@@ -88,3 +88,17 @@ TEST_CASE("Bytes round-trip", "[core][bitstream]") {
   r.readBytes(out);
   CHECK(out == in);
 }
+
+TEST_CASE("BitWriter does not require a zeroed buffer", "[core][bitstream]") {
+  std::array<std::byte, 4> buf{};
+  buf.fill(std::byte{0xFF});
+  BitWriter w(buf);
+  w.writeBits(1, 3);
+  w.writeU8(0x01);
+  w.writeBits(0, 5);
+  REQUIRE(w.ok());
+  BitReader r(w.written());
+  CHECK(r.readBits(3) == 1);
+  CHECK(r.readU8() == 0x01);
+  CHECK(r.readBits(5) == 0);
+}

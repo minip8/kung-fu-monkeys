@@ -146,3 +146,9 @@ TEST_CASE("sin/cos LUT matches a double reference", "[core][fixed]") {
   }
   CHECK(maxErr <= 2.0 * kUlp);
 }
+
+TEST_CASE("Fixed::fromDouble saturates and signedDeltaFrom covers the half turn", "[core][fixed]") {
+  CHECK(Fixed::fromDouble(1e9) == Fixed::max());
+  CHECK(Fixed::fromDouble(-1e9) == Fixed::min());
+  CHECK(Angle{0x8000}.signedDeltaFrom(Angle{0}) == -32768);
+}

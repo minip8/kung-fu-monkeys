@@ -70,3 +70,12 @@ TEST_CASE("Rng::chance respects probability extremes", "[core][rng]") {
     CHECK(r.chance(Fixed::one()));
   }
 }
+
+TEST_CASE("Rng::range covers a full 2^32 span", "[core][rng]") {
+  Rng r = Rng::seeded(3);
+  bool sawNonMin = false;
+  for (int i = 0; i < 64; ++i) {
+    if (r.range(INT32_MIN, INT32_MAX) != INT32_MIN) sawNonMin = true;
+  }
+  CHECK(sawNonMin);
+}

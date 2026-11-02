@@ -5,6 +5,9 @@
 // a value written with n bits occupies the next n bits. The layout is a
 // wire-format contract and must not change without a protocol version bump.
 //
+// The writer clears each byte when it first touches it, so the buffer does
+// not need to be zero-initialised and send buffers can be reused.
+//
 // Neither class throws or allocates. Running past the end sets an overflow
 // flag; reads past the end yield zero. Callers check ok() at the end.
 #pragma once
@@ -36,7 +39,8 @@ class BitWriter {
       const int n = bits < room ? bits : room;
       const auto mask = static_cast<uint8_t>((1u << n) - 1u);
       const auto chunk = static_cast<uint8_t>((value & mask) << bitOffset);
-      buf_[byteIndex] = static_cast<std::byte>(static_cast<uint8_t>(buf_[byteIndex]) | chunk);
+      const uint8_t existing = bitOffset == 0 ? 0 : static_cast<uint8_t>(buf_[byteIndex]);
+      buf_[byteIndex] = static_cast<std::byte>(existing | chunk);
       value >>= n;
       bits -= n;
       bitPos_ += static_cast<size_t>(n);

@@ -54,3 +54,11 @@ TEST_CASE("Vec2::fromAngle", "[core][vec2]") {
   CHECK_THAT(d.x.toDouble(), WithinAbs(std::sqrt(0.5), 2.0 / 65536.0));
   CHECK_THAT(d.y.toDouble(), WithinAbs(std::sqrt(0.5), 2.0 / 65536.0));
 }
+
+TEST_CASE("Vec2 length at the extremes of the range", "[core][vec2]") {
+  CHECK(kfm::lengthSqRaw(Vec2{Fixed::min(), Fixed::min()}) == (uint64_t{1} << 63));
+  CHECK(kfm::length(Vec2{Fixed::max(), Fixed::max()}) == Fixed::max());
+  CHECK(kfm::length(Vec2{Fixed::min(), Fixed::zero()}) == Fixed::max());
+  CHECK(kfm::normalized(Vec2{Fixed::min(), Fixed::zero()}).x < Fixed::zero());
+  CHECK(kfm::length(Vec2{Fixed::fromInt(32767), Fixed::zero()}) == Fixed::fromInt(32767));
+}

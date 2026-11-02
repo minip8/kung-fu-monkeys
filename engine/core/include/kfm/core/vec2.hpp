@@ -51,16 +51,20 @@ struct Vec2 {
   return dot(a, a);
 }
 
-// Squared length in Q32.32 as a 64-bit integer. Exact for the full range.
+// Squared length in Q32.32 as a 64-bit integer. Exact for the full range
+// (the sum is formed in uint64_t: 2 * 2^62 fits).
 [[nodiscard]] constexpr uint64_t lengthSqRaw(Vec2 a) {
   const int64_t x = a.x.raw;
   const int64_t y = a.y.raw;
-  return static_cast<uint64_t>(x * x + y * y);
+  return static_cast<uint64_t>(x * x) + static_cast<uint64_t>(y * y);
 }
 
-// Exact floor of the length for the full Fixed range (no intermediate overflow).
+// floor(|a|) with no intermediate overflow, saturating at Fixed::max() when
+// the true length exceeds the representable range (|a| >= 32768).
 [[nodiscard]] constexpr Fixed length(Vec2 a) {
-  return Fixed::fromRaw(static_cast<int32_t>(isqrt(lengthSqRaw(a))));
+  const uint32_t raw = isqrt(lengthSqRaw(a));
+  if (raw > static_cast<uint32_t>(INT32_MAX)) return Fixed::max();
+  return Fixed::fromRaw(static_cast<int32_t>(raw));
 }
 
 [[nodiscard]] constexpr Fixed distance(Vec2 a, Vec2 b) {

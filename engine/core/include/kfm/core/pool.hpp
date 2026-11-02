@@ -40,6 +40,17 @@ struct Pool {
     return isAliveIndex(id.index) && generation[id.index] == id.generation;
   }
 
+  // True when aliveBits has no bits at or above N and aliveCount matches the
+  // population count. Snapshot readers check this before trusting a pool.
+  [[nodiscard]] constexpr bool invariantsHold() const {
+    uint32_t count = 0;
+    for (uint32_t w = 0; w < kWords; ++w) {
+      if ((aliveBits[w] & ~validMask(w)) != 0) return false;
+      count += static_cast<uint32_t>(std::popcount(aliveBits[w]));
+    }
+    return count == aliveCount;
+  }
+
   // Lowest free slot, value-initialised. Returns an invalid id when full.
   constexpr EntityId spawn() {
     for (uint32_t w = 0; w < kWords; ++w) {
@@ -94,11 +105,26 @@ struct Pool {
   }
 
   // Visits alive slots in index order. f(EntityId, T&) or f(EntityId, const T&).
-  // f may despawn the current entity; it must not spawn (iteration order).
+  // f may despawn any entity, including ones not yet visited (they are then
+  // skipped); it must not spawn, because a new entity may or may not be
+  // visited depending on its index.
   template <class F>
   constexpr void forEachAlive(F&& f) {
     for (uint32_t w = 0; w < kWords; ++w) {
-      uint64_t bits = aliveBits[w];
+      uint64_t bits = aliveBits[w] & validMask(w);
+      while (bits != 0) {
+        const uint32_t index = w * 64 + static_cast<uint32_t>(std::countr_zero(bits));
+        bits &= bits - 1;
+        const auto i = static_cast<uint16_t>(index);
+        if (!isAliveIndex(i)) continue;  // despawned by an earlier callback
+        f(EntityId{i, generation[i]}, items[i]);
+      }
+    }
+  }
+  template <class F>
+  constexpr void forEachAlive(F&& f) const {
+    for (uint32_t w = 0; w < kWords; ++w) {
+      uint64_t bits = aliveBits[w] & validMask(w);
       while (bits != 0) {
         const uint32_t index = w * 64 + static_cast<uint32_t>(std::countr_zero(bits));
         bits &= bits - 1;
@@ -107,17 +133,13 @@ struct Pool {
       }
     }
   }
-  template <class F>
-  constexpr void forEachAlive(F&& f) const {
-    for (uint32_t w = 0; w < kWords; ++w) {
-      uint64_t bits = aliveBits[w];
-      while (bits != 0) {
-        const uint32_t index = w * 64 + static_cast<uint32_t>(std::countr_zero(bits));
-        bits &= bits - 1;
-        const auto i = static_cast<uint16_t>(index);
-        f(EntityId{i, generation[i]}, items[i]);
-      }
-    }
+
+  // Bits of word w that correspond to slots below N.
+  [[nodiscard]] static constexpr uint64_t validMask(uint32_t w) {
+    const uint32_t first = w * 64;
+    if (first + 64 <= N) return ~uint64_t{0};
+    if (first >= N) return 0;
+    return (uint64_t{1} << (N - first)) - 1;
   }
 };
 

@@ -47,8 +47,9 @@ struct Rng {
 
   // Uniform in [lo, hi], inclusive. Requires lo <= hi.
   constexpr int32_t range(int32_t lo, int32_t hi) {
-    const auto span = static_cast<uint32_t>(static_cast<int64_t>(hi) - lo + 1);
-    return static_cast<int32_t>(lo + static_cast<int64_t>(below(span)));
+    const uint64_t span = static_cast<uint64_t>(static_cast<int64_t>(hi) - lo) + 1;
+    const uint32_t r = span > UINT32_MAX ? next() : below(static_cast<uint32_t>(span));
+    return static_cast<int32_t>(lo + static_cast<int64_t>(r));
   }
 
   // Uniform Fixed in [0, 1).

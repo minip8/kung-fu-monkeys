@@ -66,6 +66,8 @@ struct Fixed {
   [[nodiscard]] static constexpr Fixed fromDouble(double d) {
     const double scaled = d * static_cast<double>(kOneRaw);
     const double rounded = scaled >= 0.0 ? scaled + 0.5 : scaled - 0.5;
+    if (rounded >= 2147483647.0) return max();  // saturate instead of UB
+    if (rounded <= -2147483648.0) return min();
     return Fixed{static_cast<int32_t>(rounded)};
   }
 
@@ -200,7 +202,8 @@ struct Angle {
   constexpr Angle& operator+=(Angle o) { return *this = *this + o; }
   constexpr Angle& operator-=(Angle o) { return *this = *this - o; }
 
-  // Signed shortest difference from `other` to this, in (-32768, 32767].
+  // Signed shortest difference from `other` to this, in [-32768, 32767]
+  // (exactly half a turn maps to -32768).
   [[nodiscard]] constexpr int16_t signedDeltaFrom(Angle other) const {
     return static_cast<int16_t>(static_cast<uint16_t>(bam - other.bam));
   }

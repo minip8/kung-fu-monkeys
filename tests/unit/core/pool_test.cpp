@@ -126,3 +126,40 @@ TEST_CASE("Pool survives memcpy snapshot and restore", "[core][pool]") {
   REQUIRE(p.isAlive(a));
   CHECK(p.get(a)->value == 5);
 }
+
+TEST_CASE("Pool forEachAlive skips entities despawned by an earlier callback", "[core][pool]") {
+  Pool<Thing, 8> p{};
+  for (int i = 0; i < 4; ++i)
+    p.spawn();
+  const EntityId third = p.idAt(3);
+  int visits = 0;
+  p.forEachAlive([&](EntityId id, Thing&) {
+    ++visits;
+    CHECK(p.isAlive(id));
+    if (id.index == 0) p.despawn(third);
+  });
+  CHECK(visits == 3);
+  CHECK(p.size() == 3);
+}
+
+TEST_CASE("Pool invariants and stray bits above N", "[core][pool]") {
+  Pool<Thing, 10> p{};
+  CHECK(p.invariantsHold());
+  p.spawn();
+  CHECK(p.invariantsHold());
+  p.aliveCount = 2;
+  CHECK_FALSE(p.invariantsHold());
+  p.aliveCount = 1;
+  p.aliveBits[0] |= uint64_t{1} << 63;  // slot 63 does not exist in a 10-slot pool
+  CHECK_FALSE(p.invariantsHold());
+  int visits = 0;
+  p.forEachAlive([&](EntityId id, Thing&) {
+    ++visits;
+    CHECK(id.index == 0);
+  });
+  CHECK(visits == 1);  // the stray bit is masked, never indexed
+  const Pool<Thing, 10>& cp = p;
+  visits = 0;
+  cp.forEachAlive([&](EntityId, const Thing&) { ++visits; });
+  CHECK(visits == 1);
+}
