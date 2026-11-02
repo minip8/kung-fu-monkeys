@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.8 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.11 (2026-11-02). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -14,6 +14,15 @@ status (§9).
 v0.7 changes: C++23 probe decided: baseline stays C++20 because the probe fails on the Linux CI
 compilers (§9).
 v0.8 changes: baseline moved to C++23; Linux CI runs on Ubuntu 26.04 (§1, §2, §9).
+v0.9 changes: players have HP, banana damage defaults to a one-hit kill (§5.6, §5.7, §12); M1
+content is `constexpr` defs behind `ContentDB`, file loading arrives in M4 (§5.10, §11); M1
+collision broadphase is a uniform-grid spatial hash checked against brute force (§5.3).
+v0.10 changes: HP semantics pinned: integer hits, add-only modifiers, clamp rule on `maxHp`
+change, `HitStun` tag, banana grounds on a non-lethal hit unless piercing, `PlayerHit` event
+(§5.6, §5.7, §5.8, §5.9).
+v0.11 changes: presentation flipped from pre-rendered 2.5D sprites to real-time low-poly 3D on
+the same strictly 2D sim (§2, §7, §10, §11, §12). Height stays cosmetic and the shadow still
+marks the hitbox.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -27,7 +36,7 @@ latency-first netcode, and a simulation that bots and ML agents can drive headle
 
 | Requirement | Architectural consequence |
 |---|---|
-| Fast, precise party brawler (one-hit kills, timing windows) | Fixed 60 Hz tick, exact timing semantics, zero local input delay |
+| Fast, precise party brawler (one-hit kills by default, timing windows) | Fixed 60 Hz tick, exact timing semantics, zero local input delay |
 | 2–10 players online, smooth | Server-authoritative, input-synchronised rollback netcode, tiny packets |
 | Modular gameplay: dash now, more abilities and twists later | Data-driven definitions, table-driven behaviours, an interaction rules table |
 | Engine in C++ | C++23, CMake, small set of battle-tested libraries, strict layering |
@@ -51,7 +60,7 @@ platform seams.
 | Netcode | Server-authoritative deterministic sim with **input synchronisation**: clients send inputs, server relays authoritative inputs, clients predict everyone and roll back | GGPO-style feel (no local input delay) plus a trusted authority, join-in-progress and resync; bandwidth independent of entity count |
 | Transport | WebRTC data channels as the single production transport (libdatachannel natively, the same C++ API via datachannel-wasm in the browser); in-process loopback with network emulation for tests; GameNetworkingSockets only if a Steam build happens. All behind one `ITransport` with an unreliable lane and a reliable lane; our message layer (input frames, redundancy, clock sync) sits above | One transport to harden, built-in encryption, browsers and native clients share a match with no bridging; the game netcode never knows which transport is in use |
 | Gameplay modularity | Content defs (abilities, power-ups, arenas, modes) + behaviour registries keyed by kind + a prioritised interaction rules table | New ability or twist = new file + def + registration, no edits to existing systems |
-| Presentation | 2.5D: tilted camera over a strictly 2D sim, pre-rendered 8-direction sprites, y-sorted, shadows mark true positions. SDL3 (window/input/audio) + sokol_gfx sprite batcher, Dear ImGui debug UI | Rendering is a read-only consumer of sim state; sokol_gfx has WebGL2/WebGPU backends for the browser build |
+| Presentation | Real-time low-poly 3D over a strictly 2D sim: fixed tilted camera, skinned glTF characters, flat/toon shading, blob shadows mark true positions. SDL3 (window/input/audio) + sokol_gfx, Dear ImGui debug UI | Rendering is a read-only consumer of sim state; smooth facing matches continuous aim; sokol_gfx has WebGL2/WebGPU backends for the browser build |
 | Bots / ML | `IAgent` produces `PlayerInput` like a human; headless vectorised env via nanobind; ONNX Runtime inference in C++ | Same action space for humans, scripted bots and policies |
 | Tooling | CMake presets, vcpkg, Catch2, Tracy, sanitizers, clang-format/clang-tidy, CI with a cross-OS determinism gate | Determinism is enforced, not hoped for |
 | Platforms | Web first: the browser is the shipping client, native is the dev/debug/profiling build, Steam is an optional later add. Platform code is confined to `ITransport` and `IPlatformServices` | Join friction decides a party game; everything below the seams is shared, so Steam stays a cheap option |
@@ -100,10 +109,11 @@ kung-fu-monkeys/
     net/                 messages/ (bit-packed frames, redundancy), transport/ (webrtc, loopback+emulator, optional gns),
                          clock sync, NetClient, NetServer, snapshot codec
     ai/                  IAgent, Observation builder, scripted bots, OnnxAgent
-    presentation/        renderer, sprites/animation, camera, audio, vfx, ui, interpolation+smoothing
+    presentation/        renderer (meshes, skinning, materials), animation, camera, audio, vfx, ui,
+                         interpolation+smoothing
     platform/            SDL3 window/input/audio/gamepads, filesystem, main loop, config,
                          services/ (IPlatformServices: steam, web, null)
-  content/               data files: abilities/ powerups/ arenas/ modes/ sprites/ audio/
+  content/               data files: abilities/ powerups/ arenas/ modes/ models/ audio/
   apps/
     client/              playable client (also hosts local multiplayer)
     server/              headless dedicated server
@@ -185,13 +195,20 @@ step(WorldState& s, const InputFrame& in, EventSink& events):
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
    4. MovementSystem            intent × derived stats → velocity; integrate; arena clamp
    5. ProjectileSystem          boomerang flight: outbound → return steering → grounded
-   6. CollisionSystem           broadphase (brute force or spatial hash) + swept narrowphase with time-of-impact, emits Contacts
+   6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
    7. InteractionSystem         resolves Contacts via the rules table (hit, catch, pickup, bounce)
    8. ModifierSystem            tick timers, expire, recompute derived Stats
    9. LifecycleSystem           eliminations, respawns, despawns
   10. RulesSystem::postTick     win conditions, scoring
   11. s.tick++
 ```
+
+Broadphase: a uniform grid over the arena bounds, rebuilt every tick by counting sort into
+fixed-capacity arrays local to `CollisionSystem` (derived data, never part of `WorldState` or
+snapshots). Moving entities are inserted by their swept AABB (start, end, radius). Candidate
+pairs are deduplicated and sorted by `(kindA, indexA, kindB, indexB)` before the narrowphase,
+so contact order does not depend on cell layout. A brute-force all-pairs broadphase stays in
+the tests as the oracle: a property test asserts both produce the same pair set.
 
 Systems are stateless free functions; the order is fixed and documented; each reads state and
 inputs and writes state and events. Nothing else mutates `WorldState`.
@@ -243,7 +260,7 @@ match wins.
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang
  20   Player[Shielded]           Boomerang[InFlight, !own]      BreakShield
- 30   Player[]                   Boomerang[InFlight, !own]      EliminatePlayer
+ 30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[]                       GrantPowerUp
  60   Boomerang[]                Wall                           Bounce
@@ -251,16 +268,36 @@ prio  A                          B                              handler
 
 A new twist is a new rule and possibly a new tag. Rules are tested in isolation by scripted
 scenarios ("spawn banana at x moving v, dash at tick t, expect `BoomerangCaught`").
+`DamagePlayer` subtracts the banana's damage from the player's HP and eliminates at or below
+zero. Players have `hp`/`maxHp` (a derived stat, so power-ups can change it) and bananas carry
+`damage`; the defaults make one hit a kill (`damage >= maxHp`), so the base game plays as
+one-hit kills while modes and power-ups (armour, heavy banana) can change the numbers.
+
+HP semantics (v0.10):
+- `hp`, `maxHp` and `damage` are small integers counting hits, not fixed-point. Base
+  `maxHp = 1`, base `damage = 1`. Stat modifiers on `maxHp` are add-only; a `mul` on an
+  integer stat is a content validation error.
+- When `maxHp` rises (armour picked up), `hp` rises by the same amount. When it falls (armour
+  expires), `hp = min(hp, maxHp)` but never below 1: losing a modifier never eliminates.
+  `ModifierSystem` applies this when it recomputes `Stats`.
+- `DamagePlayer` emits `PlayerHit`, grants `Tag::HitStun` for `hitStunTicks` (content, a few
+  ticks) so a piercing banana overlapping the victim across ticks lands once, and emits
+  `PlayerEliminated` if `hp <= 0`. The banana grounds at the contact point and becomes a pickup
+  unless it has `pierce`, in which case it keeps flying.
+- Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
+  consumed (rule 20); armour is `+maxHp`. A mode or power-up picks one or stacks both.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
 are rule-table decisions, not code changes.
 
 ### 5.7 Boomerang model
 
 - State: `owner`, `phase` {Outbound, Returning, Grounded}, `pos`, `vel`, `spin`, `ticksAlive`,
-  modifiers (size, speed, bounces, pierce).
+  `damage` (default 1, a one-hit kill against base `maxHp`), modifiers (size, speed, bounces,
+  pierce).
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
-  eliminated → Grounded → becomes a pickup.
+  eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
+  contact point.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
 
 ### 5.8 Power-ups and modifiers
@@ -269,12 +306,15 @@ are rule-table decisions, not code changes.
   `AbilityOverride{slot, abilityDef}`, `ProjectileModifier{...}`, `Tag` grants.
 - `ModifierList` per player (fixed capacity, e.g. 8) with remaining ticks. `ModifierSystem`
   recomputes derived `Stats` each tick as `base × Π mul + Σ add`, iterating in slot order.
+  Integer stats (`maxHp`, `ammoMax`) accept `add` only; `hp` is clamped to the new `maxHp` as
+  described in §5.6.
 - Pickup entities reference a `PowerUpDef` by index and are spawned by arena spawners.
 
 ### 5.9 Events
 
 - `SimEvent` is a POD tagged union written to a per-tick buffer: `BoomerangThrown`,
-  `BoomerangCaught{catcher, how}`, `PlayerDashed`, `PlayerEliminated{victim, killer}`,
+  `BoomerangCaught{catcher, how}`, `PlayerDashed`, `PlayerHit{victim, attacker, damage, hpAfter}`,
+  `PlayerEliminated{victim, killer}`,
   `PowerUpPicked`, `RoundEnded`, ...
 - Consumers: presentation (VFX/SFX), scoring, RL rewards, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
@@ -287,6 +327,10 @@ are rule-table decisions, not code changes.
   spawners, hazards. Loaded into an immutable `Arena` struct with a prebuilt spatial hash.
 - Content pipeline: TOML or JSON → validated → `ContentDB`; `content_hash` is the xxHash of
   the canonical serialized form. Hot reload in dev builds (restarts the match).
+- Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) are `constexpr`
+  tables in `engine/sim`, assembled into the same immutable `ContentDB` and hashed through the
+  visitor, so `content_hash` exists from M1 on. M4 replaces the `constexpr` source with the
+  TOML/JSON loader without touching systems.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -515,27 +559,36 @@ pixels.
 
 ## 7. Presentation (`engine/presentation`, `engine/platform`)
 
-The sim is strictly 2D. "2.5D" is a presentation decision: a tilted camera over the arena, with
-pre-rendered sprites standing on the ground plane.
+The sim is strictly 2D. Presentation draws it as real-time low-poly 3D: a fixed tilted camera
+over the arena, skinned character models standing on the ground plane. Sim `(x, y)` maps to
+world `(x, z)`; world `y` is height and is never read back into the sim.
 
-- **Projection and sorting.** The ground is drawn with an oblique/isometric-style projection of sim
-  `(x, y)`. Sprites are camera-facing quads anchored at the entity's feet and sorted by ground `y`
-  (painter's order), with a per-sprite depth value so overlaps resolve consistently. Arena walls
-  and props are sprites or tile layers in the same sort.
-- **Height is cosmetic.** Banana arcs, dash hops and knockback lift the sprite along the screen's
-  up axis, but the sim position never leaves the plane. Every airborne thing casts a shadow blob
-  at its true sim position, and the shadow is where the hitbox is. This keeps the catch readable:
-  you dash at the shadow.
-- **Sprite pipeline.** Characters and bananas are modeled and animated in Blender and
-  batch-rendered to sprite sheets: 8 directions (16 if the budget allows) × animation frames,
-  with an optional normal-map pass for cheap dynamic lighting and an ID-mask channel for
-  per-player palette swaps in the shader. Facing is chosen from aim angle (upper body) or move
-  angle. The render script lives in the repo so sheets regenerate from models with one command.
-- **Renderer.** sokol_gfx sprite batcher: instanced quads from texture atlases, y-sorted per
-  frame, alpha blending, a few render targets for post (bloom, hit flashes, screen shake).
-  Backends: OpenGL/Metal/D3D11 on desktop, WebGL2 (WebGPU later) in the browser. SDL3 handles
-  window, input, gamepads and audio on every target including Emscripten. SDL_GPU was the other
-  candidate; at the time of writing it has no stable browser backend, which decides it.
+- **Camera and projection.** One fixed camera per arena (perspective with a long lens, or
+  orthographic; tuned in M2), looking down at the plane. No camera rotation in gameplay, so the
+  tilt is part of the arena's design. A real depth buffer resolves overlaps; only transparent
+  effects are sorted.
+- **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
+  but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
+  quad on the ground) at its true sim position, and the shadow is where the hitbox is. This
+  keeps the catch readable: you dash at the shadow.
+- **Facing.** Characters rotate smoothly. Upper body follows the aim angle, lower body the move
+  direction, blended in the animation layer; the throw direction, the aim indicator and the
+  body always agree. This is the main readability gain over direction-quantised sprites.
+- **Asset pipeline.** Characters, bananas and props are modeled, rigged and animated in Blender
+  and exported to glTF by a script in the repo (one command regenerates every asset). Low poly
+  counts and few joints per character (well under WebGL2 uniform limits for skinning). Per-player
+  colour is a material parameter, not a texture variant. Source `.blend` files are checked in;
+  exported glTF is built by the pipeline.
+- **Renderer.** sokol_gfx: static meshes for the arena, GPU-skinned meshes for characters
+  (joint matrices in uniforms, dual quaternions if seams show), instanced bananas and pickups,
+  one directional light with flat or toon shading, blob-shadow decals, a few render targets for
+  post (bloom, hit flashes, screen shake). No shadow maps and no dynamic lighting beyond the one
+  light. Backends: OpenGL/Metal/D3D11 on desktop, WebGL2 (WebGPU later) in the browser. SDL3
+  handles window, input, gamepads and audio on every target including Emscripten. SDL_GPU was
+  the other candidate; at the time of writing it has no stable browser backend, which decides it.
+- **Animation.** Skeletal clips (idle, run, dash, throw, catch, hit, eliminated) with blending
+  and a small state machine driven by sim tags and events; clip timings are tuned to the
+  ability phase durations after M3, when those stop moving.
 - **Dear ImGui** dev overlay: net graph, rollback depth histogram, entity inspector, content reload.
 - `RenderState` is derived every frame from two sim states (prev, curr), an interpolation alpha,
   smoothing offsets and the event buffer. Presentation never mutates `WorldState`.
@@ -543,10 +596,10 @@ pre-rendered sprites standing on the ground plane.
 - Local multiplayer is first-class: several humans on one client each own a player slot, all
   predicted locally; the server sees them as separate players behind one connection.
 
-Alternative kept open: real-time low-poly 3D models on the same 2D plane (what Boomerang Fu itself
-does). No direction sheets and smooth rotation, but it needs a 3D renderer with skinning, lighting
-and shadows. Nothing below the presentation layer changes, so this can be revisited after M2 with
-the placeholder sprites in hand.
+Character drawing sits behind one interface in `presentation` so that nothing else knows
+whether a character is a skinned mesh or a quad. The earlier plan, pre-rendered 8-direction
+sprites from the same Blender models, remains the fallback if the 3D renderer stalls M2: the
+art is identical up to the export step, and nothing below the presentation layer changes.
 
 ---
 
@@ -612,7 +665,7 @@ the placeholder sprites in hand.
 | Sim, pools, fixed-point math, swept collision, abilities and rules framework | SDL3, sokol_gfx, Dear ImGui, stb |
 | Message layer, prediction/rollback, clock sync, network emulator | libdatachannel + datachannel-wasm (transport); GameNetworkingSockets only for a Steam build |
 | Bots, observation builder, vectorised env | LZ4, xxHash, toml++ or nlohmann-json |
-| Replay tooling, content validator, sprite-sheet packer | Catch2, Google Benchmark, Tracy, libFuzzer, nanobind, ONNX Runtime, Blender (sprite pipeline) |
+| Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, nanobind, ONNX Runtime, cgltf, Blender (asset pipeline) |
 
 Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `server-headless`, `wasm` (Emscripten).
 When a package is not found through vcpkg (no `VCPKG_ROOT`, or the `wasm` preset, which sets
@@ -627,7 +680,7 @@ so every build uses the same release of each dependency.
 |---|---|---|
 | M0 Skeleton | Repo layout, CMake presets, vcpkg, CI, `core` (`Fixed`, `Vec2`, `Pool`, `BitStream`, `Rng`), Catch2, determinism harness, C++23 toolchain probe (§9) | Green CI on three OSes plus wasm running an empty replay; C++20 vs C++23 baseline decided |
 | M1 Headless sim | Players, movement, dash, boomerang flight/return, catch rule, eliminations, FFA round rules, replay record/playback, scenario tests, ticks/s bench | A scripted 10-player replay runs identically everywhere |
-| M2 Playable local | SDL3 + sokol_gfx client, 2.5D sprite renderer with placeholder sheets (y-sort, shadows, height), local multiplayer, debug UI, interpolation, first feel tuning of dash and catch windows; Emscripten build of the same client runs in a tab | Two people on one keyboard/gamepads have fun for 10 minutes, natively and in the browser |
+| M2 Playable local | SDL3 + sokol_gfx client, 3D renderer with placeholder meshes (capsule monkeys, fixed camera, blob shadows, cosmetic height, GPU skinning on one rigged test model), local multiplayer, debug UI, interpolation, first feel tuning of dash and catch windows; Emscripten build of the same client runs in a tab | Two people on one keyboard/gamepads have fun for 10 minutes, natively and in the browser |
 | M3 Netcode | Loopback + emulator, `NetServer`/`NetClient`, prediction + rollback, clock sync, snapshots/join, `WebRtcTransport` (libdatachannel natively, datachannel-wasm in the browser), `netsim` with 10 clients, soak tests under loss and jitter | 10 clients at 100 ms RTT, 2% loss, no desyncs, rollback depth bounded; a browser client joins a real server |
 | M4 Content | Power-ups, modifiers, more abilities, arenas, modes, lobby UI, audio/VFX | Content added without touching system code |
 | M5 Bots & ML | Utility bot, nanobind env, PPO self-play baseline, ONNX agent in server | A trained policy beats the scripted bot |
@@ -661,12 +714,20 @@ baseline moved to C++23 (§9).
   ongoing cost and an ops duty that a Steam peer-to-peer game would not have.
 - **Monetisation on the web is weak** (portals, ads, cosmetics). If revenue matters later, the
   Steam build is the lever, and the seams keep it cheap.
-- **Sprite pipeline cost.** 8-direction sheets multiply animation work; keep the model-to-sheet
-  render automated from day one.
+- **3D renderer cost.** A skinned-mesh renderer is weeks of work where a sprite batcher is
+  days; it is the main schedule risk in M2. Mitigate by running M2 on capsules first, keeping
+  the one light and blob shadows (no shadow maps), and keeping the sprite fallback (§7).
+- **WebGL2 limits.** Skinning uniform budgets and texture formats vary by browser; keep joint
+  counts low and test the wasm build on every M2 change.
 - Decided: 60 Hz tick with sub-tick input timestamps (§5.11); WebRTC as the single production
-  transport (§6.4); 2.5D pre-rendered sprites (§7); web first, native as the dev build, Steam
-  optional (§13).
-- Open: one-hit kills vs. HP; team modes; WebTransport as a later replacement for WebRTC; mobile
+  transport (§6.4); web first, native as the dev build, Steam optional (§13).
+- Decided (v0.9): HP with banana damage defaulting to a one-hit kill (§5.6); `constexpr`
+  content behind `ContentDB` until the M4 loader (§5.10); spatial-hash broadphase with a
+  brute-force oracle (§5.3).
+- Decided (v0.10): HP semantics, `HitStun`, banana grounds on hit, `PlayerHit` event (§5.6).
+- Decided (v0.11): real-time low-poly 3D presentation over the 2D sim, replacing pre-rendered
+  2.5D sprites (§7).
+- Open: team modes; WebTransport as a later replacement for WebRTC; mobile
   browsers and touch controls.
 
 ---
