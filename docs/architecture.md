@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.9 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.10 (2026-11-02). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -17,6 +17,9 @@ v0.8 changes: baseline moved to C++23; Linux CI runs on Ubuntu 26.04 (§1, §2, 
 v0.9 changes: players have HP, banana damage defaults to a one-hit kill (§5.6, §5.7, §12); M1
 content is `constexpr` defs behind `ContentDB`, file loading arrives in M4 (§5.10, §11); M1
 collision broadphase is a uniform-grid spatial hash checked against brute force (§5.3).
+v0.10 changes: HP semantics pinned: integer hits, add-only modifiers, clamp rule on `maxHp`
+change, `HitStun` tag, banana grounds on a non-lethal hit unless piercing, `PlayerHit` event
+(§5.6, §5.7, §5.8, §5.9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -253,7 +256,7 @@ match wins.
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang
  20   Player[Shielded]           Boomerang[InFlight, !own]      BreakShield
- 30   Player[]                   Boomerang[InFlight, !own]      DamagePlayer
+ 30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[]                       GrantPowerUp
  60   Boomerang[]                Wall                           Bounce
@@ -261,20 +264,36 @@ prio  A                          B                              handler
 
 A new twist is a new rule and possibly a new tag. Rules are tested in isolation by scripted
 scenarios ("spawn banana at x moving v, dash at tick t, expect `BoomerangCaught`").
-`DamagePlayer` subtracts the banana's damage from the player's HP and eliminates at zero.
-Players have `hp`/`maxHp` (a derived stat, so power-ups can change it) and bananas carry
+`DamagePlayer` subtracts the banana's damage from the player's HP and eliminates at or below
+zero. Players have `hp`/`maxHp` (a derived stat, so power-ups can change it) and bananas carry
 `damage`; the defaults make one hit a kill (`damage >= maxHp`), so the base game plays as
 one-hit kills while modes and power-ups (armour, heavy banana) can change the numbers.
+
+HP semantics (v0.10):
+- `hp`, `maxHp` and `damage` are small integers counting hits, not fixed-point. Base
+  `maxHp = 1`, base `damage = 1`. Stat modifiers on `maxHp` are add-only; a `mul` on an
+  integer stat is a content validation error.
+- When `maxHp` rises (armour picked up), `hp` rises by the same amount. When it falls (armour
+  expires), `hp = min(hp, maxHp)` but never below 1: losing a modifier never eliminates.
+  `ModifierSystem` applies this when it recomputes `Stats`.
+- `DamagePlayer` emits `PlayerHit`, grants `Tag::HitStun` for `hitStunTicks` (content, a few
+  ticks) so a piercing banana overlapping the victim across ticks lands once, and emits
+  `PlayerEliminated` if `hp <= 0`. The banana grounds at the contact point and becomes a pickup
+  unless it has `pierce`, in which case it keeps flying.
+- Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
+  consumed (rule 20); armour is `+maxHp`. A mode or power-up picks one or stacks both.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
 are rule-table decisions, not code changes.
 
 ### 5.7 Boomerang model
 
 - State: `owner`, `phase` {Outbound, Returning, Grounded}, `pos`, `vel`, `spin`, `ticksAlive`,
-  `damage` (default: one-hit kill), modifiers (size, speed, bounces, pierce).
+  `damage` (default 1, a one-hit kill against base `maxHp`), modifiers (size, speed, bounces,
+  pierce).
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
-  eliminated → Grounded → becomes a pickup.
+  eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
+  contact point.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
 
 ### 5.8 Power-ups and modifiers
@@ -283,12 +302,15 @@ are rule-table decisions, not code changes.
   `AbilityOverride{slot, abilityDef}`, `ProjectileModifier{...}`, `Tag` grants.
 - `ModifierList` per player (fixed capacity, e.g. 8) with remaining ticks. `ModifierSystem`
   recomputes derived `Stats` each tick as `base × Π mul + Σ add`, iterating in slot order.
+  Integer stats (`maxHp`, `ammoMax`) accept `add` only; `hp` is clamped to the new `maxHp` as
+  described in §5.6.
 - Pickup entities reference a `PowerUpDef` by index and are spawned by arena spawners.
 
 ### 5.9 Events
 
 - `SimEvent` is a POD tagged union written to a per-tick buffer: `BoomerangThrown`,
-  `BoomerangCaught{catcher, how}`, `PlayerDashed`, `PlayerEliminated{victim, killer}`,
+  `BoomerangCaught{catcher, how}`, `PlayerDashed`, `PlayerHit{victim, attacker, damage, hpAfter}`,
+  `PlayerEliminated{victim, killer}`,
   `PowerUpPicked`, `RoundEnded`, ...
 - Consumers: presentation (VFX/SFX), scoring, RL rewards, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
@@ -684,7 +706,10 @@ baseline moved to C++23 (§9).
 - Decided: 60 Hz tick with sub-tick input timestamps (§5.11); WebRTC as the single production
   transport (§6.4); 2.5D pre-rendered sprites (§7); web first, native as the dev build, Steam
   optional (§13).
-- Decided (v0.9): HP with banana damage defaulting to a one-hit kill (§5.6).
+- Decided (v0.9): HP with banana damage defaulting to a one-hit kill (§5.6); `constexpr`
+  content behind `ContentDB` until the M4 loader (§5.10); spatial-hash broadphase with a
+  brute-force oracle (§5.3).
+- Decided (v0.10): HP semantics, `HitStun`, banana grounds on hit, `PlayerHit` event (§5.6).
 - Open: team modes; WebTransport as a later replacement for WebRTC; mobile
   browsers and touch controls.
 
