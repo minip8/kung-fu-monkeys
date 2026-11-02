@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.8 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.9 (2026-11-02). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -14,6 +14,9 @@ status (§9).
 v0.7 changes: C++23 probe decided: baseline stays C++20 because the probe fails on the Linux CI
 compilers (§9).
 v0.8 changes: baseline moved to C++23; Linux CI runs on Ubuntu 26.04 (§1, §2, §9).
+v0.9 changes: players have HP, banana damage defaults to a one-hit kill (§5.6, §5.7, §12); M1
+content is `constexpr` defs behind `ContentDB`, file loading arrives in M4 (§5.10, §11); M1
+collision broadphase is a uniform-grid spatial hash checked against brute force (§5.3).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -27,7 +30,7 @@ latency-first netcode, and a simulation that bots and ML agents can drive headle
 
 | Requirement | Architectural consequence |
 |---|---|
-| Fast, precise party brawler (one-hit kills, timing windows) | Fixed 60 Hz tick, exact timing semantics, zero local input delay |
+| Fast, precise party brawler (one-hit kills by default, timing windows) | Fixed 60 Hz tick, exact timing semantics, zero local input delay |
 | 2–10 players online, smooth | Server-authoritative, input-synchronised rollback netcode, tiny packets |
 | Modular gameplay: dash now, more abilities and twists later | Data-driven definitions, table-driven behaviours, an interaction rules table |
 | Engine in C++ | C++23, CMake, small set of battle-tested libraries, strict layering |
@@ -185,13 +188,20 @@ step(WorldState& s, const InputFrame& in, EventSink& events):
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
    4. MovementSystem            intent × derived stats → velocity; integrate; arena clamp
    5. ProjectileSystem          boomerang flight: outbound → return steering → grounded
-   6. CollisionSystem           broadphase (brute force or spatial hash) + swept narrowphase with time-of-impact, emits Contacts
+   6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
    7. InteractionSystem         resolves Contacts via the rules table (hit, catch, pickup, bounce)
    8. ModifierSystem            tick timers, expire, recompute derived Stats
    9. LifecycleSystem           eliminations, respawns, despawns
   10. RulesSystem::postTick     win conditions, scoring
   11. s.tick++
 ```
+
+Broadphase: a uniform grid over the arena bounds, rebuilt every tick by counting sort into
+fixed-capacity arrays local to `CollisionSystem` (derived data, never part of `WorldState` or
+snapshots). Moving entities are inserted by their swept AABB (start, end, radius). Candidate
+pairs are deduplicated and sorted by `(kindA, indexA, kindB, indexB)` before the narrowphase,
+so contact order does not depend on cell layout. A brute-force all-pairs broadphase stays in
+the tests as the oracle: a property test asserts both produce the same pair set.
 
 Systems are stateless free functions; the order is fixed and documented; each reads state and
 inputs and writes state and events. Nothing else mutates `WorldState`.
@@ -243,7 +253,7 @@ match wins.
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang
  20   Player[Shielded]           Boomerang[InFlight, !own]      BreakShield
- 30   Player[]                   Boomerang[InFlight, !own]      EliminatePlayer
+ 30   Player[]                   Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[]                       GrantPowerUp
  60   Boomerang[]                Wall                           Bounce
@@ -251,13 +261,17 @@ prio  A                          B                              handler
 
 A new twist is a new rule and possibly a new tag. Rules are tested in isolation by scripted
 scenarios ("spawn banana at x moving v, dash at tick t, expect `BoomerangCaught`").
+`DamagePlayer` subtracts the banana's damage from the player's HP and eliminates at zero.
+Players have `hp`/`maxHp` (a derived stat, so power-ups can change it) and bananas carry
+`damage`; the defaults make one hit a kill (`damage >= maxHp`), so the base game plays as
+one-hit kills while modes and power-ups (armour, heavy banana) can change the numbers.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
 are rule-table decisions, not code changes.
 
 ### 5.7 Boomerang model
 
 - State: `owner`, `phase` {Outbound, Returning, Grounded}, `pos`, `vel`, `spin`, `ticksAlive`,
-  modifiers (size, speed, bounces, pierce).
+  `damage` (default: one-hit kill), modifiers (size, speed, bounces, pierce).
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
   eliminated → Grounded → becomes a pickup.
@@ -287,6 +301,10 @@ are rule-table decisions, not code changes.
   spawners, hazards. Loaded into an immutable `Arena` struct with a prebuilt spatial hash.
 - Content pipeline: TOML or JSON → validated → `ContentDB`; `content_hash` is the xxHash of
   the canonical serialized form. Hot reload in dev builds (restarts the match).
+- Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) are `constexpr`
+  tables in `engine/sim`, assembled into the same immutable `ContentDB` and hashed through the
+  visitor, so `content_hash` exists from M1 on. M4 replaces the `constexpr` source with the
+  TOML/JSON loader without touching systems.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -666,7 +684,8 @@ baseline moved to C++23 (§9).
 - Decided: 60 Hz tick with sub-tick input timestamps (§5.11); WebRTC as the single production
   transport (§6.4); 2.5D pre-rendered sprites (§7); web first, native as the dev build, Steam
   optional (§13).
-- Open: one-hit kills vs. HP; team modes; WebTransport as a later replacement for WebRTC; mobile
+- Decided (v0.9): HP with banana damage defaulting to a one-hit kill (§5.6).
+- Open: team modes; WebTransport as a later replacement for WebRTC; mobile
   browsers and touch controls.
 
 ---
