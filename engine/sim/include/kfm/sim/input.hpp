@@ -49,7 +49,16 @@ struct InputFrame {
   std::array<PlayerInput, kMaxPlayers> inputs{};
   PlayerMask present{0};
 
-  constexpr auto operator<=>(const InputFrame&) const = default;
+  // Equality ignores inputs of absent players, matching what the visitor
+  // encodes, so a decoded frame compares equal to the one that was sent.
+  [[nodiscard]] constexpr bool operator==(const InputFrame& o) const {
+    if (tick != o.tick || present != o.present) return false;
+    for (uint16_t i = 0; i < kMaxPlayers; ++i) {
+      const bool here = ((static_cast<uint32_t>(present) >> i) & 1u) != 0;
+      if (here && inputs[i] != o.inputs[i]) return false;
+    }
+    return true;
+  }
 };
 
 }  // namespace kfm::sim

@@ -63,7 +63,7 @@ template <class V, class E>
 void visit(V& v, E& e) {
   auto raw = static_cast<uint8_t>(e);
   v.u8(raw);
-  e = static_cast<E>(raw);
+  if constexpr (V::kIsReader) e = static_cast<E>(raw);
 }
 
 // Pools visit the alive bits, the generations and the alive items only;
@@ -76,6 +76,14 @@ void visit(V& v, Pool<T, N>& pool) {
   for (uint16_t& g : pool.generation)
     v.u16(g);
   v.u16(pool.aliveCount);
+  if constexpr (V::kIsReader) {
+    // A snapshot from the network must not be able to break pool invariants.
+    if (!pool.invariantsHold()) {
+      v.markInvalid();
+      pool.clear();
+      return;
+    }
+  }
   for (uint16_t i = 0; i < N; ++i) {
     if (pool.isAliveIndex(i)) {
       visit(v, pool.items[i]);
@@ -143,6 +151,7 @@ class ChecksumVisitor {
   void u64(uint64_t& x) { h_.add(x); }
   void i32(int32_t& x) { h_.add(x); }
   void boolean(bool& x) { h_.add(x ? 1u : 0u); }
+  void markInvalid() {}
   [[nodiscard]] uint32_t finish() const { return h_.finish(); }
 
  private:
@@ -159,6 +168,7 @@ class WriteVisitor {
   void u64(uint64_t& x) { w_.writeU64(x); }
   void i32(int32_t& x) { w_.writeI32(x); }
   void boolean(bool& x) { w_.writeBool(x); }
+  void markInvalid() {}
   [[nodiscard]] bool ok() const { return w_.ok(); }
 
  private:
@@ -175,10 +185,13 @@ class ReadVisitor {
   void u64(uint64_t& x) { x = r_.readU64(); }
   void i32(int32_t& x) { x = r_.readI32(); }
   void boolean(bool& x) { x = r_.readBool(); }
-  [[nodiscard]] bool ok() const { return r_.ok(); }
+  // Called by a visit() that found the decoded value structurally invalid.
+  void markInvalid() { invalid_ = true; }
+  [[nodiscard]] bool ok() const { return r_.ok() && !invalid_; }
 
  private:
   BitReader& r_;
+  bool invalid_{false};
 };
 
 // Checksum of any visitable value. The visitor never writes, so the
