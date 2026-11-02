@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.6 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.7 (2026-11-02). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -11,6 +11,8 @@ v0.5 changes: C++ standard rationale; C++23 probe added to M0 (§9, §11).
 v0.6 changes: M0 landed (§11). Trig table generated and checked in, not computed at build time
 (§5.1); Catch2 via vcpkg with a FetchContent fallback pinned to the same version (§10); C++23 probe
 status (§9).
+v0.7 changes: C++23 probe decided: baseline stays C++20 because the probe fails on the Linux CI
+compilers (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -594,9 +596,13 @@ the placeholder sprites in hand.
   `sim` (they hold state outside `WorldState`, which breaks rollback by `memcpy`).
 - C++23 is decided in M0: a probe using `std::expected` and deducing `this` builds on the full CI
   matrix. If it passes on all five toolchains, the baseline moves to C++23 and this section and
-  `CLAUDE.md` change in the same commit. Status: the probe (`tools/cxx23-probe`) passes on GCC 15,
-  Clang 21 and Emscripten 6 locally; MSVC and Apple Clang are reported by the `cxx23-probe` CI
-  job on the first push. The baseline stays C++20 until all five are green.
+  `CLAUDE.md` change in the same commit. **Decided: C++20 stays.** The probe
+  (`tools/cxx23-probe`) passes on MSVC 19.51, Apple Clang 21, Emscripten 6, GCC 15 and Clang 21,
+  but fails on the Linux CI runners' default toolchain (GCC 13.3 has no deducing `this`; Clang
+  18.1 with libstdc++ 13 has no `std::expected`). The dedicated server builds on Linux with distro
+  compilers, so that is the toolchain that matters. The `cxx23-probe` CI job keeps running;
+  revisit when `ubuntu-latest` ships GCC ≥ 14 and Clang ≥ 19, at which point the flip is a
+  one-line change to `KFM_CXX_STANDARD` plus this section and `CLAUDE.md`.
 
 ---
 
@@ -631,8 +637,8 @@ so every build uses the same release of each dependency.
 
 Progress: M0 landed in v0.6 (build skeleton, `core`, a minimal `sim` with the visitor serializer,
 replay codec, `kfm_replay` and the determinism gate over `tools/replay-corpus`, CI workflow).
-Verified locally on GCC and Clang in Debug and Release, ASan+UBSan and Emscripten with identical
-per-tick checksums; the Windows and macOS legs of the gate run on the first push.
+Verified with identical per-tick checksums on Linux GCC/Clang, Windows MSVC and macOS Apple Clang
+in Debug and Release, ASan+UBSan and Emscripten. C++23 probe decided: stay on C++20 (§9).
 
 ---
 
