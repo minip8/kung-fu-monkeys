@@ -1,0 +1,109 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Dev (Debug, native)",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "release",
+      "displayName": "Release (native)",
+      "inherits": "base",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
+    },
+    {
+      "name": "asan",
+      "displayName": "Debug + AddressSanitizer + UBSan",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "KFM_SANITIZE": "address,undefined"
+      }
+    },
+    {
+      "name": "server-headless",
+      "displayName": "Release, headless (dedicated server)",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "KFM_HEADLESS": "ON"
+      }
+    },
+    {
+      "name": "wasm",
+      "displayName": "Release, WebAssembly (Emscripten)",
+      "inherits": "base",
+      "toolchainFile": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "KFM_USE_VCPKG": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "asan", "configurePreset": "asan" },
+    { "name": "server-headless", "configurePreset": "server-headless" },
+    { "name": "wasm", "configurePreset": "wasm" }
+  ],
+  "testPresets": [
+    {
+      "name": "base-test",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+    },
+    { "name": "dev", "inherits": "base-test", "configurePreset": "dev" },
+    { "name": "release", "inherits": "base-test", "configurePreset": "release" },
+    { "name": "asan", "inherits": "base-test", "configurePreset": "asan" },
+    { "name": "server-headless", "inherits": "base-test", "configurePreset": "server-headless" },
+    { "name": "wasm", "inherits": "base-test", "configurePreset": "wasm" }
+  ],
+  "workflowPresets": [
+    {
+      "name": "dev",
+      "steps": [
+        { "type": "configure", "name": "dev" },
+        { "type": "build", "name": "dev" },
+        { "type": "test", "name": "dev" }
+      ]
+    },
+    {
+      "name": "release",
+      "steps": [
+        { "type": "configure", "name": "release" },
+        { "type": "build", "name": "release" },
+        { "type": "test", "name": "release" }
+      ]
+    },
+    {
+      "name": "asan",
+      "steps": [
+        { "type": "configure", "name": "asan" },
+        { "type": "build", "name": "asan" },
+        { "type": "test", "name": "asan" }
+      ]
+    },
+    {
+      "name": "wasm",
+      "steps": [
+        { "type": "configure", "name": "wasm" },
+        { "type": "build", "name": "wasm" },
+        { "type": "test", "name": "wasm" }
+      ]
+    }
+  ]
+}

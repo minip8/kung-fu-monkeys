@@ -1,0 +1,25 @@
+# Kung Fu Monkeys code style. Enforced in CI.
+BasedOnStyle: Google
+Language: Cpp
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 2
+AccessModifierOffset: -1
+DerivePointerAlignment: false
+PointerAlignment: Left
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: false
+AlignConsecutiveAssignments: false
+IncludeBlocks: Regroup
+IncludeCategories:
+  - Regex: '^<kfm/'
+    Priority: 2
+  - Regex: '^<catch2/'
+    Priority: 3
+  - Regex: '^<.*\.h>'
+    Priority: 4
+  - Regex: '^<'
+    Priority: 5
+  - Regex: '.*'
+    Priority: 1
