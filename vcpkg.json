@@ -1,0 +1,13 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "kung-fu-monkeys",
+  "version-string": "0.0.1",
+  "description": "Online arena brawler: monkeys, boomerang bananas, perfect dashes",
+  "dependencies": [
+    {
+      "name": "catch2",
+      "version>=": "3.16.1"
+    }
+  ],
+  "builtin-baseline": "af839a44c17a927468f35c7a65e200aeba337da4"
+}

@@ -1,0 +1,47 @@
+// Replay format (architecture §9): seed + match config + content hash +
+// the input stream. Encoded with BitWriter so it is a wire-format contract.
+// The codec works on spans; callers own the buffers.
+//
+// Layout (all little-endian, bit-packed):
+//   header : magic "KFMR" (4×u8), version u16, seed u64, contentHash u32,
+//            buildHash u32, players u16, tickCount u32
+//   frames : tickCount × InputFrame via visit() (present mask + inputs)
+#pragma once
+
+#include "kfm/core/bitstream.hpp"
+#include "kfm/sim/input.hpp"
+#include "kfm/sim/world_state.hpp"
+
+#include <cstddef>
+#include <cstdint>
+#include <span>
+
+namespace kfm::sim {
+
+inline constexpr uint16_t kReplayVersion = 1;
+inline constexpr size_t kReplayHeaderBytes = 4 + 2 + 8 + 4 + 4 + 2 + 4;
+
+struct ReplayHeader {
+  uint64_t seed{0};
+  uint32_t contentHash{0};
+  uint32_t buildHash{0};
+  PlayerMask players{0};
+  uint32_t tickCount{0};
+
+  [[nodiscard]] constexpr MatchConfig matchConfig() const { return MatchConfig{seed, players}; }
+};
+
+// Upper bound on the encoded size of a replay with the given header.
+[[nodiscard]] constexpr size_t replayMaxBytes(const ReplayHeader& h) {
+  // Per frame: tick u32 + present u16 + up to kMaxPlayers × 5 bytes.
+  return kReplayHeaderBytes + static_cast<size_t>(h.tickCount) * (4 + 2 + kMaxPlayers * 5);
+}
+
+void writeReplayHeader(BitWriter& w, const ReplayHeader& h);
+// Returns false when the magic or version does not match or the data is short.
+[[nodiscard]] bool readReplayHeader(BitReader& r, ReplayHeader& h);
+
+void writeReplayFrame(BitWriter& w, const InputFrame& f);
+[[nodiscard]] bool readReplayFrame(BitReader& r, InputFrame& f);
+
+}  // namespace kfm::sim

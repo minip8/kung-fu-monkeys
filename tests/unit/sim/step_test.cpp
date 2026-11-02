@@ -1,0 +1,103 @@
+#include "kfm/sim/step.hpp"
+
+#include "kfm/sim/world_state.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <cstring>
+#include <type_traits>
+
+using namespace kfm;
+using namespace kfm::sim;
+
+namespace {
+InputFrame emptyFrame(const WorldState& s) {
+  InputFrame f;
+  f.tick = s.tick;
+  f.present = s.rules.present;
+  return f;
+}
+}  // namespace
+
+TEST_CASE("WorldState is trivially copyable and small", "[sim][step]") {
+  STATIC_REQUIRE(std::is_trivially_copyable_v<WorldState>);
+  STATIC_REQUIRE(sizeof(WorldState) < 4096);
+  STATIC_REQUIRE(sizeof(PlayerInput) == 5);
+}
+
+TEST_CASE("initialWorld is deterministic and starts in the lobby", "[sim][step]") {
+  const WorldState a = initialWorld(MatchConfig{1, 0x3FF});
+  const WorldState b = initialWorld(MatchConfig{1, 0x3FF});
+  // Compared through the visitor: padding bytes are not deterministic, so a
+  // memcmp of two independently built states is not a valid equality test.
+  CHECK(checksum(a) == checksum(b));
+  CHECK(a.tick == Tick{0});
+  CHECK(a.rules.phase == MatchPhase::Lobby);
+  CHECK(a.rules.present == 0x3FF);
+  CHECK(a.players.empty());
+  const WorldState c = initialWorld(MatchConfig{2, 0x3FF});
+  CHECK(a.rng != c.rng);
+}
+
+TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
+  WorldState s = initialWorld(MatchConfig{7, 0b1000000101});
+  EventSink sink;
+  step(s, emptyFrame(s), sink);
+  CHECK(s.tick == Tick{1});
+  CHECK(s.rules.phase == MatchPhase::Playing);
+  CHECK(s.players.size() == 3);
+  REQUIRE(s.playerBySlot(PlayerId{0}) != nullptr);
+  REQUIRE(s.playerBySlot(PlayerId{2}) != nullptr);
+  REQUIRE(s.playerBySlot(PlayerId{9}) != nullptr);
+  CHECK(s.playerBySlot(PlayerId{1}) == nullptr);
+  CHECK(s.playerBySlot(PlayerId::invalid()) == nullptr);
+  CHECK(s.playerBySlot(PlayerId{2})->id == PlayerId{2});
+
+  int spawned = 0;
+  int started = 0;
+  for (const SimEvent& e : sink) {
+    if (e.kind == EventKind::PlayerSpawned) ++spawned;
+    if (e.kind == EventKind::MatchStarted) ++started;
+  }
+  CHECK(spawned == 3);
+  CHECK(started == 1);
+  CHECK(sink.dropped == 0);
+
+  // Second step: no respawn, no new events.
+  sink.clear();
+  step(s, emptyFrame(s), sink);
+  CHECK(s.players.size() == 3);
+  CHECK(sink.count == 0);
+  CHECK(s.rules.ticksInPhase == 2);
+}
+
+TEST_CASE("stepping the same inputs from the same seed is bit-identical", "[sim][step]") {
+  WorldState a = initialWorld(MatchConfig{99, 0x3FF});
+  WorldState b = initialWorld(MatchConfig{99, 0x3FF});
+  EventSink sink;
+  for (int i = 0; i < 120; ++i) {
+    InputFrame f = emptyFrame(a);
+    f.inputs[3].moveDir = static_cast<uint8_t>(i);
+    step(a, f, sink);
+    step(b, f, sink);
+    REQUIRE(checksum(a) == checksum(b));
+  }
+  CHECK(a.playerBySlot(PlayerId{3})->transform.facing == Angle::fromInput8(119));
+}
+
+TEST_CASE("rollback by memcpy restores an identical state", "[sim][step]") {
+  WorldState s = initialWorld(MatchConfig{5, 0x3});
+  EventSink sink;
+  step(s, emptyFrame(s), sink);
+  WorldState saved{};
+  std::memcpy(&saved, &s, sizeof(WorldState));
+  const uint32_t savedSum = checksum(s);
+  for (int i = 0; i < 10; ++i) {
+    InputFrame f = emptyFrame(s);
+    f.inputs[0].moveDir = 200;
+    step(s, f, sink);
+  }
+  CHECK(checksum(s) != savedSum);
+  std::memcpy(&s, &saved, sizeof(WorldState));
+  CHECK(checksum(s) == savedSum);
+}

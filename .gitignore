@@ -1,0 +1,27 @@
+# Build directories
+/build/
+/out/
+/cmake-build-*/
+
+# vcpkg
+/vcpkg_installed/
+/.vcpkg/
+
+# Emscripten / wasm artifacts
+*.wasm
+*.wasm.map
+
+# Generated assets (built by the pipeline, source models are checked in)
+/content/sprites/generated/
+
+# Replay dumps from desync investigations
+/replays/dumps/
+*.desync.*
+
+# Editor / OS
+.cache/
+.vscode/
+.idea/
+*.swp
+.DS_Store
+compile_commands.json
