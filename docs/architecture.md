@@ -1,12 +1,13 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.4 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.5 (2026-11-02). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
 v0.3 changes: platform strategy for Steam and the web, `IPlatformServices` seam (§13).
 v0.4 changes: web-first. The browser is the primary shipping client, WebRTC is the single production
 transport, native is the development build, Steam is optional (§6.4, §11, §13).
+v0.5 changes: C++ standard rationale; C++23 probe added to M0 (§9, §11).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -578,6 +579,16 @@ the placeholder sprites in hand.
 - Code standards: C++20, warnings as errors, clang-format and clang-tidy in CI, ASan/UBSan
   builds, no exceptions or RTTI inside `sim`, strong typedefs (`Tick`, `PlayerId`, `EntityId`),
   `[[nodiscard]]`, no raw `new`.
+- Why C++20: it is the newest standard fully supported by all five toolchains (GCC, Clang, MSVC,
+  Apple Clang, Emscripten), and the design uses it directly: `std::span` in interfaces, `<bit>`
+  (`bit_cast`, `popcount`, `countr_zero`) for pools and serialization, `std::endian`, concepts to
+  reject non-trivially-copyable types in `Pool` and the visitor, defaulted `operator<=>` on strong
+  typedefs and `Fixed`, `consteval` lookup tables, designated initializers for defs and rule
+  tables. Avoided: C++20 modules (weak build-system and Emscripten support) and coroutines in
+  `sim` (they hold state outside `WorldState`, which breaks rollback by `memcpy`).
+- C++23 is decided in M0: a probe using `std::expected` and deducing `this` builds on the full CI
+  matrix. If it passes on all five toolchains, the baseline moves to C++23 and this section and
+  `CLAUDE.md` change in the same commit.
 
 ---
 
@@ -598,7 +609,7 @@ Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `se
 
 | Milestone | Scope | Exit criterion |
 |---|---|---|
-| M0 Skeleton | Repo layout, CMake presets, vcpkg, CI, `core` (`Fixed`, `Vec2`, `Pool`, `BitStream`, `Rng`), Catch2, determinism harness | Green CI on three OSes running an empty replay |
+| M0 Skeleton | Repo layout, CMake presets, vcpkg, CI, `core` (`Fixed`, `Vec2`, `Pool`, `BitStream`, `Rng`), Catch2, determinism harness, C++23 toolchain probe (§9) | Green CI on three OSes plus wasm running an empty replay; C++20 vs C++23 baseline decided |
 | M1 Headless sim | Players, movement, dash, boomerang flight/return, catch rule, eliminations, FFA round rules, replay record/playback, scenario tests, ticks/s bench | A scripted 10-player replay runs identically everywhere |
 | M2 Playable local | SDL3 + sokol_gfx client, 2.5D sprite renderer with placeholder sheets (y-sort, shadows, height), local multiplayer, debug UI, interpolation, first feel tuning of dash and catch windows; Emscripten build of the same client runs in a tab | Two people on one keyboard/gamepads have fun for 10 minutes, natively and in the browser |
 | M3 Netcode | Loopback + emulator, `NetServer`/`NetClient`, prediction + rollback, clock sync, snapshots/join, `WebRtcTransport` (libdatachannel natively, datachannel-wasm in the browser), `netsim` with 10 clients, soak tests under loss and jitter | 10 clients at 100 ms RTT, 2% loss, no desyncs, rollback depth bounded; a browser client joins a real server |
