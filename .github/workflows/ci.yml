@@ -111,6 +111,8 @@ jobs:
         include:
           - { name: linux-gcc,        os: ubuntu-latest,  cc: gcc,   cxx: g++ }
           - { name: linux-clang,      os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          - { name: linux-gcc-26.04,  os: ubuntu-26.04,   cc: gcc,   cxx: g++ }
+          - { name: linux-clang-26.04, os: ubuntu-26.04,  cc: clang, cxx: clang++ }
           - { name: windows-msvc,     os: windows-latest }
           - { name: macos-appleclang, os: macos-latest }
           - { name: wasm,             os: ubuntu-latest,  wasm: true }
