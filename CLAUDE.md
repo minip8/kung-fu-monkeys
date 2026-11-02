@@ -153,6 +153,6 @@ Replay checksums: changed, corpus regenerated because the catch window now start
 docs: flip platform strategy to web-first (architecture v0.4)
 ```
 
-**Never commit** generated sprite sheets, build directories, vcpkg artifacts, replay dumps from
+**Never commit** exported glTF or other generated assets, build directories, vcpkg artifacts, replay dumps from
 desync investigations, or anything under `/tmp`-style scratch paths. Regenerable assets are built
 by the pipeline, not checked in; the source models are.
