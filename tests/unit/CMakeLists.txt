@@ -22,3 +22,10 @@ kfm_add_test_exe(kfm_core_tests
   core/hash_test.cpp
 )
 target_link_libraries(kfm_core_tests PRIVATE kfm::core)
+
+kfm_add_test_exe(kfm_sim_tests
+  sim/visit_test.cpp
+  sim/replay_test.cpp
+  sim/step_test.cpp
+)
+target_link_libraries(kfm_sim_tests PRIVATE kfm::sim)

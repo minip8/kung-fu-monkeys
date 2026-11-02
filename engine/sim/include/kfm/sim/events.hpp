@@ -1,0 +1,51 @@
+// SimEvents are the only channel from the sim to presentation, scoring
+// and RL rewards (architecture §5.9). POD tagged union, fixed-capacity
+// per-tick buffer.
+#pragma once
+
+#include "kfm/core/types.hpp"
+#include "kfm/sim/constants.hpp"
+
+#include <array>
+#include <cstdint>
+
+namespace kfm::sim {
+
+enum class EventKind : uint8_t {
+  None = 0,
+  MatchStarted,
+  PlayerSpawned,
+  // M1 adds: BoomerangThrown, BoomerangCaught, PlayerDashed, PlayerEliminated, ...
+};
+
+struct SimEvent {
+  EventKind kind{EventKind::None};
+  Tick tick{};
+  PlayerId player{PlayerId::invalid()};
+  EntityId entity{};
+  uint32_t a{0};  // kind-specific payload
+  uint32_t b{0};
+};
+
+// Fixed-capacity buffer; extra events in one tick are counted and dropped.
+struct EventSink {
+  std::array<SimEvent, kMaxEventsPerTick> events{};
+  uint16_t count{0};
+  uint16_t dropped{0};
+
+  constexpr void clear() {
+    count = 0;
+    dropped = 0;
+  }
+  constexpr void push(const SimEvent& e) {
+    if (count < kMaxEventsPerTick) {
+      events[count++] = e;
+    } else {
+      ++dropped;
+    }
+  }
+  [[nodiscard]] constexpr const SimEvent* begin() const { return events.data(); }
+  [[nodiscard]] constexpr const SimEvent* end() const { return events.data() + count; }
+};
+
+}  // namespace kfm::sim

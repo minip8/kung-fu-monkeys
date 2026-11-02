@@ -55,6 +55,11 @@ endif()
 #   core -> sim -> {net, ai, presentation} -> apps
 # ---------------------------------------------------------------------------
 add_subdirectory(engine/core)
+add_subdirectory(engine/sim)
+
+if(KFM_BUILD_APPS)
+  add_subdirectory(apps/replay)
+endif()
 
 if(KFM_BUILD_TESTS)
   add_subdirectory(tests)
