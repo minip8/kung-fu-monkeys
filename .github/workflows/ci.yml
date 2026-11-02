@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CMake presets use VCPKG_ROOT; run-vcpkg checks vcpkg out at the manifest's
+  # builtin-baseline so every job resolves the same dependency versions.
+  VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+
+jobs:
+  lint:
+    name: format, tidy, sim-no-float
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: Install clang-format and clang-tidy
+        run: pipx install clang-format==19.1.7 && pipx install clang-tidy==19.1.0.1
+      - name: clang-format
+        run: |
+          files=$(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | grep -v sin_table)
+          clang-format --dry-run --Werror $files
+      - name: No floating point in engine/sim
+        run: tools/ci/check_sim_no_float.sh
+      - name: Configure (compile database)
+        run: cmake --preset dev -DKFM_USE_VCPKG=OFF -DKFM_CXX23_PROBE=OFF
+      - name: clang-tidy
+        run: clang-tidy -p build/dev --quiet $(find engine apps tests -name '*.cpp')
+
+  native:
+    name: ${{ matrix.name }} ${{ matrix.build }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [Debug, Release]
+        include:
+          - { name: linux-gcc,        os: ubuntu-latest,  cc: gcc,   cxx: g++ }
+          - { name: linux-clang,      os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          - { name: windows-msvc,     os: windows-latest }
+          - { name: macos-appleclang, os: macos-latest }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgJsonGlob: vcpkg.json
+      - name: Configure
+        run: cmake --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }} -DKFM_CXX23_PROBE=OFF
+      - name: Build
+        run: cmake --build --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
+      - name: Test (unit + determinism gate)
+        run: ctest --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
+
+  wasm:
+    name: wasm (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Configure
+        run: cmake --preset wasm -DKFM_CXX23_PROBE=OFF
+      - name: Build
+        run: cmake --build --preset wasm
+      - name: Test (unit + determinism gate under node)
+        run: ctest --preset wasm
+
+  asan:
+    name: linux-gcc ASan+UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: ${{ github.workspace }}/vcpkg
+          vcpkgJsonGlob: vcpkg.json
+      - run: cmake --preset asan -DKFM_CXX23_PROBE=OFF
+      - run: cmake --build --preset asan
+      - run: ctest --preset asan
+
+  # Architecture §9: the C++23 probe. Informational until it passes on every
+  # toolchain, at which point the baseline moves and this job becomes required.
+  cxx23-probe:
+    name: C++23 probe ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: linux-gcc,        os: ubuntu-latest,  cc: gcc,   cxx: g++ }
+          - { name: linux-clang,      os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          - { name: windows-msvc,     os: windows-latest }
+          - { name: macos-appleclang, os: macos-latest }
+          - { name: wasm,             os: ubuntu-latest,  wasm: true }
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - uses: mymindstorm/setup-emsdk@v14
+        if: matrix.wasm
+        with:
+          version: latest
+      - name: Configure
+        run: >
+          cmake --preset ${{ matrix.wasm && 'wasm' || 'release' }}
+          -DKFM_USE_VCPKG=OFF -DKFM_BUILD_TESTS=OFF -DKFM_BUILD_APPS=OFF -DKFM_CXX23_PROBE=ON
+      - name: Build probe
+        run: cmake --build --preset ${{ matrix.wasm && 'wasm' || 'release' }} --target kfm_cxx23_probe
+      - name: Run probe (native)
+        if: ${{ !matrix.wasm }}
+        run: build/release/tools/cxx23-probe/kfm_cxx23_probe
+      - name: Run probe (wasm)
+        if: matrix.wasm
+        run: node build/wasm/tools/cxx23-probe/kfm_cxx23_probe.js
