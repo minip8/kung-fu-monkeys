@@ -12,3 +12,13 @@ function(kfm_add_test_exe name)
   add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
+kfm_add_test_exe(kfm_core_tests
+  core/fixed_test.cpp
+  core/vec2_test.cpp
+  core/pool_test.cpp
+  core/ring_buffer_test.cpp
+  core/bitstream_test.cpp
+  core/rng_test.cpp
+  core/hash_test.cpp
+)
+target_link_libraries(kfm_core_tests PRIVATE kfm::core)
