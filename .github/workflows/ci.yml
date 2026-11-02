@@ -41,6 +41,10 @@ jobs:
       fail-fast: false
       matrix:
         build: [Debug, Release]
+        name: [linux-gcc, linux-clang, windows-msvc, macos-appleclang]
+        # `name` is a base axis so each include merges into exactly the
+        # combinations it names; includes without a base key all merge into
+        # every combination and the last one wins.
         include:
           - { name: linux-gcc,        os: ubuntu-latest,  cc: gcc,   cxx: g++ }
           - { name: linux-clang,      os: ubuntu-latest,  cc: clang, cxx: clang++ }
