@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Kung Fu Monkeys is an online 2–10 player arena brawler (Boomerang Fu-inspired: monkeys throw
 bananas that fly like boomerangs; dash is the base ability; a perfectly timed dash catches a
-banana). C++20 engine, deterministic simulation, rollback netcode, browser as the primary shipping
+banana). C++23 engine, deterministic simulation, rollback netcode, browser as the primary shipping
 client, with scripted bots and ML-trained agents planned.
 
 Milestone M0 (skeleton) has landed: build system, `engine/core`, a minimal `engine/sim`, the
@@ -17,14 +17,16 @@ a changelog line. Do not let code and doc disagree silently.
 
 ## Commands
 
-Toolchain: CMake ≥ 3.25, Ninja, a C++20 compiler. Optional: vcpkg (`VCPKG_ROOT`; without it
+Toolchain: CMake ≥ 3.25, Ninja, a C++23 compiler: GCC ≥ 14 or Clang ≥ 19 on Linux (Ubuntu
+24.04's GCC 13 and Clang 18 do not work), MSVC 2022, Apple Clang 16+, Emscripten 4+; verified on
+GCC 15, Clang 21, MSVC 19.51, Apple Clang 21, Emscripten 6. Optional: vcpkg (`VCPKG_ROOT`; without it
 Catch2 is fetched at configure time at the same pinned version) and emsdk (`EMSDK`, set by
 `source ~/emsdk/emsdk_env.sh`) for the `wasm` preset. Build directories are `build/<preset>`.
 
 ```sh
 cmake --preset dev                      # configure; presets: dev, release, asan, server-headless, wasm
 cmake --build --preset dev              # build
-ctest --preset dev                      # unit tests + determinism corpus + C++23 probe
+ctest --preset dev                      # unit tests + determinism corpus + C++23 feature probe
 cmake --workflow --preset dev           # configure + build + test in one go
 ctest --preset dev -R kfm_core_tests    # one test executable (kfm_core_tests, kfm_sim_tests, determinism_*)
 build/dev/tests/unit/kfm_core_tests "[fixed]"      # one Catch2 tag or test name
@@ -37,7 +39,7 @@ python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.
 ```
 
 The `wasm` preset runs the same tests under node. CI runs the lint job, the four native
-toolchains in Debug and Release, ASan+UBSan, wasm, and the C++23 probe
+toolchains in Debug and Release (Linux on Ubuntu 26.04), ASan+UBSan and wasm
 (`.github/workflows/ci.yml`).
 
 ## Architecture in one screen

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.7 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.8 (2026-11-02). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -13,6 +13,7 @@ v0.6 changes: M0 landed (§11). Trig table generated and checked in, not compute
 status (§9).
 v0.7 changes: C++23 probe decided: baseline stays C++20 because the probe fails on the Linux CI
 compilers (§9).
+v0.8 changes: baseline moved to C++23; Linux CI runs on Ubuntu 26.04 (§1, §2, §9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -29,7 +30,7 @@ latency-first netcode, and a simulation that bots and ML agents can drive headle
 | Fast, precise party brawler (one-hit kills, timing windows) | Fixed 60 Hz tick, exact timing semantics, zero local input delay |
 | 2–10 players online, smooth | Server-authoritative, input-synchronised rollback netcode, tiny packets |
 | Modular gameplay: dash now, more abilities and twists later | Data-driven definitions, table-driven behaviours, an interaction rules table |
-| Engine in C++ | C++20, CMake, small set of battle-tested libraries, strict layering |
+| Engine in C++ | C++23, CMake, small set of battle-tested libraries, strict layering |
 | Bots and trained models later | Deterministic, headless, allocation-free sim; agents are just input providers; Python bindings |
 | Reproducibility / debugging | Determinism + input-only replays + per-tick checksums |
 | Ship in the browser first | WebRTC transport, WebGL2 renderer, single-threaded client, dedicated servers; native build kept for development |
@@ -584,25 +585,23 @@ the placeholder sprites in hand.
   periodic keyframes. Replays attach to bug reports.
 - Observability: Tracy zones; structured logging; net stats (RTT, jitter, loss, rollback depth,
   mispredictions/s) in the debug overlay; server metrics endpoint later.
-- Code standards: C++20, warnings as errors, clang-format and clang-tidy in CI, ASan/UBSan
+- Code standards: C++23, warnings as errors, clang-format and clang-tidy in CI, ASan/UBSan
   builds, no exceptions or RTTI inside `sim`, strong typedefs (`Tick`, `PlayerId`, `EntityId`),
   `[[nodiscard]]`, no raw `new`.
-- Why C++20: it is the newest standard fully supported by all five toolchains (GCC, Clang, MSVC,
-  Apple Clang, Emscripten), and the design uses it directly: `std::span` in interfaces, `<bit>`
-  (`bit_cast`, `popcount`, `countr_zero`) for pools and serialization, `std::endian`, concepts to
-  reject non-trivially-copyable types in `Pool` and the visitor, defaulted `operator<=>` on strong
-  typedefs and `Fixed`, `consteval` lookup tables, designated initializers for defs and rule
-  tables. Avoided: C++20 modules (weak build-system and Emscripten support) and coroutines in
-  `sim` (they hold state outside `WorldState`, which breaks rollback by `memcpy`).
-- C++23 is decided in M0: a probe using `std::expected` and deducing `this` builds on the full CI
-  matrix. If it passes on all five toolchains, the baseline moves to C++23 and this section and
-  `CLAUDE.md` change in the same commit. **Decided: C++20 stays.** The probe
-  (`tools/cxx23-probe`) passes on MSVC 19.51, Apple Clang 21, Emscripten 6, GCC 15 and Clang 21,
-  but fails on the Linux CI runners' default toolchain (GCC 13.3 has no deducing `this`; Clang
-  18.1 with libstdc++ 13 has no `std::expected`). The dedicated server builds on Linux with distro
-  compilers, so that is the toolchain that matters. The `cxx23-probe` CI job keeps running;
-  revisit when `ubuntu-latest` ships GCC ≥ 14 and Clang ≥ 19, at which point the flip is a
-  one-line change to `KFM_CXX_STANDARD` plus this section and `CLAUDE.md`.
+- Why C++23: the design uses C++20 directly (`std::span` in interfaces, `<bit>` for pools and
+  serialization, `std::endian`, concepts to reject non-trivially-copyable types in `Pool` and the
+  visitor, defaulted `operator<=>` on strong typedefs and `Fixed`, `consteval`, designated
+  initializers for defs and rule tables) and two C++23 features earn the step: `std::expected`
+  for fallible decoders (no exceptions in `sim` or `net`) and deducing `this` for CRTP-free
+  visitors and pools. Avoided: modules (weak build-system and Emscripten support) and coroutines
+  in `sim` (they hold state outside `WorldState`, which breaks rollback by `memcpy`).
+- How it was decided (M0): `tools/cxx23-probe` exercises exactly those features. It passes on
+  GCC 15.2, Clang 21.1, MSVC 19.51, Apple Clang 21 and Emscripten 6, and fails on GCC 13.3 (no
+  deducing `this`) and Clang 18.1 with libstdc++ 13 (no `std::expected`), which are what Ubuntu
+  24.04 ships. Linux CI therefore runs on Ubuntu 26.04. The requirement is a build machine with
+  GCC ≥ 14 or Clang ≥ 19; the dedicated server's deployment is decoupled from the host distro by
+  building in CI and shipping the binary (static libstdc++) or a container, so this is a
+  build-machine constraint, not a hosting one. The probe stays in the build as a canary.
 
 ---
 
@@ -638,7 +637,8 @@ so every build uses the same release of each dependency.
 Progress: M0 landed in v0.6 (build skeleton, `core`, a minimal `sim` with the visitor serializer,
 replay codec, `kfm_replay` and the determinism gate over `tools/replay-corpus`, CI workflow).
 Verified with identical per-tick checksums on Linux GCC/Clang, Windows MSVC and macOS Apple Clang
-in Debug and Release, ASan+UBSan and Emscripten. C++23 probe decided: stay on C++20 (§9).
+in Debug and Release, ASan+UBSan and Emscripten. C++23 probe passed on all five toolchains and the
+baseline moved to C++23 (§9).
 
 ---
 

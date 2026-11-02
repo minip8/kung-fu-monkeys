@@ -1,5 +1,5 @@
-# Built as C++23 regardless of KFM_CXX_STANDARD. Failure to compile is the
-# probe's answer, so CI runs this target in a job that may fail.
+# Always built as C++23 so it keeps answering the same question even if
+# KFM_CXX_STANDARD is overridden.
 add_executable(kfm_cxx23_probe probe.cpp)
 target_link_libraries(kfm_cxx23_probe PRIVATE kfm::warnings)
 set_target_properties(kfm_cxx23_probe PROPERTIES

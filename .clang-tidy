@@ -16,6 +16,7 @@ Checks: >
   -modernize-avoid-c-arrays,
   -modernize-use-designated-initializers,
   -modernize-use-auto,
+  -modernize-use-std-print,
   performance-*,
   readability-*,
   -readability-magic-numbers,

@@ -1,7 +1,7 @@
 # Kung Fu Monkeys code style. Enforced in CI.
 BasedOnStyle: Google
 Language: Cpp
-Standard: c++20
+Standard: Latest
 ColumnLimit: 100
 IndentWidth: 2
 AccessModifierOffset: -1

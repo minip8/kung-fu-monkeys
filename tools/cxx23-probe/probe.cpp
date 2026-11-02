@@ -1,8 +1,7 @@
-// C++23 toolchain probe (architecture §9). Compiled with CXX_STANDARD 23 on
-// the full CI matrix. If it builds and runs everywhere, the baseline moves
-// to C++23. It exercises exactly the features the design would use:
-// std::expected for fallible decoders and deducing `this` for CRTP-free
-// visitors and pools.
+// C++23 feature probe (architecture §9). This decided the move to C++23:
+// it passes on every toolchain in the CI matrix. It stays as a cheap
+// canary for the features the design relies on: std::expected for
+// fallible decoders and deducing `this` for CRTP-free visitors and pools.
 #include <cstdint>
 #include <cstdio>
 #include <expected>

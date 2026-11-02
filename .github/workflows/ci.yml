@@ -17,7 +17,7 @@ env:
 jobs:
   lint:
     name: format, tidy, sim-no-float
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
@@ -30,7 +30,7 @@ jobs:
       - name: No floating point in engine/sim
         run: tools/ci/check_sim_no_float.sh
       - name: Configure (compile database)
-        run: cmake --preset dev -DKFM_USE_VCPKG=OFF -DKFM_CXX23_PROBE=OFF
+        run: cmake --preset dev -DKFM_USE_VCPKG=OFF
       - name: clang-tidy
         run: clang-tidy -p build/dev --quiet $(find engine apps tests -name '*.cpp')
 
@@ -46,8 +46,10 @@ jobs:
         # combinations it names; includes without a base key all merge into
         # every combination and the last one wins.
         include:
-          - { name: linux-gcc,        os: ubuntu-latest,  cc: gcc,   cxx: g++ }
-          - { name: linux-clang,      os: ubuntu-latest,  cc: clang, cxx: clang++ }
+          # Linux runs on 26.04: the C++23 baseline needs GCC >= 14 / Clang >= 19
+          # (architecture §9), which ubuntu-latest (24.04) does not ship.
+          - { name: linux-gcc,        os: ubuntu-26.04,   cc: gcc,   cxx: g++ }
+          - { name: linux-clang,      os: ubuntu-26.04,   cc: clang, cxx: clang++ }
           - { name: windows-msvc,     os: windows-latest }
           - { name: macos-appleclang, os: macos-latest }
     env:
@@ -63,7 +65,7 @@ jobs:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgJsonGlob: vcpkg.json
       - name: Configure
-        run: cmake --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }} -DKFM_CXX23_PROBE=OFF
+        run: cmake --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
       - name: Build
         run: cmake --build --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
       - name: Test (unit + determinism gate)
@@ -79,7 +81,7 @@ jobs:
         with:
           version: latest
       - name: Configure
-        run: cmake --preset wasm -DKFM_CXX23_PROBE=OFF
+        run: cmake --preset wasm
       - name: Build
         run: cmake --build --preset wasm
       - name: Test (unit + determinism gate under node)
@@ -87,7 +89,7 @@ jobs:
 
   asan:
     name: linux-gcc ASan+UBSan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
@@ -95,48 +97,6 @@ jobs:
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgJsonGlob: vcpkg.json
-      - run: cmake --preset asan -DKFM_CXX23_PROBE=OFF
+      - run: cmake --preset asan
       - run: cmake --build --preset asan
       - run: ctest --preset asan
-
-  # Architecture §9: the C++23 probe. Informational until it passes on every
-  # toolchain, at which point the baseline moves and this job becomes required.
-  cxx23-probe:
-    name: C++23 probe ${{ matrix.name }}
-    runs-on: ${{ matrix.os }}
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { name: linux-gcc,        os: ubuntu-latest,  cc: gcc,   cxx: g++ }
-          - { name: linux-clang,      os: ubuntu-latest,  cc: clang, cxx: clang++ }
-          - { name: linux-gcc-26.04,  os: ubuntu-26.04,   cc: gcc,   cxx: g++ }
-          - { name: linux-clang-26.04, os: ubuntu-26.04,  cc: clang, cxx: clang++ }
-          - { name: windows-msvc,     os: windows-latest }
-          - { name: macos-appleclang, os: macos-latest }
-          - { name: wasm,             os: ubuntu-latest,  wasm: true }
-    env:
-      CC: ${{ matrix.cc }}
-      CXX: ${{ matrix.cxx }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: lukka/get-cmake@latest
-      - uses: ilammy/msvc-dev-cmd@v1
-        if: runner.os == 'Windows'
-      - uses: mymindstorm/setup-emsdk@v14
-        if: matrix.wasm
-        with:
-          version: latest
-      - name: Configure
-        run: >
-          cmake --preset ${{ matrix.wasm && 'wasm' || 'release' }}
-          -DKFM_USE_VCPKG=OFF -DKFM_BUILD_TESTS=OFF -DKFM_BUILD_APPS=OFF -DKFM_CXX23_PROBE=ON
-      - name: Build probe
-        run: cmake --build --preset ${{ matrix.wasm && 'wasm' || 'release' }} --target kfm_cxx23_probe
-      - name: Run probe (native)
-        if: ${{ !matrix.wasm }}
-        run: build/release/tools/cxx23-probe/kfm_cxx23_probe
-      - name: Run probe (wasm)
-        if: matrix.wasm
-        run: node build/wasm/tools/cxx23-probe/kfm_cxx23_probe.js
