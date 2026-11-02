@@ -8,11 +8,11 @@ if(KFM_BUILD_TESTS)
   if(Catch2_FOUND)
     message(STATUS "KFM: Catch2 ${Catch2_VERSION} from find_package")
   else()
-    message(STATUS "KFM: Catch2 not found via find_package, fetching v3.8.1")
+    message(STATUS "KFM: Catch2 not found via find_package, fetching v3.16.1")
     include(FetchContent)
     FetchContent_Declare(Catch2
       GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-      GIT_TAG        v3.8.1
+      GIT_TAG        v3.16.1
       GIT_SHALLOW    TRUE
       SYSTEM)
     set(CATCH_INSTALL_DOCS OFF CACHE BOOL "" FORCE)

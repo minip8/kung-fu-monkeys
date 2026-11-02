@@ -6,7 +6,7 @@
   "dependencies": [
     {
       "name": "catch2",
-      "version>=": "3.8.1"
+      "version>=": "3.16.1"
     }
   ],
   "builtin-baseline": "af839a44c17a927468f35c7a65e200aeba337da4"
