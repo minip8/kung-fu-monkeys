@@ -1473,8 +1473,10 @@ commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS back
 `libssl-dev` on the FetchContent path, the vcpkg port otherwise), and datachannel-wasm pinned to
 `f9200eb` (v0.4.0 plus a missing-include fix) for Emscripten, linked with its two
 `--js-library` files and `-fwasm-exceptions`. Both are exposed as one target, `kfm::datachannel`.
-Content parser (v0.18): toml++ 3.4.0, header only (vcpkg `tomlplusplus`, or FetchContent of the
-release tarball by hash), in the headless server build too. `kfm::tomlplusplus` pins
+Content parser (v0.18): toml++ 3.4.0, header only (the include directory of the vcpkg
+`tomlplusplus` port, whose compiled-library target is not linked because it fixes
+`TOML_HEADER_ONLY=0` and was built with exceptions on; or FetchContent of the release tarball by
+hash), in the headless server build too. `kfm::tomlplusplus` pins
 `TOML_EXCEPTIONS=0` (parse errors come back as `toml::parse_result` and become diagnostics; the
 loader compiles without exceptions or RTTI like the engine) and `TOML_ENABLE_FORMATTERS=0`;
 only `engine/content/src/loader.cpp` includes it. TOML over JSON because tuning files need
