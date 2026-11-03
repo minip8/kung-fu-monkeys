@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -316,6 +317,30 @@ TEST_CASE("arena walls and hazards load and are validated", "[content][loader][a
   CHECK(contains(with("speed_mul = 0.5", "speed_mul = 0"), "'speed_mul' = 0.000 is outside"));
   CHECK(contains(with("{ min = [-1, -1], max = [1, 1] }", "{ min = [-1, -1] }"),
                  "wall 0: missing required key 'max'"));
+}
+
+TEST_CASE("content/ arenas: dojo stays first, the walled arenas load", "[content][loader][arena]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  REQUIRE(db.arenaCount >= 4);
+  CHECK(db.arenas[0].name.view() == "dojo");
+  CHECK(db.arenas[0].wallCount == 0);
+  CHECK(db.arenas[0].hazardCount == 0);
+  // content/arenas/NN-name.toml load after arenas.toml, in prefix order.
+  CHECK(db.findArena("pillars") == std::optional<uint8_t>{1});
+  CHECK(db.findArena("corridors") == std::optional<uint8_t>{2});
+  CHECK(db.findArena("island") == std::optional<uint8_t>{3});
+  for (const std::string_view name : {"pillars", "corridors", "island"}) {
+    INFO(name);
+    REQUIRE(db.findArena(name).has_value());
+    const sim::ArenaDef& a = db.arenas[*db.findArena(name)];
+    CHECK(a.wallCount > 0);
+    CHECK(a.spawnPointCount == sim::kMaxPlayers);
+  }
+  const sim::ArenaDef& island = db.arenas[*db.findArena("island")];
+  CHECK(island.hazardCount == 6);
+  CHECK(island.hazards[0].kind == sim::HazardKind::Pit);
 }
 
 TEST_CASE("names: format, duplicates and references", "[content][loader]") {

@@ -605,8 +605,13 @@ is a defence only for a player who has thrown.
     a pass takes the nearest face, so order inside a pass never matters.
   - Statics live only in content: nothing is built at load or in `initialWorld`, nothing is in
     `WorldState`, snapshots and rollback are unaffected. Each move tests ≤ 32 boxes with a band
-    rejection, cheaper than maintaining a grid. Measured with `kfm_replay bench` (Release):
-    see "Arena bench" below.
+    rejection, cheaper than maintaining a grid. Measured with `kfm_replay bench --ticks 36000
+    --players 10` (Release, GCC 15, the shared WSL2 development machine, `step()` alone, noisy
+    within about ±15%): `dojo` 0.75–0.85 M ticks/s (1.2–1.3 µs/tick, the M1 figure: no walls
+    takes the M1 path), `pillars` 0.74 M, `corridors` 0.85 M, `island` 0.83 M, and a synthetic
+    worst case of 32 walls 0.37–0.47 M ticks/s (2.1–2.7 µs/tick). Even the worst case is about
+    0.2% of a 60 Hz frame per simulated tick, so a rollback of 10 ticks stays far below a
+    millisecond: no grid until an arena needs more than 32 statics.
   - Hazards: the pit is a rules-table row fed by a `Player × Hazard` contact (§5.3, §5.6); a
     slow patch multiplies move speed in `ModifierSystem` (§5.8). Bananas ignore hazards (a
     grounded banana can lie in a pit; picking it up costs the monkey).
@@ -617,6 +622,15 @@ is a defence only for a player who has thrown.
     is in a pit (touching a wall is fine). The arena files live in `content/arenas.toml` (`dojo`,
     index 0) and `content/arenas/NN-name.toml` (sorted after it; the numeric prefix fixes the
     order, append with a higher one).
+  - Arenas (v0.22): `dojo` (index 0, the 32 × 18 box, unchanged), `pillars` (1: four 2 × 2
+    blocks around an open centre), `corridors` (2: a 36 × 20 box split into four rooms by a cross
+    of 0.6-thick walls with gaps at the centre and the ends, so throws into the next room come
+    back around a wall), `island` (3: a 22 × 12 playfield in a pit that runs to the outer walls,
+    a central block and two mud patches at half speed; bananas bounce off the outer walls back
+    over the pit). Scripted 4-player matches (`kfm_replay stats`, 10 matches each) average
+    rounds of 4.0 s on `dojo`, 5.0 s on `pillars`, 12.8 s on `corridors` (walls block sightlines:
+    15% of throws hit against 37%) and 1.6 s on `island` (most eliminations are falls). One
+    corpus replay per arena (§9).
 - Content pipeline (v0.18, as built): TOML → `engine/content` → validated `ContentDB`;
   `content_hash` is the XXH32 of the canonical serialized form (the visitor), as before. Every
   number a system needs lives there, including the ones that are easy to forget: the pickup
@@ -1482,7 +1496,12 @@ art is identical up to the export step, and nothing below the presentation layer
   `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
   the corpus is re-recorded; the checksums of existing entries must stay identical, because
   content that is only added never changes the default match (a scenario test asserts this for
-  extra arenas and modes).
+  extra arenas and modes). v0.22 adds one 4-player scripted replay per walled arena
+  (`scripted_4p_pillars_1800t`, `scripted_4p_corridors_1800t`, `scripted_4p_island_1800t`), so
+  wall slides, bounces, pit falls and slow patches are under the cross-platform gate. A build
+  directory caveat: the embedded content is regenerated only when a `content/` file is newer
+  than it, so after moving or deleting TOML files delete `build/<preset>/engine/content/
+  embedded.cpp` (or touch a file) before regenerating the corpus.
 - Content tests (v0.18, `kfm_content_tests`): the exact decimal conversion (truncation, digit
   separators, range, per-second division), `content/` and the embedded copy agreeing with
   `defaultContent()` on the base kit, arena 0 and mode 0 (and being identical to each other), validation of `defaultContent()`, one diagnostic per kind of mistake
