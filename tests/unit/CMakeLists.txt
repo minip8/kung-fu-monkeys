@@ -28,10 +28,19 @@ kfm_add_test_exe(kfm_sim_tests
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
+# The transport contract suite (net/transport_contract.hpp) is header-only;
+# a test executable for another transport links this target and expands
+# KFM_TRANSPORT_CONTRACT_TESTS with its own harness.
+add_library(kfm_transport_contract INTERFACE)
+add_library(kfm::transport_contract ALIAS kfm_transport_contract)
+target_include_directories(kfm_transport_contract INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/net)
+target_link_libraries(kfm_transport_contract INTERFACE kfm::net Catch2::Catch2)
+
 kfm_add_test_exe(kfm_net_tests
   net/transport_test.cpp
+  net/loopback_test.cpp
 )
-target_link_libraries(kfm_net_tests PRIVATE kfm::net)
+target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
 
 kfm_add_test_exe(kfm_presentation_tests
   presentation/math_test.cpp

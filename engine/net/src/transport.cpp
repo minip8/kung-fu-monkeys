@@ -1,5 +1,5 @@
-// Anchor TU for kfm_net until the first implementation lands (the loopback
-// transport, the network emulator and the message layer live beside it).
+// Compile-time checks of the transport seam; the implementations live in
+// their own files (loopback.cpp, and the WebRTC transport in its own target).
 #include "kfm/net/transport.hpp"
 
 namespace kfm::net {

@@ -5,6 +5,7 @@
 # library (libdatachannel) gets its own target that catches at the boundary.
 add_library(kfm_net STATIC
   src/transport.cpp
+  src/loopback.cpp
 )
 add_library(kfm::net ALIAS kfm_net)
 
