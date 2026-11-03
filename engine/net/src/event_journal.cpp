@@ -123,8 +123,10 @@ size_t EventJournal::drain(std::span<sim::SimEvent> out) {
 }
 
 size_t EventJournal::pending() const {
-  return static_cast<size_t>(std::count_if(entries_.begin(), entries_.begin() + count_,
-                                           [](const Entry& e) { return !e.delivered; }));
+  size_t n = 0;
+  for (size_t i = 0; i < count_; ++i)
+    if (!entries_[i].delivered) ++n;
+  return n;
 }
 
 void EventJournal::clear() {
