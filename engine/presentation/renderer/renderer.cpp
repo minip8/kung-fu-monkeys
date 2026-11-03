@@ -1,9 +1,12 @@
 // The M2 sokol_gfx renderer (architecture §7): placeholder meshes, one
 // directional light with a three-band toon ramp, blob-shadow decals and
-// disc-based effects. See renderer.hpp for the draw order and shaders.hpp for
-// the GLSL and uniform layout.
+// disc-based effects, and GPU-skinned characters when a model is loaded. See
+// renderer.hpp for the draw order and shaders.hpp for the GLSL and uniform
+// layout.
 #include "kfm/presentation/renderer.hpp"
 
+#include "kfm/presentation/animation.hpp"
+#include "kfm/presentation/gltf_loader.hpp"
 #include "kfm/presentation/meshes.hpp"
 #include "kfm/presentation/palette.hpp"
 #include "kfm/presentation/tuning.hpp"
@@ -17,6 +20,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
+#include <utility>
 
 namespace kfm::presentation {
 
@@ -28,13 +33,19 @@ constexpr std::size_t kBananaMesh = 1;
 constexpr std::size_t kDiscMesh = 2;
 constexpr std::size_t kFloorMesh = 3;
 constexpr std::size_t kCubeMesh = 4;
+constexpr std::size_t kSkinnedMesh = 5;
+constexpr std::size_t kStaticMeshCount = 5;  // built in init(); the skinned one is loaded later
 
 // Shader and pipeline slots.
 constexpr std::size_t kLitShader = 0;
 constexpr std::size_t kDecalShader = 1;
+constexpr std::size_t kSkinnedShader = 2;
+constexpr std::size_t kStaticShaderCount = 2;
 constexpr std::size_t kLitPipeline = 0;
 constexpr std::size_t kDecalAlphaPipeline = 1;
 constexpr std::size_t kDecalAdditivePipeline = 2;
+constexpr std::size_t kSkinnedPipeline = 3;
+constexpr std::size_t kStaticPipelineCount = 3;
 
 // --- look ----------------------------------------------------------------------
 // Direction toward the light: from above, a little left and toward the camera,
@@ -62,7 +73,8 @@ constexpr float kAimLength = 0.5f;       // aim indicator beyond the capsule sur
 constexpr float kAimThickness = 0.1f;
 constexpr float kAimHeightFraction = 0.55f;  // of the capsule height
 constexpr float kHeldBananaScale = 0.75f;
-constexpr float kOwnerTint = 0.3f;  // flying bananas lean toward the owner's colour
+constexpr float kOwnerTint = 0.3f;            // flying bananas lean toward the owner's colour
+constexpr float kMaxAnimStepSeconds = 0.25f;  // a stalled frame must not skip whole clips
 
 [[nodiscard]] constexpr Color mix(Color a, Color b, float t) {
   return {lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t)};
@@ -87,6 +99,13 @@ struct LitFsParams {
   Vec4 floor;   // arena half extents
 };
 static_assert(sizeof(LitFsParams) == static_cast<std::size_t>(shaders::kLitFsVec4s) * 16);
+
+struct SkinnedVsParams {
+  Mat4 mvp;
+  Mat4 model;
+  SkinMatrices joints;
+};
+static_assert(sizeof(SkinnedVsParams) == static_cast<std::size_t>(shaders::kSkinnedVsVec4s) * 16);
 
 struct DecalVsParams {
   Mat4 mvp;
@@ -118,13 +137,13 @@ template <typename T>
 }
 
 [[nodiscard]] uint32_t makeShader(const char* vs, const char* fs, int vsVec4s, int fsVec4s,
-                                  const char* label) {
+                                  const char* label, std::size_t attrCount = 3) {
   sg_shader_desc desc{};
   desc.vertex_func.source = vs;
   desc.fragment_func.source = fs;
   // Attributes are bound by layout(location) in the GLSL (no glsl_name, so
   // a location the compiler drops, like the decal's unused normal, is fine).
-  for (sg_shader_vertex_attr& attr : std::span(desc.attrs).first(3))
+  for (sg_shader_vertex_attr& attr : std::span(desc.attrs).first(attrCount))
     attr.base_type = SG_SHADERATTRBASETYPE_FLOAT;
 
   sg_shader_uniform_block& vsBlock = desc.uniform_blocks[0];
@@ -186,15 +205,39 @@ enum class Blend : uint8_t { Opaque, Alpha, Additive };
   return sg_make_pipeline(&desc).id;
 }
 
+// The skinned character pipeline: opaque like `lit`, SkinnedVertex layout.
+[[nodiscard]] uint32_t makeSkinnedPipeline(uint32_t shader) {
+  sg_pipeline_desc desc{};
+  desc.shader = sg_shader{shader};
+  desc.layout.buffers[0].stride = static_cast<int>(sizeof(SkinnedVertex));
+  desc.layout.attrs[0] = {.buffer_index = 0,
+                          .offset = static_cast<int>(offsetof(SkinnedVertex, px)),
+                          .format = SG_VERTEXFORMAT_FLOAT3};
+  desc.layout.attrs[1] = {.buffer_index = 0,
+                          .offset = static_cast<int>(offsetof(SkinnedVertex, nx)),
+                          .format = SG_VERTEXFORMAT_FLOAT3};
+  desc.layout.attrs[2] = {.buffer_index = 0,
+                          .offset = static_cast<int>(offsetof(SkinnedVertex, joints)),
+                          .format = SG_VERTEXFORMAT_FLOAT4};
+  desc.layout.attrs[3] = {.buffer_index = 0,
+                          .offset = static_cast<int>(offsetof(SkinnedVertex, weights)),
+                          .format = SG_VERTEXFORMAT_FLOAT4};
+  desc.index_type = SG_INDEXTYPE_UINT16;
+  desc.face_winding = SG_FACEWINDING_CCW;
+  desc.cull_mode = SG_CULLMODE_BACK;
+  desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
+  desc.depth.write_enabled = true;
+  desc.label = "kfm-skinned";
+  return sg_make_pipeline(&desc).id;
+}
+
 // Per-frame drawing context: the current pipeline/mesh (to skip redundant
 // binds) and the stats. Lives on the stack inside draw().
 class FrameDrawer {
  public:
-  FrameDrawer(const std::array<uint32_t, 3>& pipelines,
-              const std::array<uint32_t, 5>& vertexBuffers,
-              const std::array<uint32_t, 5>& indexBuffers,
-              const std::array<uint32_t, 5>& indexCounts, const Mat4& viewProj, Vec3 camRight,
-              Vec3 camUp, Vec3 camBack, RendererStats& stats)
+  FrameDrawer(std::span<const uint32_t> pipelines, std::span<const uint32_t> vertexBuffers,
+              std::span<const uint32_t> indexBuffers, std::span<const uint32_t> indexCounts,
+              const Mat4& viewProj, Vec3 camRight, Vec3 camUp, Vec3 camBack, RendererStats& stats)
       : pipelines_(pipelines),
         vertexBuffers_(vertexBuffers),
         indexBuffers_(indexBuffers),
@@ -222,6 +265,19 @@ class FrameDrawer {
                          .params = {0.0f, flash, emissive, 0.0f},
                          .floor = {}};
     submit(mesh, rangeOf(vs), rangeOf(fs));
+  }
+
+  // A skinned character with the lit toon ramp (shaders.hpp, kSkinnedVs).
+  void skinned(const Mat4& model, const SkinMatrices& joints, Color color, float flash,
+               float emissive) {
+    usePipeline(kSkinnedPipeline);
+    const SkinnedVsParams vs{.mvp = viewProj_ * model, .model = model, .joints = joints};
+    const Vec3 l = normalize(kToLight);
+    const LitFsParams fs{.color = {color.r, color.g, color.b, 1.0f},
+                         .light = {l.x, l.y, l.z, kShadeBand},
+                         .params = {0.0f, flash, emissive, 0.0f},
+                         .floor = {}};
+    submit(kSkinnedMesh, rangeOf(vs), rangeOf(fs));
   }
 
   void floor(const Mat4& model, Vec2f halfExtents) {
@@ -296,10 +352,10 @@ class FrameDrawer {
     stats_.triangles += count / 3U;
   }
 
-  const std::array<uint32_t, 3>& pipelines_;
-  const std::array<uint32_t, 5>& vertexBuffers_;
-  const std::array<uint32_t, 5>& indexBuffers_;
-  const std::array<uint32_t, 5>& indexCounts_;
+  std::span<const uint32_t> pipelines_;
+  std::span<const uint32_t> vertexBuffers_;
+  std::span<const uint32_t> indexBuffers_;
+  std::span<const uint32_t> indexCounts_;
   Mat4 viewProj_;
   Vec3 camRight_;
   Vec3 camUp_;
@@ -315,16 +371,16 @@ bool Renderer::init(const sim::ContentDB& content) {
   if (initialised_) shutdown();
   if (!sg_isvalid()) return false;
 
-  const std::array<MeshData, kMeshCount> data = {
+  const std::array<MeshData, kStaticMeshCount> data = {
       makeMonkeyCapsule(content.player),
       makeBananaMesh(content.boomerang),
       makeDisc(1.0f, 40),
       makeFloorQuad(content.arena.halfExtents.x.toFloat(), content.arena.halfExtents.y.toFloat()),
       makeUnitCube(),
   };
-  constexpr std::array<const char*, kMeshCount> kLabels = {"kfm-capsule", "kfm-banana", "kfm-disc",
-                                                           "kfm-floor", "kfm-cube"};
-  for (std::size_t i = 0; i < kMeshCount; ++i) {
+  constexpr std::array<const char*, kStaticMeshCount> kLabels = {
+      "kfm-capsule", "kfm-banana", "kfm-disc", "kfm-floor", "kfm-cube"};
+  for (std::size_t i = 0; i < kStaticMeshCount; ++i) {
     const MeshData& m = data[i];
     meshes_[i].vertexBuffer =
         makeBuffer(m.vertices.data(), m.vertices.size() * sizeof(MeshVertex), false, kLabels[i]);
@@ -344,13 +400,13 @@ bool Renderer::init(const sim::ContentDB& content) {
       makePipeline(shaders_[kDecalShader], Blend::Additive, "kfm-decal-additive");
 
   bool ok = true;
-  for (const GpuMesh& m : meshes_) {
+  for (const GpuMesh& m : std::span(meshes_).first(kStaticMeshCount)) {
     ok = ok && sg_query_buffer_state(sg_buffer{m.vertexBuffer}) == SG_RESOURCESTATE_VALID &&
          sg_query_buffer_state(sg_buffer{m.indexBuffer}) == SG_RESOURCESTATE_VALID;
   }
-  for (const uint32_t s : shaders_)
+  for (const uint32_t s : std::span(shaders_).first(kStaticShaderCount))
     ok = ok && sg_query_shader_state(sg_shader{s}) == SG_RESOURCESTATE_VALID;
-  for (const uint32_t p : pipelines_)
+  for (const uint32_t p : std::span(pipelines_).first(kStaticPipelineCount))
     ok = ok && sg_query_pipeline_state(sg_pipeline{p}) == SG_RESOURCESTATE_VALID;
   initialised_ = true;  // so shutdown() releases whatever was created
   if (!ok) {
@@ -361,6 +417,7 @@ bool Renderer::init(const sim::ContentDB& content) {
 }
 
 void Renderer::destroyResources() {
+  // An id of 0 (a slot never created) is invalid, which sokol_gfx ignores.
   for (const uint32_t p : pipelines_)
     sg_destroy_pipeline(sg_pipeline{p});
   for (const uint32_t s : shaders_)
@@ -374,10 +431,75 @@ void Renderer::destroyResources() {
   meshes_ = {};
 }
 
+void Renderer::destroyCharacterModel() {
+  if (sg_isvalid()) {
+    sg_destroy_pipeline(sg_pipeline{pipelines_[kSkinnedPipeline]});
+    sg_destroy_shader(sg_shader{shaders_[kSkinnedShader]});
+    sg_destroy_buffer(sg_buffer{meshes_[kSkinnedMesh].vertexBuffer});
+    sg_destroy_buffer(sg_buffer{meshes_[kSkinnedMesh].indexBuffer});
+  }
+  pipelines_[kSkinnedPipeline] = 0;
+  shaders_[kSkinnedShader] = 0;
+  meshes_[kSkinnedMesh] = {};
+  model_ = SkinnedModel{};
+  clips_ = {};
+  anim_ = {};
+  lastAnimTime_ = -1.0f;
+  skinnedLoaded_ = false;
+}
+
 void Renderer::shutdown() {
   if (initialised_ && sg_isvalid()) destroyResources();
   initialised_ = false;
   stats_ = {};
+  // destroyResources() released the character's GPU side; drop the CPU side.
+  model_ = SkinnedModel{};
+  clips_ = {};
+  anim_ = {};
+  lastAnimTime_ = -1.0f;
+  skinnedLoaded_ = false;
+}
+
+bool Renderer::loadCharacterModel(const char* path) {
+  if (!initialised_ || !sg_isvalid()) {
+    modelError_ = "the renderer is not initialised";
+    return false;
+  }
+  SkinnedModel loaded;
+  std::string error;
+  if (!loadSkinnedModel(path, loaded, error)) {
+    modelError_ = error;
+    return false;
+  }
+  destroyCharacterModel();
+  model_ = std::move(loaded);
+
+  GpuMesh& mesh = meshes_[kSkinnedMesh];
+  mesh.vertexBuffer =
+      makeBuffer(model_.vertices.data(), model_.vertices.size() * sizeof(SkinnedVertex), false,
+                 "kfm-character");
+  mesh.indexBuffer = makeBuffer(model_.indices.data(), model_.indices.size() * sizeof(uint16_t),
+                                true, "kfm-character");
+  mesh.indexCount = static_cast<uint32_t>(model_.indices.size());
+  shaders_[kSkinnedShader] =
+      makeShader(shaders::kSkinnedVs, shaders::kLitFs, shaders::kSkinnedVsVec4s,
+                 shaders::kLitFsVec4s, "kfm-skinned-shader", 4);
+  pipelines_[kSkinnedPipeline] = makeSkinnedPipeline(shaders_[kSkinnedShader]);
+
+  const bool ok =
+      sg_query_buffer_state(sg_buffer{mesh.vertexBuffer}) == SG_RESOURCESTATE_VALID &&
+      sg_query_buffer_state(sg_buffer{mesh.indexBuffer}) == SG_RESOURCESTATE_VALID &&
+      sg_query_shader_state(sg_shader{shaders_[kSkinnedShader]}) == SG_RESOURCESTATE_VALID &&
+      sg_query_pipeline_state(sg_pipeline{pipelines_[kSkinnedPipeline]}) == SG_RESOURCESTATE_VALID;
+  if (!ok) {
+    destroyCharacterModel();
+    modelError_ = "creating the skinned character's GPU resources failed";
+    return false;
+  }
+  clips_ = bindClips(model_);
+  skinnedLoaded_ = true;
+  modelError_.clear();
+  return true;
 }
 
 void Renderer::draw(const RenderState& state, const Camera& camera, int width, int height) {
@@ -425,6 +547,18 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
           kWallColor);
   }
 
+  // Character animation advances with presentation time; time going
+  // backwards (a fresh PresentationState) counts as no time.
+  const bool skinnedBodies = skinnedLoaded_ && !forceCapsules_;
+  if (skinnedBodies) {
+    const float dt = lastAnimTime_ < 0.0f ? 0.0f : state.time - lastAnimTime_;
+    updateCharacterAnimation(anim_, state, std::clamp(dt, 0.0f, kMaxAnimStepSeconds));
+    lastAnimTime_ = state.time;
+  }
+  // The model's bind pose is scaled to the capsule's height.
+  const float modelScale =
+      skinnedBodies && model_.height() > 0.0f ? bodyHeight / model_.height() : 1.0f;
+
   const float blink = std::fmod(state.time * 8.0f, 1.0f) < 0.5f ? 1.0f : 0.0f;
   for (uint16_t i = 0; i < state.playerCount; ++i) {
     const RenderPlayer& p = state.players[i];
@@ -435,9 +569,23 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     float flash = p.flash;
     if (p.has(PlayerFlag::Invulnerable)) flash = std::max(flash, 0.35f * blink);
     const float emissive = p.has(PlayerFlag::Dashing) ? 0.25f : 0.0f;
-    d.lit(kCapsuleMesh, translate(p.position) * rotateY(p.bodyYaw) * scale(p.scale), body, flash,
-          emissive);
-    if (eliminated) continue;
+    const Mat4 placed = translate(p.position) * rotateY(p.bodyYaw) * scale(p.scale);
+    if (skinnedBodies && p.slot < anim_.size()) {
+      SkinMatrices joints;
+      evaluateAnimState(model_, clips_, anim_[p.slot], joints);
+      d.skinned(placed * scale({modelScale, modelScale, modelScale}), joints, body, flash,
+                emissive);
+    } else {
+      d.lit(kCapsuleMesh, placed, body, flash, emissive);
+    }
+  }
+
+  // Aim indicators and bananas in hand, after all the bodies so the pipeline
+  // changes once.
+  for (uint16_t i = 0; i < state.playerCount; ++i) {
+    const RenderPlayer& p = state.players[i];
+    if (!p.visible || p.has(PlayerFlag::Eliminated)) continue;
+    const Color own = playerColor(p.colorIndex);
 
     // Aim indicator: a thin bar from the capsule surface along the aim.
     const Vec3 aimBase = p.position + Vec3{0.0f, bodyHeight * kAimHeightFraction, 0.0f};
