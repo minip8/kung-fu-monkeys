@@ -1,7 +1,7 @@
 # Playable client (architecture §3, §11 M2): SDL3 window, sokol_gfx, Dear ImGui.
 add_executable(kfm_client main.cpp)
 target_link_libraries(kfm_client PRIVATE
-  kfm::sim kfm::presentation kfm::platform_input kfm::platform kfm::warnings)
+  kfm::sim kfm::presentation kfm::renderer kfm::platform_input kfm::platform kfm::warnings)
 set_target_properties(kfm_client PROPERTIES FOLDER apps)
 
 if(EMSCRIPTEN)

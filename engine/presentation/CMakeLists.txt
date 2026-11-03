@@ -20,3 +20,18 @@ target_link_libraries(kfm_presentation
 kfm_no_exceptions_rtti(kfm_presentation)
 
 set_target_properties(kfm_presentation PROPERTIES FOLDER engine)
+
+# The sokol_gfx renderer: presentation code that needs a GPU. Links kfm::sokol
+# (the sokol_gfx target from cmake/KfmDependencies.cmake), never kfm::platform.
+if(NOT KFM_HEADLESS)
+  add_library(kfm_renderer STATIC
+    renderer/renderer.cpp
+  )
+  add_library(kfm::renderer ALIAS kfm_renderer)
+  target_include_directories(kfm_renderer PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/renderer)
+  target_link_libraries(kfm_renderer
+    PUBLIC kfm::presentation
+    PRIVATE kfm::sokol kfm::warnings)
+  kfm_no_exceptions_rtti(kfm_renderer)
+  set_target_properties(kfm_renderer PROPERTIES FOLDER engine)
+endif()

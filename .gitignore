@@ -25,3 +25,6 @@
 *.swp
 .DS_Store
 compile_commands.json
+
+# Agent worktrees
+/.claude/worktrees/
