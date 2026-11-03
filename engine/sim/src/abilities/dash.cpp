@@ -33,4 +33,15 @@ void dashOnPhaseChange(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/,
 void dashOnEnd(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const AbilityDef& /*def*/,
                const MatchContent& /*content*/, EventSink& /*sink*/) {}
 
+// PerfectDash marks the ticks on which the perfect window [press, press +
+// perfectWindowTicks) is open: Active and phaseTicks < perfectWindowTicks,
+// plus tick press + window itself when the press had a non-zero sub-tick (the
+// window closes inside that tick; the catch rule judges the exact instant,
+// §5.11). Dash has no startup, so Active starts on the press tick.
+Tags dashKindTags(const AbilityState& st, const AbilityDef& def) {
+  const bool windowOpen = st.phaseTicks < def.perfectWindowTicks ||
+                          (st.phaseTicks == def.perfectWindowTicks && st.activatedSubTick != 0);
+  return st.phase == AbilityPhase::Active && windowOpen ? Tags::of(Tag::PerfectDash) : Tags{};
+}
+
 }  // namespace kfm::sim

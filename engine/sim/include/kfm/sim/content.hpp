@@ -16,6 +16,7 @@
 #include "kfm/sim/content/mode.hpp"
 #include "kfm/sim/content/name.hpp"
 #include "kfm/sim/content/powerup.hpp"
+#include "kfm/sim/input.hpp"
 #include "kfm/sim/tags.hpp"
 
 #include <array>
@@ -29,6 +30,20 @@ namespace kfm::sim {
 inline constexpr uint8_t kAbilitySlots = 2;
 inline constexpr uint8_t kAbilitySlotDash = 0;
 inline constexpr uint8_t kAbilitySlotThrow = 1;
+
+// The button whose press edge fires an ability slot (v0.21: buttons belong to
+// slots, whatever kind the slot runs).
+[[nodiscard]] constexpr uint8_t slotButton(uint8_t slot) {
+  switch (slot) {
+    case kAbilitySlotDash:
+      return buttonBit(Button::Dash);
+    case kAbilitySlotThrow:
+      return buttonBit(Button::Throw);
+    default:
+      break;
+  }
+  return 0;
+}
 inline constexpr uint8_t kMaxAbilityDefs = 4;
 inline constexpr uint8_t kMaxArenas = 8;
 inline constexpr uint8_t kMaxModes = 8;

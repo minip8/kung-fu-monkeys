@@ -114,6 +114,10 @@ serialised unconditionally, which changed every world checksum, and the corpus w
 and power-up tags compose (§5.8). A
 scripted-bot behaviour, the `scripted_4p_powerups_1800t` corpus entry and `kfm_replay stats`
 power-up counts (§9). Pickups render per def and the HUD shows power-up timers (§7).
+v0.21 changes: more abilities (§5.4, §5.5, §5.6, §5.9). Buttons belong to ability slots, not
+kinds (slot 0 Dash button, slot 1 Throw, slot 2 the new Ability button); a kind's own tags
+(PerfectDash) come from an `AbilityBehavior::kindTags` hook, and the catch rule and the tie-break
+read the slot that grants the tag.
 v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
 `kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
 `Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
@@ -476,10 +480,15 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   the tie-break) and `dir` (dash or throw direction captured at activation). There is no
   kind-specific scratch union; a kind that needs more state adds a named field (v0.14).
 - `AbilityBehavior` registry: a table indexed by `AbilityKind` holding function pointers
-  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. The table is a `constexpr`
+  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd` and (v0.21) `kindTags`, the
+  tags the kind itself grants from the slot's state on top of the def's phase tags (Dash:
+  `PerfectDash`); `AbilitySystem` re-derives every bit in `kAbilityKindTags` each tick. The table is a `constexpr`
   array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
   a scenario test.
-- Players have N ability slots. Base kit is {Dash, Throw}. Power-ups may override a slot
+- Players have N ability slots. Base kit is {Dash, Throw}. Buttons belong to slots, not to
+  kinds (v0.21, `slotButton()`): slot 0 fires on `Button::Dash`, slot 1 on `Button::Throw`,
+  whatever kind the slot runs. The catch rule and the tie-break (§5.11) read the press time of
+  the slot that grants the tag they key on (`slotGranting()`), the dash slot in the base kit. Power-ups may override a slot
   (for example a teleport dash) or add a temporary slot.
 - Phase tags: Dash's active phase grants `Tag::Dashing`; its first `perfectWindowTicks` also
   grant `Tag::PerfectDash`, plus the tick after them when the press had a non-zero `subTick`,

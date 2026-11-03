@@ -20,8 +20,8 @@ void nonePhaseChange(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/,
                      const AbilityDef& /*def*/, AbilityPhase /*from*/, AbilityPhase /*to*/,
                      const MatchContent& /*content*/, EventSink& /*sink*/) {}
 
-constexpr AbilityBehavior kNoneBehavior{&noneCanActivate, &noneHook, &noneHook, &nonePhaseChange,
-                                        &noneHook};
+constexpr AbilityBehavior kNoneBehavior{&noneCanActivate, &noneHook, &noneHook,
+                                        &nonePhaseChange, &noneHook, &noKindTags};
 
 constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> kBehaviors = {
     kNoneBehavior,    // AbilityKind::None

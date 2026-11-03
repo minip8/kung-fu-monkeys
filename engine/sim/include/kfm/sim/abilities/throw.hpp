@@ -18,8 +18,8 @@ void throwOnEnd(WorldState& s, Player& p, AbilityState& st, const AbilityDef& de
                 const MatchContent& content, EventSink& sink);
 
 [[nodiscard]] constexpr AbilityBehavior throwBehavior() {
-  return AbilityBehavior{&throwCanActivate, &throwOnActivate, &throwOnTick, &throwOnPhaseChange,
-                         &throwOnEnd};
+  return AbilityBehavior{&throwCanActivate,   &throwOnActivate, &throwOnTick,
+                         &throwOnPhaseChange, &throwOnEnd,      &noKindTags};
 }
 
 }  // namespace kfm::sim

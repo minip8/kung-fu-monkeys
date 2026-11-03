@@ -23,6 +23,13 @@ void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink);
 // PerfectDash, def phase tags; never HitStun or Eliminated). AbilitySystem
 // sets exactly these; ModifierSystem keeps them when its own grants end.
 [[nodiscard]] Tags abilityPhaseTags(const Player& p, const MatchContent& content);
+// The tags one slot grants in its current phase (the def's phase tags plus
+// the kind's AbilityBehavior::kindTags).
+[[nodiscard]] Tags slotPhaseTags(const AbilityState& st, const MatchContent& content);
+// The first slot (in slot order) whose current phase grants `tag`, or null:
+// the dash whose press time the catch rule and the tie-break read (§5.11).
+[[nodiscard]] const AbilityState* slotGranting(const Player& p, const MatchContent& content,
+                                               Tag tag);
 // 4. Intent x stats -> velocity, integrate, arena clamp (systems/movement.cpp).
 void movementSystem(WorldState& s, const MatchContent& content);
 // 5. Boomerang flight, return steering, wall bounce, grounding (systems/projectile.cpp).

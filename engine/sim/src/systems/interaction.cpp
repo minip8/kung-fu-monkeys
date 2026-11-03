@@ -40,12 +40,16 @@ struct SortKey {
   friend bool operator<(const SortKey& l, const SortKey& r) { return l.tied() < r.tied(); }
 };
 
-[[nodiscard]] uint64_t pressTimeOf(const WorldState& s, const Contact& c) {
+[[nodiscard]] uint64_t pressTimeOf(const WorldState& s, const MatchContent& content,
+                                   const Contact& c) {
   if (c.kindA != EntityKind::Player) return std::numeric_limits<uint64_t>::max();
   const Player* p = s.players.get(c.a);
   const Tag keyed = c.kindB == EntityKind::Player ? Tag::Dashing : Tag::PerfectDash;
   if (p == nullptr || !p->tags.has(keyed)) return std::numeric_limits<uint64_t>::max();
-  const AbilityState& dash = p->abilities[kAbilitySlotDash];
+  // The slot granting the keyed tag (the base kit's dash slot); a tag set by
+  // something else (a test) falls back to the dash slot.
+  const AbilityState* slot = slotGranting(*p, content, keyed);
+  const AbilityState& dash = slot != nullptr ? *slot : p->abilities[kAbilitySlotDash];
   return (static_cast<uint64_t>(dash.activatedTick.value) << 8) | dash.activatedSubTick;
 }
 
@@ -108,7 +112,7 @@ void interactionSystem(WorldState& s, const MatchContent& content, const Contact
   uint16_t n = 0;
   const auto add = [&](const Contact& c, uint16_t index, bool reversed) {
     order[n++] = SortKey{c.tHit,
-                         pressTimeOf(s, c),
+                         pressTimeOf(s, content, c),
                          static_cast<uint8_t>(c.kindA),
                          c.a.index,
                          static_cast<uint8_t>(c.kindB),
