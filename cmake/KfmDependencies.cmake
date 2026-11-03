@@ -9,6 +9,8 @@
 #   kfm::glad    glad2 GL 4.3 core loader vendored in third_party/glad (native only)
 #   kfm::sokol   sokol_gfx + sokol_log + util/sokol_imgui, one implementation TU (FetchContent only)
 #   kfm::cgltf   cgltf 1.15 (header only; the includer that defines CGLTF_IMPLEMENTATION owns it)
+#   kfm::datachannel  libdatachannel 0.24.6 natively (vcpkg, or FetchContent static with OpenSSL),
+#                datachannel-wasm f9200eb under Emscripten; only when KFM_WEBRTC (headless too)
 # None of them link kfm::warnings: third-party code is compiled with its own
 # flags and its headers are SYSTEM includes, so it never trips -Werror.
 
@@ -31,6 +33,131 @@ if(KFM_BUILD_TESTS)
     list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
   endif()
   include(Catch)
+endif()
+
+# ---------------------------------------------------------------------------
+# WebRTC data channels (architecture §6.4): kfm::datachannel, the C++ `rtc::`
+# API used by kfm_net_webrtc. Defined before the headless return below
+# because the dedicated server needs it. KFM_WEBRTC=OFF skips it entirely
+# (no network dependencies; kfm_net_webrtc and its tests are not built).
+#
+#   native      libdatachannel 0.24.6 (vcpkg `libdatachannel[ws]` without
+#               default features, i.e. no `srtp` media transport), or the
+#               FetchContent fallback below, built static with OpenSSL as
+#               the TLS backend (DTLS for the data channels; libssl-dev on
+#               Linux, see .github/workflows/ci.yml), libjuice for ICE and
+#               usrsctp for SCTP, WebSocket support on, media off.
+#   Emscripten  datachannel-wasm (same `rtc::` API over the browser's
+#               RTCPeerConnection/WebSocket), FetchContent only, pinned to
+#               master f9200eb (2026-09-27: v0.4.0 plus a missing
+#               <functional> include). It links two --js-library files.
+# ---------------------------------------------------------------------------
+if(KFM_WEBRTC)
+  add_library(kfm_datachannel INTERFACE)
+  add_library(kfm::datachannel ALIAS kfm_datachannel)
+  if(EMSCRIPTEN)
+    message(STATUS "KFM: datachannel-wasm f9200eb from FetchContent")
+    FetchContent_Declare(datachannel_wasm
+      URL      https://github.com/paullouisageneau/datachannel-wasm/archive/f9200eb942f66ddbfecf088ce7122d095aca1c3e.tar.gz
+      URL_HASH SHA256=3271291205c5b3ef06a7a6cbfe107cab93ecfd8b3a303afd94337e02b0343349
+      DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+      SYSTEM)
+    # Its cmake_minimum_required(3.7) draws CMake 4's deprecation warning;
+    # nothing in it depends on pre-3.10 policies.
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+    FetchContent_MakeAvailable(datachannel_wasm)
+    unset(CMAKE_POLICY_VERSION_MINIMUM)
+    # datachannel-wasm reports errors by throwing (std::runtime_error);
+    # kfm_net_webrtc catches them at its boundary. Native wasm exception
+    # handling on both sides, and on whatever links kfm::datachannel, so a
+    # throw is catchable instead of aborting (Emscripten's default).
+    target_compile_options(datachannel-wasm PRIVATE -fwasm-exceptions)
+    target_link_libraries(kfm_datachannel INTERFACE datachannel-wasm)
+    target_link_options(kfm_datachannel INTERFACE -fwasm-exceptions)
+    set_target_properties(datachannel-wasm PROPERTIES FOLDER third_party)
+  else()
+    find_package(LibDataChannel 0.24.6 EXACT CONFIG QUIET)
+    if(LibDataChannel_FOUND)
+      message(STATUS "KFM: libdatachannel ${LibDataChannel_VERSION} from find_package")
+      # vcpkg builds the static library under the `LibDataChannel` export
+      # name on static triplets (its `-static` twin is never installed).
+      if(TARGET LibDataChannel::LibDataChannelStatic)
+        target_link_libraries(kfm_datachannel INTERFACE LibDataChannel::LibDataChannelStatic)
+      else()
+        target_link_libraries(kfm_datachannel INTERFACE LibDataChannel::LibDataChannel)
+      endif()
+    else()
+      message(STATUS "KFM: libdatachannel not found via find_package, fetching v0.24.6")
+      # The release tarball has empty deps/ submodule directories, so each
+      # submodule libdatachannel needs (plog, usrsctp, libjuice; json and
+      # libsrtp only serve the examples and media) is fetched as its own
+      # tarball at the commit v0.24.6 pins and extracted into deps/. A git
+      # clone with submodules would do the same without the hashes. The
+      # outer tarball is extracted first and its deps then filled in; bumping
+      # the pin means deleting build/<preset>/_deps (the check below says so).
+      FetchContent_Declare(libdatachannel
+        URL      https://github.com/paullouisageneau/libdatachannel/archive/refs/tags/v0.24.6.tar.gz
+        URL_HASH SHA256=22a66aebebd8dae561d8e5181da96f2fcc203e067c5b2186c07b39af913464c0
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_SUBDIR  kfm-deferred)  # added below with our options, not by MakeAvailable
+      FetchContent_MakeAvailable(libdatachannel)
+      FetchContent_Declare(libdatachannel_plog
+        URL      https://github.com/SergiusTheBest/plog/archive/94899e0b926ac1b0f4750bfbd495167b4a6ae9ef.tar.gz
+        URL_HASH SHA256=92a08bce559b5f28aa88d3fd9071567414b9f43a83fe2a05a6dd14f1da536072
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_DIR     ${libdatachannel_SOURCE_DIR}/deps/plog
+        SOURCE_SUBDIR  kfm-deferred)
+      FetchContent_Declare(libdatachannel_usrsctp
+        URL      https://github.com/paullouisageneau/usrsctp/archive/fec583d54493f879d2ae44a743423bf8a04371ab.tar.gz
+        URL_HASH SHA256=e5c114afe73c9a0ec419fab5f5b3f63f3ce57b09b90d06ea85e63dca8aed3e7c
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_DIR     ${libdatachannel_SOURCE_DIR}/deps/usrsctp
+        SOURCE_SUBDIR  kfm-deferred)
+      FetchContent_Declare(libdatachannel_libjuice
+        URL      https://github.com/paullouisageneau/libjuice/archive/b89c792e3612faf2f12cf35bcc56857313a06be3.tar.gz
+        URL_HASH SHA256=713b22174e8cb2e06538fa9bac2650bda21b83c86f5128813ab4dcf8f5bea9ed
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        SOURCE_DIR     ${libdatachannel_SOURCE_DIR}/deps/libjuice
+        SOURCE_SUBDIR  kfm-deferred)
+      FetchContent_MakeAvailable(libdatachannel_plog libdatachannel_usrsctp libdatachannel_libjuice)
+      foreach(dep plog usrsctp libjuice)
+        if(NOT EXISTS "${libdatachannel_SOURCE_DIR}/deps/${dep}/CMakeLists.txt")
+          message(FATAL_ERROR "libdatachannel deps/${dep} is empty (the pin changed?): "
+                              "delete ${FETCHCONTENT_BASE_DIR} and configure again")
+        endif()
+      endforeach()
+
+      # A function scope keeps these switches away from the rest of the
+      # build; all three projects honour normal variables over option()
+      # (CMP0077 NEW at their minimum versions).
+      function(kfm_add_libdatachannel)
+        set(BUILD_SHARED_LIBS OFF)
+        set(NO_EXAMPLES ON)
+        set(NO_TESTS ON)          # libdatachannel and libjuice
+        set(NO_MEDIA ON)          # data channels only: no libsrtp
+        set(NO_WEBSOCKET OFF)     # the signaling socket (client and server)
+        set(USE_GNUTLS OFF)       # OpenSSL
+        set(USE_MBEDTLS OFF)
+        set(USE_NICE OFF)         # libjuice
+        set(PREFER_SYSTEM_LIB OFF)
+        set(WARNINGS_AS_ERRORS OFF)
+        set(NO_SERVER ON)         # libjuice's embedded TURN server
+        set(sctp_werror OFF)
+        set(sctp_debug OFF)
+        set(sctp_build_programs OFF)
+        set(sctp_build_shared_lib OFF)
+        add_subdirectory(${libdatachannel_SOURCE_DIR} ${libdatachannel_BINARY_DIR}
+          EXCLUDE_FROM_ALL SYSTEM)
+      endfunction()
+      kfm_add_libdatachannel()
+      target_link_libraries(kfm_datachannel INTERFACE LibDataChannel::LibDataChannelStatic)
+      foreach(t datachannel datachannel-static juice juice-static usrsctp)
+        if(TARGET ${t})
+          set_target_properties(${t} PROPERTIES FOLDER third_party)
+        endif()
+      endforeach()
+    endif()
+  endif()
 endif()
 
 # Everything below is the client stack (window, GPU, debug UI, assets). The

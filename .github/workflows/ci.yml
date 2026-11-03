@@ -24,6 +24,13 @@ env:
   KFM_SDL_APT_PACKAGES: >-
     pkg-config libx11-dev libxext-dev libxft-dev
     libwayland-dev libxkbcommon-dev libegl-dev wayland-protocols
+  # The WebRTC transport (kfm_net_webrtc, architecture §6.4) on the
+  # FetchContent path (no vcpkg: the lint job's compile database, local
+  # builds): libdatachannel 0.24.6 links the system OpenSSL for DTLS and the
+  # WebSocket client/server. With vcpkg (native and ASan jobs, Windows,
+  # macOS) the manifest builds openssl itself and this is unused.
+  KFM_NET_APT_PACKAGES: >-
+    libssl-dev
 
 jobs:
   lint:
@@ -34,8 +41,8 @@ jobs:
       - uses: lukka/get-cmake@latest
       - name: Install clang-format and clang-tidy
         run: pipx install clang-format==19.1.7 && pipx install clang-tidy==19.1.0.1
-      - name: Install SDL3 build dependencies
-        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES
+      - name: Install SDL3 and WebRTC build dependencies
+        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES $KFM_NET_APT_PACKAGES
       - name: clang-format
         # third_party/ (generated glad loader, sokol impl TU) is outside this set.
         run: |
@@ -65,7 +72,10 @@ jobs:
           - { name: linux-gcc,        os: ubuntu-26.04,   cc: gcc,   cxx: g++ }
           - { name: linux-clang,      os: ubuntu-26.04,   cc: clang, cxx: clang++ }
           - { name: windows-msvc,     os: windows-latest }
-          - { name: macos-appleclang, os: macos-latest }
+          # macOS names its compilers explicitly: the job exports CC/CXX from these
+          # keys, and an empty CC reaches OpenSSL's Configure (built by vcpkg for
+          # libdatachannel), which takes it literally and runs "" -fPIC ... .
+          - { name: macos-appleclang, os: macos-latest,  cc: clang, cxx: clang++ }
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
@@ -81,7 +91,7 @@ jobs:
         # xvfb-run exists).
         run: |
           sudo apt-get update
-          sudo apt-get install -y $KFM_SDL_APT_PACKAGES xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri libegl-mesa0
+          sudo apt-get install -y $KFM_SDL_APT_PACKAGES $KFM_NET_APT_PACKAGES xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri libegl-mesa0
       - uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
@@ -92,6 +102,29 @@ jobs:
         run: cmake --build --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
       - name: Test (unit + determinism gate, client smoke on Linux)
         run: ctest --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
+
+  server-headless:
+    # The dedicated server's build (architecture §13.5): KFM_HEADLESS=ON, so no
+    # SDL, GL or ImGui; kfm_server, kfm_netsim and every headless test,
+    # including the soak gates (label soak) and the real-socket WebRTC tests
+    # (label network, 127.0.0.1 only). Dependencies come from FetchContent at
+    # their pinned versions, with the system OpenSSL, as on a lean build host.
+    name: linux-gcc server-headless Release
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: Install WebRTC build dependencies
+        run: sudo apt-get update && sudo apt-get install -y $KFM_NET_APT_PACKAGES
+      - name: Configure
+        run: cmake --preset server-headless -DKFM_USE_VCPKG=OFF
+      - name: Build (kfm_server, kfm_netsim, tests)
+        run: cmake --build --preset server-headless
+      - name: Check the dedicated server was produced
+        run: build/server-headless/apps/server/kfm_server --help
+      - name: Test (unit, netcode soaks, network, determinism gate)
+        run: ctest --preset server-headless
 
   wasm:
     name: wasm (Emscripten)
@@ -117,8 +150,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
-      - name: Install SDL3 build dependencies
-        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES
+      - name: Install SDL3 and WebRTC build dependencies
+        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES $KFM_NET_APT_PACKAGES
       - uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg

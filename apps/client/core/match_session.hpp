@@ -54,6 +54,7 @@ enum class SlotOwner : uint8_t {
   Local,     // a bound local device
   Dropped,   // local, but its pad was removed: repeats its last input
   Bot,       // sim::scriptedInput
+  Remote,    // network mode: a slot driven by another client or the server
 };
 
 // How the frame is drawn (architecture §6.8).
@@ -77,6 +78,10 @@ struct SessionConfig {
   uint8_t bots{0};                    // lobby bot count
   uint32_t maxTicksPerFrame{kDefaultMaxTicksPerFrame};
   bool bindKeyboardToSlot0{true};  // slot 0 starts bound to keyboard profile 0
+  // The host starts what the lobby's start request means (network mode
+  // connects instead of starting a local match): a start key in the lobby is
+  // latched for takeStartRequest() and no local match begins.
+  bool hostHandlesStart{false};
 };
 
 class MatchSession {
@@ -107,6 +112,10 @@ class MatchSession {
   // Creates the world from lobbyPresentMask() and seed() and starts the
   // clock at nowNs. Returns false (and stays in the lobby) when the mask is empty.
   bool startMatch(uint64_t nowNs);
+  // hostHandlesStart: whether the lobby's start key was pressed since the
+  // last call (cleared by the call).
+  [[nodiscard]] bool takeStartRequest();
+  void setHostHandlesStart(bool v) { hostHandlesStart_ = v; }
   // Back to the lobby; bindings are kept. Clears the pause (and any pending
   // single step) and the presentation state.
   void returnToLobby();
@@ -181,6 +190,8 @@ class MatchSession {
   uint64_t botSeed_{kDefaultBotSeed};
   uint8_t bots_{0};
   bool startRequested_{false};
+  bool hostHandlesStart_{false};
+  bool hostStartPending_{false};
 
   sim::ContentDB content_{};
   sim::WorldState prev_{};

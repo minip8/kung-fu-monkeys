@@ -28,6 +28,27 @@ kfm_add_test_exe(kfm_sim_tests
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
+# The transport contract suite (net/transport_contract.hpp) is header-only;
+# a test executable for another transport links this target and expands
+# KFM_TRANSPORT_CONTRACT_TESTS with its own harness.
+add_library(kfm_transport_contract INTERFACE)
+add_library(kfm::transport_contract ALIAS kfm_transport_contract)
+target_include_directories(kfm_transport_contract INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/net)
+target_link_libraries(kfm_transport_contract INTERFACE kfm::net Catch2::Catch2)
+
+kfm_add_test_exe(kfm_net_tests
+  net/transport_test.cpp
+  net/loopback_test.cpp
+  net/messages_test.cpp
+  net/messages_fuzz_test.cpp
+  net/input_history_test.cpp
+  net/clock_sync_test.cpp
+  net/event_journal_test.cpp
+  net/net_server_test.cpp
+  net/net_client_test.cpp
+)
+target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
+
 kfm_add_test_exe(kfm_presentation_tests
   presentation/math_test.cpp
   presentation/camera_test.cpp
@@ -67,6 +88,61 @@ if(NOT KFM_HEADLESS)
     client/match_session_test.cpp
     client/content_tuning_test.cpp
     client/sdl_input_test.cpp
+    client/net_session_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
+
+  if(KFM_WEBRTC AND NOT EMSCRIPTEN)
+    # The client's network mode over real sockets: NetServer on
+    # WebRtcTransport::createServer and a NetSession on createClient, one
+    # process, 127.0.0.1. Labelled `network` like the other WebRTC tests.
+    kfm_add_test_exe(kfm_client_net_tests client/net_session_webrtc_test.cpp)
+    target_link_libraries(kfm_client_net_tests PRIVATE kfm::client_core kfm::net_webrtc)
+    set_tests_properties(kfm_client_net_tests PROPERTIES LABELS network TIMEOUT 120)
+  endif()
+endif()
+
+if(KFM_WEBRTC AND NOT EMSCRIPTEN)
+  # WebRtcTransport over real libdatachannel on 127.0.0.1 (no internet:
+  # host candidates only). Labelled `network` so it can be excluded with
+  # `ctest -LE network`; a generous timeout because ICE + DTLS per test case
+  # is slow under sanitizers.
+  kfm_add_test_exe(kfm_net_webrtc_tests
+    net/webrtc_signaling_test.cpp
+    net/webrtc_api_test.cpp
+    net/webrtc_transport_test.cpp
+    net/webrtc_contract_test.cpp
+  )
+  target_include_directories(kfm_net_webrtc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc kfm::transport_contract)
+  set_tests_properties(kfm_net_webrtc_tests PROPERTIES LABELS network TIMEOUT 300)
+endif()
+
+if(KFM_WEBRTC AND EMSCRIPTEN)
+  # The browser transport links (datachannel-wasm's --js-library files, wasm
+  # exceptions) and its browser-free paths run under node.
+  kfm_add_test_exe(kfm_net_webrtc_tests
+    net/webrtc_signaling_test.cpp
+    net/webrtc_api_test.cpp
+  )
+  target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc)
+endif()
+
+if(TARGET kfm::server_host)
+  # apps/server's ServerHost over the loopback emulator: match restart,
+  # stats lines, shutdown (every target, wasm included).
+  kfm_add_test_exe(kfm_server_tests
+    server/server_host_test.cpp
+  )
+  target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim)
+
+  if(TARGET kfm_server)
+    # The same over real sockets: WebRtcTransport on 127.0.0.1, two NetClients
+    # in-process on the steady clock (label `network`, like the transport tests).
+    kfm_add_test_exe(kfm_server_network_tests
+      server/server_webrtc_test.cpp
+    )
+    target_link_libraries(kfm_server_network_tests PRIVATE kfm::server_host kfm::net_webrtc)
+    set_tests_properties(kfm_server_network_tests PROPERTIES LABELS network TIMEOUT 120)
+  endif()
 endif()

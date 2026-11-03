@@ -1,20 +1,30 @@
-// kfm_client: the playable local client (architecture §3, §6.8, §7, §11 M2).
+// kfm_client: the playable client (architecture §3, §6.8, §7, §11 M2, M3).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
+//              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //
 // Frame: pollEvents (ImGui first, then SDL -> InputEvent into the session)
 // -> MatchSession::advance (0..4 fixed 60 Hz ticks, inputs sampled right
-// before each step) -> buildRenderState -> arena camera -> HUD / lobby /
-// debug overlay (ImGui) -> debugUiFlush -> default pass: renderer.draw, then
+// before each step) or, in network mode, NetSession::advance (pump,
+// reconcile, onRollback, the rate-controlled ticks, journal events) ->
+// buildRenderState -> arena camera -> HUD / lobby / network status / debug
+// overlay (ImGui) -> debugUiFlush -> default pass: renderer.draw, then
 // debugUiDraw -> present.
 //
+// Network mode (--connect): connects at startup with one local slot (or
+// --players N); Escape disconnects and returns to the local lobby, which binds
+// devices as usual and whose Start connects again, one slot per bound device.
+// The session runs over a WebRtcTransport, natively and in the browser alike.
+//
 // Keys outside the game bindings: F1 debug overlay, P pause, O single step,
-// Escape back to the lobby (quits from the lobby, natively), - / = bot count
-// in the lobby, Enter / pad Start starts the match (and leaves the
-// match-over screen).
+// Escape back to the lobby (quits from the lobby, natively; online it
+// disconnects and returns to the local lobby), - / = bot count in the lobby,
+// Enter / pad Start starts the match or connects (and leaves the match-over
+// screen). Pause, step and the bot keys do nothing online.
 #include "core/client_options.hpp"
 #include "core/match_session.hpp"
+#include "core/net_session.hpp"
 #include "debug_overlay.hpp"
 #include "hud.hpp"
 #include "kfm/platform/debug_ui.hpp"
@@ -26,6 +36,10 @@
 #include "kfm/presentation/render_state.hpp"
 #include "kfm/presentation/renderer.hpp"
 #include "sdl_input.hpp"
+
+#ifdef KFM_CLIENT_WEBRTC
+#include "kfm/net/webrtc_transport.hpp"
+#endif
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
@@ -40,6 +54,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -54,6 +69,9 @@ struct App {
   presentation::Renderer renderer;
   bool rendererReady = false;
   std::unique_ptr<MatchSession> session;
+  std::unique_ptr<client::NetSession> net;  // network mode, while connected or showing why not
+  client::NetPhase lastNetPhase = client::NetPhase::Connecting;
+  bool connectRequested = false;  // the lobby's Start, online: connect next frame
   client::GamepadSet pads;
   client::DebugOverlay overlay;
   presentation::RenderState renderState;
@@ -86,6 +104,44 @@ constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-
   return platform::debugUiWantsKeyboard();
 }
 
+// Starts network mode: a WebRtcTransport to --connect and a NetSession over
+// the lobby's bound devices. A transport that cannot be created leaves a
+// failed session that shows why.
+void startNetwork(App& app, bool atStartup, std::uint64_t nowNs) {
+  const client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  const platform::InputSampler& lobby = app.session->sampler();
+#ifdef KFM_CLIENT_WEBRTC
+  net::WebRtcClientConfig wc;
+  wc.signalingUrl = app.options.connect;
+  wc.stunServer = app.options.stun;
+  wc.connectionToken = config.token;
+  auto transport = net::WebRtcTransport::createClient(wc);
+  if (transport) {
+    net::ITransport* raw = transport->get();
+    app.net =
+        std::make_unique<client::NetSession>(config, lobby, raw, nowNs, std::move(*transport));
+  } else {
+    app.net = std::make_unique<client::NetSession>(config, lobby, nullptr, nowNs, nullptr,
+                                                   transport.error());
+  }
+#else
+  app.net = std::make_unique<client::NetSession>(config, lobby, nullptr, nowNs, nullptr,
+                                                 "this build has no WebRTC (KFM_WEBRTC=OFF)");
+#endif
+  app.lastNetPhase = app.net->phase();
+  std::printf("kfm_client: %s\n", app.net->statusText().c_str());
+  std::fflush(stdout);
+}
+
+// Escape online: disconnect and hand the devices back to the local lobby.
+void leaveNetwork(App& app) {
+  app.net->disconnect();
+  app.session->sampler() = app.net->lobbySampler();
+  app.net.reset();
+  std::printf("kfm_client: back to the local lobby\n");
+  std::fflush(stdout);
+}
+
 // App shortcuts that are not game bindings.
 void handleShortcut(App& app, const SDL_Event& event) {
   if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
@@ -96,6 +152,11 @@ void handleShortcut(App& app, const SDL_Event& event) {
     return;
   }
   if (gameInputBlocked()) return;
+  if (app.net) {
+    // Online the server's clock rules: no pause, step or bot keys.
+    if (sc == SDL_SCANCODE_ESCAPE) leaveNetwork(app);
+    return;
+  }
   switch (sc) {
     case SDL_SCANCODE_ESCAPE:
       if (s.phase() == SessionPhase::Match) {
@@ -139,7 +200,11 @@ void onEvent(void* user, const SDL_Event& event) {
   // While a debug text field has the keyboard, key presses stay out of the
   // game; releases always go through so no key is left held.
   if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked()) return;
-  app->session->push(*input);
+  if (app->net) {
+    app->net->push(*input);
+  } else {
+    app->session->push(*input);
+  }
 }
 
 bool writePpm(const std::string& path, int width, int height) {
@@ -160,9 +225,64 @@ bool writePpm(const std::string& path, int width, int height) {
   return static_cast<bool>(out.flush());
 }
 
+// The local frame: lobby or local match (M2).
+presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, int h,
+                                float density) {
+  MatchSession& s = *app.session;
+  s.advance(now);
+  // Network mode: the lobby's Start connects, from the next frame on.
+  if (s.takeStartRequest()) app.connectRequested = true;
+  presentation::buildRenderState(
+      s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(), s.content(),
+      static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
+  const presentation::Camera camera = presentation::makeArenaCamera(
+      s.content().arena, static_cast<float>(w), static_cast<float>(h));
+
+  platform::debugUiNewFrame(w, h, dt, density);
+  if (s.phase() == SessionPhase::Lobby) {
+    if (client::drawLobby(s, app.options.connect)) {
+      if (app.options.networkMode()) {
+        app.connectRequested = true;
+      } else {
+        (void)s.startMatch(now);
+      }
+    }
+  } else {
+    client::drawMatchHud(
+        s,
+        client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
+  }
+  app.overlay.draw(s, app.renderer.stats(), now);
+  return camera;
+}
+
+// The network frame: connection status until the match runs, then the
+// predicted match with remote players smoothed (§6.9).
+presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int h, float density) {
+  client::NetSession& n = *app.net;
+  n.advance(now);
+  if (n.phase() != app.lastNetPhase) {
+    app.lastNetPhase = n.phase();
+    std::printf("kfm_client: %s\n", n.statusText().c_str());
+    std::fflush(stdout);
+  }
+  n.build(static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
+  const presentation::Camera camera = presentation::makeArenaCamera(
+      n.content().arena, static_cast<float>(w), static_cast<float>(h));
+
+  platform::debugUiNewFrame(w, h, dt, density);
+  if (n.everRan()) {
+    client::drawMatchHud(
+        client::hudView(n),
+        client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
+  }
+  if (!n.running()) client::drawNetStatus(n);
+  app.overlay.draw(n, app.renderer.stats());
+  return camera;
+}
+
 bool frame(void* user) {
   auto* app = static_cast<App*>(user);
-  MatchSession& s = *app->session;
   if (!app->window.pollEvents(onEvent, app)) app->quit = true;
 
   const std::uint64_t now = platform::Window::nowNs();
@@ -170,27 +290,14 @@ bool frame(void* user) {
   app->lastFrameNs = now;
   app->overlay.recordFrame(dt);
 
-  s.advance(now);
-
   const platform::DrawableSize size = app->window.drawableSize();
   const int w = std::max(size.width, 1);
   const int h = std::max(size.height, 1);
-  presentation::buildRenderState(
-      s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(), s.content(),
-      static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app->renderState);
-  const presentation::Camera camera = presentation::makeArenaCamera(
-      s.content().arena, static_cast<float>(w), static_cast<float>(h));
-
   const float density = app->window.pixelDensity();
-  platform::debugUiNewFrame(w, h, dt, density);
-  if (s.phase() == SessionPhase::Lobby) {
-    if (client::drawLobby(s)) (void)s.startMatch(now);
-  } else {
-    client::drawMatchHud(
-        s,
-        client::HudInput{.state = &app->renderState, .camera = &camera, .uiScale = 1.0f / density});
-  }
-  app->overlay.draw(s, app->renderer.stats(), now);
+  if (app->connectRequested && !app->net) startNetwork(*app, false, now);
+  app->connectRequested = false;
+  const presentation::Camera camera =
+      app->net ? netFrame(*app, now, dt, w, h, density) : localFrame(*app, now, dt, w, h, density);
   platform::debugUiFlush();
 
   platform::beginDefaultPass({.r = 0.10F, .g = 0.12F, .b = 0.16F, .a = 1.0F}, w, h);
@@ -217,9 +324,22 @@ void onExit(void* user) {
   platform::gfxShutdown();
   app->pads.closeAll();
   app->window.shutdown();
-  std::printf("kfm_client: stopped after %llu frames at tick %u, checksum 0x%08X\n",
-              static_cast<unsigned long long>(app->frames), app->session->curr().tick.value,
-              app->session->checksum());
+  if (app->net) {
+    const net::ClientNetStats& st = app->net->client().netStats();
+    std::printf(
+        "kfm_client: stopped after %llu frames online (%s) at tick %u, checksum 0x%08X, "
+        "%llu rollbacks, %llu checksum mismatches\n",
+        static_cast<unsigned long long>(app->frames), client::netPhaseName(app->net->phase()),
+        app->net->curr().tick.value, app->net->checksum(),
+        static_cast<unsigned long long>(st.rollbacks),
+        static_cast<unsigned long long>(st.checksumMismatches));
+    app->net->disconnect();
+    app->net.reset();
+  } else {
+    std::printf("kfm_client: stopped after %llu frames at tick %u, checksum 0x%08X\n",
+                static_cast<unsigned long long>(app->frames), app->session->curr().tick.value,
+                app->session->checksum());
+  }
 }
 
 }  // namespace
@@ -245,8 +365,14 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     return EXIT_FAILURE;
   }
 
-  app.session = std::make_unique<MatchSession>(client::SessionConfig{
-      .seed = app.options.seed, .botSeed = app.options.playersSeed, .bots = app.options.bots});
+  // Network mode: the lobby only binds devices (the server owns bots and the
+  // seed) and its Start connects.
+  const bool online = app.options.networkMode();
+  app.session = std::make_unique<MatchSession>(
+      client::SessionConfig{.seed = app.options.seed,
+                            .botSeed = app.options.playersSeed,
+                            .bots = online ? std::uint8_t{0} : app.options.bots,
+                            .hostHandlesStart = online});
   // A renderer that cannot create its buffers, shaders or pipelines is fatal
   // (so client_smoke catches it); a missing character model is not.
   app.rendererReady = app.renderer.init(app.session->content());
@@ -267,7 +393,12 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
 
   app.overlay.open = app.options.overlay;
   app.lastFrameNs = platform::Window::nowNs();
-  if (app.options.autostart && !app.session->startMatch(app.lastFrameNs)) {
+  if (online) {
+    // --connect connects at startup with the devices bound so far (keyboard
+    // left: one slot, unless --players); Escape returns to the local lobby,
+    // where more devices can join and Start connects again with all of them.
+    startNetwork(app, true, app.lastFrameNs);
+  } else if (app.options.autostart && !app.session->startMatch(app.lastFrameNs)) {
     std::fprintf(stderr, "warning: --autostart with no players; staying in the lobby\n");
   }
   platform::runMainLoop(&app, frame, onExit);

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.16 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.17 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -52,6 +52,25 @@ banana damages it, through a new rule row on Player × Player contacts, which `C
 now emits and `InteractionSystem` tries in both orientations; `DashAttackDef` content switch,
 `PlayerDashHit` event, a scripted-bot behaviour that exercises it (§5.3, §5.6, §5.9, §5.10,
 §5.11, §9, §12).
+v0.17 changes: `WebRtcTransport` as built (§6.4): channel labels and reliability, the
+server-hosted `ws://` signaling socket and its JSON offer/answer/candidate format, the
+callback-queue threading model, size limits, exceptions caught at the `kfm_net_webrtc` boundary;
+the libdatachannel 0.24.6 / datachannel-wasm dependency pins, OpenSSL, `KFM_WEBRTC` (§10).
+Message layer as built (§6.3): delta-coded inputs, worst-case sizes, checksummed snapshots, LZ4
+deferred at 4.7 KB; loopback emulator model and the transport contract suite (§6.4); the
+browser network check and the two datachannel-wasm link fixes (§9, §10).
+The `InputFrame` present mask is the authoritative roster: `InputSystem` copies it
+into `MatchRules::present` every tick and `RulesSystem` despawns absent players at a round start,
+so a mid-match joiner plays from the next round (§5.4, §6.6). `NetServer` (§6.6, §6.7): handshake
+checks, slot assignment, reconnect reservations (10 s), timeouts (5 s), checksum cadence (every 10
+ticks), input validation, a token-bucket rate limit (tick rate + 30 messages/s) and kicks after 32
+protocol errors in 10 s; the `ResyncRequest` message (§6.3). `NetClient` (§6.1, §6.2, §5.9, §6.9):
+the lead controller law and constants, an anchor state that makes rollbacks deeper than the ring
+possible, the event journal, spectator delay and the host call sequence. The client's network
+mode (`NetSession`, `--connect`, the net overlay panel, per-tick input windows on the
+rate-controlled clock) and when `onRollback` is called (§6.9, §7). Match restart and shutdown
+semantics (§6.6), `kfm_server` as the one-match-per-process host (§6.5), `kfm_netsim` and the
+soak and network ctests plus the `server-headless` CI job (§9), M3 landed (§11).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -279,6 +298,13 @@ the sub-tick stamp of the latest press (0 → 1) edge of any button within this 
 never update it, so it only carries meaning on a tick where a press edge occurred and
 repeated-input prediction is unaffected. The input sampler that fills it arrives in M2.
 
+Roster (v0.17): `InputFrame::present` is the authoritative roster. `InputSystem` copies it into
+`MatchRules::present` each tick; `RulesSystem` spawns the present slots and despawns any alive
+player whose slot is no longer present when a round starts. A slot that joins mid-round therefore
+waits for the next round (its bit counts toward the two-player minimum at once), and a slot that
+leaves mid-round keeps its idle monkey until it is eliminated or the round ends. The server
+changes the mask only through its frames, so prediction, rollback and replays need nothing else.
+
 Input sampler (v0.15, `engine/platform`, SDL-free and unit-tested headlessly): the client
 translates OS events into a platform-neutral `InputEvent` (key, pad button, pad axis, pad
 added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes them into an
@@ -467,6 +493,12 @@ is a defence only for a player who has thrown.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
   are dropped; events for ticks at or before the confirmed tick are final.
+- `EventJournal` (v0.17, `kfm/net/event_journal.hpp`) implements this for `NetClient`: 2048
+  entries in a fixed array sorted by tick, the hash over (kind, player, entity, a, b), equal
+  events of one tick matched by multiplicity. An event the host already drained that a
+  re-simulation does not emit again is counted as retracted (presentation cannot un-play it).
+  Final means at or before the client's verified tick, or older than the ring (no rollback can
+  reach it); delivered final entries are forgotten.
 
 ### 5.10 Arenas and content
 
@@ -580,6 +612,20 @@ netcode model.
 - Optional fixed input delay (0–3 ticks, default 0, per-match setting) trades a little local
   latency for fewer remote mispredictions, the same knob fighting games expose.
 
+Lead control in numbers (v0.17, `kfm/net/clock_sync.hpp`, integer-only): RTT and jitter come
+from `Ping`/`Pong` (every 50 ms until synced, then every 250 ms) with the RFC 6298 gains (1/8,
+1/4), except that the jitter starts at 0 instead of R/2 so the first lead is not twice the RTT.
+The initial sync waits for `Welcome`, the snapshot and three RTT samples, then sets
+`L = estimated server tick + ceil((srtt/2 + 2·jitter)/tick) + 1 − inputDelay`, where the server
+tick is extrapolated from the newest `Pong`'s tick by the time since it plus srtt/2. From then on
+the smoothed margin (EMA, gain 1/8 per `AuthInputs`) drives the rate: 1.0 inside [+1, +2] ticks,
+otherwise `1 − 1 % × (margin − nearest band edge in ticks)`, clamped to 98–102 %. Margin reports
+about inputs sent before a sync or jump are ignored. A smoothed margin below −8 ticks jumps the
+clock forward to the band's middle; the client never jumps backwards. The client's `TickClock`
+accumulates ns × `kTickHz` × rate in ppm (one tick = 10^15 units, no drift) and returns at most 8
+ticks per call. The input delay is 0–3 ticks (default 0): inputs passed at local tick L are for
+tick L + delay.
+
 Client tick, in order:
 
 ```
@@ -590,6 +636,21 @@ Client tick, in order:
 5. saveState(L); step(world, predicted[L], events)
 6. L++; presentation.render(interpolate(prev, curr), smoothingOffsets, events)
 ```
+
+`NetClient` (v0.17) maps that onto one host frame: `beginFrame()`, `pump(now)`, `reconcile()`,
+then `ticksDue(now)` times `tick(localInputs)`, then `onRollback` in presentation when
+`frameReport().rolledBack`, then render `world()`/`prevWorld()` with `drainEvents()`. It keeps the
+ring of 32 saved states (`memcpy`), the frames it stepped each tick with (128 ticks) and an anchor:
+the state at the first tick whose frame is not yet known to be authoritative. A misprediction
+inside the ring restores the saved state of its tick; an older one (a snapshot or a long burst of
+loss put the prediction more than 32 ticks ahead of the authoritative stream) re-simulates from
+the anchor, and only one older than the 128-tick frame history asks for a resync. Remote slots and
+the present mask repeat the newest authoritative frame before the tick; local slots use the
+inputs submitted for it. Inputs are resent back to the newest tick the server has assembled (at
+most 16). Checksums are compared at confirmed ticks against the saved, anchor or current state of
+that tick. A spectator (no slots) never predicts: it steps only authoritative frames and its clock
+keeps it `spectatorDelayTicks` (3) behind the newest one. `sizeof(NetClient)` is about 360 KB
+(the ring is 32 × 5.9 KB), so hosts allocate it on the heap.
 
 ### 6.3 Message layer
 
@@ -607,6 +668,7 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | `Snapshot` | S→C | reliable (transport fragments) | full `WorldState` via visitor, LZ4-compressed, plus tick |
 | Control | both | reliable | Hello/Connect (token), ContentHash/BuildId, JoinMatch, PlayerJoined/Left, MatchConfig, Chat, Disconnect |
 | Ping | both | transport stats plus our own tick-stamped ping | — |
+| `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
 consecutive packets vanish. Unreliable messages stay under 1200 bytes so they never fragment;
@@ -616,6 +678,36 @@ Bandwidth at 60 packets/s with 10 players, including transport overhead (GNS ≈
 packet with its encryption tag, WebRTC ≈ 60–80 bytes with SCTP/DTLS): client upstream ≈ 4–7 KB/s;
 server downstream per client ≈ 8–14 KB/s; one snapshot ≈ 5–20 KB. A 10-player match costs the
 server well under 150 KB/s.
+
+As built (v0.17, `kfm/net/messages.hpp`, `kProtocolVersion = 1`): every message is a one-byte
+type tag followed by LSB-first bit-packed fields, zero-padded to a byte; decoders are fallible
+without exceptions (`std::expected<void, DecodeError>`: truncated, wrong type, out of range,
+trailing bytes, invalid state, checksum mismatch), reject non-zero padding and trailing bytes,
+and are fuzzed with random and mutated buffers. The `Hello` type byte and version field are
+frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
+- Inputs are delta-coded against the slot's previous input (the first against idle): one
+  "same" bit, else a 5-bit changed-field mask and 8 bits per changed field (46 bits worst
+  case). `Input` carries `startTick`, a count of 1–16 (`kMaxInputRedundancy`), the client's slot
+  mask (a client owns several slots in local multiplayer) and the last authoritative tick it
+  received. `AuthInputs` carries the present mask once plus a "same mask" bit per later frame,
+  an optional saturated `arrivalMargin` (i8) and an optional world checksum for `endTick − back`.
+  Worst cases, asserted at compile time against `kMaxUnreliableBytes`: `Input` 931 B,
+  `AuthInputs` 935 B (10 players × 16 ticks, every field changing); a steady 10-player
+  `AuthInputs` is about 85 B, `Ping` 13 B, `Pong` 17 B.
+- `Snapshot` is the seed, present mask, a `sim::checksum` of the world and the `WorldState`
+  through the visitor; the reader checks both the visitor's validation and the checksum.
+  Measured 4 740 B with every pool full and at most 1 308 B in a scripted 10-player match, so
+  LZ4 (§10) is deferred: uncompressed is under 1/13 of `kMaxReliableBytes`.
+- Control: `Hello` (version, `contentHash`, `buildId`, a token of up to 64 bytes, requested slot
+  count with 0 = spectate), `Welcome` (assigned slots, `MatchConfig`, server tick), `Reject`
+  (protocol, content or build mismatch, bad token, match full, shutting down), `JoinMatch`,
+  `PlayerJoined`, `PlayerLeft`, `MatchConfig` (with its start tick), `Disconnect` (quit, kicked,
+  timeout, protocol error, shutting down). `Ping{sendNs, tick}` / `Pong{echo, tick, holdNs}`.
+- `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
+  with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
+  shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
+  more than 64 ticks / bad slot; `assembleNext` substitutes repeat-last and records it as the
+  authoritative input, so a late arrival can never change a stepped tick).
 
 ### 6.4 Transport abstraction
 
@@ -634,6 +726,26 @@ Implementations, in priority order:
 - `LoopbackTransport` + `NetEmulator` (latency, jitter, loss, duplication, reorder): N clients and
   a server in one process. This is how the netcode is unit-tested and how the `netsim` app works.
   Every real transport must pass the same contract test suite as the loopback.
+  As built (v0.17, `kfm/net/loopback.hpp`): a `LoopbackNetwork(seed)` hub owns the server
+  endpoint and every client endpoint; each link direction has its own `Rng` seeded from the
+  network seed, the client id and the direction, and every message consumes the same number of
+  draws whatever the probabilities, so changing one link's conditions never shifts another's and
+  a run is identical for the same seed and calls. `LaneConditions` per lane: latency, jitter
+  (uniform, capped near 4.29 s), loss, duplication and reorder in ppm, a reorder hold-back and a
+  retransmit delay. Unreliable copies arrive at send time + latency + jitter (+ hold-back);
+  the reliable lane adds `retransmitNs` per lost attempt (at most 31) and never delivers before
+  the previous reliable message on that direction, so it is exactly-once and in order.
+  A send is stamped with the sender's last poll time; a message becomes readable on the first
+  `poll(now)` at or after its delivery time, ordered by (delivery time, send order), and
+  `receivedNs` is that delivery time raised to the receiver's previous poll. Connected is seen
+  after the reliable latency on each side; `cut()` emulates a timeout on both. Client PeerIds
+  start at 1 and are never reused; the receive queue holds 8192 messages.
+  The contract suite (`tests/unit/net/transport_contract.hpp`, target
+  `kfm::transport_contract`) takes a harness (server, client, optional extra client, clock,
+  advance, timeout) and generates eleven cases: connect, both lanes both ways, reliable order and
+  exactly-once over 300 messages, both size limits with one byte over rejected, unknown peers,
+  disconnect from either side, exact stats deltas, `recv` span rules, peer identity. It runs over
+  a clean loopback and over a 30 ± 20 ms link with 20% reliable retransmits.
 - `WebRtcTransport`, the single production transport. WebRTC data channels over DTLS/SCTP/UDP:
   one channel with `ordered: false, maxRetransmits: 0` for the unreliable lane, one ordered
   reliable channel for control and snapshots. The server and the native client use libdatachannel
@@ -647,6 +759,37 @@ Implementations, in priority order:
   API-identical to Steamworks' `ISteamNetworkingSockets`, which gains Steam Datagram Relay. Kept
   behind the same interface; the server can run it alongside WebRTC so Steam and browser peers
   share a match.
+
+As built (v0.17), `kfm::net::WebRtcTransport` (`engine/net`, target `kfm_net_webrtc`):
+
+- Channels: the client opens `"r"` (ordered, reliable) and `"u"` (`unordered`,
+  `maxRetransmits = 0`) in-band; the server accepts them. A peer is `Connected` once both are
+  open; a failed or closed peer connection, or either channel closing, is `Disconnected`, and so
+  is a handshake that has not finished within `connectTimeoutMs` (10 s; on the server an
+  unfinished peer is dropped silently because it was never announced). PeerIds are assigned
+  1, 2, 3, ... when a client's signaling socket arrives and are never reused; at most
+  `maxPeers` (≤ `kMaxPeers`) at a time.
+- Limits: sends over `kMaxUnreliableBytes` / `kMaxReliableBytes`, to unknown or unconnected
+  peers, or on the unreliable lane while more than 64 KB is already buffered are dropped and
+  counted in `sendErrors`; oversize arrivals are dropped as `recvDropped`. libdatachannel
+  advertises a 256 KB SCTP max message size (browsers advertise their own 256 KB).
+- Signaling (M3): the dedicated server hosts its own plain `ws://` WebSocket
+  (`rtc::WebSocketServer`, ephemeral port allowed); the lobby service takes it over later.
+  One flat JSON object per text message, `{"type":"offer"|"answer","sdp":...}` or
+  `{"type":"candidate","candidate":...,"mid":...}`, hand-written encoder/decoder
+  (`kfm/net/webrtc_signaling.hpp`). The client offers, the server answers, both trickle
+  candidates; candidates that overtake the SDP are held until it is applied. No TURN; an
+  optional STUN URL in both configs.
+- Threading: libdatachannel's callbacks (its own threads natively, the main thread in the
+  browser) only append to one mutex-guarded queue; `poll()` drains it on the caller's thread and
+  does everything else there (creating and answering peer connections, adopting channels,
+  timeouts), so one implementation serves all three targets. Arrival times are taken on the
+  callback thread and mapped onto the caller's clock in `poll()`. `recv()` pops what `poll()`
+  made readable; its span is backed by the transport until the next `recv()`.
+- The `rtc::` API throws, so `kfm_net_webrtc` alone is built with exceptions (wasm exceptions in
+  the browser) and catches at every entry point; its header includes nothing from `rtc::`, and
+  `kfm_net` stays exception-free. The connection token rides in the client config for the message
+  layer to send; the transport never validates it (§6.7).
 
 Why WebRTC everywhere rather than GNS natively plus WebRTC for the browser: with the browser as
 the primary client there is exactly one transport in production, one code path to harden, and
@@ -663,7 +806,16 @@ C++ server library is mature. The seam makes that swap a contained change.
 
 ### 6.5 Threads
 
-- Server: `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
+- Server (M3 as built, v0.17): `kfm_server` (`apps/server`) hosts one match per process:
+  `ServerHost` drives `NetServer` over a `WebRtcTransport` server from a drift-free 60 Hz clock
+  (tick k is due at base + k·10⁹/60 ns; a frame runs at most 8 ticks and a larger backlog is
+  dropped, counted and rebased), pumping every millisecond; it fills `--bots N` slots, announces
+  the next match 3 s after `MatchEnded` with a splitmix64-derived seed and the same roster,
+  prints one log line per join/leave/kick/resync/round/match and a periodic delta stats line,
+  and on SIGINT/SIGTERM or an exit limit shuts down (300 ms linger for the reliable lane).
+  `--rounds-to-win` is deliberately absent: it would change the content hash and reject every
+  client (content negotiation is M4's). The multi-match host below is the M6 shape.
+- Server (target): `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
   matches on a thread pool (the sim is cheap). One socket I/O thread timestamps arrivals and
   pushes to a single-producer single-consumer queue per match.
 - Native client: main thread (input → sim → render submit); libdatachannel's own service threads
@@ -679,6 +831,41 @@ C++ server library is mature. The seam makes that swap a contained change.
 - Late joiners and spectators receive a snapshot at tick T plus the authoritative input stream
   from T onward. Spectators are clients without a player slot.
 - Reconnect within a grace window reuses the reserved slot through the same flow.
+- A joiner's slot is present in the authoritative frames from the tick after its `Welcome`; it
+  spawns at the next round start (§5.4 roster, v0.17).
+- `NetServer` (v0.17) is driven by its host: `pump(nowNs)` drains the transport between ticks,
+  `tick(nowNs)` assembles, steps and broadcasts one tick; it owns no clock. Handshake: `Hello` on
+  the reliable lane is checked for protocol version, content hash, build id, token (a host
+  callback; empty accepts all) and room, then answered with `Welcome` (slots, `MatchConfig`,
+  server tick), a `Snapshot` of the current world and a `PlayerJoined` broadcast, or `Reject`.
+  Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
+  a peer's slots later. Server-side bots are slots the host marks with `setBot()`; they get
+  `scriptedInput` every tick (§8).
+- Each `AuthInputs` carries the frames the peer has not acknowledged (its `lastAuthTick` from
+  `Input`, at most 16), the minimum arrival margin of its inputs since the previous send (§6.2) and,
+  every `checksumEveryTicks` = 10 ticks, the checksum of the world after the newest frame.
+- Checksum mismatch: the client sends `ResyncRequest{tick, its checksum}` (reliable); the server
+  answers with a fresh `Snapshot`, at most once per 250 ms per peer.
+- Reconnect: a peer that drops (transport close or 5 s without a packet) while holding slots and a
+  non-empty token leaves them reserved for `reconnectGraceTicks` (10 s): still present, fed an idle
+  input (not "repeat last", so a held stick does not run the monkey into a wall). A `Hello` with
+  the same token reclaims them and gets a fresh snapshot; a `Hello` whose token belongs to a
+  still-connected peer takes its slots over (the client noticed the drop first). After the window,
+  or on `Disconnect{Quit}`, the slots leave the roster (`PlayerLeft`).
+- Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` sends
+  `MatchConfig{config, startTick}` at once to every peer (and to anyone who joins before
+  `startTick`, after their snapshot); the message means "the world from `startTick` is a new
+  match whose snapshot follows". At `startTick` the server's world becomes `initialWorld` with
+  its tick set to `startTick` (ticks never go backwards, so client clocks, frame histories and the
+  assembler carry over; this is the one place outside a sim system that writes a `WorldState`
+  field, and it is safe because the sim only uses tick differences), every peer gets a
+  `Snapshot`, the bots are re-seeded and a `MatchRestarted` host event fires. The client drops
+  server checksums for ticks at or after the announced start until that snapshot loads, then
+  hard-loads it like a resync (`FrameReport::matchRestarted`), so an announced restart costs no
+  resync; an immediate restart under reliable-lane loss can cost one, which is why the host
+  announces 3 s ahead. `shutdown()` sends `Disconnect{ServerShuttingDown}` to every peer and
+  rejects later `Hello`s; `closeAll()` then drops them. `ServerConfig::maxPlayers` caps the slots
+  open to peers and bots.
 
 ### 6.7 Authority and abuse resistance
 
@@ -688,6 +875,13 @@ C++ server library is mature. The seam makes that swap a contained change.
   rides in the first reliable message. GNS and WebRTC encrypt in transit. Rate limits per address.
   Message decoders are fuzzed.
 - Aim assistance cannot be prevented server-side; acceptable for a party game.
+- `NetServer` numbers (v0.17): inputs are stored only for slots the sending peer owns (foreign
+  slots are ignored and counted), only with defined button bits (Throw..Taunt), and only for ticks
+  in the assembler window (up to 64 ticks ahead; copies of assembled ticks are redundancy, not
+  errors). `Input` messages pass a per-peer token bucket of `kTickHz + 30` messages per second with
+  a one-second burst; the rest are dropped and counted. Undecodable messages, messages before the
+  handshake, foreign slots, bad buttons and too-early ticks are protocol errors; more than 32 in
+  10 s get `Disconnect{ProtocolError}` and the slots are released at once.
 
 ### 6.8 Perceived latency budget (local actions)
 
@@ -735,6 +929,14 @@ pixels. M2 numbers (v0.15): offsets are keyed by pool index and generation and d
 1.5 units snaps; offsets below 1e-3 are cleared. Offsets move only the model: the blob shadow
 stays on the interpolated sim position, which is the hitbox. `onRollback()` exists from M2 and
 is only exercised by tests until M3.
+As wired in M3 (v0.17, `apps/client/core/net_session.cpp`): `onRollback` is called right after
+`reconcile()`, before the frame's new ticks, with the states and alpha the previous frame drew,
+so the offset is the correction alone. Called after the ticks it would also absorb the frame's
+own motion, and with a rollback on most frames (bots mispredict about 60 ticks/s) that compounds
+into a standing lag of roughly 1/(1 − e^(−dt/τ)) frames, about 120 ms for remote players. A hard
+clock jump inside the tick batch gets a second call with the new states. Presentation draws only
+the events the journal delivers (§5.9), never the raw per-tick sink; retracted events are counted
+and not yet undone on screen.
 
 ---
 
@@ -797,6 +999,31 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   windows. The browser page turns its query string into the same flags
   (`?autostart&bots=3&seed=7&overlay`).
 
+- M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
+  beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
+  `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.
+  `--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]` (the browser
+  takes the same names in the query string) creates a `WebRtcTransport` client and a
+  `NetClient`; the host sequence is `beginFrame`, `pump`, `reconcile`, `onRollback` if needed,
+  one `tick` per `ticksDue` with inputs sampled over that tick's wall-clock window (the batch
+  ends at the frame's time and earlier ticks count back at the 98–102 % rate the batch ran at,
+  `NetClient::tickStartNs(i)`), then `drainEvents` into the frame events. The lobby's bound
+  devices in slot order become devices 0, 1, …; their count is the requested slot count
+  (`--players` overrides, `--spectate` requests 0); when the session reaches Running, device i is
+  bound to the i-th set bit of `localSlots()` and held buttons are consumed. A slot without a
+  device repeats its last input and can be taken over by a free device's press as in M2.
+  Status flow: Connecting → Syncing → Running, or Rejected / Disconnected / Failed with a reason
+  on a status window that replaces the lobby; Escape disconnects and returns to the local lobby,
+  whose Start then reconnects. Online, pause, step, time scale, bot keys, restart and content
+  tuning do nothing (the server's clock and content rule; a content edit would break the hash)
+  and the overlay says so. The F1 overlay gains the §7 net panel: RTT/jitter/loss with a graph,
+  lead against target, arrival margin, clock rate, rollback depth graph and histogram,
+  mispredictions and substitutions per second, journal counts, checksums compared/mismatched,
+  resyncs, bytes/s each way. Remote humans and server bots both read `P<n>` (the roster carries
+  no bot flag). First end-to-end runs: a native client and the browser page each joined a real
+  `NetServer` over WebRTC on one machine (RTT about 3 ms in the browser, roughly 60 rollbacks/s
+  of depth ≤ 3 against bots, 0 checksum mismatches); the 3 s real-socket client test
+  (`kfm_client_net_tests`, label `network`) syncs in about 185 ms.
 M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp`:
 - World basis: sim `(x, y)` at cosmetic height `h` is world `(x, h, −y)`, right-handed, +y up.
   The camera sits on world +z (the sim −y side), so with an ordinary right-handed `lookAt` and
@@ -938,6 +1165,41 @@ art is identical up to the export step, and nothing below the presentation layer
   keyboard input, screenshots). It is a developer tool, not a CI step: a browser download per
   run and timed waits would make the gate slow and flaky, and `client_smoke` already covers
   rendering on CI.
+- `kfm_netsim` (v0.17, `apps/netsim`, over the shared `kfm::netsim` harness in
+  `engine/net/netsim` that `kfm_netcode_tests` also uses): N clients and a server in one process
+  over the loopback emulator, `--clients --rtt --jitter --loss --dup --reorder --seconds --seed
+  --input-delay --spectators --join-at --cut C:D[:AT] --csv`, a per-client-per-second CSV and the
+  soak summary line, exiting non-zero on any mismatch, resync, rollback overflow or a client not
+  running at the end. Two ctests (label `soak`, 30 s of match each, identical numbers in Debug
+  and Release because the runs are deterministic): `netsim_10c_100ms_2pct` (depth max 11 / p99 9
+  / p50 8, 50 mispredicted ticks/s, lead 4.65 against 5.24, 0.035 substitutions/s, 1.1 KB/s up
+  and 4.1 KB/s down per client; 0.3 s Release, 2 s Debug) and `netsim_10c_300ms_10pct` (depth
+  24 / 22 / 20, lead 10.7 against 11.2, 0.47 substitutions/s, 1.4 / 7.2 KB/s; 0.7 s Release,
+  3.9 s Debug), both with zero mismatches, resyncs, overflows and hard jumps. `kfm_server_tests`
+  plays a full bot match to the end over the loopback and through the restart;
+  `kfm_server_network_tests` (label `network`) runs `ServerHost` over a real `WebRtcTransport`
+  with two in-process clients on the real clock (running after about 115 ms, 0 mismatches,
+  shutdown seen by both). The transport contract suite runs over `WebRtcTransport` in
+  `kfm_net_webrtc_tests` (11 cases, about 2.6 s, 20/20 consecutive runs clean). CI gains a
+  `server-headless` job (Ubuntu 26.04, Release, FetchContent) that builds `kfm_server` and runs
+  its ctest; the native matrix runs the `soak` and `network` labels through `ctest`.
+- Browser network check (v0.17): `apps/net-probe` (`kfm_net_probe --serve PORT` natively,
+  `--connect ws://host:port` natively, `kfm_net_probe.html?connect=...` in the browser) runs a
+  `WebRtcTransport` echo exchange: idle pings for RTT, then N messages per lane of varied sizes
+  including each lane's maximum and one oversize message per lane that must be refused, and
+  prints `KFM_NET_PROBE PASS|FAIL ...` (also in `window.kfmNetProbeResult`).
+  `tools/web/check_webrtc.py` starts the native server, serves the wasm page and drives it in
+  headless Chromium; `net_probe_loopback` (`--loopback`, label `network`) covers the probe
+  natively in ctest. First browser run: 200/200 on each lane, 0 lost, 0 corrupt, 0 out of
+  order, idle RTT median 1.2 ms, connect 98 ms, no Chromium flags (the browser's host candidate
+  is an mDNS name; the server's is its interface address, so a server behind NAT needs STUN or
+  a public address). It found two datachannel-wasm link defects fixed at the build level
+  (§10): its JS glue uses `_malloc`/`_free` without declaring them (a forced dependency stub,
+  `engine/net/src/webrtc/datachannel_wasm_deps.js`) and reads `Module['HEAPU8'|'HEAPU32']`,
+  which Emscripten 4+ only exports on request (`-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32` on
+  `kfm_net_webrtc`'s interface link options; the setting is last-wins, so an executable that
+  sets its own list must keep both). Linking the transport into `kfm_client.html` costs about
+  4 KB gzipped (23 KB once referenced) and nothing in frame pacing.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
   hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
@@ -1003,6 +1265,18 @@ so every build uses the same release of each dependency. The lookups enforce the
 taking whatever is installed: SDL3 is found with `find_package(SDL3 3.4.18 EXACT CONFIG)`, so a
 distro `libsdl3-dev` of another release is ignored, and cgltf, which has no CMake package, is
 accepted from vcpkg only when its header banner reads `Version: 1.15`.
+M3 transport dependencies (v0.17), only with `KFM_WEBRTC` (default on; off builds without any
+network dependency) and also in the headless server build: libdatachannel 0.24.6 natively (vcpkg
+`libdatachannel[ws]` without default features, i.e. no `srtp` media; or FetchContent of the
+release tarball plus its plog, usrsctp and libjuice submodules as separate hashed tarballs at the
+commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS backend (system
+`libssl-dev` on the FetchContent path, the vcpkg port otherwise), and datachannel-wasm pinned to
+`f9200eb` (v0.4.0 plus a missing-include fix) for Emscripten, linked with its two
+`--js-library` files and `-fwasm-exceptions`. Both are exposed as one target, `kfm::datachannel`.
+On Windows the vcpkg dependencies are linked statically (triplet `x64-windows-static-md`, set by
+the top-level `CMakeLists.txt` unless a triplet is given): the libdatachannel DLL's import library
+exports `std::vector<std::byte>`'s members, which collide with the byte vectors every other
+object file instantiates for itself (LNK2005); the static library has no dllimport side.
 
 ---
 
@@ -1018,6 +1292,37 @@ accepted from vcpkg only when its header banner reads `Version: 1.15`.
 | M5 Bots & ML | Utility bot, nanobind env, PPO self-play baseline, ONNX agent in server | A trained policy beats the scripted bot |
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
+
+Progress: M3 landed in v0.17. `engine/net` holds the `ITransport` seam, the loopback
+transport with its deterministic emulator and the transport contract suite, the bit-packed
+message layer, `NetServer`, `NetClient` (prediction, a 32-state rollback ring plus an anchor,
+clock sync and lead control, the event journal, checksum resync, mid-match join, spectating,
+reconnect) and `WebRtcTransport` (libdatachannel natively, datachannel-wasm in the browser,
+server-hosted `ws://` signaling). `apps/server` is the headless dedicated server, `apps/netsim`
+the in-process soak tool, `apps/net-probe` the transport echo check, and `kfm_client --connect`
+(natively and as `kfm_client.html?connect=`) the network mode of the M2 client. Exit criterion:
+`kfm_netcode_tests` and the `netsim_10c_100ms_2pct` gate run 10 clients at 100 ms RTT, ±10 ms
+jitter and 2 % loss with no checksum mismatch or resync and a rollback depth bounded at 11 ticks
+(p99 9) against a 32-tick ring, and still no desync at 300 ms and 10 % loss (depth 24); a native
+`kfm_client` and the browser page each joined a real `kfm_server` with three bots over WebRTC on
+one machine (native: 16 s online across three rounds, 802 rollbacks of depth ≤ 3, 0 mismatches;
+browser: online with RTT about 3 ms, 60 fps, 0 console errors, 0 mismatches) and the WebRTC
+transport passed its browser echo check (200/200 on each lane, 0 lost). Numbers: the
+`kfm_netcode_tests` 60 s soaks give depth max 11 / p99 9 at 100 ms and 25 / 22 at 300 ms, about
+53 mispredicted ticks/s per client (the scripted aim jitters every tick), lead 4.7 against 5.3
+and 10.7 against 11.3, 0.03 and 0.5 server substitutions/s per client, about 1.1 KB/s up and
+4.0 KB/s down per client before transport overhead; a steady 10-player `AuthInputs` is about
+85 B and a full snapshot at most 4.7 KB. Verified locally on GCC 15 Debug, Release, ASan+UBSan
+(with the vptr check off: the no-RTTI engine has no typeinfo), the server-headless preset,
+Clang 21 and Emscripten 6; MSVC and Apple Clang are left to CI (`std::format` and
+`std::string::contains` are used for the first time, in `apps/server` and its tests). Sim
+change: the `InputFrame` present mask is the roster (§5.4); replay checksums unchanged, bench
+unchanged. Follow-ups: `wss://` signaling and tokens from a lobby service (M6), the warm-up
+round a joiner lands in (a solo player wins it; the server's own first round is drawn because the
+roster reaches the world one tick after start), bots that yield a slot to a human, a shared build
+id constant, retracted events undone on screen, reconnect-with-token from the UI, a server-chosen
+match config, multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
+a human playtest over a real link.
 
 Progress: M2 landed in v0.15 (pending human playtest of the exit criterion). The client opens
 an SDL3 window with a GL 4.3 core context (4.1 on macOS) through the vendored glad loader,
@@ -1072,7 +1377,8 @@ baseline moved to C++23 (§9).
   1–2 tick input delay, and, if needed, rendering remote players 1–2 ticks behind confirmed.
 - **Catch feel under latency.** Catcher-favouring is inherent; the thrower sees the catch
   ≈ RTT late. Add anticipation VFX on the dash so the result reads as intentional.
-- **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4.
+- **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4. Measured (v0.17): at
+  most 4.7 KB uncompressed with every pool full, so LZ4 is deferred until a cap rises (§6.3).
 - **Lobby/matchmaking/NAT** is a service problem, deferred behind the connection-token boundary.
 - **Browser as the primary client.** One to two frames more input latency than a tuned native
   client, Safari quirks (audio gesture, gamepad, WebGL), tab throttling (covered by snapshot
