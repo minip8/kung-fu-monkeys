@@ -945,6 +945,28 @@ so every build uses the same release of each dependency.
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
+Progress: M2 landed in v0.15 (pending human playtest of the exit criterion). The client opens
+an SDL3 window with a GL 4.3 core context (4.1 on macOS) through the vendored glad loader,
+draws the arena, players, bananas, pickups, blob shadows and effects with sokol_gfx from a
+`RenderState` built from two sim states, interpolation alpha and the tick's events, and runs
+the same code in the browser as `kfm_client.html` (WebGL2, `desynchronized` context,
+`requestAnimationFrame` loop). Players are GPU-skinned from a generated rigged test model with
+six clips and a crossfading state machine, or capsules on request. Up to ten local slots: two
+keyboard profiles and gamepads with hotplug, press-to-join lobby, scripted bots filling the
+rest, restart with the same or a new seed. Dear ImGui HUD (scores, countdown, banners, ammo
+pips) and F1 overlay (frame and tick statistics, entity inspector, pause and single step, time
+scale, interpolation policy, live content tuning printed back as C++). Rendering is checked
+without a human by `kfm_client --exit-after-frames --screenshot`, `kfm_render_probe --exit-on
+<event>` and the Linux xvfb smoke tests; the browser by `tools/web/check_browser.py` in
+headless Chromium (WebGL2 context attributes, no console errors, steady 60 fps frame pacing
+under SwiftShader, keyboard input moves and throws). `kfm_replay stats` gives the first
+feel-tuning numbers (§12): no content change in M2, replay checksums unchanged, sim bench
+unchanged (about 930k ticks/s `step()` alone in Release on the development machine). Verified
+locally on GCC 15 Debug, Release and ASan+UBSan, Clang 21 and Emscripten 6; MSVC and Apple
+Clang are left to CI. Follow-ups: the upper/lower body split and a slumping body after
+elimination (§7), the §12 catch-at-full-ammo decision, mouse aim through `screenToGround`,
+Linux audio (SDL `alsa` feature), instancing when draw calls grow, and the human playtest.
+
 Progress: M1 landed in v0.13. `engine/sim` runs the full §5.3 pipeline as ten system files:
 FFA round flow (countdown, round end, respawn, scoring, match end), input decoding with press
 edges, Dash and Throw through the `AbilityBehavior` table, movement with the arena clamp,
