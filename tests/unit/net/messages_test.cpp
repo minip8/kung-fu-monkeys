@@ -341,6 +341,8 @@ TEST_CASE("Snapshot round-trips and stays far below the reliable limit", "[net][
   sim::WorldState& w = full->world;
   while (!w.players.full()) {
     const EntityId id = w.players.spawnAt(w.players.size());
+    // Bounds the index for GCC 15's -Wstringop-overflow in Release.
+    if (id.index >= sim::kMaxPlayers) FAIL("spawnAt failed");
     w.players.items[id.index].id = PlayerId{static_cast<PlayerId::rep>(id.index)};
     w.players.items[id.index].modifiers.count = sim::kMaxModifiers;
   }
