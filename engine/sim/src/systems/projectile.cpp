@@ -5,6 +5,7 @@
 #include "angle_of.hpp"
 #include "kfm/sim/systems.hpp"
 
+#include <algorithm>
 #include <cstdint>
 
 namespace kfm::sim {
@@ -32,9 +33,7 @@ void steerToward(Boomerang& b, Vec2 target, const BoomerangDef& def) {
   if (toTarget != Vec2::zero()) {
     const Angle desired = angleOf(toTarget);
     const int32_t rate = def.turnRateBam;
-    int32_t delta = desired.signedDeltaFrom(t.facing);
-    if (delta > rate) delta = rate;
-    if (delta < -rate) delta = -rate;
+    const int32_t delta = std::clamp<int32_t>(desired.signedDeltaFrom(t.facing), -rate, rate);
     t.facing += Angle::fromBam(static_cast<uint16_t>(delta));
   }
   t.vel = Vec2::fromAngle(t.facing, def.speed);

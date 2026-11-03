@@ -267,11 +267,11 @@ TEST_CASE("bananas bounce off each wall with restitution and an event", "[sim][p
   const Fixed gap = Fixed::fromRatio(1, 10);
 
   struct Case {
-    const char* name;
-    Vec2 start;
-    Vec2 vel;
-    Vec2 wantPos;
-    Vec2 wantVel;
+    const char* name{};
+    Vec2 start{};
+    Vec2 vel{};
+    Vec2 wantPos{};
+    Vec2 wantVel{};
   };
   const Case cases[] = {
       {"+x",
