@@ -30,7 +30,8 @@ rules gain an ownership field and a boomerang-phase mask.
 v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7);
 the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the pickup radius
 (§5.10); bananas spawn clear of the thrower (§5.7);
-the stick is idle iff `moveMag == 0` (§5.4).
+the stick is idle iff `moveMag == 0` (§5.4);
+rule-table semantics and the `HitStun` tick convention pinned (§5.6).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -263,7 +264,13 @@ on a tick where a button edge occurred, so repeated-input prediction is unaffect
 
 `CollisionSystem` emits contacts `(a, b, info)`. `InteractionSystem` resolves each by scanning
 a prioritised rules table keyed on `(kindA, requiredTagsA, kindB, requiredTagsB)`; the first
-match wins.
+match whose handler returns `true` wins. A handler returning `false` means "did not apply, keep
+scanning": that is how a perfect catch judged outside its time window falls through to
+`DamagePlayer` without the catch rule knowing about damage. Contacts are resolved in `tHit`
+order (then earlier dash press, then pool index), and a contact whose entity an earlier contact
+despawned is skipped. Every row forbids `Tag::Eliminated` on the player: a player eliminated
+earlier in the same tick stays in the pool until `LifecycleSystem` and must not be hit, catch
+or pick up again.
 
 ```
 prio  A                          B                              handler
@@ -291,7 +298,10 @@ HP semantics (v0.10):
   `ModifierSystem` applies this when it recomputes `Stats`.
 - `DamagePlayer` emits `PlayerHit`, grants `Tag::HitStun` for `hitStunTicks` (content, a few
   ticks) so a piercing banana overlapping the victim across ticks lands once, and emits
-  `PlayerEliminated` if `hp <= 0`. The banana grounds at the contact point and becomes a pickup
+  `PlayerEliminated` if `hp <= 0`. Tick convention (v0.13): `hitStunTicks = N` counts the hit
+  tick. A hit on tick T protects against contacts on T..T+N−1 (the tag is set in step 7 and
+  `ModifierSystem` counts down in step 8 of the same tick), freezes movement on T+1..T+N−1
+  (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. The banana grounds at the contact point and becomes a pickup
   unless it has `pierce`, in which case it keeps flying.
 - Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
   consumed (rule 20); armour is `+maxHp`. A mode or power-up picks one or stacks both.

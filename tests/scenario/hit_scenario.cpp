@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstddef>
+#include <vector>
 
 using namespace kfm;
 using namespace kfm::sim;
@@ -110,4 +111,52 @@ TEST_CASE("a missed banana returns and is auto-caught by its thrower", "[scenari
   CHECK(s.boomerangs.empty());
   CHECK(s.playerBySlot(PlayerId{1})->ammo == content.player.ammoStart);
   CHECK(s.rules.phase == MatchPhase::Playing);
+}
+
+// HitStun tick convention (architecture §5.6): a hit on tick T with
+// hitStunTicks = N stuns for N ticks counting the hit tick. Contacts on ticks
+// T..T+N-1 find the tag (InteractionSystem runs before ModifierSystem counts
+// down), movement is frozen on T+1..T+N-1 (movement on T ran before the hit),
+// and the tag is gone at the end of T+N-1.
+TEST_CASE("HitStun lasts hitStunTicks counting the hit tick", "[scenario][hit]") {
+  ContentDB content = defaultContent();
+  content.player.maxHp = 3;  // survive the hits
+  const int n = content.player.hitStunTicks;
+  REQUIRE(n >= 2);
+  WorldState s = makePlayingWorld(23, 0b11, content);
+  placePlayer(s, PlayerId{0}, Vec2::zero());
+  placePlayer(s, PlayerId{1}, Vec2{Fixed::fromInt(10), Fixed::zero()});
+  const Vec2 incoming{Fixed::fromRatio(-3, 10), Fixed::zero()};
+  // 1.0 away closing at 0.3/tick against a 0.85 contact distance: hits mid-tick.
+  spawnBanana(s, PlayerId{1}, Vec2{Fixed::one(), Fixed::zero()}, incoming, BoomerangPhase::Outbound,
+              content);
+
+  InputFrame f = frameFor(s);
+  f.inputs[0] = PlayerInput{64, 255, 0, 0, 0};  // walk +y throughout
+  const Tick hitTick = s.tick;
+  std::vector<SimEvent> hits;
+  for (int k = 0; k <= n; ++k) {
+    if (k == n - 1) {
+      // A second banana arriving on the last stunned tick: it must land one
+      // tick later, on T+N, not on T+N-1.
+      const Player& p0 = *s.playerBySlot(PlayerId{0});
+      spawnBanana(s, PlayerId{1}, p0.transform.pos + Vec2{Fixed::one(), Fixed::zero()}, incoming,
+                  BoomerangPhase::Outbound, content);
+    }
+    const Vec2 before = s.playerBySlot(PlayerId{0})->transform.pos;
+    EventLog log;
+    runTicks(s, f, 1, content, log);
+    for (const SimEvent& e : log) {
+      if (e.kind == EventKind::PlayerHit) hits.push_back(e);
+    }
+    const Player& p0 = *s.playerBySlot(PlayerId{0});
+    const bool moved = p0.transform.pos != before;
+    INFO("tick T+" << k);
+    CHECK(moved == (k == 0 || k == n));
+    CHECK(p0.tags.has(Tag::HitStun) == (k < n - 1 || k == n));  // T+N: the second hit
+    if (k == 0) CHECK(p0.hitStunTicks == n - 1);
+  }
+  REQUIRE(hits.size() == 2);
+  CHECK(hits[0].tick == hitTick);
+  CHECK(hits[1].tick == hitTick.plus(n));
 }
