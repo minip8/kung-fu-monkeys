@@ -27,7 +27,8 @@ v0.12 changes: M1 interfaces pinned (§5.3, §5.5, §5.6, Appendix A). `step()` 
 `ContentDB` explicitly; the ability and rule tables are `constexpr` (no startup registration);
 hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, keep scanning") and
 rules gain an ownership field and a boomerang-phase mask.
-v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7).
+v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7);
+the perfect catch ignores an own outbound banana (§5.6).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -292,7 +293,11 @@ HP semantics (v0.10):
 - Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
   consumed (rule 20); armour is `+maxHp`. A mode or power-up picks one or stacks both.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
-are rule-table decisions, not code changes.
+are rule-table decisions, not code changes. M1 decides the first: the catch is two rows,
+`Player[PerfectDash] × Boomerang[InFlight, !own]` (prio 10) and
+`Player[PerfectDash] × Boomerang[Returning, own]` (prio 11). An own outbound banana passes
+through its thrower with or without a dash; otherwise a dash (22 u/s) that outruns the banana
+it just threw (16 u/s) would catch it straight back.
 
 ### 5.7 Boomerang model
 

@@ -67,7 +67,7 @@ EventSink resolve(WorldState& s, const Contacts& cs, const ContentDB& content = 
 
 TEST_CASE("rules table is sorted and every row ignores eliminated players", "[sim][interaction]") {
   const auto rules = interactionRules();
-  REQUIRE(rules.size() == 4);
+  REQUIRE(rules.size() == 5);
   for (size_t i = 0; i < rules.size(); ++i) {
     if (i > 0) CHECK(rules[i - 1].priority < rules[i].priority);
     CHECK(rules[i].kindA == EntityKind::Player);
@@ -156,6 +156,29 @@ TEST_CASE("mistimed perfect dash on an own outbound banana does nothing", "[sim]
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, Fixed::zero())}));
   CHECK(sink.count == 0);
   CHECK(s.boomerangs.isAlive(banana));
+}
+
+TEST_CASE("a perfect dash passes through an own outbound banana", "[sim][interaction]") {
+  WorldState s = makePlayingWorld(1, 0b11);
+  const EntityId banana = spawnBanana(s, kP0, Vec2::zero(), Vec2{Fixed::one(), Fixed::zero()});
+  givePerfectDash(s, kP0, s.tick, 0);  // inside the window
+  const EventSink sink =
+      resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
+  CHECK(sink.count == 0);
+  CHECK(s.boomerangs.isAlive(banana));
+}
+
+TEST_CASE("a perfect dash catches an own returning banana as Perfect", "[sim][interaction]") {
+  WorldState s = makePlayingWorld(1, 0b11);
+  const EntityId banana =
+      spawnBanana(s, kP0, Vec2::zero(), Vec2::zero(), BoomerangPhase::Returning);
+  givePerfectDash(s, kP0, s.tick, 0);
+  const EventSink sink =
+      resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
+  REQUIRE(sink.count == 1);
+  CHECK(sink.events[0].kind == EventKind::BoomerangCaught);
+  CHECK(sink.events[0].a == static_cast<uint32_t>(CatchHow::Perfect));
+  CHECK_FALSE(s.boomerangs.isAlive(banana));
 }
 
 TEST_CASE("own outbound banana matches no rule", "[sim][interaction]") {

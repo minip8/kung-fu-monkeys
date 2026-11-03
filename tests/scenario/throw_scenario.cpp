@@ -102,8 +102,17 @@ TEST_CASE("throw while dashing spawns the banana from the moving player", "[scen
   log = stepWith(s, PlayerInput{0, 0, 0, 0, 0});
   const SimEvent* thrown = findEvent(log, EventKind::BoomerangThrown);
   REQUIRE(thrown != nullptr);
-  const Boomerang& b = *s.boomerangs.get(thrown->entity);
-  CHECK(near(b.transform.prevPos.x, posBeforeSpawnTick.x + content.boomerang.spawnOffset));
+  const Boomerang* b = s.boomerangs.get(thrown->entity);
+  REQUIRE(b != nullptr);  // an own outbound banana passes through its dashing thrower
+  CHECK(near(b->transform.prevPos.x, posBeforeSpawnTick.x + content.boomerang.spawnOffset));
+  // The dash (22 u/s) outruns the banana (16 u/s): the thrower overtakes its
+  // own banana while still holding PerfectDash, and it must not catch it.
+  const EntityId bananaId = thrown->entity;
+  EventLog after = stepWith(s, PlayerInput{0, 0, 0, 0, 0});
+  const EventLog more = stepWith(s, PlayerInput{0, 0, 0, 0, 0});
+  after.insert(after.end(), more.begin(), more.end());
+  CHECK(countEvents(after, EventKind::BoomerangCaught) == 0);
+  CHECK(s.boomerangs.isAlive(bananaId));
 }
 
 namespace {

@@ -13,10 +13,17 @@ namespace {
 // LifecycleSystem runs; no row may touch it again.
 constexpr Tags kGone = Tags::of(Tag::Eliminated);
 
-constexpr std::array<InteractionRule, 4> kRules = {{
-    // Player[PerfectDash] x Boomerang[InFlight]: perfect catch (any owner).
+// The perfect catch is two rows: any banana in flight that is not the
+// catcher's, and the catcher's own banana only once it is returning. An own
+// outbound banana passes through its thrower (as it does without a dash), so
+// throwing while dashing never catches the banana just thrown.
+constexpr std::array<InteractionRule, 5> kRules = {{
+    // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
-     Tags{}, kPhaseInFlight, Ownership::Any, &catchBoomerang},
+     Tags{}, kPhaseInFlight, Ownership::NotOwn, &catchBoomerang},
+    // Player[PerfectDash] x Boomerang[Returning, own]: perfect catch of one's own.
+    {11, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
+     Tags{}, kPhaseReturning, Ownership::Own, &catchBoomerang},
     // Player[!HitStun, !Invulnerable] x Boomerang[InFlight, !own]: damage.
     {30, EntityKind::Player, Tags{}, kGone | Tag::HitStun | Tag::Invulnerable,
      EntityKind::Boomerang, Tags{}, Tags{}, kPhaseInFlight, Ownership::NotOwn, &damagePlayer},
