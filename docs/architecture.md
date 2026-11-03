@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.14 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.15 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -41,6 +41,11 @@ the snapshot reader rejects out-of-range enums, ids and indices (§5.2); the rep
 defined by a checked-in manifest and re-recorded on regeneration, with no content-hash exemption
 (§9); the sim float check also rejects float literals, `fromDouble`/`toFloat`/`toDouble` and
 `<cmath>` (§5.1).
+v0.15 changes: M2 (playable local client) decisions. Presentation pinned: world basis, fixed
+arena camera, interpolation/snap/smoothing constants, cosmetic height curves, facing, effects,
+palette and placeholder meshes (§7); GL-only sokol backends with hand-written GLSL and a vendored
+glad loader, GL 4.3 core natively (§7, §10); the input sampler's tap, sub-tick and aim semantics
+(§5.4); the M2 dependency set and how each is sourced (§10); the client smoke test (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -262,6 +267,35 @@ players: a held button never re-fires. `subTick` is explained in §5.11. Precise
 the sub-tick stamp of the latest press (0 → 1) edge of any button within this tick; releases
 never update it, so it only carries meaning on a tick where a press edge occurred and
 repeated-input prediction is unaffected. The input sampler that fills it arrives in M2.
+
+Input sampler (v0.15, `engine/platform`, SDL-free and unit-tested headlessly): the client
+translates OS events into a platform-neutral `InputEvent` (key, pad button, pad axis, pad
+added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes them into an
+`InputSampler`, which is sampled once per tick immediately before `step()`:
+- Actions, not keys: Up/Down/Left/Right/Throw/Dash, each with key aliases per keyboard profile
+  and button aliases per gamepad profile. An action is down while any alias is down, so a
+  second alias of a held action is not an edge; key repeats are ignored.
+- Tap semantics: a button bit is set if the action is held at sampling time or was pressed
+  during the tick, so a tap shorter than one tick yields exactly one pressed tick followed by a
+  released one. Every event pushed since the previous sample belongs to the tick being sampled;
+  events are not split across ticks by timestamp (a frame that runs two steps gives all presses
+  to the first).
+- `subTick = clamp((pressNs − tickStartNs) · 256 / tickDurationNs, 0, 255)` for the latest
+  Throw or Dash press edge of the tick; movement keys and releases never stamp; 0 without a
+  press edge; late presses clamp to 0 and presses after the tick end to 255.
+- Movement: digital keys give the 8 directions with `moveMag = 255` and opposing keys cancel;
+  sticks use a radial deadzone of 0.2 rescaled so the deadzone edge is 0, SDL's +Y-down flipped
+  to sim +y-up, `moveMag` in 1..255 outside the deadzone and exactly 0 inside; the dpad is used
+  only while the left stick is inside its deadzone.
+- Aim: the right stick when outside its deadzone, otherwise the current non-idle move
+  direction, otherwise the previous aim (never reset). Keyboard aim follows movement.
+- Local multiplayer: a device feeds at most one slot; `PadRemoved` unbinds its slot and flags it
+  as dropped (nothing rebinds automatically); `pollJoin()` reports the first unbound device
+  that pressed Throw or Dash this tick, which is how "press a button to join" works. Default
+  bindings: keyboard profile 0 is WASD with J or Space to throw and K or Left Shift to dash;
+  profile 1 is the arrow keys with Period or Right Ctrl to throw and Slash or Right Shift to
+  dash; gamepads move with the left stick (dpad fallback), aim with the right stick, throw with
+  West or Right Shoulder and dash with South or Left Shoulder.
 
 ### 5.5 Abilities (the modularity core)
 
@@ -610,7 +644,10 @@ C++ server library is mature. The seam makes that swap a contained change.
 - Prediction applies the input in the same tick.
 - Render interpolates between the previous and current tick (≤ 1 tick) or renders the newest
   tick directly when display rate ≥ tick rate. Natively, use a low-latency present mode and avoid
-  deep swapchain queues.
+  deep swapchain queues. M2 numbers (v0.15): an entity is interpolated only when the same
+  `EntityId` (index and generation) exists in both states; otherwise, or when it moved more than
+  2.0 units between the two ticks (a dash moves about 0.37 per tick), it snaps to the newest
+  state, its body yaw resets and any smoothing offset is cleared.
 - Browser specifics: request the WebGL context with `desynchronized: true` (bypasses the
   compositor queue in Chromium), read input and step the sim at the top of the
   `requestAnimationFrame` callback, render the newest predicted tick directly rather than
@@ -625,7 +662,11 @@ After a rollback, each visible entity records `visualOffset = oldRenderPos − n
 decays it exponentially over ~100–150 ms, snapping instead when the error exceeds a threshold
 (teleports, dashes). The local player snaps or blends very briefly. The remote-player
 "warp" per misprediction is small: a direction change hidden for ~4 ticks moves a monkey a few
-pixels.
+pixels. M2 numbers (v0.15): offsets are keyed by pool index and generation and decay as
+`exp(−dt/τ)` with τ = 120 ms for remote entities and 30 ms for local players; a correction over
+1.5 units snaps; offsets below 1e-3 are cleared. Offsets move only the model: the blob shadow
+stays on the interpolated sim position, which is the hitbox. `onRollback()` exists from M2 and
+is only exercised by tests until M3.
 
 ---
 
@@ -668,6 +709,46 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
 - Local multiplayer is first-class: several humans on one client each own a player slot, all
   predicted locally; the server sees them as separate players behind one connection.
 
+M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp`:
+- World basis: sim `(x, y)` at cosmetic height `h` is world `(x, h, −y)`, right-handed, +y up.
+  The camera sits on world +z (the sim −y side), so with an ordinary right-handed `lookAt` and
+  `perspective`, sim +x is screen right, sim +y is screen up (away from the camera) and sim
+  angles turn counter-clockwise on screen. A sim `Angle` θ is a world yaw of θ; models face
+  model +x. Matrices are column-major `float[16]`, uploaded to GL without transposition.
+- Camera: vertical FOV 30°, pitch 55° below the horizon, perspective. The distance is solved
+  (bisection) so the arena box plus 1.8 units of height above it fills the viewport with a 6%
+  margin on the limiting axis at any aspect ratio, and a lens shift (off-axis projection)
+  re-centres it vertically. `worldToScreen` serves HUD labels and `screenToGround` mouse aim.
+- Height curves: dash hop `0.35·sin(πu)` over the Dash active phase; hit-stun lift
+  `0.4·sin(πu)`; a flying banana rides at hand height 0.6 plus an arc of 0.5 that rises as a
+  sine over the outbound phase and falls with the remaining distance to the owner while
+  returning, so it is on the ground at the throw and at the owner; pickups hover at 0.15 ± 0.08
+  and spin slowly. The monkey placeholder capsule is 3.2 radii tall.
+- Facing: body yaw follows the dash direction while dashing, otherwise the move direction
+  (keeping the last non-zero one), limited to 720°/s; aim yaw follows the aim directly. A dash
+  stretches the forward axis by 0.18 and hit-stun squashes height by up to 0.2.
+- Effects from events: dash ring 0.25 s, perfect-catch flash 0.4 s, auto-catch flash 0.2 s, hit
+  flash 0.2 s, throw puff 0.25 s, elimination burst 0.6 s, round-start / round-end / match-end
+  banners 1 / 1.5 / 3 s; at most 64 live effects, the one nearest expiry is replaced when full.
+  Screen shake adds 0.12 per hit, 0.3 per elimination, 0.08 per perfect catch, capped at 0.5,
+  decays with τ = 0.15 s and oscillates at 23 Hz.
+- Palette (slot order): red, blue, yellow, green, orange, purple, cyan, pink, white, charcoal;
+  every pair at least 0.25 apart in RGB.
+- Placeholder meshes are generated on the CPU (`meshes.hpp`): capsule (16 × 4 per hemisphere),
+  banana (a tapered tube bent along a quarter arc whose chord equals the hitbox diameter), disc,
+  floor quad whose `uv` is the sim-plane position (a one-unit grid is `fract(uv)`), unit cube.
+- Rendering backends in M2: sokol_gfx GL only (`SOKOL_GLCORE` natively, `SOKOL_GLES3` /
+  WebGL2 in the browser) with hand-written GLSL emitted for `#version 330 core` or
+  `#version 300 es` by a compile-time prefix; no sokol-shdc until D3D11/Metal/WebGPU are
+  wanted. Natively GL is loaded through a vendored glad2 loader (`third_party/glad`, GL 4.3
+  core, generated reproducibly; the command is in its README) with `SOKOL_EXTERNAL_GL_LOADER`
+  and `SDL_GL_GetProcAddress`, so no machine needs system GL headers. The context is 4.3 core
+  forward-compatible (4.1 on macOS): sokol decides at compile time from the header whether to
+  use texture views and at run time from the driver, so a 4.1 header on a 4.3+ driver renders
+  every texture black; 4.3 matches sokol's own Win32 loader. sokol is its own CMake target
+  (`kfm::sokol`: one implementation TU, backend define as a public compile definition) so the
+  renderer in `presentation` can use it without depending on `platform`.
+
 Character drawing sits behind one interface in `presentation` so that nothing else knows
 whether a character is a skinned mesh or a quad. The earlier plan, pre-rendered 8-direction
 sprites from the same Blender models, remains the fallback if the 3D renderer stalls M2: the
@@ -707,6 +788,13 @@ art is identical up to the export step, and nothing below the presentation layer
   one number to track, `kfm_replay bench` stands in for Google Benchmark (v0.13): it times
   `step()` over scripted matches (with and without input generation), restarting a match that
   ends so every timed tick is live gameplay.
+- Client smoke test (v0.15): `kfm_client --exit-after-frames N [--screenshot out.ppm]` renders
+  N frames and exits, so rendering is checked without a human: on Linux CI a `client_smoke`
+  ctest runs it under `xvfb-run` with Mesa's software rasteriser (X11, `LIBGL_ALWAYS_SOFTWARE`),
+  registered only when `xvfb-run` exists at configure time. The browser page sets
+  `webglContextAttributes` (`desynchronized`, `powerPreference`, no antialias) and, because SDL3
+  creates its context through `emscripten_webgl_create_context` which ignores that setting,
+  also wraps `getContext('webgl2')` to merge the same attributes.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
   hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
@@ -754,6 +842,15 @@ art is identical up to the export step, and nothing below the presentation layer
 | Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, nanobind, ONNX Runtime, cgltf, Blender (asset pipeline) |
 
 Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `server-headless`, `wasm` (Emscripten).
+M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
+x11`, or FetchContent `release-3.4.18` built static with the same optional subsystems switched
+off as the port, so both paths build the same SDL; SDL 3.4 aborts configuration on Linux when an
+enabled optional dependency is missing, and neither path has Linux audio until the `alsa`
+feature is added); Dear ImGui 1.93.0 (FetchContent only: the vcpkg `imgui[sdl3-binding]` port
+re-enables sdl3's default `ibus`/`dbus` features and drags in libsystemd and meson); sokol
+pinned to floooh/sokol `efeb776` (FetchContent only, the vcpkg port is a 2023 snapshot); glad2
+2.0.8 vendored; cgltf 1.15 (vcpkg or FetchContent). FetchContent uses release tarballs with
+SHA256 hashes. The Emscripten build compiles SDL3 from the same source.
 When a package is not found through vcpkg (no `VCPKG_ROOT`, or the `wasm` preset, which sets
 `KFM_USE_VCPKG=OFF`), CMake falls back to FetchContent pinned to the same version as the manifest,
 so every build uses the same release of each dependency.
@@ -836,6 +933,10 @@ baseline moved to C++23 (§9).
   perfect catch ignores an own outbound banana (§5.6); `HitStun` counts the hit tick (§5.6);
   idle stick iff `moveMag == 0` (§5.4); `PerfectDash` covers the sub-tick end of the window
   (§5.5); the wall bounce stays in `ProjectileSystem` until arenas have interior walls (§5.6).
+- Decided (v0.15, M2): world basis and fixed arena camera, interpolation/snap/smoothing
+  constants, height curves, facing and effects (§6.8, §6.9, §7); GL-only sokol backends with
+  hand-written GLSL, vendored glad loader, GL 4.3 core natively (§7, §10); input sampler
+  semantics and default bindings (§5.4); dependency sourcing (§10).
 - Open (M2 feel tuning): a perfect catch at full ammo destroys the banana, so with `ammoMax = 1`
   the thrower stays empty-handed until it finds a pickup. Alternatives: catch only below
   `ammoMax`, or drop the caught banana as a pickup.
