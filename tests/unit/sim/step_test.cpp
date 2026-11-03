@@ -1,5 +1,6 @@
 #include "kfm/sim/step.hpp"
 
+#include "kfm/core/rng.hpp"
 #include "kfm/sim/world_state.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -44,7 +45,8 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
   EventSink sink;
   step(s, emptyFrame(s), defaultContent(), sink);
   CHECK(s.tick == Tick{1});
-  CHECK(s.rules.phase == MatchPhase::Playing);
+  // The first tick starts round 1: players spawn and the countdown begins.
+  CHECK(s.rules.phase == MatchPhase::RoundStarting);
   CHECK(s.players.size() == 3);
   REQUIRE(s.playerBySlot(PlayerId{0}) != nullptr);
   REQUIRE(s.playerBySlot(PlayerId{2}) != nullptr);
@@ -55,7 +57,13 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
   // Spawned at the arena spawn point of their slot, with content stats.
   const ContentDB& content = defaultContent();
   const Player& p9 = *s.playerBySlot(PlayerId{9});
-  CHECK(p9.transform.pos == content.arena.spawnPoints[9]);
+  // Spawn points go by rank among present slots plus a per-round offset drawn
+  // from the world RNG: seed 7 draws offset 2, slot 9 has rank 2 -> point 4.
+  {
+    Rng rng = Rng::seeded(7);
+    REQUIRE(rng.below(content.arena.spawnPointCount) == 2);
+  }
+  CHECK(p9.transform.pos == content.arena.spawnPoints[4]);
   CHECK(p9.hp == content.player.maxHp);
   CHECK(p9.ammo == content.player.ammoStart);
   CHECK(p9.stats.moveSpeed == content.player.moveSpeed);
