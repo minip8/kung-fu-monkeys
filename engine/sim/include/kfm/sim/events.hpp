@@ -36,6 +36,8 @@ enum class EventKind : uint8_t {
   TimerWarning,     // a = whole seconds left on the mode's clock (10, 3, 2, 1)
   ShieldBroken,     // player = shielded victim, entity = the banana or the dashing player,
                     // a = attacker slot, b = power-up index whose shield broke (§5.8)
+  // v0.21 (abilities, §5.5):
+  PlayerBlinked,  // player, entity = player, a/b = origin x/y (raw Q16.16 bits as uint32)
 };
 
 // BoomerangCaught payload `a`.

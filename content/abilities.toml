@@ -7,7 +7,7 @@
 # second (the loader divides by 60 and truncates toward zero, like
 # Fixed::fromRatio). Every key but name and kind is optional (0 / empty).
 #
-# Keys: name, kind (dash | throw), cooldown_ticks, startup_ticks,
+# Keys: name, kind (dash | throw | blink), cooldown_ticks, startup_ticks,
 # active_ticks, recovery_ticks, perfect_window_ticks, speed, param0, param1,
 # tags_startup, tags_active, tags_recovery (lists of tag names: dashing,
 # perfect_dash, hit_stun, shielded, invulnerable, eliminated).
@@ -39,3 +39,15 @@ cooldown_ticks = 8          # a banana every 8 ticks while the hands are fast
 startup_ticks = 1
 active_ticks = 1
 recovery_ticks = 3
+
+# Blink (v0.21): a teleport dash. After a short telegraph the monkey jumps
+# speed x active_ticks along its stick (or facing), stopped by walls; nothing
+# on the path is touched. No tags: a banana still hits during the startup.
+[[ability]]
+name = "blink"
+kind = "blink"
+cooldown_ticks = 90         # 1.5 s from press to the next blink
+startup_ticks = 6           # 0.1 s telegraph before the jump
+active_ticks = 10           # the jump: speed x active_ticks = 5 units
+recovery_ticks = 6
+speed = 30                  # units/s over the active ticks

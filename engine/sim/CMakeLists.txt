@@ -9,6 +9,7 @@ add_library(kfm_sim STATIC
   src/abilities/registry.cpp
   src/abilities/dash.cpp
   src/abilities/throw.cpp
+  src/abilities/blink.cpp
   src/modes/mode_flow.cpp
   src/modes/registry.cpp
   src/modes/rounds.cpp

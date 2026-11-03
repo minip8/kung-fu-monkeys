@@ -123,7 +123,10 @@ extra `AbilityState` per player changed every world checksum; the corpus was reg
 checked equal with slot 3 left out of the visitor). Loadouts list 2 or 3 names; a mode may carry
 its own (`ModeDef::abilities`, read through `MatchContent::loadout()`); any kind may sit in any
 slot or be granted by an `AbilityOverride` (the same-kind rule is gone) as long as the dash and
-throw buttons fire something; `kMaxAbilityDefs` 16 (§5.8, §5.10).
+throw buttons fire something; `kMaxAbilityDefs` 16 (§5.8, §5.10). New kinds, each a behaviour
+file, a def in `content/abilities.toml`, one registry line and a scenario test, reached through
+`rounds_*` modes whose loadout puts them on the ability button: Blink (a teleport dash, no tags
+of its own so a telegraphed blinker is still hit; `PlayerBlinked`).
 v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
 `kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
 `Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
@@ -501,6 +504,19 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   because the window `[press, press + perfectWindowTicks)` measured from the press instant
   closes inside that tick (§5.11). The tag says "the window may be open this tick"; the catch
   rule judges the exact instant. Tags are a bitset read by the interaction rules.
+- Kinds beyond the base kit (v0.21), each one behaviour file under `src/abilities/`, a def in
+  `content/abilities.toml`, one registry line and a scenario test; they read only `AbilityDef`
+  numbers and add no `AbilityState` field:
+  - Blink (`blink.cpp`): the direction is captured at the press (stick, else facing); on the
+    Startup → Active transition the monkey moves by `dir × speed × activeTicks` through
+    `statics::moveCircle` (Slide, outer box included), so walls stop it like a walk. The jump
+    happens in `AbilitySystem`, before `MovementSystem` sets `prevPos`, so the swept collision
+    never sees the path: bananas and monkeys on it are passed, not touched. Blink grants no
+    tags. Decided against `Dashing` during the startup: that tag arms the dash attack (row 25),
+    so a standing blinker would strike whoever walked into it; without it the startup is a
+    plain, readable telegraph during which a banana hits as usual, and nothing in the rules
+    table changes. `PlayerBlinked` carries the origin. Shipped: 6-tick startup, a 5-unit jump
+    (30 u/s over 10 ticks), 1.5 s cooldown, in mode `rounds_blink`.
 
 ### 5.6 Interaction rules (where the twists live)
 
@@ -746,6 +762,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
   respawn or late join; `PlayerSpawned` stays the round-start spawn), `TimerWarning{seconds}`
   (10, 3, 2, 1 s left on the mode clock).
+  v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`.
   `RoundEnded`, ...
 - v0.20: `PickupSpawned` and `PickupTaken` carry the pickup's `PickupKind` in `a` and, for a
   power-up, its def index in `b` (a banana pickup's payload stays 0/0), which is all a

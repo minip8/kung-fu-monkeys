@@ -55,6 +55,7 @@ enum class AbilityKind : uint8_t {
   None = 0,
   Dash,
   Throw,
+  Blink,   // v0.21: teleport dash (abilities/blink.cpp)
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 enum class AbilityPhase : uint8_t { Idle = 0, Startup, Active, Recovery };
@@ -67,8 +68,8 @@ struct AbilityDef {
   uint16_t activeTicks{0};
   uint16_t recoveryTicks{0};
   uint16_t perfectWindowTicks{0};  // Dash: first N active ticks grant Tag::PerfectDash
-  Fixed speed{};                   // Dash: dash speed (units/tick). Throw: unused
-  Fixed param0{};                  // kind-specific spare numeric params
+  Fixed speed{};   // Dash: dash speed; Blink: distance per active tick (units/tick). Throw: unused
+  Fixed param0{};  // kind-specific spare numeric params
   Fixed param1{};
   Tags tagsStartup{};  // tags granted during each phase
   Tags tagsActive{};

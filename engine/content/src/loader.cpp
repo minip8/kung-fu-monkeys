@@ -73,9 +73,10 @@ struct AbilityKindName {
   std::string_view name;
   AbilityKind kind;
 };
-constexpr std::array<AbilityKindName, 2> kAbilityKinds = {{
+constexpr std::array<AbilityKindName, 3> kAbilityKinds = {{
     {"dash", AbilityKind::Dash},
     {"throw", AbilityKind::Throw},
+    {"blink", AbilityKind::Blink},
 }};
 static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
               "every AbilityKind but None needs a TOML name in kAbilityKinds");
@@ -1296,6 +1297,10 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     }
     if (d.kind == AbilityKind::Dash && d.activeTicks <= d.perfectWindowTicks) {
       fail(where + ": active_ticks must exceed perfect_window_ticks");
+    }
+    // A blink jumps speed × active_ticks (v0.21).
+    if (d.kind == AbilityKind::Blink && (d.activeTicks < 1 || d.speed <= Fixed::zero())) {
+      fail(where + ": a blink needs active_ticks >= 1 and a positive speed (its distance)");
     }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");

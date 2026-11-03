@@ -2,6 +2,7 @@
 // AbilityKind, in enum order.
 #include "kfm/sim/abilities/registry.hpp"
 
+#include "kfm/sim/abilities/blink.hpp"
 #include "kfm/sim/abilities/dash.hpp"
 #include "kfm/sim/abilities/throw.hpp"
 
@@ -27,6 +28,7 @@ constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> 
     kNoneBehavior,    // AbilityKind::None
     dashBehavior(),   // AbilityKind::Dash
     throwBehavior(),  // AbilityKind::Throw
+    blinkBehavior(),  // AbilityKind::Blink
 };
 
 }  // namespace

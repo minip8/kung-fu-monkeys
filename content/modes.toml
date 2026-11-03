@@ -42,3 +42,12 @@ rounds_to_win = 3
 time_limit_ticks = 3600     # 60 s per round
 round_start_ticks = 60
 round_end_ticks = 120
+
+# Ability modes (v0.21): rounds with a third ability on the ability button.
+[[mode]]
+name = "rounds_blink"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "blink"]
