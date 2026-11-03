@@ -79,8 +79,11 @@ constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-
 #endif
 }
 
-[[nodiscard]] bool gameInputBlocked(const App& app) {
-  return app.overlay.open && platform::debugUiWantsKeyboard();
+// Whenever an ImGui widget has the keyboard (the overlay's fields, but also
+// the lobby's Bots field with the overlay closed), key presses go to it, not
+// to the game bindings or the app shortcuts.
+[[nodiscard]] bool gameInputBlocked() {
+  return platform::debugUiWantsKeyboard();
 }
 
 // App shortcuts that are not game bindings.
@@ -92,7 +95,7 @@ void handleShortcut(App& app, const SDL_Event& event) {
     app.overlay.open = !app.overlay.open;
     return;
   }
-  if (gameInputBlocked(app)) return;
+  if (gameInputBlocked()) return;
   switch (sc) {
     case SDL_SCANCODE_ESCAPE:
       if (s.phase() == SessionPhase::Match) {
@@ -135,7 +138,7 @@ void onEvent(void* user, const SDL_Event& event) {
   if (!input) return;
   // While a debug text field has the keyboard, key presses stay out of the
   // game; releases always go through so no key is left held.
-  if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked(*app)) return;
+  if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked()) return;
   app->session->push(*input);
 }
 
