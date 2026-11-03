@@ -3,10 +3,10 @@
 //
 // - A perfect catch needs room below ammoMax (v0.16): a full-ammo perfect
 //   dash into a non-own banana declines the catch and takes the hit, and the
-//   banana grounds into a pickup like any other hit.
+//   banana flies on through it like any other hit (v0.27).
 // - Supply = ammo held + bananas in flight + pickups. It never reaches 0
-//   while two or more players are alive (a banana hit grounds the hitting
-//   banana into a pickup; a dash attack leaves the attacker holding its
+//   while two or more players are alive (a banana that hits flies on and
+//   comes home or grounds; a dash attack leaves the attacker holding its
 //   ammo), so a round can always still end. Checked over scripted matches.
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
@@ -39,7 +39,7 @@ constexpr uint8_t kAimRight = 0;
 TEST_CASE("a perfect dash at full ammo into a non-own banana takes the hit",
           "[scenario][catch][supply]") {
   const ContentDB& content = defaultContent();
-  // Three players so the round goes on after the hit and the pickup stays.
+  // Three players so the round goes on after the hit.
   WorldState s = makePlayingWorld(31, 0b111);
   placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::zero()});
   placePlayer(s, PlayerId{1}, Vec2{Fixed::fromInt(4), Fixed::zero()});
@@ -79,12 +79,12 @@ TEST_CASE("a perfect dash at full ammo into a non-own banana takes the hit",
   CHECK(s.playerBySlot(PlayerId{0}) == nullptr);
   REQUIRE(s.rules.phase == MatchPhase::Playing);
 
-  // The hitting banana grounded into a pickup; the victim's held banana went
-  // with it. Supply: player 2's banana plus the pickup.
+  // The hitting banana flies on toward its thrower; the victim's held banana
+  // went with it. Supply: player 2's banana plus the one in flight.
   CHECK(playerAt(s, PlayerId{1}).ammo == 0);
-  CHECK(s.boomerangs.size() == 0);
-  CHECK(s.pickups.size() == 1);
-  CHECK(countEvents(log, EventKind::PickupSpawned) == 1);
+  CHECK(s.boomerangs.size() == 1);
+  CHECK(s.pickups.empty());
+  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
   CHECK(supplyOf(s) == 2);
 }
 

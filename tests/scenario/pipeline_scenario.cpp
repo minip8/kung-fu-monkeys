@@ -175,11 +175,9 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
                    EventKind::MatchEnded, EventKind::BoomerangCaught}) ==
           (round < content.modes[0].roundsToWin
                ? std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
-                                        EventKind::PlayerEliminated, EventKind::BoomerangGrounded,
-                                        EventKind::PickupSpawned, EventKind::RoundEnded}
+                                        EventKind::PlayerEliminated, EventKind::RoundEnded}
                : std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
-                                        EventKind::PlayerEliminated, EventKind::BoomerangGrounded,
-                                        EventKind::PickupSpawned, EventKind::RoundEnded,
+                                        EventKind::PlayerEliminated, EventKind::RoundEnded,
                                         EventKind::MatchEnded}));
     const SimEvent& ended = onlyEvent(roundLog, EventKind::RoundEnded);
     CHECK(ended.player == kP1);
@@ -276,22 +274,26 @@ TEST_CASE("the press sub-tick decides a catch at the window edges", "[scenario][
 
 TEST_CASE("walking over a grounded banana picks it up unless at ammoMax", "[scenario][pipeline]") {
   const ContentDB& content = defaultContent();
-  // Ground a banana: player 1 eliminates player 2 at (0, 0) in a 3-player
-  // match (so the round goes on), leaving a pickup near the origin.
+  // Ground a banana: player 1 throws it away from everyone, then is
+  // eliminated (a hit flies on, so a gone owner is what grounds it), leaving
+  // a pickup where the banana was. Player 2 stays, so the round goes on.
   WorldState s = makePlayingWorld(43, 0b111);
   placePlayer(s, kP0, at(-6, 6));
   placePlayer(s, kP1, at(6, 0));
-  placePlayer(s, PlayerId{2}, at(0, 0));
+  placePlayer(s, PlayerId{2}, at(6, -6));
   InputFrame f = frameFor(s);
   f.inputs[1].aimDir = kAimLeft;
   f.inputs[1].buttons = kThrow;
   EventLog log;
   runTicks(s, f, 1, content, log);
   f.inputs[1].buttons = 0;
+  runTicks(s, f, 20, content, log);
+  REQUIRE(s.boomerangs.size() == 1);
+  playerAt(s, kP1).tags.set(Tag::Eliminated);
   for (int i = 0; i < 60 && s.pickups.empty(); ++i) {
     runTicks(s, f, 1, content, log);
   }
-  REQUIRE(countEvents(log, EventKind::PlayerEliminated) == 1);
+  REQUIRE(s.playerBySlot(kP1) == nullptr);
   REQUIRE(s.pickups.size() == 1);
   REQUIRE(s.rules.phase == MatchPhase::Playing);
   const SimEvent& spawned = onlyEvent(log, EventKind::PickupSpawned);
@@ -310,17 +312,18 @@ TEST_CASE("walking over a grounded banana picks it up unless at ammoMax", "[scen
     CHECK(playerAt(s, kP0).ammo == content.player.ammoMax);
   }
   SECTION("empty-handed, the player takes it") {
-    // Player 1 threw: its ammo is 0. Walk it across the pickup along +x.
-    REQUIRE(playerAt(s, kP1).ammo == 0);
-    placePlayer(s, kP1, lying - at(3, 0));
+    // Empty player 2's hand, then walk it across the pickup along +x.
+    const PlayerId kP2{2};
+    playerAt(s, kP2).ammo = 0;
+    placePlayer(s, kP2, lying - at(3, 0));
     InputFrame walk = frameFor(s);
-    walk.inputs[1] = PlayerInput{kMoveRight, 255, 0, 0, 0};
+    walk.inputs[2] = PlayerInput{kMoveRight, 255, 0, 0, 0};
     EventLog walked;
     runTicks(s, walk, 60, content, walked);
     const SimEvent& taken = onlyEvent(walked, EventKind::PickupTaken);
-    CHECK(taken.player == kP1);
+    CHECK(taken.player == kP2);
     CHECK(taken.entity == spawned.entity);
     CHECK(s.pickups.empty());
-    CHECK(playerAt(s, kP1).ammo == 1);
+    CHECK(playerAt(s, kP2).ammo == 1);
   }
 }

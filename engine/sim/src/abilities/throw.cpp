@@ -12,7 +12,7 @@ namespace kfm::sim {
 namespace {
 
 // The thrower's live Projectile grants, in slot order, snapshotted onto the
-// banana (§5.8): muls multiply, damage adds (saturating), pierce ors.
+// banana (§5.8): muls multiply, damage adds (saturating).
 void applyProjectileModifiers(Boomerang& b, const Player& p, const ContentDB& db) {
   int32_t damage = b.damage;
   for (uint8_t i = 0; i < p.modifiers.count && i < kMaxModifiers; ++i) {
@@ -23,7 +23,6 @@ void applyProjectileModifiers(Boomerang& b, const Player& p, const ContentDB& db
       b.speedMul = b.speedMul * grant.projectile.speedMul;
       b.radiusMul = b.radiusMul * grant.projectile.radiusMul;
       damage += grant.projectile.damageAdd;
-      b.pierce = static_cast<uint8_t>(b.pierce | grant.projectile.pierce);
     }
   }
   b.damage = static_cast<uint8_t>(damage < UINT8_MAX ? damage : UINT8_MAX);
@@ -38,7 +37,6 @@ void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const MatchCo
   b.owner = p.id;
   b.phase = BoomerangPhase::Outbound;
   b.damage = def.damage;
-  b.pierce = def.pierce;
   applyProjectileModifiers(b, p, content.db);
   // The banana travels from the thrower's centre to its spawn point through
   // the interior walls (v0.22), so a throw at a wall bounces off it instead

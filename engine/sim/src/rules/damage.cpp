@@ -1,8 +1,7 @@
 // Damage on hit (prio 30, architecture §5.6 HP semantics, §5.7). hp and damage
-// count hits; the victim gets HitStun so a piercing banana overlapping across
-// ticks lands once, and is tagged Eliminated at 0 hp (LifecycleSystem despawns
-// it at the end of the tick). The banana grounds at the contact point unless
-// it pierces.
+// count hits; the victim gets HitStun so a banana overlapping it across ticks
+// lands once, and is tagged Eliminated at 0 hp (LifecycleSystem despawns it at
+// the end of the tick). The banana always flies on through its victim (v0.28).
 #include "kfm/sim/modes/registry.hpp"
 #include "kfm/sim/rules/handlers.hpp"
 #include "rules/apply_damage.hpp"
@@ -28,21 +27,13 @@ void applyDamage(WorldState& s, const MatchContent& content, Player& victim, Ent
 }
 
 bool damagePlayer(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
-                  const Contact& contact, EventSink& sink) {
+                  const Contact& /*contact*/, EventSink& sink) {
   Player* victim = s.players.get(a);
-  Boomerang* banana = s.boomerangs.get(b);
+  const Boomerang* banana = s.boomerangs.get(b);
   if (victim == nullptr || banana == nullptr) return false;
 
   applyDamage(s, content, *victim, a, banana->damage,
               HitSource{EventKind::PlayerHit, b, banana->owner.value}, sink);
-
-  if (banana->pierce == 0) {
-    banana->phase = BoomerangPhase::Grounded;
-    banana->ticksInPhase = 0;
-    banana->transform.pos = contact.point;
-    banana->transform.prevPos = contact.point;
-    banana->transform.vel = Vec2::zero();
-  }
   return true;
 }
 

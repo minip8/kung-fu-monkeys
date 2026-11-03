@@ -647,7 +647,6 @@ class Builder {
     s.fixed("restitution", b.restitution, Fixed::zero(), Fixed::fromInt(4));
     s.fixed("spawn_offset", b.spawnOffset, Fixed::zero(), Fixed::fromInt(16));
     s.integer("damage", b.damage, 0, 255);
-    s.flag("pierce", b.pierce);
   }
 
   void parsePickup(Section& s) {
@@ -848,7 +847,6 @@ class Builder {
       g.fixed("speed_mul", out.projectile.speedMul, Fixed::epsilon(), kMaxProjectileMul);
       g.fixed("radius_mul", out.projectile.radiusMul, Fixed::epsilon(), kMaxProjectileMul);
       g.integer("damage_add", out.projectile.damageAdd, 0, 255);
-      g.flag("pierce", out.projectile.pierce);
     } else if (*kind == "tag") {
       out.kind = GrantKind::Tag;
       if (const std::optional<Tag> t = g.tag("tag", true)) {
@@ -1159,7 +1157,6 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
               grant.projectile.radiusMul > kMaxProjectileMul) {
             fail(at + ": speed_mul and radius_mul must be in (0, 4]");
           }
-          if (grant.projectile.pierce > 1) fail(at + ": pierce is a 0/1 switch");
           break;
         case GrantKind::Tag:
           if (!grantableTag(grant.tag)) fail(at + ": only shielded or invulnerable");
@@ -1356,7 +1353,6 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     fail("[boomerang] spawn_offset must exceed player radius + boomerang radius (" +
          fixedText(c.player.radius + c.boomerang.radius) + ")");
   }
-  if (c.boomerang.pierce > 1) fail("[boomerang] pierce is a 0/1 switch");
   // The default dash attack needs a banana in hand (§5.6); 0 would make
   // every dash an attack.
   if (c.dashAttack.minAmmo < 1) fail("[dash_attack] min_ammo must be at least 1");

@@ -176,8 +176,7 @@ WorldState richWorld() {
                 Angle::fromBam(77),
                 40,
                 4,
-                1,
-                0};
+                1};
   const EntityId k = s.pickups.spawn();
   spawned(s.pickups, k) = Pickup{PickupKind::Banana, Vec2{-4_fx, 5_fx}, 0, 0};
   // v0.20: a power-up pickup and a banana carrying projectile modifiers.
@@ -186,7 +185,6 @@ WorldState richWorld() {
   const EntityId b2 = s.boomerangs.spawn();
   Boomerang& big = spawned(s.boomerangs, b2);
   big.owner = PlayerId{0};
-  big.pierce = 1;
   big.radiusMul = 2_fx;
   big.speedMul = Fixed::fromRatio(17, 20);
   return s;
@@ -208,7 +206,6 @@ TEST_CASE("write/read round-trips every M1 state type", "[sim][visit]") {
   CHECK(b.boomerangs.size() == 2);
   CHECK(b.boomerangs.items[1].radiusMul == 2_fx);
   CHECK(b.boomerangs.items[1].speedMul == Fixed::fromRatio(17, 20));
-  CHECK(b.boomerangs.items[1].pierce == 1);
   CHECK(b.boomerangs.items[0].radiusMul == Fixed::one());
   CHECK(b.pickups.items[1].kind == PickupKind::PowerUp);
   CHECK(b.pickups.items[1].powerUpIndex == 4);
@@ -348,9 +345,6 @@ TEST_CASE("reader rejects out-of-range enums, ids and indices", "[sim][visit]") 
   }
   SECTION("Player.grantedTags above Tag::kCount") {
     a.players.items[0].grantedTags.bits |= uint32_t{1} << static_cast<uint32_t>(Tag::kCount);
-  }
-  SECTION("Boomerang.pierce above 1") {
-    a.boomerangs.items[0].pierce = 2;
   }
   SECTION("player id differs from its slot (would index scores[200])") {
     a.players.items[0].id = PlayerId{200};

@@ -53,9 +53,9 @@ TEST_CASE("a three-player round: last one standing wins, then everyone respawns"
   CHECK(s.playerBySlot(PlayerId{2}) == nullptr);
   CHECK(s.rules.phase == MatchPhase::Playing);
   CHECK(countEvents(log, EventKind::PlayerEliminated) == 1);
-  CHECK(countEvents(log, EventKind::BoomerangGrounded) == 1);
-  CHECK(countEvents(log, EventKind::PickupSpawned) == 1);
-  CHECK(s.pickups.size() == 1);
+  // The banana flies on (v0.27); the round reset below clears it.
+  CHECK(countEvents(log, EventKind::BoomerangGrounded) == 0);
+  CHECK(s.boomerangs.size() == 1);
   log.clear();
 
   // Player 1 falls: player 0 wins the round.

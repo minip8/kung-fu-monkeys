@@ -32,12 +32,11 @@ struct StatModifier {
 
 // Applied to every banana the holder throws while the power-up is live, and
 // snapshotted onto the Boomerang at the throw (it outlives the power-up).
-// Several combine in slot order: muls multiply, damage adds, pierce ors.
+// Several combine in slot order: muls multiply, damage adds.
 struct ProjectileModifier {
   Fixed speedMul{Fixed::one()};
   Fixed radiusMul{Fixed::one()};
   uint8_t damageAdd{0};
-  uint8_t pierce{0};  // 0/1
 };
 
 enum class GrantKind : uint8_t {

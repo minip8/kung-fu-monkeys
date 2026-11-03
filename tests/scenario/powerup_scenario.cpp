@@ -30,12 +30,11 @@ const PlayerId kP2{2};
 // Indices of the shipped power-ups, in powerups.toml order.
 constexpr uint8_t kSpeed = 0;
 constexpr uint8_t kBig = 1;
-constexpr uint8_t kPierce = 2;
-constexpr uint8_t kTriple = 3;
-constexpr uint8_t kShield = 4;
-constexpr uint8_t kFastHands = 5;
+constexpr uint8_t kTriple = 2;
+constexpr uint8_t kShield = 3;
+constexpr uint8_t kFastHands = 4;
 
-// defaultContent() plus the throw_fast ability and the six power-ups.
+// defaultContent() plus the throw_fast ability and the five power-ups.
 ContentDB powerUpContent() {
   ContentDB c = defaultContent();
   AbilityDef fast = c.abilities[c.player.abilities[kAbilitySlotThrow]];
@@ -50,12 +49,9 @@ ContentDB powerUpContent() {
   ProjectileModifier big;
   big.radiusMul = Fixed::fromInt(2);
   big.speedMul = Fixed::fromRatio(85, 100);
-  ProjectileModifier pierce;
-  pierce.pierce = 1;
   addPowerUp(c, "speed_boost", 480,
              {statGrant(StatKind::MoveSpeed, Fixed::fromRatio(3, 2), Fixed::zero())});
   addPowerUp(c, "big_banana", 600, {projectileGrant(big)});
-  addPowerUp(c, "piercing_banana", 600, {projectileGrant(pierce)});
   addPowerUp(c, "triple_banana", 900,
              {statGrant(StatKind::AmmoMax, Fixed::one(), Fixed::fromInt(2))});
   addPowerUp(c, "shield", 900, {tagGrant(Tag::Shielded)});
@@ -157,33 +153,6 @@ TEST_CASE("big banana: wider and slower bananas that hit what a normal one misse
     log = idle(s, content, 50);
     CHECK(countEvents(log, EventKind::PlayerHit) == (powered ? 1 : 0));
   }
-}
-
-TEST_CASE("piercing banana: one banana hits two players, even after the power-up expired",
-          "[scenario][powerup]") {
-  const ContentDB content = powerUpContent();
-  WorldState s = makePlayingWorld(43, 0b1111, content);
-  placePlayer(s, kP0, at(-7, 0));
-  placePlayer(s, kP1, at(-3, 0));
-  placePlayer(s, kP2, at(0, 0));
-  placePlayer(s, PlayerId{3}, at(0, 8));
-  // Live for 3 ticks: the throw (startup 2) still sees it, the hits do not.
-  givePowerUp(playerAt(s, kP0), kPierce, 3);
-  EventLog log;
-  const EntityId id = throwRight(s, content, log);
-  const Boomerang* thrown = s.boomerangs.get(id);
-  REQUIRE(thrown != nullptr);
-  REQUIRE(thrown->pierce == 1);
-  log = idle(s, content, 2);
-  REQUIRE(playerAt(s, kP0).modifiers.count == 0);  // expired before any hit
-  log = idle(s, content, 40);
-  int hitsByIt = 0;
-  for (const SimEvent& e : log) {
-    if (e.kind == EventKind::PlayerHit && e.entity == id) ++hitsByIt;
-  }
-  CHECK(hitsByIt == 2);
-  CHECK(s.playerBySlot(kP1) == nullptr);
-  CHECK(s.playerBySlot(kP2) == nullptr);
 }
 
 TEST_CASE("triple banana: ammoMax +2 with a top-up, clamped back on expiry",

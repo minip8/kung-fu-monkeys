@@ -3,7 +3,7 @@
 //
 // - Row 20, Player[Shielded] × Boomerang[InFlight, !own] (the same tags the
 //   damage row 30 needs, so a shield only breaks on a hit that would land):
-//   no damage; the banana grounds at the contact point, piercing or not.
+//   no damage; the banana grounds at the contact point.
 // - Row 24, Player[Dashing] × Player[Shielded] (the dash-attack row 25's
 //   tags): declines below DashAttackDef::minAmmo like the attack itself;
 //   otherwise no damage, the attacker's dash stops (its slot goes to
@@ -46,7 +46,7 @@ uint8_t consumeShield(Player& p, const ContentDB& db) {
     break;
   }
   p.tags.clear(Tag::Shielded);
-  // The block staggers like a hit, so the same dash or a piercing banana
+  // The block staggers like a hit, so the same dash or a banana
   // still overlapping on the next ticks cannot land straight through.
   p.hitStunTicks = db.player.hitStunTicks;
   if (p.hitStunTicks > 0) p.tags.set(Tag::HitStun);

@@ -86,8 +86,7 @@ struct BoomerangDef {
   uint16_t turnRateBam{0};     // max heading change per tick while returning (BAM units)
   Fixed restitution{};         // wall bounce velocity scale (1 = elastic)
   Fixed spawnOffset{};         // distance ahead of the thrower where it spawns
-  uint8_t damage{1};
-  uint8_t pierce{0};  // 0/1: keeps flying after a hit
+  uint8_t damage{1};           // per hit; the banana flies on through its victim
 };
 
 // Pickups lying in the arena (M1: grounded bananas; M4 adds power-ups).

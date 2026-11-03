@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.26 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.28 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -193,6 +193,13 @@ and the contest. Dropped: ONNX Runtime, the nanobind `VecEnv`, every training de
 §2, §4, §10). Human-likeness is a host setting, not part of the bot: input delay matching the
 human lead in mixed matches, none bot versus bot, difficulty tiers only for the built-in bot
 (§8). M5 reframed as the agent platform with a new exit criterion; the ladder moves to M6 (§11).
+v0.27 changes: bananas pierce by default (`[boomerang] pierce = true`): a hit no longer grounds
+the banana, it flies on through the victim and comes home; the `piercing_banana` power-up is
+removed, shifting the later power-up indices (§5.6, §5.7, §5.8, §12).
+v0.28 changes: the pierce switch is gone. Every banana flies on through the monkeys it hits;
+`BoomerangDef::pierce`, `Boomerang::pierce`, `ProjectileModifier::pierce` and their TOML keys
+are removed, and a banana no longer grounds on a hit under any content (§5.2, §5.6, §5.7, §5.8,
+§5.10, §12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -370,10 +377,10 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   neither invalid nor a slot, an ability `defIndex` past the def table, or a tag bit above
   `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
   system would index or shift by. v0.20 adds a power-up index past `kMaxPowerUps`, a pickup
-  spawner past `kMaxPickupSpawners`, a banana `pierce` above 1 and `grantedTags` bits above
-  `Tag::kCount`.
-- Power-up fields (v0.20): a banana's `speedMul` and `radiusMul` (after `pierce`, a plain 0/1
-  byte), a pickup's `spawner` and a player's `grantedTags` are visited unconditionally like
+  spawner past `kMaxPickupSpawners`, a banana `pierce` above 1 (the field is gone since v0.28)
+  and `grantedTags` bits above `Tag::kCount`.
+- Power-up fields (v0.20): a banana's `speedMul` and `radiusMul` (after `damage`; a `pierce` byte
+  sat between them until v0.28), a pickup's `spawner` and a player's `grantedTags` are visited unconditionally like
   every other field; adding them changed every world checksum and the corpus was regenerated.
   A `ModifierList` visits only its live prefix, as before.
 - Mode counters (v0.23): `MatchRules`' per-player `deaths`, `respawnTicks` and `invulnTicks`
@@ -697,19 +704,19 @@ HP semantics (v0.10):
   expires), `hp = min(hp, maxHp)` but never below 1: losing a modifier never eliminates.
   `ModifierSystem` applies this when it recomputes `Stats`.
 - `DamagePlayer` emits `PlayerHit`, grants `Tag::HitStun` for `hitStunTicks` (content, a few
-  ticks) so a piercing banana overlapping the victim across ticks lands once, and emits
+  ticks) so a banana overlapping the victim across ticks lands once, and emits
   `PlayerEliminated` if `hp <= 0`. Tick convention (v0.13): `hitStunTicks = N` counts the hit
   tick. A hit on tick T protects against contacts on T..T+N−1 (the tag is set in step 7 and
   `ModifierSystem` counts down in step 8 of the same tick), freezes movement on T+1..T+N−1
-  (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. The banana grounds at the contact point and becomes a pickup
-  unless it has `pierce`, in which case it keeps flying.
+  (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. The banana keeps flying
+  through its victim (v0.27; since v0.28 there is no switch to make it ground instead).
 - Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
   consumed (rule 20, and rule 24 for a dash attack); armour is `+maxHp`. A mode or power-up picks
   one or stacks both. As built (v0.20): rows 20 and 24 key on the tags of the rows they pre-empt
   (30 and 25), so a shield breaks only on a hit that would land. The block removes the first
   `ModifierList` entry whose def grants `Shielded` (ending that power-up), clears the tag and
   gives the victim `HitStun` for `hitStunTicks` like a hit, without damage; a blocked banana
-  grounds at the contact point even when it pierces; a blocked dash stops (the attacker's dash
+  grounds at the contact point; a blocked dash stops (the attacker's dash
   slot jumps to Recovery and its dash tags drop), because the rest of the dash would otherwise
   land once the stagger ran out. Both emit `ShieldBroken`.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
@@ -720,23 +727,23 @@ through its thrower with or without a dash; otherwise a dash (22 u/s) that outru
 it just threw (16 u/s) would catch it straight back.
 The catch also needs room for the banana (v0.16): `CatchBoomerang` declines when the catcher
 already holds `ammoMax`, checked before the time window. The scan then falls through as for a
-mistimed dash: a non-own banana in flight reaches row 30 and hits the full-ammo dasher (and
-grounds into a pickup), an own returning banana reaches row 40 and is auto-caught (absorbed even
+mistimed dash: a non-own banana in flight reaches row 30 and hits the full-ammo dasher (and flies
+on through it, v0.27), an own returning banana reaches row 40 and is auto-caught (absorbed even
 at full ammo, as without a dash). A perfect catch therefore always gains a banana, and the dash
 is a defence only for a player who has thrown.
 
 ### 5.7 Boomerang model
 
 - State: `owner`, `phase` {Outbound, Returning, Grounded}, `pos`, `vel`, `spin`, `ticksAlive`,
-  `damage` (default 1, a one-hit kill against base `maxHp`), `pierce`, and (v0.20) the
+  `damage` (default 1, a one-hit kill against base `maxHp`), and (v0.20) the
   projectile modifiers `speedMul` and `radiusMul` snapshotted at the throw (§5.8): the banana
   flies at `BoomerangDef::speed × speedMul` out and back, and its wall limits and contact radius
   use `BoomerangDef::radius × radiusMul`. Bananas already bounce off every wall without limit, so
   an "extra bounces" modifier has nothing to extend and is not built.
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
-  eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
-  contact point.
+  eliminated → Grounded → becomes a pickup. Hits a player → flies on unchanged (v0.28: no
+  `pierce` switch; before v0.27 a hit grounded it at the contact point).
 - A throw spawns the banana `spawnOffset` (1.0) ahead of the thrower along the aim, clear of
   the thrower's contact radius (0.5 + 0.35), so no throw starts with a contact against its owner.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
@@ -791,7 +798,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
     ability def while the power-up is live; the last override in slot order wins. Buttons
     belong to slots (v0.21), so the def may be of any kind, and an override of the empty third
     slot adds an ability for the power-up's duration.
-  - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd, pierce}`, each mul in
+  - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd}`, each mul in
     (0, 4].
   - `Tag`: `shielded` or `invulnerable` (the others belong to abilities and the damage rules).
 - State: a `ModifierList` entry is `ActiveModifier{powerUp, ticksLeft}`; the grants are read
@@ -819,7 +826,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   hand are lost (bananas in flight still return and are caught up to the cap).
 - Projectile modifiers are combined at the throw (`abilities/throw.cpp`) over the thrower's live
   `Projectile` grants in slot order (muls multiply, `damageAdd` adds onto `BoomerangDef::damage`
-  saturating at 255, `pierce` ors) and stored on the `Boomerang` (`damage`, `pierce`, `speedMul`,
+  saturating at 255) and stored on the `Boomerang` (`damage`, `speedMul`,
   `radiusMul`), so a banana keeps them after the power-up expires or its thrower is eliminated.
 - Spawners: `ArenaDef::pickupSpawners` (`kMaxPickupSpawners` 8): `PickupSpawner{pos,
   powerUpSet (bit i = power-up i, 0 = all), firstTicks, intervalTicks (0 = once), maxAlive}`.
@@ -842,7 +849,6 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   |---|---|---|
   | `speed_boost` | 8 s | `move_speed` × 1.5 |
   | `big_banana` | 10 s | bananas radius × 2, speed × 0.85 |
-  | `piercing_banana` | 10 s | bananas pierce |
   | `triple_banana` | 15 s | `ammo_max` + 2 (tops up 2 bananas) |
   | `shield` | 15 s | `shielded`: absorbs one hit |
   | `fast_hands` | 10 s | throw slot runs `throw_fast` (cooldown 8 instead of 20, startup 1) |
@@ -1034,7 +1040,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `color` (palette 0–9), `shape` (`orb` | `cube` | `diamond` | `coin`) and `grants` (required,
   1–4 inline tables): `{ kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max", mul, add }`,
   `{ kind = "ability", slot = "dash" | "throw", ability = "<name>" }`,
-  `{ kind = "projectile", speed_mul, radius_mul, damage_add, pierce }`,
+  `{ kind = "projectile", speed_mul, radius_mul, damage_add }`,
   `{ kind = "tag", tag = "shielded" | "invulnerable" }`. An arena's optional `spawners` is a list
   of up to 8 `{ pos = [x, y], power_ups = ["<name>", ...], first_ticks, interval_ticks,
   max_alive }` (`power_ups` absent = every power-up). Ability and power-up names resolve after
@@ -2289,6 +2295,23 @@ baseline moved to C++23 (§9).
   almost every miss is a press stamped a fraction of a tick after impact, not a short window;
   short rounds (4p median 4.6 s) come from the scripted bot's 2 Hz near-perfect throwing, not
   from the content (a 4× slower thrower gives a 9.9 s median). Human playtests decide the rest.
+- Decided (v0.27): bananas pierce by default. `[boomerang] pierce = true` in the base kit and
+  `defaultContent()`, so a banana hit damages and the banana flies on, out and back to its
+  thrower as on a miss; a piercing banana that crosses several monkeys hits each once (`HitStun`
+  still stops a double hit on one victim). Shield blocks, slams, a gone owner and
+  `maxReturnTicks` still ground bananas, so pickups remain but are rarer. The supply floor still
+  holds: a banana that hits stays in flight and is counted as supply until it comes home or
+  grounds. The `piercing_banana` power-up had nothing left to grant and is removed; the
+  `ProjectileModifier::pierce` grant stays for content that turns the base switch off (both removed in v0.28). Removing
+  it shifts the indices of `triple_banana`, `shield` and `fast_hands` (and their
+  `MatchConfig::powerUps` bits); that is safe because the content hash pins indices in replays
+  and on the wire, the corpus was regenerated and saved lobby settings name power-ups rather
+  than index them.
+- Decided (v0.28): no pierce switch. With every banana piercing, `[boomerang] pierce` and the
+  projectile grant's `pierce` only offered a way back to the old rule, and the owner chose to
+  drop them: the fields leave `BoomerangDef`, `Boomerang` and `ProjectileModifier`, the loader
+  rejects the keys as unknown, and `DamagePlayer` never grounds a banana. Shield blocks, slams,
+  a gone owner and `maxReturnTicks` are now the only ways a banana grounds.
 - Decided (v0.26): bots are a public contract, a sandboxed and instruction-metered wasm module
   behind a four-export C ABI; the SDKs, example bots and contest live in a separate repository;
   no training stack in the engine (ONNX Runtime and the nanobind env dropped); human-likeness is

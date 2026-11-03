@@ -622,13 +622,13 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                  "spawner 0: pos (3.000, 1.000) is in pit hazard 0"));
 }
 
-TEST_CASE("content/ ships the six power-ups and an arena that spawns them",
+TEST_CASE("content/ ships the five power-ups and an arena that spawns them",
           "[content][loader][powerup]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
-  const std::array<std::string_view, 6> names = {"speed_boost",   "big_banana", "piercing_banana",
-                                                 "triple_banana", "shield",     "fast_hands"};
+  const std::array<std::string_view, 5> names = {"speed_boost", "big_banana", "triple_banana",
+                                                 "shield", "fast_hands"};
   REQUIRE(db.powerUpCount == names.size());
   for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);

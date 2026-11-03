@@ -14,7 +14,7 @@
 #   { kind = "ability", slot = "dash" | "throw" | "ability", ability = "<ability name>" }
 #       the slot runs that ability (any kind: buttons belong to slots) while live;
 #       it switches when the slot is idle, its cooldown capped at the new def's.
-#   { kind = "projectile", speed_mul, radius_mul, damage_add, pierce }
+#   { kind = "projectile", speed_mul, radius_mul, damage_add }
 #       applied to each banana thrown while live and kept by that banana.
 #   { kind = "tag", tag = "shielded" | "invulnerable" }
 #       shielded absorbs one banana hit or dash attack, then the power-up ends.
@@ -33,13 +33,6 @@ duration_ticks = 600        # 10 s
 color = 2                   # yellow
 shape = "orb"
 grants = [{ kind = "projectile", radius_mul = 2, speed_mul = 0.85 }]
-
-[[powerup]]
-name = "piercing_banana"
-duration_ticks = 600
-color = 5                   # purple
-shape = "cube"
-grants = [{ kind = "projectile", pierce = true }]
 
 [[powerup]]
 name = "triple_banana"
