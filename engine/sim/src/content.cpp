@@ -84,6 +84,10 @@ constexpr ContentDB makeDefaultContent() {
   c.mode.roundsToWin = 3;
   c.mode.roundEndTicks = 120;
   c.mode.roundStartTicks = 60;
+
+  c.dashAttack.damage = 1;
+  c.dashAttack.minAmmo = 1;
+  c.dashAttack.consumesAmmo = 0;
   return c;
 }
 
@@ -105,6 +109,10 @@ static_assert(kDefaultContent.arena.halfExtents.x <= Fixed::fromInt(1024) &&
 static_assert(kDefaultContent.boomerang.spawnOffset >
                   kDefaultContent.player.radius + kDefaultContent.boomerang.radius,
               "a thrown banana spawns clear of its thrower (§5.7)");
+static_assert(kDefaultContent.dashAttack.minAmmo >= 1,
+              "the default dash attack needs a banana in hand (§5.6); minAmmo = 0 would make "
+              "every dash an attack");
+static_assert(kDefaultContent.dashAttack.consumesAmmo <= 1, "consumesAmmo is a 0/1 switch");
 
 }  // namespace
 

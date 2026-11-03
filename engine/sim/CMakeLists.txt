@@ -12,6 +12,7 @@ add_library(kfm_sim STATIC
   src/rules/table.cpp
   src/rules/catch.cpp
   src/rules/damage.cpp
+  src/rules/dash_attack.cpp
   src/rules/auto_catch.cpp
   src/rules/pickup.cpp
   src/systems/rules.cpp

@@ -47,7 +47,10 @@ palette and placeholder meshes (§7); GL-only sokol backends with hand-written G
 glad loader, GL 4.3 core natively (§7, §10); the input sampler's tap, sub-tick and aim semantics
 (§5.4); the M2 dependency set and how each is sourced (§10); the client smoke test (§9).
 v0.16 changes: a perfect catch needs room below `ammoMax`; at full ammo the catch declines and a
-non-own banana hits the dasher (§5.6, §12).
+non-own banana hits the dasher (§5.6, §12). Dash attack: dashing into an enemy while holding a
+banana damages it, through a new rule row on Player × Player contacts, which `CollisionSystem`
+now emits and `InteractionSystem` tries in both orientations; `DashAttackDef` content switch,
+`PlayerDashHit` event (§5.3, §5.6, §5.9, §5.10, §5.11, §12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -228,7 +231,7 @@ step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& e
    4. MovementSystem            intent × derived stats → velocity; integrate; arena clamp
    5. ProjectileSystem          boomerang flight: outbound → return steering → grounded
    6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
-   7. InteractionSystem         resolves Contacts via the rules table (hit, catch, pickup, bounce)
+   7. InteractionSystem         resolves Contacts via the rules table (hit, catch, dash attack, pickup)
    8. ModifierSystem            tick timers, expire, recompute derived Stats
    9. LifecycleSystem           eliminations, respawns, despawns
   10. RulesSystem::postTick     win conditions, scoring
@@ -239,7 +242,12 @@ Broadphase: a uniform grid over the arena bounds, rebuilt every tick by counting
 fixed-capacity arrays local to `CollisionSystem` (derived data, never part of `WorldState` or
 snapshots). Moving entities are inserted by their swept AABB (start, end, radius). Candidate
 pairs are deduplicated and sorted by `(kindA, indexA, kindB, indexB)` before the narrowphase,
-so contact order does not depend on cell layout. A brute-force all-pairs broadphase stays in
+so contact order does not depend on cell layout. Contacts are Player × Boomerang,
+Player × Pickup and (v0.16) Player × Player; a player pair is listed once with
+`indexA < indexB`, both players moving, radii from `PlayerDef::radius`, and its contact point is
+the midpoint of the two centres at `tHit` so it reads the same from either side. Player pairs are
+purely geometric: every touching pair is a contact whatever its tags (at most 45 with 10
+players), and the rules table decides what a touch means. A brute-force all-pairs broadphase stays in
 the tests as the oracle: a property test asserts both produce the same pair set.
 
 Systems are stateless free functions; the order is fixed and documented; each reads state and
@@ -339,6 +347,7 @@ or pick up again.
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
  20   Player[Shielded]           Boomerang[InFlight, !own]      BreakShield
+ 25   Player[Dashing, !HitStun]  Player[!HitStun, !Invulnerable] DashAttack (declines below minAmmo)
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[]                       GrantPowerUp
@@ -346,11 +355,34 @@ prio  A                          B                              handler
 ```
 
 M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
-restores one ammo and stays put at `ammoMax`). Rows 20 and 60 do not exist yet. The wall bounce
-lives in `ProjectileSystem` (§5.7), not in the table: in M1 the arena is a box, the bounce is a
-per-axis reflection done while integrating, and `CollisionSystem` emits only Player × Boomerang
-and Player × Pickup contacts. A Wall row arrives when arenas gain interior shapes and some
-banana kinds should not bounce, at which point walls become contact sources.
+restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below). Rows
+20 and 60 do not exist yet. The wall bounce lives in `ProjectileSystem` (§5.7), not in the table:
+the arena is a box, the bounce is a per-axis reflection done while integrating, and
+`CollisionSystem` emits only Player × Boomerang, Player × Pickup and Player × Player contacts. A
+Wall row arrives when arenas gain interior shapes and some banana kinds should not bounce, at
+which point walls become contact sources.
+
+Dash attack (v0.16): dashing into an enemy while holding at least `DashAttackDef::minAmmo`
+bananas damages it. Row 25, `Player[Dashing, !HitStun, !Eliminated] ×
+Player[!HitStun, !Invulnerable, !Eliminated]`, handler `dashAttack` (`rules/dash_attack.cpp`).
+- Attacker as A: rows key on `(kindA, kindB)` with the actor as A, so `InteractionSystem` tries
+  every Player × Player contact in both orientations (A into B, and B into A, the second with
+  `a`/`b` swapped and the normal negated). Each orientation is sorted and resolved like any
+  other contact; a pair where neither player dashes matches no row and does nothing, so walking
+  into a player, or a dash without ammo, passes through.
+- Without enough ammo the handler returns `false`; no other row keys on two players, so nothing
+  happens. On success it damages the victim exactly like `DamagePlayer` (shared code: hp loss,
+  `HitStun`, `PlayerEliminated` at 0 hp) by `DashAttackDef::damage`, emits `PlayerDashHit`
+  instead of `PlayerHit`, spawns no pickup and spends one banana only when
+  `DashAttackDef::consumesAmmo` is set (default off: the attacker keeps its banana, so the round's
+  banana supply floor holds).
+- Two players dashing into each other, both with ammo: both orientations have the same `tHit`,
+  so the tie-break decides (§5.11): the earlier dash press, then the lower slot. The loser is
+  then `HitStun` or eliminated, and row 25 forbids `HitStun` on the attacker, so it cannot
+  retaliate in the same tick. A banana that reaches the dasher at an earlier `tHit` resolves
+  first and stops the attack the same way.
+- Content switch (§5.10): `minAmmo = 0` would make every dash an attack; the default content
+  asserts `minAmmo >= 1`.
 
 A new twist is a new rule and possibly a new tag. Rules are tested in isolation by scripted
 scenarios ("spawn banana at x moving v, dash at tick t, expect `BoomerangCaught`").
@@ -426,6 +458,8 @@ is a defence only for a player who has thrown.
 
 - `SimEvent` is a POD tagged union written to a per-tick buffer: `BoomerangThrown`,
   `BoomerangCaught{catcher, how}`, `PlayerDashed`, `PlayerHit{victim, attacker, damage, hpAfter}`,
+  `PlayerDashHit{victim, attacker, hpAfter}` (v0.16: a dash attack; `entity` is the attacking
+  player where `PlayerHit` carries the banana, and presentation shows both the same way),
   `PlayerEliminated{victim, killer}`,
   `PowerUpPicked`, `RoundEnded`, ...
 - Consumers: presentation (VFX/SFX), scoring, RL rewards, telemetry.
@@ -445,6 +479,10 @@ is a defence only for a player who has thrown.
   TOML/JSON loader without touching systems. Every number a system needs lives there, including
   the ones that are easy to forget: the pickup contact radius is `PickupDef::radius` (0.5),
   not the banana's flight radius (0.35), so a grounded banana is easier to walk over than to dodge.
+- `DashAttackDef` (v0.16): `damage` (1), `minAmmo` (1: a banana in hand), `consumesAmmo`
+  (0: kept). Visited for the content hash like every other def; M4's loader exposes it, and
+  `minAmmo = 0` (every dash an attack) is a valid content choice there, while the default content
+  asserts `minAmmo >= 1`.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -474,9 +512,11 @@ What uses it:
 - **Deterministic tie-breaking.** Two monkeys dashing for the same banana in the same tick:
   `InteractionSystem` resolves contacts in `tHit` order, so the monkey the banana reaches first
   wins; on equal `tHit` the earlier dash press wins, compared as (`activatedTick`,
-  `activatedSubTick`) of a player holding `PerfectDash`, and a player without it sorts after
+  `activatedSubTick`) of player A when it holds the tag its rows key on (`PerfectDash` against a
+  banana or pickup, `Dashing` against a player, v0.16), and a player without it sorts after
   every dashing one; then the lower pool index (`kindA, indexA, kindB, indexB`), which for
-  players is the slot (§5.6, v0.14).
+  players is the slot (§5.6, v0.14). Two players dashing into each other is the same tie: the
+  earlier press strikes first (§5.6).
 - **Telemetry.** The sim knows the true press time, so input-to-effect latency can be measured
   in real matches.
 
@@ -1062,6 +1102,9 @@ baseline moved to C++23 (§9).
   constants, height curves, facing and effects (§6.8, §6.9, §7); GL-only sokol backends with
   hand-written GLSL, vendored glad loader, GL 4.3 core natively (§7, §10); input sampler
   semantics and default bindings (§5.4); dependency sourcing (§10).
+- Decided (v0.16): dash attack. Dashing into an enemy while holding a banana damages it,
+  through rule row 25 on Player × Player contacts (attacker as A, both orientations, press-time
+  tie-break, no pickup, ammo kept by default), switched by `DashAttackDef` (§5.3, §5.6, §5.10).
 - Decided (v0.16): catch only below `ammoMax`; a full-ammo perfect dash into a non-own banana
   takes the hit (§5.6). The record of the alternatives, as it stood open in v0.15: a perfect
   catch at full ammo destroyed the banana, so with `ammoMax = 1` the thrower stayed empty-handed

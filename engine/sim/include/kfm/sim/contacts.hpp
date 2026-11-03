@@ -6,6 +6,7 @@
 #include "kfm/core/fixed.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/core/vec2.hpp"
+#include "kfm/sim/constants.hpp"
 
 #include <array>
 #include <compare>
@@ -14,9 +15,14 @@
 namespace kfm::sim {
 
 inline constexpr uint16_t kMaxContacts = 256;
-// Players × (boomerangs + pickups) bounds every M1 candidate pair, so the
-// broadphase can never drop one.
+// Unordered player pairs: the Player × Player contacts (v0.16).
+inline constexpr uint16_t kMaxPlayerPairs = kMaxPlayers * (kMaxPlayers - 1) / 2;
+// Players × (boomerangs + pickups) plus the player pairs bound every
+// candidate pair, so the broadphase can never drop one.
 inline constexpr uint16_t kMaxCandidatePairs = 1024;
+static_assert(uint32_t{kMaxPlayers} * (kMaxBoomerangs + kMaxPickups) + kMaxPlayerPairs <=
+                  kMaxCandidatePairs,
+              "every candidate pair fits");
 
 enum class EntityKind : uint8_t { Player = 0, Boomerang, Pickup };
 
@@ -26,9 +32,21 @@ struct Contact {
   EntityKind kindB{EntityKind::Player};
   EntityId b{};
   Fixed tHit{};   // time of impact as a fraction of the tick, in [0, 1]; 0 = overlapping at start
-  Vec2 point{};   // contact point at tHit
+  Vec2 point{};   // B's centre at tHit; for Player × Player the midpoint of both centres
   Vec2 normal{};  // unit normal from A toward B at tHit
 };
+
+// The same contact seen from B (Player × Player: InteractionSystem tries both
+// orientations, §5.6). The midpoint is symmetric, so only the normal flips.
+[[nodiscard]] constexpr Contact reversedContact(const Contact& c) {
+  return Contact{.kindA = c.kindB,
+                 .a = c.b,
+                 .kindB = c.kindA,
+                 .b = c.a,
+                 .tHit = c.tHit,
+                 .point = c.point,
+                 .normal = -c.normal};
+}
 
 struct Contacts {
   std::array<Contact, kMaxContacts> items{};

@@ -251,6 +251,7 @@ void applyEvent(PresentationState& ps, const WorldState& prev, const WorldState&
       break;
     }
     case EventKind::PlayerHit:
+    case EventKind::PlayerDashHit:  // a dash hit reads like a banana hit (§5.9)
       addEffect(ps, makeEffect(EffectKind::HitFlash, slot, bodyAt(e.player), kHitFlashSeconds));
       flashPlayer(ps, e.player, kHitFlashSeconds);
       addShake(ps, kShakeOnHit);

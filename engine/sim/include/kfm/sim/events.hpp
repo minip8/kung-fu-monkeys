@@ -28,6 +28,8 @@ enum class EventKind : uint8_t {
   PlayerEliminated,   // player = victim, a = killer slot or 0xFF
   PickupSpawned,      // entity = pickup
   PickupTaken,        // player, entity = pickup
+  PlayerDashHit,      // player = victim, entity = attacker's player, a = attacker slot,
+                      // b = hp after (a dash attack, §5.6; PlayerHit is a banana hit)
 };
 
 // BoomerangCaught payload `a`.

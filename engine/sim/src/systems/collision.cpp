@@ -1,5 +1,8 @@
 // CollisionSystem (architecture §5.3 step 6, §5.11): uniform-grid broadphase
 // checked against brute force, swept circle narrowphase with time of impact.
+// Emits Player × Boomerang, Player × Pickup and (v0.16) Player × Player
+// contacts. Player pairs are purely geometric (no tag filter: the rules table
+// decides what a touch means) and listed once, with indexA < indexB.
 // Reads state only; every scratch array is local to the call (no heap, no
 // state in WorldState).
 #include "kfm/sim/systems.hpp"
@@ -129,6 +132,16 @@ void buildPlayerGrid(const WorldState& s, const ContentDB& content, PlayerGrid& 
   return hits;
 }
 
+// Player pairs (slot, other) with other > slot, so each unordered pair is
+// listed once with indexA < indexB.
+void pushPlayerPairs(uint16_t slot, uint16_t playerMask, CandidatePairs& out) {
+  for (uint16_t other = slot + 1; other < kMaxPlayers; ++other) {
+    if ((playerMask & (1u << other)) != 0) {
+      out.push(CandidatePair{EntityKind::Player, slot, EntityKind::Player, other});
+    }
+  }
+}
+
 void pushPairs(uint16_t playerMask, EntityKind kindB, uint16_t indexB, CandidatePairs& out) {
   for (uint16_t slot = 0; slot < kMaxPlayers; ++slot) {
     if ((playerMask & (1u << slot)) != 0) {
@@ -146,17 +159,29 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
   Vec2 posB{};
   Fixed radiusB{};
   EntityId idB{};
-  if (pair.kindB == EntityKind::Boomerang) {
-    const Transform& tb = s.boomerangs.items[pair.indexB].transform;
-    prevB = tb.prevPos;
-    posB = tb.pos;
-    radiusB = content.boomerang.radius;
-    idB = s.boomerangs.idAt(pair.indexB);
-  } else {
-    prevB = s.pickups.items[pair.indexB].pos;
-    posB = prevB;
-    radiusB = pickupRadius(content);
-    idB = s.pickups.idAt(pair.indexB);
+  switch (pair.kindB) {
+    case EntityKind::Player: {
+      const Transform& tb = s.players.items[pair.indexB].transform;
+      prevB = tb.prevPos;
+      posB = tb.pos;
+      radiusB = content.player.radius;
+      idB = s.players.idAt(pair.indexB);
+      break;
+    }
+    case EntityKind::Boomerang: {
+      const Transform& tb = s.boomerangs.items[pair.indexB].transform;
+      prevB = tb.prevPos;
+      posB = tb.pos;
+      radiusB = content.boomerang.radius;
+      idB = s.boomerangs.idAt(pair.indexB);
+      break;
+    }
+    case EntityKind::Pickup:
+      prevB = s.pickups.items[pair.indexB].pos;
+      posB = prevB;
+      radiusB = pickupRadius(content);
+      idB = s.pickups.idAt(pair.indexB);
+      break;
   }
 
   const collision::SweptHit hit =
@@ -167,12 +192,14 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
   const Vec2 atB = lerp(prevB, posB, hit.tHit);
   Vec2 normal = normalized(atB - atA);
   if (normal == Vec2::zero()) normal = Vec2{Fixed::one(), Fixed::zero()};
+  // Two players: the midpoint, so the contact reads the same from either side.
+  const Vec2 point = pair.kindB == EntityKind::Player ? lerp(atA, atB, Fixed::half()) : atB;
   out.push(Contact{.kindA = EntityKind::Player,
                    .a = s.players.idAt(pair.indexA),
                    .kindB = pair.kindB,
                    .b = idB,
                    .tHit = hit.tHit,
-                   .point = atB,
+                   .point = point,
                    .normal = normal});
 }
 
@@ -183,6 +210,10 @@ void collisionBroadphaseGrid(const WorldState& s, const ContentDB& content, Cand
   PlayerGrid grid;
   buildPlayerGrid(s, content, grid);
   if (grid.alive == 0) return;
+  for (uint16_t slot = 0; slot < kMaxPlayers; ++slot) {
+    if ((grid.alive & (1u << slot)) == 0) continue;
+    pushPlayerPairs(slot, queryPlayers(grid, grid.boxes[slot]), out);
+  }
   s.boomerangs.forEachAlive([&](EntityId id, const Boomerang& b) {
     pushPairs(queryPlayers(grid, boomerangBox(b, content)), EntityKind::Boomerang, id.index, out);
   });
@@ -197,6 +228,11 @@ void collisionBroadphaseBruteForce(const WorldState& s, const ContentDB& content
   out.clear();
   s.players.forEachAlive([&](EntityId pid, const Player& p) {
     const Aabb pb = playerBox(p, content);
+    s.players.forEachAlive([&](EntityId qid, const Player& q) {
+      if (qid.index > pid.index && collision::overlaps(pb, playerBox(q, content))) {
+        out.push(CandidatePair{EntityKind::Player, pid.index, EntityKind::Player, qid.index});
+      }
+    });
     s.boomerangs.forEachAlive([&](EntityId bid, const Boomerang& b) {
       if (collision::overlaps(pb, boomerangBox(b, content))) {
         out.push(CandidatePair{EntityKind::Player, pid.index, EntityKind::Boomerang, bid.index});

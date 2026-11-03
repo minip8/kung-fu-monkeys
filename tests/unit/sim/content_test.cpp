@@ -38,6 +38,18 @@ TEST_CASE("contentHash is stable and sensitive to every def", "[sim][content]") 
   copy = c;
   copy.abilities[static_cast<uint8_t>(AbilityKind::Throw)].tagsActive.set(Tag::Shielded);
   CHECK(contentHash(copy) != h);
+
+  copy = c;
+  copy.dashAttack.minAmmo = 0;
+  CHECK(contentHash(copy) != h);
+
+  copy = c;
+  copy.dashAttack.consumesAmmo = 1;
+  CHECK(contentHash(copy) != h);
+
+  copy = c;
+  copy.dashAttack.damage = 2;
+  CHECK(contentHash(copy) != h);
 }
 
 TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][content]") {
@@ -67,6 +79,10 @@ TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][con
   CHECK(c.pickup.radius == Fixed::half());
   // A fresh banana spawns clear of its thrower.
   CHECK(c.boomerang.spawnOffset > c.player.radius + c.boomerang.radius);
+  // Dash attack (§5.6): needs a banana in hand, keeps it, one hit kills.
+  CHECK(c.dashAttack.minAmmo == 1);
+  CHECK(c.dashAttack.consumesAmmo == 0);
+  CHECK(c.dashAttack.damage >= c.player.maxHp);
 }
 
 TEST_CASE("arena spawn points are distinct and inside the arena", "[sim][content]") {
