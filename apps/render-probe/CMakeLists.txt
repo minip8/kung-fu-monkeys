@@ -4,6 +4,8 @@ add_executable(kfm_render_probe main.cpp)
 target_link_libraries(kfm_render_probe PRIVATE
   kfm::sim kfm::presentation kfm::renderer kfm::platform kfm::warnings)
 set_target_properties(kfm_render_probe PROPERTIES FOLDER apps)
+# The rigged test model next to the executable (embedded under Emscripten).
+kfm_use_test_rig(kfm_render_probe)
 
 if(EMSCRIPTEN)
   # Browser build: kfm_render_probe.html + .js + .wasm, reusing the client's

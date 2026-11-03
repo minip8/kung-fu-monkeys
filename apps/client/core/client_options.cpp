@@ -56,6 +56,8 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.autostart = true;
     } else if (arg == "--overlay") {
       out.overlay = true;
+    } else if (arg == "--capsules") {
+      out.capsules = true;
     } else if (arg == "--bots") {
       uint64_t n = 0;
       if (!value(i, n)) return false;
