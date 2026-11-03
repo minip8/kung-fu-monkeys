@@ -8,6 +8,13 @@ if(KFM_SANITIZE)
   else()
     add_compile_options(-fsanitize=${KFM_SANITIZE} -fno-omit-frame-pointer -fno-sanitize-recover=all)
     add_link_options(-fsanitize=${KFM_SANITIZE})
+    if(KFM_SANITIZE MATCHES "undefined")
+      # The deterministic layers (core, sim, net) are built with -fno-rtti, so
+      # the typeinfo UBSan's vptr check wants for ITransport implementations
+      # does not exist and sanitized tests fail to link against them.
+      add_compile_options(-fno-sanitize=vptr)
+      add_link_options(-fno-sanitize=vptr)
+    endif()
   endif()
   message(STATUS "KFM: sanitizers enabled: ${KFM_SANITIZE}")
 endif()
