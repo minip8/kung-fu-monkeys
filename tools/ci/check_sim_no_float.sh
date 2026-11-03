@@ -4,8 +4,9 @@
 # floating-point literal (1.5, 2.f, .5, 1e3), the Fixed float conversions
 # (fromDouble, toFloat, toDouble) or <cmath>/<math.h>. Presentation converts
 # Fixed at the boundary; core keeps those conversions for that purpose, which
-# is why this check scopes to sim only. Line comments are stripped before the
-# literal and conversion checks so prose such as "§5.2" does not trip them.
+# is why this check scopes to sim only. String literals and line comments are
+# stripped before the literal and conversion checks so prose such as "§5.2"
+# does not trip them.
 set -eu
 root=$(cd "$(dirname "$0")/../.." && pwd)
 types='\b(float|double|long double)\b'
@@ -22,8 +23,8 @@ if matches=$(grep -rnE "$types" "$root/engine/sim" --include='*.hpp' --include='
 fi
 files=$(find "$root/engine/sim" -name '*.hpp' -o -name '*.cpp' -o -name '*.inc' | sort)
 for f in $files; do
-  # Drop // comments (keeps #include lines, which carry no //), keep line numbers.
-  if matches=$(sed -e 's://.*$::' "$f" | grep -nE "$literals|$calls"); then
+  # Blank string literals, then drop // comments; line numbers are kept.
+  if matches=$(sed -E -e 's/"([^"\\]|\\.)*"/""/g' -e 's://.*$::' "$f" | grep -nE "$literals|$calls"); then
     report "literal or conversion in $f" "$matches"
   fi
 done
