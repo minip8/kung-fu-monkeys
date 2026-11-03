@@ -2,6 +2,7 @@
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
+//              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 #pragma once
 
@@ -17,6 +18,7 @@ namespace kfm::client {
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
     "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
+    "                  [--mute] [--volume 0..100]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
@@ -27,6 +29,8 @@ inline constexpr const char* kUsage =
     "  --capsules             draw players as capsules, not the skinned model\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
+    "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
+    "  --volume N             master volume in percent, 0-100 (default 80)\n"
     "network mode:\n"
     "  --connect ws://h:p     play on a server: connects at startup; Esc goes to the\n"
     "                         local lobby, whose Start reconnects with every device\n"
@@ -45,6 +49,9 @@ struct ClientOptions {
   uint8_t bots{0};
   uint64_t seed{1};
   uint64_t playersSeed{kDefaultBotSeed};
+  // Audio (§7): the mixer's starting settings; the overlay can change them.
+  bool mute{false};
+  uint8_t volume{80};  // percent, = presentation::kDefaultMasterVolume
   // Network mode (empty connect: local play).
   std::string connect;  // signaling URL, "ws://host:port"
   std::string token;

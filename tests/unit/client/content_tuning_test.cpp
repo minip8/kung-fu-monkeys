@@ -120,3 +120,20 @@ TEST_CASE("client options: network flags", "[client][options]") {
   const std::array<const char*, 2> noUrl = {"kfm_client", "--connect"};
   CHECK_FALSE(parseClientOptions(noUrl, bad, err));
 }
+
+TEST_CASE("client options: audio flags", "[client][options][audio]") {
+  std::string err;
+  const ClientOptions defaults;
+  CHECK_FALSE(defaults.mute);
+  CHECK(defaults.volume == 80);
+  ClientOptions o;
+  const std::array<const char*, 4> args = {"kfm_client", "--mute", "--volume", "35"};
+  REQUIRE(parseClientOptions(args, o, err));
+  CHECK(o.mute);
+  CHECK(o.volume == 35);
+  ClientOptions bad;
+  const std::array<const char*, 3> loud = {"kfm_client", "--volume", "101"};
+  CHECK_FALSE(parseClientOptions(loud, bad, err));
+  const std::array<const char*, 2> missing = {"kfm_client", "--volume"};
+  CHECK_FALSE(parseClientOptions(missing, bad, err));
+}

@@ -1,6 +1,7 @@
 #include "hud.hpp"
 
 #include "kfm/platform/input_sampler.hpp"
+#include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/palette.hpp"
 
 #include <imgui.h>
@@ -14,6 +15,7 @@ namespace kfm::client {
 
 namespace {
 
+using presentation::EffectKind;
 using presentation::HudPhase;
 using presentation::kNoSlot;
 
@@ -142,28 +144,32 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
   }
 }
 
-void drawBanners(ImDrawList* dl, const HudView& session, const presentation::RenderHud& hud,
+// Banners pop in with their effect (bannerScale, event_fx.hpp).
+void drawBanners(ImDrawList* dl, const HudView& session, const presentation::RenderState& state,
                  ImVec2 view) {
+  const presentation::RenderHud& hud = state.hud;
   const ImVec2 centre{view.x * 0.5f, view.y * 0.42f};
   char text[64];
   switch (hud.phase) {
     case HudPhase::RoundStarting: {
+      const float pop = presentation::bannerScale(state, EffectKind::RoundStartBanner);
       std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
-      centredText(dl, 40.0f, ImVec2(centre.x, centre.y - 50.0f), kWhite, text);
+      centredText(dl, 40.0f * pop, ImVec2(centre.x, centre.y - 50.0f), kWhite, text);
       const int n = std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)));
       std::snprintf(text, sizeof text, "%d", n);
       centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), kBananaYellow, text);
       break;
     }
     case HudPhase::RoundEnded: {
+      const float pop = presentation::bannerScale(state, EffectKind::RoundEndBanner);
       if (hud.lastRoundWinner == kNoSlot) {
-        centredText(dl, 56.0f, centre, kWhite, "Draw!");
+        centredText(dl, 56.0f * pop, centre, kWhite, "Draw!");
       } else {
         const auto w = static_cast<uint8_t>(hud.lastRoundWinner);
         char label[8];
         slotLabel(session, w, label);
         std::snprintf(text, sizeof text, "Round won by %s", label);
-        centredText(dl, 56.0f, centre, slotColor(w), text);
+        centredText(dl, 56.0f * pop, centre, slotColor(w), text);
       }
       break;
     }
@@ -173,7 +179,8 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         char label[8];
         slotLabel(session, w, label);
         std::snprintf(text, sizeof text, "%s wins the match!", label);
-        centredText(dl, 64.0f, centre, slotColor(w), text);
+        centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
+                    centre, slotColor(w), text);
       }
       centredText(dl, 20.0f, ImVec2(centre.x, centre.y + 60.0f), kWhite,
                   session.network ? "Esc: leave the server" : "Enter / Start: back to the lobby");
@@ -260,7 +267,7 @@ void drawMatchHud(const HudView& view, const HudInput& in) {
   const presentation::RenderHud& hud = in.state->hud;
   drawPlayerTags(dl, view, in);
   drawScoreBar(dl, view, hud, display.x);
-  drawBanners(dl, view, hud, display);
+  drawBanners(dl, view, *in.state, display);
   drawNotices(dl, view, display);
 }
 
