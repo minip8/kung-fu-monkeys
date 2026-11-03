@@ -26,8 +26,15 @@ void projectileSystem(WorldState& s, const ContentDB& content, EventSink& sink);
 // 6. Broadphase + swept narrowphase; reads state only (systems/collision.cpp).
 void collisionSystem(const WorldState& s, const ContentDB& content, Contacts& out);
 // 7. Contacts resolved through the rules table (systems/interaction.cpp, rules/).
+//    A Player x Player contact is tried in both orientations (§5.6).
 void interactionSystem(WorldState& s, const ContentDB& content, const Contacts& contacts,
                        EventSink& sink);
+// InteractionSystem's step for one contact, in the orientation given: scan the
+// rows by priority until a handler returns true or an entity is gone. Exported
+// for kfm_replay stats, which resolves contacts one at a time in
+// InteractionSystem's order; the caller checks MatchPhase::Playing.
+void interactionResolveContact(WorldState& s, const ContentDB& content, const Contact& c,
+                               EventSink& sink);
 // 8. Modifier timers, derived Stats, HP clamp, HitStun expiry (systems/modifier.cpp).
 void modifierSystem(WorldState& s, const ContentDB& content);
 // 9. Eliminated players despawn, grounded boomerangs become pickups (systems/lifecycle.cpp).
@@ -37,7 +44,8 @@ void rulesPostTick(WorldState& s, const ContentDB& content, EventSink& sink);
 
 // CollisionSystem's two broadphases, exported so a property test can assert
 // they produce the same candidate set (§5.3). Both fill `out` with the
-// Player x Boomerang and Player x Pickup pairs whose swept AABBs
+// Player x Player (indexA < indexB), Player x Boomerang and Player x Pickup
+// pairs whose swept AABBs
 // (prevPos..pos ± radius) overlap, deduplicated and sorted by
 // (kindA, indexA, kindB, indexB).
 void collisionBroadphaseGrid(const WorldState& s, const ContentDB& content, CandidatePairs& out);

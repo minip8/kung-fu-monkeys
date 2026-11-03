@@ -363,6 +363,29 @@ TEST_CASE("events start effects whose timers count down", "[presentation][builde
   CHECK(playerIn(rs, 1).flash == 0.0f);
 }
 
+TEST_CASE("a dash hit flashes like a banana hit", "[presentation][builder]") {
+  WorldState s = makePlayingWorld(17, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  const auto effectsOf = [&](EventKind kind) {
+    PresentationState ps;
+    build(ps, s, s, 1.0f);
+    const std::vector<SimEvent> events = {
+        SimEvent{kind, s.tick, kP1, s.players.idAt(0), kP0.value, 0}};
+    return build(ps, s, s, 1.0f, events);
+  };
+  const RenderState banana = effectsOf(EventKind::PlayerHit);
+  const RenderState dash = effectsOf(EventKind::PlayerDashHit);
+  REQUIRE(dash.effectCount == 1);
+  CHECK(countEffects(dash, EffectKind::HitFlash) == 1);
+  CHECK(dash.effects[0].slot == 1);
+  CHECK(dash.effects[0].duration == banana.effects[0].duration);
+  CHECK(dash.effects[0].position.x == banana.effects[0].position.x);
+  CHECK(dash.shakeAmplitude == Approx(kShakeOnHit).margin(1e-5));
+  CHECK(playerIn(dash, 1).flash == Approx(1.0f));
+  CHECK(playerIn(dash, 0).flash == 0.0f);
+}
+
 TEST_CASE("the effect buffer never overflows", "[presentation][builder]") {
   const WorldState s = makePlayingWorld(18, 0b1);
   PresentationState ps;

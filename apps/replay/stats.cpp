@@ -38,33 +38,42 @@ void mergeWait(Stats::ThrowerWait& to, const Stats::ThrowerWait& from) {
   to.roundEndedFirst += from.roundEndedFirst;
 }
 
-// InteractionSystem's resolution order (systems/interaction.cpp, §5.11):
-// time of impact, then the earlier dash press of a PerfectDash holder, then
-// pool indices, then list position; keys are taken from the state before any
-// contact resolves. Returns indices into contacts.items.
-[[nodiscard]] std::vector<uint16_t> interactionOrder(const WorldState& s,
-                                                     const Contacts& contacts) {
-  using Key = std::tuple<Fixed, uint64_t, uint8_t, uint16_t, uint8_t, uint16_t, uint16_t>;
-  std::vector<Key> keys;
-  keys.reserve(contacts.count);
-  for (uint16_t i = 0; i < contacts.count; ++i) {
-    const Contact& c = contacts.items[i];
+// InteractionSystem's resolution order (systems/interaction.cpp, §5.6,
+// §5.11): every contact, plus each Player x Player contact seen from B; time
+// of impact, then the earlier dash press of A when A holds the tag its rows
+// key on (PerfectDash against a banana or pickup, Dashing against a player),
+// then pool indices, then list position and orientation; keys are taken from
+// the state before any contact resolves. Returns the oriented contacts.
+[[nodiscard]] std::vector<Contact> interactionOrder(const WorldState& s, const Contacts& contacts) {
+  using Key = std::tuple<Fixed, uint64_t, uint8_t, uint16_t, uint8_t, uint16_t, uint16_t, bool>;
+  std::vector<std::pair<Key, Contact>> keyed;
+  keyed.reserve(contacts.count);
+  const auto add = [&](const Contact& c, uint16_t index, bool reversed) {
     uint64_t press = std::numeric_limits<uint64_t>::max();
     if (c.kindA == EntityKind::Player) {
       const Player* p = s.players.get(c.a);
-      if (p != nullptr && p->tags.has(Tag::PerfectDash)) {
+      const Tag keyedTag = c.kindB == EntityKind::Player ? Tag::Dashing : Tag::PerfectDash;
+      if (p != nullptr && p->tags.has(keyedTag)) {
         const AbilityState& dash = p->abilities[kAbilitySlotDash];
         press = (static_cast<uint64_t>(dash.activatedTick.value) << 8) | dash.activatedSubTick;
       }
     }
-    keys.emplace_back(c.tHit, press, static_cast<uint8_t>(c.kindA), c.a.index,
-                      static_cast<uint8_t>(c.kindB), c.b.index, i);
+    keyed.emplace_back(Key{c.tHit, press, static_cast<uint8_t>(c.kindA), c.a.index,
+                           static_cast<uint8_t>(c.kindB), c.b.index, index, reversed},
+                       c);
+  };
+  for (uint16_t i = 0; i < contacts.count; ++i) {
+    const Contact& c = contacts.items[i];
+    add(c, i, false);
+    if (c.kindA == EntityKind::Player && c.kindB == EntityKind::Player) {
+      add(reversedContact(c), i, true);
+    }
   }
-  std::ranges::sort(keys);
-  std::vector<uint16_t> order;
-  order.reserve(keys.size());
-  for (const Key& k : keys)
-    order.push_back(std::get<6>(k));
+  std::ranges::sort(keyed, {}, &std::pair<Key, Contact>::first);
+  std::vector<Contact> order;
+  order.reserve(keyed.size());
+  for (const auto& k : keyed)
+    order.push_back(k.second);
   return order;
 }
 
@@ -180,6 +189,10 @@ void Stats::merge(const Stats& o) {
   throws += o.throws;
   hits += o.hits;
   eliminations += o.eliminations;
+  dashAttackWithAmmo += o.dashAttackWithAmmo;
+  dashAttackWithoutAmmo += o.dashAttackWithoutAmmo;
+  dashHits += o.dashHits;
+  dashEliminations += o.dashEliminations;
   dashes += o.dashes;
   windowsOpened += o.windowsOpened;
   perfectCatches += o.perfectCatches;
@@ -189,6 +202,8 @@ void Stats::merge(const Stats& o) {
   convertedDashes += o.convertedDashes;
   consultedContacts += o.consultedContacts;
   declinedContacts += o.declinedContacts;
+  fullAmmoDeclined += o.fullAmmoDeclined;
+  fullAmmoDeclinedInWindow += o.fullAmmoDeclinedInWindow;
   append(consultedDelta, o.consultedDelta);
   dangerContacts += o.dangerContacts;
   dangerContactsRecentDash += o.dangerContactsRecentDash;
@@ -223,6 +238,27 @@ void StatsCollector::beginContacts(const WorldState& s) {
 }
 
 void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
+  if (c.kindA == EntityKind::Player && c.kindB == EntityKind::Player) {
+    // Row 25 of the rules table (rules/table.cpp), as InteractionSystem sees it.
+    const Player* attacker = s.players.get(c.a);
+    const Player* victim = s.players.get(c.b);
+    if (attacker == nullptr || victim == nullptr) return;
+    const Tags attackerForbid = Tags::of(Tag::Eliminated) | Tag::HitStun;
+    const Tags victimForbid = attackerForbid | Tag::Invulnerable;
+    if (!attacker->tags.has(Tag::Dashing) || !attacker->tags.hasNone(attackerForbid) ||
+        !victim->tags.hasNone(victimForbid)) {
+      return;
+    }
+    const std::pair<uint8_t, uint32_t> dash{
+        static_cast<uint8_t>(attacker->id.value),
+        attacker->abilities[kAbilitySlotDash].activatedTick.value};
+    if (attacker->ammo >= defaultContent().dashAttack.minAmmo) {
+      dashAttackWithAmmo_.insert(dash);
+    } else {
+      dashAttackWithoutAmmo_.insert(dash);
+    }
+    return;
+  }
   if (c.kindA != EntityKind::Player || c.kindB != EntityKind::Boomerang) return;
   const Player* p = s.players.get(c.a);
   const Boomerang* b = s.boomerangs.get(c.b);
@@ -236,11 +272,17 @@ void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
   // Rows 10 and 11 of the rules table (rules/table.cpp).
   const bool catchable = !own || b->phase == BoomerangPhase::Returning;
   if (catchable && p->tags.has(Tag::PerfectDash)) {
-    ++stats_.consultedContacts;
-    stats_.consultedDelta.push_back(delta);
     const uint16_t window = content.abilityAt(dash.defIndex).perfectWindowTicks;
-    if (delta < 0.0 || delta >= static_cast<double>(window)) ++stats_.declinedContacts;
-    attempted_.emplace(static_cast<uint8_t>(p->id.value), dash.activatedTick.value);
+    const bool inWindow = delta >= 0.0 && delta < static_cast<double>(window);
+    if (p->ammo >= p->stats.ammoMax) {  // the catch declines first on ammo (rules/catch.cpp)
+      ++stats_.fullAmmoDeclined;
+      if (inWindow) ++stats_.fullAmmoDeclinedInWindow;
+    } else {
+      ++stats_.consultedContacts;
+      stats_.consultedDelta.push_back(delta);
+      if (!inWindow) ++stats_.declinedContacts;
+      attempted_.emplace(static_cast<uint8_t>(p->id.value), dash.activatedTick.value);
+    }
   }
   if (!own) {
     ++stats_.dangerContacts;
@@ -278,6 +320,9 @@ void StatsCollector::endRoundTracking(const WorldState& s) {
 void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
   const Tick stepped{s.tick.value - 1};
   ++stats_.ticks;
+  // PlayerEliminated directly follows the hit that caused it (rules/apply_damage.hpp).
+  EventKind lastHit = EventKind::None;
+  PlayerId lastVictim = PlayerId::invalid();
   for (const SimEvent& e : sink) {
     switch (e.kind) {
       case EventKind::RoundStarted:
@@ -338,8 +383,15 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
         }
         break;
       }
+      case EventKind::PlayerDashHit:
+        ++stats_.dashHits;
+        lastHit = e.kind;
+        lastVictim = e.player;
+        break;
       case EventKind::PlayerHit: {
         ++stats_.hits;
+        lastHit = e.kind;
+        lastVictim = e.player;
         const auto flight = inFlight_.find(keyOf(e.entity));
         if (flight != inFlight_.end()) {
           stats_.flightToHit.push_back(seconds(flight->second, e.tick));
@@ -349,6 +401,9 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
       }
       case EventKind::PlayerEliminated:
         ++stats_.eliminations;
+        if (lastHit == EventKind::PlayerDashHit && lastVictim == e.player) {
+          ++stats_.dashEliminations;
+        }
         if (e.player.isValid() && e.player.value < kMaxPlayers && ammoBefore_[e.player.value] > 0) {
           ++stats_.eliminatedHoldingAmmo;
         }
@@ -429,6 +484,8 @@ void StatsCollector::finish(const WorldState& s) {
   for (const auto& d : converted_)
     if (attempted_.contains(d)) ++converted;
   stats_.convertedDashes = converted;
+  stats_.dashAttackWithAmmo = dashAttackWithAmmo_.size();
+  stats_.dashAttackWithoutAmmo = dashAttackWithoutAmmo_.size();
 }
 
 void statsStep(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& sink,
@@ -443,19 +500,16 @@ void statsStep(WorldState& s, const InputFrame& in, const ContentDB& content, Ev
   Contacts contacts;
   collisionSystem(s, content, contacts);
   collector.beginContacts(s);
-  // InteractionSystem one contact at a time, in its resolution order, so each
+  // InteractionSystem one oriented contact at a time, in its resolution order, so each
   // contact is judged against the state the rules table would see: a contact
   // whose banana was caught, or whose player was eliminated, earlier in the
   // same tick is not counted as consulted. The shadow checksum proves the
   // split resolution matches interactionSystem() over the whole list.
   if (s.rules.phase == MatchPhase::Playing) {
-    for (const uint16_t i : interactionOrder(s, contacts)) {
-      const Contact& c = contacts.items[i];
+    for (const Contact& c : interactionOrder(s, contacts)) {
       if (!entityAlive(s, c.kindA, c.a) || !entityAlive(s, c.kindB, c.b)) continue;
       collector.observeContact(s, c);
-      Contacts one;
-      one.push(c);
-      interactionSystem(s, content, one, sink);
+      interactionResolveContact(s, content, c, sink);
     }
   }
   modifierSystem(s, content);
@@ -469,7 +523,7 @@ void printMatchLine(uint32_t index, uint64_t seed, uint64_t inputSeed, const Sta
   std::printf(
       "match %3u seed 0x%llx input 0x%llx: %6.1f s%s, %2zu rounds (mean %5.1f s), "
       "throws %3llu hits %3llu elim %3llu dashes %3llu, catches perfect %2llu auto %3llu, "
-      "attempts %llu -> %llu\n",
+      "attempts %llu -> %llu, dash hits %llu\n",
       index, static_cast<unsigned long long>(seed), static_cast<unsigned long long>(inputSeed),
       static_cast<double>(st.ticks) * kTickSeconds, st.matchesFinished > 0 ? "" : " (cap)",
       rounds.n, rounds.mean, static_cast<unsigned long long>(st.throws),
@@ -478,7 +532,8 @@ void printMatchLine(uint32_t index, uint64_t seed, uint64_t inputSeed, const Sta
       static_cast<unsigned long long>(st.perfectCatches),
       static_cast<unsigned long long>(st.autoCatches),
       static_cast<unsigned long long>(st.attemptDashes),
-      static_cast<unsigned long long>(st.convertedDashes));
+      static_cast<unsigned long long>(st.convertedDashes),
+      static_cast<unsigned long long>(st.dashHits));
 }
 
 void printSummary(const Stats& st, uint32_t players) {
@@ -519,13 +574,22 @@ void printSummary(const Stats& st, uint32_t players) {
       u(st.throws), u(st.hits), u(st.eliminations), u(st.dashes), u(st.windowsOpened),
       u(st.perfectCatches), u(st.perfectCatchesOwn), u(st.autoCatches));
   std::printf("hit rate: %.1f%% of throws hit a player\n", 100.0 * ratio(st.hits, st.throws));
+  std::printf(
+      "dash attacks (dashes that met a hittable player): with ammo %llu, without ammo %llu; "
+      "dash hits %llu (%.2f per round), eliminations by dash %llu\n",
+      u(st.dashAttackWithAmmo), u(st.dashAttackWithoutAmmo), u(st.dashHits),
+      static_cast<double>(st.dashHits) / rounds, u(st.dashEliminations));
 
   std::printf(
-      "catch attempts (dashes whose window met a catchable banana): %llu, converted "
-      "%llu (%.1f%%); consulted contacts %llu, declined at the sub-tick edge %llu\n",
+      "catch attempts (dashes below ammoMax whose window met a catchable banana): %llu, "
+      "converted %llu (%.1f%%); consulted contacts %llu, declined at the sub-tick edge %llu\n",
       u(st.attemptDashes), u(st.convertedDashes),
       100.0 * ratio(st.convertedDashes, st.attemptDashes), u(st.consultedContacts),
       u(st.declinedContacts));
+  std::printf(
+      "catch declined at full ammo (v0.16): %llu contacts, %llu of them inside the perfect "
+      "window\n",
+      u(st.fullAmmoDeclined), u(st.fullAmmoDeclinedInWindow));
   std::printf(
       "danger contacts (non-own banana in flight touches a live player): %llu, %llu "
       "(%.1f%%) within a dash's cooldown\n",
@@ -548,7 +612,7 @@ void printSummary(const Stats& st, uint32_t players) {
               u(st.emptySpellsCensored));
 
   std::printf(
-      "perfect catch at full ammo (banana destroyed): %llu of %llu perfect catches "
+      "perfect catch at full ammo (0 since v0.16): %llu of %llu perfect catches "
       "(%.1f%%); auto catches at full ammo %llu\n",
       u(st.perfectAtFullAmmo), u(st.perfectCatches),
       100.0 * ratio(st.perfectAtFullAmmo, st.perfectCatches), u(st.autoAtFullAmmo));

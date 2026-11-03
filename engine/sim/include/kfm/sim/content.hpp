@@ -73,6 +73,16 @@ struct PlayerDef {
   std::array<uint8_t, kAbilitySlots> abilities{};
 };
 
+// Dash attack (rules/dash_attack.cpp, architecture §5.6): a player dashing
+// into an enemy while holding at least minAmmo bananas deals `damage`. A
+// content switch: minAmmo = 0 would make every dash an attack (the default
+// content asserts minAmmo >= 1), and consumesAmmo spends one banana per hit.
+struct DashAttackDef {
+  uint8_t damage{1};
+  uint8_t minAmmo{1};
+  uint8_t consumesAmmo{0};  // 0/1
+};
+
 struct ArenaDef {
   Vec2 halfExtents{};  // box arena, centred at the origin
   std::array<Vec2, kMaxPlayers> spawnPoints{};
@@ -93,6 +103,7 @@ struct ContentDB {
   PlayerDef player{};
   ArenaDef arena{};
   ModeDef mode{};
+  DashAttackDef dashAttack{};
 
   // Def at a state's defIndex; an out-of-range index falls back to the inert
   // None def (index 0), so a bad index can never read past the table.

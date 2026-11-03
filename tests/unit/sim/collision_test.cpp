@@ -274,6 +274,53 @@ TEST_CASE("collisionSystem: a player walking onto a static pickup", "[sim][colli
   CHECK(std::abs(out.items[0].tHit.toDouble() - ((3.0 - r) / 2.5)) <= 1e-4);
 }
 
+TEST_CASE("collisionSystem: two players moving into each other", "[sim][collision]") {
+  const ContentDB& c = defaultContent();
+  WorldState s = makePlayingWorld(1, 0b111);
+  // Slot 1 comes from the right, slot 0 from the left; both end at the
+  // origin. Closing at 4 units per tick from a gap of 4 with radii summing
+  // to 1, they touch at t = 0.75. Slot 2 is far away.
+  Player& p1 = placePlayer(s, kP1, v(0, 0));
+  p1.transform.prevPos = v(2, 0);
+  Player& p0 = placePlayer(s, kP0, v(0, 0));
+  p0.transform.prevPos = v(-2, 0);
+  placePlayer(s, PlayerId{2}, v(-10, 6));
+
+  Contacts out;
+  collisionSystem(s, c, out);
+  REQUIRE(out.count == 1);
+  const Contact& k = out.items[0];
+  CHECK(k.kindA == EntityKind::Player);
+  CHECK(k.kindB == EntityKind::Player);
+  CHECK(k.a == s.players.idAt(0));  // indexA < indexB
+  CHECK(k.b == s.players.idAt(1));
+  const double r = (c.player.radius + c.player.radius).toDouble();
+  CHECK(std::abs(k.tHit.toDouble() - ((4.0 - r) / 4.0)) <= 1e-4);
+  // The midpoint of both centres at tHit, normal from A toward B.
+  CHECK(std::abs(k.point.x.toDouble()) <= 1e-3);
+  CHECK(std::abs(k.point.y.toDouble()) <= 1e-6);
+  CHECK(std::abs(k.normal.x.toDouble() - 1.0) <= 1e-3);
+
+  // Seen from B: same time and point, the normal flips.
+  const Contact back = reversedContact(k);
+  CHECK(back.a == k.b);
+  CHECK(back.b == k.a);
+  CHECK(back.tHit == k.tHit);
+  CHECK(back.point == k.point);
+  CHECK(back.normal == -k.normal);
+}
+
+TEST_CASE("collisionSystem: players apart or grazing make no contact", "[sim][collision]") {
+  const ContentDB& c = defaultContent();
+  WorldState s = makePlayingWorld(1, 0b11);
+  placePlayer(s, kP0, v(0, 0));
+  // Exactly the radius sum apart and not approaching: a graze is no hit.
+  placePlayer(s, kP1, Vec2{c.player.radius + c.player.radius, Fixed::zero()});
+  Contacts out;
+  collisionSystem(s, c, out);
+  CHECK(out.count == 0);
+}
+
 TEST_CASE("collisionSystem: coincident centres give a fallback normal", "[sim][collision]") {
   WorldState s = makePlayingWorld(1, 0b1);
   placePlayer(s, kP0, v(3, 3));
@@ -325,6 +372,7 @@ TEST_CASE("grid broadphase equals brute force on random worlds", "[sim][collisio
   big.arena.halfExtents = Vec2{200_fx, 40_fx};  // forces a scaled cell size
   Rng rng = Rng::seeded(0xB20AD);
   int totalPairs = 0;
+  int playerPairs = 0;
   for (int world = 0; world < 300; ++world) {
     const ContentDB& c = (world % 5 == 4) ? big : defaultContent();
     const Fixed hx = c.arena.halfExtents.x;
@@ -386,8 +434,14 @@ TEST_CASE("grid broadphase equals brute force on random worlds", "[sim][collisio
     REQUIRE(std::ranges::is_sorted(grid));
     REQUIRE(std::ranges::adjacent_find(grid) == grid.end());
     totalPairs += grid.count;
+    for (const CandidatePair& pair : grid) {
+      if (pair.kindB != EntityKind::Player) continue;
+      ++playerPairs;
+      REQUIRE(pair.indexA < pair.indexB);
+    }
   }
   CHECK(totalPairs > 500);  // the test exercised real overlaps
+  CHECK(playerPairs > 50);  // ... including Player x Player pairs
 }
 
 TEST_CASE("broadphase pairs entities touching exactly at a box edge", "[sim][collision]") {

@@ -1,6 +1,6 @@
 // Interaction rule handlers (architecture §5.6). Each returns true when it
 // resolved the contact and false when it did not apply (keep scanning).
-// a is always the player, b the boomerang or pickup.
+// a is always a player; b the boomerang, pickup or (dash attack) the victim.
 #pragma once
 
 #include "kfm/sim/contacts.hpp"
@@ -10,9 +10,14 @@
 
 namespace kfm::sim {
 
-// Prio 10, rules/catch.cpp: perfect-dash catch judged against press sub-tick (§5.11).
+// Prio 10/11, rules/catch.cpp: perfect-dash catch judged against press sub-tick (§5.11);
+// declines at ammoMax (v0.16).
 bool catchBoomerang(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
                     const Contact& contact, EventSink& sink);
+// Prio 25, rules/dash_attack.cpp: a dasher holding ammo damages the player it
+// touches (no pickup; ammo kept unless content.dashAttack.consumesAmmo).
+bool dashAttack(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+                const Contact& contact, EventSink& sink);
 // Prio 30, rules/damage.cpp: hp loss, HitStun, elimination, banana grounds unless pierce.
 bool damagePlayer(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
                   const Contact& contact, EventSink& sink);

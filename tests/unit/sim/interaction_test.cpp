@@ -9,6 +9,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <initializer_list>
 
 using namespace kfm;
@@ -52,6 +53,29 @@ void givePerfectDash(WorldState& s, PlayerId id, Tick pressTick, uint8_t pressSu
   dash.activatedSubTick = pressSubTick;
 }
 
+// Gives a player Dashing (past the perfect window) with the dash pressed at
+// (tick, subTick).
+void giveDash(WorldState& s, PlayerId id, Tick pressTick, uint8_t pressSubTick) {
+  Player& p = playerAt(s, id);
+  p.tags.set(Tag::Dashing);
+  AbilityState& dash = p.abilities[kAbilitySlotDash];
+  dash.phase = AbilityPhase::Active;
+  dash.activatedTick = pressTick;
+  dash.activatedSubTick = pressSubTick;
+}
+
+// A Player x Player contact as CollisionSystem lists it (lower slot as A).
+Contact playersTouch(const WorldState& s, PlayerId a, PlayerId b, Fixed tHit) {
+  Contact c;
+  c.kindA = EntityKind::Player;
+  c.a = s.players.idAt(a.value);
+  c.kindB = EntityKind::Player;
+  c.b = s.players.idAt(b.value);
+  c.tHit = tHit;
+  c.normal = Vec2{Fixed::one(), Fixed::zero()};
+  return c;
+}
+
 Fixed ticks(double t) {
   return Fixed::fromDouble(t);
 }
@@ -67,13 +91,32 @@ EventSink resolve(WorldState& s, const Contacts& cs, const ContentDB& content = 
 
 TEST_CASE("rules table is sorted and every row ignores eliminated players", "[sim][interaction]") {
   const auto rules = interactionRules();
-  REQUIRE(rules.size() == 5);
+  REQUIRE(rules.size() == 6);
   for (size_t i = 0; i < rules.size(); ++i) {
     if (i > 0) CHECK(rules[i - 1].priority < rules[i].priority);
     CHECK(rules[i].kindA == EntityKind::Player);
     CHECK(rules[i].forbidA.has(Tag::Eliminated));
+    if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Eliminated));
     CHECK(rules[i].resolve != nullptr);
   }
+}
+
+TEST_CASE("the dash attack row: Player[Dashing] x Player[!HitStun, !Invulnerable]",
+          "[sim][interaction]") {
+  const auto rules = interactionRules();
+  const auto row = std::ranges::find(rules, uint8_t{25}, &InteractionRule::priority);
+  REQUIRE(row != rules.end());
+  CHECK(row->kindA == EntityKind::Player);
+  CHECK(row->kindB == EntityKind::Player);
+  CHECK(row->requireA == Tags::of(Tag::Dashing));
+  CHECK(row->forbidA.has(Tag::HitStun));  // a stunned dasher cannot strike back
+  CHECK(row->requireB == Tags{});
+  CHECK(row->forbidB.has(Tag::HitStun));
+  CHECK(row->forbidB.has(Tag::Invulnerable));
+  CHECK(row->ownership == Ownership::Any);
+  CHECK(row->resolve == &dashAttack);
+  // The only row on Player x Player.
+  CHECK(std::ranges::count(rules, EntityKind::Player, &InteractionRule::kindB) == 1);
 }
 
 TEST_CASE("perfect catch inside the window takes the banana and an ammo", "[sim][interaction]") {
@@ -94,15 +137,34 @@ TEST_CASE("perfect catch inside the window takes the banana and an ammo", "[sim]
   CHECK(sink.events[0].tick == s.tick);
 }
 
-TEST_CASE("perfect catch ammo is capped at ammoMax", "[sim][interaction]") {
+TEST_CASE("a perfect catch at ammoMax declines and falls through", "[sim][interaction]") {
+  // §5.6 (v0.16): the catch needs room below ammoMax. Declining keeps the
+  // scan going: a non-own banana in flight reaches the damage row, an own
+  // returning banana the auto-catch row (absorbed even at full ammo).
   WorldState s = makePlayingWorld(1, 0b11);
   REQUIRE(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
-  const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
   givePerfectDash(s, kP0, s.tick, 0);
-  const EventSink sink =
-      resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
-  CHECK(countEvents(sink, EventKind::BoomerangCaught) == 1);
-  CHECK(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
+
+  SECTION("non-own banana in flight: the full-ammo dasher is hit") {
+    const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
+    const EventSink sink =
+        resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
+    CHECK(countEvents(sink, EventKind::BoomerangCaught) == 0);
+    CHECK(countEvents(sink, EventKind::PlayerHit) == 1);
+    CHECK(playerAt(s, kP0).tags.has(Tag::Eliminated));
+    REQUIRE(s.boomerangs.isAlive(banana));
+    CHECK(s.boomerangs.items[banana.index].phase == BoomerangPhase::Grounded);
+  }
+  SECTION("own returning banana: auto-caught, not perfect") {
+    const EntityId banana =
+        spawnBanana(s, kP0, Vec2::zero(), Vec2::zero(), BoomerangPhase::Returning);
+    const EventSink sink =
+        resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
+    REQUIRE(countEvents(sink, EventKind::BoomerangCaught) == 1);
+    CHECK(firstEvent(sink, EventKind::BoomerangCaught).a == static_cast<uint32_t>(CatchHow::Auto));
+    CHECK_FALSE(s.boomerangs.isAlive(banana));
+    CHECK(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
+  }
 }
 
 TEST_CASE("perfect window edges are judged against press sub-tick and tHit", "[sim][interaction]") {
@@ -129,6 +191,7 @@ TEST_CASE("perfect window edges are judged against press sub-tick and tHit", "[s
   for (const Case& c : cases) {
     DYNAMIC_SECTION(c.name) {
       WorldState s = makePlayingWorld(3, 0b11);
+      playerAt(s, kP0).ammo = 0;
       const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
       givePerfectDash(s, kP0, s.tick.plus(-c.pressTicksAgo), c.pressSubTick);
       const EventSink sink =
@@ -170,6 +233,7 @@ TEST_CASE("a perfect dash passes through an own outbound banana", "[sim][interac
 
 TEST_CASE("a perfect dash catches an own returning banana as Perfect", "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
+  playerAt(s, kP0).ammo = 0;
   const EntityId banana =
       spawnBanana(s, kP0, Vec2::zero(), Vec2::zero(), BoomerangPhase::Returning);
   givePerfectDash(s, kP0, s.tick, 0);
@@ -375,6 +439,8 @@ TEST_CASE("two perfect dashers on one banana: earlier press wins, then lower slo
 
 TEST_CASE("earlier time of impact beats an earlier press", "[sim][interaction]") {
   WorldState s = makePlayingWorld(5, 0b111);
+  playerAt(s, kP0).ammo = 0;
+  playerAt(s, kP1).ammo = 0;
   const EntityId banana = spawnBanana(s, kP2, Vec2::zero(), Vec2::zero());
   givePerfectDash(s, kP0, s.tick.plus(-1), 0);  // pressed a tick earlier
   givePerfectDash(s, kP1, s.tick, 0);
@@ -476,5 +542,175 @@ TEST_CASE("no contact resolves outside the Playing phase", "[sim][interaction]")
     CHECK(sink.count == 0);
     CHECK(playerAt(s, kP0).hp == defaultContent().player.maxHp);
     CHECK(s.boomerangs.isAlive(b));
+  }
+}
+
+// --- dash attack (row 25) ---------------------------------------------------------
+
+TEST_CASE("a dasher holding ammo damages the player it touches", "[sim][interaction][dash]") {
+  WorldState s = makePlayingWorld(7, 0b111);
+  giveDash(s, kP1, s.tick.plus(-6), 0);  // the dasher is B in the listed contact
+  const uint32_t pickupsBefore = s.pickups.size();
+  const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.4))}));
+
+  REQUIRE(sink.count == 2);
+  CHECK(sink.events[0].kind == EventKind::PlayerDashHit);
+  CHECK(sink.events[0].player == kP0);
+  CHECK(sink.events[0].entity == s.players.idAt(kP1.value));
+  CHECK(sink.events[0].a == kP1.value);
+  CHECK(sink.events[0].b == 0);
+  CHECK(sink.events[1].kind == EventKind::PlayerEliminated);
+  CHECK(sink.events[1].player == kP0);
+  CHECK(sink.events[1].entity == s.players.idAt(kP0.value));
+  CHECK(sink.events[1].a == kP1.value);
+  CHECK(countEvents(sink, EventKind::PlayerHit) == 0);
+
+  const Player& victim = playerAt(s, kP0);
+  CHECK(victim.hp == 0);
+  CHECK(victim.tags.has(Tag::HitStun));
+  CHECK(victim.tags.has(Tag::Eliminated));
+  CHECK(victim.hitStunTicks == defaultContent().player.hitStunTicks);
+  CHECK(playerAt(s, kP1).ammo == 1);  // kept by default
+  CHECK_FALSE(playerAt(s, kP1).tags.has(Tag::HitStun));
+  CHECK(s.pickups.size() == pickupsBefore);
+}
+
+TEST_CASE("a dash attack declines without ammo and nothing else applies",
+          "[sim][interaction][dash]") {
+  WorldState s = makePlayingWorld(7, 0b11);
+  giveDash(s, kP0, s.tick, 0);
+  playerAt(s, kP0).ammo = 0;
+  const uint32_t before = checksum(s);
+  const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, Fixed::zero())}));
+  CHECK(sink.count == 0);
+  CHECK(checksum(s) == before);
+}
+
+TEST_CASE("players touching without a dash do nothing", "[sim][interaction][dash]") {
+  WorldState s = makePlayingWorld(7, 0b11);
+  const uint32_t before = checksum(s);
+  const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, Fixed::zero())}));
+  CHECK(sink.count == 0);
+  CHECK(checksum(s) == before);
+}
+
+TEST_CASE("a dash attack respects HitStun, Invulnerable and Eliminated",
+          "[sim][interaction][dash]") {
+  WorldState s = makePlayingWorld(7, 0b11);
+  giveDash(s, kP0, s.tick, 0);
+  SECTION("victim in HitStun") {
+    playerAt(s, kP1).tags.set(Tag::HitStun);
+  }
+  SECTION("victim Invulnerable") {
+    playerAt(s, kP1).tags.set(Tag::Invulnerable);
+  }
+  SECTION("victim already eliminated this tick") {
+    playerAt(s, kP1).tags.set(Tag::Eliminated);
+  }
+  SECTION("attacker in HitStun") {
+    playerAt(s, kP0).tags.set(Tag::HitStun);
+  }
+  const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.5))}));
+  CHECK(sink.count == 0);
+  CHECK(playerAt(s, kP1).hp == 1);
+}
+
+TEST_CASE("mutual dash attack: one hit, earlier press wins, then lower slot",
+          "[sim][interaction][dash]") {
+  WorldState s = makePlayingWorld(7, 0b11);
+  PlayerId winner = kP0;
+  SECTION("slot 1 pressed earlier in the same tick") {
+    giveDash(s, kP0, s.tick.plus(-3), 200);
+    giveDash(s, kP1, s.tick.plus(-3), 20);
+    winner = kP1;
+  }
+  SECTION("slot 1 pressed a tick earlier, with a larger sub-tick") {
+    giveDash(s, kP0, s.tick.plus(-2), 0);
+    giveDash(s, kP1, s.tick.plus(-3), 255);
+    winner = kP1;
+  }
+  SECTION("slot 0 pressed earlier") {
+    giveDash(s, kP0, s.tick.plus(-5), 0);
+    giveDash(s, kP1, s.tick.plus(-1), 0);
+    winner = kP0;
+  }
+  SECTION("identical press: lower slot wins") {
+    giveDash(s, kP0, s.tick.plus(-2), 77);
+    giveDash(s, kP1, s.tick.plus(-2), 77);
+    winner = kP0;
+  }
+  const PlayerId loser = winner == kP0 ? kP1 : kP0;
+  const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.25))}));
+  REQUIRE(countEvents(sink, EventKind::PlayerDashHit) == 1);
+  CHECK(firstEvent(sink, EventKind::PlayerDashHit).player == loser);
+  CHECK(firstEvent(sink, EventKind::PlayerDashHit).a == winner.value);
+  CHECK(playerAt(s, loser).tags.has(Tag::Eliminated));
+  CHECK_FALSE(playerAt(s, winner).tags.has(Tag::HitStun));
+  CHECK(playerAt(s, winner).hp == 1);
+}
+
+TEST_CASE("mutual dash with a tougher loser: the stunned loser cannot retaliate",
+          "[sim][interaction][dash]") {
+  ContentDB content = defaultContent();
+  content.player.maxHp = 3;
+  WorldState s = makePlayingWorld(7, 0b11, content);
+  giveDash(s, kP0, s.tick.plus(-4), 0);
+  giveDash(s, kP1, s.tick.plus(-2), 0);
+  const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.25))}), content);
+  REQUIRE(countEvents(sink, EventKind::PlayerDashHit) == 1);
+  CHECK(firstEvent(sink, EventKind::PlayerDashHit).player == kP1);
+  CHECK(firstEvent(sink, EventKind::PlayerDashHit).b == 2);
+  CHECK(countEvents(sink, EventKind::PlayerEliminated) == 0);
+  CHECK(playerAt(s, kP0).hp == 3);
+  CHECK(playerAt(s, kP1).hp == 2);
+  CHECK(playerAt(s, kP1).tags.has(Tag::HitStun));
+}
+
+TEST_CASE("an earlier banana hit stops the dasher's attack in the same tick",
+          "[sim][interaction][dash]") {
+  WorldState s = makePlayingWorld(7, 0b111);
+  giveDash(s, kP0, s.tick.plus(-6), 0);
+  const EntityId banana = spawnBanana(s, kP2, Vec2::zero(), Vec2::zero());
+  const EventSink sink =
+      resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.6)),
+                             touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.3))}));
+  CHECK(countEvents(sink, EventKind::PlayerHit) == 1);
+  CHECK(countEvents(sink, EventKind::PlayerDashHit) == 0);
+  CHECK(playerAt(s, kP1).hp == 1);
+}
+
+TEST_CASE("dash attack content switches: damage, minAmmo, consumesAmmo",
+          "[sim][interaction][dash]") {
+  ContentDB content = defaultContent();
+  content.player.maxHp = 3;
+  content.player.ammoMax = 2;
+  SECTION("consumesAmmo spends a banana per hit") {
+    content.dashAttack.consumesAmmo = 1;
+    content.dashAttack.damage = 2;
+    WorldState s = makePlayingWorld(7, 0b11, content);
+    playerAt(s, kP0).ammo = 2;
+    giveDash(s, kP0, s.tick, 0);
+    const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.5))}), content);
+    CHECK(countEvents(sink, EventKind::PlayerDashHit) == 1);
+    CHECK(playerAt(s, kP0).ammo == 1);
+    CHECK(playerAt(s, kP1).hp == 1);
+  }
+  SECTION("minAmmo above what the dasher holds declines") {
+    content.dashAttack.minAmmo = 2;
+    WorldState s = makePlayingWorld(7, 0b11, content);
+    playerAt(s, kP0).ammo = 1;
+    giveDash(s, kP0, s.tick, 0);
+    const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.5))}), content);
+    CHECK(sink.count == 0);
+  }
+  SECTION("minAmmo = 0 makes every dash an attack") {
+    content.dashAttack.minAmmo = 0;
+    content.dashAttack.consumesAmmo = 1;  // nothing to spend: ammo stays at 0
+    WorldState s = makePlayingWorld(7, 0b11, content);
+    playerAt(s, kP0).ammo = 0;
+    giveDash(s, kP0, s.tick, 0);
+    const EventSink sink = resolve(s, contactsOf({playersTouch(s, kP0, kP1, ticks(0.5))}), content);
+    CHECK(countEvents(sink, EventKind::PlayerDashHit) == 1);
+    CHECK(playerAt(s, kP0).ammo == 0);
   }
 }

@@ -1,13 +1,13 @@
-// Banana supply (architecture §5.6, §5.7, §12): what the open M2 feel-tuning
-// question about a perfect catch at full ammo rests on.
+// Banana supply (architecture §5.6, §5.7, §12): what the M2 feel-tuning
+// decision about a perfect catch at full ammo rests on.
 //
-// - Today a perfect catch at full ammo destroys the banana: the catcher keeps
-//   one, the thrower is left empty-handed and nothing lands on the floor. This
-//   test pins that behaviour; resolving §12 differently changes it.
+// - A perfect catch needs room below ammoMax (v0.16): a full-ammo perfect
+//   dash into a non-own banana declines the catch and takes the hit, and the
+//   banana grounds into a pickup like any other hit.
 // - Supply = ammo held + bananas in flight + pickups. It never reaches 0
-//   while two or more players are alive (a hit grounds the hitting banana
-//   into a pickup; a catch at full ammo leaves the catcher holding one), so
-//   a round can always still end. Checked over scripted matches.
+//   while two or more players are alive (a banana hit grounds the hitting
+//   banana into a pickup; a dash attack leaves the attacker holding its
+//   ammo), so a round can always still end. Checked over scripted matches.
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
 #include "scenario_util.hpp"
@@ -36,13 +36,16 @@ constexpr uint8_t kAimRight = 0;
 
 }  // namespace
 
-TEST_CASE("a perfect catch at full ammo destroys the banana", "[scenario][catch][supply]") {
+TEST_CASE("a perfect dash at full ammo into a non-own banana takes the hit",
+          "[scenario][catch][supply]") {
   const ContentDB& content = defaultContent();
-  WorldState s = makePlayingWorld(31, 0b11);
+  // Three players so the round goes on after the hit and the pickup stays.
+  WorldState s = makePlayingWorld(31, 0b111);
   placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::zero()});
   placePlayer(s, PlayerId{1}, Vec2{Fixed::fromInt(4), Fixed::zero()});
+  placePlayer(s, PlayerId{2}, Vec2{Fixed::zero(), Fixed::fromInt(7)});
   REQUIRE(playerAt(s, PlayerId{0}).ammo == content.player.ammoMax);
-  REQUIRE(supplyOf(s) == 2);
+  REQUIRE(supplyOf(s) == 3);
 
   InputFrame f = frameFor(s);
   f.inputs[0].aimDir = kAimRight;
@@ -55,7 +58,7 @@ TEST_CASE("a perfect catch at full ammo destroys the banana", "[scenario][catch]
   // Player 0, holding its own banana, dashes into the incoming one at a gap
   // of 2 (inside the perfect window, as in catch_scenario.cpp).
   bool dashed = false;
-  for (int t = 0; t < 60 && countEvents(log, EventKind::BoomerangCaught) == 0; ++t) {
+  for (int t = 0; t < 60 && countEvents(log, EventKind::PlayerHit) == 0; ++t) {
     f.inputs[0].buttons = 0;
     const Player& p0 = playerAt(s, PlayerId{0});
     if (!dashed) {
@@ -67,17 +70,22 @@ TEST_CASE("a perfect catch at full ammo destroys the banana", "[scenario][catch]
     runTicks(s, f, 1, content, log);
   }
   REQUIRE(dashed);
-  const SimEvent* caught = findEvent(log, EventKind::BoomerangCaught);
-  REQUIRE(caught != nullptr);
-  CHECK(caught->player == PlayerId{0});
-  CHECK(caught->a == static_cast<uint32_t>(CatchHow::Perfect));
+  CHECK(countEvents(log, EventKind::BoomerangCaught) == 0);
+  const SimEvent* hit = findEvent(log, EventKind::PlayerHit);
+  REQUIRE(hit != nullptr);
+  CHECK(hit->player == PlayerId{0});
+  CHECK(hit->a == 1);
+  CHECK(countEvents(log, EventKind::PlayerEliminated) == 1);
+  CHECK(s.playerBySlot(PlayerId{0}) == nullptr);
+  REQUIRE(s.rules.phase == MatchPhase::Playing);
 
-  CHECK(playerAt(s, PlayerId{0}).ammo == content.player.ammoMax);  // no gain past ammoMax
+  // The hitting banana grounded into a pickup; the victim's held banana went
+  // with it. Supply: player 2's banana plus the pickup.
   CHECK(playerAt(s, PlayerId{1}).ammo == 0);
   CHECK(s.boomerangs.size() == 0);
-  CHECK(s.pickups.size() == 0);  // nothing dropped
-  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
-  CHECK(supplyOf(s) == 1);  // one banana left in the round
+  CHECK(s.pickups.size() == 1);
+  CHECK(countEvents(log, EventKind::PickupSpawned) == 1);
+  CHECK(supplyOf(s) == 2);
 }
 
 TEST_CASE("scripted matches never run out of bananas", "[scenario][supply]") {

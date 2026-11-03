@@ -209,6 +209,12 @@ void visit(V& v, ModeDef& d) {
   v.u16(d.roundStartTicks);
 }
 template <class V>
+void visit(V& v, DashAttackDef& d) {
+  v.u8(d.damage);
+  v.u8(d.minAmmo);
+  v.u8(d.consumesAmmo);
+}
+template <class V>
 void visit(V& v, ContentDB& c) {
   for (AbilityDef& d : c.abilities)
     visit(v, d);
@@ -218,6 +224,7 @@ void visit(V& v, ContentDB& c) {
   visit(v, c.player);
   visit(v, c.arena);
   visit(v, c.mode);
+  visit(v, c.dashAttack);
 }
 
 // --- input and state ---------------------------------------------------------

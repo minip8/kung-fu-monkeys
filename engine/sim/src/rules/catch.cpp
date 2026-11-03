@@ -4,9 +4,11 @@
 // pressTime = activatedTick + activatedSubTick / 256 and hitTime = tick + tHit.
 // Outside the window the handler declines and the scan falls through to the
 // damage rule.
+//
+// A catcher already at ammoMax also declines (v0.16, §12): a non-own banana
+// in flight then falls through to row 30 (the full-ammo dasher is hit) and an
+// own returning banana to row 40 (auto catch, absorbed even at full ammo).
 #include "kfm/sim/rules/handlers.hpp"
-
-#include <algorithm>
 
 namespace kfm::sim {
 
@@ -17,12 +19,16 @@ bool catchBoomerang(WorldState& s, const ContentDB& content, EntityId a, EntityI
   const AbilityState& dash = p->abilities[kAbilitySlotDash];
   const AbilityDef& def = content.abilityAt(dash.defIndex);
 
+  // Decline reasons, in this order: (1) no room for another banana, (2) the
+  // contact lies outside the perfect window. Both fall through the same way;
+  // the order only matters to readers and tools counting decline reasons.
+  if (p->ammo >= p->stats.ammoMax) return false;
   const Fixed delta = Fixed::fromInt(s.tick.minus(dash.activatedTick)) + contact.tHit -
                       Fixed::fromRatio(dash.activatedSubTick, 256);
   if (delta < Fixed::zero() || delta >= Fixed::fromInt(def.perfectWindowTicks)) return false;
 
   s.boomerangs.despawn(b);
-  p->ammo = std::min<uint8_t>(static_cast<uint8_t>(p->ammo + 1), p->stats.ammoMax);
+  ++p->ammo;  // below ammoMax, checked above
   sink.push(SimEvent{EventKind::BoomerangCaught, s.tick, p->id, b,
                      static_cast<uint32_t>(CatchHow::Perfect), 0});
   return true;

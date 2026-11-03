@@ -12,9 +12,10 @@
 //   kfm_replay verify <in.kfmr> <expected.txt>  exit 0 when identical
 //   kfm_replay bench [--ticks N] [--seed S] [--players P] [--input-seed I]
 //   kfm_replay stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]
-//                    [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N] [--quiet]
+//                    [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N]
+//                    [--dash-attack-one-in N] [--quiet]
 //     match k uses seed S + k and input seed I + k; --ticks caps each match
-//     (default 36000, 10 minutes); the three bot knobs override
+//     (default 36000, 10 minutes); the four bot knobs override
 //     ScriptedInputConfig (sensitivity checks: is a number the content's or
 //     the scripted bot's?); --quiet drops the per-match lines
 #include "kfm/core/rng.hpp"
@@ -70,7 +71,8 @@ constexpr const char* kUsage =
     "  bench [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
     "  record-scripted ... --stats   also print feel-tuning statistics of the match\n"
     "  stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
-    "        [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N] [--quiet]\n";
+    "        [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N]\n"
+    "        [--dash-attack-one-in N] [--quiet]\n";
 
 bool parseArgs(int argc, char** argv, Args& a) {
   if (argc < 2) return false;
@@ -112,7 +114,8 @@ bool parseArgs(int argc, char** argv, Args& a) {
         return false;
       }
       a.matches = static_cast<uint32_t>(matches);
-    } else if (arg == "--throw-one-in" || arg == "--dash-one-in" || arg == "--dodge-per-256") {
+    } else if (arg == "--throw-one-in" || arg == "--dash-one-in" || arg == "--dodge-per-256" ||
+               arg == "--dash-attack-one-in") {
       if (!takeValue(v)) return false;
       char* end = nullptr;
       const unsigned long long n = std::strtoull(v, &end, 0);
@@ -125,6 +128,7 @@ bool parseArgs(int argc, char** argv, Args& a) {
       if (arg == "--throw-one-in") a.bot.throwOneIn = static_cast<uint16_t>(n);
       if (arg == "--dash-one-in") a.bot.dashOneIn = static_cast<uint16_t>(n);
       if (arg == "--dodge-per-256") a.bot.dodgePer256 = static_cast<uint8_t>(n);
+      if (arg == "--dash-attack-one-in") a.bot.dashAttackOneIn = static_cast<uint16_t>(n);
     } else if (arg == "--stats") {
       a.stats = true;
     } else if (arg == "--quiet") {
