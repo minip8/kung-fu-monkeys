@@ -220,10 +220,4 @@ class InputSampler {
   std::vector<Transition> transitions_;
 };
 
-// Transitional: the placeholder apps/client/main.cpp still calls this. Delete
-// together with that placeholder when the platform work unit replaces it.
-[[nodiscard]] inline int placeholder() {
-  return 1;
-}
-
 }  // namespace kfm::platform

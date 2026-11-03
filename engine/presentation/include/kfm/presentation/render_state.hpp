@@ -159,10 +159,4 @@ struct RenderState {
   RenderHud hud{};
 };
 
-// Skeleton shim: the placeholder apps/client/main.cpp still calls this. Delete
-// it once the platform work unit replaces that file.
-[[nodiscard]] inline int placeholder() {
-  return 1;
-}
-
 }  // namespace kfm::presentation
