@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.25 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.26 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -185,12 +185,21 @@ state fields added for a feature are visited unconditionally and the corpus is r
 rather than kept checksum-stable through conditional encodings (§5.2, §9); toml++ headers only
 from the vcpkg port, Windows links vcpkg statically, autotools for the vcpkg `alsa` port (§10);
 clang-format 19.1.7 is the formatter of record (§9).
+v0.26 changes: bots are a public contract (§8). A bot is a WebAssembly module behind a small
+versioned C ABI, sandboxed and metered in instructions per tick; this repository hosts the seam
+(`IAgent`, the `Observation` schema, `WasmAgent` over a wasm runtime, the reference bot, the
+`kfm_arena` headless match runner) and a separate bots repository holds the SDKs, example bots
+and the contest. Dropped: ONNX Runtime, the nanobind `VecEnv`, every training dependency (§1,
+§2, §4, §10). Human-likeness is a host setting, not part of the bot: input delay matching the
+human lead in mixed matches, none bot versus bot, difficulty tiers only for the built-in bot
+(§8). M5 reframed as the agent platform with a new exit criterion; the ladder moves to M6 (§11).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
 power-ups are picked up in the arena, and the signature twist is that a perfectly
 timed dash onto a flying banana catches it. 2–10 players online, C++ engine,
-latency-first netcode, and a simulation that bots and ML agents can drive headlessly.
+latency-first netcode, a simulation that bots can drive headlessly, and a public bot API so
+anyone can write one.
 
 ---
 
@@ -202,7 +211,7 @@ latency-first netcode, and a simulation that bots and ML agents can drive headle
 | 2–10 players online, smooth | Server-authoritative, input-synchronised rollback netcode, tiny packets |
 | Modular gameplay: dash now, more abilities and twists later | Data-driven definitions, table-driven behaviours, an interaction rules table |
 | Engine in C++ | C++23, CMake, small set of battle-tested libraries, strict layering |
-| Bots and trained models later | Deterministic, headless, allocation-free sim; agents are just input providers; Python bindings |
+| Bots written by anyone, trained or not | Deterministic, headless, allocation-free sim; agents are just input providers; a sandboxed, instruction-metered wasm bot ABI (§8) |
 | Reproducibility / debugging | Determinism + input-only replays + per-tick checksums |
 | Ship in the browser first | WebRTC transport, WebGL2 renderer, single-threaded client, dedicated servers; native build kept for development |
 
@@ -217,13 +226,13 @@ platform seams.
 
 | Area | Decision | Why |
 |---|---|---|
-| Simulation | Deterministic, fixed timestep (60 Hz) with sub-tick input timestamps, fixed-point math, plain-old-data (POD) world state with fixed-capacity pools | Rollback by `memcpy`, replays are just inputs, Linux servers, native clients and the browser build agree bit-for-bit, ML runs are reproducible |
-| Layering | `core` → `sim` → {`net`, `ai`, `presentation`} → apps. `sim` has no I/O, no platform code, no allocation after init | Same sim binary logic in client, server, replay tool, tests and Python |
+| Simulation | Deterministic, fixed timestep (60 Hz) with sub-tick input timestamps, fixed-point math, plain-old-data (POD) world state with fixed-capacity pools | Rollback by `memcpy`, replays are just inputs, Linux servers, native clients and the browser build agree bit-for-bit, bot matches are reproducible |
+| Layering | `core` → `sim` → {`net`, `ai`, `presentation`} → apps. `sim` has no I/O, no platform code, no allocation after init | Same sim binary logic in client, server, replay tool, tests and the match runner |
 | Netcode | Server-authoritative deterministic sim with **input synchronisation**: clients send inputs, server relays authoritative inputs, clients predict everyone and roll back | GGPO-style feel (no local input delay) plus a trusted authority, join-in-progress and resync; bandwidth independent of entity count |
 | Transport | WebRTC data channels as the single production transport (libdatachannel natively, the same C++ API via datachannel-wasm in the browser); in-process loopback with network emulation for tests; GameNetworkingSockets only if a Steam build happens. All behind one `ITransport` with an unreliable lane and a reliable lane; our message layer (input frames, redundancy, clock sync) sits above | One transport to harden, built-in encryption, browsers and native clients share a match with no bridging; the game netcode never knows which transport is in use |
 | Gameplay modularity | Content defs (abilities, power-ups, arenas, modes) + behaviour registries keyed by kind + a prioritised interaction rules table | New ability or twist = new file + def + registration, no edits to existing systems |
 | Presentation | Real-time low-poly 3D over a strictly 2D sim: fixed tilted camera, skinned glTF characters, flat/toon shading, blob shadows mark true positions. SDL3 (window/input/audio) + sokol_gfx, Dear ImGui debug UI | Rendering is a read-only consumer of sim state; smooth facing matches continuous aim; sokol_gfx has WebGL2/WebGPU backends for the browser build |
-| Bots / ML | `IAgent` produces `PlayerInput` like a human; headless vectorised env via nanobind; ONNX Runtime inference in C++ | Same action space for humans, scripted bots and policies |
+| Bots | A bot is a wasm module behind a versioned C ABI (observation in, `PlayerInput` out), sandboxed and metered in instructions per tick; `IAgent` wraps modules and the built-in bot alike; SDKs, example bots and any training live in a separate repository, no training stack in the engine | Same action space for humans and every bot; any language; a match is reproducible from seed plus modules; fairness by fuel, not wall clock |
 | Tooling | CMake presets, vcpkg, Catch2, Tracy, sanitizers, clang-format/clang-tidy, CI with a cross-OS determinism gate | Determinism is enforced, not hoped for |
 | Platforms | Web first: the browser is the shipping client, native is the dev/debug/profiling build, Steam is an optional later add. Platform code is confined to `ITransport` and `IPlatformServices` | Join friction decides a party game; everything below the seams is shared, so Steam stays a cheap option |
 
@@ -251,7 +260,7 @@ platform seams.
                       └──────────────────────────────────────────────────┘
 
   The same `sim` library runs in: client (prediction), server (authority),
-  replay viewer, test harness, Python training env.
+  replay viewer, test harness, headless match runner.
 ```
 
 ---
@@ -272,7 +281,8 @@ kung-fu-monkeys/
                          app-side loading (--content/--arena/--mode) and hot-reload polling
     net/                 messages/ (bit-packed frames, redundancy), transport/ (webrtc, loopback+emulator, optional gns),
                          clock sync, NetClient, NetServer, snapshot codec
-    ai/                  IAgent, Observation builder, scripted bots, OnnxAgent
+    ai/                  IAgent, Observation builder, the reference bot, WasmAgent (bot modules
+                         over the wasm runtime, instruction-metered)
     presentation/        renderer (meshes, skinning, materials), animation, camera, audio, vfx, ui,
                          interpolation+smoothing
     platform/            SDL3 window/input/audio/gamepads, filesystem, main loop, config,
@@ -284,7 +294,7 @@ kung-fu-monkeys/
     server/              headless dedicated server
     replay/              replay viewer / analyser
     netsim/              N clients + 1 server in one process over an emulated network
-  bindings/python/       nanobind module `kfm`, Gymnasium/PettingZoo wrappers, training scripts
+    arena/               headless match runner: bot modules in, replay and result line out
   tests/                 unit/ scenario/ determinism/ netcode/ fuzz/ bench/
   tools/                 content validator, replay corpus, CI scripts
 ```
@@ -464,7 +474,7 @@ struct InputFrame {
 ```
 
 The stick is idle iff `moveMag == 0` (v0.13); `moveDir` is always an angle, so every one of the
-256 directions, +x included, is reachable. This struct is also the bot and reinforcement-learning action space. Button presses are
+256 directions, +x included, is reachable. This struct is also the bot action space (§8). Button presses are
 edge-detected in `InputSystem`, which makes "repeat last input" a safe prediction for remote
 players: a held button never re-fires. `subTick` is explained in §5.11. Precisely (v0.14): it is
 the sub-tick stamp of the latest press (0 → 1) edge of any button within this tick; releases
@@ -863,7 +873,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `PowerUpPicked` would carry, so there is no separate event. `ShieldBroken{victim, entity = the
   banana or the dashing player, a = attacker slot, b = the power-up whose shield broke}` (§5.6).
   No event marks a power-up's expiry: presentation reads the `ModifierList` timers from state.
-- Consumers: presentation (VFX/SFX), scoring, RL rewards, telemetry.
+- Consumers: presentation (VFX/SFX), scoring, the match runner's result line, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
   are dropped; events for ticks at or before the confirmed tick are final.
@@ -1106,7 +1116,7 @@ Why not the alternatives:
 - *Snapshot interpolation (Quake/Source style)*: remote entities render one snapshot interval
   plus a buffer behind (~100 ms), bandwidth scales with entity count (10 monkeys plus dozens of
   bananas), timing interactions like the catch need server-side rewind lag compensation, and
-  replays and ML would need a separate deterministic path anyway.
+  replays and bot matches would need a separate deterministic path anyway.
 - *Peer-to-peer GGPO rollback*: O(N²) connections for 10 players, NAT traversal pain, every
   peer is trusted, the session waits on the slowest peer or needs per-pair delay, determinism is
   required between every client build, and there is no authority to resync from. We keep
@@ -1797,26 +1807,74 @@ art is identical up to the export step, and nothing below the presentation layer
 
 ---
 
-## 8. Bots and machine learning (`engine/ai`, `bindings/python`)
+## 8. Bots (`engine/ai`, the bot API)
 
-- `IAgent { PlayerInput act(const Observation&, Tick); void onEvents(span<const SimEvent>); }`.
-  Humans, scripted bots, ONNX policies and Python policies all produce `PlayerInput`. Agents
-  live outside the sim: server-side bots write straight into the authoritative frame (no
-  network); client-side practice bots feed the local input path.
-- `Observation` builder in C++: egocentric features (self position, velocity, cooldowns, ammo,
-  modifiers; nearest K players; nearest K boomerangs with position, velocity, phase, owner
-  relation, time-to-impact; pickups; arena raycasts or a coarse occupancy grid). Versioned
-  schema. The full `WorldState` is also exposed for custom encoders.
-- Scripted bots: utility AI (dodge / approach / throw / dash-catch scorers) with reaction delay
-  and aim noise for difficulty tiers. They double as RL opponents and as a netcode load tool.
-- Training: `kfm` Python module (nanobind). `VecEnv(num_envs, players_per_env, seed)` with
-  `reset()` and `step(actions) → obs, rewards, dones, infos` as numpy arrays; worlds are
-  stepped in parallel in C++; `action_repeat` (act every 2–4 ticks); rewards computed from
-  `SimEvent`s with shaping hooks; PettingZoo-parallel wrapper for self-play. Headless target:
-  well over 100k ticks/s per core.
-- Imitation data comes for free: every online match is already an input replay.
-- Deployment: export to ONNX; `OnnxAgent` (ONNX Runtime, CPU) runs inside the server. Bots can
-  be given artificial input delay to match human online conditions.
+Decided (v0.26): bots are a public contract. Anyone writes a bot in any language, the game hosts
+it, and matches between bots are reproducible and fair by construction. This replaces the
+earlier plan of an in-repo training stack (nanobind env, PPO baseline, ONNX inference), none of
+which the contract needs.
+
+- **The contract.** A bot is a WebAssembly module (core wasm, no WASI) behind a small versioned
+  C ABI. Exports: `kfm_abi_version() → u32` (the `Observation` schema version the module was
+  built against; the host refuses a mismatch), `kfm_obs_buffer() → ptr` (where the host writes
+  the observation each tick), `kfm_init(seed: u64, slot: u32)` and
+  `kfm_act(tick: u32) → u64` (the packed 5-byte `PlayerInput`, §5.4). Imports: none required;
+  an optional `kfm_log(ptr, len)` whose output the host discards or captures in the result.
+  No clock, no randomness beyond the seed, no I/O: a module is a pure function of its
+  observations, so a match is reproducible from seed, match config, content hash and the bot
+  modules. Wasm float arithmetic is specified bit for bit, so trained policies reproduce too.
+- **`Observation`.** A versioned, little-endian, fixed-layout POD built in C++ by `engine/ai`
+  (`buildObservation(WorldState, MatchContent, PlayerId, delay) → Observation`) and mirrored by
+  each SDK. Full information (the game has no fog of war): self (position, velocity, facing, HP,
+  ammo, per-slot cooldowns, modifiers, tags), every player (position, velocity, HP, ammo, alive,
+  dashing, relation to self), every banana (position, velocity, phase, owner relation, time to
+  closest approach), pickups, the arena's statics, the match (mode, tick, scores, round state)
+  and the bot's own input delay in ticks. A schema change bumps the version and is a breaking
+  change for bots; the v1 field list is pinned when M5 starts.
+- **Helpers live in the SDKs, not the host.** Nearest banana, time to impact, raycasts, "can I
+  dash-catch now" are SDK functions running inside the bot's own budget. The host ABI stays
+  four exports, which is what keeps it stable across SDK growth.
+- **`IAgent`.** `struct IAgent { virtual PlayerInput act(const Observation&, Tick) = 0; }`,
+  implemented by `WasmAgent` (one module instance per slot, with its own linear memory even
+  when two slots run the same module) and by the built-in reference bot in C++. Events reach a
+  bot folded into the observation, not through a callback. Agents live outside the sim.
+  Server-side bots write straight into the authoritative frame (no network); the native client
+  runs bot modules as local players through the same runtime; the browser client instantiates
+  them through the browser's own `WebAssembly` API behind a JS shim, with metering best-effort
+  there, because contests run on the server.
+- **Budget in instructions, never wall clock.** Each bot gets a fuel budget per tick (wasm
+  instructions, metered by the runtime). Tournaments run at thousands of times real time, so a
+  wall-clock budget would make results machine-dependent. Exceeding the budget or trapping
+  costs the bot that tick: the host substitutes "repeat last input", exactly the rule the
+  server already applies to a late network input (§6.1), and counts it in the result. Module
+  size and linear-memory caps are contest rules; the numbers are pinned with the runtime.
+- **Human-likeness is a host setting, not part of the bot.** Bot versus bot: no delay, no noise;
+  fuel is the only fairness control. With humans in the match: the host delays a bot's input by
+  the humans' lead in ticks, so the bot acts on state as stale as a human's; the observation
+  carries that delay so the bot can predict ahead the way a human does. Difficulty tiers
+  (reaction delay, aim noise) exist only for the built-in reference bot in casual lobbies and
+  never apply to a contest bot.
+- **The reference bot.** A utility AI (dodge / approach / throw / dash-catch scorers) in C++
+  in `engine/ai`. It fills lobby slots in the shipped game (and yields a slot to a joining
+  human, an M3 follow-up) and is the baseline a contest bot must beat; its source is also the
+  worked example in each SDK language in the bots repository. The scripted input generator
+  (§9) stays as test scaffolding and is not an `IAgent`.
+- **The headless match runner.** `kfm_arena` (`apps/arena`): bot modules or built-in bots by
+  name, seed, arena, mode and power-up set in; the match played at full speed; a `.kfmr` replay
+  (playable by `kfm_replay` and the client) and a result line (placements, scores, per-bot
+  fuel use, traps and substitutions) out. It is the contest's local test tool, the ladder's
+  engine and, for anyone who wants to train by self-play or search, all the environment the
+  project provides.
+- **Outside this repository.** A separate bots repository holds the SDKs (one copy-in file per
+  language with no dependencies: C, Rust and AssemblyScript to start), starter and example
+  bots, the contest rules and, later, the ladder service. The dividing line: anything that
+  links into the game binaries lives here, anything that produces a file the game loads lives
+  there. The project ships no training tooling: a trained policy is a weight array in a source
+  file plus the forward pass the bot writes. No PyTorch export, no ONNX, no Python environment;
+  the nanobind `VecEnv` is dropped, not deferred, unless someone asks for it with a use.
+- **Open until M5 starts (§12).** The wasm runtime (a small C library with instruction
+  metering: wasm3 or WAMR, wasmtime only if metering accuracy demands it), the fuel budget per
+  tick, the module and memory caps, and the `Observation` v1 field list.
 
 ---
 
@@ -1995,8 +2053,8 @@ art is identical up to the export step, and nothing below the presentation layer
 |---|---|
 | Sim, pools, fixed-point math, swept collision, abilities and rules framework | SDL3, sokol_gfx, Dear ImGui, stb |
 | Message layer, prediction/rollback, clock sync, network emulator | libdatachannel + datachannel-wasm (transport); GameNetworkingSockets only for a Steam build |
-| Bots, observation builder, vectorised env | LZ4, xxHash, toml++ or nlohmann-json |
-| Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, nanobind, ONNX Runtime, cgltf, Blender (asset pipeline) |
+| Bots, observation builder, the bot ABI and SDKs, match runner | LZ4, xxHash, toml++ or nlohmann-json |
+| Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, a wasm runtime with instruction metering (wasm3 or WAMR, chosen when M5 starts, §8), cgltf, Blender (asset pipeline) |
 
 Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `server-headless`, `wasm` (Emscripten).
 M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
@@ -2054,8 +2112,8 @@ ALSA plugins. CI installs `libasound2-dev`. Windows (WASAPI), macOS (CoreAudio) 
 | M2 Playable local | SDL3 + sokol_gfx client, 3D renderer with placeholder meshes (capsule monkeys, fixed camera, blob shadows, cosmetic height, GPU skinning on one rigged test model), local multiplayer, debug UI, interpolation, first feel tuning of dash and catch windows; Emscripten build of the same client runs in a tab | Two people on one keyboard/gamepads have fun for 10 minutes, natively and in the browser |
 | M3 Netcode | Loopback + emulator, `NetServer`/`NetClient`, prediction + rollback, clock sync, snapshots/join, `WebRtcTransport` (libdatachannel natively, datachannel-wasm in the browser), `netsim` with 10 clients, soak tests under loss and jitter | 10 clients at 100 ms RTT, 2% loss, no desyncs, rollback depth bounded; a browser client joins a real server |
 | M4 Content | Power-ups, modifiers, more abilities, arenas, modes, lobby UI, audio/VFX | Content added without touching system code |
-| M5 Bots & ML | Utility bot, nanobind env, PPO self-play baseline, ONNX agent in server | A trained policy beats the scripted bot |
-| M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
+| M5 Agent platform | `IAgent` and the versioned `Observation`, bot ABI v1 and `WasmAgent` over the wasm runtime, the reference bot in lobbies and on the server, `kfm_arena`, SDK v1 and example bots published from the bots repository (§8) | A bot built outside this repository against SDK v1 beats the reference bot in a `kfm_arena` tournament run |
+| M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting, the bot ladder (`kfm_arena` as a service, rankings, replay viewing) | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
 Progress: M3 landed in v0.17. `engine/net` holds the `ITransport` seam, the loopback
@@ -2231,6 +2289,13 @@ baseline moved to C++23 (§9).
   almost every miss is a press stamped a fraction of a tick after impact, not a short window;
   short rounds (4p median 4.6 s) come from the scripted bot's 2 Hz near-perfect throwing, not
   from the content (a 4× slower thrower gives a 9.9 s median). Human playtests decide the rest.
+- Decided (v0.26): bots are a public contract, a sandboxed and instruction-metered wasm module
+  behind a four-export C ABI; the SDKs, example bots and contest live in a separate repository;
+  no training stack in the engine (ONNX Runtime and the nanobind env dropped); human-likeness is
+  a host setting (input delay equal to the human lead in mixed matches, none bot versus bot)
+  (§8, §10, §11).
+- Open (M5 start): the wasm runtime and its metering accuracy, the fuel budget per tick, module
+  and memory caps, the `Observation` v1 field list (§8).
 - Open: team modes (v0.23 leaves them out: they need a team per slot in `MatchConfig`, team
   scoring in a `ModeBehavior` and a friendly-fire decision in the rules table; the mode table
   and the per-player mode counters are the seams); WebTransport as a later replacement for WebRTC;
@@ -2262,7 +2327,7 @@ What the browser costs, honestly:
 ### 13.2 Native without Steam: build it, do not ship it
 
 A native client stays in the repo as the development, debugging and profiling build: Tracy,
-sanitizers, `netsim` with ten clients, the replay viewer and the ML environment all live there,
+sanitizers, `netsim` with ten clients, the replay viewer and the match runner all live there,
 and it is the reference the browser build is checked against. Shipping it without Steam adds
 installers for three OSes, Windows SmartScreen and macOS notarisation (paid certificates),
 auto-update and crash reporting, and buys one to two frames of latency and no audience. For
@@ -2316,7 +2381,7 @@ directory, invites, presence, achievements, cloud). Nothing else knows which pla
 Browsers can host a listen server over WebRTC, but the host tab gets throttled, the host has zero
 lead, and host migration is real work. Dedicated servers are the cleaner answer and the
 architecture already assumes them: clients connect out, so no TURN relay is needed and NAT is a
-non-issue; the server is the authority, the bot host and the ML host; a match costs ~100 KB/s and
+non-issue; the server is the authority and the bot host; a match costs ~100 KB/s and
 a sliver of a core, so one small VPS per region (EU, NA, Asia to start) hosts hundreds of matches.
 The lobby/signaling service is a small WebSocket endpoint that issues room codes and connection
 tokens and tells the browser which server to dial.
@@ -2397,3 +2462,7 @@ std::span<const InteractionRule> interactionRules();  // sorted by priority
 - **Misprediction**: a predicted input differing from the authoritative one.
 - **Sub-tick timestamp**: the fraction of a tick at which a button edge occurred, carried in the input.
 - **Lane**: a transport's unreliable-unordered or reliable-ordered message channel.
+- **Bot module**: a WebAssembly module implementing the bot ABI (§8); one instance per slot.
+- **Observation**: the versioned POD the host writes into a bot module before each `act`.
+- **Fuel**: a bot's per-tick budget in wasm instructions; running out costs that tick's input.
+- **Bot delay**: ticks a bot's input is held back to match the human lead in a mixed match.

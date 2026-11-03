@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Kung Fu Monkeys is an online 2–10 player arena brawler (Boomerang Fu-inspired: monkeys throw
 bananas that fly like boomerangs; dash is the base ability; a perfectly timed dash catches a
 banana). C++23 engine, deterministic simulation, rollback netcode, browser as the primary shipping
-client, with scripted bots and ML-trained agents planned.
+client, with a public bot API (sandboxed wasm modules, any language) planned.
 
 Milestones M0 (skeleton), M1 (headless sim), M2 (playable local client), M3 (netcode) and M4
 (content) have landed: build system, `engine/core`, the
@@ -22,7 +22,8 @@ event-driven effects and procedural sound, procedural meshes, skinning, the soko
 `apps/client` (local play with the lobby settings panel, bots, HUD, F1 overlay, the browser
 page); `engine/net` (`ITransport`, loopback + emulator, message layer, `NetServer`, `NetClient`
 with rollback and clock sync, `WebRtcTransport`), `apps/server`, `apps/netsim`, `apps/net-probe`
-and the client's `--connect` mode. Next is M5 (bots and ML). `docs/architecture.md` is the
+and the client's `--connect` mode. Next is M5 (agent platform: `IAgent`, the wasm bot ABI,
+the reference bot, `kfm_arena`). `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -156,14 +157,14 @@ Append arenas/modes, never reorder (indices are in replays and on the wire).
   `engine/sim/src/rules/table.cpp`.
 - Power-ups: `PowerUpDef` grants `StatModifier`/`AbilityOverride`/`Tag`; `ModifierSystem`
   recomputes derived stats each tick.
-- `SimEvent`s are the only channel from sim to presentation, scoring and RL rewards.
+- `SimEvent`s are the only channel from sim to presentation, scoring and match results.
 
 **Input (§5.4, §5.11).** `PlayerInput` is 5 bytes: `moveDir`, `moveMag`, `aimDir`, `buttons`,
 `subTick`. The stick is idle iff `moveMag == 0`; `moveDir` is always an angle. Button edges are detected in `InputSystem`, which is what makes "repeat last input"
 a safe remote prediction. `subTick` is the fraction of the tick at which the last button edge
 happened; it is used only by time-aware rules (perfect-dash window judged against swept
 time-of-impact, tie-breaking), never to move entities within a tick. The same struct is the
-bot/RL action space.
+bot action space.
 
 **Netcode (§6).** Server-authoritative, input-synchronised, client rollback. Clients send only
 inputs; the server steps at 60 Hz, substitutes "repeat last input" for late arrivals, never
@@ -189,9 +190,16 @@ per backend) links `kfm::sokol`, never `kfm::platform`. `platform` owns SDL3, th
 before `step()`; the sampler is SDL-free and tested headlessly. Tuning constants live in
 `kfm/presentation/tuning.hpp`, never as literals in the renderer.
 
-**Bots and ML (§8).** Agents implement `IAgent` and produce `PlayerInput` exactly like a human;
-they live outside the sim. Server-side bots write into the authoritative frame directly. The
-Python module (`bindings/python`, nanobind) exposes a vectorised headless env over the same sim.
+**Bots (§8).** A bot is a public contract: a sandboxed WebAssembly module behind a four-export
+C ABI (`kfm_abi_version`, `kfm_obs_buffer`, `kfm_init`, `kfm_act`), fed a versioned POD
+`Observation` and returning a `PlayerInput`, metered in wasm instructions per tick (never wall
+clock; over budget or a trap means "repeat last input" for that tick). `IAgent` wraps modules
+(`WasmAgent`) and the built-in reference bot alike; agents live outside the sim and server-side
+bots write into the authoritative frame directly. Helpers (nearest banana, time to impact) go
+in the SDKs, not the host ABI. Human-likeness is a host setting: input delay equal to the
+human lead in mixed matches, none bot versus bot. SDKs, example bots and the contest live in a
+separate repository; this repo ships no training tooling (no ONNX, no nanobind, no Python env).
+`kfm_arena` is the headless match runner (modules in, replay and result line out).
 
 ## Working conventions specific to this repo
 
@@ -233,8 +241,8 @@ CI must be green on every leg (the native matrix, ASan+UBSan and wasm) first.
 ```
 
 Types: `feat`, `fix`, `refactor`, `perf`, `test`, `docs`, `build`, `ci`, `chore`.
-Scopes: `core`, `sim`, `net`, `ai`, `presentation`, `platform`, `content`, `apps`, `bindings`,
-`docs`, `ci`. Omit the scope only for repo-wide changes.
+Scopes: `core`, `sim`, `net`, `ai`, `presentation`, `platform`, `content`, `apps`, `docs`,
+`ci`. Omit the scope only for repo-wide changes.
 
 Examples:
 
