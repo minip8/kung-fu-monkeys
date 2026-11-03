@@ -1,7 +1,7 @@
 // Rounds mode (architecture §5.3): the M1 free-for-all. A round ends when at
 // most one monkey is left and at least two slots are present; the survivor
 // (if any) wins it, and the first to roundsToWin round wins takes the match.
-// Writes nothing of the mode block, so a rounds match serialises as in M1.
+// Never touches the per-player mode counters (deaths, respawn, spawn protection).
 #include "kfm/sim/modes/modes.hpp"
 #include "modes/mode_flow.hpp"
 

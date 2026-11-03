@@ -103,9 +103,9 @@ dispatches the per-mode decisions through a `ModeBehavior` table indexed by kind
 `respawnTicks` and `invulnTicks`; `ticksInPhase` is the mode clock. Deathmatch respawns go
 through `LifecycleSystem` at the spawn point farthest from the other monkeys (world RNG on ties)
 with `Tag::Invulnerable` as spawn protection, which the damage and dash-attack rows already
-forbid. The visitor writes the mode block only when it is non-zero (a flag in the phase byte),
-so rounds matches serialise, checksum and snapshot exactly as before: existing corpus checksums
-are unchanged. New events `ScoreChanged`, `PlayerRespawned`, `TimerWarning`; `content/modes.toml`
+forbid. The visitor serialises the new counters like every other field, so every world
+checksum changed and the corpus was regenerated; the rounds mode itself plays exactly as before
+(it never sets a counter). New events `ScoreChanged`, `PlayerRespawned`, `TimerWarning`; `content/modes.toml`
 ships `rounds`, `deathmatch` and `survival`. Presentation (§7): RespawnBurst, ScorePop and
 TimerBanner effects, Respawn, Score and TimerWarning sounds, a per-mode HUD scoreboard and clock.
 Team modes stay open (§12).
@@ -284,11 +284,10 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   neither invalid nor a slot, an ability `defIndex` past the def table, or a tag bit above
   `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
   system would index or shift by.
-- Optional blocks (v0.23): `MatchRules`' mode block (per-player `deaths`, `respawnTicks`,
-  `invulnTicks`) is written after the M1 fields only when it is not all zero, flagged by bit 7
-  of the phase byte (`kModeBlockFlag`); a reader without the flag zeroes it. The encoding stays
-  a pure function of the state, and the rounds mode, which never writes the block, serialises
-  exactly as before v0.23, so new per-mode state did not change the existing corpus checksums.
+- Mode counters (v0.23): `MatchRules`' per-player `deaths`, `respawnTicks` and `invulnTicks`
+  are visited unconditionally after the M1 fields, like every other field. Adding them changed
+  every world checksum (the corpus was regenerated); a new state field for a real feature is
+  the legitimate case for that, not a reason for a second encoding.
 
 ### 5.3 Tick pipeline
 
@@ -336,7 +335,7 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 
 | Kind | Round / match end | Elimination | Notes |
 |---|---|---|---|
-| `rounds` | at most one monkey left (two or more present): the survivor wins the round (none: draw); first to `roundsToWin` round wins takes the match | nothing | the M1 rules, byte for byte; never writes the mode block |
+| `rounds` | at most one monkey left (two or more present): the survivor wins the round (none: draw); first to `roundsToWin` round wins takes the match | nothing | the M1 rules; never sets a mode counter |
 | `deathmatch` | one round; the first to `scoreToWin` eliminations, or the leader once `timeLimitTicks` of play pass (a tied lead: draw) ends the match (`RoundEnded` + `MatchEnded`) | +1 score for the attacker (`ScoreChanged`), +1 death, respawn due in `respawnTicks` | a present slot without a monkey or a pending respawn (a late joiner) is scheduled like a respawn; a slot that left keeps its monkey until eliminated, then forfeits its score |
 | `survival` | as rounds, plus a per-round `timeLimitTicks`: on timeout the survivor with the most hp wins the round, then the one with the fewest deaths this match, else a draw | +1 death | no respawn within a round |
 
@@ -1032,7 +1031,7 @@ C++ server library is mature. The seam makes that swap a contained change.
   `MatchSession` restart the same way whatever the mode: a deathmatch ends on `scoreToWin` or
   its clock (one round, so `round` stays 1), survival and rounds on `roundsToWin`; a draw
   (deathmatch's tied lead) is a `MatchEnded` with an invalid winner, logged as "drawn". The
-  restart keeps the mode, and `initialWorld` starts the next match with an empty mode block,
+  restart keeps the mode, and `initialWorld` starts the next match with zeroed mode counters,
   so nothing (scores, deaths, respawn timers) carries over. A deathmatch joiner does not wait for
   a next round that never comes: its slot spawns `respawnTicks` after it appears in the frames
   (§5.3), at the farthest spawn point.
@@ -1478,14 +1477,15 @@ art is identical up to the export step, and nothing below the presentation layer
   the corpus is re-recorded; the checksums of existing entries must stay identical, because
   content that is only added never changes the default match (a scenario test asserts this for
   extra arenas and modes). v0.23 adds `scripted_4p_deathmatch_3600t` and
-  `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode block and the
-  survival flow are under the cross-platform gate.
+  `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
+  survival flow are under the cross-platform gate. New `WorldState` fields (v0.23: the mode
+  counters) change every checksum and regenerate the corpus; added content alone must not.
 - Mode tests (v0.23): `mode_scenario.cpp` (deathmatch scoring, respawn exactly `respawnTicks`
   after the elimination at the farthest spawn point, spawn protection blocking a hit for
   `respawnInvulnTicks`, `scoreToWin`, the clock with the leader winning or a draw on a tied
   lead and the 10/3/2/1 warnings, late joiners and leavers; survival's last-standing and
-  timeout tie-breaks; rounds never writing the mode block; a mid-respawn round trip through the
-  visitor; determinism), the visitor's optional-block encoding, loader validation (unknown kind,
+  timeout tie-breaks; rounds never setting a mode counter; a mid-respawn round trip through the
+  visitor; determinism), the counters' visitor round trip, loader validation (unknown kind,
   `score_to_win = 0`, `respawn_ticks = 0` in deathmatch), the HUD fields and mode effects and
   sounds, a server restarting a deathmatch and a survival match, a local deathmatch ending on
   its clock, and a 4-client deathmatch over the emulator at 100 ms / 2% staying in sync.
@@ -1744,7 +1744,7 @@ baseline moved to C++23 (§9).
   from the content (a 4× slower thrower gives a 9.9 s median). Human playtests decide the rest.
 - Open: team modes (v0.23 leaves them out: they need a team per slot in `MatchConfig`, team
   scoring in a `ModeBehavior` and a friendly-fire decision in the rules table; the mode table
-  and the per-player mode block are the seams); WebTransport as a later replacement for WebRTC;
+  and the per-player mode counters are the seams); WebTransport as a later replacement for WebRTC;
   mobile browsers and touch controls.
 
 ---

@@ -544,7 +544,7 @@ TEST_CASE("session: a deathmatch ends on its clock, restarts, and Enter returns 
   d.rebase();
   CHECK(d.s->mode() == 1);
   CHECK(d.s->curr().rules.phase != sim::MatchPhase::MatchEnded);
-  CHECK_FALSE(d.s->curr().rules.hasModeBlock());
+  CHECK_FALSE(d.s->curr().rules.hasModeCounters());
   playToEnd();
   d.push(key(Key::Enter, true));
   d.frame(1);

@@ -2,7 +2,7 @@
 // Deathmatch scores eliminations, respawns the eliminated after respawnTicks
 // with spawn protection and ends on scoreToWin or the clock; survival is
 // rounds on a clock with a timeout tie-break; rounds stays the M1 flow and
-// never writes the mode block.
+// never sets a mode counter.
 #include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/visit.hpp"
 #include "scenario_util.hpp"
@@ -337,9 +337,10 @@ TEST_CASE("survival: on timeout most hp wins, then fewest deaths, else a draw",
   }
 }
 
-TEST_CASE("rounds never writes the mode block", "[scenario][modes][rounds]") {
-  // The default mode keeps the M1 serialisation, which is what keeps the
-  // replay corpus checksums unchanged (visit.hpp, kModeBlockFlag).
+TEST_CASE("rounds never sets a death, respawn or spawn-protection counter",
+          "[scenario][modes][rounds]") {
+  // The rounds flow is the M1 one: the mode counters stay zero and no mode
+  // event fires.
   const MatchConfig config{.seed = 0xB10C, .players = 0b1111};
   WorldState s = initialWorld(config);
   Rng inputs = Rng::seeded(0xB10C);
@@ -352,7 +353,7 @@ TEST_CASE("rounds never writes the mode block", "[scenario][modes][rounds]") {
     scoreEvents += countEvents(sink, EventKind::ScoreChanged) +
                    countEvents(sink, EventKind::PlayerRespawned) +
                    countEvents(sink, EventKind::TimerWarning);
-    REQUIRE_FALSE(s.rules.hasModeBlock());
+    REQUIRE_FALSE(s.rules.hasModeCounters());
   }
   CHECK(scoreEvents == 0);
 }
@@ -365,7 +366,7 @@ TEST_CASE("a deathmatch world round-trips through the visitor mid-respawn",
   EventLog log;
   REQUIRE(shoot(a, m, kP0, kP1, log));
   runTicks(a, frameFor(a), 5, m, log);
-  REQUIRE(a.rules.hasModeBlock());
+  REQUIRE(a.rules.hasModeCounters());
   REQUIRE(a.rules.respawnTicks[1] > 0);
 
   std::array<std::byte, 16384> buf{};

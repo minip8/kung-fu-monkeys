@@ -132,14 +132,14 @@ struct MatchRules {
   // Round wins (rounds, survival) or eliminations scored (deathmatch).
   std::array<uint8_t, kMaxPlayers> scores{};
   PlayerId lastRoundWinner{PlayerId::invalid()};
-  // v0.23 mode block: only deathmatch and survival write it, so it stays all
-  // zero in the rounds mode and the visitor leaves it out of the stream there
-  // (visit.hpp), which keeps rounds checksums and snapshots as before.
+  // v0.23 per-player mode counters: only deathmatch and survival write them,
+  // so they stay zero in the rounds mode.
   std::array<uint8_t, kMaxPlayers> deaths{};         // eliminations suffered this match
   std::array<uint16_t, kMaxPlayers> respawnTicks{};  // dead: ticks until respawn; 0 = none due
   std::array<uint16_t, kMaxPlayers> invulnTicks{};   // alive: spawn protection left (Invulnerable)
 
-  [[nodiscard]] constexpr bool hasModeBlock() const {
+  // Any of the mode counters is non-zero.
+  [[nodiscard]] constexpr bool hasModeCounters() const {
     for (uint8_t i = 0; i < kMaxPlayers; ++i) {
       if (deaths[i] != 0 || respawnTicks[i] != 0 || invulnTicks[i] != 0) return true;
     }

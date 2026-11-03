@@ -222,39 +222,22 @@ TEST_CASE("every new state field reaches the checksum", "[sim][visit]") {
   CHECK(changed([](WorldState& s) { s.rules.invulnTicks[4] = 1; }));
 }
 
-TEST_CASE("the mode block is in the stream only when it is not all zero", "[sim][visit]") {
-  // An all-zero block (every rounds match) leaves the M1 encoding untouched,
-  // which keeps the replay corpus checksums; a non-zero one follows the M1
-  // fields, flagged in the phase byte.
-  const WorldState a = richWorld();
-  REQUIRE_FALSE(a.rules.hasModeBlock());
-  std::array<std::byte, 16384> bufA{};
-  BitWriter wa(bufA);
-  REQUIRE(writeTo(wa, a));
-
-  WorldState b = a;
-  b.rules.deaths[2] = 3;
-  b.rules.respawnTicks[2] = 40;
-  b.rules.invulnTicks[7] = 9;
-  std::array<std::byte, 16384> bufB{};
-  BitWriter wb(bufB);
-  REQUIRE(writeTo(wb, b));
-  CHECK(wb.bytesWritten() == wa.bytesWritten() + size_t{kMaxPlayers} * (1 + 2 + 2));
-
-  WorldState c{};
-  c.rules.deaths[5] = 9;  // a read without the block must clear it
-  BitReader ra(wa.written());
-  REQUIRE(readFrom(ra, c));
-  CHECK(checksum(c) == checksum(a));
-  CHECK_FALSE(c.rules.hasModeBlock());
-  BitReader rb(wb.written());
-  REQUIRE(readFrom(rb, c));
-  CHECK(rb.atEnd());
-  CHECK(checksum(c) == checksum(b));
-  CHECK(c.rules.deaths[2] == 3);
-  CHECK(c.rules.respawnTicks[2] == 40);
-  CHECK(c.rules.invulnTicks[7] == 9);
-  CHECK(c.rules.phase == b.rules.phase);
+TEST_CASE("write/read round-trips the per-player mode counters", "[sim][visit]") {
+  WorldState a = richWorld();
+  a.rules.deaths[2] = 3;
+  a.rules.respawnTicks[2] = 40;
+  a.rules.invulnTicks[7] = 9;
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, a));
+  WorldState b{};
+  BitReader r(w.written());
+  REQUIRE(readFrom(r, b));
+  CHECK(r.atEnd());
+  CHECK(checksum(b) == checksum(a));
+  CHECK(b.rules.deaths[2] == 3);
+  CHECK(b.rules.respawnTicks[2] == 40);
+  CHECK(b.rules.invulnTicks[7] == 9);
 }
 
 TEST_CASE("ModifierList past count is canonicalised", "[sim][visit]") {
