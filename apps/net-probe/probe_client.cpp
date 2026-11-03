@@ -67,13 +67,18 @@ void putU64(std::span<std::byte> out, uint64_t v) {
 
 [[nodiscard]] std::vector<std::byte> makeMessage(std::byte laneByte, net::Lane lane, uint32_t seq,
                                                  uint64_t nowNs, size_t size) {
-  std::vector<std::byte> m(size);
-  m[0] = kClientTag;
-  m[1] = laneByte;
-  putU32(std::span(m).subspan(2, 4), seq);
-  putU64(std::span(m).subspan(6, 8), nowNs);
-  for (size_t i = kHeaderBytes; i < size; ++i)
-    m[i] = fill(lane, seq, i);
+  // Never shorter than the header, and written through an explicitly checked
+  // pointer: GCC 15 in Release otherwise reports a potential null dereference
+  // on the vector's storage under -Werror.
+  std::vector<std::byte> m(std::max(size, kHeaderBytes));
+  std::byte* const p = m.data();
+  if (p == nullptr) return m;  // cannot happen: the size is at least kHeaderBytes
+  p[0] = kClientTag;
+  p[1] = laneByte;
+  putU32(std::span<std::byte>(p + 2, 4), seq);
+  putU64(std::span<std::byte>(p + 6, 8), nowNs);
+  for (size_t i = kHeaderBytes; i < m.size(); ++i)
+    p[i] = fill(lane, seq, i);
   return m;
 }
 
