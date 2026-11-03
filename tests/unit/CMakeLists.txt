@@ -44,11 +44,13 @@ if(NOT KFM_HEADLESS)
 endif()
 
 if(NOT KFM_HEADLESS)
-  # apps/client: the headless match loop (kfm_client_core); no window is opened.
+  # apps/client: the headless match loop (kfm_client_core) and the SDL event
+  # translation (kfm_client_sdl); no window is opened.
   kfm_add_test_exe(kfm_client_tests
     client/fixed_step_clock_test.cpp
     client/match_session_test.cpp
     client/content_tuning_test.cpp
+    client/sdl_input_test.cpp
   )
-  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core)
+  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
 endif()

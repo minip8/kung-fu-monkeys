@@ -30,8 +30,16 @@
     canvas.addEventListener('mousedown', () => canvas.focus());
     window.addEventListener('load', () => canvas.focus());
     const statusElement = document.getElementById('status');
+    // Command-line flags from the query string: ?autostart&bots=3&seed=7 runs
+    // kfm_client --autostart --bots 3 --seed 7.
+    const kfmArguments = [];
+    for (const [key, value] of new URLSearchParams(window.location.search)) {
+      kfmArguments.push('--' + key);
+      if (value !== '') kfmArguments.push(value);
+    }
     var Module = {
       canvas: canvas,
+      arguments: kfmArguments,
       webglContextAttributes: kfmWebglAttributes,
       print: (text) => console.log(text),
       printErr: (text) => console.error(text),
