@@ -7,5 +7,6 @@ kfm_add_test_exe(kfm_scenario_tests
   hit_scenario.cpp
   round_scenario.cpp
   match_scenario.cpp
+  scripted_match_scenario.cpp
 )
 target_link_libraries(kfm_scenario_tests PRIVATE kfm::sim)

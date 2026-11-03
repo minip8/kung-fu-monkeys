@@ -5,6 +5,7 @@ add_library(kfm_sim STATIC
   src/world_state.cpp
   src/step.cpp
   src/replay.cpp
+  src/scripted_inputs.cpp
   src/abilities/registry.cpp
   src/abilities/dash.cpp
   src/abilities/throw.cpp

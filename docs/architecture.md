@@ -31,7 +31,8 @@ v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact 
 the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the pickup radius
 (§5.10); bananas spawn clear of the thrower (§5.7);
 the stick is idle iff `moveMag == 0` (§5.4);
-rule-table semantics and the `HitStun` tick convention pinned (§5.6).
+rule-table semantics and the `HitStun` tick convention pinned (§5.6); scripted-input
+scaffolding (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -665,6 +666,12 @@ art is identical up to the export step, and nothing below the presentation layer
   on packet decoders; Google Benchmark for ticks/s and rollback cost.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release.
+- Scripted inputs (v0.13): `kfm/sim/scripted_inputs.hpp` generates varied, deterministic
+  matches (wander, aim at the nearest player, throw, dash at incoming bananas, fresh button
+  edges) from an `Rng` separate from the world's. It is test and tooling scaffolding shared by
+  the scenario tests, `kfm_replay record-scripted`, the bench and later the netsim, not an
+  `IAgent` (§8); it lives in `engine/sim` only because it is float-free, allocation-free and
+  never writes `WorldState`.
 - Replays: `seed + match config + content_hash + input stream`. The `replay` app scrubs via
   periodic keyframes. Replays attach to bug reports.
 - Observability: Tracy zones; structured logging; net stats (RTT, jitter, loss, rollback depth,
