@@ -647,7 +647,16 @@ C++ server library is mature. The seam makes that swap a contained change.
   deep swapchain queues. M2 numbers (v0.15): an entity is interpolated only when the same
   `EntityId` (index and generation) exists in both states; otherwise, or when it moved more than
   2.0 units between the two ticks (a dash moves about 0.37 per tick), it snaps to the newest
-  state, its body yaw resets and any smoothing offset is cleared.
+  state, its body yaw resets and any smoothing offset is cleared. The local client's fixed-step
+  clock accumulates time in units of ns × `kTickHz` so a tick costs exactly 1e9 units (no drift
+  at 1×; the time scale, clamped to 0.25–2×, scales the units added per frame); at most 4 ticks
+  run per frame (adjustable 1–4) and any further backlog is dropped and counted, never
+  simulated late. Inputs for tick i are sampled over the wall-clock window that tick covers,
+  immediately before its `step()`; pausing freezes the accumulator and discards pending presses
+  so nothing fires on resume. Render policy "auto": the newest tick is drawn directly when the
+  measured display rate (EMA of frame intervals) is at least 0.95 × `kTickHz` × time scale (the
+  tolerance covers 59.94 Hz displays), otherwise frames interpolate with
+  `alpha = accumulator / tickCost`; the overlay can force either.
 - Browser specifics: request the WebGL context with `desynchronized: true` (bypasses the
   compositor queue in Chromium), read input and step the sim at the top of the
   `requestAnimationFrame` callback, render the newest predicted tick directly rather than
@@ -708,6 +717,24 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
 - UI (menus, lobby, scoreboard, settings) is separate from gameplay rendering.
 - Local multiplayer is first-class: several humans on one client each own a player slot, all
   predicted locally; the server sees them as separate players behind one connection.
+- M2 client flow (v0.15, `apps/client`, the headless-testable `kfm_client_core` under the SDL
+  and ImGui glue): the lobby is client-side, before the world exists, because `MatchConfig`
+  fixes the present mask at `initialWorld`. Slot 0 is bound to keyboard profile 0 at startup;
+  an unbound device joins the lowest free slot by pressing Throw or Dash (any button on a pad);
+  bots (scripted inputs from an `Rng` separate from the world's, seeded by `--players-seed`,
+  default the same as `kfm_replay --input-seed`) fill the lowest free slots after the humans;
+  Enter, pad Start, the Start button or `--autostart` creates the world. After `MatchEnded`,
+  Enter or Start returns to the lobby with bindings kept. A removed pad's slot repeats its last
+  full input (held buttons cannot re-fire thanks to edge detection) until the next free device
+  presses a button, and becomes a bot on restart. Restart "same seed" reproduces the run
+  exactly. Live content editing from the F1 overlay (dash phases and window, banana flight,
+  player speed, hit-stun, mode) is a local-only debug feature: the overlay shows the content
+  hash, marks it TUNED when it differs from the defaults, and prints the values as C++ so a
+  tuned result is pasted back into the `constexpr` tables and the corpus regenerated. The HUD
+  (scores, round, countdown, banners, `P<n>`/`BOT<n>` tags with ammo pips placed with
+  `worldToScreen`) is drawn on ImGui's background draw list, over the scene and under ImGui
+  windows. The browser page turns its query string into the same flags
+  (`?autostart&bots=3&seed=7&overlay`).
 
 M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp`:
 - World basis: sim `(x, y)` at cosmetic height `h` is world `(x, h, −y)`, right-handed, +y up.
