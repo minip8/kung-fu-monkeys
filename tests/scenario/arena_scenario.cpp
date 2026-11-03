@@ -230,7 +230,9 @@ TEST_CASE("a banana flies over a pit untouched", "[scenario][arena]") {
     log = lab.step(PlayerInput{0, 0, kLeft, t == 0 ? kThrow : uint8_t{0}, 0});
   }
   const EntityId id = firstEvent(log, EventKind::BoomerangThrown).entity;
-  const Vec2 vel0 = lab.s.boomerangs.get(id)->transform.vel;
+  const Boomerang* thrown = lab.s.boomerangs.get(id);
+  REQUIRE(thrown != nullptr);
+  const Vec2 vel0 = thrown->transform.vel;
   int ticksOverPit = 0;
   for (int t = 0; t < 14; ++t) {
     log = lab.step(PlayerInput{});
