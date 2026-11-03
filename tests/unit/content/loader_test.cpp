@@ -746,3 +746,61 @@ TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][m
   CHECK(loaded.modes[survival].kind == sim::ModeKind::Survival);
   CHECK(loaded.modes[survival].timeLimitTicks > 0);
 }
+
+TEST_CASE("content/ ships blink, slam and parry with a mode each (v0.21)",
+          "[content][loader][abilities]") {
+  ContentDB loaded{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
+  // The base kit keeps the ability button empty.
+  CHECK(loaded.player.abilities[sim::kAbilitySlotExtra] == 0);
+  const std::array<std::pair<std::string_view, sim::AbilityKind>, 3> kinds = {{
+      {"blink", sim::AbilityKind::Blink},
+      {"slam", sim::AbilityKind::Slam},
+      {"parry", sim::AbilityKind::Parry},
+  }};
+  for (const auto& [name, kind] : kinds) {
+    INFO(name);
+    const std::string modeName = "rounds_" + std::string(name);
+    const std::optional<uint8_t> mode = loaded.findMode(modeName);
+    REQUIRE(mode.has_value());
+    const sim::ModeDef& m = loaded.modes[*mode];
+    CHECK(m.kind == sim::ModeKind::Rounds);
+    REQUIRE(m.hasAbilities == 1);
+    CHECK(m.abilities[sim::kAbilitySlotDash] == loaded.player.abilities[sim::kAbilitySlotDash]);
+    CHECK(m.abilities[sim::kAbilitySlotThrow] == loaded.player.abilities[sim::kAbilitySlotThrow]);
+    const sim::AbilityDef& def = loaded.abilityAt(m.abilities[sim::kAbilitySlotExtra]);
+    CHECK(def.name.view() == name);
+    CHECK(def.kind == kind);
+  }
+}
+
+TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loader][abilities]") {
+  const std::string base(kMinimal);
+  const auto withAbility = [&](std::string_view body) {
+    return base + "\n[[ability]]\nname = \"extra\"\n" + std::string(body);
+  };
+  CHECK(loads(withAbility("kind = \"blink\"\nactive_ticks = 10\nspeed = 30\n")));
+  CHECK(loads(withAbility("kind = \"slam\"\nactive_ticks = 12\nparam0 = 3\nparam1 = 4\n")));
+  CHECK(loads(withAbility("kind = \"parry\"\nactive_ticks = 8\nrecovery_ticks = 4\n")));
+  CHECK(
+      loads(withAbility("kind = \"parry\"\nactive_ticks = 8\nrecovery_ticks = 4\n"
+                        "tags_active = [\"parrying\", \"slamming\"]\n")));
+  CHECK(contains(loadErrors(withAbility("kind = \"teleport\"\n")), "unknown kind \"teleport\""));
+  CHECK(contains(loadErrors(withAbility("kind = \"blink\"\nactive_ticks = 10\n")),
+                 "a blink needs active_ticks >= 1 and a positive speed"));
+  CHECK(contains(loadErrors(withAbility("kind = \"slam\"\nactive_ticks = 12\nparam0 = 0.25\n")),
+                 "a slam needs active_ticks >= 1, param0 (reach) in (player radius, 8]"));
+  CHECK(contains(loadErrors(withAbility("kind = \"slam\"\nactive_ticks = 12\nparam0 = 9\n")),
+                 "a slam needs"));
+  CHECK(contains(loadErrors(withAbility("kind = \"parry\"\nactive_ticks = 8\n")),
+                 "a parry needs active_ticks >= 1 and recovery_ticks >= 1"));
+  // A third slot through the loadout.
+  CHECK(loads(replaced(withAbility("kind = \"blink\"\nactive_ticks = 10\nspeed = 30\n"),
+                       "[\"dash\", \"throw\"]", "[\"dash\", \"throw\", \"extra\"]")));
+  // Power-ups never grant ability-owned tags.
+  CHECK(contains(
+      loadErrors(std::string(kMinimal) + "\n[[powerup]]\nname = \"p\"\nduration_ticks = 60\n"
+                                         "grants = [{ kind = \"tag\", tag = \"parrying\" }]\n"),
+      "a power-up can grant only 'shielded' or 'invulnerable'"));
+}

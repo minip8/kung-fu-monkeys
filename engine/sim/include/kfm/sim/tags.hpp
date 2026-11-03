@@ -14,6 +14,7 @@ enum class Tag : uint8_t {
   Invulnerable,
   Eliminated,
   Slamming,  // v0.21: a slam's impact tick (abilities/slam.cpp, rules/slam.cpp)
+  Parrying,  // v0.21: a parry's window may be open (abilities/parry.cpp, rules/parry.cpp)
   kCount,    // NOLINT(readability-identifier-naming): count sentinel
 };
 static_assert(static_cast<uint32_t>(Tag::kCount) <= 32);

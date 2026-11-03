@@ -57,6 +57,7 @@ enum class AbilityKind : uint8_t {
   Throw,
   Blink,   // v0.21: teleport dash (abilities/blink.cpp)
   Slam,    // v0.21: radial impulse (abilities/slam.cpp, rules/slam.cpp)
+  Parry,   // v0.21: timed banana reflection (abilities/parry.cpp, rules/parry.cpp)
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 enum class AbilityPhase : uint8_t { Idle = 0, Startup, Active, Recovery };

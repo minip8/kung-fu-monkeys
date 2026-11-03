@@ -73,11 +73,12 @@ struct AbilityKindName {
   std::string_view name;
   AbilityKind kind;
 };
-constexpr std::array<AbilityKindName, 4> kAbilityKinds = {{
+constexpr std::array<AbilityKindName, 5> kAbilityKinds = {{
     {"dash", AbilityKind::Dash},
     {"throw", AbilityKind::Throw},
     {"blink", AbilityKind::Blink},
     {"slam", AbilityKind::Slam},
+    {"parry", AbilityKind::Parry},
 }};
 static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
               "every AbilityKind but None needs a TOML name in kAbilityKinds");
@@ -98,7 +99,7 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 7> kTagNames = {{
+constexpr std::array<TagName, 8> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
@@ -106,6 +107,7 @@ constexpr std::array<TagName, 7> kTagNames = {{
     {"invulnerable", Tag::Invulnerable},
     {"eliminated", Tag::Eliminated},
     {"slamming", Tag::Slamming},
+    {"parrying", Tag::Parrying},
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -1312,6 +1314,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
       fail(where +
            ": a slam needs active_ticks >= 1, param0 (reach) in (player radius, 8] and "
            "param1 (push) >= 0");
+    }
+    // A parry's window needs an active phase, and a recovery tick for its
+    // sub-tick tail (v0.21).
+    if (d.kind == AbilityKind::Parry && (d.activeTicks < 1 || d.recoveryTicks < 1)) {
+      fail(where + ": a parry needs active_ticks >= 1 and recovery_ticks >= 1");
     }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");

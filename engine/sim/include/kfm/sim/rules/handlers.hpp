@@ -15,6 +15,11 @@ namespace kfm::sim {
 // declines at ammoMax (v0.16).
 bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                     const Contact& contact, EventSink& sink);
+// Prio 15, rules/parry.cpp (v0.21): a parry judged against the press
+// sub-tick reflects a non-own banana back at its thrower and makes it the
+// parrier's; declines outside the window (falls through to damage).
+bool parryBoomerang(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
+                    const Contact& contact, EventSink& sink);
 // Prio 16, rules/slam.cpp (v0.21): a slammer's impact grounds a non-own
 // banana in flight within its reach.
 bool slamGroundsBanana(WorldState& s, const MatchContent& content, EntityId a, EntityId b,

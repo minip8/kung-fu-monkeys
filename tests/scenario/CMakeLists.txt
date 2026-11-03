@@ -17,5 +17,6 @@ kfm_add_test_exe(kfm_scenario_tests
   powerup_scenario.cpp
   blink_scenario.cpp
   slam_scenario.cpp
+  parry_scenario.cpp
 )
 target_link_libraries(kfm_scenario_tests PRIVATE kfm::sim)

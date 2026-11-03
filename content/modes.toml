@@ -59,3 +59,11 @@ rounds_to_win = 3
 round_end_ticks = 120
 round_start_ticks = 60
 abilities = ["dash", "throw", "slam"]
+
+[[mode]]
+name = "rounds_parry"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "parry"]

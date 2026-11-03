@@ -132,7 +132,10 @@ contacts made only through that reach carry `Contact::reach` and match only rows
 `reachA`, the new rows 16 (ground a non-own banana) and 26 (push a monkey through the new
 `Player::knockback`, which `MovementSystem` adds to the velocity); `SlamLanded`,
 `PlayerSlammed`; the new state fields changed every checksum, verified equal with them left out
-of the visitor).
+of the visitor); Parry (`Tag::Parrying` while its window may be open, row 15 judged to the press
+sub-tick reflects a non-own banana back at its thrower as the parrier's own, a mistimed parry
+falls through to damage, the perfect catch wins a tie; `PlayerParryStarted`,
+`BoomerangParried`).
 v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
 `kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
 `Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
@@ -537,6 +540,14 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
     and counts it down, its only change. The slammer walks during the startup (no `Dashing`,
     as for Blink). Shipped: 0.2 s startup, reach 3, push 4 units over 0.2 s, 2 s cooldown, in
     mode `rounds_slam`. New state: `Player::knockback`, `knockbackTicks` (visited).
+  - Parry (`parry.cpp`, `rules/parry.cpp`): the window is `[press + startupTicks, press +
+    startupTicks + activeTicks)` from the press instant (`activatedTick + activatedSubTick /
+    256`), like the perfect dash's. `kindTags` grants `Tag::Parrying` on the Active ticks plus
+    the first Recovery tick when the press had a non-zero sub-tick (the window closes inside
+    it; the loader requires `recovery_ticks >= 1`); the rule judges the exact instant (§5.6).
+    `PlayerParryStarted` on the press (the stance effect). Shipped: 2-tick startup, an 8-tick
+    window, 14 ticks of recovery (a whiff is punishable), 1 s cooldown, in mode
+    `rounds_parry`.
 
 ### 5.6 Interaction rules (where the twists live)
 
@@ -553,6 +564,7 @@ or pick up again.
 ```
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
+ 15   Player[Parrying, !HitStun] Boomerang[InFlight, !own]      ParryBoomerang (declines outside the window)
  16   Player[Slamming, !HitStun] Boomerang[InFlight, !own] (reach) SlamGroundsBanana
  20   Player[Shielded, !HitStun] Boomerang[InFlight, !own]      ShieldBlocksBanana
  24   Player[Dashing, !HitStun]  Player[Shielded, !HitStun]     ShieldBlocksDash (declines below minAmmo)
@@ -564,6 +576,20 @@ prio  A                          B                              handler
  51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
  60   Player[]                   Hazard[Pit]                    FallIntoPit
 ```
+
+Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
+`0 <= (tick + tHit) − (pressTime + startupTicks) < activeTicks`; outside the window the handler
+declines and the scan falls through to the slam, shield and damage rows, so a mistimed parry is
+a hit. A parried banana becomes the parrier's (owner swap), `Outbound` with a fresh
+`outboundTicks` timer, placed at the contact point and heading for the thrower's current
+position (straight back when the thrower is gone), at its own speed with its projectile
+modifiers kept; `BoomerangParried{parrier, banana, a = thrower}`. As the parrier's own outbound
+banana it passes through the parrier, may hit the thrower (credited to the parrier) and returns
+to the parrier, so a parry gains a banana. Order: below the perfect catch (rows 10/11) because
+both reward timing and the catch also puts the banana in hand at once, so it wins a tie (a
+dasher at full ammo declines the catch and the parry takes it); above the slam, shield and
+damage rows, which it pre-empts the way the catch pre-empts damage. It ignores own bananas: a
+returning own banana is still auto-caught (row 40).
 
 Slam (v0.21, rows 16 and 26, `rules/slam.cpp`). A contact made only through a slammer's widened
 radius (§5.3, §5.5) carries `Contact::reach` (`kReachA`/`kReachB`, swapped with the orientation)
@@ -799,7 +825,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   (10, 3, 2, 1 s left on the mode clock).
   v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`,
   `SlamLanded{player = the slammer, entity, a = the reach's raw value}` (the impact, for the
-  shockwave), `PlayerSlammed{player = the pushed monkey, entity = the slammer, a = its slot}`.
+  shockwave), `PlayerSlammed{player = the pushed monkey, entity = the slammer, a = its slot}`,
+  `PlayerParryStarted{player, entity}` (the press), `BoomerangParried{player = the parrier, now
+  the owner, entity = the banana, a = the thrower's slot}`.
   `RoundEnded`, ...
 - v0.20: `PickupSpawned` and `PickupTaken` carry the pickup's `PickupKind` in `a` and, for a
   power-up, its def index in `b` (a banana pickup's payload stays 0/0), which is all a

@@ -4,6 +4,7 @@
 
 #include "kfm/sim/abilities/blink.hpp"
 #include "kfm/sim/abilities/dash.hpp"
+#include "kfm/sim/abilities/parry.hpp"
 #include "kfm/sim/abilities/slam.hpp"
 #include "kfm/sim/abilities/throw.hpp"
 
@@ -31,6 +32,7 @@ constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> 
     throwBehavior(),  // AbilityKind::Throw
     blinkBehavior(),  // AbilityKind::Blink
     slamBehavior(),   // AbilityKind::Slam
+    parryBehavior(),  // AbilityKind::Parry
 };
 
 }  // namespace

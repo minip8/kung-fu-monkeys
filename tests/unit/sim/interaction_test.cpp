@@ -92,7 +92,7 @@ EventSink resolve(WorldState& s, const Contacts& cs, const ContentDB& content = 
 TEST_CASE("rules table is sorted and every row ignores eliminated players", "[sim][interaction]") {
   const auto rules = interactionRules();
   // M1 six + the shield rows and power-ups (v0.20) + the pit (v0.22) + the slam (v0.21)
-  REQUIRE(rules.size() == 12);
+  REQUIRE(rules.size() == 13);  // + the parry (v0.21)
   for (size_t i = 0; i < rules.size(); ++i) {
     if (i > 0) CHECK(rules[i - 1].priority < rules[i].priority);
     CHECK(rules[i].kindA == EntityKind::Player);

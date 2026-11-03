@@ -31,17 +31,25 @@ constexpr uint8_t kReach = 1;
 // Pickups are split by kind: row 50 the grounded banana, row 51 a power-up.
 // Player × Hazard (row 60, v0.22) is the pit: no tag spares a player whose
 // centre is over it.
+// The parry (v0.21, row 15) sits below the perfect catch (both reward
+// timing; the catch also gains a banana at once, so it wins a tie) and above
+// the slam, the shield and damage: a mistimed parry declines and falls
+// through to them.
 // The slam (v0.21, rows 16 and 26) is the only pair of rows that accepts a
 // contact made through a slammer's widened radius (InteractionRule::reachA):
 // it grounds bananas below the catch (a perfect catch still gains the banana)
 // and above the shield and damage, and pushes monkeys after the dash attack.
-constexpr std::array<InteractionRule, 12> kRules = {{
+constexpr std::array<InteractionRule, 13> kRules = {{
     // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseInFlight, Ownership::NotOwn, &catchBoomerang},
     // Player[PerfectDash] x Boomerang[Returning, own]: perfect catch of one's own.
     {11, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseReturning, Ownership::Own, &catchBoomerang},
+    // Player[Parrying, !HitStun] x Boomerang[InFlight, !own]: reflected (declines outside
+    // the window).
+    {15, EntityKind::Player, Tags::of(Tag::Parrying), kGone | Tag::HitStun, EntityKind::Boomerang,
+     Tags{}, Tags{}, kPhaseInFlight, Ownership::NotOwn, &parryBoomerang},
     // Player[Slamming, !HitStun] x Boomerang[InFlight, !own], through the reach: grounded.
     {16, EntityKind::Player, Tags::of(Tag::Slamming), kGone | Tag::HitStun, EntityKind::Boomerang,
      Tags{}, Tags{}, kPhaseInFlight, Ownership::NotOwn, &slamGroundsBanana, kPickupAny, kReach},

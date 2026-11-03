@@ -37,9 +37,11 @@ enum class EventKind : uint8_t {
   ShieldBroken,     // player = shielded victim, entity = the banana or the dashing player,
                     // a = attacker slot, b = power-up index whose shield broke (§5.8)
   // v0.21 (abilities, §5.5):
-  PlayerBlinked,  // player, entity = player, a/b = origin x/y (raw Q16.16 bits as uint32)
-  SlamLanded,     // player = slammer, entity = player, a = reach (raw Q16.16 bits)
-  PlayerSlammed,  // player = pushed monkey, entity = slammer's player, a = slammer slot
+  PlayerBlinked,       // player, entity = player, a/b = origin x/y (raw Q16.16 bits as uint32)
+  SlamLanded,          // player = slammer, entity = player, a = reach (raw Q16.16 bits)
+  PlayerSlammed,       // player = pushed monkey, entity = slammer's player, a = slammer slot
+  PlayerParryStarted,  // player, entity = player (a parry pressed: the stance)
+  BoomerangParried,    // player = parrier (the new owner), entity = boomerang, a = thrower slot
 };
 
 // BoomerangCaught payload `a`.
