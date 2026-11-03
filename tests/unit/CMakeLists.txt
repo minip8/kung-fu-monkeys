@@ -87,3 +87,28 @@ if(NOT KFM_HEADLESS)
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
 endif()
+
+if(KFM_WEBRTC AND NOT EMSCRIPTEN)
+  # WebRtcTransport over real libdatachannel on 127.0.0.1 (no internet:
+  # host candidates only). Labelled `network` so it can be excluded with
+  # `ctest -LE network`; a generous timeout because ICE + DTLS per test case
+  # is slow under sanitizers.
+  kfm_add_test_exe(kfm_net_webrtc_tests
+    net/webrtc_signaling_test.cpp
+    net/webrtc_api_test.cpp
+    net/webrtc_transport_test.cpp
+  )
+  target_include_directories(kfm_net_webrtc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc)
+  set_tests_properties(kfm_net_webrtc_tests PROPERTIES LABELS network TIMEOUT 300)
+endif()
+
+if(KFM_WEBRTC AND EMSCRIPTEN)
+  # The browser transport links (datachannel-wasm's --js-library files, wasm
+  # exceptions) and its browser-free paths run under node.
+  kfm_add_test_exe(kfm_net_webrtc_tests
+    net/webrtc_signaling_test.cpp
+    net/webrtc_api_test.cpp
+  )
+  target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc)
+endif()
