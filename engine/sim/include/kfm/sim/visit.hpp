@@ -69,6 +69,8 @@ inline constexpr uint8_t kEnumCount = 0;  // no specialisation: not visitable
 template <>
 inline constexpr uint8_t kEnumCount<AbilityKind> = static_cast<uint8_t>(AbilityKind::kCount);
 template <>
+inline constexpr uint8_t kEnumCount<HazardKind> = static_cast<uint8_t>(HazardKind::kCount);
+template <>
 inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<StatKind> = 3;
@@ -220,6 +222,18 @@ void visit(V& v, ArenaDef& d) {
   for (Vec2& p : d.spawnPoints)
     visit(v, p);
   v.u8(d.spawnPointCount);
+  for (Wall& w : d.walls) {
+    visit(v, w.min);
+    visit(v, w.max);
+  }
+  v.u8(d.wallCount);
+  for (Hazard& h : d.hazards) {
+    visit(v, h.min);
+    visit(v, h.max);
+    visit(v, h.kind);
+    visit(v, h.speedMul);
+  }
+  v.u8(d.hazardCount);
 }
 template <class V>
 void visit(V& v, ModeDef& d) {

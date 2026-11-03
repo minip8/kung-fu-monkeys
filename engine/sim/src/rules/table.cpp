@@ -23,7 +23,9 @@ constexpr Tags kGone = Tags::of(Tag::Eliminated);
 // InteractionSystem tries each player contact both ways round. A stunned
 // attacker cannot strike, so the loser of a mutual dash cannot retaliate in
 // the same tick.
-constexpr std::array<InteractionRule, 6> kRules = {{
+// Player × Hazard (row 60, v0.22) is the pit: no tag spares a player whose
+// centre is over it.
+constexpr std::array<InteractionRule, 7> kRules = {{
     // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseInFlight, Ownership::NotOwn, &catchBoomerang},
@@ -42,6 +44,9 @@ constexpr std::array<InteractionRule, 6> kRules = {{
     // Player[] x Pickup[]: take pickup.
     {50, EntityKind::Player, Tags{}, kGone, EntityKind::Pickup, Tags{}, Tags{}, kPhaseAny,
      Ownership::Any, &takePickup},
+    // Player[] x Hazard[Pit]: falls in, eliminated by nobody.
+    {60, EntityKind::Player, Tags{}, kGone, EntityKind::Hazard, Tags{}, Tags{}, kPhaseAny,
+     Ownership::Any, &fallIntoPit},
 }};
 
 static_assert(std::ranges::is_sorted(kRules, {}, &InteractionRule::priority));

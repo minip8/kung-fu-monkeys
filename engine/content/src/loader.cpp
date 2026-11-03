@@ -101,6 +101,17 @@ constexpr std::array<TagName, 6> kTagNames = {{
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
 
+struct HazardKindName {
+  std::string_view name;
+  sim::HazardKind kind;
+};
+constexpr std::array<HazardKindName, 2> kHazardKinds = {{
+    {"pit", sim::HazardKind::Pit},
+    {"slow", sim::HazardKind::Slow},
+}};
+static_assert(kHazardKinds.size() == static_cast<size_t>(sim::HazardKind::kCount),
+              "every HazardKind needs a TOML name in kHazardKinds");
+
 // Name of the built-in inert ability at index 0.
 constexpr std::string_view kNoneAbility = "none";
 
@@ -287,8 +298,8 @@ class Section {
       error(n, "'" + std::string(what) + "' must be a pair [x, y]");
       return false;
     }
-    const std::optional<Fixed> x = toFixed(*arr->get(0), what, 1);
-    const std::optional<Fixed> y = toFixed(*arr->get(1), what, 1);
+    const std::optional<Fixed> x = toFixed((*arr)[0], what, 1);
+    const std::optional<Fixed> y = toFixed((*arr)[1], what, 1);
     if (!x || !y) return false;
     out = Vec2{*x, *y};
     return true;
@@ -588,6 +599,8 @@ class Builder {
     } else {
       parseSpawnEllipse(s, *ellipse, a);
     }
+    if (const toml::node* walls = s.take("walls")) parseWalls(s, *walls, a);
+    if (const toml::node* hazards = s.take("hazards")) parseHazards(s, *hazards, a);
     if (!name || !uniqueName(s, *name, db_.arenas, db_.arenaCount, "arena")) return;
     if (db_.arenaCount >= sim::kMaxArenas) {
       s.error("too many arenas (at most " + std::to_string(sim::kMaxArenas) + ", kMaxArenas)");
@@ -604,7 +617,7 @@ class Builder {
       return;
     }
     for (size_t i = 0; i < arr->size(); ++i) {
-      if (!s.vec2Of(*arr->get(i), "spawn_points", a.spawnPoints[i])) return;
+      if (!s.vec2Of((*arr)[i], "spawn_points", a.spawnPoints[i])) return;
     }
     a.spawnPointCount = static_cast<uint8_t>(arr->size());
   }
@@ -633,12 +646,74 @@ class Builder {
       return;
     }
     for (size_t i = 0; i < order->size(); ++i) {
-      const std::optional<int64_t> k = s.toInteger(*order->get(i), "order", 0, 359);
+      const std::optional<int64_t> k = s.toInteger((*order)[i], "order", 0, 359);
       if (!k) return;
       const Angle angle = Angle::fromDegrees(static_cast<int32_t>(*k) * step);
       a.spawnPoints[i] = Vec2{cos(angle) * radii.x, sin(angle) * radii.y};
     }
     a.spawnPointCount = static_cast<uint8_t>(order->size());
+  }
+
+  // `walls = [{ min = [x, y], max = [x, y] }, ...]` (v0.22): interior blocks.
+  static void parseWalls(Section& outer, const toml::node& n, ArenaDef& a) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->size() > sim::kMaxArenaWalls) {
+      outer.error(n, "'walls' must list at most " + std::to_string(sim::kMaxArenaWalls) +
+                         " { min = [x, y], max = [x, y] } boxes (kMaxArenaWalls)");
+      return;
+    }
+    uint8_t count = 0;
+    for (const toml::node& el : *arr) {
+      const toml::table* t = el.as_table();
+      if (t == nullptr) {
+        outer.error(el, "'walls' entries must be tables { min = [x, y], max = [x, y] }");
+        return;
+      }
+      Section s(*t, outer.file(), outer.diag(), outer.where() + " wall " + std::to_string(count));
+      sim::Wall& w = a.walls[count++];
+      s.vec2("min", w.min, true);
+      s.vec2("max", w.max, true);
+      s.finish();
+    }
+    a.wallCount = count;
+  }
+
+  // `hazards = [{ kind = "pit" | "slow", min = [x, y], max = [x, y],
+  // speed_mul = m }, ...]` (v0.22): speed_mul is for slow only.
+  static void parseHazards(Section& outer, const toml::node& n, ArenaDef& a) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->size() > sim::kMaxArenaHazards) {
+      outer.error(n, "'hazards' must list at most " + std::to_string(sim::kMaxArenaHazards) +
+                         " { kind, min, max } boxes (kMaxArenaHazards)");
+      return;
+    }
+    uint8_t count = 0;
+    for (const toml::node& el : *arr) {
+      const toml::table* t = el.as_table();
+      if (t == nullptr) {
+        outer.error(el, "'hazards' entries must be tables { kind, min = [x, y], max = [x, y] }");
+        return;
+      }
+      Section s(*t, outer.file(), outer.diag(), outer.where() + " hazard " + std::to_string(count));
+      sim::Hazard& h = a.hazards[count++];
+      if (const std::optional<std::string> kind = s.string("kind", true)) {
+        bool known = false;
+        for (const HazardKindName& k : kHazardKinds) {
+          if (k.name == *kind) {
+            h.kind = k.kind;
+            known = true;
+          }
+        }
+        if (!known) s.error("unknown hazard kind " + inQuotes(*kind) + " (known: pit, slow)");
+      }
+      s.vec2("min", h.min, true);
+      s.vec2("max", h.max, true);
+      if (h.kind == sim::HazardKind::Slow) {
+        s.fixed("speed_mul", h.speedMul, Fixed::epsilon(), Fixed::fromInt(4), true);
+      }
+      s.finish();
+    }
+    a.hazardCount = count;
   }
 
   void parseMode(Section& s) {
@@ -730,6 +805,68 @@ bool parseContent(std::string_view tomlText, std::string_view sourceName, Conten
   return parseContent(std::span<const ContentSource>(&source, 1), out, diag);
 }
 
+namespace {
+
+[[nodiscard]] std::string pointText(Vec2 p) {
+  return "(" + fixedText(p.x) + ", " + fixedText(p.y) + ")";
+}
+
+// Walls and hazards of one arena (v0.22): counts in range, boxes non-empty
+// and inside the arena, and no spawn point that starts a monkey overlapping
+// a wall or standing in a pit.
+template <class Fail>
+void validateStatics(const ContentDB& c, const ArenaDef& a, const std::string& where,
+                     const Fail& fail) {
+  if (a.wallCount > sim::kMaxArenaWalls || a.hazardCount > sim::kMaxArenaHazards) {
+    fail(where + ": more walls or hazards than kMaxArenaWalls / kMaxArenaHazards");
+    return;
+  }
+  const auto checkBox = [&](const std::string& what, Vec2 min, Vec2 max) {
+    if (!(min.x < max.x && min.y < max.y)) {
+      fail(where + ": " + what + " needs min < max on both axes, got min " + pointText(min) +
+           " max " + pointText(max));
+    }
+    if (min.x < -a.halfExtents.x || min.y < -a.halfExtents.y || max.x > a.halfExtents.x ||
+        max.y > a.halfExtents.y) {
+      fail(where + ": " + what + " reaches outside the arena box");
+    }
+  };
+  for (uint8_t w = 0; w < a.wallCount; ++w) {
+    checkBox("wall " + std::to_string(w), a.walls[w].min, a.walls[w].max);
+  }
+  for (uint8_t h = 0; h < a.hazardCount; ++h) {
+    const sim::Hazard& hz = a.hazards[h];
+    const std::string what = "hazard " + std::to_string(h);
+    checkBox(what, hz.min, hz.max);
+    std::string prefix = where;
+    prefix += ": ";
+    prefix += what;
+    if (hz.kind >= sim::HazardKind::kCount) fail(prefix + " has an unknown kind");
+    if (hz.kind == sim::HazardKind::Slow &&
+        (hz.speedMul <= Fixed::zero() || hz.speedMul > Fixed::fromInt(4))) {
+      fail(prefix + " speed_mul must be in (0, 4]");
+    }
+  }
+  for (uint8_t k = 0; k < a.spawnPointCount && k < sim::kMaxPlayers; ++k) {
+    const Vec2 p = a.spawnPoints[k];
+    for (uint8_t w = 0; w < a.wallCount; ++w) {
+      if (sim::circleOverlapsBox(a.walls[w].min, a.walls[w].max, p, c.player.radius)) {
+        fail(where + ": spawn point " + std::to_string(k) + " " + pointText(p) +
+             " puts a monkey inside wall " + std::to_string(w));
+      }
+    }
+    for (uint8_t h = 0; h < a.hazardCount; ++h) {
+      const sim::Hazard& hz = a.hazards[h];
+      if (hz.kind == sim::HazardKind::Pit && sim::boxContains(hz.min, hz.max, p)) {
+        fail(where + ": spawn point " + std::to_string(k) + " " + pointText(p) +
+             " is in pit hazard " + std::to_string(h));
+      }
+    }
+  }
+}
+
+}  // namespace
+
 bool validateContent(const ContentDB& c, Diagnostics& diag) {
   const size_t errorsBefore = diag.errorCount();
   const auto fail = [&](const std::string& message) { diag.error("", 0, message); };
@@ -808,6 +945,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
              fixedText(p.y) + ") puts a monkey outside the arena");
       }
     }
+    validateStatics(c, a, where, fail);
   }
 
   if (c.modeCount < 1 || c.modeCount > sim::kMaxModes) {

@@ -87,6 +87,14 @@ void buildRenderState(PresentationState& ps, const sim::WorldState& prev,
                       std::span<const sim::SimEvent> newEvents, const sim::MatchContent& match,
                       float dtSeconds, RenderState& out);
 
+// The arena's interior walls and hazards as world-space boxes (v0.22):
+// walls first, then hazards, each in content order, then the pit rims: a
+// strip of kPitRimWidth inside a pit along each stretch of its edge that
+// borders open floor (not another pit, not the outer box), so adjoining pit
+// boxes read as one pit. buildRenderState() calls it every frame; it depends
+// on the arena only.
+void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out);
+
 [[nodiscard]] inline RenderState buildRenderState(
     PresentationState& ps, const sim::WorldState& prev, const sim::WorldState& curr, float alpha,
     std::span<const sim::SimEvent> newEvents, const sim::MatchContent& content, float dtSeconds) {

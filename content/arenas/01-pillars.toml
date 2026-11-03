@@ -1,0 +1,32 @@
+# Arenas with interior statics (architecture §5.10, v0.22). Files here load
+# after content/arenas.toml (sorted relative paths: "arenas.toml" sorts before
+# "arenas/..."), so dojo stays index 0; the numeric prefixes keep these in a
+# fixed order. Append new arenas with a higher prefix, never renumber: arena
+# indices are in replay headers and on the wire.
+#
+# On top of the keys described in content/arenas.toml, an arena may list
+#   walls   = [{ min = [x, y], max = [x, y] }, ...]          (at most 32)
+#   hazards = [{ kind = "pit", min = [x, y], max = [x, y] },
+#              { kind = "slow", min = [x, y], max = [x, y], speed_mul = m }, ...]  (at most 16)
+# Boxes are axis aligned in arena units, min < max, inside the arena box.
+# Walls are solid: monkeys slide along them (a dash stops at one), bananas
+# bounce off them like off the outer box. Hazards act on a monkey whose
+# centre is inside: a pit eliminates it at once (nobody scores the kill),
+# slow multiplies its move speed by speed_mul (0 < m <= 4). Bananas fly over
+# hazards. The loader rejects a spawn point that puts a monkey overlapping a
+# wall or with its centre in a pit.
+
+# Four square blocks around an open centre: cover to hide behind and corners
+# to bank throws off.
+[[arena]]
+name = "pillars"
+half_extents = [16, 9]
+# The dojo's spawn ellipse: every point clears the blocks by at least half a
+# monkey.
+spawn_ellipse = { radii = [12, 6], step_degrees = 36, order = [0, 5, 2, 7, 4, 9, 6, 1, 8, 3] }
+walls = [
+  { min = [-6, 2], max = [-4, 4] },
+  { min = [4, 2], max = [6, 4] },
+  { min = [-6, -4], max = [-4, -2] },
+  { min = [4, -4], max = [6, -2] },
+]

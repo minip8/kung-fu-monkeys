@@ -95,6 +95,20 @@ effect and event → sound mapping side by side in `event_fx`; trails are sample
 without a device, opened on the first input in the browser), `--mute` / `--volume` and the F1
 Audio panel. SDL3 is built with ALSA on Linux (vcpkg `alsa` feature, or the FetchContent build
 when `libasound2-dev` is present), no new dependency (§10). Tests (§9).
+v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
+`kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
+`Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
+of scope. Players (stick and dash alike) and bananas move through one code path,
+`statics::moveCircle`: per-axis swept faces then rounded corners, `Slide` for players (a dash
+stops at a wall, its phases run on) and `Bounce` for bananas (restitution, `BoomerangBounced`),
+the outer box included, bit-identical to M1 without walls; a throw's spawn offset travels the
+same path. No spatial structure for statics: a plain loop over ≤ 32 boxes. A pit is a rules-table
+row (prio 60, `Player × Hazard`, `fallIntoPit`: eliminated, killer 0xFF) fed by a new
+`EntityKind::Hazard` contact; bananas fly over hazards; a slow patch multiplies move speed in
+`ModifierSystem`'s derived stats (§5.3, §5.6–§5.8). The loader reads `walls`/`hazards` and
+rejects spawn points overlapping a wall or in a pit. Arenas `pillars`, `corridors`, `island` in
+`content/arenas/`, `dojo` unchanged; walls and pits drawn from `RenderState` statics (§7); one
+corpus replay per new arena (§9).
 v0.23 changes: game modes are content (§5.3, §5.9, §5.10, §6.6). `ModeDef` gains a `kind`
 (`rounds`, `deathmatch`, `survival`) and per-kind numbers (`timeLimitTicks`, `scoreToWin`,
 `respawnTicks`, `respawnInvulnTicks`); `RulesSystem` keeps the shared phase machine and
@@ -296,11 +310,11 @@ step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& e
    1. RulesSystem::preTick      round start/end, spawn waves, pickup spawners
    2. InputSystem               decode PlayerInput → Intent; press-edge detection
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
-   4. MovementSystem            intent × derived stats → velocity; integrate; arena clamp
-   5. ProjectileSystem          boomerang flight: outbound → return steering → grounded
+   4. MovementSystem            intent × derived stats → velocity; integrate sliding along walls; arena clamp
+   5. ProjectileSystem          boomerang flight: outbound → return steering → grounded; wall bounces
    6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
    7. InteractionSystem         resolves Contacts via the rules table (hit, catch, dash attack, pickup)
-   8. ModifierSystem            tick timers, expire, recompute derived Stats
+   8. ModifierSystem            tick timers, expire, recompute derived Stats (incl. slow hazards)
    9. LifecycleSystem           eliminations, respawns, despawns
   10. RulesSystem::postTick     win conditions, scoring
   11. s.tick++
@@ -317,6 +331,10 @@ the midpoint of the two centres at `tHit` so it reads the same from either side.
 purely geometric: every touching pair is a contact whatever its tags (at most 45 with 10
 players), and the rules table decides what a touch means. A brute-force all-pairs broadphase stays in
 the tests as the oracle: a property test asserts both produce the same pair set.
+Statics (v0.22) never enter the grid: walls are resolved while integrating (steps 4 and 5,
+§5.10), and after the narrowphase `CollisionSystem` appends one Player × Hazard contact per
+hazard box holding a player's centre at the end of the tick (player slot order, then hazard
+index), with `tHit` the centre's entry time into the box and `b` the hazard's index.
 
 Systems are stateless free functions; the order is fixed and documented; each reads state and
 inputs and writes state and events. Nothing else mutates `WorldState`.
@@ -456,16 +474,26 @@ prio  A                          B                              handler
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[]                       GrantPowerUp
- 60   Boomerang[]                Wall                           Bounce
+ 60   Player[]                   Hazard[Pit]                    FallIntoPit
 ```
 
 M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
-restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below). Rows
-20 and 60 do not exist yet. The wall bounce lives in `ProjectileSystem` (§5.7), not in the table:
-the arena is a box, the bounce is a per-axis reflection done while integrating, and
-`CollisionSystem` emits only Player × Boomerang, Player × Pickup and Player × Player contacts. A
-Wall row arrives when arenas gain interior shapes and some banana kinds should not bounce, at
-which point walls become contact sources.
+restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below) and
+v0.22 row 60 (the pit, `rules/hazard.cpp`). Row 20 does not exist yet. Walls are not in the
+table (v0.22): interior walls and the outer box are resolved while integrating, players sliding
+in `MovementSystem` and bananas bouncing in `ProjectileSystem`, through one function
+(`statics::moveCircle`, §5.10), so a wall never produces a contact. A `Boomerang × Wall` row
+would come back only when some banana kind should not bounce; it would then be a
+`MoveParams::response` choice made from the banana's modifiers rather than a contact.
+
+Pit (v0.22): `CollisionSystem` emits `Player × Hazard` for every hazard holding a player's
+centre at the end of the tick (`EntityKind::Hazard`, `b.index` = the hazard's index in
+`content.arena.hazards`, `tHit` = the centre's entry time). Row 60 forbids only `Eliminated`:
+no tag (not even `Invulnerable` or a dash) saves a monkey over a pit. `fallIntoPit` declines for
+non-pit kinds (a slow patch acts through stats, §5.8) and otherwise sets hp 0 and `Eliminated`
+and emits `PlayerEliminated` with killer 0xFF and no `PlayerHit`: nobody is credited. Its
+`tHit` orders it among the tick's other contacts, so a banana that reached the monkey before it
+stepped over the edge still scores.
 
 Dash attack (v0.16): dashing into an enemy while holding at least `DashAttackDef::minAmmo`
 bananas damages it. Row 25, `Player[Dashing, !HitStun, !Eliminated] ×
@@ -544,6 +572,17 @@ is a defence only for a player who has thrown.
   outbound banana keeps flying after its thrower is eliminated and grounds once it turns back.
   Walls reflect per axis with `restitution` and emit one `BoomerangBounced` per bounce tick,
   also when a corner reflects both axes in the same tick.
+- Walls (v0.22): the banana moves by its velocity through `statics::moveCircle` with the
+  `Bounce` response (§5.10), the same code path for interior walls and the outer box: a crossed
+  wall face mirrors the overshoot and reflects that velocity component times `restitution`, a
+  wall corner reflects the velocity about the corner normal, and the outer box keeps the M1
+  per-axis reflection bit for bit. Still one `BoomerangBounced` per bounce tick. A throw's
+  `spawnOffset` travels the same path from the thrower's centre (interior walls only, the outer
+  box stays with `ProjectileSystem` as in M1), so a throw into an adjacent wall bounces back at
+  once (plus `BoomerangBounced`) instead of spawning inside or behind it. A returning banana
+  keeps homing after a bounce; its 6.6°/tick turn rate means it needs many ticks to turn back
+  into the wall, and `maxReturnTicks` grounds one that cannot get home, so there is no extra
+  bounce cap (and no new `Boomerang` state). Bananas fly over hazards.
 - Bananas fly only while the match phase is `Playing`. During `RoundStarting`, `RoundEnded`
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
   `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
@@ -557,6 +596,11 @@ is a defence only for a player who has thrown.
   recomputes derived `Stats` each tick as `base × Π mul + Σ add`, iterating in slot order.
   Integer stats (`maxHp`, `ammoMax`) accept `add` only; `hp` is clamped to the new `maxHp` as
   described in §5.6.
+- Slow hazards (v0.22) go through the same derivation: `moveSpeed = base × Π mul × hazard + Σ
+  add`, where `hazard` is the product of `speedMul` over the `Slow` hazards holding the player's
+  centre after this tick's movement (1 elsewhere, and then not multiplied in at all, so an arena
+  without slow patches derives bit-identical stats). Like a modifier, it shapes the next tick's
+  movement; `MovementSystem` has no hazard code.
 - Pickup entities reference a `PowerUpDef` by index and are spawned by arena spawners.
 
 ### 5.9 Events
@@ -584,8 +628,61 @@ is a defence only for a player who has thrown.
 
 ### 5.10 Arenas and content
 
-- Arena: static collision shapes (AABBs / convex polygons on a grid), spawn points, pickup
-  spawners, hazards. Loaded into an immutable `Arena` struct with a prebuilt spatial hash.
+- Arena: static collision shapes, spawn points, pickup spawners, hazards, in the immutable
+  `ArenaDef`. As built (v0.22), see "Arena statics" below: axis-aligned boxes only (convex
+  polygons dropped until an arena needs one) and no prebuilt spatial hash (a plain loop is
+  cheap at ≤ 32 walls).
+- Arena statics (v0.22, `kfm/sim/content/arena.hpp`, `engine/sim/src/systems/statics.hpp`):
+  - `ArenaDef` = `name`, `halfExtents` (the outer box), `spawnPoints`, `walls[kMaxArenaWalls =
+    32]` + `wallCount`, `hazards[kMaxArenaHazards = 16]` + `hazardCount` (pickup spawners for
+    power-ups get their own block). `Wall{min, max}` is a solid axis-aligned box;
+    `Hazard{min, max, kind, speedMul}` with `HazardKind::Pit` and `Slow` acts on a player whose
+    centre is in the closed box and never blocks anything. All of it is visited, so it is part
+    of the content hash; unused slots stay zero.
+  - One code path for circles against statics, `statics::moveCircle(arena, from, delta, vel,
+    {radius, response, restitution, outerBox})`: (1) x moves by `delta.x`; among the walls whose
+    face band `[min.y, max.y]` holds the circle's y, the nearest face it crosses (start on or
+    outside `min.x − r`, end past it, so nothing tunnels at any speed) stops it (`Slide`: at the
+    face, `vel.x = 0`) or reflects it (`Bounce`: overshoot mirrored, `vel.x = −vel.x ×
+    restitution`); (2) rounded corners: every wall the circle still overlaps (only a corner
+    zone can be entered this way, never the box) pushes it out along the normal from the
+    closest box point to exactly `r`, removing (`Slide`) or reflecting with restitution
+    (`Bounce`) the inward velocity; a centre found inside a box leaves through the nearest
+    face; (3) y the same way, then corners again; (4) the outer box: `Slide` clamps per axis to
+    `halfExtents − r` and `Bounce` mirrors per axis, the M1 code unchanged. With no walls the
+    function is exactly M1's `pos += vel` and clamp/reflect, so the default match keeps its
+    checksums. Players use `Slide` with their velocity (stick or dash: a dash stops at a wall
+    and its phases and perfect window still run their ticks); bananas `Bounce`, and a throw's
+    spawn offset travels it with `outerBox = false` (§5.7). Walls are visited in content order;
+    a pass takes the nearest face, so order inside a pass never matters.
+  - Statics live only in content: nothing is built at load or in `initialWorld`, nothing is in
+    `WorldState`, snapshots and rollback are unaffected. Each move tests ≤ 32 boxes with a band
+    rejection, cheaper than maintaining a grid. Measured with `kfm_replay bench --ticks 36000
+    --players 10` (Release, GCC 15, the shared WSL2 development machine, `step()` alone, noisy
+    within about ±15%): `dojo` 0.75–0.85 M ticks/s (1.2–1.3 µs/tick, the M1 figure: no walls
+    takes the M1 path), `pillars` 0.74 M, `corridors` 0.85 M, `island` 0.83 M, and a synthetic
+    worst case of 32 walls 0.37–0.47 M ticks/s (2.1–2.7 µs/tick). Even the worst case is about
+    0.2% of a 60 Hz frame per simulated tick, so a rollback of 10 ticks stays far below a
+    millisecond: no grid until an arena needs more than 32 statics.
+  - Hazards: the pit is a rules-table row fed by a `Player × Hazard` contact (§5.3, §5.6); a
+    slow patch multiplies move speed in `ModifierSystem` (§5.8). Bananas ignore hazards (a
+    grounded banana can lie in a pit; picking it up costs the monkey).
+  - TOML (`[[arena]]`): `walls = [{ min = [x, y], max = [x, y] }, ...]`,
+    `hazards = [{ kind = "pit" | "slow", min, max, speed_mul = m }, ...]` (`speed_mul` required
+    for `slow`, in (0, 4], and an unknown key for `pit`). Validation: counts, `min < max` on both
+    axes, boxes inside the arena, and no spawn point whose monkey overlaps a wall or whose centre
+    is in a pit (touching a wall is fine). The arena files live in `content/arenas.toml` (`dojo`,
+    index 0) and `content/arenas/NN-name.toml` (sorted after it; the numeric prefix fixes the
+    order, append with a higher one).
+  - Arenas (v0.22): `dojo` (index 0, the 32 × 18 box, unchanged), `pillars` (1: four 2 × 2
+    blocks around an open centre), `corridors` (2: a 36 × 20 box split into four rooms by a cross
+    of 0.6-thick walls with gaps at the centre and the ends, so throws into the next room come
+    back around a wall), `island` (3: a 22 × 12 playfield in a pit that runs to the outer walls,
+    a central block and two mud patches at half speed; bananas bounce off the outer walls back
+    over the pit). Scripted 4-player matches (`kfm_replay stats`, 10 matches each) average
+    rounds of 4.0 s on `dojo`, 5.0 s on `pillars`, 12.8 s on `corridors` (walls block sightlines:
+    15% of throws hit against 37%) and 1.6 s on `island` (most eliminations are falls). One
+    corpus replay per arena (§9).
 - Content pipeline (v0.18, as built): TOML → `engine/content` → validated `ContentDB`;
   `content_hash` is the XXH32 of the canonical serialized form (the visitor), as before. Every
   number a system needs lives there, including the ones that are easy to forget: the pickup
@@ -615,7 +712,8 @@ is a defence only for a player who has thrown.
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
   on `defaultContent()` by a test): the loadout's slot kinds, a dash with no startup and its
   perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
-  keep a monkey inside, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
+  keep a monkey inside (and, v0.22, clear of walls and out of pits), walls and hazards that are
+  non-empty boxes inside the arena, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
   `file:line: error: message` lines; a failed load leaves the previous `ContentDB` untouched.
 - Selection: a `MatchConfig` carries `arena` and `mode` indices (index 0 is the default, the
   first loaded). They are constant for a match like the content and are not part of
@@ -1119,6 +1217,19 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   orthographic; tuned in M2), looking down at the plane. No camera rotation in gameplay, so the
   tilt is part of the arena's design. A real depth buffer resolves overlaps; only transparent
   effects are sorted.
+- **Arena statics (v0.22).** `makeArenaCamera(arena, ...)` frames each arena from its own
+  `halfExtents` (fixed pitch and field of view, distance solved per arena and viewport), so a
+  36 × 20 `corridors` sits further away than the 32 × 18 `dojo`; interior walls are drawn below
+  `framingHeight` and never leave the frame. `buildArenaPieces()` turns the arena's walls and
+  hazards into `RenderState::arenaPieces` (world-space boxes, walls first, then hazards, then
+  pit rims); the renderer draws each as the unit cube scaled to it: walls as
+  `kArenaWallHeight` (1.2) stone blocks, above a banana in flight so a bounce reads as hitting
+  one; pits as a near-black slab just above the floor with a brown rim strip
+  (`kPitRimWidth`) along every stretch of edge that meets open floor (adjoining pit boxes and
+  the outer wall get none, so a ring of boxes reads as one pit); slow patches as a mud slab.
+  Slabs stay under the blob shadows. Colours are `kArenaWallColor`, `kArenaPitColor`,
+  `kArenaPitRimColor`, `kArenaSlowColor` in `palette.hpp`, sizes in `tuning.hpp`.
+  `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
   quad on the ground) at its true sim position, and the shadow is where the hitbox is. This
@@ -1476,7 +1587,12 @@ art is identical up to the export step, and nothing below the presentation layer
   `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
   the corpus is re-recorded; the checksums of existing entries must stay identical, because
   content that is only added never changes the default match (a scenario test asserts this for
-  extra arenas and modes). v0.23 adds `scripted_4p_deathmatch_3600t` and
+  extra arenas and modes). v0.22 adds one 4-player scripted replay per walled arena
+  (`scripted_4p_pillars_1800t`, `scripted_4p_corridors_1800t`, `scripted_4p_island_1800t`), so
+  wall slides, bounces, pit falls and slow patches are under the cross-platform gate. The
+  embedded content depends on the globbed file list as well as the files (a list file rewritten
+  only when it changes), so adding, moving or deleting a TOML file re-embeds before a regen.
+  v0.23 adds `scripted_4p_deathmatch_3600t` and
   `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
   survival flow are under the cross-platform gate. New `WorldState` fields (v0.23: the mode
   counters) change every checksum and regenerate the corpus; added content alone must not.

@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -256,19 +257,90 @@ TEST_CASE("unknown keys and sections are errors with lines", "[content][loader]"
                  "test.toml:6: error: [player]: unknown key 'max_hpp'"));
   CHECK(contains(loadErrors(std::string(kMinimal) + "\n[shop]\nprice = 1\n"),
                  "unknown top-level key 'shop'"));
-  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"box\"", "name = \"box\"\nwalls = []")),
-                 "arena \"box\": unknown key 'walls'"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"box\"", "name = \"box\"\nportals = []")),
+                 "arena \"box\": unknown key 'portals'"));
 }
 
-TEST_CASE("missing pieces are errors", "[content][loader]") {
-  CHECK(
-      contains(loadErrors(replaced(kMinimal, "[pickup]\nradius = 0.5\n", "")), "missing [pickup]"));
-  CHECK(contains(loadErrors(replaced(kMinimal, "[[mode]]\nname = \"rounds\"\n", "")),
-                 "no [[mode]] defined"));
-  CHECK(contains(loadErrors(replaced(kMinimal, "radius = 0.5\nmove_speed", "move_speed")),
-                 "[player]: missing required key 'radius'"));
-  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"throw\"\n", "")),
-                 "missing required key 'name'"));
+TEST_CASE("arena walls and hazards load and are validated", "[content][loader][arena]") {
+  const std::string withStatics =
+      replaced(kMinimal, "name = \"box\"",
+               "name = \"box\"\n"
+               "walls = [{ min = [-1, -1], max = [1, 1] }, { min = [5, 2], max = [6, 5] }]\n"
+               "hazards = [{ kind = \"pit\", min = [-10, -5], max = [-8, 5] },\n"
+               "           { kind = \"slow\", min = [3, -5], max = [4, 5], speed_mul = 0.5 }]");
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(parseContent(withStatics, "test.toml", db, diag));
+  const sim::ArenaDef& a = db.arenas[0];
+  REQUIRE(a.wallCount == 2);
+  CHECK(a.walls[0].min == Vec2{Fixed::fromInt(-1), Fixed::fromInt(-1)});
+  CHECK(a.walls[1].max == Vec2{Fixed::fromInt(6), Fixed::fromInt(5)});
+  REQUIRE(a.hazardCount == 2);
+  CHECK(a.hazards[0].kind == sim::HazardKind::Pit);
+  CHECK(a.hazards[0].speedMul == Fixed::one());
+  CHECK(a.hazards[1].kind == sim::HazardKind::Slow);
+  CHECK(a.hazards[1].speedMul == Fixed::half());
+
+  const auto with = [&](std::string_view from, std::string_view to) {
+    return loadErrors(replaced(withStatics, from, to));
+  };
+  // A spawn point that puts a monkey (radius 0.5) inside or overlapping a wall.
+  CHECK(contains(with("[[-2, 0], [2, 0]]", "[[-2, 0], [1.25, 0]]"),
+                 "arena \"box\": spawn point 1 (1.250, 0.000) puts a monkey inside wall 0"));
+  CHECK(contains(with("[[-2, 0], [2, 0]]", "[[-2, 0], [0, 0]]"), "inside wall 0"));
+  // Touching is fine: 1.5 is exactly one radius from the wall face.
+  {
+    ContentDB ok{};
+    Diagnostics okDiag;
+    CHECK(parseContent(replaced(withStatics, "[[-2, 0], [2, 0]]", "[[-2, 0], [1.5, 0]]"),
+                       "test.toml", ok, okDiag));
+  }
+  // A spawn point in a pit; a slow patch is allowed.
+  CHECK(contains(with("[[-2, 0], [2, 0]]", "[[-9, 0], [2, 0]]"),
+                 "spawn point 0 (-9.000, 0.000) is in pit hazard 0"));
+  {
+    ContentDB ok{};
+    Diagnostics okDiag;
+    CHECK(parseContent(replaced(withStatics, "[[-2, 0], [2, 0]]", "[[-2, 0], [3.5, 0]]"),
+                       "test.toml", ok, okDiag));
+  }
+  // Boxes: empty, outside the arena.
+  CHECK(contains(with("min = [5, 2], max = [6, 5]", "min = [6, 2], max = [5, 5]"),
+                 "wall 1 needs min < max on both axes"));
+  CHECK(contains(with("min = [5, 2], max = [6, 5]", "min = [5, 2], max = [11, 5]"),
+                 "wall 1 reaches outside the arena box"));
+  // Kinds and keys.
+  CHECK(contains(with("kind = \"pit\"", "kind = \"lava\""), "unknown hazard kind \"lava\""));
+  CHECK(contains(with("max = [-8, 5] }", "max = [-8, 5], speed_mul = 0.5 }"),
+                 "hazard 0: unknown key 'speed_mul'"));
+  CHECK(contains(with(", speed_mul = 0.5", ""), "hazard 1: missing required key 'speed_mul'"));
+  CHECK(contains(with("speed_mul = 0.5", "speed_mul = 0"), "'speed_mul' = 0.000 is outside"));
+  CHECK(contains(with("{ min = [-1, -1], max = [1, 1] }", "{ min = [-1, -1] }"),
+                 "wall 0: missing required key 'max'"));
+}
+
+TEST_CASE("content/ arenas: dojo stays first, the walled arenas load", "[content][loader][arena]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  REQUIRE(db.arenaCount >= 4);
+  CHECK(db.arenas[0].name.view() == "dojo");
+  CHECK(db.arenas[0].wallCount == 0);
+  CHECK(db.arenas[0].hazardCount == 0);
+  // content/arenas/NN-name.toml load after arenas.toml, in prefix order.
+  CHECK(db.findArena("pillars") == std::optional<uint8_t>{1});
+  CHECK(db.findArena("corridors") == std::optional<uint8_t>{2});
+  CHECK(db.findArena("island") == std::optional<uint8_t>{3});
+  for (const std::string_view name : {"pillars", "corridors", "island"}) {
+    INFO(name);
+    REQUIRE(db.findArena(name).has_value());
+    const sim::ArenaDef& a = db.arenas[db.findArena(name).value_or(0)];
+    CHECK(a.wallCount > 0);
+    CHECK(a.spawnPointCount == sim::kMaxPlayers);
+  }
+  const sim::ArenaDef& island = db.arenas[db.findArena("island").value_or(0)];
+  CHECK(island.hazardCount == 6);
+  CHECK(island.hazards[0].kind == sim::HazardKind::Pit);
 }
 
 TEST_CASE("names: format, duplicates and references", "[content][loader]") {

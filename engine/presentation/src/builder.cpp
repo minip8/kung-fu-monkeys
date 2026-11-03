@@ -4,7 +4,11 @@
 #include "kfm/presentation/world_basis.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <span>
+#include <utility>
 
 namespace kfm::presentation {
 namespace {
@@ -498,12 +502,105 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   out.shakeOffset =
       Vec3{ps.shake * std::sin(w), ps.shake * 0.6f * std::sin((1.37f * w) + 1.1f), 0.0f};
   out.arenaHalfExtents = toFloat(match.arena.halfExtents);
+  buildArenaPieces(match.arena, out);
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
   out.bananaRadius = content.boomerang.radius.toFloat();
   out.time = ps.time;
   buildHud(curr, match, out.hud);
   phaseSounds(ps, out.hud, out);
+}
+
+namespace {
+
+struct Box2f {
+  Vec2f lo;
+  Vec2f hi;
+};
+
+[[nodiscard]] float axisOf(Vec2f v, int axis) {
+  return axis == 0 ? v.x : v.y;
+}
+
+// The stretches of one pit edge that border open floor. The edge lies at
+// `at` on `axis` (0 = x, 1 = y), spans [from, to] on the other axis, and
+// faces `outward` (+1 or -1). A stretch is covered when another pit holds
+// the points just outside it, or when the edge lies on the outer box.
+template <class Emit>
+void floorStretches(std::span<const Box2f> pits, size_t self, int axis, float at, float outward,
+                    float from, float to, float halfExtent, Emit&& emit) {
+  if (std::fabs(at) >= halfExtent) return;  // on the outer wall
+  std::array<std::pair<float, float>, sim::kMaxArenaHazards> covered{};
+  size_t n = 0;
+  const int other = 1 - axis;
+  for (size_t j = 0; j < pits.size(); ++j) {
+    if (j == self) continue;
+    const float lo = axisOf(pits[j].lo, axis);
+    const float hi = axisOf(pits[j].hi, axis);
+    const bool holdsOutside = outward > 0.0f ? (lo <= at && hi > at) : (lo < at && hi >= at);
+    if (!holdsOutside) continue;
+    const float a = std::max(from, axisOf(pits[j].lo, other));
+    const float b = std::min(to, axisOf(pits[j].hi, other));
+    if (a < b) covered[n++] = {a, b};
+  }
+  std::sort(covered.begin(), covered.begin() + static_cast<std::ptrdiff_t>(n));
+  float cursor = from;
+  for (size_t k = 0; k < n; ++k) {
+    if (covered[k].first > cursor) emit(cursor, covered[k].first);
+    cursor = std::max(cursor, covered[k].second);
+  }
+  if (cursor < to) emit(cursor, to);
+}
+
+}  // namespace
+
+void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out) {
+  uint16_t n = 0;
+  const auto add = [&](ArenaPieceKind kind, Vec2f lo, Vec2f hi, float height) {
+    if (n >= out.arenaPieces.size() || lo.x >= hi.x || lo.y >= hi.y) return;
+    // Sim y maps to world -z, so the box's z extent is its sim y extent.
+    out.arenaPieces[n++] =
+        RenderArenaPiece{.kind = kind,
+                         .center = simToWorld(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}),
+                         .size = Vec3{hi.x - lo.x, height, hi.y - lo.y}};
+  };
+  for (uint8_t i = 0; i < arena.wallCount && i < sim::kMaxArenaWalls; ++i) {
+    add(ArenaPieceKind::Wall, toFloat(arena.walls[i].min), toFloat(arena.walls[i].max),
+        kArenaWallHeight);
+  }
+  std::array<Box2f, sim::kMaxArenaHazards> pits{};
+  size_t pitCount = 0;
+  for (uint8_t i = 0; i < arena.hazardCount && i < sim::kMaxArenaHazards; ++i) {
+    const sim::Hazard& h = arena.hazards[i];
+    const bool pit = h.kind == sim::HazardKind::Pit;
+    add(pit ? ArenaPieceKind::Pit : ArenaPieceKind::Slow, toFloat(h.min), toFloat(h.max),
+        kHazardSlabHeight);
+    if (pit) pits[pitCount++] = Box2f{toFloat(h.min), toFloat(h.max)};
+  }
+  const std::span<const Box2f> pitSpan(pits.data(), pitCount);
+  const Vec2f half = toFloat(arena.halfExtents);
+  const float rim = kPitRimWidth;
+  uint16_t rims = 0;
+  const auto addRim = [&](Vec2f lo, Vec2f hi) {
+    if (rims >= kMaxRenderPitRims) return;
+    ++rims;
+    add(ArenaPieceKind::PitRim, lo, hi, kHazardSlabHeight);
+  };
+  for (size_t i = 0; i < pitCount; ++i) {
+    const Box2f& b = pits[i];
+    const float wx = std::min(rim, 0.5f * (b.hi.x - b.lo.x));
+    const float wy = std::min(rim, 0.5f * (b.hi.y - b.lo.y));
+    // -y and +y edges (axis y fixed), then -x and +x (axis x fixed).
+    floorStretches(pitSpan, i, 1, b.lo.y, -1.0f, b.lo.x, b.hi.x, half.y,
+                   [&](float a, float c) { addRim({a, b.lo.y}, {c, b.lo.y + wy}); });
+    floorStretches(pitSpan, i, 1, b.hi.y, 1.0f, b.lo.x, b.hi.x, half.y,
+                   [&](float a, float c) { addRim({a, b.hi.y - wy}, {c, b.hi.y}); });
+    floorStretches(pitSpan, i, 0, b.lo.x, -1.0f, b.lo.y, b.hi.y, half.x,
+                   [&](float a, float c) { addRim({b.lo.x, a}, {b.lo.x + wx, c}); });
+    floorStretches(pitSpan, i, 0, b.hi.x, 1.0f, b.lo.y, b.hi.y, half.x,
+                   [&](float a, float c) { addRim({b.hi.x - wx, a}, {b.hi.x, c}); });
+  }
+  out.arenaPieceCount = n;
 }
 
 void onRollback(PresentationState& ps, const WorldState& newPrev, const WorldState& newCurr,

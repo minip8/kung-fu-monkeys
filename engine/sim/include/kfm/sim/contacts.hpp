@@ -24,7 +24,10 @@ static_assert(uint32_t{kMaxPlayers} * (kMaxBoomerangs + kMaxPickups) + kMaxPlaye
                   kMaxCandidatePairs,
               "every candidate pair fits");
 
-enum class EntityKind : uint8_t { Player = 0, Boomerang, Pickup };
+// Hazard (v0.22) is not a pool entity: a Contact's EntityId for it carries the
+// index into MatchContent::arena.hazards (generation 0). CollisionSystem
+// emits Player × Hazard when the player's centre ends the tick inside one.
+enum class EntityKind : uint8_t { Player = 0, Boomerang, Pickup, Hazard };
 
 struct Contact {
   EntityKind kindA{EntityKind::Player};

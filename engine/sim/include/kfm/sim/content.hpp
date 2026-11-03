@@ -12,8 +12,9 @@
 #include "kfm/core/fixed.hpp"
 #include "kfm/core/vec2.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content/arena.hpp"  // ArenaDef, Wall, Hazard
 #include "kfm/sim/content/mode.hpp"
-#include "kfm/sim/content/name.hpp"
+#include "kfm/sim/content/name.hpp"  // ContentName
 #include "kfm/sim/tags.hpp"
 
 #include <array>
@@ -92,13 +93,6 @@ struct DashAttackDef {
   uint8_t damage{1};
   uint8_t minAmmo{1};
   uint8_t consumesAmmo{0};  // 0/1
-};
-
-struct ArenaDef {
-  ContentName name{};
-  Vec2 halfExtents{};  // box arena, centred at the origin
-  std::array<Vec2, kMaxPlayers> spawnPoints{};
-  uint8_t spawnPointCount{0};
 };
 
 struct ContentDB {

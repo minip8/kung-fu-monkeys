@@ -1,12 +1,15 @@
 // CollisionSystem (architecture §5.3 step 6, §5.11): uniform-grid broadphase
 // checked against brute force, swept circle narrowphase with time of impact.
-// Emits Player × Boomerang, Player × Pickup and (v0.16) Player × Player
-// contacts. Player pairs are purely geometric (no tag filter: the rules table
-// decides what a touch means) and listed once, with indexA < indexB.
+// Emits Player × Boomerang, Player × Pickup, (v0.16) Player × Player and
+// (v0.22) Player × Hazard contacts. Player pairs are purely geometric (no tag
+// filter: the rules table decides what a touch means) and listed once, with
+// indexA < indexB. Walls never produce contacts: MovementSystem and
+// ProjectileSystem already resolved them (systems/statics.hpp).
 // Reads state only; every scratch array is local to the call (no heap, no
 // state in WorldState).
 #include "kfm/sim/systems.hpp"
 #include "systems/collision_internal.hpp"
+#include "systems/statics.hpp"
 
 #include <algorithm>
 #include <array>
@@ -182,6 +185,8 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
       radiusB = pickupRadius(content);
       idB = s.pickups.idAt(pair.indexB);
       break;
+    case EntityKind::Hazard:
+      return;  // statics never come out of the broadphase
   }
 
   const collision::SweptHit hit = collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB,
@@ -201,6 +206,29 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
                    .tHit = hit.tHit,
                    .point = point,
                    .normal = normal});
+}
+
+// Player × Hazard (v0.22): one contact per hazard whose closed box holds the
+// player's centre at the end of the tick, in (player slot, hazard index)
+// order, timed at the centre's entry into the box. Statics need no
+// broadphase: at most kMaxArenaHazards boxes per player.
+void pushHazardContacts(const WorldState& s, const MatchContent& content, Contacts& out) {
+  const ArenaDef& arena = content.arena;
+  if (arena.hazardCount == 0) return;
+  s.players.forEachAlive([&](EntityId id, const Player& p) {
+    const Transform& t = p.transform;
+    for (uint8_t i = 0; i < arena.hazardCount && i < kMaxArenaHazards; ++i) {
+      const Hazard& h = arena.hazards[i];
+      if (!boxContains(h.min, h.max, t.pos)) continue;
+      out.push(Contact{.kindA = EntityKind::Player,
+                       .a = id,
+                       .kindB = EntityKind::Hazard,
+                       .b = EntityId{i, 0},
+                       .tHit = statics::entryTime(t.prevPos, t.pos, h.min, h.max),
+                       .point = t.pos,
+                       .normal = Vec2::zero()});
+    }
+  });
 }
 
 }  // namespace
@@ -255,6 +283,7 @@ void collisionSystem(const WorldState& s, const MatchContent& content, Contacts&
   for (const CandidatePair& pair : pairs) {
     narrowphase(s, content, pair, out);
   }
+  pushHazardContacts(s, content, out);
 }
 
 }  // namespace kfm::sim

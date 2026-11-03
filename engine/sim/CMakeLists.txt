@@ -20,6 +20,7 @@ add_library(kfm_sim STATIC
   src/rules/dash_attack.cpp
   src/rules/auto_catch.cpp
   src/rules/pickup.cpp
+  src/rules/hazard.cpp
   src/systems/rules.cpp
   src/systems/input.cpp
   src/systems/ability.cpp
