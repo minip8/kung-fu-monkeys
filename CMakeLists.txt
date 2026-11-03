@@ -65,6 +65,7 @@ if(KFM_BUILD_APPS)
   add_subdirectory(apps/replay)
   if(NOT KFM_HEADLESS)
     add_subdirectory(apps/client)
+    add_subdirectory(apps/render-probe)
   endif()
 endif()
 
