@@ -1,13 +1,19 @@
-// kfm_replay: headless replay tool and the determinism gate (architecture
-// §9). M0 scope: record an empty replay, print per-tick checksums, verify a
-// replay against an expected checksum file. The viewer arrives with M2.
+// kfm_replay: headless replay tool, the determinism gate and the M1 bench
+// (architecture §9). Records empty or scripted replays, prints per-tick
+// checksums, verifies a replay against an expected checksum file, and times
+// a scripted match. The viewer arrives with M2.
 //
 //   kfm_replay record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]
+//   kfm_replay record-scripted <out.kfmr> [--ticks N] [--seed S] [--players P] [--input-seed I]
 //   kfm_replay info <in.kfmr>
 //   kfm_replay checksums <in.kfmr>              prints "<tick> <hex>" per tick
 //   kfm_replay verify <in.kfmr> <expected.txt>  exit 0 when identical
+//   kfm_replay bench [--ticks N] [--seed S] [--players P] [--input-seed I]
+#include "kfm/core/rng.hpp"
+#include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/sim.hpp"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,7 +34,17 @@ struct Args {
   uint32_t ticks{600};
   uint64_t seed{0x4B464D00ULL};
   uint32_t players{10};
+  uint64_t inputSeed{0x5C121DULL};  // scripted-input Rng, separate from the world's
 };
+
+constexpr const char* kUsage =
+    "usage: kfm_replay <command> ...\n"
+    "  record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]\n"
+    "  record-scripted <out.kfmr> [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
+    "  info <in.kfmr>\n"
+    "  checksums <in.kfmr>\n"
+    "  verify <in.kfmr> <expected.checksums>\n"
+    "  bench [--ticks N] [--seed S] [--players P] [--input-seed I]\n";
 
 bool parseArgs(int argc, char** argv, Args& a) {
   if (argc < 2) return false;
@@ -50,6 +66,9 @@ bool parseArgs(int argc, char** argv, Args& a) {
     } else if (arg == "--players") {
       if (!takeValue(v)) return false;
       a.players = static_cast<uint32_t>(std::strtoul(v, nullptr, 0));
+    } else if (arg == "--input-seed") {
+      if (!takeValue(v)) return false;
+      a.inputSeed = std::strtoull(v, nullptr, 0);
     } else {
       a.positional.emplace_back(arg);
     }
@@ -113,31 +132,32 @@ bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, F&& onTic
   return true;
 }
 
-int cmdRecordEmpty(const Args& a) {
-  if (a.positional.size() != 1) {
-    std::fprintf(
-        stderr, "usage: kfm_replay record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]\n");
-    return 2;
-  }
+bool checkPlayers(const Args& a) {
   if (a.players == 0 || a.players > kMaxPlayers) {
     std::fprintf(stderr, "error: --players must be 1..%u\n", kMaxPlayers);
-    return 2;
+    return false;
   }
+  return true;
+}
+
+ReplayHeader headerFor(const Args& a) {
   ReplayHeader h;
   h.seed = a.seed;
   h.contentHash = contentHash(defaultContent());
   h.buildHash = 0;
   h.players = static_cast<PlayerMask>((1u << a.players) - 1u);
   h.tickCount = a.ticks;
+  return h;
+}
 
+// Writes a replay whose frame for each tick comes from makeFrame(tick).
+template <class MakeFrame>
+int writeReplay(const Args& a, const ReplayHeader& h, MakeFrame&& makeFrame) {
   std::vector<std::byte> buf(replayMaxBytes(h));
   BitWriter w(buf);
   writeReplayHeader(w, h);
   for (uint32_t t = 0; t < h.tickCount; ++t) {
-    InputFrame f;
-    f.tick = Tick{t};
-    f.present = h.players;
-    writeReplayFrame(w, f);
+    writeReplayFrame(w, makeFrame(Tick{t}));
   }
   if (!w.ok()) {
     std::fprintf(stderr, "error: replay buffer overflow\n");
@@ -149,6 +169,85 @@ int cmdRecordEmpty(const Args& a) {
   }
   std::printf("wrote %s: %u ticks, %u players, seed 0x%llx, %zu bytes\n", a.positional[0].c_str(),
               h.tickCount, a.players, static_cast<unsigned long long>(h.seed), w.bytesWritten());
+  return 0;
+}
+
+int cmdRecordEmpty(const Args& a) {
+  if (a.positional.size() != 1) {
+    std::fprintf(
+        stderr, "usage: kfm_replay record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]\n");
+    return 2;
+  }
+  if (!checkPlayers(a)) return 2;
+  const ReplayHeader h = headerFor(a);
+  return writeReplay(a, h, [&](Tick t) {
+    InputFrame f;
+    f.tick = t;
+    f.present = h.players;
+    return f;
+  });
+}
+
+// Scripted inputs read the state, so the match is simulated while recording;
+// playback then reproduces it from the inputs alone.
+int cmdRecordScripted(const Args& a) {
+  if (a.positional.size() != 1) {
+    std::fprintf(stderr,
+                 "usage: kfm_replay record-scripted <out.kfmr> [--ticks N] [--seed S] "
+                 "[--players P] [--input-seed I]\n");
+    return 2;
+  }
+  if (!checkPlayers(a)) return 2;
+  const ReplayHeader h = headerFor(a);
+  const ContentDB& content = defaultContent();
+  WorldState world = initialWorld(h.matchConfig());
+  Rng inputs = Rng::seeded(a.inputSeed);
+  EventSink sink;
+  const int rc = writeReplay(a, h, [&](Tick t) {
+    const InputFrame f = scriptedFrame(inputs, world, content);
+    KFM_CHECK(f.tick == t);
+    sink.clear();
+    step(world, f, content, sink);
+    return f;
+  });
+  if (rc == 0) {
+    std::printf("  input seed 0x%llx, final tick %u, round %u, phase %u\n",
+                static_cast<unsigned long long>(a.inputSeed), world.tick.value, world.rules.round,
+                static_cast<unsigned>(world.rules.phase));
+  }
+  return rc;
+}
+
+// Times a scripted match: input generation + step(), and step() alone.
+int cmdBench(const Args& a) {
+  if (!checkPlayers(a)) return 2;
+  using Clock = std::chrono::steady_clock;
+  const ContentDB& content = defaultContent();
+  const ReplayHeader h = headerFor(a);
+  WorldState world = initialWorld(h.matchConfig());
+  Rng inputs = Rng::seeded(a.inputSeed);
+  EventSink sink;
+  uint64_t events = 0;
+  Clock::duration stepTime{};
+  const Clock::time_point begin = Clock::now();
+  for (uint32_t t = 0; t < a.ticks; ++t) {
+    const InputFrame f = scriptedFrame(inputs, world, content);
+    sink.clear();
+    const Clock::time_point s0 = Clock::now();
+    step(world, f, content, sink);
+    stepTime += Clock::now() - s0;
+    events += sink.count;
+  }
+  const Clock::duration total = Clock::now() - begin;
+  const double totalUs = std::chrono::duration<double, std::micro>(total).count();
+  const double stepUs = std::chrono::duration<double, std::micro>(stepTime).count();
+  const double ticks = a.ticks == 0 ? 1.0 : static_cast<double>(a.ticks);
+  std::printf(
+      "bench: %u players, %u ticks, %llu events, checksum %08x\n"
+      "  step + scripted inputs: %.0f ticks/s, %.2f us/tick\n"
+      "  step only:              %.0f ticks/s, %.2f us/tick\n",
+      a.players, a.ticks, static_cast<unsigned long long>(events), checksum(world),
+      ticks / (totalUs * 1e-6), totalUs / ticks, ticks / (stepUs * 1e-6), stepUs / ticks);
   return 0;
 }
 
@@ -240,13 +339,15 @@ int cmdVerify(const Args& a) {
 int main(int argc, char** argv) {
   Args a;
   if (!parseArgs(argc, argv, a)) {
-    std::fprintf(stderr, "usage: kfm_replay <record-empty|info|checksums|verify> ...\n");
+    std::fputs(kUsage, stderr);
     return 2;
   }
   if (a.command == "record-empty") return cmdRecordEmpty(a);
+  if (a.command == "record-scripted") return cmdRecordScripted(a);
+  if (a.command == "bench") return cmdBench(a);
   if (a.command == "info") return cmdInfo(a);
   if (a.command == "checksums") return cmdChecksums(a);
   if (a.command == "verify") return cmdVerify(a);
-  std::fprintf(stderr, "error: unknown command '%s'\n", a.command.c_str());
+  std::fprintf(stderr, "error: unknown command '%s'\n%s", a.command.c_str(), kUsage);
   return 2;
 }

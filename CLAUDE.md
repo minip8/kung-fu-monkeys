@@ -34,7 +34,9 @@ cmake --build --preset dev --target regen-replay-corpus   # after an intentional
 tools/ci/check_sim_no_float.sh          # no float/double in engine/sim
 clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | grep -v sin_table)
 clang-tidy -p build/dev $(find engine apps tests -name '*.cpp')
-build/dev/apps/replay/kfm_replay record-empty|info|checksums|verify ...   # replay tool
+build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|verify ...  # replay tool
+build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
+build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
 ```
 
