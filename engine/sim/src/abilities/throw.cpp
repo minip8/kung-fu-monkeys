@@ -5,23 +5,10 @@
 // without spending ammo or emitting an event.
 #include "kfm/sim/abilities/throw.hpp"
 
+#include "systems/angle_of.hpp"
+
 namespace kfm::sim {
 namespace {
-
-// Heading of a non-zero vector as a binary angle, by successive approximation
-// against the sine table (no atan2 in fixed point). Accurate to a few BAM,
-// which is far below anything visible or gameplay-relevant.
-[[nodiscard]] Angle headingOf(Vec2 v) {
-  if (v == Vec2::zero()) return Angle{};
-  // Pick the half-turn containing v, then halve the bracket 15 times.
-  uint16_t a = (v.y < Fixed::zero() || (v.y == Fixed::zero() && v.x < Fixed::zero())) ? Angle::kHalf
-                                                                                      : uint16_t{0};
-  for (uint16_t stepBam = Angle::kQuarter; stepBam != 0; stepBam >>= 1) {
-    const Angle mid = Angle::fromBam(static_cast<uint16_t>(a + stepBam));
-    if (cross(Vec2::fromAngle(mid), v) >= Fixed::zero()) a = mid.bam;
-  }
-  return Angle::fromBam(a);
-}
 
 void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const ContentDB& content,
                  EventSink& sink) {
@@ -34,7 +21,7 @@ void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const Content
   b.transform.pos = p.transform.pos + st.dir * def.spawnOffset;
   b.transform.prevPos = b.transform.pos;
   b.transform.vel = st.dir * def.speed;
-  b.transform.facing = headingOf(st.dir);
+  b.transform.facing = angleOf(st.dir);
   b.damage = def.damage;
   b.pierce = def.pierce;
   if (p.ammo > 0) --p.ammo;
