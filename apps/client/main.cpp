@@ -129,21 +129,24 @@ App gApp;
 #ifdef __EMSCRIPTEN__
 EM_JS_DEPS(kfm_settings, "$stringToNewUTF8,$UTF8ToString");
 // localStorage can be missing or throw (privacy modes, sandboxed frames): the
-// settings are then simply not remembered.
+// settings are then simply not remembered. (JavaScript: clang-format would
+// break its operators.)
+// clang-format off
 EM_JS(char*, kfmLoadSettingsJs, (), {
   try {
-    const s = window.localStorage.getItem('kfm.settings');
-    return s == = null ? 0 : stringToNewUTF8(s);
+    const s = window.localStorage.getItem("kfm.settings");
+    return s === null ? 0 : stringToNewUTF8(s);
   } catch (e) {
     return 0;
   }
 });
 EM_JS(void, kfmSaveSettingsJs, (const char* text), {
   try {
-    window.localStorage.setItem('kfm.settings', UTF8ToString(text));
+    window.localStorage.setItem("kfm.settings", UTF8ToString(text));
   } catch (e) {
   }
 });
+// clang-format on
 #else
 [[nodiscard]] std::filesystem::path settingsPath() {
   char* dir = SDL_GetPrefPath("kfm", "kung-fu-monkeys");  // created if missing
