@@ -1,17 +1,4 @@
-# One test executable per module. Tests may use floating point (reference
-# comparisons) and exceptions (Catch2); the libraries under test may not.
-function(kfm_add_test_exe name)
-  add_executable(${name} ${ARGN})
-  target_link_libraries(${name} PRIVATE Catch2::Catch2WithMain kfm::warnings)
-  set_target_properties(${name} PROPERTIES FOLDER tests)
-  if(EMSCRIPTEN)
-    target_link_options(${name} PRIVATE -sEXIT_RUNTIME=1 -sALLOW_MEMORY_GROWTH=1)
-  endif()
-  # Plain add_test rather than catch_discover_tests: one process per module
-  # is fast and works unchanged under the Emscripten node emulator.
-  add_test(NAME ${name} COMMAND ${name})
-endfunction()
-
+# One test executable per module (kfm_add_test_exe is defined in tests/).
 kfm_add_test_exe(kfm_core_tests
   core/fixed_test.cpp
   core/vec2_test.cpp
@@ -29,5 +16,14 @@ kfm_add_test_exe(kfm_sim_tests
   sim/step_test.cpp
   sim/content_test.cpp
   sim/tags_test.cpp
+  sim/input_test.cpp
+  sim/ability_test.cpp
+  sim/movement_test.cpp
+  sim/projectile_test.cpp
+  sim/collision_test.cpp
+  sim/interaction_test.cpp
+  sim/modifier_test.cpp
+  sim/lifecycle_test.cpp
+  sim/rules_test.cpp
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim)
