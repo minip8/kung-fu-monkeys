@@ -468,14 +468,14 @@ TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][m
   ContentDB loaded{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
-  const std::optional<uint8_t> deathmatch = loaded.findMode("deathmatch");
-  const std::optional<uint8_t> survival = loaded.findMode("survival");
+  const uint8_t deathmatch = loaded.findMode("deathmatch").value_or(0);
+  const uint8_t survival = loaded.findMode("survival").value_or(0);
   REQUIRE(loaded.findMode("rounds") == std::optional<uint8_t>{0});  // the default stays first
-  REQUIRE(deathmatch.has_value());
-  REQUIRE(survival.has_value());
+  REQUIRE(deathmatch != 0);
+  REQUIRE(survival != 0);
   CHECK(loaded.modes[0].kind == sim::ModeKind::Rounds);
-  CHECK(loaded.modes[*deathmatch].kind == sim::ModeKind::Deathmatch);
-  CHECK(loaded.modes[*deathmatch].timeLimitTicks > 0);
-  CHECK(loaded.modes[*survival].kind == sim::ModeKind::Survival);
-  CHECK(loaded.modes[*survival].timeLimitTicks > 0);
+  CHECK(loaded.modes[deathmatch].kind == sim::ModeKind::Deathmatch);
+  CHECK(loaded.modes[deathmatch].timeLimitTicks > 0);
+  CHECK(loaded.modes[survival].kind == sim::ModeKind::Survival);
+  CHECK(loaded.modes[survival].timeLimitTicks > 0);
 }

@@ -139,12 +139,12 @@ TEST_CASE("deathmatch: 4 clients at 100 ms RTT and 2% loss stay in sync through 
   }();
   int respawns = 0;
   int scores = 0;
-  SoakMatch match{&content, 1, [&](const NetServer& server) {
-                    for (const sim::SimEvent& e : server.tickEvents()) {
-                      if (e.kind == sim::EventKind::PlayerRespawned) ++respawns;
-                      if (e.kind == sim::EventKind::ScoreChanged) ++scores;
-                    }
-                  }};
+  const SoakMatch match{&content, 1, [&](const NetServer& server) {
+                          for (const sim::SimEvent& e : server.tickEvents()) {
+                            if (e.kind == sim::EventKind::PlayerRespawned) ++respawns;
+                            if (e.kind == sim::EventKind::ScoreChanged) ++scores;
+                          }
+                        }};
   const SoakReport r = soak("deathmatch-100ms-2%", 4, 50 * kMs, 10 * kMs, 20'000, 30, match);
   CHECK(r.mismatches == 0);
   CHECK(respawns > 5);

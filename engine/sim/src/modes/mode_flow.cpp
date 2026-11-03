@@ -3,6 +3,7 @@
 
 #include "kfm/sim/constants.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -21,8 +22,7 @@ namespace {
   uint64_t best = std::numeric_limits<uint64_t>::max();
   s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
     if (p.tags.has(Tag::Eliminated)) return;
-    const uint64_t d = lengthSqRaw(p.transform.pos - pos);
-    if (d < best) best = d;
+    best = std::min(best, lengthSqRaw(p.transform.pos - pos));
   });
   return best;
 }
@@ -35,7 +35,7 @@ namespace {
   uint64_t best = 0;
   for (uint8_t k = 0; k < arena.spawnPointCount; ++k) {
     dist[k] = nearestEnemySq(s, arena.spawnPoints[k]);
-    if (dist[k] > best) best = dist[k];
+    best = std::max(best, dist[k]);
   }
   uint32_t ties = 0;
   for (uint8_t k = 0; k < arena.spawnPointCount; ++k) {

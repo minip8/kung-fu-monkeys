@@ -142,7 +142,7 @@ TEST_CASE("deathmatch: spawn protection blocks hits for respawnInvulnTicks",
   spreadOut(s);
   EventLog log;
   REQUIRE(shoot(s, m, kP0, kP1, log));
-  for (int t = 0; t < m.mode.respawnTicks && s.playerBySlot(kP1) == nullptr; ++t)
+  for (uint16_t t = 0; t < m.mode.respawnTicks && s.playerBySlot(kP1) == nullptr; ++t)
     runTicks(s, frameFor(s), 1, m, log);
   const SimEvent& back = firstEvent(log, EventKind::PlayerRespawned);
   REQUIRE(playerAt(s, kP1).tags.has(Tag::Invulnerable));
@@ -269,7 +269,7 @@ TEST_CASE("deathmatch: a respawn takes the spawn point farthest from the other m
     EventLog log;
     REQUIRE(shoot(s, m, kP0, kP1, log));
     placePlayer(s, kP0, arena.spawnPoints[near]);
-    for (int t = 0; t < m.mode.respawnTicks && s.playerBySlot(kP1) == nullptr; ++t) {
+    for (uint16_t t = 0; t < m.mode.respawnTicks && s.playerBySlot(kP1) == nullptr; ++t) {
       placePlayer(s, kP0, arena.spawnPoints[near]);  // hold P0 still on its point
       runTicks(s, frameFor(s), 1, m, log);
     }

@@ -239,7 +239,7 @@ TEST_CASE("the mode block is in the stream only when it is not all zero", "[sim]
   std::array<std::byte, 16384> bufB{};
   BitWriter wb(bufB);
   REQUIRE(writeTo(wb, b));
-  CHECK(wb.bytesWritten() == wa.bytesWritten() + kMaxPlayers * (1 + 2 + 2));
+  CHECK(wb.bytesWritten() == wa.bytesWritten() + size_t{kMaxPlayers} * (1 + 2 + 2));
 
   WorldState c{};
   c.rules.deaths[5] = 9;  // a read without the block must clear it
