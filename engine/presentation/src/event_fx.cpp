@@ -150,7 +150,7 @@ float bannerScale(const RenderState& state, EffectKind banner) {
 }
 
 void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                  const SimEvent& e, const sim::ContentDB& content, RenderState& out) {
+                  const SimEvent& e, const sim::MatchContent& content, RenderState& out) {
   const float halfWidth = content.arena.halfExtents.x.toFloat();
   // The plane position the sound pans from; unset for unpositioned events.
   std::optional<Vec2f> soundAt;

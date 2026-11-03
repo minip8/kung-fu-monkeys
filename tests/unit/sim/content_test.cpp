@@ -24,7 +24,7 @@ TEST_CASE("contentHash is stable and sensitive to every def", "[sim][content]") 
   CHECK(contentHash(copy) != h);
 
   copy = c;
-  copy.arena.spawnPoints[9].y += Fixed::epsilon();
+  copy.arenas[0].spawnPoints[9].y += Fixed::epsilon();
   CHECK(contentHash(copy) != h);
 
   copy = c;
@@ -32,7 +32,7 @@ TEST_CASE("contentHash is stable and sensitive to every def", "[sim][content]") 
   CHECK(contentHash(copy) != h);
 
   copy = c;
-  copy.mode.roundsToWin = 5;
+  copy.modes[0].roundsToWin = 5;
   CHECK(contentHash(copy) != h);
 
   copy = c;
@@ -75,7 +75,7 @@ TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][con
   CHECK(c.abilityCount == static_cast<uint8_t>(AbilityKind::kCount));
   CHECK(c.player.ammoStart <= c.player.ammoMax);
   CHECK(c.boomerang.damage >= c.player.maxHp);  // base game: one hit kills
-  CHECK(c.mode.roundsToWin == 3);
+  CHECK(c.modes[0].roundsToWin == 3);
   CHECK(c.pickup.radius == Fixed::half());
   // A fresh banana spawns clear of its thrower.
   CHECK(c.boomerang.spawnOffset > c.player.radius + c.boomerang.radius);
@@ -87,7 +87,7 @@ TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][con
 
 TEST_CASE("arena spawn points are distinct and inside the arena", "[sim][content]") {
   const ContentDB& c = defaultContent();
-  const ArenaDef& a = c.arena;
+  const ArenaDef& a = c.arenas[0];
   REQUIRE(a.spawnPointCount == kMaxPlayers);
   const Fixed limitX = a.halfExtents.x - c.player.radius;
   const Fixed limitY = a.halfExtents.y - c.player.radius;

@@ -22,7 +22,7 @@ struct HitSource {
 };
 
 // Damages `victim` (whose pool id is victimEntity) by `damage` hits on `tick`.
-void applyDamage(Tick tick, const ContentDB& content, Player& victim, EntityId victimEntity,
+void applyDamage(Tick tick, const MatchContent& content, Player& victim, EntityId victimEntity,
                  uint8_t damage, const HitSource& source, EventSink& sink);
 
 }  // namespace kfm::sim

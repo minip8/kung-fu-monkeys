@@ -8,14 +8,14 @@ namespace kfm::sim {
 
 bool dashCanActivate(const WorldState& s, const Player& p, const AbilityDef& def);
 void dashOnActivate(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                    const ContentDB& content, EventSink& sink);
+                    const MatchContent& content, EventSink& sink);
 void dashOnTick(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                const ContentDB& content, EventSink& sink);
+                const MatchContent& content, EventSink& sink);
 void dashOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                       AbilityPhase from, AbilityPhase to, const ContentDB& content,
+                       AbilityPhase from, AbilityPhase to, const MatchContent& content,
                        EventSink& sink);
 void dashOnEnd(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-               const ContentDB& content, EventSink& sink);
+               const MatchContent& content, EventSink& sink);
 
 [[nodiscard]] constexpr AbilityBehavior dashBehavior() {
   return AbilityBehavior{&dashCanActivate, &dashOnActivate, &dashOnTick, &dashOnPhaseChange,

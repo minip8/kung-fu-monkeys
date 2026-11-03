@@ -1,5 +1,7 @@
-// M1 content tables (architecture §5.10): constexpr defs built from integer
-// ratios only, and the content hash over their canonical serialized form.
+// Default content tables (architecture §5.10): constexpr defs built from
+// integer ratios only, and the content hash over their canonical serialized
+// form. They mirror content/*.toml exactly (tests/unit/content asserts the
+// loaded TOML hashes the same), and stay as the sim tests' fixture.
 #include "kfm/sim/content.hpp"
 
 #include "kfm/core/assert.hpp"
@@ -20,6 +22,7 @@ constexpr Fixed perSecond(int32_t unitsPerSecond) {
 
 constexpr ArenaDef makeArena() {
   ArenaDef a;
+  a.name = ContentName::of("dojo");
   a.halfExtents = Vec2{Fixed::fromInt(16), Fixed::fromInt(9)};
   // Ten points on an ellipse (radii 12 × 6) in steps of 36 degrees, listed in an
   // order that spreads the first few slots across the arena (2 players face
@@ -37,8 +40,10 @@ constexpr ArenaDef makeArena() {
 
 constexpr ContentDB makeDefaultContent() {
   ContentDB c;
+  c.abilities[0].name = ContentName::of("none");
 
   AbilityDef& dash = c.abilities[static_cast<uint8_t>(AbilityKind::Dash)];
+  dash.name = ContentName::of("dash");
   dash.kind = AbilityKind::Dash;
   dash.cooldownTicks = 45;
   dash.startupTicks = 0;
@@ -49,6 +54,7 @@ constexpr ContentDB makeDefaultContent() {
   dash.tagsActive = Tags::of(Tag::Dashing);
 
   AbilityDef& thr = c.abilities[static_cast<uint8_t>(AbilityKind::Throw)];
+  thr.name = ContentName::of("throw");
   thr.kind = AbilityKind::Throw;
   thr.cooldownTicks = 20;
   thr.startupTicks = 2;
@@ -79,11 +85,15 @@ constexpr ContentDB makeDefaultContent() {
   c.player.abilities[kAbilitySlotDash] = static_cast<uint8_t>(AbilityKind::Dash);
   c.player.abilities[kAbilitySlotThrow] = static_cast<uint8_t>(AbilityKind::Throw);
 
-  c.arena = makeArena();
+  c.arenas[0] = makeArena();
+  c.arenaCount = 1;
 
-  c.mode.roundsToWin = 3;
-  c.mode.roundEndTicks = 120;
-  c.mode.roundStartTicks = 60;
+  ModeDef& rounds = c.modes[0];
+  rounds.name = ContentName::of("rounds");
+  rounds.roundsToWin = 3;
+  rounds.roundEndTicks = 120;
+  rounds.roundStartTicks = 60;
+  c.modeCount = 1;
 
   c.dashAttack.damage = 1;
   c.dashAttack.minAmmo = 1;
@@ -103,8 +113,8 @@ static_assert(kDashDef.startupTicks == 0,
               "PerfectDash is granted from the press tick (§5.5): the dash has no startup");
 static_assert(kDashDef.activeTicks > kDashDef.perfectWindowTicks,
               "the perfect window, plus its sub-tick tail, fits inside the active phase");
-static_assert(kDefaultContent.arena.halfExtents.x <= Fixed::fromInt(1024) &&
-                  kDefaultContent.arena.halfExtents.y <= Fixed::fromInt(1024),
+static_assert(kDefaultContent.arenas[0].halfExtents.x <= Fixed::fromInt(1024) &&
+                  kDefaultContent.arenas[0].halfExtents.y <= Fixed::fromInt(1024),
               "the swept narrowphase needs coordinates within ±1024 (collision_internal.hpp)");
 static_assert(kDefaultContent.boomerang.spawnOffset >
                   kDefaultContent.player.radius + kDefaultContent.boomerang.radius,

@@ -373,7 +373,7 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
   }
 }
 
-void buildHud(const WorldState& curr, const ContentDB& content, RenderHud& hud) {
+void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHud& hud) {
   const sim::MatchRules& r = curr.rules;
   hud.phase = hudPhase(r.phase);
   hud.ticksInPhase = r.ticksInPhase;
@@ -434,8 +434,9 @@ float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnSta
 }
 
 void buildRenderState(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                      float alpha, std::span<const SimEvent> newEvents, const ContentDB& content,
-                      float dtSeconds, RenderState& out) {
+                      float alpha, std::span<const SimEvent> newEvents,
+                      const sim::MatchContent& match, float dtSeconds, RenderState& out) {
+  const ContentDB& content = match.db;
   const float dt = std::max(dtSeconds, 0.0f);
   alpha = clamp01(alpha);
   ps.time += dt;
@@ -457,7 +458,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
 
   ps.shake *= std::exp(-dt / kShakeTau);
   for (const SimEvent& e : newEvents)
-    applyEventFx(ps, prev, curr, e, content, out);
+    applyEventFx(ps, prev, curr, e, match, out);
   // Flashes started by this frame's events show this frame.
   for (uint16_t i = 0; i < out.playerCount; ++i) {
     RenderPlayer& rp = out.players[i];
@@ -475,12 +476,12 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   const float w = kTwoPi * kShakeHz * ps.time;
   out.shakeOffset =
       Vec3{ps.shake * std::sin(w), ps.shake * 0.6f * std::sin((1.37f * w) + 1.1f), 0.0f};
-  out.arenaHalfExtents = toFloat(content.arena.halfExtents);
+  out.arenaHalfExtents = toFloat(match.arena.halfExtents);
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
   out.bananaRadius = content.boomerang.radius.toFloat();
   out.time = ps.time;
-  buildHud(curr, content, out.hud);
+  buildHud(curr, match, out.hud);
   phaseSounds(ps, out.hud, out);
 }
 

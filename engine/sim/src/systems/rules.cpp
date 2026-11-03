@@ -19,7 +19,7 @@ namespace {
   return pos.x > Fixed::zero() ? Angle::fromBam(Angle::kHalf) : Angle{};
 }
 
-void resetPlayer(Player& p, PlayerId id, Vec2 pos, const ContentDB& content) {
+void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content) {
   // Keep the previous buttons so a button held across the round boundary does
   // not register as a fresh press.
   const uint8_t prevButtons = p.prevButtons;
@@ -29,15 +29,15 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const ContentDB& content) {
   p.transform.pos = pos;
   p.transform.prevPos = pos;
   p.transform.facing = facingTowardCentre(pos);
-  p.stats = Stats{content.player.moveSpeed, content.player.maxHp, content.player.ammoMax};
-  p.hp = content.player.maxHp;
-  p.ammo = content.player.ammoStart;
+  p.stats = Stats{content.db.player.moveSpeed, content.db.player.maxHp, content.db.player.ammoMax};
+  p.hp = content.db.player.maxHp;
+  p.ammo = content.db.player.ammoStart;
   for (uint8_t slot = 0; slot < kAbilitySlots; ++slot) {
-    p.abilities[slot].defIndex = content.player.abilities[slot];
+    p.abilities[slot].defIndex = content.db.player.abilities[slot];
   }
 }
 
-void startRound(WorldState& s, const ContentDB& content, EventSink& sink) {
+void startRound(WorldState& s, const MatchContent& content, EventSink& sink) {
   s.boomerangs.clear();
   s.pickups.clear();
   // A player who left the roster mid-round (§6.6) is removed here; the
@@ -76,7 +76,7 @@ void startRound(WorldState& s, const ContentDB& content, EventSink& sink) {
 
 }  // namespace
 
-void rulesPreTick(WorldState& s, const ContentDB& content, EventSink& sink) {
+void rulesPreTick(WorldState& s, const MatchContent& content, EventSink& sink) {
   MatchRules& r = s.rules;
   if (r.phase == MatchPhase::Lobby) {
     sink.push(SimEvent{EventKind::MatchStarted, s.tick, PlayerId::invalid(), EntityId{}, 0, 0});
@@ -93,7 +93,7 @@ void rulesPreTick(WorldState& s, const ContentDB& content, EventSink& sink) {
   }
 }
 
-void rulesPostTick(WorldState& s, const ContentDB& content, EventSink& sink) {
+void rulesPostTick(WorldState& s, const MatchContent& content, EventSink& sink) {
   MatchRules& r = s.rules;
   ++r.ticksInPhase;
   if (r.phase != MatchPhase::Playing) return;

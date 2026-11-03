@@ -19,17 +19,17 @@ struct AbilityBehavior {
   // Called once on activation, after AbilitySystem recorded activatedTick,
   // activatedSubTick and reset the phase.
   void (*onActivate)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                     const ContentDB& content, EventSink& sink);
+                     const MatchContent& content, EventSink& sink);
   // Called every tick the slot is not Idle, after the phase advanced.
   void (*onTick)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                 const ContentDB& content, EventSink& sink);
+                 const MatchContent& content, EventSink& sink);
   // Called on every phase transition, including skipped zero-length phases.
   void (*onPhaseChange)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                        AbilityPhase from, AbilityPhase to, const ContentDB& content,
+                        AbilityPhase from, AbilityPhase to, const MatchContent& content,
                         EventSink& sink);
   // Called when the slot returns to Idle.
   void (*onEnd)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                const ContentDB& content, EventSink& sink);
+                const MatchContent& content, EventSink& sink);
 };
 
 // Behaviour for a kind; out-of-range kinds get the inert None behaviour.

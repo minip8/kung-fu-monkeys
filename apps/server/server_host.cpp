@@ -96,9 +96,10 @@ ServerHost::ServerHost(net::ITransport& transport, const sim::ContentDB& content
   }
   lastStatsNs_ = nowNs;
   nextStatsNs_ = config_.statsEveryNs > 0 ? nowNs + config_.statsEveryNs : 0;
-  log("start seed=0x{:x} bots={} slots={} max_players={} tokens={}", config_.server.match.seed,
-      placed, slotList(server_->bots()), config_.server.maxPlayers,
-      config_.server.acceptToken ? "checked" : "any");
+  log("start seed=0x{:x} arena={} mode={} bots={} slots={} max_players={} tokens={}",
+      config_.server.match.seed, content.arenaAt(config_.server.match.arena).name.view(),
+      content.modeAt(config_.server.match.mode).name.view(), placed, slotList(server_->bots()),
+      config_.server.maxPlayers, config_.server.acceptToken ? "checked" : "any");
 }
 
 uint64_t ServerHost::tickDueAt(uint64_t k) const {

@@ -261,8 +261,8 @@ TEST_CASE("spin advances while in flight", "[sim][projectile]") {
 TEST_CASE("bananas bounce off each wall with restitution and an event", "[sim][projectile]") {
   ContentDB c = defaultContent();
   c.boomerang.restitution = Fixed::half();
-  const Fixed limX = c.arena.halfExtents.x - c.boomerang.radius;
-  const Fixed limY = c.arena.halfExtents.y - c.boomerang.radius;
+  const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
+  const Fixed limY = c.arenas[0].halfExtents.y - c.boomerang.radius;
   const Fixed step = Fixed::fromRatio(3, 10);
   const Fixed gap = Fixed::fromRatio(1, 10);
 
@@ -313,8 +313,8 @@ TEST_CASE("bananas bounce off each wall with restitution and an event", "[sim][p
 
 TEST_CASE("a corner bounce reflects both axes and emits one event", "[sim][projectile]") {
   const ContentDB& c = defaultContent();
-  const Fixed limX = c.arena.halfExtents.x - c.boomerang.radius;
-  const Fixed limY = c.arena.halfExtents.y - c.boomerang.radius;
+  const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
+  const Fixed limY = c.arenas[0].halfExtents.y - c.boomerang.radius;
   WorldState s = makePlayingWorld(1, 0b1);
   const Vec2 vel = v(0.2, 0.2);
   const EntityId id = spawnBanana(s, kP0, Vec2{limX, limY} - v(0.1, 0.1), vel);
@@ -327,8 +327,8 @@ TEST_CASE("a corner bounce reflects both axes and emits one event", "[sim][proje
 
 TEST_CASE("a huge overshoot is clamped inside the arena", "[sim][projectile]") {
   const ContentDB& c = defaultContent();
-  const Fixed limX = c.arena.halfExtents.x - c.boomerang.radius;
-  const Fixed limY = c.arena.halfExtents.y - c.boomerang.radius;
+  const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
+  const Fixed limY = c.arenas[0].halfExtents.y - c.boomerang.radius;
   WorldState s = makePlayingWorld(1, 0b1);
   const EntityId id = spawnBanana(s, kP0, v(0, 0), v(100, -100));
   tickProjectiles(s);
@@ -341,7 +341,7 @@ TEST_CASE("a huge overshoot is clamped inside the arena", "[sim][projectile]") {
 
 TEST_CASE("a banana resting exactly on the wall line does not bounce", "[sim][projectile]") {
   const ContentDB& c = defaultContent();
-  const Fixed limX = c.arena.halfExtents.x - c.boomerang.radius;
+  const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
   WorldState s = makePlayingWorld(1, 0b1);
   const EntityId id = spawnBanana(s, kP0, Vec2{limX - Fixed::fromRatio(1, 10), Fixed::zero()},
                                   Vec2{Fixed::fromRatio(1, 10), Fixed::zero()});

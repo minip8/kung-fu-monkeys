@@ -1,5 +1,5 @@
 // Dash attack (prio 25, architecture §5.6, §5.10). A player dashing into an
-// enemy while holding at least content.dashAttack.minAmmo bananas damages it
+// enemy while holding at least content.db.dashAttack.minAmmo bananas damages it
 // like a banana hit (rules/apply_damage.hpp: hp, HitStun, PlayerEliminated at
 // 0 hp), emitting PlayerDashHit instead of PlayerHit. Nothing grounds and no
 // pickup spawns; the attacker spends a banana only when consumesAmmo is set.
@@ -13,12 +13,12 @@
 
 namespace kfm::sim {
 
-bool dashAttack(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+bool dashAttack(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                 const Contact& /*contact*/, EventSink& sink) {
   Player* attacker = s.players.get(a);
   Player* victim = s.players.get(b);
   if (attacker == nullptr || victim == nullptr || a == b) return false;
-  const DashAttackDef& def = content.dashAttack;
+  const DashAttackDef& def = content.db.dashAttack;
   if (attacker->ammo < def.minAmmo) return false;
 
   if (def.consumesAmmo != 0 && attacker->ammo > 0) --attacker->ammo;

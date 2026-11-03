@@ -498,7 +498,7 @@ TEST_CASE("session: restart turns a dropped slot into a bot", "[client][session]
 
 TEST_CASE("session: after the match ends, Enter returns to the lobby", "[client][session]") {
   Driver d(SessionConfig{.seed = 8, .bots = 3});
-  d.s->content().mode.roundsToWin = 1;
+  d.s->content().modes[0].roundsToWin = 1;
   d.start();
   // Enter does nothing while the match is running.
   d.push(key(Key::Enter, true));
@@ -553,6 +553,75 @@ TEST_CASE("session: content edits apply live and reset", "[client][session]") {
   CHECK(d.s->contentHash() != sim::contentHash(sim::defaultContent()));
   d.s->resetContent();
   CHECK(d.s->contentIsDefault());
+}
+
+namespace {
+
+// The default content plus a small second arena and a quick second mode.
+sim::ContentDB twoArenas() {
+  sim::ContentDB c = sim::defaultContent();
+  sim::ArenaDef& pit = c.arenas[1];
+  pit.name = sim::ContentName::of("pit");
+  pit.halfExtents = Vec2{Fixed::fromInt(4), Fixed::fromInt(3)};
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
+    pit.spawnPoints[i] = Vec2{Fixed::fromInt(i % 3) - Fixed::one(), Fixed::zero()};
+  pit.spawnPointCount = sim::kMaxPlayers;
+  c.arenaCount = 2;
+  c.modes[1] = c.modes[0];
+  c.modes[1].name = sim::ContentName::of("quick");
+  c.modes[1].roundStartTicks = 5;
+  c.modeCount = 2;
+  return c;
+}
+
+}  // namespace
+
+TEST_CASE("session: arena and mode select the match's content", "[client][session]") {
+  const sim::ContentDB content = twoArenas();
+  Driver d(SessionConfig{.seed = 4, .arena = 1, .mode = 1, .content = &content, .bots = 2});
+  CHECK(d.s->matchConfig().arena == 1);
+  CHECK(&d.s->matchContent().arena == &d.s->content().arenas[1]);
+  d.start();
+  CHECK(d.s->matchConfig().arena == 1);
+  CHECK(d.s->matchConfig().mode == 1);
+  for (int i = 0; i < 120; ++i)
+    d.frame(1);
+  const Fixed limit = Fixed::fromInt(4) - content.player.radius;
+  for (const auto& p : d.s->curr().players.items) {
+    CHECK(abs(p.transform.pos.x) <= limit);
+  }
+  // Out-of-range indices fall back to the default.
+  d.s->setArena(9);
+  CHECK(d.s->arena() == 0);
+  d.s->setMode(1);
+  d.s->restart(d.now(), false);
+  CHECK(d.s->matchConfig().arena == 0);
+  CHECK(d.s->matchConfig().mode == 1);
+}
+
+TEST_CASE("session: replaceContent (hot reload) restarts with the new content",
+          "[client][session]") {
+  Driver d(SessionConfig{.seed = 6, .bots = 3});
+  d.start();
+  for (int i = 0; i < 200; ++i)
+    d.frame(1);
+  d.s->content().player.moveSpeed = Fixed::one();  // a live edit, dropped by the reload
+  const sim::ContentDB content = twoArenas();
+  d.s->replaceContent(content, d.now());
+  d.rebase();
+  CHECK(d.s->phase() == SessionPhase::Match);
+  CHECK(d.s->curr().tick.value == 0);
+  CHECK(d.s->seed() == 6);
+  CHECK(d.s->contentIsDefault());  // the live copy is the new loaded content
+  CHECK(d.s->contentHash() == sim::contentHash(content));
+  CHECK(sim::contentHash(d.s->loadedContent()) == sim::contentHash(content));
+
+  // A reload whose content lacks the selected arena falls back to index 0.
+  d.s->setArena(1);
+  d.s->replaceContent(sim::defaultContent(), d.now());
+  d.rebase();
+  CHECK(d.s->arena() == 0);
+  CHECK(d.s->matchConfig().arena == 0);
 }
 
 TEST_CASE("session: a pause does not carry into the next match", "[client][session]") {

@@ -416,11 +416,12 @@ TEST_CASE("HUD derives phase, countdown, scores and winners", "[presentation][bu
   RenderState rs = build(ps, s, s, 1.0f);
   CHECK(rs.hud.phase == HudPhase::RoundStarting);
   CHECK(rs.hud.round == 1);
-  CHECK(rs.hud.roundsToWin == content.mode.roundsToWin);
+  CHECK(rs.hud.roundsToWin == content.modes[0].roundsToWin);
   CHECK(rs.hud.presentMask == 0b11);
   CHECK(rs.hud.ticksInPhase == s.rules.ticksInPhase);
-  CHECK(rs.hud.countdownSeconds ==
-        Approx(static_cast<float>(content.mode.roundStartTicks - s.rules.ticksInPhase) / 60.0f));
+  CHECK(
+      rs.hud.countdownSeconds ==
+      Approx(static_cast<float>(content.modes[0].roundStartTicks - s.rules.ticksInPhase) / 60.0f));
   CHECK(rs.hud.lastRoundWinner == kNoSlot);
   CHECK(rs.hud.matchWinner == kNoSlot);
   for (int i = 0; i < 30; ++i)
@@ -447,11 +448,11 @@ TEST_CASE("HUD derives phase, countdown, scores and winners", "[presentation][bu
 
   // MatchEnded names the winner.
   s.rules.phase = MatchPhase::MatchEnded;
-  s.rules.scores[0] = content.mode.roundsToWin;
+  s.rules.scores[0] = content.modes[0].roundsToWin;
   rs = build(ps, s, s, 1.0f);
   CHECK(rs.hud.phase == HudPhase::MatchEnded);
   CHECK(rs.hud.matchWinner == 0);
-  CHECK(rs.hud.scores[0] == content.mode.roundsToWin);
+  CHECK(rs.hud.scores[0] == content.modes[0].roundsToWin);
 }
 
 TEST_CASE("a scripted 10-player match renders consistently every frame",
@@ -466,8 +467,8 @@ TEST_CASE("a scripted 10-player match renders consistently every frame",
   EventSink sink;
   std::set<EffectKind> seen;
   std::set<SoundId> heard;
-  const float hx = content.arena.halfExtents.x.toFloat();
-  const float hy = content.arena.halfExtents.y.toFloat();
+  const float hx = content.arenas[0].halfExtents.x.toFloat();
+  const float hy = content.arenas[0].halfExtents.y.toFloat();
   for (int k = 0; k < 2400; ++k) {
     *prev = *curr;
     sink.clear();
@@ -614,7 +615,8 @@ TEST_CASE("pickup, landing and bounce effects sit at the entity", "[presentation
   CHECK(e.slot == 1);
   REQUIRE(rs.soundCount == 1);
   CHECK(rs.sounds[0].id == SoundId::Pickup);
-  CHECK(rs.sounds[0].pan == Approx(soundPan(2.0f, defaultContent().arena.halfExtents.x.toFloat())));
+  CHECK(rs.sounds[0].pan ==
+        Approx(soundPan(2.0f, defaultContent().arenas[0].halfExtents.x.toFloat())));
   CHECK(rs.sounds[0].pan > 0.0f);
 }
 
@@ -665,7 +667,7 @@ TEST_CASE("count-in follows the round-start countdown, then go", "[presentation]
   RenderState rs = build(ps, s, s, 1.0f);  // lobby: nothing
   CHECK(rs.soundCount == 0);
   std::vector<SoundId> heard;
-  for (int k = 0; k < content.mode.roundStartTicks + 5; ++k) {
+  for (int k = 0; k < content.modes[0].roundStartTicks + 5; ++k) {
     const WorldState prev = s;
     const EventLog log = stepWith(s, PlayerInput{});
     rs = build(ps, prev, s, 1.0f, log);
@@ -673,7 +675,7 @@ TEST_CASE("count-in follows the round-start countdown, then go", "[presentation]
       heard.push_back(rs.sounds[i].id);
   }
   // One count-in per whole second of countdown, then go.
-  const auto whole = static_cast<std::size_t>((content.mode.roundStartTicks + 59) / 60);
+  const auto whole = static_cast<std::size_t>((content.modes[0].roundStartTicks + 59) / 60);
   REQUIRE(heard.size() == whole + 1);
   for (std::size_t i = 0; i < whole; ++i)
     CHECK(heard[i] == SoundId::CountIn);

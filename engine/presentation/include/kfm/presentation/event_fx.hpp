@@ -51,6 +51,6 @@ void addEffect(PresentationState& ps, const RenderEffect& e);
 
 // Effects, flashes, shake and the sound of one event.
 void applyEventFx(PresentationState& ps, const sim::WorldState& prev, const sim::WorldState& curr,
-                  const sim::SimEvent& e, const sim::ContentDB& content, RenderState& out);
+                  const sim::SimEvent& e, const sim::MatchContent& content, RenderState& out);
 
 }  // namespace kfm::presentation

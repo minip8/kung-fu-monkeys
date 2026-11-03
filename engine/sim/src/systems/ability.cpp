@@ -92,14 +92,14 @@ constexpr Tags kSystemOwnedTags = Tags::of(Tag::HitStun) | Tag::Eliminated;
   return 0;
 }
 
-[[nodiscard]] const AbilityDef& defFor(const ContentDB& content, const AbilityState& st) {
-  return content.abilityAt(st.defIndex);
+[[nodiscard]] const AbilityDef& defFor(const MatchContent& content, const AbilityState& st) {
+  return content.db.abilityAt(st.defIndex);
 }
 
 // Advances through every phase whose duration has elapsed (a loop, so several
 // zero-length phases are skipped in one tick).
 void settle(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-            const AbilityBehavior& behavior, const ContentDB& content, EventSink& sink) {
+            const AbilityBehavior& behavior, const MatchContent& content, EventSink& sink) {
   while (st.phase != AbilityPhase::Idle && st.phaseTicks >= phaseDuration(def, st.phase)) {
     const AbilityPhase from = st.phase;
     const AbilityPhase to = nextPhase(from);
@@ -110,7 +110,7 @@ void settle(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
   }
 }
 
-void tickSlot(WorldState& s, Player& p, AbilityState& st, const ContentDB& content,
+void tickSlot(WorldState& s, Player& p, AbilityState& st, const MatchContent& content,
               EventSink& sink) {
   const AbilityDef& def = defFor(content, st);
   const AbilityBehavior& behavior = behaviorFor(def.kind);
@@ -138,7 +138,7 @@ void tickSlot(WorldState& s, Player& p, AbilityState& st, const ContentDB& conte
   if (st.phase != AbilityPhase::Idle) behavior.onTick(s, p, st, def, content, sink);
 }
 
-void rebuildTags(Player& p, const ContentDB& content) {
+void rebuildTags(Player& p, const MatchContent& content) {
   Tags owned = Tags::of(Tag::Dashing) | Tag::PerfectDash;
   Tags granted{};
   for (const AbilityState& st : p.abilities) {
@@ -158,7 +158,7 @@ void rebuildTags(Player& p, const ContentDB& content) {
 
 }  // namespace
 
-void abilitySystem(WorldState& s, const ContentDB& content, EventSink& sink) {
+void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink) {
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     for (AbilityState& st : p.abilities) {
       tickSlot(s, p, st, content, sink);

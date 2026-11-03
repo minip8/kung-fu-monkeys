@@ -413,7 +413,8 @@ void drawSparks(FrameDrawer& d, const RenderEffect& e, const SparkStyle& s) {
 
 }  // namespace
 
-bool Renderer::init(const sim::ContentDB& content) {
+bool Renderer::init(const sim::MatchContent& match) {
+  const sim::ContentDB& content = match.db;
   if (initialised_) shutdown();
   if (!sg_isvalid()) return false;
 
@@ -421,7 +422,7 @@ bool Renderer::init(const sim::ContentDB& content) {
       makeMonkeyCapsule(content.player),
       makeBananaMesh(content.boomerang),
       makeDisc(1.0f, 40),
-      makeFloorQuad(content.arena.halfExtents.x.toFloat(), content.arena.halfExtents.y.toFloat()),
+      makeFloorQuad(match.arena.halfExtents.x.toFloat(), match.arena.halfExtents.y.toFloat()),
       makeUnitCube(),
   };
   constexpr std::array<const char*, kStaticMeshCount> kLabels = {

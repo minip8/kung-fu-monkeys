@@ -1,6 +1,7 @@
 # cmake -DKFM_REPLAY_EXE=<path> [-DKFM_EMULATOR=<node>] -DKFM_CORPUS_DIR=<dir> -P RegenCorpus.cmake
 # Re-records every replay listed in <dir>/corpus.txt with the current build
-# (so each carries this build's content hash), then rewrites <name>.checksums
+# (so each carries this build's content hash: the embedded content/*.toml),
+# then rewrites <name>.checksums
 # next to it. A .kfmr in the corpus without a manifest line is an error: it
 # could not be re-recorded after a content change.
 set(manifest "${KFM_CORPUS_DIR}/corpus.txt")
@@ -16,8 +17,8 @@ foreach(line IN LISTS lines)
   endif()
   string(REGEX REPLACE "[ \t]+" ";" fields "${line}")
   list(LENGTH fields n)
-  if(NOT n EQUAL 6)
-    message(FATAL_ERROR "corpus.txt: expected 6 fields, got ${n}: '${line}'")
+  if(NOT n EQUAL 6 AND NOT n EQUAL 8)
+    message(FATAL_ERROR "corpus.txt: expected 6 or 8 fields, got ${n}: '${line}'")
   endif()
   list(GET fields 0 name)
   list(GET fields 1 kind)
@@ -27,6 +28,13 @@ foreach(line IN LISTS lines)
   list(GET fields 5 ticks)
   set(replay "${KFM_CORPUS_DIR}/${name}.kfmr")
   set(args --seed ${seed} --players ${players} --ticks ${ticks})
+  if(n EQUAL 8)
+    # Optional arena and mode names (MatchConfig::arena / ::mode); without
+    # them the replay uses the first of each, the default match.
+    list(GET fields 6 arena)
+    list(GET fields 7 mode)
+    list(APPEND args --arena ${arena} --mode ${mode})
+  endif()
   if(kind STREQUAL "empty")
     set(record record-empty)
   elseif(kind STREQUAL "scripted")

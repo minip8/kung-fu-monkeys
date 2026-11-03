@@ -488,7 +488,7 @@ void StatsCollector::finish(const WorldState& s) {
   stats_.dashAttackWithoutAmmo = dashAttackWithoutAmmo_.size();
 }
 
-void statsStep(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& sink,
+void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink,
                StatsCollector& collector) {
   // The order of step() (step.cpp, architecture §5.3); callers compare the
   // checksum with a step() shadow every tick.

@@ -109,8 +109,8 @@ TEST_CASE("movement is frozen outside Playing", "[sim][movement]") {
 
 TEST_CASE("arena clamp on all four walls zeroes the clamped component", "[sim][movement]") {
   const ContentDB& content = defaultContent();
-  const Fixed limX = content.arena.halfExtents.x - content.player.radius;
-  const Fixed limY = content.arena.halfExtents.y - content.player.radius;
+  const Fixed limX = content.arenas[0].halfExtents.x - content.player.radius;
+  const Fixed limY = content.arenas[0].halfExtents.y - content.player.radius;
   const Fixed eps = Fixed::fromRatio(1, 100);
   struct Case {
     Vec2 start;
@@ -146,7 +146,8 @@ TEST_CASE("arena clamp on all four walls zeroes the clamped component", "[sim][m
 
 TEST_CASE("a dash into a corner stops at both walls", "[sim][movement]") {
   const ContentDB& content = defaultContent();
-  const Vec2 lim = content.arena.halfExtents - Vec2{content.player.radius, content.player.radius};
+  const Vec2 lim =
+      content.arenas[0].halfExtents - Vec2{content.player.radius, content.player.radius};
   WorldState s = makePlayingWorld(8, 0b1);
   Player& p = placePlayer(s, kP0, lim - Vec2{Fixed::fromRatio(1, 10), Fixed::fromRatio(1, 10)});
   p.tags.set(Tag::Dashing);

@@ -7,6 +7,8 @@
 //   kfm_replay record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]
 //   kfm_replay record-scripted <out.kfmr> [--ticks N] [--seed S] [--players P] [--input-seed I]
 //                                         [--stats]
+//     record-*, bench and stats also take --arena NAME --mode NAME (default:
+//     the first of each); the replay header stores their indices
 //   kfm_replay info <in.kfmr>
 //   kfm_replay checksums <in.kfmr>              prints "<tick> <hex>" per tick
 //   kfm_replay verify <in.kfmr> <expected.txt>  exit 0 when identical
@@ -18,6 +20,10 @@
 //     (default 36000, 10 minutes); the four bot knobs override
 //     ScriptedInputConfig (sensitivity checks: is a number the content's or
 //     the scripted bot's?); --quiet drops the per-match lines
+//   --content DIR (any command): load content/*.toml from DIR instead of the
+//     copy built into the binary (architecture §5.10). Recording stores the
+//     content hash; playback refuses a replay recorded with other content.
+#include "kfm/content/app_content.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/sim.hpp"
@@ -51,7 +57,15 @@ struct Args {
   bool stats{false};
   bool quiet{false};
   ScriptedInputConfig bot{};  // stats only; replays always use the defaults
+  std::string contentDir;     // empty: the embedded content
+  std::string arena;          // names; empty = index 0
+  std::string mode;
 };
+
+// The content every command runs with, loaded once in main() (--content or
+// the embedded copy), and the arena/mode indices of --arena/--mode.
+content::LoadedContent gContent;
+MatchConfig gMatch{};
 
 // Default per-match tick cap of `stats`: 10 minutes.
 constexpr uint32_t kStatsDefaultTicks = 36'000;
@@ -63,8 +77,9 @@ constexpr uint32_t kMaxTicks = 1'000'000;
 
 constexpr const char* kUsage =
     "usage: kfm_replay <command> ...\n"
-    "  record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]\n"
+    "  record-empty <out.kfmr> [--ticks N] [--seed S] [--players P] [--arena A] [--mode M]\n"
     "  record-scripted <out.kfmr> [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
+    "                  [--arena A] [--mode M]\n"
     "  info <in.kfmr>\n"
     "  checksums <in.kfmr>\n"
     "  verify <in.kfmr> <expected.checksums>\n"
@@ -72,7 +87,8 @@ constexpr const char* kUsage =
     "  record-scripted ... --stats   also print feel-tuning statistics of the match\n"
     "  stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
     "        [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N]\n"
-    "        [--dash-attack-one-in N] [--quiet]\n";
+    "        [--dash-attack-one-in N] [--quiet]\n"
+    "  every command: --content DIR   content/*.toml to use (default: built in)\n";
 
 bool parseArgs(int argc, char** argv, Args& a) {
   if (argc < 2) return false;
@@ -129,6 +145,11 @@ bool parseArgs(int argc, char** argv, Args& a) {
       if (arg == "--dash-one-in") a.bot.dashOneIn = static_cast<uint16_t>(n);
       if (arg == "--dodge-per-256") a.bot.dodgePer256 = static_cast<uint8_t>(n);
       if (arg == "--dash-attack-one-in") a.bot.dashAttackOneIn = static_cast<uint16_t>(n);
+    } else if (arg == "--content" || arg == "--arena" || arg == "--mode") {
+      if (!takeValue(v)) return false;
+      if (arg == "--content") a.contentDir = v;
+      if (arg == "--arena") a.arena = v;
+      if (arg == "--mode") a.mode = v;
     } else if (arg == "--stats") {
       a.stats = true;
     } else if (arg == "--quiet") {
@@ -165,15 +186,20 @@ bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, F&& onTic
     std::fprintf(stderr, "error: not a KFMR replay (bad magic/version/header)\n");
     return false;
   }
-  const ContentDB& content = defaultContent();
-  const uint32_t buildContentHash = contentHash(content);
-  if (header.contentHash != buildContentHash) {
+  const ContentDB& db = gContent.db;
+  if (header.contentHash != gContent.hash) {
     std::fprintf(stderr,
-                 "error: content hash mismatch: replay 0x%08x, this build 0x%08x "
+                 "error: content hash mismatch: replay 0x%08x, loaded 0x%08x "
                  "(recorded with different content)\n",
-                 header.contentHash, buildContentHash);
+                 header.contentHash, gContent.hash);
     return false;
   }
+  if (header.arena >= db.arenaCount || header.mode >= db.modeCount) {
+    std::fprintf(stderr, "error: replay arena %u / mode %u not in the content\n", header.arena,
+                 header.mode);
+    return false;
+  }
+  const MatchContent content = matchContent(db, header.matchConfig());
   WorldState world = initialWorld(header.matchConfig());
   EventSink sink;
   onTick(world.tick, checksum(world));
@@ -206,9 +232,11 @@ bool checkPlayers(const Args& a) {
 ReplayHeader headerFor(const Args& a) {
   ReplayHeader h;
   h.seed = a.seed;
-  h.contentHash = contentHash(defaultContent());
+  h.contentHash = gContent.hash;
   h.buildHash = 0;
   h.players = static_cast<PlayerMask>((1u << a.players) - 1u);
+  h.arena = gMatch.arena;
+  h.mode = gMatch.mode;
   h.tickCount = a.ticks;
   return h;
 }
@@ -230,8 +258,10 @@ int writeReplay(const Args& a, const ReplayHeader& h, MakeFrame&& makeFrame) {
     std::fprintf(stderr, "error: cannot write %s\n", a.positional[0].c_str());
     return 1;
   }
-  std::printf("wrote %s: %u ticks, %u players, seed 0x%llx, %zu bytes\n", a.positional[0].c_str(),
-              h.tickCount, a.players, static_cast<unsigned long long>(h.seed), w.bytesWritten());
+  std::printf("wrote %s: %u ticks, %u players, seed 0x%llx, arena %s, mode %s, %zu bytes\n",
+              a.positional[0].c_str(), h.tickCount, a.players,
+              static_cast<unsigned long long>(h.seed), gContent.db.arenaAt(h.arena).name.cStr(),
+              gContent.db.modeAt(h.mode).name.cStr(), w.bytesWritten());
   return 0;
 }
 
@@ -258,7 +288,7 @@ struct StatsRun {
   explicit StatsRun(const WorldState& start) : shadow(start) {}
 
   void step(WorldState& world, const InputFrame& f, EventSink& sink) {
-    const ContentDB& content = defaultContent();
+    const MatchContent content = matchContent(gContent.db, gMatch);
     replay::statsStep(world, f, content, sink, collector);
     shadowSink.clear();
     sim::step(shadow, f, content, shadowSink);
@@ -294,7 +324,7 @@ int cmdRecordScripted(const Args& a) {
   }
   if (!checkPlayers(a)) return 2;
   const ReplayHeader h = headerFor(a);
-  const ContentDB& content = defaultContent();
+  const MatchContent content = matchContent(gContent.db, h.matchConfig());
   WorldState world = initialWorld(h.matchConfig());
   Rng inputs = Rng::seeded(a.inputSeed);
   EventSink sink;
@@ -330,8 +360,8 @@ int cmdRecordScripted(const Args& a) {
 int cmdBench(const Args& a) {
   if (!checkPlayers(a)) return 2;
   using Clock = std::chrono::steady_clock;
-  const ContentDB& content = defaultContent();
   const ReplayHeader h = headerFor(a);
+  const MatchContent content = matchContent(gContent.db, h.matchConfig());
   WorldState world = initialWorld(h.matchConfig());
   Rng inputs = Rng::seeded(a.inputSeed);
   EventSink sink;
@@ -341,7 +371,9 @@ int cmdBench(const Args& a) {
   const Clock::time_point begin = Clock::now();
   for (uint32_t t = 0; t < a.ticks; ++t) {
     if (world.rules.phase == MatchPhase::MatchEnded) {
-      world = initialWorld(MatchConfig{h.seed + matches, h.players});
+      MatchConfig next = h.matchConfig();
+      next.seed = h.seed + matches;
+      world = initialWorld(next);
       ++matches;
     }
     const InputFrame f = scriptedFrame(inputs, world, content);
@@ -371,14 +403,16 @@ int cmdStats(const Args& a) {
     if (!a.positional.empty()) std::fputs(kUsage, stderr);
     return 2;
   }
-  const ContentDB& content = defaultContent();
   const ReplayHeader h = headerFor(a);
+  const MatchContent content = matchContent(gContent.db, h.matchConfig());
   const uint32_t cap = a.ticksSet ? a.ticks : kStatsDefaultTicks;
   replay::Stats total;
   for (uint32_t m = 0; m < a.matches; ++m) {
     const uint64_t seed = a.seed + m;
     const uint64_t inputSeed = a.inputSeed + m;
-    WorldState world = initialWorld(MatchConfig{seed, h.players});
+    MatchConfig config = h.matchConfig();
+    config.seed = seed;
+    WorldState world = initialWorld(config);
     Rng inputs = Rng::seeded(inputSeed);
     EventSink sink;
     const auto run = std::make_unique<StatsRun>(world);
@@ -408,13 +442,23 @@ int cmdInfo(const Args& a) {
     std::fprintf(stderr, "error: not a KFMR replay\n");
     return 1;
   }
+  // Names only mean something when the replay's content is the loaded one.
+  const bool same = h.contentHash == gContent.hash;
+  const auto nameOr = [&](bool ok, const ContentName& n) {
+    return std::string(ok ? n.view() : std::string_view("?"));
+  };
+  const std::string arena =
+      nameOr(same && h.arena < gContent.db.arenaCount, gContent.db.arenaAt(h.arena).name);
+  const std::string mode =
+      nameOr(same && h.mode < gContent.db.modeCount, gContent.db.modeAt(h.mode).name);
   std::printf(
-      "replay %s\n  version      %u\n  seed         0x%llx\n  content hash 0x%08x\n"
-      "  build hash   0x%08x\n  players      0x%03x\n  ticks        %u\n  bytes        %zu\n"
-      "  this build's content hash 0x%08x\n",
+      "replay %s\n  version      %u\n  seed         0x%llx\n  content hash 0x%08x%s\n"
+      "  build hash   0x%08x\n  players      0x%03x\n  arena        %u (%s)\n"
+      "  mode         %u (%s)\n  ticks        %u\n  bytes        %zu\n  loaded %s\n",
       a.positional[0].c_str(), kReplayVersion, static_cast<unsigned long long>(h.seed),
-      h.contentHash, h.buildHash, h.players, h.tickCount, bytes.size(),
-      contentHash(defaultContent()));
+      h.contentHash, same ? " (matches the loaded content)" : " (differs from the loaded content)",
+      h.buildHash, h.players, h.arena, arena.c_str(), h.mode, mode.c_str(), h.tickCount,
+      bytes.size(), gContent.describe().c_str());
   return 0;
 }
 
@@ -485,6 +529,20 @@ int main(int argc, char** argv) {
   Args a;
   if (!parseArgs(argc, argv, a)) {
     std::fputs(kUsage, stderr);
+    return 2;
+  }
+  // Embedded unless --content: the determinism gate must not depend on files
+  // next to the binary (and runs the same under node).
+  content::Diagnostics diag;
+  const bool loaded = content::loadAppContent(a.contentDir, {}, gContent, diag);
+  if (!diag.items().empty()) std::fputs(diag.format().c_str(), stderr);
+  if (!loaded) {
+    std::fprintf(stderr, "error: the content failed to load\n");
+    return 1;
+  }
+  std::string error;
+  if (!content::resolveMatchNames(gContent.db, a.arena, a.mode, gMatch, error)) {
+    std::fprintf(stderr, "error: %s\n", error.c_str());
     return 2;
   }
   if (a.command == "record-empty") return cmdRecordEmpty(a);

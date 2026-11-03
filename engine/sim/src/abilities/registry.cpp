@@ -15,10 +15,10 @@ bool noneCanActivate(const WorldState& /*s*/, const Player& /*p*/, const Ability
   return false;
 }
 void noneHook(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const AbilityDef& /*def*/,
-              const ContentDB& /*content*/, EventSink& /*sink*/) {}
+              const MatchContent& /*content*/, EventSink& /*sink*/) {}
 void nonePhaseChange(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/,
                      const AbilityDef& /*def*/, AbilityPhase /*from*/, AbilityPhase /*to*/,
-                     const ContentDB& /*content*/, EventSink& /*sink*/) {}
+                     const MatchContent& /*content*/, EventSink& /*sink*/) {}
 
 constexpr AbilityBehavior kNoneBehavior{&noneCanActivate, &noneHook, &noneHook, &nonePhaseChange,
                                         &noneHook};

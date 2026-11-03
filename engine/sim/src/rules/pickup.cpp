@@ -4,7 +4,7 @@
 
 namespace kfm::sim {
 
-bool takePickup(WorldState& s, const ContentDB& /*content*/, EntityId a, EntityId b,
+bool takePickup(WorldState& s, const MatchContent& /*content*/, EntityId a, EntityId b,
                 const Contact& /*contact*/, EventSink& sink) {
   Player* p = s.players.get(a);
   if (p == nullptr || !s.pickups.isAlive(b)) return false;

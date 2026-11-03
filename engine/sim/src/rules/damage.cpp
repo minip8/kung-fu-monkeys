@@ -8,10 +8,10 @@
 
 namespace kfm::sim {
 
-void applyDamage(Tick tick, const ContentDB& content, Player& victim, EntityId victimEntity,
+void applyDamage(Tick tick, const MatchContent& content, Player& victim, EntityId victimEntity,
                  uint8_t damage, const HitSource& source, EventSink& sink) {
   victim.hp = victim.hp > damage ? static_cast<uint8_t>(victim.hp - damage) : 0;
-  victim.hitStunTicks = content.player.hitStunTicks;
+  victim.hitStunTicks = content.db.player.hitStunTicks;
   victim.tags.set(Tag::HitStun);
   sink.push(SimEvent{source.event, tick, victim.id, source.entity, source.attackerSlot, victim.hp});
   if (victim.hp == 0) {
@@ -21,7 +21,7 @@ void applyDamage(Tick tick, const ContentDB& content, Player& victim, EntityId v
   }
 }
 
-bool damagePlayer(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+bool damagePlayer(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                   const Contact& contact, EventSink& sink) {
   Player* victim = s.players.get(a);
   Boomerang* banana = s.boomerangs.get(b);

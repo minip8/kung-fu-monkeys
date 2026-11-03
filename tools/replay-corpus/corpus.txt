@@ -3,7 +3,11 @@
 # regenerated after a content change (a replay carries the content hash and
 # kfm_replay refuses one recorded with different content).
 #
-# name                kind      seed        input-seed  players  ticks
+# Two optional trailing columns name the arena and mode (kfm_replay --arena /
+# --mode); a line without them records the first arena and mode in
+# content/, the default match.
+#
+# name                kind      seed        input-seed  players  ticks  [arena  mode]
 empty_2p_60t          empty     0x7         -           2        60
 empty_10p_600t        empty     0x4B464D00  -           10       600
 scripted_4p_1200t     scripted  0x4B464D04  0x5C1204    4        1200

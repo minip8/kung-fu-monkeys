@@ -12,12 +12,12 @@
 
 namespace kfm::sim {
 
-bool catchBoomerang(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                     const Contact& contact, EventSink& sink) {
   Player* p = s.players.get(a);
   if (p == nullptr || !s.boomerangs.isAlive(b)) return false;
   const AbilityState& dash = p->abilities[kAbilitySlotDash];
-  const AbilityDef& def = content.abilityAt(dash.defIndex);
+  const AbilityDef& def = content.db.abilityAt(dash.defIndex);
 
   // Decline reasons, in this order: (1) no room for another banana, (2) the
   // contact lies outside the perfect window. Both fall through the same way;

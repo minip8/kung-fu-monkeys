@@ -37,7 +37,7 @@ TEST_CASE("a three-player round: last one standing wins, then everyone respawns"
   EventLog log;
 
   // Lobby -> countdown -> Playing.
-  runTicks(s, frameFor(s), content.mode.roundStartTicks, content, log);
+  runTicks(s, frameFor(s), content.modes[0].roundStartTicks, content, log);
   CHECK(s.rules.phase == MatchPhase::RoundStarting);
   runTicks(s, frameFor(s), 1, content, log);
   REQUIRE(s.rules.phase == MatchPhase::Playing);
@@ -73,7 +73,7 @@ TEST_CASE("a three-player round: last one standing wins, then everyone respawns"
   log.clear();
 
   // The pause lasts roundEndTicks, then round 2 starts with everyone back.
-  runTicks(s, frameFor(s), content.mode.roundEndTicks, content, log);
+  runTicks(s, frameFor(s), content.modes[0].roundEndTicks, content, log);
   CHECK(log.empty());
   CHECK(s.rules.phase == MatchPhase::RoundEnded);
   runTicks(s, frameFor(s), 1, content, log);
@@ -89,7 +89,7 @@ TEST_CASE("a three-player round: last one standing wins, then everyone respawns"
     CHECK(playerAt(s, PlayerId{i}).hp == content.player.maxHp);
     CHECK(playerAt(s, PlayerId{i}).tags == Tags{});
   }
-  runTicks(s, frameFor(s), content.mode.roundStartTicks, content, log);
+  runTicks(s, frameFor(s), content.modes[0].roundStartTicks, content, log);
   CHECK(s.rules.phase == MatchPhase::Playing);
 }
 
@@ -110,7 +110,7 @@ TEST_CASE("a round where the last two fall in the same tick is a draw", "[scenar
   CHECK_FALSE(ended->player.isValid());
 
   // Nobody scored, so play resumes with round 2.
-  runTicks(s, frameFor(s), content.mode.roundEndTicks + 1, content, log);
+  runTicks(s, frameFor(s), content.modes[0].roundEndTicks + 1, content, log);
   CHECK(s.rules.phase == MatchPhase::RoundStarting);
   CHECK(s.rules.round == 2);
   CHECK(s.players.size() == 2);

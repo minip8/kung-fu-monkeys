@@ -7,6 +7,7 @@
 //   kfm_render_probe [--players N] [--seed S] [--input-seed I] [--ticks-per-frame K]
 //                    [--width W] [--height H] [--exit-after-frames N]
 //                    [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]
+//                    [--content DIR] [--arena NAME] [--mode NAME]
 //
 // --exit-after-frames N renders N frames and exits 0 (rendering smoke test).
 // --screenshot path     writes the last rendered frame as binary PPM (native only;
@@ -18,7 +19,11 @@
 //                       --exit-after-frames still bounds the run.
 // --capsules            draw players as capsules instead of the skinned model
 //                       (also the fallback when content/models/test_rig.glb is missing).
+// --content DIR         content directory (default: content/ next to the
+//                       executable, else the embedded copy); --arena / --mode
+//                       pick the match's arena and mode by name.
 // A match that ends is replaced by a fresh one (next seed) after a short pause.
+#include "kfm/content/app_content.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/platform/debug_ui.hpp"
 #include "kfm/platform/gfx.hpp"
@@ -41,6 +46,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <string>
@@ -67,6 +73,9 @@ struct Options {
   bool hideUi = false;
   bool capsules = false;
   int exitOn = -1;  // -1: none; < kExitOnWindow: an EffectKind; kExitOnWindow: PerfectDash
+  std::string_view contentDir;  // empty: next to the executable, else embedded
+  std::string_view arena;       // names; empty = the first one
+  std::string_view mode;
 };
 
 constexpr int kExitOnWindow = 100;
@@ -87,6 +96,8 @@ constexpr std::array<ExitOnName, 7> kExitOnNames = {{
 
 struct App {
   Options options;
+  content::LoadedContent content;
+  sim::MatchConfig config{};  // of the current match
   platform::Window window;
   presentation::Renderer renderer;
   presentation::PresentationState presentation{};
@@ -111,7 +122,8 @@ App gApp;  // NOLINT(bugprone-throwing-static-initialization)
 constexpr const char* kUsage =
     "usage: kfm_render_probe [--players N] [--seed S] [--input-seed I] [--ticks-per-frame K]\n"
     "                        [--width W] [--height H] [--exit-after-frames N]\n"
-    "                        [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]\n";
+    "                        [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]\n"
+    "                        [--content DIR] [--arena NAME] [--mode NAME]\n";
 
 template <typename T>
 bool parseNumber(std::string_view v, T& out) {
@@ -137,6 +149,12 @@ bool parseArgs(int argc, const char* const* argv, Options& o) {
           ok = true;
         }
       }
+    } else if (arg == "--content" && hasValue) {
+      o.contentDir = argv[++i];
+    } else if (arg == "--arena" && hasValue) {
+      o.arena = argv[++i];
+    } else if (arg == "--mode" && hasValue) {
+      o.mode = argv[++i];
     } else if (arg == "--screenshot" && hasValue) {
       o.screenshotPath = argv[++i];
     } else if (arg == "--players" && hasValue) {
@@ -176,8 +194,16 @@ bool parseArgs(int argc, const char* const* argv, Options& o) {
 #endif
 }
 
-[[nodiscard]] sim::MatchConfig matchConfig(const Options& o, uint32_t match) {
-  return sim::MatchConfig{o.seed + match - 1, static_cast<sim::PlayerMask>((1u << o.players) - 1u)};
+// Match `match` (1-based): the next seed, the same arena and mode.
+[[nodiscard]] sim::MatchConfig matchConfig(const App& app, uint32_t match) {
+  sim::MatchConfig c = app.config;
+  c.seed = app.options.seed + match - 1;
+  c.players = static_cast<sim::PlayerMask>((1u << app.options.players) - 1u);
+  return c;
+}
+
+[[nodiscard]] sim::MatchContent matchContent(const App& app) {
+  return sim::matchContent(app.content.db, app.config);
 }
 
 void onEvent(void* user, const SDL_Event& event) {
@@ -205,13 +231,14 @@ bool writePpm(const char* path, int width, int height) {
 
 // Steps the scripted match K ticks; every tick's events land in frameEvents.
 void stepSim(App& app) {
-  const sim::ContentDB& content = sim::defaultContent();
+  const sim::MatchContent content = matchContent(app);
   app.frameEvents.clear();
   for (uint32_t k = 0; k < app.options.ticksPerFrame; ++k) {
     if (app.curr.rules.phase == sim::MatchPhase::MatchEnded &&
         app.curr.rules.ticksInPhase >= kMatchEndPauseTicks) {
       ++app.matches;
-      app.curr = sim::initialWorld(matchConfig(app.options, app.matches));
+      app.config = matchConfig(app, app.matches);
+      app.curr = sim::initialWorld(app.config);
       app.presentation = {};
     }
     app.prev = app.curr;
@@ -249,7 +276,7 @@ bool frame(void* user) {
   stepSim(*app);
   // Presentation time advances with sim time, so screenshots are reproducible.
   const float simDt = static_cast<float>(app->options.ticksPerFrame) / 60.0f;
-  const sim::ContentDB& content = sim::defaultContent();
+  const sim::MatchContent content = matchContent(*app);
   presentation::buildRenderState(app->presentation, app->prev, app->curr, 1.0f, app->frameEvents,
                                  content, simDt, app->renderState);
 
@@ -319,6 +346,23 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     std::fputs(kUsage, stderr);
     return EXIT_FAILURE;
   }
+  {
+    content::Diagnostics diag;
+    const char* base = SDL_GetBasePath();  // owned by SDL
+    const bool loaded = content::loadAppContent(
+        app.options.contentDir,
+        base != nullptr ? std::filesystem::path(base) : std::filesystem::path{}, app.content, diag);
+    if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
+    std::string error;
+    if (!loaded || !content::resolveMatchNames(app.content.db, app.options.arena, app.options.mode,
+                                               app.config, error)) {
+      std::fprintf(stderr, "error: %s\n", loaded ? error.c_str() : "the content failed to load");
+      return EXIT_FAILURE;
+    }
+    std::printf("kfm_render_probe: %s, arena %s, mode %s\n", app.content.describe().c_str(),
+                app.content.db.arenaAt(app.config.arena).name.cStr(),
+                app.content.db.modeAt(app.config.mode).name.cStr());
+  }
   if (!app.window.init({.title = "Kung Fu Monkeys: render probe",
                         .width = app.options.width,
                         .height = app.options.height,
@@ -334,8 +378,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     platform::gfxShutdown();
     return EXIT_FAILURE;
   }
-  const sim::ContentDB& content = sim::defaultContent();
-  if (!app.renderer.init(content)) {
+  if (!app.renderer.init(matchContent(app))) {
     std::fprintf(stderr, "error: the renderer failed to initialise\n");
     platform::debugUiShutdown();
     platform::gfxShutdown();
@@ -348,7 +391,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
                    app.renderer.characterModelError().c_str());
     }
   }
-  app.curr = sim::initialWorld(matchConfig(app.options, app.matches));
+  app.config = matchConfig(app, app.matches);
+  app.curr = sim::initialWorld(app.config);
   app.prev = app.curr;
   app.inputs = Rng::seeded(app.options.inputSeed);
   app.frameEvents.reserve(static_cast<std::size_t>(kMaxTicksPerFrame) * sim::kMaxEventsPerTick);

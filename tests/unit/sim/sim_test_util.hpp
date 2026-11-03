@@ -30,7 +30,7 @@ using EventLog = std::vector<SimEvent>;
 
 // Steps n ticks with the same per-player inputs (frame.tick is rewritten to
 // the world's tick each time) and appends every event to log.
-inline void runTicks(WorldState& s, const InputFrame& frame, int n, const ContentDB& content,
+inline void runTicks(WorldState& s, const InputFrame& frame, int n, const MatchContent& content,
                      EventLog& log) {
   EventSink sink;
   InputFrame f = frame;

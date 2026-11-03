@@ -21,17 +21,17 @@ using collision::GridLayout;
 
 static_assert(kMaxPlayers <= 16, "player sets below are uint16_t bit masks");
 
-[[nodiscard]] Fixed pickupRadius(const ContentDB& content) {
-  return content.pickup.radius;
+[[nodiscard]] Fixed pickupRadius(const MatchContent& content) {
+  return content.db.pickup.radius;
 }
 
-[[nodiscard]] Aabb playerBox(const Player& p, const ContentDB& content) {
-  return collision::sweptAabb(p.transform.prevPos, p.transform.pos, content.player.radius);
+[[nodiscard]] Aabb playerBox(const Player& p, const MatchContent& content) {
+  return collision::sweptAabb(p.transform.prevPos, p.transform.pos, content.db.player.radius);
 }
-[[nodiscard]] Aabb boomerangBox(const Boomerang& b, const ContentDB& content) {
-  return collision::sweptAabb(b.transform.prevPos, b.transform.pos, content.boomerang.radius);
+[[nodiscard]] Aabb boomerangBox(const Boomerang& b, const MatchContent& content) {
+  return collision::sweptAabb(b.transform.prevPos, b.transform.pos, content.db.boomerang.radius);
 }
-[[nodiscard]] Aabb pickupBox(const Pickup& p, const ContentDB& content) {
+[[nodiscard]] Aabb pickupBox(const Pickup& p, const MatchContent& content) {
   return collision::sweptAabb(p.pos, p.pos, pickupRadius(content));
 }
 
@@ -68,7 +68,7 @@ struct PlayerGrid {
   }
 };
 
-void buildPlayerGrid(const WorldState& s, const ContentDB& content, PlayerGrid& g) {
+void buildPlayerGrid(const WorldState& s, const MatchContent& content, PlayerGrid& g) {
   g.layout = collision::gridLayout(content.arena.halfExtents);
   const uint32_t cellCount = uint32_t{g.layout.nx} * g.layout.ny;
   std::array<CellRange, kMaxPlayers> ranges{};
@@ -151,7 +151,7 @@ void pushPairs(uint16_t playerMask, EntityKind kindB, uint16_t indexB, Candidate
 }
 
 // Narrowphase for one candidate pair; pushes a Contact on a hit.
-void narrowphase(const WorldState& s, const ContentDB& content, const CandidatePair& pair,
+void narrowphase(const WorldState& s, const MatchContent& content, const CandidatePair& pair,
                  Contacts& out) {
   const Player& player = s.players.items[pair.indexA];
   const Transform& ta = player.transform;
@@ -164,7 +164,7 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
       const Transform& tb = s.players.items[pair.indexB].transform;
       prevB = tb.prevPos;
       posB = tb.pos;
-      radiusB = content.player.radius;
+      radiusB = content.db.player.radius;
       idB = s.players.idAt(pair.indexB);
       break;
     }
@@ -172,7 +172,7 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
       const Transform& tb = s.boomerangs.items[pair.indexB].transform;
       prevB = tb.prevPos;
       posB = tb.pos;
-      radiusB = content.boomerang.radius;
+      radiusB = content.db.boomerang.radius;
       idB = s.boomerangs.idAt(pair.indexB);
       break;
     }
@@ -184,8 +184,8 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
       break;
   }
 
-  const collision::SweptHit hit =
-      collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB, content.player.radius + radiusB);
+  const collision::SweptHit hit = collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB,
+                                                            content.db.player.radius + radiusB);
   if (!hit.hit) return;
 
   const Vec2 atA = lerp(ta.prevPos, ta.pos, hit.tHit);
@@ -205,7 +205,8 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
 
 }  // namespace
 
-void collisionBroadphaseGrid(const WorldState& s, const ContentDB& content, CandidatePairs& out) {
+void collisionBroadphaseGrid(const WorldState& s, const MatchContent& content,
+                             CandidatePairs& out) {
   out.clear();
   PlayerGrid grid;
   buildPlayerGrid(s, content, grid);
@@ -223,7 +224,7 @@ void collisionBroadphaseGrid(const WorldState& s, const ContentDB& content, Cand
   sortPairs(out);
 }
 
-void collisionBroadphaseBruteForce(const WorldState& s, const ContentDB& content,
+void collisionBroadphaseBruteForce(const WorldState& s, const MatchContent& content,
                                    CandidatePairs& out) {
   out.clear();
   s.players.forEachAlive([&](EntityId pid, const Player& p) {
@@ -247,7 +248,7 @@ void collisionBroadphaseBruteForce(const WorldState& s, const ContentDB& content
   sortPairs(out);
 }
 
-void collisionSystem(const WorldState& s, const ContentDB& content, Contacts& out) {
+void collisionSystem(const WorldState& s, const MatchContent& content, Contacts& out) {
   out.clear();
   CandidatePairs pairs;
   collisionBroadphaseGrid(s, content, pairs);

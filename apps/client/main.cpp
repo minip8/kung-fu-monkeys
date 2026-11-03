@@ -1,6 +1,7 @@
 // kfm_client: the playable client (architecture §3, §6.8, §7, §11 M2, M3).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--no-hot-reload]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
@@ -19,6 +20,13 @@
 // devices as usual and whose Start connects again, one slot per bound device.
 // The session runs over a WebRtcTransport, natively and in the browser alike.
 //
+// Content (§5.10): loaded at startup from --content, else content/ next to
+// the executable, else the copy built into it (always, in the browser); its
+// hash must match the server's online. Natively, local play polls the
+// content directory about once a second and on a change reloads it and
+// restarts the match with the same seed (errors are printed and the old
+// content kept). Online the server's content and match config rule.
+//
 // Keys outside the game bindings: F1 debug overlay, P pause, O single step,
 // Escape back to the lobby (quits from the lobby, natively; online it
 // disconnects and returns to the local lobby), - / = bot count in the lobby,
@@ -30,6 +38,8 @@
 #include "core/net_session.hpp"
 #include "debug_overlay.hpp"
 #include "hud.hpp"
+#include "kfm/content/app_content.hpp"
+#include "kfm/content/loader.hpp"
 #include "kfm/platform/debug_ui.hpp"
 #include "kfm/platform/gfx.hpp"
 #include "kfm/platform/main_loop.hpp"
@@ -52,6 +62,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <memory>
@@ -68,9 +79,14 @@ using client::SessionPhase;
 
 struct App {
   client::ClientOptions options;
+  content::LoadedContent content;
+  content::ContentWatcher contentWatcher;  // inactive unless hot reload applies
   platform::Window window;
   presentation::Renderer renderer;
   bool rendererReady = false;
+  // What the renderer's meshes were built from (content hash, arena index):
+  // the floor follows the arena, so a new arena or content re-initialises it.
+  std::uint64_t rendererKey = 0;
   std::unique_ptr<MatchSession> session;
   std::unique_ptr<client::NetSession> net;  // network mode, while connected or showing why not
   client::NetPhase lastNetPhase = client::NetPhase::Connecting;
@@ -101,6 +117,42 @@ constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-
 #endif
 }
 
+// (Re)initialises the renderer when the match's arena or the loaded
+// content changed since its meshes were built. False only when the renderer
+// cannot be initialised at all.
+bool syncRenderer(App& app, const sim::MatchContent& content, std::uint32_t contentHash,
+                  std::uint8_t arena) {
+  const std::uint64_t key = (std::uint64_t{contentHash} << 8) | arena;
+  if (app.rendererReady && key == app.rendererKey) return true;
+  app.rendererReady = app.renderer.init(content);
+  app.rendererKey = key;
+  if (!app.rendererReady) return false;
+  if (!app.options.capsules) {
+    const std::string modelPath = characterModelPath();
+    if (!app.renderer.loadCharacterModel(modelPath.c_str())) {
+      std::fprintf(stderr, "warning: drawing capsules: %s\n",
+                   app.renderer.characterModelError().c_str());
+    }
+  }
+  return true;
+}
+
+// Hot reload (§5.10): the content directory changed on disk.
+void reloadContent(App& app, std::uint64_t nowNs) {
+  content::LoadedContent reloaded;
+  content::Diagnostics diag;
+  if (!content::loadAppContent(app.content.dir.string(), {}, reloaded, diag)) {
+    std::fprintf(stderr, "kfm_client: content reload failed, keeping the old content:\n%s",
+                 diag.format().c_str());
+    return;
+  }
+  if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
+  app.content = std::move(reloaded);
+  app.session->replaceContent(app.content.db, nowNs);
+  std::printf("kfm_client: reloaded %s; match restarted\n", app.content.describe().c_str());
+  std::fflush(stdout);
+}
+
 // Whenever an ImGui widget has the keyboard (the overlay's fields, but also
 // the lobby's Bots field with the overlay closed), key presses go to it, not
 // to the game bindings or the app shortcuts.
@@ -112,7 +164,8 @@ constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-
 // the lobby's bound devices. A transport that cannot be created leaves a
 // failed session that shows why.
 void startNetwork(App& app, bool atStartup, std::uint64_t nowNs) {
-  const client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  config.content = &app.content.db;
   const platform::InputSampler& lobby = app.session->sampler();
 #ifdef KFM_CLIENT_WEBRTC
   net::WebRtcClientConfig wc;
@@ -251,10 +304,11 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   // Network mode: the lobby's Start connects, from the next frame on.
   if (s.takeStartRequest()) app.connectRequested = true;
   presentation::buildRenderState(
-      s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(), s.content(),
-      static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
+      s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(),
+      s.matchContent(), static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
   const presentation::Camera camera = presentation::makeArenaCamera(
-      s.content().arena, static_cast<float>(w), static_cast<float>(h));
+      s.matchContent().arena, static_cast<float>(w), static_cast<float>(h));
+  (void)syncRenderer(app, s.matchContent(), app.content.hash, s.matchConfig().arena);
 
   platform::debugUiNewFrame(w, h, dt, density);
   if (s.phase() == SessionPhase::Lobby) {
@@ -288,7 +342,8 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   }
   n.build(static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
   const presentation::Camera camera = presentation::makeArenaCamera(
-      n.content().arena, static_cast<float>(w), static_cast<float>(h));
+      n.matchContent().arena, static_cast<float>(w), static_cast<float>(h));
+  (void)syncRenderer(app, n.matchContent(), app.content.hash, n.client().simConfig().arena);
 
   platform::debugUiNewFrame(w, h, dt, density);
   if (n.everRan()) {
@@ -315,6 +370,9 @@ bool frame(void* user) {
   const int w = std::max(size.width, 1);
   const int h = std::max(size.height, 1);
   const float density = app->window.pixelDensity();
+  if (!app->net && app->contentWatcher.poll(static_cast<double>(now) * 1e-9)) {
+    reloadContent(*app, now);
+  }
   if (app->connectRequested && !app->net) startNetwork(*app, false, now);
   app->connectRequested = false;
   const presentation::Camera camera =
@@ -374,6 +432,31 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     std::fprintf(stderr, "error: %s\n%s", error.c_str(), client::kUsage);
     return EXIT_FAILURE;
   }
+  {
+    content::Diagnostics diag;
+    const char* base = SDL_GetBasePath();  // owned by SDL; null under Emscripten is fine
+    const bool loaded = content::loadAppContent(
+        app.options.contentDir,
+        base != nullptr ? std::filesystem::path(base) : std::filesystem::path{}, app.content, diag);
+    if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
+    if (!loaded) {
+      std::fprintf(stderr, "error: the content failed to load\n");
+      return EXIT_FAILURE;
+    }
+    std::printf("kfm_client: %s\n", app.content.describe().c_str());
+    std::fflush(stdout);
+  }
+  sim::MatchConfig local{};
+  if (!content::resolveMatchNames(app.content.db, app.options.arena, app.options.mode, local,
+                                  error)) {
+    std::fprintf(stderr, "error: %s\n", error.c_str());
+    return EXIT_FAILURE;
+  }
+#ifndef __EMSCRIPTEN__
+  if (app.options.hotReload && !app.content.embedded()) {
+    app.contentWatcher = content::ContentWatcher(app.content.dir);
+  }
+#endif
   if (!app.window.init({.title = "Kung Fu Monkeys", .width = 1280, .height = 720, .vsync = true})) {
     return EXIT_FAILURE;
   }
@@ -392,25 +475,21 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   const bool online = app.options.networkMode();
   app.session = std::make_unique<MatchSession>(
       client::SessionConfig{.seed = app.options.seed,
+                            .arena = local.arena,
+                            .mode = local.mode,
+                            .content = &app.content.db,
                             .botSeed = app.options.playersSeed,
                             .bots = online ? std::uint8_t{0} : app.options.bots,
                             .hostHandlesStart = online});
   // A renderer that cannot create its buffers, shaders or pipelines is fatal
   // (so client_smoke catches it); a missing character model is not.
-  app.rendererReady = app.renderer.init(app.session->content());
-  if (!app.rendererReady) {
+  if (!syncRenderer(app, app.session->matchContent(), app.content.hash,
+                    app.session->matchConfig().arena)) {
     std::fprintf(stderr, "error: the renderer failed to initialise\n");
     platform::debugUiShutdown();
     platform::gfxShutdown();
     app.window.shutdown();
     return EXIT_FAILURE;
-  }
-  if (!app.options.capsules) {
-    const std::string modelPath = characterModelPath();
-    if (!app.renderer.loadCharacterModel(modelPath.c_str())) {
-      std::fprintf(stderr, "warning: drawing capsules: %s\n",
-                   app.renderer.characterModelError().c_str());
-    }
   }
 
   app.overlay.open = app.options.overlay;

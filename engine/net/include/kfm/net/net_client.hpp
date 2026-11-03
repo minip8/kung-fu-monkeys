@@ -206,6 +206,13 @@ class NetClient {
   [[nodiscard]] bool spectator() const { return localSlots_ == 0; }
   [[nodiscard]] sim::PlayerMask localSlots() const { return localSlots_; }
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return matchConfig_; }
+  // The config the local world runs with (its arena and mode select the
+  // content every step uses); trails matchConfig() across a restart until
+  // the new match's snapshot is loaded.
+  [[nodiscard]] const sim::MatchConfig& simConfig() const { return simConfig_; }
+  [[nodiscard]] sim::MatchContent matchContent() const {
+    return sim::matchContent(*content_, simConfig_);
+  }
   // Start tick of an announced match restart whose snapshot has not loaded yet.
   [[nodiscard]] std::optional<Tick> pendingRestart() const { return restartTick_; }
 
@@ -294,6 +301,9 @@ class NetClient {
 
   // Session.
   sim::MatchConfig matchConfig_{};
+  // The config the local world simulates with (arena, mode): the one of the
+  // last snapshot loaded. matchConfig_ already holds an announced restart's.
+  sim::MatchConfig simConfig_{};
   sim::PlayerMask localSlots_{0};
   bool haveWelcome_{false};
   bool haveSnapshot_{false};

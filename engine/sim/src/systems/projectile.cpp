@@ -61,8 +61,8 @@ bool reflectAxis(Fixed& pos, Fixed& vel, Fixed limit, Fixed restitution) {
 
 }  // namespace
 
-void projectileSystem(WorldState& s, const ContentDB& content, EventSink& sink) {
-  const BoomerangDef& def = content.boomerang;
+void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
+  const BoomerangDef& def = content.db.boomerang;
   const Vec2 limit = Vec2{max(content.arena.halfExtents.x - def.radius, Fixed::zero()),
                           max(content.arena.halfExtents.y - def.radius, Fixed::zero())};
 

@@ -179,6 +179,7 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
 
   roundTrip(WelcomeMsg{0b1100, sim::MatchConfig{99, 0x3FF}, Tick{1234}});
   roundTrip(WelcomeMsg{0, sim::MatchConfig{1, 1}, Tick{0}});  // spectator
+  roundTrip(WelcomeMsg{0b1, sim::MatchConfig{5, 0b11, 2, sim::kMaxModes - 1}, Tick{7}});
   for (uint8_t r = 0; r < kRejectReasonCount; ++r)
     roundTrip(RejectMsg{static_cast<RejectReason>(r)});
   roundTrip(JoinMatchMsg{0});
@@ -187,6 +188,7 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
   roundTrip(PlayerJoinedMsg{PlayerId{0}, Tick{0}, false});
   roundTrip(PlayerLeftMsg{PlayerId{3}, Tick{5000}});
   roundTrip(MatchConfigMsg{sim::MatchConfig{0xFFFF'FFFF'FFFF'FFFFull, 0x2AA}, Tick{60}});
+  roundTrip(MatchConfigMsg{sim::MatchConfig{3, 0x1, sim::kMaxArenas - 1, 4}, Tick{61}});
   for (uint8_t r = 0; r < kDisconnectReasonCount; ++r)
     roundTrip(DisconnectMsg{static_cast<DisconnectReason>(r)});
   roundTrip(ResyncRequestMsg{Tick{0}, 0});
@@ -234,6 +236,9 @@ TEST_CASE("Encoders refuse invalid messages", "[net][messages]") {
   CHECK(encode(JoinMatchMsg{sim::kMaxPlayers + 1}, buf) == 0);
   CHECK(encode(WelcomeMsg{0x400, {}, {}}, buf) == 0);
   CHECK(encode(MatchConfigMsg{sim::MatchConfig{0, 0xFFFF}, {}}, buf) == 0);
+  // Arena and mode indices beyond the content capacities never go out.
+  CHECK(encode(MatchConfigMsg{sim::MatchConfig{0, 1, sim::kMaxArenas, 0}, {}}, buf) == 0);
+  CHECK(encode(WelcomeMsg{1, sim::MatchConfig{0, 1, 0, sim::kMaxModes}, {}}, buf) == 0);
 
   // Too small a buffer is an overflow, not a partial message.
   std::array<std::byte, 8> small{};
@@ -324,7 +329,7 @@ TEST_CASE("Snapshot round-trips and stays far below the reliable limit", "[net][
   REQUIRE(matchMax > 0);
 
   auto snap = std::make_unique<SnapshotMsg>();
-  snap->config = sim::MatchConfig{1234, kAllPlayersMask};
+  snap->config = sim::MatchConfig{1234, kAllPlayersMask, 1, 2};
   snap->world = *world;
   std::vector<std::byte> buf(kMaxReliableBytes);
   const size_t n = encode(*snap, buf);
@@ -334,6 +339,8 @@ TEST_CASE("Snapshot round-trips and stays far below the reliable limit", "[net][
   CHECK(sim::checksum(back->world) == sim::checksum(snap->world));
   CHECK(back->config.seed == 1234);
   CHECK(back->config.players == kAllPlayersMask);
+  CHECK(back->config.arena == 1);
+  CHECK(back->config.mode == 2);
 
   // Worst case: every pool full.
   auto full = std::make_unique<SnapshotMsg>();

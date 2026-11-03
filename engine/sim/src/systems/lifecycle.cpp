@@ -5,7 +5,7 @@
 
 namespace kfm::sim {
 
-void lifecycleSystem(WorldState& s, const ContentDB& /*content*/, EventSink& sink) {
+void lifecycleSystem(WorldState& s, const MatchContent& /*content*/, EventSink& sink) {
   s.players.forEachAlive([&](EntityId id, const Player& p) {
     if (p.tags.has(Tag::Eliminated)) s.players.despawn(id);
   });

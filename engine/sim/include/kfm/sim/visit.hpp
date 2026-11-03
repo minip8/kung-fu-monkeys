@@ -154,7 +154,23 @@ void visit(V& v, Tags& t) {
 // --- content (hashed for content_hash, architecture §5.10) ------------------
 
 template <class V>
+void visit(V& v, ContentName& n) {
+  if constexpr (V::kIsReader) {
+    for (char& c : n.chars) {
+      uint8_t byte = 0;
+      v.u8(byte);
+      c = static_cast<char>(byte);
+    }
+  } else {
+    for (const char c : n.chars) {
+      auto byte = static_cast<uint8_t>(c);
+      v.u8(byte);
+    }
+  }
+}
+template <class V>
 void visit(V& v, AbilityDef& d) {
+  visit(v, d.name);
   visit(v, d.kind);
   v.u16(d.cooldownTicks);
   v.u16(d.startupTicks);
@@ -197,6 +213,7 @@ void visit(V& v, PlayerDef& d) {
 }
 template <class V>
 void visit(V& v, ArenaDef& d) {
+  visit(v, d.name);
   visit(v, d.halfExtents);
   for (Vec2& p : d.spawnPoints)
     visit(v, p);
@@ -204,6 +221,7 @@ void visit(V& v, ArenaDef& d) {
 }
 template <class V>
 void visit(V& v, ModeDef& d) {
+  visit(v, d.name);
   v.u8(d.roundsToWin);
   v.u16(d.roundEndTicks);
   v.u16(d.roundStartTicks);
@@ -222,9 +240,13 @@ void visit(V& v, ContentDB& c) {
   visit(v, c.boomerang);
   visit(v, c.pickup);
   visit(v, c.player);
-  visit(v, c.arena);
-  visit(v, c.mode);
   visit(v, c.dashAttack);
+  for (ArenaDef& d : c.arenas)
+    visit(v, d);
+  v.u8(c.arenaCount);
+  for (ModeDef& d : c.modes)
+    visit(v, d);
+  v.u8(c.modeCount);
 }
 
 // --- input and state ---------------------------------------------------------

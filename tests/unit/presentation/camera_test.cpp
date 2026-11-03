@@ -32,7 +32,7 @@ constexpr std::array<Viewport, 5> kViewports = {{
 }};
 
 const sim::ArenaDef& arena() {
-  return sim::defaultContent().arena;
+  return sim::defaultContent().arenas[0];
 }
 
 std::array<Vec3, 4> groundCorners() {

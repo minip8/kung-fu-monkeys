@@ -84,14 +84,12 @@ struct PresentationState {
 
 void buildRenderState(PresentationState& ps, const sim::WorldState& prev,
                       const sim::WorldState& curr, float alpha,
-                      std::span<const sim::SimEvent> newEvents, const sim::ContentDB& content,
+                      std::span<const sim::SimEvent> newEvents, const sim::MatchContent& match,
                       float dtSeconds, RenderState& out);
 
-[[nodiscard]] inline RenderState buildRenderState(PresentationState& ps,
-                                                  const sim::WorldState& prev,
-                                                  const sim::WorldState& curr, float alpha,
-                                                  std::span<const sim::SimEvent> newEvents,
-                                                  const sim::ContentDB& content, float dtSeconds) {
+[[nodiscard]] inline RenderState buildRenderState(
+    PresentationState& ps, const sim::WorldState& prev, const sim::WorldState& curr, float alpha,
+    std::span<const sim::SimEvent> newEvents, const sim::MatchContent& content, float dtSeconds) {
   RenderState out;
   buildRenderState(ps, prev, curr, alpha, newEvents, content, dtSeconds, out);
   return out;
