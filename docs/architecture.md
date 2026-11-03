@@ -1170,7 +1170,10 @@ is in `platform`.
 - Browser gesture rule (§13): an `AudioContext` may only start after a user gesture, so the
   browser client opens the device on the first key, mouse button, touch or pad button, and SDL3
   resumes its context once `navigator.userActivation.hasBeenActive`. Natively the device opens on
-  the first frame with sound enabled.
+  the first frame with sound enabled. First browser run (`check_browser.py`, headless Chromium):
+  no device before input, "audio open: emscripten, 48000 Hz" and a running `AudioContext` after
+  the key presses, 60 fps unchanged, no console errors (one Chromium deprecation warning about
+  SDL's `ScriptProcessorNode`); with `?mute` no `AudioContext` is created.
 - `kfm_client --mute` and `--volume 0..100` (default 80; `?mute&volume=50` in the browser) set
   the mixer; the F1 overlay's Audio panel (local and online) toggles mute, sets the volume, plays
   a test click and shows the device status, voices, steals and underruns. The client glue is

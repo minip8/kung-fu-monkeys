@@ -25,7 +25,8 @@ Checks (each PASS/FAIL, plus INFO lines):
               dot above its head turns dark once it has thrown)
   audio       the client opens its audio device on the first input event (browser
               autoplay policy, architecture §7): the "kfm_client: audio open" or
-              "kfm_client: silent: ..." line it prints after the key presses (INFO only:
+              "kfm_client: silent: ..." line it prints after the key presses and the
+              state of SDL's AudioContext ("running" once resumed) (INFO only:
               whether headless Chromium has an audio output depends on the machine)
 
 Screenshots: <out>/01-loaded.png, 02-later.png, 03-before-input.png, 04-after-move.png,
@@ -267,8 +268,11 @@ def run(args) -> int:
         time.sleep(0.5)
         audio = [line for line in console_lines
                  if "kfm_client: audio" in line or "kfm_client: silent" in line]
-        report.info("audio", audio[-1] if audio else
-                    "no audio line: the device was not opened after the key presses")
+        state = page.evaluate("() => (window.Module && Module.SDL3 && Module.SDL3.audioContext)"
+                              " ? Module.SDL3.audioContext.state : 'no AudioContext'")
+        report.info("audio", (audio[-1] if audio else
+                              "no audio line: the device was not opened after the key presses")
+                    + f"; AudioContext {state}")
 
         report.check("console", not console_errors and not page_errors,
                      f"{len(console_errors)} console errors, {len(page_errors)} page errors, "
