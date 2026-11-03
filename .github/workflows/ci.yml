@@ -16,14 +16,15 @@ env:
   # Headers SDL3 3.4.18 needs on Linux for the features we build (vcpkg sdl3
   # with x11 + wayland, and the identical FetchContent configuration in
   # cmake/KfmDependencies.cmake): X11 + Xext (+ Xft, which the port asks
-  # for), Wayland client + xkbcommon + EGL, and pkg-config to find them.
-  # Everything else SDL can use (ibus, dbus, alsa, pulse, pipewire, udev,
-  # kmsdrm, libdecor, the X extensions) is switched off on both paths, so it
-  # is not installed. GL needs no headers:
+  # for), Wayland client + xkbcommon + EGL, ALSA for audio (dlopened at run
+  # time; the runners have no sound card, so the client stays silent), and
+  # pkg-config to find them. Everything else SDL can use (ibus, dbus, pulse,
+  # pipewire, udev, kmsdrm, libdecor, the X extensions) is switched off on
+  # both paths, so it is not installed. GL needs no headers:
   # the GL loader is vendored (third_party/glad).
   KFM_SDL_APT_PACKAGES: >-
     pkg-config libx11-dev libxext-dev libxft-dev
-    libwayland-dev libxkbcommon-dev libegl-dev wayland-protocols
+    libwayland-dev libxkbcommon-dev libegl-dev wayland-protocols libasound2-dev
   # The WebRTC transport (kfm_net_webrtc, architecture §6.4) on the
   # FetchContent path (no vcpkg: the lint job's compile database, local
   # builds): libdatachannel 0.24.6 links the system OpenSSL for DTLS and the

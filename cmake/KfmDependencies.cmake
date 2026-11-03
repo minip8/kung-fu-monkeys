@@ -195,19 +195,41 @@ else()
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
   set(SDL_UNINSTALL OFF CACHE BOOL "" FORCE)
-  # Mirror the vcpkg sdl3 port at the features vcpkg.json selects (x11 and
-  # wayland on Linux, no ibus/dbus/alsa/vulkan) so both paths build the same
-  # SDL. The port also switches off every optional host library that would
+  # Mirror the vcpkg sdl3 port at the features vcpkg.json selects (x11,
+  # wayland and alsa on Linux, no ibus/dbus/vulkan) so both paths build the
+  # same SDL. The port also switches off every optional host library that would
   # silently change SDL's capabilities from one machine to the next; SDL's
   # own CMake otherwise fails on Linux when any enabled one is missing.
   foreach(opt
-      SDL_DBUS SDL_IBUS SDL_ALSA SDL_VULKAN SDL_LIBUDEV SDL_LIBURING
+      SDL_DBUS SDL_IBUS SDL_VULKAN SDL_LIBUDEV SDL_LIBURING
       SDL_FRIBIDI SDL_JACK SDL_KMSDRM SDL_LIBTHAI SDL_PIPEWIRE SDL_PULSEAUDIO
       SDL_ROCKCHIP SDL_RPI SDL_SNDIO SDL_WAYLAND_LIBDECOR
       SDL_X11_XCURSOR SDL_X11_XDBE SDL_X11_XFIXES SDL_X11_XINPUT SDL_X11_XRANDR
       SDL_X11_XSHAPE SDL_X11_XSCRNSAVER SDL_X11_XSYNC SDL_X11_XTEST)
     set(${opt} OFF CACHE BOOL "" FORCE)
   endforeach()
+  # Audio (architecture §7, v0.19): ALSA is the one Linux backend, as with
+  # vcpkg's `alsa` feature; PipeWire and PulseAudio reach it through their
+  # ALSA plugins. SDL dlopens libasound at run time (SDL_ALSA_SHARED), so a
+  # machine without it, or without a sound card (CI, xvfb), just gets no audio
+  # device and the client stays silent. Only the build needs the headers
+  # (libasound2-dev); without them the client builds silent with a warning
+  # instead of failing SDL's configure.
+  set(kfm_sdl_alsa OFF)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(KFM_ALSA QUIET alsa)
+    endif()
+    if(KFM_ALSA_FOUND)
+      set(kfm_sdl_alsa ON)
+    else()
+      message(WARNING "KFM: ALSA headers (libasound2-dev) not found: SDL3 builds without "
+                      "Linux audio and the client is silent")
+    endif()
+  endif()
+  set(SDL_ALSA ${kfm_sdl_alsa} CACHE BOOL "" FORCE)
+  set(SDL_ALSA_SHARED ON CACHE BOOL "" FORCE)
   set(SDL_REVISION "release-3.4.18" CACHE STRING "" FORCE)
   FetchContent_MakeAvailable(SDL3)
 endif()
