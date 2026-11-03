@@ -9,8 +9,11 @@ bananas that fly like boomerangs; dash is the base ability; a perfectly timed da
 banana). C++23 engine, deterministic simulation, rollback netcode, browser as the primary shipping
 client, with scripted bots and ML-trained agents planned.
 
-Milestone M0 (skeleton) has landed: build system, `engine/core`, a minimal `engine/sim`, the
-replay runner and the determinism gate. M1 (headless sim) is next. `docs/architecture.md` is the
+Milestones M0 (skeleton) and M1 (headless sim) have landed: build system, `engine/core`, the
+full `engine/sim` tick pipeline (FFA rounds, Dash, Throw, banana flight and return, swept
+collision, the interaction rules table, modifiers, lifecycle) over `constexpr` content, a
+scripted input generator, `kfm_replay` (record, verify, bench) and the determinism gate over a
+corpus of empty and scripted replays. M2 (playable local client) is next. `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -28,9 +31,10 @@ cmake --preset dev                      # configure; presets: dev, release, asan
 cmake --build --preset dev              # build
 ctest --preset dev                      # unit tests + determinism corpus + C++23 feature probe
 cmake --workflow --preset dev           # configure + build + test in one go
-ctest --preset dev -R kfm_core_tests    # one test executable (kfm_core_tests, kfm_sim_tests, determinism_*)
+ctest --preset dev -R kfm_core_tests    # one test executable (kfm_core_tests, kfm_sim_tests, kfm_scenario_tests, determinism_*)
 build/dev/tests/unit/kfm_core_tests "[fixed]"      # one Catch2 tag or test name
 cmake --build --preset dev --target regen-replay-corpus   # after an intentional gameplay change only
+# (re-run `cmake --preset dev` after adding a .kfmr: the gate globs the corpus at configure time)
 tools/ci/check_sim_no_float.sh          # no float/double in engine/sim
 clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | grep -v sin_table)
 clang-tidy -p build/dev $(find engine apps tests -name '*.cpp')
@@ -67,6 +71,9 @@ not convention.
 - Systems are stateless free functions run in the fixed order listed in §5.3. Nothing else
   mutates `WorldState`.
 
+Wasm executables link with `-sSTACK_SIZE=1MB`: a `step()` keeps ~40 KB of per-tick scratch on
+the stack and Emscripten's 64 KB default overflows silently in Release.
+
 A replay corpus with per-tick checksums is the CI merge gate across Linux/Windows/macOS/wasm and
 Debug/Release. Any sim change that alters checksums is either a bug or an intentional gameplay
 change that regenerates the corpus; say which.
@@ -77,13 +84,15 @@ change that regenerates the corpus; say which.
   line, one scenario test.
 - Interactions: `CollisionSystem` emits contacts; `InteractionSystem` resolves them through the
   prioritised rules table keyed on `(kind, tags) × (kind, tags)`. New twist = new rule (+ tag).
-  The dash-catch is a rule row, not code inside the dash.
+  The dash-catch is a rule row, not code inside the dash. A handler returning `false` means "did
+  not apply, keep scanning" (a mistimed catch falls through to damage). Rows live in
+  `engine/sim/src/rules/table.cpp`.
 - Power-ups: `PowerUpDef` grants `StatModifier`/`AbilityOverride`/`Tag`; `ModifierSystem`
   recomputes derived stats each tick.
 - `SimEvent`s are the only channel from sim to presentation, scoring and RL rewards.
 
 **Input (§5.4, §5.11).** `PlayerInput` is 5 bytes: `moveDir`, `moveMag`, `aimDir`, `buttons`,
-`subTick`. Button edges are detected in `InputSystem`, which is what makes "repeat last input"
+`subTick`. The stick is idle iff `moveMag == 0`; `moveDir` is always an angle. Button edges are detected in `InputSystem`, which is what makes "repeat last input"
 a safe remote prediction. `subTick` is the fraction of the tick at which the last button edge
 happened; it is used only by time-aware rules (perfect-dash window judged against swept
 time-of-impact, tie-breaking), never to move entities within a tick. The same struct is the

@@ -27,12 +27,13 @@ v0.12 changes: M1 interfaces pinned (§5.3, §5.5, §5.6, Appendix A). `step()` 
 `ContentDB` explicitly; the ability and rule tables are `constexpr` (no startup registration);
 hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, keep scanning") and
 rules gain an ownership field and a boomerang-phase mask.
-v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7);
-the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the pickup radius
-(§5.10); bananas spawn clear of the thrower (§5.7);
-the stick is idle iff `moveMag == 0` (§5.4);
-rule-table semantics and the `HitStun` tick convention pinned (§5.6); scripted-input
-scaffolding (§9); `PerfectDash` covers the sub-tick end of the window (§5.5); wasm stack size (§12).
+v0.13 changes: M1 landed (§11). Integration decisions: nothing moves and no contact resolves
+outside `Playing` (§5.7); the perfect catch ignores an own outbound banana (§5.6); `PickupDef`
+holds the pickup radius and bananas spawn clear of the thrower (§5.7, §5.10); the stick is idle
+iff `moveMag == 0` (§5.4); rule-table semantics and the `HitStun` tick convention pinned (§5.6);
+`PerfectDash` covers the sub-tick end of the window (§5.5); the wall bounce stays in
+`ProjectileSystem` (§5.6, §5.7); scripted-input scaffolding and `kfm_replay bench` in place of
+Google Benchmark for now (§9); wasm stack size (§12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -286,6 +287,13 @@ prio  A                          B                              handler
  60   Boomerang[]                Wall                           Bounce
 ```
 
+M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
+restores one ammo and stays put at `ammoMax`). Rows 20 and 60 do not exist yet. The wall bounce
+lives in `ProjectileSystem` (§5.7), not in the table: in M1 the arena is a box, the bounce is a
+per-axis reflection done while integrating, and `CollisionSystem` emits only Player × Boomerang
+and Player × Pickup contacts. A Wall row arrives when arenas gain interior shapes and some
+banana kinds should not bounce, at which point walls become contact sources.
+
 A new twist is a new rule and possibly a new tag. Rules are tested in isolation by scripted
 scenarios ("spawn banana at x moving v, dash at tick t, expect `BoomerangCaught`").
 `DamagePlayer` subtracts the banana's damage from the player's HP and eliminates at or below
@@ -328,6 +336,13 @@ it just threw (16 u/s) would catch it straight back.
 - A throw spawns the banana `spawnOffset` (1.0) ahead of the thrower along the aim, clear of
   the thrower's contact radius (0.5 + 0.35), so no throw starts with a contact against its owner.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
+- M1 flight (`ProjectileSystem`): constant speed; Outbound for `outboundTicks`, then Returning,
+  steering toward the owner's current position by at most `turnRateBam` per tick. A returning
+  banana whose owner is gone, or that has been returning for more than `maxReturnTicks` (no
+  infinite orbit), grounds where it is; the owner check runs only while Returning, so an
+  outbound banana keeps flying after its thrower is eliminated and grounds once it turns back.
+  Walls reflect per axis with `restitution` and emit one `BoomerangBounced` per bounce tick,
+  also when a corner reflects both axes in the same tick.
 - Bananas fly only while the match phase is `Playing`. During `RoundStarting`, `RoundEnded`
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
   `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
@@ -666,7 +681,10 @@ art is identical up to the export step, and nothing below the presentation layer
 - Tests: Catch2 unit tests per system; scenario tests (scripted inputs → expected events and
   state); property tests (random inputs, invariants such as no entity leaks and bounded
   values); netcode tests over `LoopbackTransport` with 0–300 ms latency and 0–10% loss; libFuzzer
-  on packet decoders; Google Benchmark for ticks/s and rollback cost.
+  on packet decoders; Google Benchmark for ticks/s and rollback cost. Until there is more than
+  one number to track, `kfm_replay bench` stands in for Google Benchmark (v0.13): it times
+  `step()` over scripted matches (with and without input generation), restarting a match that
+  ends so every timed tick is live gameplay.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release.
 - Scripted inputs (v0.13): `kfm/sim/scripted_inputs.hpp` generates varied, deterministic
@@ -728,6 +746,21 @@ so every build uses the same release of each dependency.
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
+Progress: M1 landed in v0.13. `engine/sim` runs the full §5.3 pipeline as ten system files:
+FFA round flow (countdown, round end, respawn, scoring, match end), input decoding with press
+edges, Dash and Throw through the `AbilityBehavior` table, movement with the arena clamp,
+banana flight, return steering and wall bounces, a uniform-grid broadphase checked against
+brute force with an exact swept-circle narrowphase, the rules table (perfect catch judged
+against the press sub-tick, damage with `HitStun`, auto-catch, pickups), modifiers and
+lifecycle. Content is the `constexpr` `ContentDB` with its hash. `kfm/sim/scripted_inputs.hpp`
+drives `kfm_replay record-scripted`, `kfm_replay bench` and the scenario tests; the corpus holds
+`scripted_10p_3600t` and `scripted_4p_1200t` beside the empty replays and passes with identical
+checksums on GCC 15 Debug, Release and ASan+UBSan, Clang 21 Debug and Emscripten on Linux
+(MSVC and Apple Clang are left to CI). Bench, 10 players, scripted match, one core of the
+development machine (Linux under WSL2): about 900k ticks/s (1.1 µs/tick) for `step()` alone in
+Release, about 480k ticks/s including input generation; Debug about 200k ticks/s. That is
+roughly 15 000× real time, so rollback depth and server match density are not sim-bound.
+
 Progress: M0 landed in v0.6 (build skeleton, `core`, a minimal `sim` with the visitor serializer,
 replay codec, `kfm_replay` and the determinism gate over `tools/replay-corpus`, CI workflow).
 Verified with identical per-tick checksums on Linux GCC/Clang, Windows MSVC and macOS Apple Clang
@@ -772,6 +805,13 @@ baseline moved to C++23 (§9).
 - Decided (v0.10): HP semantics, `HitStun`, banana grounds on hit, `PlayerHit` event (§5.6).
 - Decided (v0.11): real-time low-poly 3D presentation over the 2D sim, replacing pre-rendered
   2.5D sprites (§7).
+- Decided (v0.13, M1 integration): nothing moves or resolves outside `Playing` (§5.7); the
+  perfect catch ignores an own outbound banana (§5.6); `HitStun` counts the hit tick (§5.6);
+  idle stick iff `moveMag == 0` (§5.4); `PerfectDash` covers the sub-tick end of the window
+  (§5.5); the wall bounce stays in `ProjectileSystem` until arenas have interior walls (§5.6).
+- Open (M2 feel tuning): a perfect catch at full ammo destroys the banana, so with `ammoMax = 1`
+  the thrower stays empty-handed until it finds a pickup. Alternatives: catch only below
+  `ammoMax`, or drop the caught banana as a pickup.
 - Open: team modes; WebTransport as a later replacement for WebRTC; mobile
   browsers and touch controls.
 
