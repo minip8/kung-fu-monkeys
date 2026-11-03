@@ -27,5 +27,7 @@ kfm_add_test_exe(kfm_sim_tests
   sim/visit_test.cpp
   sim/replay_test.cpp
   sim/step_test.cpp
+  sim/content_test.cpp
+  sim/tags_test.cpp
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim)

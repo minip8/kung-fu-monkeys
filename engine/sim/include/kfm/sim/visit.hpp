@@ -16,7 +16,9 @@
 #include "kfm/core/rng.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/core/vec2.hpp"
+#include "kfm/sim/content.hpp"
 #include "kfm/sim/input.hpp"
+#include "kfm/sim/tags.hpp"
 #include "kfm/sim/world_state.hpp"
 
 #include <cstdint>
@@ -94,6 +96,77 @@ void visit(V& v, Pool<T, N>& pool) {
 }
 
 // --- sim types --------------------------------------------------------------
+
+template <class V>
+void visit(V& v, Tags& t) {
+  v.u32(t.bits);
+}
+
+// --- content (hashed for content_hash, architecture §5.10) ------------------
+
+template <class V>
+void visit(V& v, AbilityDef& d) {
+  visit(v, d.kind);
+  v.u16(d.cooldownTicks);
+  v.u16(d.startupTicks);
+  v.u16(d.activeTicks);
+  v.u16(d.recoveryTicks);
+  v.u16(d.perfectWindowTicks);
+  visit(v, d.speed);
+  visit(v, d.param0);
+  visit(v, d.param1);
+  visit(v, d.tagsStartup);
+  visit(v, d.tagsActive);
+  visit(v, d.tagsRecovery);
+}
+template <class V>
+void visit(V& v, BoomerangDef& d) {
+  visit(v, d.radius);
+  visit(v, d.speed);
+  v.u16(d.outboundTicks);
+  v.u16(d.maxReturnTicks);
+  v.u16(d.turnRateBam);
+  visit(v, d.restitution);
+  visit(v, d.spawnOffset);
+  v.u8(d.damage);
+  v.u8(d.pierce);
+}
+template <class V>
+void visit(V& v, PlayerDef& d) {
+  visit(v, d.radius);
+  visit(v, d.moveSpeed);
+  v.u8(d.maxHp);
+  v.u8(d.ammoMax);
+  v.u8(d.ammoStart);
+  v.u16(d.hitStunTicks);
+  for (uint8_t& a : d.abilities)
+    v.u8(a);
+}
+template <class V>
+void visit(V& v, ArenaDef& d) {
+  visit(v, d.halfExtents);
+  for (Vec2& p : d.spawnPoints)
+    visit(v, p);
+  v.u8(d.spawnPointCount);
+}
+template <class V>
+void visit(V& v, ModeDef& d) {
+  v.u8(d.roundsToWin);
+  v.u16(d.roundEndTicks);
+  v.u16(d.roundStartTicks);
+}
+template <class V>
+void visit(V& v, ContentDB& c) {
+  for (AbilityDef& d : c.abilities)
+    visit(v, d);
+  v.u8(c.abilityCount);
+  visit(v, c.boomerang);
+  visit(v, c.player);
+  visit(v, c.arena);
+  visit(v, c.mode);
+}
+
+// --- state -------------------------------------------------------------------
 
 template <class V>
 void visit(V& v, PlayerInput& in) {

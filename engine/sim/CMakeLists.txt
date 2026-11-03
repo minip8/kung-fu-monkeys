@@ -1,6 +1,7 @@
 # engine/sim: the deterministic simulation. Depends only on kfm::core
 # (architecture §4). No exceptions, no RTTI, no floating point (CI greps).
 add_library(kfm_sim STATIC
+  src/content.cpp
   src/world_state.cpp
   src/step.cpp
   src/replay.cpp
