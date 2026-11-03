@@ -57,6 +57,12 @@ void sampleBound(const SkinnedModel& model, const ClipBinding& binding, AnimClip
   sampleClip(model, model.clips[static_cast<std::size_t>(index)], time, animClipLoops(clip), out);
 }
 
+// Joints that both the model and the pose provide, capped at the skin budget.
+[[nodiscard]] std::size_t jointCount(const SkinnedModel& model, const Pose& pose) {
+  return std::ranges::min({model.joints.size(), static_cast<std::size_t>(pose.count),
+                           static_cast<std::size_t>(kMaxSkinJoints)});
+}
+
 }  // namespace
 
 float clipTime(float time, float duration, bool loop) {
@@ -101,12 +107,6 @@ void blendPoses(const Pose& a, const Pose& b, float weightB, Pose& out) {
                      .scale = lerp(pa.scale, pb.scale, w)};
   }
   out.count = n;
-}
-
-// Joints that both the model and the pose provide, capped at the skin budget.
-[[nodiscard]] static std::size_t jointCount(const SkinnedModel& model, const Pose& pose) {
-  return std::ranges::min({model.joints.size(), static_cast<std::size_t>(pose.count),
-                           static_cast<std::size_t>(kMaxSkinJoints)});
 }
 
 void globalTransforms(const SkinnedModel& model, const Pose& pose, SkinMatrices& out) {
