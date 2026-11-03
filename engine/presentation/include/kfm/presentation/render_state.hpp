@@ -15,6 +15,7 @@
 #include "kfm/presentation/math.hpp"
 #include "kfm/presentation/sound.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content/arena.hpp"
 #include "kfm/sim/content/mode.hpp"
 #include "kfm/sim/world_state.hpp"
 
@@ -161,6 +162,28 @@ struct RenderEffect {
   }
 };
 
+// Arena statics (v0.22): the interior walls, then the hazards, in content
+// order, then the pit rims. Boxes in world space: `center` is the box centre
+// on the ground (y = 0), `size` its world extents (x, y = the drawn height,
+// z). Built from content, so constant for a match.
+enum class ArenaPieceKind : uint8_t {
+  Wall = 0,  // solid block, drawn kArenaWallHeight tall
+  Pit,       // near-black floor slab
+  PitRim,    // a strip inside a pit along an edge it shares with the floor
+  Slow,      // mud patch
+};
+
+struct RenderArenaPiece {
+  ArenaPieceKind kind{ArenaPieceKind::Wall};
+  Vec3 center{};
+  Vec3 size{};
+};
+
+// Rim strips are capped; a pit layout needing more draws without the excess.
+inline constexpr uint16_t kMaxRenderPitRims = 64;
+inline constexpr uint16_t kMaxRenderArenaPieces =
+    sim::kMaxArenaWalls + sim::kMaxArenaHazards + kMaxRenderPitRims;
+
 enum class HudPhase : uint8_t { Lobby = 0, RoundStarting, Playing, RoundEnded, MatchEnded };
 
 struct RenderHud {
@@ -200,6 +223,8 @@ struct RenderState {
   float shakeAmplitude{0.0f};  // world units
   Vec3 shakeOffset{};          // add to the camera eye and target this frame
   Vec2f arenaHalfExtents{};    // sim units, for the floor and wall rim
+  std::array<RenderArenaPiece, kMaxRenderArenaPieces> arenaPieces{};  // interior walls, hazards
+  uint16_t arenaPieceCount{0};
   float playerRadius{0.0f};
   float playerHeight{0.0f};
   float bananaRadius{0.0f};

@@ -632,6 +632,29 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     d.lit(kCubeMesh, translate({half.x + (t * 0.5f), y, 0.0f}) * scale({t, kWallHeight, lenZ}),
           kWallColor);
   }
+  // Interior walls and hazards (v0.22): unit cubes scaled to each box. Pits
+  // and mud are slabs just above the floor and under the blob shadows; a
+  // pit's rim strips sit on top of its near-black slab (half its height).
+  for (uint16_t i = 0; i < state.arenaPieceCount; ++i) {
+    const RenderArenaPiece& piece = state.arenaPieces[i];
+    const Vec3 c = piece.center;
+    const Vec3 s = piece.size;
+    switch (piece.kind) {
+      case ArenaPieceKind::Wall:
+        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kArenaWallColor);
+        break;
+      case ArenaPieceKind::Pit:
+        d.lit(kCubeMesh, translate({c.x, s.y * 0.25f, c.z}) * scale({s.x, s.y * 0.5f, s.z}),
+              kArenaPitColor);
+        break;
+      case ArenaPieceKind::PitRim:
+        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kArenaPitRimColor);
+        break;
+      case ArenaPieceKind::Slow:
+        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kArenaSlowColor);
+        break;
+    }
+  }
 
   // Character animation advances with presentation time; time going
   // backwards (a fresh PresentationState) counts as no time.

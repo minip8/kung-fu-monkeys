@@ -27,7 +27,9 @@ constexpr Tags kGone = Tags::of(Tag::Eliminated);
 // The shield (v0.20, rows 20 and 24) sits just above the row it pre-empts
 // and keys on the same tags, so it only breaks on a hit that would land.
 // Pickups are split by kind: row 50 the grounded banana, row 51 a power-up.
-constexpr std::array<InteractionRule, 9> kRules = {{
+// Player × Hazard (row 60, v0.22) is the pit: no tag spares a player whose
+// centre is over it.
+constexpr std::array<InteractionRule, 10> kRules = {{
     // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseInFlight, Ownership::NotOwn, &catchBoomerang},
@@ -56,6 +58,9 @@ constexpr std::array<InteractionRule, 9> kRules = {{
     // Player[] x Pickup[PowerUp]: grant the power-up.
     {51, EntityKind::Player, Tags{}, kGone, EntityKind::Pickup, Tags{}, Tags{}, kPhaseAny,
      Ownership::Any, &grantPowerUp, pickupKindBit(PickupKind::PowerUp)},
+    // Player[] x Hazard[Pit]: falls in, eliminated by nobody.
+    {60, EntityKind::Player, Tags{}, kGone, EntityKind::Hazard, Tags{}, Tags{}, kPhaseAny,
+     Ownership::Any, &fallIntoPit},
 }};
 
 static_assert(std::ranges::is_sorted(kRules, {}, &InteractionRule::priority));

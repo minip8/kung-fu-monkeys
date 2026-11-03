@@ -1,6 +1,7 @@
 // Interaction rule handlers (architecture §5.6). Each returns true when it
 // resolved the contact and false when it did not apply (keep scanning).
-// a is always a player; b the boomerang, pickup or (dash attack) the victim.
+// a is always a player; b the boomerang, pickup, hazard or (dash attack) the
+// victim.
 #pragma once
 
 #include "kfm/sim/contacts.hpp"
@@ -39,5 +40,10 @@ bool takePickup(WorldState& s, const MatchContent& content, EntityId a, EntityId
 // ModifierList entry; declines with the list full (§5.8).
 bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                   const Contact& contact, EventSink& sink);
+// Prio 60, rules/hazard.cpp (v0.22): a player whose centre is in a Pit is
+// eliminated, killer 0xFF; declines for every other HazardKind. b.index is
+// the hazard's index in content.arena.hazards.
+bool fallIntoPit(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
+                 const Contact& contact, EventSink& sink);
 
 }  // namespace kfm::sim

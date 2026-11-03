@@ -37,6 +37,18 @@ inline constexpr float kPickupBobHeight = 0.08f;
 inline constexpr float kPickupBobHz = 0.8f;
 inline constexpr float kPickupSpinRadPerSec = 1.5f;
 
+// --- arena statics (§7, v0.22) -------------------------------------------------------
+// Interior walls are drawn as blocks this tall: above a banana in flight
+// (hand height + arc) so a bounce reads as hitting the wall, below the
+// camera's framing height so a wall near the far edge never leaves frame.
+inline constexpr float kArenaWallHeight = 1.2f;
+// Hazards are flat slabs lying on the floor; their top sits this high so
+// they never z-fight the floor, below blob shadows (renderer kShadowLift).
+inline constexpr float kHazardSlabHeight = 0.008f;
+// A pit is drawn as a rim and a darker inset bottom, which reads as depth
+// under the fixed camera; the inset is this far in from the hazard box.
+inline constexpr float kPitRimWidth = 0.18f;
+
 // --- facing (§7) ---------------------------------------------------------------------
 // Body yaw follows the move direction at most this fast (720°/s: a half turn
 // in 0.25 s); aim yaw follows the aim directly.

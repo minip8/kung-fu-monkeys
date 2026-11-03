@@ -12,6 +12,7 @@ kfm_add_test_exe(kfm_scenario_tests
   banana_supply_scenario.cpp
   dash_attack_scenario.cpp
   match_config_scenario.cpp
+  arena_scenario.cpp
   mode_scenario.cpp
   powerup_scenario.cpp
 )

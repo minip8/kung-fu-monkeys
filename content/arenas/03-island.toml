@@ -1,0 +1,20 @@
+# A playfield of 22 x 12 surrounded by a pit that runs out to the arena
+# walls, a block in the middle and two patches of mud. Bananas fly over the
+# pit and bounce back off the outer walls; a monkey that steps or dashes off
+# the edge is out. See 01-pillars.toml for the walls / hazards keys.
+[[arena]]
+name = "island"
+half_extents = [16, 9]
+# An 8 x 4 ellipse on the island, in the dojo's order.
+spawn_ellipse = { radii = [8, 4], step_degrees = 36, order = [0, 5, 2, 7, 4, 9, 6, 1, 8, 3] }
+walls = [
+  { min = [-1.5, -1], max = [1.5, 1] },  # central block
+]
+hazards = [
+  { kind = "pit", min = [-16, 6], max = [16, 9] },     # north shore
+  { kind = "pit", min = [-16, -9], max = [16, -6] },   # south shore
+  { kind = "pit", min = [-16, -6], max = [-11, 6] },   # west shore
+  { kind = "pit", min = [11, -6], max = [16, 6] },     # east shore
+  { kind = "slow", min = [-7, 2.5], max = [-4, 5], speed_mul = 0.5 },   # mud
+  { kind = "slow", min = [4, -5], max = [7, -2.5], speed_mul = 0.5 },   # mud
+]

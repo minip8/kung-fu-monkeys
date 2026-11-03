@@ -22,6 +22,7 @@ add_library(kfm_sim STATIC
   src/rules/pickup.cpp
   src/rules/powerup.cpp
   src/rules/shield.cpp
+  src/rules/hazard.cpp
   src/systems/rules.cpp
   src/systems/input.cpp
   src/systems/ability.cpp

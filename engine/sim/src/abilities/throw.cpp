@@ -6,6 +6,7 @@
 #include "kfm/sim/abilities/throw.hpp"
 
 #include "systems/angle_of.hpp"
+#include "systems/statics.hpp"
 
 namespace kfm::sim {
 namespace {
@@ -36,15 +37,30 @@ void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const MatchCo
   Boomerang& b = s.boomerangs.items[id.index];
   b.owner = p.id;
   b.phase = BoomerangPhase::Outbound;
-  b.transform.pos = p.transform.pos + st.dir * def.spawnOffset;
-  b.transform.prevPos = b.transform.pos;
   b.damage = def.damage;
   b.pierce = def.pierce;
   applyProjectileModifiers(b, p, content.db);
+  // The banana travels from the thrower's centre to its spawn point through
+  // the interior walls (v0.22), so a throw at a wall bounces off it instead
+  // of spawning inside or behind it. The outer box is left to
+  // ProjectileSystem as in M1. Speed and radius carry the thrower's
+  // projectile modifiers (v0.20, §5.8).
   b.transform.vel = st.dir * (def.speed * b.speedMul);
-  b.transform.facing = angleOf(st.dir);
+  const statics::MoveResult spawned =
+      statics::moveCircle(content.arena, p.transform.pos, st.dir * def.spawnOffset, b.transform.vel,
+                          statics::MoveParams{.radius = def.radius * b.radiusMul,
+                                              .response = statics::Response::Bounce,
+                                              .restitution = def.restitution,
+                                              .outerBox = false});
+  b.transform.pos = spawned.pos;
+  b.transform.prevPos = b.transform.pos;
+  b.transform.facing = b.transform.vel != Vec2::zero() && spawned.hitWall ? angleOf(b.transform.vel)
+                                                                          : angleOf(st.dir);
   if (p.ammo > 0) --p.ammo;
   sink.push(SimEvent{EventKind::BoomerangThrown, s.tick, p.id, id, 0, 0});
+  if (spawned.hitWall) {
+    sink.push(SimEvent{.kind = EventKind::BoomerangBounced, .tick = s.tick, .entity = id});
+  }
 }
 
 }  // namespace

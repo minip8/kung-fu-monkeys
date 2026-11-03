@@ -860,3 +860,65 @@ TEST_CASE("a power-up pickup bursts and chimes; a broken shield shatters",
   CHECK(powerUpSounds == 1);
   CHECK(shieldSounds == 1);
 }
+
+TEST_CASE("arena walls and hazards become world-space pieces", "[presentation][builder][arena]") {
+  // The dojo has no statics.
+  {
+    const WorldState s = makePlayingWorld(26, 0b1);
+    PresentationState ps;
+    CHECK(build(ps, s, s, 1.0f).arenaPieceCount == 0);
+  }
+  ArenaDef a = defaultContent().arenas[0];
+  const auto at = [](int32_t x, int32_t y) { return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)}; };
+  a.walls[0] = Wall{at(2, 1), at(4, 5)};
+  a.wallCount = 1;
+  // An L of two pits touching along y = 2, the second running into the
+  // outer wall (x = 16), and a mud patch.
+  a.hazards[0] = Hazard{at(-6, -2), at(-2, 2), HazardKind::Pit, Fixed::one()};
+  a.hazards[1] = Hazard{at(-6, 2), at(16, 4), HazardKind::Pit, Fixed::one()};
+  a.hazards[2] = Hazard{at(8, -8), at(10, -6), HazardKind::Slow, Fixed::half()};
+  a.hazardCount = 3;
+  auto rs = std::make_unique<RenderState>();
+  buildArenaPieces(a, *rs);
+
+  // Walls first: sim (x, y) box -> world centre (x, 0, -y), size (dx, h, dy).
+  REQUIRE(rs->arenaPieceCount >= 4);
+  const RenderArenaPiece& wall = rs->arenaPieces[0];
+  CHECK(wall.kind == ArenaPieceKind::Wall);
+  CHECK(wall.center.x == Approx(3.0f));
+  CHECK(wall.center.y == 0.0f);
+  CHECK(wall.center.z == Approx(-3.0f));
+  CHECK(wall.size.x == Approx(2.0f));
+  CHECK(wall.size.y == Approx(kArenaWallHeight));
+  CHECK(wall.size.z == Approx(4.0f));
+  CHECK(rs->arenaPieces[1].kind == ArenaPieceKind::Pit);
+  CHECK(rs->arenaPieces[2].kind == ArenaPieceKind::Pit);
+  CHECK(rs->arenaPieces[3].kind == ArenaPieceKind::Slow);
+  CHECK(rs->arenaPieces[3].size.y == Approx(kHazardSlabHeight));
+
+  // Rims run only where a pit meets open floor: not along the stretch the
+  // two pits share (x in [-6, -2] at y = 2), not along the outer wall.
+  constexpr float kEps = 1e-4f;
+  float rimLength = 0.0f;
+  for (uint16_t i = 4; i < rs->arenaPieceCount; ++i) {
+    const RenderArenaPiece& p = rs->arenaPieces[i];
+    REQUIRE(p.kind == ArenaPieceKind::PitRim);
+    const float x0 = p.center.x - (0.5f * p.size.x);
+    const float x1 = p.center.x + (0.5f * p.size.x);
+    const float y0 = -p.center.z - (0.5f * p.size.z);
+    const float y1 = -p.center.z + (0.5f * p.size.z);
+    INFO("rim x [" << x0 << ", " << x1 << "] y [" << y0 << ", " << y1 << "]");
+    const bool inFirst =
+        x0 >= -6.0f - kEps && x1 <= -2.0f + kEps && y0 >= -2.0f - kEps && y1 <= 2.0f + kEps;
+    const bool inSecond =
+        x0 >= -6.0f - kEps && x1 <= 16.0f + kEps && y0 >= 2.0f - kEps && y1 <= 4.0f + kEps;
+    CHECK((inFirst || inSecond));
+    const bool acrossJoint = y0 < 2.0f + kPitRimWidth - kEps && y1 > 2.0f - kPitRimWidth + kEps &&
+                             x1 > -6.0f + kPitRimWidth + kEps && x0 < -2.0f - kPitRimWidth - kEps;
+    CHECK_FALSE(acrossJoint);
+    rimLength += std::max(p.size.x, p.size.z);
+  }
+  // First pit: its -y, -x and +x edges (4 each); second pit: -y edge from
+  // x = -2 to 16 (18), +y edge (22), -x edge (2); its +x edge is the wall.
+  CHECK(rimLength == Approx(4.0f + 4.0f + 4.0f + 18.0f + 22.0f + 2.0f));
+}

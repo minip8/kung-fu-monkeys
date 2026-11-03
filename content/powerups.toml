@@ -1,5 +1,5 @@
 # Power-ups (PowerUpDef, architecture §5.8). Arena spawners (see
-# arenas/dojo_powerups.toml) drop them as pickups; a monkey that touches one
+# arenas/04-dojo_powerups.toml) drop them as pickups; a monkey that touches one
 # gains its grants for duration_ticks. Indices go into the world state and
 # are part of the content hash: append new power-ups, never reorder.
 #

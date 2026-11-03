@@ -85,6 +85,8 @@ void mergeWait(Stats::ThrowerWait& to, const Stats::ThrowerWait& from) {
       return s.boomerangs.isAlive(id);
     case EntityKind::Pickup:
       return s.pickups.isAlive(id);
+    case EntityKind::Hazard:
+      return true;  // arena statics never despawn
   }
   return false;
 }

@@ -6,9 +6,12 @@
 //   1. Expiry: entries whose ticksLeft is 0 are dropped, compacting the list
 //      in slot order (step 7 below counted them down on earlier ticks).
 //   2. Stats from content.db.player, then every grant of every live entry in
-//      slot order: moveSpeed = base × Π mul + Σ add (never negative); maxHp
-//      and ammoMax are integer stats, add-only (mul is ignored), clamped to
-//      [1, 255] and [0, 255].
+//      slot order: moveSpeed = base × Π mul × hazard + Σ add (never
+//      negative), where hazard is the product of the speedMul of every Slow
+//      hazard holding the player's centre (v0.22, statics::speedMulAt;
+//      outside them it is 1 and not multiplied in at all); maxHp and ammoMax
+//      are integer stats, add-only (mul is ignored), clamped to [1, 255] and
+//      [0, 255].
 //   3. HP clamp against the previous tick's maxHp: a rise raises hp by the
 //      same amount; a fall gives hp = max(1, min(hp, maxHp)), so losing a
 //      modifier never eliminates. A player already at hp 0 is left alone.
@@ -30,6 +33,7 @@
 // and slots of the state after ticks T .. T+D-1 and is dropped on tick T+D;
 // the list, the stats and the tags always agree between ticks.
 #include "kfm/sim/systems.hpp"
+#include "systems/statics.hpp"
 
 #include <algorithm>
 #include <array>
@@ -65,7 +69,8 @@ void forEachGrant(const ContentDB& db, const ModifierList& mods, F&& f) {
   }
 }
 
-[[nodiscard]] Stats deriveStats(const ContentDB& db, const ModifierList& mods) {
+[[nodiscard]] Stats deriveStats(const ContentDB& db, const ModifierList& mods,
+                                Fixed hazardSpeedMul) {
   const PlayerDef& base = db.player;
   Fixed mul = Fixed::one();
   Fixed add{};
@@ -86,6 +91,7 @@ void forEachGrant(const ContentDB& db, const ModifierList& mods, F&& f) {
         break;
     }
   });
+  if (hazardSpeedMul != Fixed::one()) mul = mul * hazardSpeedMul;
   Stats out;
   out.moveSpeed = max(base.moveSpeed * mul + add, Fixed::zero());
   out.maxHp = static_cast<uint8_t>(std::clamp<int32_t>(maxHp, 1, UINT8_MAX));
@@ -143,7 +149,7 @@ void modifierSystem(WorldState& s, const MatchContent& content) {
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     dropExpired(p.modifiers);
     const uint8_t oldMaxHp = p.stats.maxHp;
-    p.stats = deriveStats(db, p.modifiers);
+    p.stats = deriveStats(db, p.modifiers, statics::speedMulAt(content.arena, p.transform.pos));
     clampHp(p, oldMaxHp, p.stats.maxHp);
     p.ammo = std::min(p.ammo, p.stats.ammoMax);
     applyAbilityOverrides(p, db);

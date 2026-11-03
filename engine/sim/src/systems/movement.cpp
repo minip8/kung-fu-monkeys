@@ -1,33 +1,24 @@
 // MovementSystem (architecture §5.3 step 4): intent × stats -> velocity,
-// integrate, arena clamp.
+// integrate against the arena's statics.
 //
 // Per player: prevPos = pos (the swept-collision start); velocity is zero
 // outside MatchPhase::Playing, left as AbilitySystem set it while Dashing, and
 // intent.move * stats.moveSpeed otherwise; HitStun overrides everything with
-// zero. Then pos += vel and pos is clamped per axis to the arena box shrunk by
+// zero. Then the player moves by vel through statics::moveCircle (Slide):
+// interior walls stop the normal component and keep the tangential one, for
+// stick movement and dash displacement alike (a dash stops at a wall while
+// its phases run on), and pos is clamped per axis to the arena box shrunk by
 // the player radius, zeroing the velocity component that was clamped.
+// Without walls this is the M1 integrate-and-clamp, bit for bit.
 #include "kfm/sim/systems.hpp"
+#include "systems/statics.hpp"
 
 namespace kfm::sim {
-namespace {
-
-// Clamps one axis to [-limit, limit]; zeroes the velocity component on contact.
-void clampAxis(Fixed& pos, Fixed& vel, Fixed limit) {
-  if (pos > limit) {
-    pos = limit;
-    vel = Fixed::zero();
-  } else if (pos < -limit) {
-    pos = -limit;
-    vel = Fixed::zero();
-  }
-}
-
-}  // namespace
 
 void movementSystem(WorldState& s, const MatchContent& content) {
   const bool playing = s.rules.phase == MatchPhase::Playing;
-  const Vec2 limit =
-      content.arena.halfExtents - Vec2{content.db.player.radius, content.db.player.radius};
+  const statics::MoveParams params{.radius = content.db.player.radius,
+                                   .response = statics::Response::Slide};
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     Transform& t = p.transform;
     t.prevPos = t.pos;
@@ -37,9 +28,7 @@ void movementSystem(WorldState& s, const MatchContent& content) {
       t.vel = p.intent.move * p.stats.moveSpeed;
     }
     if (p.tags.has(Tag::HitStun)) t.vel = Vec2::zero();
-    t.pos += t.vel;
-    clampAxis(t.pos.x, t.vel.x, limit.x);
-    clampAxis(t.pos.y, t.vel.y, limit.y);
+    t.pos = statics::moveCircle(content.arena, t.pos, t.vel, t.vel, params).pos;
   });
 }
 

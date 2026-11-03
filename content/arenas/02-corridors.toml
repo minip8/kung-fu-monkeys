@@ -1,0 +1,19 @@
+# A cross of thin walls splitting the arena into four rooms. Gaps at the
+# centre and at the four ends let monkeys through; a banana thrown into a
+# neighbouring room has to find its way back around a wall, so returns
+# bounce and curve. See 01-pillars.toml for the walls / hazards keys.
+[[arena]]
+name = "corridors"
+half_extents = [18, 10]
+# Two per room plus one in each side corridor, ordered so the first players
+# start in opposite rooms.
+spawn_points = [
+  [-9, -5], [9, 5], [-9, 5], [9, -5], [-15, 0],
+  [15, 0], [-5, -7], [5, 7], [-5, 7], [5, -7],
+]
+walls = [
+  { min = [-14, -0.3], max = [-3, 0.3] },   # west arm
+  { min = [3, -0.3], max = [14, 0.3] },     # east arm
+  { min = [-0.3, -8], max = [0.3, -2.5] },  # south arm
+  { min = [-0.3, 2.5], max = [0.3, 8] },    # north arm
+]
