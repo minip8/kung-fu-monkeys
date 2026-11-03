@@ -1,7 +1,8 @@
 // End-to-end session flows over the loopback emulator (architecture §6.6):
 // mid-match join, spectating, reconnect within the grace window, checksum
 // resync, input delay.
-#include "netsim.hpp"
+#include "kfm/net/netsim.hpp"
+#include "kfm/sim/step.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,16 +18,8 @@ using namespace kfm::net::netsim;
 
 namespace {
 
-[[nodiscard]] bool allRunning(NetSim& s) {
-  return std::all_of(s.rigs().begin(), s.rigs().end(),
-                     [](const ClientRig& r) { return r.client->running(); });
-}
-
-ClientConfig tokenConfig(const std::string& token, uint8_t slots = 1) {
-  ClientConfig c;
-  c.requestedSlots = slots;
-  c.setToken(std::as_bytes(std::span(token.data(), token.size())));
-  return c;
+[[nodiscard]] bool allRunning(const NetSim& s) {
+  return s.allRunning();
 }
 
 }  // namespace
