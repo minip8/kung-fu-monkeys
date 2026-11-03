@@ -18,6 +18,17 @@
 //
 // Ownership: recv() exposes the front message of the receive queue; its data
 // span is valid until the next recv() or poll() on the same transport.
+//
+// Contract details pinned by the contract suite (tests/unit/net/
+// transport_contract.hpp) and both implementations (v0.17):
+// - A zero-length message is a valid message on either lane.
+// - stats() counts user messages and their payload bytes only, never
+//   transport framing, retransmissions or signaling; rejected sends are not
+//   counted as sent.
+// - disconnect() of a peer that never finished connecting closes it without
+//   an event (it was never announced); a second disconnect() reports nothing.
+// - The local side sees Disconnected on the first poll() after disconnect().
+// - No method throws; the WebRTC transport catches at its boundary.
 #pragma once
 
 #include <array>
