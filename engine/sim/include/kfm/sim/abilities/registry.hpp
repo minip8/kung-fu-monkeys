@@ -43,7 +43,7 @@ struct AbilityBehavior {
 
 // Every tag an AbilityBehavior::kindTags may return. AbilitySystem owns these
 // bits (it clears and re-derives them each tick) like the defs' phase tags.
-inline constexpr Tags kAbilityKindTags = Tags::of(Tag::Dashing) | Tag::PerfectDash;
+inline constexpr Tags kAbilityKindTags = Tags::of(Tag::Dashing) | Tag::PerfectDash | Tag::Slamming;
 
 // Behaviour for a kind; out-of-range kinds get the inert None behaviour.
 [[nodiscard]] const AbilityBehavior& behaviorFor(AbilityKind kind);

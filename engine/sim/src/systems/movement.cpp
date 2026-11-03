@@ -9,7 +9,9 @@
 // stick movement and dash displacement alike (a dash stops at a wall while
 // its phases run on), and pos is clamped per axis to the arena box shrunk by
 // the player radius, zeroing the velocity component that was clamped.
-// Without walls this is the M1 integrate-and-clamp, bit for bit.
+// Without walls this is the M1 integrate-and-clamp, bit for bit. A pending
+// knockback (v0.21, a slam's push) is added to the velocity, stun or not,
+// while it lasts.
 #include "kfm/sim/systems.hpp"
 #include "systems/statics.hpp"
 
@@ -28,6 +30,10 @@ void movementSystem(WorldState& s, const MatchContent& content) {
       t.vel = p.intent.move * p.stats.moveSpeed;
     }
     if (p.tags.has(Tag::HitStun)) t.vel = Vec2::zero();
+    if (playing && p.knockbackTicks > 0) {  // a slam's push (v0.21) adds on top of anything
+      t.vel = t.vel + p.knockback;
+      if (--p.knockbackTicks == 0) p.knockback = Vec2::zero();
+    }
     t.pos = statics::moveCircle(content.arena, t.pos, t.vel, t.vel, params).pos;
   });
 }

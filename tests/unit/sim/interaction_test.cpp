@@ -91,7 +91,8 @@ EventSink resolve(WorldState& s, const Contacts& cs, const ContentDB& content = 
 
 TEST_CASE("rules table is sorted and every row ignores eliminated players", "[sim][interaction]") {
   const auto rules = interactionRules();
-  REQUIRE(rules.size() == 10);  // M1 six + the shield rows and power-ups (v0.20) + the pit (v0.22)
+  // M1 six + the shield rows and power-ups (v0.20) + the pit (v0.22) + the slam (v0.21)
+  REQUIRE(rules.size() == 12);
   for (size_t i = 0; i < rules.size(); ++i) {
     if (i > 0) CHECK(rules[i - 1].priority < rules[i].priority);
     CHECK(rules[i].kindA == EntityKind::Player);
@@ -115,8 +116,9 @@ TEST_CASE("the dash attack row: Player[Dashing] x Player[!HitStun, !Invulnerable
   CHECK(row->forbidB.has(Tag::Invulnerable));
   CHECK(row->ownership == Ownership::Any);
   CHECK(row->resolve == &dashAttack);
-  // The only rows on Player x Player: the attack and the shield that pre-empts it (v0.20).
-  CHECK(std::ranges::count(rules, EntityKind::Player, &InteractionRule::kindB) == 2);
+  // The rows on Player x Player: the attack, the shield that pre-empts it (v0.20)
+  // and the slam push (v0.21).
+  CHECK(std::ranges::count(rules, EntityKind::Player, &InteractionRule::kindB) == 3);
 }
 
 TEST_CASE("perfect catch inside the window takes the banana and an ammo", "[sim][interaction]") {

@@ -37,7 +37,13 @@ struct Contact {
   Fixed tHit{};   // time of impact as a fraction of the tick, in [0, 1]; 0 = overlapping at start
   Vec2 point{};   // B's centre at tHit; for Player × Player the midpoint of both centres
   Vec2 normal{};  // unit normal from A toward B at tHit
+  // v0.21: kReachA / kReachB when the contact exists only through a slam's
+  // widened radius on that side (0 = the bodies touch). Only rules with
+  // reachA accept a contact carrying kReachA, and none accept kReachB.
+  uint8_t reach{0};
 };
+inline constexpr uint8_t kReachA = 1;
+inline constexpr uint8_t kReachB = 2;
 
 // The same contact seen from B (Player × Player: InteractionSystem tries both
 // orientations, §5.6). The midpoint is symmetric, so only the normal flips.
@@ -48,7 +54,9 @@ struct Contact {
                  .b = c.a,
                  .tHit = c.tHit,
                  .point = c.point,
-                 .normal = -c.normal};
+                 .normal = -c.normal,
+                 .reach = static_cast<uint8_t>(((c.reach & kReachA) != 0 ? kReachB : 0) |
+                                               ((c.reach & kReachB) != 0 ? kReachA : 0))};
 }
 
 struct Contacts {

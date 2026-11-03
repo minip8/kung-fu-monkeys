@@ -56,6 +56,7 @@ enum class AbilityKind : uint8_t {
   Dash,
   Throw,
   Blink,   // v0.21: teleport dash (abilities/blink.cpp)
+  Slam,    // v0.21: radial impulse (abilities/slam.cpp, rules/slam.cpp)
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 enum class AbilityPhase : uint8_t { Idle = 0, Startup, Active, Recovery };
@@ -69,8 +70,8 @@ struct AbilityDef {
   uint16_t recoveryTicks{0};
   uint16_t perfectWindowTicks{0};  // Dash: first N active ticks grant Tag::PerfectDash
   Fixed speed{};   // Dash: dash speed; Blink: distance per active tick (units/tick). Throw: unused
-  Fixed param0{};  // kind-specific spare numeric params
-  Fixed param1{};
+  Fixed param0{};  // kind-specific numeric params. Slam: reach (radius from its centre)
+  Fixed param1{};  // Slam: push distance, spread over activeTicks
   Tags tagsStartup{};  // tags granted during each phase
   Tags tagsActive{};
   Tags tagsRecovery{};

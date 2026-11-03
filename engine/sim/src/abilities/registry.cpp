@@ -4,6 +4,7 @@
 
 #include "kfm/sim/abilities/blink.hpp"
 #include "kfm/sim/abilities/dash.hpp"
+#include "kfm/sim/abilities/slam.hpp"
 #include "kfm/sim/abilities/throw.hpp"
 
 #include <array>
@@ -29,6 +30,7 @@ constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> 
     dashBehavior(),   // AbilityKind::Dash
     throwBehavior(),  // AbilityKind::Throw
     blinkBehavior(),  // AbilityKind::Blink
+    slamBehavior(),   // AbilityKind::Slam
 };
 
 }  // namespace

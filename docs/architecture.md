@@ -126,7 +126,13 @@ slot or be granted by an `AbilityOverride` (the same-kind rule is gone) as long 
 throw buttons fire something; `kMaxAbilityDefs` 16 (§5.8, §5.10). New kinds, each a behaviour
 file, a def in `content/abilities.toml`, one registry line and a scenario test, reached through
 `rounds_*` modes whose loadout puts them on the ability button: Blink (a teleport dash, no tags
-of its own so a telegraphed blinker is still hit; `PlayerBlinked`).
+of its own so a telegraphed blinker is still hit; `PlayerBlinked`); Slam (a radial impulse:
+`Tag::Slamming` on the impact tick widens the slammer's contact radius in `CollisionSystem`,
+contacts made only through that reach carry `Contact::reach` and match only rows flagged
+`reachA`, the new rows 16 (ground a non-own banana) and 26 (push a monkey through the new
+`Player::knockback`, which `MovementSystem` adds to the velocity); `SlamLanded`,
+`PlayerSlammed`; the new state fields changed every checksum, verified equal with them left out
+of the visitor).
 v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
 `kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
 `Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
@@ -377,6 +383,9 @@ place), a pickup spawned at the end of tick T is touchable from T+1 like a groun
 the spawner timeline is a function of `MatchRules::ticksInPhase` that the post-tick has not yet
 advanced. The order of the ten systems is unchanged.
 the tests as the oracle: a property test asserts both produce the same pair set.
+Slam reach (v0.21): a player holding `Tag::Slamming` is inserted with its slam's reach
+(`param0`) as radius, and a pair is tested at the body radii first, then at the widened ones;
+a contact found only the second way carries `Contact::reach` (§5.6).
 Statics (v0.22) never enter the grid: walls are resolved while integrating (steps 4 and 5,
 §5.10), and after the narrowphase `CollisionSystem` appends one Player × Hazard contact per
 hazard box holding a player's centre at the end of the tick (player slot order, then hazard
@@ -517,6 +526,17 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
     plain, readable telegraph during which a banana hits as usual, and nothing in the rules
     table changes. `PlayerBlinked` carries the origin. Shipped: 6-tick startup, a 5-unit jump
     (30 u/s over 10 ticks), 1.5 s cooldown, in mode `rounds_blink`.
+  - Slam (`slam.cpp`, `rules/slam.cpp`): the behaviour only marks the impact. `kindTags`
+    grants `Tag::Slamming` on the first Active tick only (phaseTicks 0), so a slam acts once
+    however long its active phase; the Startup → Active transition emits `SlamLanded`. While a
+    player is `Slamming`, `CollisionSystem` uses the slam def's `param0` (the reach, from the
+    slammer's centre) as its contact radius, so the broadphase finds what the slam reaches; the
+    rules table does the rest (rows 16 and 26, §5.6). A pushed monkey gets
+    `Player::knockback = away × param1 / activeTicks` and `knockbackTicks = activeTicks`;
+    `MovementSystem` adds the knockback to whatever velocity it computed (stick, dash, stun)
+    and counts it down, its only change. The slammer walks during the startup (no `Dashing`,
+    as for Blink). Shipped: 0.2 s startup, reach 3, push 4 units over 0.2 s, 2 s cooldown, in
+    mode `rounds_slam`. New state: `Player::knockback`, `knockbackTicks` (visited).
 
 ### 5.6 Interaction rules (where the twists live)
 
@@ -533,15 +553,30 @@ or pick up again.
 ```
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
+ 16   Player[Slamming, !HitStun] Boomerang[InFlight, !own] (reach) SlamGroundsBanana
  20   Player[Shielded, !HitStun] Boomerang[InFlight, !own]      ShieldBlocksBanana
  24   Player[Dashing, !HitStun]  Player[Shielded, !HitStun]     ShieldBlocksDash (declines below minAmmo)
  25   Player[Dashing, !HitStun]  Player[!HitStun, !Invulnerable] DashAttack (declines below minAmmo)
+ 26   Player[Slamming, !HitStun] Player[] (reach)               SlamPushesPlayer
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[Banana]                 TakePickup (declines at ammoMax)
  51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
  60   Player[]                   Hazard[Pit]                    FallIntoPit
 ```
+
+Slam (v0.21, rows 16 and 26, `rules/slam.cpp`). A contact made only through a slammer's widened
+radius (§5.3, §5.5) carries `Contact::reach` (`kReachA`/`kReachB`, swapped with the orientation)
+and matches only a row with `reachA` set, from the slammer's side: the reach never catches,
+damages, picks up, dash-attacks or blocks. Row 16 grounds a non-own banana in flight where it
+is (it becomes a pickup like any grounded banana); it sits below the catch rows (a perfect catch
+still gains the banana) and the parry, and above the shield and damage rows, so a banana that
+reaches the slammer's body on the impact tick is knocked down too. Row 26 pushes any monkey that
+is not eliminated (a push is no hit: shields and spawn protection ignore it) and emits
+`PlayerSlammed`; it sits after the dash attack, so a dasher's attack on the slammer at the same
+`tHit` lands first. A stunned slammer (`HitStun` earlier in the tick) slams nothing. Both
+require `Slamming`, which only the impact tick grants: before it a banana hits the slammer as
+usual (the fall-through).
 
 M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
 restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below) and
@@ -762,7 +797,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
   respawn or late join; `PlayerSpawned` stays the round-start spawn), `TimerWarning{seconds}`
   (10, 3, 2, 1 s left on the mode clock).
-  v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`.
+  v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`,
+  `SlamLanded{player = the slammer, entity, a = the reach's raw value}` (the impact, for the
+  shockwave), `PlayerSlammed{player = the pushed monkey, entity = the slammer, a = its slot}`.
   `RoundEnded`, ...
 - v0.20: `PickupSpawned` and `PickupTaken` carry the pickup's `PickupKind` in `a` and, for a
   power-up, its def index in `b` (a banana pickup's payload stays 0/0), which is all a

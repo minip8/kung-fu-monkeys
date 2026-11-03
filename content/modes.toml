@@ -51,3 +51,11 @@ rounds_to_win = 3
 round_end_ticks = 120
 round_start_ticks = 60
 abilities = ["dash", "throw", "blink"]
+
+[[mode]]
+name = "rounds_slam"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "slam"]

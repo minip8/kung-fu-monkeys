@@ -88,6 +88,10 @@ struct Player {
   // (§5.8): it clears only these, and other tag sources leave them alone.
   Tags grantedTags{};
   std::array<AbilityState, kAbilitySlots> abilities{};
+  // v0.21: a slam's push, added to the velocity by MovementSystem on each of
+  // the next knockbackTicks ticks (units per tick).
+  Vec2 knockback{};
+  uint16_t knockbackTicks{0};
 };
 
 enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded };

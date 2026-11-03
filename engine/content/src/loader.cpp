@@ -73,10 +73,11 @@ struct AbilityKindName {
   std::string_view name;
   AbilityKind kind;
 };
-constexpr std::array<AbilityKindName, 3> kAbilityKinds = {{
+constexpr std::array<AbilityKindName, 4> kAbilityKinds = {{
     {"dash", AbilityKind::Dash},
     {"throw", AbilityKind::Throw},
     {"blink", AbilityKind::Blink},
+    {"slam", AbilityKind::Slam},
 }};
 static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
               "every AbilityKind but None needs a TOML name in kAbilityKinds");
@@ -97,13 +98,14 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 6> kTagNames = {{
+constexpr std::array<TagName, 7> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
     {"shielded", Tag::Shielded},
     {"invulnerable", Tag::Invulnerable},
     {"eliminated", Tag::Eliminated},
+    {"slamming", Tag::Slamming},
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -1301,6 +1303,15 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     // A blink jumps speed × active_ticks (v0.21).
     if (d.kind == AbilityKind::Blink && (d.activeTicks < 1 || d.speed <= Fixed::zero())) {
       fail(where + ": a blink needs active_ticks >= 1 and a positive speed (its distance)");
+    }
+    // A slam reaches param0 (beyond the player's own radius, at most 8 so
+    // the widened contact box stays a few grid cells) and pushes param1
+    // units over active_ticks (v0.21).
+    if (d.kind == AbilityKind::Slam && (d.activeTicks < 1 || d.param0 <= c.player.radius ||
+                                        d.param0 > Fixed::fromInt(8) || d.param1 < Fixed::zero())) {
+      fail(where +
+           ": a slam needs active_ticks >= 1, param0 (reach) in (player radius, 8] and "
+           "param1 (push) >= 0");
     }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");

@@ -449,6 +449,8 @@ void visit(V& v, Player& p) {
   visit(v, p.grantedTags);
   for (AbilityState& a : p.abilities)
     visit(v, a);
+  visit(v, p.knockback);
+  v.u16(p.knockbackTicks);
 }
 template <class V>
 void visit(V& v, Boomerang& b) {

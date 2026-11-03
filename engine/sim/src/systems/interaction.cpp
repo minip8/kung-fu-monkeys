@@ -76,6 +76,8 @@ struct SortKey {
 
 [[nodiscard]] bool ruleMatches(const WorldState& s, const InteractionRule& rule, const Contact& c) {
   if (rule.kindA != c.kindA || rule.kindB != c.kindB) return false;
+  // Through a slam's reach (v0.21): only a slam row, from the slammer's side.
+  if (c.reach != 0 && (rule.reachA == 0 || (c.reach & kReachA) == 0)) return false;
   if (!playerTagsMatch(s, c.kindA, c.a, rule.requireA, rule.forbidA)) return false;
   if (!playerTagsMatch(s, c.kindB, c.b, rule.requireB, rule.forbidB)) return false;
   if (c.kindB == EntityKind::Pickup) {
