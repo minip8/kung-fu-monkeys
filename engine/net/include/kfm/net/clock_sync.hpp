@@ -112,6 +112,15 @@ class TickClock {
   // Accumulator units per tick: 1e9 ns × kTickHz × 1e6 ppm / kTickHz.
   static constexpr uint64_t kUnitsPerTick = 1'000'000'000ull * kRateOnePpm;
 
+  // Wall time one tick takes at ratePpm, rounded to the nearest ns
+  // (16'666'667 at 100 %, shorter when the clock runs fast). Hosts use it to
+  // give each tick of a batch its wall-clock input window (§5.4); 0 ppm is
+  // treated as 1 ppm.
+  [[nodiscard]] static constexpr uint64_t tickWallNs(uint32_t ratePpm) {
+    const uint64_t perNs = uint64_t{sim::kTickHz} * (ratePpm == 0 ? 1u : ratePpm);
+    return (kUnitsPerTick + (perNs / 2)) / perNs;
+  }
+
  private:
   uint64_t lastNs_{0};
   uint64_t acc_{0};

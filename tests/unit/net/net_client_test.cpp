@@ -199,6 +199,25 @@ TEST_CASE("a correct prediction needs no rollback", "[net][client]") {
   CHECK(fs.client->confirmedTick() == Tick{5});
 }
 
+TEST_CASE("the input windows of a ticksDue() batch end at its nowNs", "[net][client]") {
+  FakeServer fs;
+  fs.start(0b01, sim::initialWorld(kConfig), Tick{0});
+  CHECK(fs.client->ticksDue(fs.now) == 0);  // the clock just started
+  CHECK(fs.client->tickWallNs() == TickClock::tickWallNs(fs.client->netStats().ratePpm));
+  const uint64_t now = fs.now + (50 * kMs);  // three ticks of wall time
+  const uint32_t n = fs.client->ticksDue(now);
+  REQUIRE(n == 3);
+  const uint64_t wall = fs.client->tickWallNs();
+  CHECK(wall == TickClock::tickWallNs(fs.client->netStats().ratePpm));
+  CHECK(fs.client->tickStartNs(n - 1) + wall == now);  // the last tick ends at nowNs
+  CHECK(fs.client->tickStartNs(0) == now - (3 * wall));
+  CHECK(fs.client->tickStartNs(1) - fs.client->tickStartNs(0) == wall);
+  // Before the session runs no tick is due: the window is empty at nowNs.
+  NetClient idle(sim::defaultContent());
+  CHECK(idle.ticksDue(now) == 0);
+  CHECK(idle.tickStartNs(0) == now);
+}
+
 TEST_CASE("inputs are sent with redundancy back to the newest assembled tick", "[net][client]") {
   FakeServer fs;
   fs.start(0b01, sim::initialWorld(kConfig), Tick{0});

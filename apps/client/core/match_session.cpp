@@ -37,7 +37,10 @@ constexpr sim::PlayerMask kAllSlots = static_cast<sim::PlayerMask>((1u << sim::k
 }  // namespace
 
 MatchSession::MatchSession(const SessionConfig& config)
-    : seed_(config.seed), botSeed_(config.botSeed), content_(sim::defaultContent()) {
+    : seed_(config.seed),
+      botSeed_(config.botSeed),
+      hostHandlesStart_(config.hostHandlesStart),
+      content_(sim::defaultContent()) {
   clock_.setMaxTicksPerFrame(std::min(config.maxTicksPerFrame, kDefaultMaxTicksPerFrame));
   if (config.bindKeyboardToSlot0) {
     (void)sampler_.bind(PlayerId{0}, platform::DeviceBinding::keyboard(0));
@@ -62,7 +65,10 @@ void MatchSession::advance(uint64_t nowNs) {
     const bool start = startRequested_;
     startRequested_ = false;
     sampler_.endTick();  // lobby presses never reach a match
-    if (start) {
+    if (start && hostHandlesStart_) {
+      hostStartPending_ = true;
+      createWorld(lobbyPresentMask());
+    } else if (start) {
       (void)startMatch(nowNs);
     } else {
       createWorld(lobbyPresentMask());  // keep the drawn lobby arena in sync
@@ -182,6 +188,12 @@ bool MatchSession::startMatch(uint64_t nowNs) {
   if (present == 0) return false;
   beginMatch(present, static_cast<sim::PlayerMask>(present & sampler_.boundSlots()), nowNs);
   return true;
+}
+
+bool MatchSession::takeStartRequest() {
+  const bool pending = hostStartPending_;
+  hostStartPending_ = false;
+  return pending;
 }
 
 void MatchSession::returnToLobby() {

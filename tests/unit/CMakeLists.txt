@@ -88,8 +88,18 @@ if(NOT KFM_HEADLESS)
     client/match_session_test.cpp
     client/content_tuning_test.cpp
     client/sdl_input_test.cpp
+    client/net_session_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
+
+  if(KFM_WEBRTC AND NOT EMSCRIPTEN)
+    # The client's network mode over real sockets: NetServer on
+    # WebRtcTransport::createServer and a NetSession on createClient, one
+    # process, 127.0.0.1. Labelled `network` like the other WebRTC tests.
+    kfm_add_test_exe(kfm_client_net_tests client/net_session_webrtc_test.cpp)
+    target_link_libraries(kfm_client_net_tests PRIVATE kfm::client_core kfm::net_webrtc)
+    set_tests_properties(kfm_client_net_tests PROPERTIES LABELS network TIMEOUT 120)
+  endif()
 endif()
 
 if(KFM_WEBRTC AND NOT EMSCRIPTEN)

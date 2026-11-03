@@ -677,3 +677,21 @@ TEST_CASE("session: the press that takes over a dropped slot is not sampled", "[
   d.frame(1);
   CHECK(d.s->lastFrame().inputs[0].buttons == sim::buttonBit(sim::Button::Throw));
 }
+
+TEST_CASE("hostHandlesStart latches the lobby's start key instead of starting a match",
+          "[client][session]") {
+  Driver d(SessionConfig{.seed = 3, .bots = 1, .hostHandlesStart = true});
+  d.frame(1);
+  CHECK(!d.s->takeStartRequest());
+  d.push(key(Key::Enter, true));
+  d.frame(1);
+  CHECK(d.s->phase() == SessionPhase::Lobby);  // no local match
+  CHECK(d.s->takeStartRequest());
+  CHECK(!d.s->takeStartRequest());  // cleared by the call
+  // Turned off again, the start key starts a local match as in M2.
+  d.s->setHostHandlesStart(false);
+  d.push(key(Key::Enter, false));
+  d.push(key(Key::Enter, true));
+  d.frame(1);
+  CHECK(d.s->phase() == SessionPhase::Match);
+}

@@ -206,6 +206,13 @@ class NetClient {
   // The state at L − 1 (interpolation); world() when there is none.
   [[nodiscard]] const sim::WorldState& prevWorld() const;
   [[nodiscard]] uint32_t renderPhaseQ16() const { return clock_.phaseQ16(); }
+  // Input windows of the last ticksDue() batch (§5.4, §6.8): each tick spans
+  // tickWallNs() at the rate that batch ran at, and the batch's last tick ends
+  // at that call's nowNs, the ones before it counting back in whole ticks
+  // (the same anchoring as the local client's fixed-step clock). i is the
+  // tick's index in the batch, 0 = the first tick() after ticksDue().
+  [[nodiscard]] uint64_t tickWallNs() const { return TickClock::tickWallNs(dueRatePpm_); }
+  [[nodiscard]] uint64_t tickStartNs(uint32_t i) const;
   [[nodiscard]] const FrameReport& frameReport() const { return report_; }
   [[nodiscard]] const ClientNetStats& netStats() const { return stats_; }
   [[nodiscard]] const EventJournal& journal() const { return journal_; }
@@ -264,6 +271,7 @@ class NetClient {
   [[nodiscard]] const sim::WorldState* stateAt(Tick t) const;
   void rollbackTo(Tick t);
   [[nodiscard]] uint32_t spectatorRatePpm() const;
+  void recordBatch(uint64_t nowNs, uint32_t ticks, uint32_t ratePpm);
 
   const sim::ContentDB* content_;
   ClientConfig config_;
@@ -318,6 +326,10 @@ class NetClient {
   RttEstimator rtt_{};
   LeadController lead_;
   TickClock clock_{};
+  // The last ticksDue() batch: its nowNs, tick count and clock rate.
+  uint64_t dueNowNs_{0};
+  uint32_t dueTicks_{0};
+  uint32_t dueRatePpm_{kRateOnePpm};
 
   FrameReport report_{};
   ClientNetStats stats_{};

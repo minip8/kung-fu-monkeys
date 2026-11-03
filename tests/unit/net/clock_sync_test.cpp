@@ -131,3 +131,10 @@ TEST_CASE("TickClock runs exactly kTickHz ticks per second and scales with the r
   CHECK(stalled.droppedTicks() == 56);
   CHECK(stalled.advance(900 * kMs, kRateOnePpm, 4) == 0);  // time going backwards adds nothing
 }
+
+TEST_CASE("TickClock::tickWallNs is one tick of wall time at the given rate", "[net][clock]") {
+  CHECK(TickClock::tickWallNs(kRateOnePpm) == 16'666'667);
+  CHECK(TickClock::tickWallNs(1'020'000) == 16'339'869);  // 102 %: shorter ticks
+  CHECK(TickClock::tickWallNs(980'000) == 17'006'803);    // 98 %: longer ticks
+  CHECK(TickClock::tickWallNs(0) > 0);
+}

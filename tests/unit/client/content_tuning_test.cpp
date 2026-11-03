@@ -82,3 +82,41 @@ TEST_CASE("options: flags parse", "[client][options]") {
   const std::array<const char*, 3> zero = {"kfm_client", "--exit-after-frames", "0"};
   CHECK_FALSE(parseClientOptions(zero, bad, err));
 }
+
+TEST_CASE("client options: network flags", "[client][options]") {
+  using kfm::client::ClientOptions;
+  using kfm::client::parseClientOptions;
+  std::string err;
+  ClientOptions o;
+  const std::array<const char*, 11> args = {
+      "kfm_client", "--connect", "ws://127.0.0.1:9000",        "--token",   "abc",
+      "--spectate", "--stun",    "stun:stun.example.org:3478", "--players", "2",
+      "--autostart"};
+  REQUIRE(parseClientOptions(args, o, err));
+  CHECK(o.networkMode());
+  CHECK(o.connect == "ws://127.0.0.1:9000");
+  CHECK(o.token == "abc");
+  CHECK(o.spectate);
+  CHECK(o.stun == "stun:stun.example.org:3478");
+  CHECK(o.players == 2);
+  const kfm::client::NetSessionConfig c = kfm::client::netSessionConfig(o, true);
+  CHECK(c.serverLabel == o.connect);
+  CHECK(c.token.size() == 3);
+  CHECK(c.spectate);
+  CHECK(c.requestedSlots == 2);
+
+  ClientOptions plain;
+  const std::array<const char*, 3> connect = {"kfm_client", "--connect", "ws://h:1"};
+  REQUIRE(parseClientOptions(connect, plain, err));
+  CHECK(kfm::client::netSessionConfig(plain, true).requestedSlots == 1);   // at startup: one slot
+  CHECK(kfm::client::netSessionConfig(plain, false).requestedSlots == 0);  // lobby: the devices
+  CHECK_FALSE(ClientOptions{}.networkMode());
+
+  ClientOptions bad;
+  const std::array<const char*, 3> notWs = {"kfm_client", "--connect", "http://h:1"};
+  CHECK_FALSE(parseClientOptions(notWs, bad, err));
+  const std::array<const char*, 3> zeroPlayers = {"kfm_client", "--players", "0"};
+  CHECK_FALSE(parseClientOptions(zeroPlayers, bad, err));
+  const std::array<const char*, 2> noUrl = {"kfm_client", "--connect"};
+  CHECK_FALSE(parseClientOptions(noUrl, bad, err));
+}
