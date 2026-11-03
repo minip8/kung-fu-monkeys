@@ -1,43 +1,61 @@
-// kfm_client: the playable client (architecture §3, §11 M2). This first cut
-// opens the window, clears it, and draws a Dear ImGui overlay; the sim,
-// renderer and input sampler are wired in by later M2 work units.
+// kfm_client: the playable local client (architecture §3, §6.8, §7, §11 M2).
 //
-//   kfm_client [--exit-after-frames N] [--screenshot out.ppm]
+//   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
+//              [--overlay] [--exit-after-frames N] [--screenshot out.ppm]
 //
-// --exit-after-frames N renders N frames and exits 0 (rendering smoke test).
-// --screenshot path     writes the last rendered frame as binary PPM (native only;
-//                       with no --exit-after-frames it is taken when the client quits).
+// Frame: pollEvents (ImGui first, then SDL -> InputEvent into the session)
+// -> MatchSession::advance (0..4 fixed 60 Hz ticks, inputs sampled right
+// before each step) -> buildRenderState -> arena camera -> HUD / lobby /
+// debug overlay (ImGui) -> debugUiFlush -> default pass: renderer.draw, then
+// debugUiDraw -> present.
+//
+// Keys outside the game bindings: F1 debug overlay, P pause, O single step,
+// Escape back to the lobby (quits from the lobby, natively), - / = bot count
+// in the lobby, Enter / pad Start starts the match (and leaves the
+// match-over screen).
+#include "core/client_options.hpp"
+#include "core/match_session.hpp"
+#include "debug_overlay.hpp"
+#include "hud.hpp"
 #include "kfm/platform/debug_ui.hpp"
 #include "kfm/platform/gfx.hpp"
 #include "kfm/platform/main_loop.hpp"
 #include "kfm/platform/window.hpp"
+#include "kfm/presentation/builder.hpp"
+#include "kfm/presentation/camera.hpp"
+#include "kfm/presentation/render_state.hpp"
+#include "kfm/presentation/renderer.hpp"
+#include "sdl_input.hpp"
 
 #include <SDL3/SDL_events.h>
-#include <SDL3/SDL_keycode.h>
-#include <imgui.h>
+#include <SDL3/SDL_scancode.h>
 
-#include <charconv>
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <ios>
-#include <string_view>
-#include <system_error>
+#include <memory>
+#include <span>
+#include <string>
 #include <vector>
 
 namespace {
 
 using namespace kfm;
-
-struct Options {
-  std::uint64_t exitAfterFrames = 0;  // 0: run until quit
-  const char* screenshotPath = nullptr;
-};
+using client::MatchSession;
+using client::SessionPhase;
 
 struct App {
-  Options options;
+  client::ClientOptions options;
   platform::Window window;
+  presentation::Renderer renderer;
+  bool rendererReady = false;
+  std::unique_ptr<MatchSession> session;
+  client::GamepadSet pads;
+  client::DebugOverlay overlay;
+  presentation::RenderState renderState;
   std::uint64_t frames = 0;
   std::uint64_t lastFrameNs = 0;
   bool quit = false;
@@ -47,37 +65,69 @@ struct App {
 // Static storage: under Emscripten main() is unwound once the loop starts.
 App gApp;
 
-constexpr const char* kUsage = "usage: kfm_client [--exit-after-frames N] [--screenshot out.ppm]\n";
+constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-forward effects
 
-bool parseArgs(int argc, const char* const* argv, Options& o) {
-  for (int i = 1; i < argc; ++i) {
-    const std::string_view arg = argv[i];
-    if (arg == "--exit-after-frames" && i + 1 < argc) {
-      const std::string_view v = argv[++i];
-      const auto [end, ec] = std::from_chars(v.data(), v.data() + v.size(), o.exitAfterFrames);
-      if (ec != std::errc{} || end != v.data() + v.size() || o.exitAfterFrames == 0) {
-        std::fprintf(stderr, "error: --exit-after-frames needs a positive number, got '%s'\n",
-                     argv[i]);
-        return false;
-      }
-    } else if (arg == "--screenshot" && i + 1 < argc) {
-      o.screenshotPath = argv[++i];
-    } else {
-      std::fprintf(stderr, "error: unknown or incomplete argument '%s'\n", argv[i]);
-      return false;
-    }
-  }
-  return true;
+[[nodiscard]] bool gameInputBlocked(const App& app) {
+  return app.overlay.open && platform::debugUiWantsKeyboard();
 }
 
-// Event seam: the input sampler's SDL_Event -> InputEvent translation hooks in
-// here in the next M2 wave (respecting debugUiWantsKeyboard/Mouse).
+// App shortcuts that are not game bindings.
+void handleShortcut(App& app, const SDL_Event& event) {
+  if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
+  MatchSession& s = *app.session;
+  const SDL_Scancode sc = event.key.scancode;
+  if (sc == SDL_SCANCODE_F1) {
+    app.overlay.open = !app.overlay.open;
+    return;
+  }
+  if (gameInputBlocked(app)) return;
+  switch (sc) {
+    case SDL_SCANCODE_ESCAPE:
+      if (s.phase() == SessionPhase::Match) {
+        s.returnToLobby();
+      } else {
+#ifndef __EMSCRIPTEN__
+        app.quit = true;  // a browser tab is closed by the browser
+#endif
+      }
+      break;
+    case SDL_SCANCODE_P:
+      if (s.phase() == SessionPhase::Match) s.setPaused(!s.paused());
+      break;
+    case SDL_SCANCODE_O:
+      if (s.phase() == SessionPhase::Match) {
+        s.setPaused(true);
+        s.requestSingleStep();
+      }
+      break;
+    case SDL_SCANCODE_MINUS:
+      if (s.phase() == SessionPhase::Lobby && s.botCount() > 0) {
+        s.setBotCount(static_cast<std::uint8_t>(s.botCount() - 1));
+      }
+      break;
+    case SDL_SCANCODE_EQUALS:
+      if (s.phase() == SessionPhase::Lobby) {
+        s.setBotCount(static_cast<std::uint8_t>(s.botCount() + 1));
+      }
+      break;
+    default:
+      break;
+  }
+}
+
 void onEvent(void* user, const SDL_Event& event) {
   auto* app = static_cast<App*>(user);
-  if (event.type == SDL_EVENT_KEY_DOWN && event.key.key == SDLK_ESCAPE) app->quit = true;
+  app->pads.onEvent(event);
+  handleShortcut(*app, event);
+  const auto input = client::translateSdlEvent(event);
+  if (!input) return;
+  // While a debug text field has the keyboard, key presses stay out of the
+  // game; releases always go through so no key is left held.
+  if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked(*app)) return;
+  app->session->push(*input);
 }
 
-bool writePpm(const char* path, int width, int height) {
+bool writePpm(const std::string& path, int width, int height) {
   std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) *
                                    static_cast<std::size_t>(height) * 3U);
   if (!platform::readPixelsRgb(width, height, pixels)) {
@@ -86,7 +136,7 @@ bool writePpm(const char* path, int width, int height) {
   }
   std::ofstream out(path, std::ios::binary);
   if (!out) {
-    std::fprintf(stderr, "error: cannot open '%s' for writing\n", path);
+    std::fprintf(stderr, "error: cannot open '%s' for writing\n", path.c_str());
     return false;
   }
   out << "P6\n" << width << ' ' << height << "\n255\n";
@@ -97,36 +147,47 @@ bool writePpm(const char* path, int width, int height) {
 
 bool frame(void* user) {
   auto* app = static_cast<App*>(user);
+  MatchSession& s = *app->session;
   if (!app->window.pollEvents(onEvent, app)) app->quit = true;
 
   const std::uint64_t now = platform::Window::nowNs();
   const double dt = static_cast<double>(now - app->lastFrameNs) * 1e-9;
   app->lastFrameNs = now;
+  app->overlay.recordFrame(dt);
+
+  s.advance(now);
 
   const platform::DrawableSize size = app->window.drawableSize();
-  platform::debugUiNewFrame(size.width, size.height, dt, app->window.pixelDensity());
+  const int w = std::max(size.width, 1);
+  const int h = std::max(size.height, 1);
+  presentation::buildRenderState(
+      s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(), s.content(),
+      static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app->renderState);
+  const presentation::Camera camera = presentation::makeArenaCamera(
+      s.content().arena, static_cast<float>(w), static_cast<float>(h));
 
-  ImGui::SetNextWindowPos(ImVec2(16.0F, 16.0F), ImGuiCond_FirstUseEver);
-  ImGui::Begin("Kung Fu Monkeys");
-  const ImGuiIO& io = ImGui::GetIO();
-  ImGui::Text("frame time %.2f ms",
-              static_cast<double>(io.Framerate > 0.0F ? 1000.0F / io.Framerate : 0.0F));
-  ImGui::Text("fps %.1f", static_cast<double>(io.Framerate));
-  ImGui::Text("drawable %d x %d", size.width, size.height);
-  if (ImGui::Button("Quit")) app->quit = true;
-  ImGui::End();
+  const float density = app->window.pixelDensity();
+  platform::debugUiNewFrame(w, h, dt, density);
+  if (s.phase() == SessionPhase::Lobby) {
+    if (client::drawLobby(s)) (void)s.startMatch(now);
+  } else {
+    client::drawMatchHud(
+        s,
+        client::HudInput{.state = &app->renderState, .camera = &camera, .uiScale = 1.0f / density});
+  }
+  app->overlay.draw(s, app->renderer.stats(), now);
   platform::debugUiFlush();
 
-  platform::beginDefaultPass({.r = 0.18F, .g = 0.42F, .b = 0.27F, .a = 1.0F}, size.width,
-                             size.height);
+  platform::beginDefaultPass({.r = 0.10F, .g = 0.12F, .b = 0.16F, .a = 1.0F}, w, h);
+  if (app->rendererReady) app->renderer.draw(app->renderState, camera, w, h);
   platform::debugUiDraw();
   platform::endPass();
 
   ++app->frames;
   const bool lastFrame = app->quit || (app->options.exitAfterFrames != 0 &&
                                        app->frames >= app->options.exitAfterFrames);
-  if (lastFrame && app->options.screenshotPath != nullptr &&
-      !writePpm(app->options.screenshotPath, size.width, size.height)) {
+  if (lastFrame && !app->options.screenshotPath.empty() &&
+      !writePpm(app->options.screenshotPath, w, h)) {
     app->exitCode = EXIT_FAILURE;
   }
   app->window.swap();
@@ -135,21 +196,25 @@ bool frame(void* user) {
 
 void onExit(void* user) {
   auto* app = static_cast<App*>(user);
+  if (app->rendererReady) app->renderer.shutdown();
+  app->rendererReady = false;
   platform::debugUiShutdown();
   platform::gfxShutdown();
+  app->pads.closeAll();
   app->window.shutdown();
-#ifdef __EMSCRIPTEN__
-  std::printf("kfm_client: stopped after %llu frames\n",
-              static_cast<unsigned long long>(app->frames));
-#endif
+  std::printf("kfm_client: stopped after %llu frames at tick %u, checksum 0x%08X\n",
+              static_cast<unsigned long long>(app->frames), app->session->curr().tick.value,
+              app->session->checksum());
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signature
   App& app = gApp;
-  if (!parseArgs(argc, argv, app.options)) {
-    std::fputs(kUsage, stderr);
+  std::string error;
+  const std::span<const char* const> args(argv, static_cast<std::size_t>(argc));
+  if (!client::parseClientOptions(args, app.options, error)) {
+    std::fprintf(stderr, "error: %s\n%s", error.c_str(), client::kUsage);
     return EXIT_FAILURE;
   }
   if (!app.window.init({.title = "Kung Fu Monkeys", .width = 1280, .height = 720, .vsync = true})) {
@@ -164,7 +229,17 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     platform::gfxShutdown();
     return EXIT_FAILURE;
   }
+
+  app.session = std::make_unique<MatchSession>(client::SessionConfig{
+      .seed = app.options.seed, .botSeed = app.options.playersSeed, .bots = app.options.bots});
+  app.rendererReady = app.renderer.init(app.session->content());
+  if (!app.rendererReady) std::fprintf(stderr, "warning: the renderer failed to initialise\n");
+
+  app.overlay.open = app.options.overlay;
   app.lastFrameNs = platform::Window::nowNs();
+  if (app.options.autostart && !app.session->startMatch(app.lastFrameNs)) {
+    std::fprintf(stderr, "warning: --autostart with no players; staying in the lobby\n");
+  }
   platform::runMainLoop(&app, frame, onExit);
   return app.exitCode;
 }
