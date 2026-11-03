@@ -60,6 +60,10 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
 #   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock)
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
+#   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
+#   arena (with preview), mode, power-up toggles, bots, volume, mute; saved between runs (SDL pref dir / browser
+#   localStorage), flags win: --arena NAME --mode NAME --powerups all|none|a,b ; --no-settings ignores the saved file
+#   browser: kfm_client.html?arena=pillars&mode=deathmatch&powerups=shield,big_banana
 #   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
 ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
@@ -76,6 +80,7 @@ source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/w
 python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
 build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
 #   also --content DIR --arena NAME --mode NAME (kfm_netsim and kfm_render_probe take the same three)
+#   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
 cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)

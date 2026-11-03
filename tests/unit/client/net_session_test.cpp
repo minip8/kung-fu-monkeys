@@ -416,3 +416,21 @@ TEST_CASE("a spectating session requests no slots and sees every player as remot
   CHECK(s.statusText().find("Spectating") != std::string::npos);
   CHECK(s.client().netStats().ticks > 0);
 }
+
+TEST_CASE("the online lobby learns the server's match config, power-up set included",
+          "[client][net][lobby]") {
+  net::ServerConfig config;
+  config.match.seed = 0x5E7;
+  config.match.powerUps = 0b0101;
+  Rig rig(std::move(config));
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}));
+  NetSession& s = *r.s;
+  CHECK_FALSE(s.configKnown());
+  REQUIRE(rig.runUntil([&] { return s.configKnown(); }, 2 * kSec));
+  CHECK(s.client().matchConfig().powerUps == 0b0101);
+  CHECK(s.client().matchConfig().seed == 0x5E7);
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  CHECK(s.matchContent().powerUps == 0b0101);  // the client simulates with the server's set
+  CHECK((s.client().matchConfig().players & 0b11) == 0b11);
+}

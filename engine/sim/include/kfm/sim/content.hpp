@@ -193,9 +193,14 @@ struct MatchContent {
   const ContentDB& db;
   const ArenaDef& arena;
   const ModeDef& mode;
+  uint16_t powerUps{kAllPowerUps};  // MatchConfig::powerUps: the enabled power-ups
 
-  constexpr MatchContent(const ContentDB& content, uint8_t arenaIndex, uint8_t modeIndex)
-      : db(content), arena(content.arenaAt(arenaIndex)), mode(content.modeAt(modeIndex)) {}
+  constexpr MatchContent(const ContentDB& content, uint8_t arenaIndex, uint8_t modeIndex,
+                         uint16_t powerUpSet = kAllPowerUps)
+      : db(content),
+        arena(content.arenaAt(arenaIndex)),
+        mode(content.modeAt(modeIndex)),
+        powerUps(powerUpSet) {}
   // NOLINTNEXTLINE(misc-explicit-constructor): implicit on purpose, see above
   constexpr MatchContent(const ContentDB& content) : MatchContent(content, 0, 0) {}
 

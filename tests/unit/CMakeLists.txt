@@ -107,8 +107,9 @@ if(NOT KFM_HEADLESS)
     client/sdl_input_test.cpp
     client/net_session_test.cpp
     client/event_fx_rollback_test.cpp
+    client/lobby_test.cpp
   )
-  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
+  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
 
   if(KFM_WEBRTC AND NOT EMSCRIPTEN)
     # The client's network mode over real sockets: NetServer on

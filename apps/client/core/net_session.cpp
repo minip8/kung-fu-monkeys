@@ -161,6 +161,7 @@ void NetSession::advance(uint64_t nowNs) {
   c.beginFrame();
   c.pump(nowNs);
   c.reconcile();
+  if (c.state() == net::ClientState::Syncing || c.running()) configKnown_ = true;
   const bool rolledBack = c.frameReport().rolledBack;
   if (rolledBack && everRan_) {
     // The re-simulated timeline ends at the tick drawn last frame: compare at

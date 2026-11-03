@@ -189,6 +189,10 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
   roundTrip(PlayerLeftMsg{PlayerId{3}, Tick{5000}});
   roundTrip(MatchConfigMsg{sim::MatchConfig{0xFFFF'FFFF'FFFF'FFFFull, 0x2AA}, Tick{60}});
   roundTrip(MatchConfigMsg{sim::MatchConfig{3, 0x1, sim::kMaxArenas - 1, 4}, Tick{61}});
+  // The per-match power-up set (protocol v3): none, some, all.
+  roundTrip(MatchConfigMsg{sim::MatchConfig{3, 0x1, 1, 1, 0}, Tick{62}});
+  roundTrip(WelcomeMsg{0b1, sim::MatchConfig{5, 0b11, 0, 0, 0x0021}, Tick{8}});
+  roundTrip(MatchConfigMsg{sim::MatchConfig{3, 0x1, 1, 1, sim::kAllPowerUps}, Tick{63}});
   for (uint8_t r = 0; r < kDisconnectReasonCount; ++r)
     roundTrip(DisconnectMsg{static_cast<DisconnectReason>(r)});
   roundTrip(ResyncRequestMsg{Tick{0}, 0});

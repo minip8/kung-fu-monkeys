@@ -90,4 +90,10 @@ struct PickupSpawner {
 };
 static_assert(kMaxPowerUps <= 16, "PickupSpawner::powerUpSet is a uint16_t bit set");
 
+// A per-match power-up set (MatchConfig::powerUps, v0.24): bit i enables
+// power-up i. Spawners draw from their own set intersected with it; every
+// bit set (the default) leaves them as the arena defines them, 0 turns every
+// power-up spawner off.
+inline constexpr uint16_t kAllPowerUps = 0xFFFF;
+
 }  // namespace kfm::sim
