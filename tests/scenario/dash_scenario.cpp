@@ -54,7 +54,8 @@ TEST_CASE("a dash along facing covers activeTicks x speed and then stops", "[sce
     const Player& p = *s.playerBySlot(kP0);
     INFO("k = " << k - 1);
     CHECK(p.tags.has(Tag::Dashing) == (k - 1 < dash.activeTicks));
-    CHECK(p.tags.has(Tag::PerfectDash) == (k - 1 < dash.perfectWindowTicks));
+    // Pressed at sub-tick 40: the window closes inside tick T + perfectWindowTicks.
+    CHECK(p.tags.has(Tag::PerfectDash) == (k - 1 <= dash.perfectWindowTicks));
     log = stepWith(s, PlayerInput{0, 0, 0, 0, 0});
     dashedEvents += countEvents(log, EventKind::PlayerDashed);
   }

@@ -32,7 +32,7 @@ the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the 
 (§5.10); bananas spawn clear of the thrower (§5.7);
 the stick is idle iff `moveMag == 0` (§5.4);
 rule-table semantics and the `HitStun` tick convention pinned (§5.6); scripted-input
-scaffolding (§9).
+scaffolding (§9); `PerfectDash` covers the sub-tick end of the window (§5.5).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -259,7 +259,10 @@ on a tick where a button edge occurred, so repeated-input prediction is unaffect
 - Players have N ability slots. Base kit is {Dash, Throw}. Power-ups may override a slot
   (for example a teleport dash) or add a temporary slot.
 - Phase tags: Dash's active phase grants `Tag::Dashing`; its first `perfectWindowTicks` also
-  grant `Tag::PerfectDash`. Tags are a bitset read by the interaction rules.
+  grant `Tag::PerfectDash`, plus the tick after them when the press had a non-zero `subTick`,
+  because the window `[press, press + perfectWindowTicks)` measured from the press instant
+  closes inside that tick (§5.11). The tag says "the window may be open this tick"; the catch
+  rule judges the exact instant. Tags are a bitset read by the interaction rules.
 
 ### 5.6 Interaction rules (where the twists live)
 

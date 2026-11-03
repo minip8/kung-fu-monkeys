@@ -23,8 +23,12 @@
 //
 // Tags: after all slots ran, Dashing/PerfectDash and every phase tag granted by
 // the player's slot defs are cleared and re-derived from the current phases
-// (def.tagsStartup/Active/Recovery; PerfectDash iff the Dash slot is Active and
-// phaseTicks < perfectWindowTicks). HitStun and Eliminated are never touched.
+// (def.tagsStartup/Active/Recovery). PerfectDash marks the ticks on which the
+// perfect window [press, press + perfectWindowTicks) is open: the Dash slot is
+// Active and phaseTicks < perfectWindowTicks, plus tick press + window itself
+// when the press had a non-zero sub-tick (the window closes inside that tick;
+// the catch rule judges the exact instant, §5.11). HitStun and Eliminated are
+// never touched.
 #include "kfm/sim/abilities/registry.hpp"
 #include "kfm/sim/systems.hpp"
 
@@ -143,8 +147,10 @@ void rebuildTags(Player& p, const ContentDB& content) {
     const AbilityDef& def = defFor(content, st);
     owned = owned | def.tagsStartup | def.tagsActive | def.tagsRecovery;
     granted = granted | phaseTags(def, st.phase);
-    if (def.kind == AbilityKind::Dash && st.phase == AbilityPhase::Active &&
-        st.phaseTicks < def.perfectWindowTicks) {
+    const bool windowOpen =
+        st.phaseTicks < def.perfectWindowTicks ||
+        (st.phaseTicks == def.perfectWindowTicks && st.activatedSubTick != 0);
+    if (def.kind == AbilityKind::Dash && st.phase == AbilityPhase::Active && windowOpen) {
       granted.set(Tag::PerfectDash);
     }
   }

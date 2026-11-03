@@ -91,7 +91,9 @@ TEST_CASE("dash timeline: phases, PerfectDash and cooldown land on exact ticks",
     }
     CHECK(slot(s, 0).phase == want);
     CHECK(p.tags.has(Tag::Dashing) == (k < a));
-    CHECK(p.tags.has(Tag::PerfectDash) == (k < perfect));
+    // Pressed at sub-tick 77: the window closes 77/256 into tick T + perfect,
+    // so PerfectDash covers that tick too (the catch rule judges the instant).
+    CHECK(p.tags.has(Tag::PerfectDash) == (k <= perfect));
     CHECK(slot(s, 0).cooldownTicks == dash.cooldownTicks - k);
   }
 
@@ -221,6 +223,20 @@ TEST_CASE("dash velocity is pinned during Active and the slot leaves it after", 
   abilityTick(s, withButtons(s, 0, 0), content, sink);  // first Recovery tick
   CHECK(slot(s, 0).phase == AbilityPhase::Recovery);
   CHECK(s.playerBySlot(kP0)->transform.vel == Vec2::zero());
+}
+
+TEST_CASE("a press on the tick boundary keeps PerfectDash for exactly the window",
+          "[sim][ability]") {
+  const ContentDB& content = defaultContent();
+  const int perfect = content.abilityForSlot(kAbilitySlotDash).perfectWindowTicks;
+  WorldState s = makePlayingWorld(2, 0b1);
+  EventSink sink;
+  abilityTick(s, withButtons(s, kDash, 0, 0, 0), content, sink);  // sub-tick 0
+  for (int k = 0; k <= perfect + 1; ++k) {
+    if (k > 0) abilityTick(s, withButtons(s, 0), content, sink);
+    INFO("k = " << k);
+    CHECK(s.playerBySlot(kP0)->tags.has(Tag::PerfectDash) == (k < perfect));
+  }
 }
 
 TEST_CASE("tag rebuild leaves HitStun and Eliminated alone", "[sim][ability]") {
