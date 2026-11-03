@@ -788,6 +788,24 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   colour. Draw order: opaque, alpha ground decals and billboards, additive billboards; nothing is
   sorted. The per-frame path allocates nothing. Measured 47–55 draw calls and under 5k triangles
   for 10 players; budget 100 draw calls per frame before instancing is worth doing.
+- GPU skinning (v0.15): the one rigged test model of the M2 exit criterion is generated at
+  build time by `tools/assets/gen_test_rig.py` (stdlib Python, byte-identical output; CMake
+  target `kfm_test_rig`), copied next to each executable natively and embedded in the browser
+  build. It is the M2 stand-in for the Blender → glTF pipeline above, which arrives with real
+  art; no exported glTF is committed. The rig has 7 joints (root, spine, head, upper and lower
+  arms) and six clips (idle and run loop; dash, throw, hit and eliminated hold their last
+  frame). cgltf loads meshes, skins and LINEAR/STEP rotation and translation channels into a
+  `SkinnedModel` of plain vectors (`kfm::presentation_gltf`, skipped in headless builds); the
+  animation layer (headless, tested) samples clips, blends poses (lerp translations, nlerp
+  rotations) and produces skin matrices. Clip priority: eliminated > hit (`HitStun`) > dash
+  (`Dashing`) > throw (`Throwing`, held at least 0.3 s) > run (ground speed above 0.5 units/s,
+  ignoring snap-sized jumps) > idle; any change crossfades over 0.1 s. Per-slot animation state
+  lives in the renderer, never in `RenderState`. Budget: at most 16 joints and 4 influences per
+  vertex, skin matrices as 72 vec4s (WebGL2 guarantees 256); raise it only with dual quaternions
+  or a joint texture. A missing or invalid model, or `--capsules`, falls back to the capsule
+  with a warning. Not yet done: the upper-body/lower-body split (body yaw drives the whole
+  model; the aim bar shows the aim) and a slumping body after elimination (the sim despawns an
+  eliminated player in the same tick, so a presentation-side ghost is needed).
 - `kfm_render_probe` (`apps/render-probe`) renders a scripted match through the same builder and
   renderer with `--screenshot`, `--exit-after-frames`, `--exit-on <event>` and `--hide-ui`, so
   rendering is verified from screenshots without a human; it is the second xvfb smoke test on
