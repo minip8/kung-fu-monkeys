@@ -158,7 +158,9 @@ WorldState richWorld() {
   s.rules.round = 2;
   s.rules.scores[3] = 1;
   s.rules.lastRoundWinner = PlayerId{3};
+  // The index checks bound the pool writes for GCC 15's -Wstringop-overflow in Release.
   const EntityId b = s.boomerangs.spawn();
+  REQUIRE(b.index < kMaxBoomerangs);
   s.boomerangs.items[b.index] =
       Boomerang{PlayerId{1},
                 BoomerangPhase::Returning,
@@ -169,11 +171,14 @@ WorldState richWorld() {
                 1,
                 0};
   const EntityId k = s.pickups.spawn();
+  REQUIRE(k.index < kMaxPickups);
   s.pickups.items[k.index] = Pickup{PickupKind::Banana, Vec2{-4_fx, 5_fx}, 0, 0};
   // v0.20: a power-up pickup and a banana carrying projectile modifiers.
   const EntityId k2 = s.pickups.spawn();
+  REQUIRE(k2.index < kMaxPickups);
   s.pickups.items[k2.index] = Pickup{PickupKind::PowerUp, Vec2{6_fx, -2_fx}, 4, 2};
   const EntityId b2 = s.boomerangs.spawn();
+  REQUIRE(b2.index < kMaxBoomerangs);
   Boomerang& big = s.boomerangs.items[b2.index];
   big.owner = PlayerId{0};
   big.pierce = 1;
