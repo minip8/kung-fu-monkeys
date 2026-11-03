@@ -261,3 +261,72 @@ TEST_CASE("ContentDB round-trips through the visitor", "[sim][visit]") {
   CHECK(contentHash(d) == contentHash(c));
   CHECK(checksumOf(d) == checksumOf(c));
 }
+
+// A snapshot from the network must not be able to smuggle in a state the
+// systems index or shift by: each corruption below is written raw (the
+// writer does not validate) and must make readFrom fail.
+TEST_CASE("reader rejects out-of-range enums, ids and indices", "[sim][visit]") {
+  WorldState a = richWorld();
+  const auto raw = [](auto& e, uint8_t v) {
+    std::memcpy(&e, &v, 1);  // an enum value outside its declared range
+  };
+
+  SECTION("MatchPhase") {
+    raw(a.rules.phase, 5);
+  }
+  SECTION("AbilityPhase") {
+    raw(a.players.items[0].abilities[0].phase, 4);
+  }
+  SECTION("BoomerangPhase (would shift by 40)") {
+    raw(a.boomerangs.items[0].phase, 40);
+  }
+  SECTION("PickupKind") {
+    raw(a.pickups.items[0].kind, 1);
+  }
+  SECTION("StatKind") {
+    raw(a.players.items[0].modifiers.items[0].stat, 3);
+  }
+  SECTION("player id differs from its slot (would index scores[200])") {
+    a.players.items[0].id = PlayerId{200};
+  }
+  SECTION("player id is another valid slot") {
+    a.players.items[0].id = PlayerId{3};
+  }
+  SECTION("AbilityState.defIndex past the def table") {
+    a.players.items[0].abilities[0].defIndex = kMaxAbilityDefs;
+  }
+  SECTION("boomerang owner is neither invalid nor a slot") {
+    a.boomerangs.items[0].owner = PlayerId{kMaxPlayers};
+  }
+  SECTION("lastRoundWinner is neither invalid nor a slot") {
+    a.rules.lastRoundWinner = PlayerId{17};
+  }
+  SECTION("tag bits above Tag::kCount") {
+    a.players.items[0].tags.bits |= uint32_t{1} << static_cast<uint32_t>(Tag::kCount);
+  }
+
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, a));
+  WorldState b{};
+  BitReader r(w.written());
+  CHECK_FALSE(readFrom(r, b));
+}
+
+TEST_CASE("reader accepts boundary values and keeps the checksum", "[sim][visit]") {
+  WorldState a = richWorld();
+  a.rules.phase = MatchPhase::MatchEnded;
+  a.boomerangs.items[0].owner = PlayerId::invalid();
+  a.boomerangs.items[0].phase = BoomerangPhase::Grounded;
+  a.players.items[0].abilities[0].defIndex = kMaxAbilityDefs - 1;
+  a.players.items[0].modifiers.items[0].stat = StatKind::AmmoMax;
+  a.players.items[0].tags.set(Tag::Eliminated);
+  a.rules.lastRoundWinner = PlayerId{kMaxPlayers - 1};
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, a));
+  WorldState b{};
+  BitReader r(w.written());
+  REQUIRE(readFrom(r, b));
+  CHECK(checksum(b) == checksum(a));
+}

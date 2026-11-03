@@ -60,12 +60,54 @@ void visit(V& v, Rng& r) {
     v.u32(word);
 }
 
+// Number of valid values of each visited enum (values are 0..count-1). A
+// reader rejects anything at or above it: a snapshot from the network must
+// not be able to put an out-of-range enum into the state, where it would
+// index a table or shift by it.
+template <class E>
+inline constexpr uint8_t kEnumCount = 0;  // no specialisation: not visitable
+template <>
+inline constexpr uint8_t kEnumCount<AbilityKind> = static_cast<uint8_t>(AbilityKind::kCount);
+template <>
+inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
+template <>
+inline constexpr uint8_t kEnumCount<StatKind> = 3;
+template <>
+inline constexpr uint8_t kEnumCount<BoomerangPhase> = 3;
+template <>
+inline constexpr uint8_t kEnumCount<PickupKind> = 1;
+template <>
+inline constexpr uint8_t kEnumCount<MatchPhase> = 5;
+static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
+static_assert(static_cast<uint8_t>(StatKind::AmmoMax) + 1 == kEnumCount<StatKind>);
+static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
+static_assert(static_cast<uint8_t>(PickupKind::Banana) + 1 == kEnumCount<PickupKind>);
+static_assert(static_cast<uint8_t>(MatchPhase::MatchEnded) + 1 == kEnumCount<MatchPhase>);
+
 template <class V, class E>
   requires std::is_enum_v<E> && std::is_same_v<std::underlying_type_t<E>, uint8_t>
 void visit(V& v, E& e) {
+  static_assert(kEnumCount<E> > 0, "add a kEnumCount specialisation for this enum");
   auto raw = static_cast<uint8_t>(e);
   v.u8(raw);
-  if constexpr (V::kIsReader) e = static_cast<E>(raw);
+  if constexpr (V::kIsReader) {
+    if (raw >= kEnumCount<E>) {
+      v.markInvalid();
+      raw = 0;
+    }
+    e = static_cast<E>(raw);
+  }
+}
+
+// A reader rejects a player reference that is neither invalid nor a slot.
+template <class V>
+void validatePlayerRef(V& v, PlayerId& p) {
+  if constexpr (V::kIsReader) {
+    if (p.isValid() && p.value >= kMaxPlayers) {
+      v.markInvalid();
+      p = PlayerId::invalid();
+    }
+  }
 }
 
 // Pools visit the alive bits, the generations and the alive items only;
@@ -100,6 +142,13 @@ void visit(V& v, Pool<T, N>& pool) {
 template <class V>
 void visit(V& v, Tags& t) {
   v.u32(t.bits);
+  if constexpr (V::kIsReader) {
+    constexpr uint32_t kValid = (uint32_t{1} << static_cast<uint32_t>(Tag::kCount)) - 1u;
+    if ((t.bits & ~kValid) != 0) {
+      v.markInvalid();
+      t.bits &= kValid;
+    }
+  }
 }
 
 // --- content (hashed for content_hash, architecture §5.10) ------------------
@@ -202,6 +251,7 @@ void visit(V& v, MatchRules& r) {
   for (uint8_t& score : r.scores)
     v.u8(score);
   visit(v, r.lastRoundWinner);
+  validatePlayerRef(v, r.lastRoundWinner);
 }
 template <class V>
 void visit(V& v, Transform& t) {
@@ -254,6 +304,12 @@ void visit(V& v, Intent& in) {
 template <class V>
 void visit(V& v, AbilityState& a) {
   v.u8(a.defIndex);
+  if constexpr (V::kIsReader) {
+    if (a.defIndex >= kMaxAbilityDefs) {
+      v.markInvalid();
+      a.defIndex = 0;
+    }
+  }
   visit(v, a.phase);
   v.u16(a.phaseTicks);
   v.u16(a.cooldownTicks);
@@ -279,6 +335,7 @@ void visit(V& v, Player& p) {
 template <class V>
 void visit(V& v, Boomerang& b) {
   visit(v, b.owner);
+  validatePlayerRef(v, b.owner);
   visit(v, b.phase);
   visit(v, b.transform);
   visit(v, b.spin);
@@ -299,6 +356,17 @@ void visit(V& v, WorldState& s) {
   visit(v, s.rng);
   visit(v, s.rules);
   visit(v, s.players);
+  if constexpr (V::kIsReader) {
+    // Players are indexed by slot (WorldState::playerBySlot): an alive
+    // player's id must equal its pool index, or rules index by a stray id.
+    for (uint16_t i = 0; i < kMaxPlayers; ++i) {
+      Player& p = s.players.items[i];
+      if (s.players.isAliveIndex(i) && p.id.value != i) {
+        v.markInvalid();
+        p.id = PlayerId{static_cast<PlayerId::rep>(i)};
+      }
+    }
+  }
   visit(v, s.boomerangs);
   visit(v, s.pickups);
 }

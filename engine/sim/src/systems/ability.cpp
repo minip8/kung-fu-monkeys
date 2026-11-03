@@ -93,9 +93,7 @@ constexpr Tags kSystemOwnedTags = Tags::of(Tag::HitStun) | Tag::Eliminated;
 }
 
 [[nodiscard]] const AbilityDef& defFor(const ContentDB& content, const AbilityState& st) {
-  // An out-of-range index falls back to the inert None def (index 0).
-  return st.defIndex < content.abilities.size() ? content.abilities[st.defIndex]
-                                                : content.abilities[0];
+  return content.abilityAt(st.defIndex);
 }
 
 // Advances through every phase whose duration has elapsed (a loop, so several

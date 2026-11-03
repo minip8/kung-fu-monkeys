@@ -196,6 +196,11 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
 - Serialization uses a visitor (`template <class V> void visit(V&, Player&)`) that yields
   read, write, checksum and debug dump from one function. Network snapshots, replays and
   checksums always go through the visitor, never raw memory (padding bytes are not deterministic).
+  The reading visitor validates what it decodes (v0.14): an enum at or above its value count, an
+  alive player whose id is not its slot, a player reference (banana owner, round winner) that is
+  neither invalid nor a slot, an ability `defIndex` past the def table, or a tag bit above
+  `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
+  system would index or shift by.
 
 ### 5.3 Tick pipeline
 

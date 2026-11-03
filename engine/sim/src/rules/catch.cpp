@@ -15,7 +15,7 @@ bool catchBoomerang(WorldState& s, const ContentDB& content, EntityId a, EntityI
   Player* p = s.players.get(a);
   if (p == nullptr || !s.boomerangs.isAlive(b)) return false;
   const AbilityState& dash = p->abilities[kAbilitySlotDash];
-  const AbilityDef& def = content.abilities[dash.defIndex];
+  const AbilityDef& def = content.abilityAt(dash.defIndex);
 
   const Fixed delta = Fixed::fromInt(s.tick.minus(dash.activatedTick)) + contact.tHit -
                       Fixed::fromRatio(dash.activatedSubTick, 256);

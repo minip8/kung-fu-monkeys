@@ -94,6 +94,12 @@ struct ContentDB {
   ArenaDef arena{};
   ModeDef mode{};
 
+  // Def at a state's defIndex; an out-of-range index falls back to the inert
+  // None def (index 0), so a bad index can never read past the table.
+  [[nodiscard]] constexpr const AbilityDef& abilityAt(uint8_t index) const {
+    return index < abilities.size() ? abilities[index] : abilities[0];
+  }
+
   // Def for an ability slot of the base loadout.
   [[nodiscard]] constexpr const AbilityDef& abilityForSlot(uint8_t slot) const {
     return abilities[player.abilities[slot]];
