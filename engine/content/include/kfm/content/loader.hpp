@@ -5,8 +5,9 @@
 // A content set is any number of TOML documents merged in a canonical order
 // (sorted relative paths). Top-level keys:
 //   [player] [boomerang] [pickup] [dash_attack]   exactly once in the set
-//   [[ability]] [[arena]] [[mode]]                appended in load order
-// Defs refer to each other by name (the player's loadout names abilities);
+//   [[ability]] [[arena]] [[mode]] [[powerup]]    appended in load order
+// Defs refer to each other by name (the player's loadout and power-up
+// overrides name abilities, arena spawners name power-ups);
 // the loader resolves names to indices. Unknown keys are errors, so a typo
 // never silently falls back to a default. Fixed-point values are written as
 // decimals and converted exactly (decimal.hpp), never through double.

@@ -28,8 +28,12 @@ static_assert(kMaxPlayers <= 16, "player sets below are uint16_t bit masks");
 [[nodiscard]] Aabb playerBox(const Player& p, const MatchContent& content) {
   return collision::sweptAabb(p.transform.prevPos, p.transform.pos, content.db.player.radius);
 }
+// A banana's contact radius: the def's, scaled by its projectile modifier (§5.8).
+[[nodiscard]] Fixed boomerangRadius(const Boomerang& b, const MatchContent& content) {
+  return content.db.boomerang.radius * b.radiusMul;
+}
 [[nodiscard]] Aabb boomerangBox(const Boomerang& b, const MatchContent& content) {
-  return collision::sweptAabb(b.transform.prevPos, b.transform.pos, content.db.boomerang.radius);
+  return collision::sweptAabb(b.transform.prevPos, b.transform.pos, boomerangRadius(b, content));
 }
 [[nodiscard]] Aabb pickupBox(const Pickup& p, const MatchContent& content) {
   return collision::sweptAabb(p.pos, p.pos, pickupRadius(content));
@@ -169,10 +173,11 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
       break;
     }
     case EntityKind::Boomerang: {
-      const Transform& tb = s.boomerangs.items[pair.indexB].transform;
+      const Boomerang& banana = s.boomerangs.items[pair.indexB];
+      const Transform& tb = banana.transform;
       prevB = tb.prevPos;
       posB = tb.pos;
-      radiusB = content.db.boomerang.radius;
+      radiusB = boomerangRadius(banana, content);
       idB = s.boomerangs.idAt(pair.indexB);
       break;
     }

@@ -38,19 +38,16 @@ struct Stats {
   uint8_t ammoMax{0};
 };
 
-enum class StatKind : uint8_t { MoveSpeed = 0, MaxHp, AmmoMax };
-
-// M1: the type exists, lists stay empty. Integer stats accept `add` only.
-struct StatModifier {
-  StatKind stat{StatKind::MoveSpeed};
-  Fixed mul{Fixed::one()};
-  Fixed add{};
+// One live power-up on a player (§5.8): its def and the ticks it has left.
+// The grants are read from the def every tick, never copied here.
+struct ActiveModifier {
+  uint8_t powerUp{0};  // index into ContentDB::powerUps
   uint16_t ticksLeft{0};
 };
 
-// Fixed capacity; items[0..count) are live, in slot order.
+// Fixed capacity; items[0..count) are live, in slot order (pickup order).
 struct ModifierList {
-  std::array<StatModifier, kMaxModifiers> items{};
+  std::array<ActiveModifier, kMaxModifiers> items{};
   uint8_t count{0};
 };
 
@@ -100,15 +97,20 @@ struct Boomerang {
   uint16_t ticksAlive{0};
   uint16_t ticksInPhase{0};
   uint8_t damage{1};
-  uint8_t pierce{0};
+  uint8_t pierce{0};  // 0/1
+  // Projectile modifiers of the thrower's power-ups, snapshotted at the throw
+  // (§5.8): speed and contact radius are the BoomerangDef's times these.
+  Fixed speedMul{Fixed::one()};
+  Fixed radiusMul{Fixed::one()};
 };
 
-enum class PickupKind : uint8_t { Banana = 0 };  // M1: a grounded banana; M4 adds power-ups
+enum class PickupKind : uint8_t { Banana = 0, PowerUp };
 
 struct Pickup {
   PickupKind kind{PickupKind::Banana};
   Vec2 pos{};
-  uint8_t powerUpIndex{0};
+  uint8_t powerUpIndex{0};  // PowerUp: index into ContentDB::powerUps
+  uint8_t spawner{0};       // PowerUp: index into the arena's pickupSpawners
 };
 
 // --- match --------------------------------------------------------------------

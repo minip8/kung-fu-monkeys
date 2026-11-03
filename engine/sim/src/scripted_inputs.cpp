@@ -70,21 +70,24 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
   in.moveMag = 255;
   in.moveDir = wanderDirection(rng, p, content, config);
 
-  // Out of ammo: go for the nearest banana lying within reach.
-  if (p.ammo == 0) {
-    uint64_t best = squareRaw(config.pickupRadius);
-    bool found = false;
-    Vec2 target{};
-    s.pickups.forEachAlive([&](EntityId /*kid*/, const Pickup& k) {
-      const uint64_t d = lengthSqRaw(k.pos - pos);
-      if (d <= best) {
-        best = d;
-        target = k.pos;
-        found = true;
-      }
-    });
-    if (found && target != pos) in.moveDir = directionTo(pos, target);
-  }
+  // Out of ammo: go for the nearest banana lying within reach. Holding a
+  // banana: go for the nearest power-up lying within reach (none in an arena
+  // without spawners, so this never changes a power-up-free match).
+  const bool wantBanana = p.ammo == 0;
+  const PickupKind wanted = wantBanana ? PickupKind::Banana : PickupKind::PowerUp;
+  uint64_t best = squareRaw(wantBanana ? config.pickupRadius : config.powerUpRadius);
+  bool found = false;
+  Vec2 target{};
+  s.pickups.forEachAlive([&](EntityId /*kid*/, const Pickup& k) {
+    if (k.kind != wanted) return;
+    const uint64_t d = lengthSqRaw(k.pos - pos);
+    if (d <= best) {
+      best = d;
+      target = k.pos;
+      found = true;
+    }
+  });
+  if (found && target != pos) in.moveDir = directionTo(pos, target);
 
   // Aim at the nearest other alive player, with a little jitter.
   uint64_t nearest = std::numeric_limits<uint64_t>::max();  // stays max with nobody else alive

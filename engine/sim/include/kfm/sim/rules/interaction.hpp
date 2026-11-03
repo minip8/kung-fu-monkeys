@@ -29,6 +29,16 @@ inline constexpr uint8_t kPhaseReturning = boomerangPhaseBit(BoomerangPhase::Ret
   return mask == kPhaseAny || (mask & boomerangPhaseBit(p)) != 0;
 }
 
+// Bits over PickupKind for InteractionRule::pickupMaskB.
+[[nodiscard]] constexpr uint8_t pickupKindBit(PickupKind k) {
+  return static_cast<uint8_t>(1u << static_cast<uint8_t>(k));
+}
+inline constexpr uint8_t kPickupAny = 0;  // no pickup-kind constraint
+
+[[nodiscard]] constexpr bool pickupMaskMatches(uint8_t mask, PickupKind k) {
+  return mask == kPickupAny || (mask & pickupKindBit(k)) != 0;
+}
+
 // Relation between the player A and the owner of boomerang B.
 enum class Ownership : uint8_t { Any = 0, Own, NotOwn };
 
@@ -47,6 +57,7 @@ struct InteractionRule {
   uint8_t phaseMaskB{kPhaseAny};  // when B is a boomerang: allowed BoomerangPhase bits
   Ownership ownership{Ownership::Any};
   InteractionResolveFn resolve{nullptr};
+  uint8_t pickupMaskB{kPickupAny};  // when B is a pickup: allowed PickupKind bits
 };
 
 // The M1 rows, sorted by ascending priority.

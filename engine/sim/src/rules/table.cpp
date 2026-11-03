@@ -23,13 +23,24 @@ constexpr Tags kGone = Tags::of(Tag::Eliminated);
 // InteractionSystem tries each player contact both ways round. A stunned
 // attacker cannot strike, so the loser of a mutual dash cannot retaliate in
 // the same tick.
-constexpr std::array<InteractionRule, 6> kRules = {{
+//
+// The shield (v0.20, rows 20 and 24) sits just above the row it pre-empts
+// and keys on the same tags, so it only breaks on a hit that would land.
+// Pickups are split by kind: row 50 the grounded banana, row 51 a power-up.
+constexpr std::array<InteractionRule, 9> kRules = {{
     // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseInFlight, Ownership::NotOwn, &catchBoomerang},
     // Player[PerfectDash] x Boomerang[Returning, own]: perfect catch of one's own.
     {11, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseReturning, Ownership::Own, &catchBoomerang},
+    // Player[Shielded, !HitStun, !Invulnerable] x Boomerang[InFlight, !own]: shield blocks.
+    {20, EntityKind::Player, Tags::of(Tag::Shielded), kGone | Tag::HitStun | Tag::Invulnerable,
+     EntityKind::Boomerang, Tags{}, Tags{}, kPhaseInFlight, Ownership::NotOwn, &shieldBlocksBanana},
+    // Player[Dashing, !HitStun] x Player[Shielded, !HitStun, !Invulnerable]: shield blocks.
+    {24, EntityKind::Player, Tags::of(Tag::Dashing), kGone | Tag::HitStun, EntityKind::Player,
+     Tags::of(Tag::Shielded), kGone | Tag::HitStun | Tag::Invulnerable, kPhaseAny, Ownership::Any,
+     &shieldBlocksDash},
     // Player[Dashing, !HitStun] x Player[!HitStun, !Invulnerable]: dash attack.
     {25, EntityKind::Player, Tags::of(Tag::Dashing), kGone | Tag::HitStun, EntityKind::Player,
      Tags{}, kGone | Tag::HitStun | Tag::Invulnerable, kPhaseAny, Ownership::Any, &dashAttack},
@@ -39,9 +50,12 @@ constexpr std::array<InteractionRule, 6> kRules = {{
     // Player[] x Boomerang[Returning, own]: auto catch.
     {40, EntityKind::Player, Tags{}, kGone, EntityKind::Boomerang, Tags{}, Tags{}, kPhaseReturning,
      Ownership::Own, &autoCatch},
-    // Player[] x Pickup[]: take pickup.
+    // Player[] x Pickup[Banana]: take the banana.
     {50, EntityKind::Player, Tags{}, kGone, EntityKind::Pickup, Tags{}, Tags{}, kPhaseAny,
-     Ownership::Any, &takePickup},
+     Ownership::Any, &takePickup, pickupKindBit(PickupKind::Banana)},
+    // Player[] x Pickup[PowerUp]: grant the power-up.
+    {51, EntityKind::Player, Tags{}, kGone, EntityKind::Pickup, Tags{}, Tags{}, kPhaseAny,
+     Ownership::Any, &grantPowerUp, pickupKindBit(PickupKind::PowerUp)},
 }};
 
 static_assert(std::ranges::is_sorted(kRules, {}, &InteractionRule::priority));

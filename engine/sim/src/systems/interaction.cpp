@@ -72,6 +72,10 @@ struct SortKey {
   if (rule.kindA != c.kindA || rule.kindB != c.kindB) return false;
   if (!playerTagsMatch(s, c.kindA, c.a, rule.requireA, rule.forbidA)) return false;
   if (!playerTagsMatch(s, c.kindB, c.b, rule.requireB, rule.forbidB)) return false;
+  if (c.kindB == EntityKind::Pickup) {
+    const Pickup* k = s.pickups.get(c.b);
+    return k != nullptr && pickupMaskMatches(rule.pickupMaskB, k->kind);
+  }
   if (c.kindB != EntityKind::Boomerang) return true;
   const Boomerang* b = s.boomerangs.get(c.b);
   if (b == nullptr || !phaseMaskMatches(rule.phaseMaskB, b->phase)) return false;

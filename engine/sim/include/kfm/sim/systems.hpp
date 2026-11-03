@@ -35,9 +35,11 @@ void interactionSystem(WorldState& s, const MatchContent& content, const Contact
 // InteractionSystem's order; the caller checks MatchPhase::Playing.
 void interactionResolveContact(WorldState& s, const MatchContent& content, const Contact& c,
                                EventSink& sink);
-// 8. Modifier timers, derived Stats, HP clamp, HitStun expiry (systems/modifier.cpp).
+// 8. Power-up expiry and timers, derived Stats, HP clamp, ability overrides,
+//    granted tags, HitStun expiry (systems/modifier.cpp).
 void modifierSystem(WorldState& s, const MatchContent& content);
-// 9. Eliminated players despawn, grounded boomerangs become pickups (systems/lifecycle.cpp).
+// 9. Eliminated players despawn, grounded boomerangs become pickups, power-up
+//    spawners (systems/lifecycle.cpp).
 void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink);
 // 10. Win conditions and scoring (systems/rules.cpp).
 void rulesPostTick(WorldState& s, const MatchContent& content, EventSink& sink);

@@ -30,3 +30,12 @@ cooldown_ticks = 20         # a third of a second between throws
 startup_ticks = 2           # wind-up before the banana leaves the hand
 active_ticks = 1            # the banana spawns on the Startup -> Active transition
 recovery_ticks = 6          # follow-through
+
+# Fast Hands (powerups.toml) runs the throw slot on this def while it lasts.
+[[ability]]
+name = "throw_fast"
+kind = "throw"
+cooldown_ticks = 8          # a banana every 8 ticks while the hands are fast
+startup_ticks = 1
+active_ticks = 1
+recovery_ticks = 3

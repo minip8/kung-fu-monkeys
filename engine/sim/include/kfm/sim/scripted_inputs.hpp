@@ -10,7 +10,8 @@
 //   - wander: keep the current stick direction (read back from the player's
 //     decoded intent), turn to a random one about once a second, and steer
 //     back toward the interior near a wall; moveMag 255;
-//   - with no ammo, walk toward the nearest banana pickup;
+//   - with no ammo, walk toward the nearest banana pickup; holding ammo, walk
+//     toward the nearest power-up pickup within powerUpRadius (§5.8);
 //   - aim at the nearest other alive player (with a little jitter);
 //   - throw about twice a second while ammo > 0 and the Throw slot is ready;
 //   - dash now and then, and often toward a non-own banana in flight that is
@@ -43,6 +44,7 @@ struct ScriptedInputConfig {
   Fixed dashAttackRadius{Fixed::fromInt(3)};  // how close that enemy must be
   Fixed threatRadius{Fixed::fromInt(2)};      // how close an incoming banana must be
   Fixed pickupRadius{Fixed::fromInt(40)};     // how far an empty-handed player looks for ammo
+  Fixed powerUpRadius{Fixed::fromInt(12)};    // how far an armed player goes for a power-up
   Fixed wallMargin{Fixed::fromInt(2)};        // turn back when this close to a wall
   uint8_t aimJitter{2};                       // ± 1/256 turns of random aim error
 };

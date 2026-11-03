@@ -12,3 +12,4 @@ empty_2p_60t          empty     0x7         -           2        60
 empty_10p_600t        empty     0x4B464D00  -           10       600
 scripted_4p_1200t     scripted  0x4B464D04  0x5C1204    4        1200
 scripted_10p_3600t    scripted  0x4B464D10  0x5C121D    10       3600
+scripted_4p_powerups_1800t  scripted  0x4B464D20  0x5C1220  4  1800  dojo_powerups  rounds

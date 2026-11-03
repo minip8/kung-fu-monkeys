@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.19 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.20 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -95,6 +95,22 @@ effect and event → sound mapping side by side in `event_fx`; trails are sample
 without a device, opened on the first input in the browser), `--mute` / `--volume` and the F1
 Audio panel. SDL3 is built with ALSA on Linux (vcpkg `alsa` feature, or the FetchContent build
 when `libasound2-dev` is present), no new dependency (§10). Tests (§9).
+v0.20 changes: power-ups as built (§5.8). `PowerUpDef` (content, `[[powerup]]` in
+`content/powerups.toml`): a duration, a visual (palette colour + shape) and up to 4 grants of four
+kinds: `StatModifier`, `AbilityOverride`, `ProjectileModifier` (snapshotted onto the banana at the
+throw), `Tag` (`shielded`, `invulnerable`). A `ModifierList` entry is now `{powerUp, ticksLeft}`;
+`ModifierSystem` drops expired entries, derives stats, swaps overridden ability slots while idle
+(cooldown capped at the new def's) and sets granted tags, then counts down, so a power-up picked on
+tick T shapes the state after T..T+D−1. Pickups gain `PickupKind::PowerUp` and the arena gains
+up to 8 `PickupSpawner`s run at the end of `LifecycleSystem` from `ticksInPhase` and the world RNG
+(§5.3). Rules rows 20/24 (the shield absorbs one banana hit or dash attack, staggers the victim,
+stops the dash, ends its power-up) and 50/51 (pickups split by kind through a new
+`pickupMaskB`) (§5.6). `ShieldBroken` event; `PickupSpawned`/`PickupTaken` carry the pickup kind
+and power-up (§5.9). Six power-ups, the `throw_fast` ability and the `dojo_powerups` arena; the
+default `dojo` has no spawners, so the default match and the existing corpus checksums are
+unchanged; unmodified bananas and banana pickups serialise exactly as before (§5.2). A
+scripted-bot behaviour, the `scripted_4p_powerups_1800t` corpus entry and `kfm_replay stats`
+power-up counts (§9). Pickups render per def and the HUD shows power-up timers (§7).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -269,21 +285,27 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   alive player whose id is not its slot, a player reference (banana owner, round winner) that is
   neither invalid nor a slot, an ability `defIndex` past the def table, or a tag bit above
   `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
-  system would index or shift by.
+  system would index or shift by. v0.20 adds a power-up index past `kMaxPowerUps`, a pickup
+  spawner past `kMaxPickupSpawners` and a banana `pierce` above 1.
+- Optional payloads (v0.20) are visited only when present, so state without them serialises
+  byte for byte as before and old replay checksums stay valid: a banana's projectile modifiers
+  (`speedMul`, `radiusMul`) follow its `pierce` byte only when that byte's top bit says they
+  differ from 1, and a pickup's `spawner` only when its kind is `PowerUp`. A `ModifierList`
+  visits only its live prefix, as before.
 
 ### 5.3 Tick pipeline
 
 ```
 step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& events):
-   1. RulesSystem::preTick      round start/end, spawn waves, pickup spawners
+   1. RulesSystem::preTick      round start/end, spawn waves
    2. InputSystem               decode PlayerInput → Intent; press-edge detection
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
    4. MovementSystem            intent × derived stats → velocity; integrate; arena clamp
    5. ProjectileSystem          boomerang flight: outbound → return steering → grounded
    6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
    7. InteractionSystem         resolves Contacts via the rules table (hit, catch, dash attack, pickup)
-   8. ModifierSystem            tick timers, expire, recompute derived Stats
-   9. LifecycleSystem           eliminations, respawns, despawns
+   8. ModifierSystem            expire, recompute derived Stats, overrides and tags, tick timers
+   9. LifecycleSystem           eliminations, respawns, despawns, power-up spawners (v0.20)
   10. RulesSystem::postTick     win conditions, scoring
   11. s.tick++
 ```
@@ -298,7 +320,14 @@ Player × Pickup and (v0.16) Player × Player; a player pair is listed once with
 the midpoint of the two centres at `tHit` so it reads the same from either side. Player pairs are
 purely geometric: every touching pair is a contact whatever its tags (at most 45 with 10
 players), and the rules table decides what a touch means. A brute-force all-pairs broadphase stays in
-the tests as the oracle: a property test asserts both produce the same pair set.
+the tests as the oracle: a property test asserts both produce the same pair set. A banana's
+contact radius is `BoomerangDef::radius × Boomerang::radiusMul` (v0.20, §5.8).
+
+Power-up spawners (v0.20) run at the end of `LifecycleSystem`, not in `RulesSystem::preTick`:
+entity creation and removal already live there (grounded bananas become pickups in the same
+place), a pickup spawned at the end of tick T is touchable from T+1 like a grounded banana, and
+the spawner timeline is a function of `MatchRules::ticksInPhase` that the post-tick has not yet
+advanced. The order of the ten systems is unchanged.
 
 Systems are stateless free functions; the order is fixed and documented; each reads state and
 inputs and writes state and events. Nothing else mutates `WorldState`.
@@ -403,17 +432,21 @@ or pick up again.
 ```
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
- 20   Player[Shielded]           Boomerang[InFlight, !own]      BreakShield
+ 20   Player[Shielded, !HitStun] Boomerang[InFlight, !own]      ShieldBlocksBanana
+ 24   Player[Dashing, !HitStun]  Player[Shielded, !HitStun]     ShieldBlocksDash (declines below minAmmo)
  25   Player[Dashing, !HitStun]  Player[!HitStun, !Invulnerable] DashAttack (declines below minAmmo)
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
- 50   Player[]                   Pickup[]                       GrantPowerUp
+ 50   Player[]                   Pickup[Banana]                 TakePickup (declines at ammoMax)
+ 51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
  60   Boomerang[]                Wall                           Bounce
 ```
 
 M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
-restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below). Rows
-20 and 60 do not exist yet. The wall bounce lives in `ProjectileSystem` (§5.7), not in the table:
+restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below); v0.20
+adds rows 20, 24 and 51 (§5.8) and the row field `pickupMaskB` (allowed `PickupKind` bits when B is
+a pickup, like `phaseMaskB` for a banana) that splits row 50 from row 51. Row 60 does not exist
+yet. The wall bounce lives in `ProjectileSystem` (§5.7), not in the table:
 the arena is a box, the bounce is a per-axis reflection done while integrating, and
 `CollisionSystem` emits only Player × Boomerang, Player × Pickup and Player × Player contacts. A
 Wall row arrives when arenas gain interior shapes and some banana kinds should not bounce, at
@@ -463,7 +496,14 @@ HP semantics (v0.10):
   (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. The banana grounds at the contact point and becomes a pickup
   unless it has `pierce`, in which case it keeps flying.
 - Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
-  consumed (rule 20); armour is `+maxHp`. A mode or power-up picks one or stacks both.
+  consumed (rule 20, and rule 24 for a dash attack); armour is `+maxHp`. A mode or power-up picks
+  one or stacks both. As built (v0.20): rows 20 and 24 key on the tags of the rows they pre-empt
+  (30 and 25), so a shield breaks only on a hit that would land. The block removes the first
+  `ModifierList` entry whose def grants `Shielded` (ending that power-up), clears the tag and
+  gives the victim `HitStun` for `hitStunTicks` like a hit, without damage; a blocked banana
+  grounds at the contact point even when it pierces; a blocked dash stops (the attacker's dash
+  slot jumps to Recovery and its dash tags drop), because the rest of the dash would otherwise
+  land once the stagger ran out. Both emit `ShieldBroken`.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
 are rule-table decisions, not code changes. M1 decides the first: the catch is two rows,
 `Player[PerfectDash] × Boomerang[InFlight, !own]` (prio 10) and
@@ -480,8 +520,11 @@ is a defence only for a player who has thrown.
 ### 5.7 Boomerang model
 
 - State: `owner`, `phase` {Outbound, Returning, Grounded}, `pos`, `vel`, `spin`, `ticksAlive`,
-  `damage` (default 1, a one-hit kill against base `maxHp`), modifiers (size, speed, bounces,
-  pierce).
+  `damage` (default 1, a one-hit kill against base `maxHp`), `pierce`, and (v0.20) the
+  projectile modifiers `speedMul` and `radiusMul` snapshotted at the throw (§5.8): the banana
+  flies at `BoomerangDef::speed × speedMul` out and back, and its wall limits and contact radius
+  use `BoomerangDef::radius × radiusMul`. Bananas already bounce off every wall without limit, so
+  an "extra bounces" modifier has nothing to extend and is not built.
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
   eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
@@ -511,6 +554,70 @@ is a defence only for a player who has thrown.
   described in §5.6.
 - Pickup entities reference a `PowerUpDef` by index and are spawned by arena spawners.
 
+As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/powerup.cpp`,
+`rules/shield.cpp`, `systems/lifecycle.cpp`):
+
+- `PowerUpDef{name, durationTicks (>= 1), visual{color, shape}, grants[4], grantCount}` in
+  `ContentDB::powerUps` (`kMaxPowerUps` 16, `powerUpAt`, `findPowerUp`). `visual.color` indexes
+  the player palette (0–9) and `visual.shape` is `Orb`, `Cube`, `Diamond` or `Coin`; the sim
+  never reads either. A `PowerUpGrant` has a `GrantKind` and the fields of its kind:
+  - `Stat`: `StatModifier{stat, mul, add}` over `MoveSpeed` (mul and add), `MaxHp` and `AmmoMax`
+    (whole `add` only; the loader rejects a `mul`).
+  - `AbilityOverride{slot, ability}`: the slot runs that ability def (same kind as the loadout's,
+    so the button mapping holds; validated) while the power-up is live; the last override in
+    slot order wins.
+  - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd, pierce}`, each mul in
+    (0, 4].
+  - `Tag`: `shielded` or `invulnerable` (the others belong to abilities and the damage rules).
+- State: a `ModifierList` entry is `ActiveModifier{powerUp, ticksLeft}`; the grants are read
+  from the def every tick, never copied. Row 51 (`grantPowerUp`) adds an entry with
+  `ticksLeft = durationTicks`; the same power-up again restarts the existing entry's timer in its
+  slot (no stacking of one def); a full list (8) declines and the pickup stays. Like the banana
+  pickup (row 50) it ignores `HitStun` and dashing.
+- `ModifierSystem` per player: (1) drop entries at `ticksLeft == 0`, compacting in slot order;
+  (2) `Stats` from `PlayerDef` and every `Stat` grant in slot order (`moveSpeed` never negative,
+  `maxHp` in [1, 255], `ammoMax` in [0, 255]); (3) the `hp` clamp of §5.6 and `ammo` capped at
+  `ammoMax`; (4) ability overrides; (5) tags: every tag some def in the DB can grant is cleared,
+  then the live grants are set; (6) `HitStun` countdown; (7) `ticksLeft--`. A power-up picked
+  on tick T therefore shapes the state after ticks T..T+D−1 and is gone after T+D, and the list,
+  the stats and the tags always agree between ticks.
+- Ability overrides switch a slot only while it is `Idle` (a running dash or throw finishes on
+  the def it started with); on the switch the slot's remaining cooldown is capped at the new
+  def's `cooldownTicks` (gaining a faster throw takes effect at once; losing it never lengthens
+  a cooldown already running). Expiry restores the loadout's def the same way.
+- Ammo: an `AmmoMax` add tops the ammo up by the same amount on every pickup (rule 51), then
+  `ModifierSystem` caps it at the new `ammoMax`; on expiry the cap falls back and extra bananas in
+  hand are lost (bananas in flight still return and are caught up to the cap).
+- Projectile modifiers are combined at the throw (`abilities/throw.cpp`) over the thrower's live
+  `Projectile` grants in slot order (muls multiply, `damageAdd` adds onto `BoomerangDef::damage`
+  saturating at 255, `pierce` ors) and stored on the `Boomerang` (`damage`, `pierce`, `speedMul`,
+  `radiusMul`), so a banana keeps them after the power-up expires or its thrower is eliminated.
+- Spawners: `ArenaDef::pickupSpawners` (`kMaxPickupSpawners` 8): `PickupSpawner{pos,
+  powerUpSet (bit i = power-up i, 0 = all), firstTicks, intervalTicks (0 = once), maxAlive}`.
+  At the end of `LifecycleSystem`, while `Playing`, a spawner fires when `ticksInPhase ==
+  firstTicks + k × intervalTicks`, unless `maxAlive` of its own pickups (`Pickup::spawner`) lie in
+  the arena; it draws the def uniformly from its set with one `rng.below()` of the world RNG and
+  emits `PickupSpawned`. Its timeline is a function of the round clock, so a spawner has no state
+  of its own; round start clears pickups. The loader keeps the arena's `maxAlive` sum at or below
+  half the pickup pool so grounded bananas always find room. An arena without spawners never
+  touches the RNG here (the default `dojo` has none, which keeps the default match and its
+  replays unchanged).
+- Shield: rows 20 and 24, §5.6.
+- The shipped set (`content/powerups.toml`), picked up in `dojo_powerups` (the dojo plus four
+  spawners near the corners, first at 1 s and 4 s into a round, then every 8 s, one alive each):
+
+  | name | duration | grants |
+  |---|---|---|
+  | `speed_boost` | 8 s | `move_speed` × 1.5 |
+  | `big_banana` | 10 s | bananas radius × 2, speed × 0.85 |
+  | `piercing_banana` | 10 s | bananas pierce |
+  | `triple_banana` | 15 s | `ammo_max` + 2 (tops up 2 bananas) |
+  | `shield` | 15 s | `shielded`: absorbs one hit |
+  | `fast_hands` | 10 s | throw slot runs `throw_fast` (cooldown 8 instead of 20, startup 1) |
+
+  Fast Hands is an `AbilityOverride` rather than a cooldown stat: a new def needs no new
+  `StatKind` and no special case in `AbilitySystem`.
+
 ### 5.9 Events
 
 - `SimEvent` is a POD tagged union written to a per-tick buffer: `BoomerangThrown`,
@@ -518,7 +625,12 @@ is a defence only for a player who has thrown.
   `PlayerDashHit{victim, attacker, hpAfter}` (v0.16: a dash attack; `entity` is the attacking
   player where `PlayerHit` carries the banana, and presentation shows both the same way),
   `PlayerEliminated{victim, killer}`,
-  `PowerUpPicked`, `RoundEnded`, ...
+  `RoundEnded`, ...
+- v0.20: `PickupSpawned` and `PickupTaken` carry the pickup's `PickupKind` in `a` and, for a
+  power-up, its def index in `b` (a banana pickup's payload stays 0/0), which is all a
+  `PowerUpPicked` would carry, so there is no separate event. `ShieldBroken{victim, entity = the
+  banana or the dashing player, a = attacker slot, b = the power-up whose shield broke}` (§5.6).
+  No event marks a power-up's expiry: presentation reads the `ModifierList` timers from state.
 - Consumers: presentation (VFX/SFX), scoring, RL rewards, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
@@ -541,7 +653,7 @@ is a defence only for a player who has thrown.
   grounded banana is easier to walk over than to dodge.
 - Files: `content/*.toml` (any depth), read in sorted relative-path order and merged. Top-level
   keys: `[player]`, `[boomerang]`, `[pickup]`, `[dash_attack]` exactly once in the whole set;
-  `[[ability]]`, `[[arena]]`, `[[mode]]` appended in load order. Keys are the C++ field names in
+  `[[ability]]`, `[[arena]]`, `[[mode]]`, `[[powerup]]` (v0.20) appended in load order. Keys are the C++ field names in
   snake_case; unknown keys and unknown top-level tables are errors (a typo never falls back to a
   default); keys other than `name`, `kind` and a few required lengths are optional and keep the
   struct default. Each file's header comment lists its keys and units.
@@ -553,13 +665,14 @@ is a defence only for a player who has thrown.
   per second and divided by `kTickHz` in the same single truncation (`22` is
   `fromRatio(22, 60)`). Tags are lists of names (`dashing`, `perfect_dash`, ...), ability kinds
   are names (`dash`, `throw`); the loader's name tables static_assert they cover the enums.
-- Names: abilities, arenas and modes have a `ContentName` (`std::array<char, 16>`, NUL padded,
+- Names: abilities, arenas, modes and power-ups have a `ContentName` (`std::array<char, 16>`, NUL padded,
   1–15 of `a-z 0-9 _ -`), hashed with the def. Defs reference each other by name in TOML (the
   player's loadout `abilities = ["dash", "throw"]`) and the loader resolves them to indices;
   ability index 0 is the built-in inert `none`. Arena and mode names are how command lines and
   the lobby choose (`ContentDB::findArena` / `findMode`); the sim only sees indices.
 - Validation: duplicate names, unresolved references, counts against the capacities
-  (`kMaxAbilityDefs` 4, `kMaxArenas` 8, `kMaxModes` 8; at least one arena and one mode), and
+  (`kMaxAbilityDefs` 4, `kMaxArenas` 8, `kMaxModes` 8, `kMaxPowerUps` 16; at least one arena
+  and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
   on `defaultContent()` by a test): the loadout's slot kinds, a dash with no startup and its
   perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
@@ -607,6 +720,19 @@ is a defence only for a player who has thrown.
   (0: kept). Visited for the content hash like every other def; the TOML key is
   `[dash_attack]`. The loader's validation requires `minAmmo >= 1` like the M1 tables did;
   allowing 0 (every dash an attack) is a one-line change there when a mode wants it.
+- Power-ups (v0.20, §5.8): `[[powerup]]` with `name`, `duration_ticks` (required, >= 1),
+  `color` (palette 0–9), `shape` (`orb` | `cube` | `diamond` | `coin`) and `grants` (required,
+  1–4 inline tables): `{ kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max", mul, add }`,
+  `{ kind = "ability", slot = "dash" | "throw", ability = "<name>" }`,
+  `{ kind = "projectile", speed_mul, radius_mul, damage_add, pierce }`,
+  `{ kind = "tag", tag = "shielded" | "invulnerable" }`. An arena's optional `spawners` is a list
+  of up to 8 `{ pos = [x, y], power_ups = ["<name>", ...], first_ticks, interval_ticks,
+  max_alive }` (`power_ups` absent = every power-up). Ability and power-up names resolve after
+  every file is read, so the reference may point into a later file. Validation: unknown names,
+  an unknown grant kind or stat, a `mul` or a fractional `add` on an integer stat, an override of
+  another kind than its slot's def, a tag a power-up may not grant, multipliers outside (0, 4],
+  a spawner outside the arena (by the pickup radius), spawners without any power-up defined, an
+  arena's `max_alive` sum above 16.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 

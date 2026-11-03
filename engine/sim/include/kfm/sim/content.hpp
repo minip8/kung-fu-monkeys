@@ -12,6 +12,8 @@
 #include "kfm/core/fixed.hpp"
 #include "kfm/core/vec2.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content/name.hpp"
+#include "kfm/sim/content/powerup.hpp"
 #include "kfm/sim/tags.hpp"
 
 #include <array>
@@ -28,32 +30,6 @@ inline constexpr uint8_t kAbilitySlotThrow = 1;
 inline constexpr uint8_t kMaxAbilityDefs = 4;
 inline constexpr uint8_t kMaxArenas = 8;
 inline constexpr uint8_t kMaxModes = 8;
-
-// A def's name as TOML spells it (`name = "dojo"`): up to kMaxChars
-// characters, NUL padded, so it is fixed-size, trivially copyable and hashed
-// byte for byte. Names are how content files, command lines and the lobby
-// refer to arenas and modes; the sim only ever sees indices.
-struct ContentName {
-  static constexpr size_t kBytes = 16;
-  static constexpr size_t kMaxChars = kBytes - 1;  // always NUL terminated
-  std::array<char, kBytes> chars{};
-
-  // Truncates past kMaxChars (the loader rejects such names first).
-  [[nodiscard]] static constexpr ContentName of(std::string_view s) {
-    ContentName n;
-    for (size_t i = 0; i < s.size() && i < kMaxChars; ++i)
-      n.chars[i] = s[i];
-    return n;
-  }
-  [[nodiscard]] constexpr std::string_view view() const {
-    size_t len = 0;
-    while (len < kMaxChars && chars[len] != '\0')
-      ++len;
-    return {chars.data(), len};
-  }
-  [[nodiscard]] constexpr const char* cStr() const { return chars.data(); }
-  constexpr bool operator==(const ContentName&) const = default;
-};
 
 enum class AbilityKind : uint8_t {
   None = 0,
@@ -123,6 +99,9 @@ struct ArenaDef {
   Vec2 halfExtents{};  // box arena, centred at the origin
   std::array<Vec2, kMaxPlayers> spawnPoints{};
   uint8_t spawnPointCount{0};
+  // Power-up pickup spawners (§5.8); none in the default arena.
+  std::array<PickupSpawner, kMaxPickupSpawners> pickupSpawners{};
+  uint8_t pickupSpawnerCount{0};
 };
 
 struct ModeDef {  // FFA rules
@@ -145,6 +124,22 @@ struct ContentDB {
   uint8_t arenaCount{0};
   std::array<ModeDef, kMaxModes> modes{};
   uint8_t modeCount{0};
+  // Power-ups (§5.8), referenced by pickups, spawners and ModifierList
+  // entries by index.
+  std::array<PowerUpDef, kMaxPowerUps> powerUps{};
+  uint8_t powerUpCount{0};
+
+  // Power-up at an index; out of range falls back to an inert empty def.
+  [[nodiscard]] constexpr const PowerUpDef& powerUpAt(uint8_t index) const {
+    return index < powerUpCount ? powerUps[index] : kNoPowerUp;
+  }
+  [[nodiscard]] constexpr std::optional<uint8_t> findPowerUp(std::string_view name) const {
+    for (uint8_t i = 0; i < powerUpCount; ++i) {
+      if (powerUps[i].name.view() == name) return i;
+    }
+    return std::nullopt;
+  }
+  static constexpr PowerUpDef kNoPowerUp{};
 
   // Def at a state's defIndex; an out-of-range index falls back to the inert
   // None def (index 0), so a bad index can never read past the table.

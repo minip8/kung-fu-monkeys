@@ -30,7 +30,7 @@ constexpr void enterPhase(Boomerang& b, BoomerangPhase phase) {
 // Turns facing toward `target` by at most turnRateBam and sets the velocity
 // along the new facing at `speed`. A target at the boomerang's own position
 // leaves the facing unchanged.
-void steerToward(Boomerang& b, Vec2 target, const BoomerangDef& def) {
+void steerToward(Boomerang& b, Vec2 target, const BoomerangDef& def, Fixed speed) {
   Transform& t = b.transform;
   const Vec2 toTarget = target - t.pos;
   if (toTarget != Vec2::zero()) {
@@ -39,7 +39,7 @@ void steerToward(Boomerang& b, Vec2 target, const BoomerangDef& def) {
     const int32_t delta = std::clamp<int32_t>(desired.signedDeltaFrom(t.facing), -rate, rate);
     t.facing += Angle::fromBam(static_cast<uint16_t>(delta));
   }
-  t.vel = Vec2::fromAngle(t.facing, def.speed);
+  t.vel = Vec2::fromAngle(t.facing, speed);
 }
 
 // Reflects one axis off the walls at ±limit. Returns true on a bounce.
@@ -63,8 +63,13 @@ bool reflectAxis(Fixed& pos, Fixed& vel, Fixed limit, Fixed restitution) {
 
 void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
   const BoomerangDef& def = content.db.boomerang;
-  const Vec2 limit = Vec2{max(content.arena.halfExtents.x - def.radius, Fixed::zero()),
-                          max(content.arena.halfExtents.y - def.radius, Fixed::zero())};
+  // Wall limits for a banana of contact radius r (§5.8: a projectile
+  // modifier may scale it per banana).
+  const auto limitFor = [&](Fixed r) {
+    return Vec2{max(content.arena.halfExtents.x - r, Fixed::zero()),
+                max(content.arena.halfExtents.y - r, Fixed::zero())};
+  };
+  const Vec2 baseLimit = limitFor(def.radius);
 
   const bool playing = s.rules.phase == MatchPhase::Playing;
   s.boomerangs.forEachAlive([&](EntityId id, Boomerang& b) {
@@ -86,12 +91,13 @@ void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sin
         t.vel = Vec2::zero();
         return;
       }
-      steerToward(b, owner->transform.pos, def);
+      steerToward(b, owner->transform.pos, def, def.speed * b.speedMul);
     } else if (t.vel != Vec2::zero()) {  // Outbound: straight line
       t.facing = angleOf(t.vel);
     }
 
     t.pos += t.vel;
+    const Vec2 limit = b.radiusMul == Fixed::one() ? baseLimit : limitFor(def.radius * b.radiusMul);
     const bool bx = reflectAxis(t.pos.x, t.vel.x, limit.x, def.restitution);
     const bool by = reflectAxis(t.pos.y, t.vel.y, limit.y, def.restitution);
     if (bx || by) {

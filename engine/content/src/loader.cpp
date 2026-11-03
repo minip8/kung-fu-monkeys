@@ -28,7 +28,13 @@ using sim::AbilityKind;
 using sim::ArenaDef;
 using sim::ContentDB;
 using sim::ContentName;
+using sim::GrantKind;
 using sim::ModeDef;
+using sim::PickupSpawner;
+using sim::PowerUpDef;
+using sim::PowerUpGrant;
+using sim::PowerUpShape;
+using sim::StatKind;
 using sim::Tag;
 using sim::Tags;
 
@@ -88,6 +94,49 @@ constexpr std::array<TagName, 6> kTagNames = {{
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
+
+// Power-up spellings (§5.8).
+struct StatName {
+  std::string_view name;
+  StatKind stat;
+  bool integer;  // add-only
+};
+constexpr std::array<StatName, 3> kStatNames = {{
+    {"move_speed", StatKind::MoveSpeed, false},
+    {"max_hp", StatKind::MaxHp, true},
+    {"ammo_max", StatKind::AmmoMax, true},
+}};
+static_assert(kStatNames.size() == static_cast<size_t>(StatKind::AmmoMax) + 1,
+              "every StatKind needs a TOML name in kStatNames");
+
+struct ShapeName {
+  std::string_view name;
+  PowerUpShape shape;
+};
+constexpr std::array<ShapeName, 4> kShapeNames = {{
+    {"orb", PowerUpShape::Orb},
+    {"cube", PowerUpShape::Cube},
+    {"diamond", PowerUpShape::Diamond},
+    {"coin", PowerUpShape::Coin},
+}};
+static_assert(kShapeNames.size() == static_cast<size_t>(PowerUpShape::Coin) + 1,
+              "every PowerUpShape needs a TOML name in kShapeNames");
+
+// Ability slots by the button that fires them (the [player] loadout order).
+constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash", "throw"};
+
+// Tags a power-up may grant: the rest are owned by AbilitySystem (dashing,
+// perfect_dash) or by the damage rules (hit_stun, eliminated).
+[[nodiscard]] constexpr bool grantableTag(Tag t) {
+  return t == Tag::Shielded || t == Tag::Invulnerable;
+}
+
+// Projectile multipliers stay in (0, kMaxProjectileMul].
+const Fixed kMaxProjectileMul = Fixed::fromInt(4);
+
+[[nodiscard]] constexpr bool isWhole(Fixed f) {
+  return f.raw % Fixed::kOneRaw == 0;
+}
 
 // Name of the built-in inert ability at index 0.
 constexpr std::string_view kNoneAbility = "none";
@@ -243,6 +292,36 @@ class Section {
     return s->get();
   }
 
+  // A string from a fixed name table; nullptr (with an error listing the
+  // names) when it is not a string or not in the table, or absent.
+  template <class Entry, size_t N, class Proj>
+  const Entry* named(std::string_view key, const std::array<Entry, N>& table, Proj proj,
+                     bool required = false) {
+    const toml::node* n = take(key, required);
+    if (n == nullptr) return nullptr;
+    if (const toml::value<std::string>* str = n->as_string()) {
+      for (const Entry& e : table) {
+        if (proj(e) == str->get()) return &e;
+      }
+    }
+    std::string known;
+    for (const Entry& e : table) {
+      if (!known.empty()) known += ", ";
+      known += proj(e);
+    }
+    error(*n, "'" + std::string(key) + "' must be one of: " + known);
+    return nullptr;
+  }
+
+  // One tag name.
+  std::optional<Tag> tag(std::string_view key, bool required = false) {
+    const toml::node* n = take(key, required);
+    if (n == nullptr) return std::nullopt;
+    if (const std::optional<Tag> t = tagNamed(*n)) return t;
+    error(*n, "unknown tag in '" + std::string(key) + "' (known: " + tagList() + ")");
+    return std::nullopt;
+  }
+
   void tags(std::string_view key, Tags& out) {
     const toml::node* n = take(key);
     if (n == nullptr) return;
@@ -388,11 +467,13 @@ class Builder {
         list(file, node, "arena", [&](Section& s) { parseArena(s); });
       } else if (k == "mode") {
         list(file, node, "mode", [&](Section& s) { parseMode(s); });
+      } else if (k == "powerup") {
+        list(file, node, "powerup", [&](Section& s) { parsePowerUp(s); });
       } else {
         diag_.error(file.name, lineOf(node),
                     "unknown top-level key '" + std::string(k) +
                         "' (expected [player], [boomerang], [pickup], [dash_attack], "
-                        "[[ability]], [[arena]] or [[mode]])");
+                        "[[ability]], [[arena]], [[mode]] or [[powerup]])");
       }
     }
   }
@@ -406,6 +487,7 @@ class Builder {
     if (db_.arenaCount == 0) diag_.error("", 0, "no [[arena]] defined (need at least one)");
     if (db_.modeCount == 0) diag_.error("", 0, "no [[mode]] defined (need at least one)");
     resolveLoadout();
+    resolvePowerUpNames();
     if (diag_.hasErrors()) return false;
     if (!validateContent(db_, diag_)) return false;
     out = db_;
@@ -573,12 +655,150 @@ class Builder {
     } else {
       parseSpawnEllipse(s, *ellipse, a);
     }
+    const toml::node* spawners = s.take("spawners");
     if (!name || !uniqueName(s, *name, db_.arenas, db_.arenaCount, "arena")) return;
     if (db_.arenaCount >= sim::kMaxArenas) {
       s.error("too many arenas (at most " + std::to_string(sim::kMaxArenas) + ", kMaxArenas)");
       return;
     }
+    if (spawners != nullptr) parseSpawners(s, *spawners, a, db_.arenaCount);
     db_.arenas[db_.arenaCount++] = a;
+  }
+
+  // spawners = [{ pos = [x, y], power_ups = ["name", ...], first_ticks,
+  //               interval_ticks, max_alive }, ...] (§5.8). power_ups is
+  // optional (every power-up); names resolve once every file is read.
+  void parseSpawners(Section& outer, const toml::node& n, ArenaDef& a, uint8_t arenaIndex) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->size() > sim::kMaxPickupSpawners) {
+      outer.error(n, "'spawners' must be a list of at most " +
+                         std::to_string(sim::kMaxPickupSpawners) + " spawner tables");
+      return;
+    }
+    for (size_t i = 0; i < arr->size(); ++i) {
+      const toml::table* t = arr->get(i)->as_table();
+      if (t == nullptr) {
+        outer.error(*arr->get(i), "'spawners' entries must be tables { pos, ... }");
+        continue;
+      }
+      Section s(*t, outer.file(), outer.diag(), outer.where() + " spawner " + std::to_string(i));
+      PickupSpawner sp;
+      s.vec2("pos", sp.pos, true);
+      s.integer("first_ticks", sp.firstTicks, 0, 65535);
+      s.integer("interval_ticks", sp.intervalTicks, 0, 65535);
+      s.integer("max_alive", sp.maxAlive, 1, sim::kMaxPickups);
+      if (const toml::node* set = s.take("power_ups")) {
+        const toml::array* names = set->as_array();
+        if (names == nullptr || names->empty()) {
+          s.error(*set, "'power_ups' must be a non-empty list of power-up names");
+        } else {
+          for (const toml::node& el : *names) {
+            const toml::value<std::string>* str = el.as_string();
+            if (str == nullptr) {
+              s.error(el, "'power_ups' entries must be power-up names");
+              continue;
+            }
+            spawnerNames_.push_back(SpawnerName{
+                arenaIndex, static_cast<uint8_t>(i),
+                PendingName{str->get(), s.where(), lineOf(el), std::string(s.file().name)}});
+          }
+        }
+      }
+      s.finish();
+      a.pickupSpawners[i] = sp;
+    }
+    a.pickupSpawnerCount = static_cast<uint8_t>(arr->size());
+  }
+
+  void parsePowerUp(Section& s) {
+    PowerUpDef d;
+    const std::optional<std::string> name = s.name(d.name);
+    if (name) s.setWhere("powerup " + inQuotes(*name));
+    s.integer("duration_ticks", d.durationTicks, 1, 65535, true);
+    s.integer("color", d.visual.color, 0, sim::kMaxPlayers - 1);
+    if (const ShapeName* shape =
+            s.named("shape", kShapeNames, [](const ShapeName& e) { return e.name; })) {
+      d.visual.shape = shape->shape;
+    }
+    const uint8_t index = db_.powerUpCount;
+    if (const toml::node* grants = s.take("grants", true)) {
+      const toml::array* arr = grants->as_array();
+      if (arr == nullptr || arr->empty() || arr->size() > sim::kMaxPowerUpGrants) {
+        s.error(*grants, "'grants' must list 1 to " + std::to_string(sim::kMaxPowerUpGrants) +
+                             " grant tables");
+      } else {
+        for (size_t i = 0; i < arr->size(); ++i) {
+          const toml::table* t = arr->get(i)->as_table();
+          if (t == nullptr) {
+            s.error(*arr->get(i), "'grants' entries must be tables { kind = ..., ... }");
+            continue;
+          }
+          Section g(*t, s.file(), s.diag(), s.where() + " grant " + std::to_string(i));
+          d.grants[i] = parseGrant(g, index, static_cast<uint8_t>(i));
+          g.finish();
+        }
+        d.grantCount = static_cast<uint8_t>(arr->size());
+      }
+    }
+    if (!name || !uniqueName(s, *name, db_.powerUps, db_.powerUpCount, "powerup")) return;
+    if (db_.powerUpCount >= sim::kMaxPowerUps) {
+      s.error("too many power-ups (at most " + std::to_string(sim::kMaxPowerUps) +
+              ", kMaxPowerUps)");
+      return;
+    }
+    db_.powerUps[db_.powerUpCount++] = d;
+  }
+
+  // One grant table: kind = "stat" | "ability" | "projectile" | "tag".
+  PowerUpGrant parseGrant(Section& g, uint8_t powerUp, uint8_t grantIndex) {
+    PowerUpGrant out;
+    const std::optional<std::string> kind = g.string("kind", true);
+    if (!kind) return out;
+    if (*kind == "stat") {
+      out.kind = GrantKind::Stat;
+      const StatName* stat =
+          g.named("stat", kStatNames, [](const StatName& e) { return e.name; }, true);
+      if (stat != nullptr) out.stat.stat = stat->stat;
+      g.fixed("mul", out.stat.mul, Fixed::zero(), Fixed::fromInt(16));
+      g.fixed("add", out.stat.add, Fixed::fromInt(-255), Fixed::fromInt(255));
+      if (stat != nullptr && stat->integer) {
+        if (out.stat.mul != Fixed::one()) {
+          g.error("'" + std::string(stat->name) +
+                  "' is an integer stat: it takes 'add' only, never 'mul'");
+        }
+        if (!isWhole(out.stat.add)) {
+          g.error("'" + std::string(stat->name) + "' is an integer stat: 'add' must be whole");
+        }
+      }
+    } else if (*kind == "ability") {
+      out.kind = GrantKind::AbilityOverride;
+      const std::string_view* slot =
+          g.named("slot", kSlotNames, [](std::string_view e) { return e; }, true);
+      if (slot != nullptr) out.slot = static_cast<uint8_t>(slot - kSlotNames.data());
+      if (const std::optional<std::string> ability = g.string("ability", true)) {
+        overrideNames_.push_back(
+            OverrideName{powerUp, grantIndex,
+                         PendingName{*ability, g.where(), g.line(), std::string(g.file().name)}});
+      }
+    } else if (*kind == "projectile") {
+      out.kind = GrantKind::Projectile;
+      g.fixed("speed_mul", out.projectile.speedMul, Fixed::epsilon(), kMaxProjectileMul);
+      g.fixed("radius_mul", out.projectile.radiusMul, Fixed::epsilon(), kMaxProjectileMul);
+      g.integer("damage_add", out.projectile.damageAdd, 0, 255);
+      g.flag("pierce", out.projectile.pierce);
+    } else if (*kind == "tag") {
+      out.kind = GrantKind::Tag;
+      if (const std::optional<Tag> t = g.tag("tag", true)) {
+        if (grantableTag(*t)) {
+          out.tag = *t;
+        } else {
+          g.error("a power-up can grant only 'shielded' or 'invulnerable'");
+        }
+      }
+    } else {
+      g.error("unknown grant kind " + inQuotes(*kind) + " (stat, ability, projectile, tag)");
+    }
+    return out;
   }
 
   static void parseSpawnPoints(Section& s, const toml::node& n, ArenaDef& a) {
@@ -659,11 +879,48 @@ class Builder {
     }
   }
 
+  // Power-up names in spawner sets and ability names in overrides: every
+  // file is read first, so a reference may point into a later file.
+  void resolvePowerUpNames() {
+    for (const SpawnerName& n : spawnerNames_) {
+      if (const std::optional<uint8_t> i = db_.findPowerUp(n.name.name)) {
+        PickupSpawner& sp = db_.arenas[n.arena].pickupSpawners[n.spawner];
+        sp.powerUpSet = static_cast<uint16_t>(sp.powerUpSet | (1u << *i));
+      } else {
+        diag_.error(n.name.file, n.name.line,
+                    n.name.where + ": 'power_ups' names unknown power-up " + inQuotes(n.name.name));
+      }
+    }
+    for (const OverrideName& n : overrideNames_) {
+      bool found = false;
+      for (uint8_t i = 1; i < db_.abilityCount; ++i) {
+        if (db_.abilities[i].name.view() == n.name.name) {
+          if (n.powerUp < db_.powerUpCount) db_.powerUps[n.powerUp].grants[n.grant].ability = i;
+          found = true;
+        }
+      }
+      if (!found) {
+        diag_.error(n.name.file, n.name.line,
+                    n.name.where + ": 'ability' names unknown ability " + inQuotes(n.name.name));
+      }
+    }
+  }
+
   struct PendingName {
     std::string name;
     std::string where;
     uint32_t line{0};
     std::string file;
+  };
+  struct SpawnerName {
+    uint8_t arena{0};
+    uint8_t spawner{0};
+    PendingName name;
+  };
+  struct OverrideName {
+    uint8_t powerUp{0};
+    uint8_t grant{0};
+    PendingName name;
   };
 
   Diagnostics& diag_;
@@ -673,6 +930,8 @@ class Builder {
   std::optional<Origin> pickupAt_;
   std::optional<Origin> dashAttackAt_;
   std::array<std::optional<PendingName>, sim::kAbilitySlots> loadout_{};
+  std::vector<SpawnerName> spawnerNames_;
+  std::vector<OverrideName> overrideNames_;
 };
 
 }  // namespace
@@ -701,6 +960,115 @@ bool parseContent(std::string_view tomlText, std::string_view sourceName, Conten
   const ContentSource source{std::string(sourceName), std::string(tomlText)};
   return parseContent(std::span<const ContentSource>(&source, 1), out, diag);
 }
+
+namespace {
+
+// Power-ups and spawners (§5.8): what ModifierSystem, the throw and the
+// spawners rely on instead of re-checking per tick.
+template <class Fail>
+void validatePowerUps(const ContentDB& c, const Fail& fail) {
+  if (c.powerUpCount > sim::kMaxPowerUps) {
+    fail("power-up count " + std::to_string(c.powerUpCount) + " above kMaxPowerUps");
+    return;
+  }
+  for (uint8_t i = 0; i < c.powerUpCount; ++i) {
+    const PowerUpDef& d = c.powerUps[i];
+    const std::string where = "powerup " + inQuotes(d.name.view());
+    if (!validName(d.name.view())) fail(where + ": invalid name");
+    for (uint8_t j = 0; j < i; ++j) {
+      if (c.powerUps[j].name == d.name) fail(where + ": name used twice");
+    }
+    if (d.durationTicks < 1) fail(where + ": duration_ticks must be at least 1");
+    if (d.visual.color >= sim::kMaxPlayers) fail(where + ": color must be a palette index 0-9");
+    if (d.grantCount < 1 || d.grantCount > sim::kMaxPowerUpGrants) {
+      fail(where + ": needs 1 to " + std::to_string(sim::kMaxPowerUpGrants) + " grants");
+      continue;
+    }
+    for (uint8_t g = 0; g < d.grantCount; ++g) {
+      const PowerUpGrant& grant = d.grants[g];
+      const std::string at = where + " grant " + std::to_string(g);
+      switch (grant.kind) {
+        case GrantKind::Stat:
+          if (grant.stat.stat != StatKind::MoveSpeed && grant.stat.mul != Fixed::one()) {
+            fail(at + ": an integer stat takes 'add' only, never 'mul'");
+          }
+          if (grant.stat.stat != StatKind::MoveSpeed && !isWhole(grant.stat.add)) {
+            fail(at + ": an integer stat's 'add' must be whole");
+          }
+          if (grant.stat.mul < Fixed::zero()) fail(at + ": 'mul' must not be negative");
+          break;
+        case GrantKind::AbilityOverride: {
+          if (grant.slot >= sim::kAbilitySlots) {
+            fail(at + ": slot " + std::to_string(grant.slot) + " is not an ability slot");
+            break;
+          }
+          if (grant.ability < 1 || grant.ability >= c.abilityCount) {
+            fail(at + ": ability index " + std::to_string(grant.ability) + " is not defined");
+            break;
+          }
+          // The slot keeps its button (dash or throw): the override must be
+          // the same kind as the loadout's def.
+          const uint8_t base = c.player.abilities[grant.slot];
+          if (base < c.abilityCount && c.abilities[grant.ability].kind != c.abilities[base].kind) {
+            fail(at + ": ability " + inQuotes(c.abilities[grant.ability].name.view()) +
+                 " is not the same kind as the " + std::string(kSlotNames[grant.slot]) + " slot's");
+          }
+          break;
+        }
+        case GrantKind::Projectile:
+          if (grant.projectile.speedMul <= Fixed::zero() ||
+              grant.projectile.speedMul > kMaxProjectileMul ||
+              grant.projectile.radiusMul <= Fixed::zero() ||
+              grant.projectile.radiusMul > kMaxProjectileMul) {
+            fail(at + ": speed_mul and radius_mul must be in (0, 4]");
+          }
+          if (grant.projectile.pierce > 1) fail(at + ": pierce is a 0/1 switch");
+          break;
+        case GrantKind::Tag:
+          if (!grantableTag(grant.tag)) fail(at + ": only shielded or invulnerable");
+          break;
+        case GrantKind::None:
+          fail(at + ": grant has no kind");
+          break;
+      }
+    }
+  }
+
+  for (uint8_t i = 0; i < c.arenaCount && i < sim::kMaxArenas; ++i) {
+    const ArenaDef& a = c.arenas[i];
+    const std::string where = "arena " + inQuotes(a.name.view());
+    if (a.pickupSpawnerCount > sim::kMaxPickupSpawners) {
+      fail(where + ": more than " + std::to_string(sim::kMaxPickupSpawners) + " spawners");
+      continue;
+    }
+    if (a.pickupSpawnerCount > 0 && c.powerUpCount == 0) {
+      fail(where + ": has spawners but no [[powerup]] is defined");
+    }
+    uint32_t alive = 0;
+    const uint32_t defined = c.powerUpCount >= 16 ? 0xFFFFu : (uint32_t{1} << c.powerUpCount) - 1u;
+    for (uint8_t k = 0; k < a.pickupSpawnerCount; ++k) {
+      const PickupSpawner& sp = a.pickupSpawners[k];
+      const std::string at = where + " spawner " + std::to_string(k);
+      alive += sp.maxAlive;
+      if (sp.maxAlive < 1) fail(at + ": max_alive must be at least 1");
+      if ((sp.powerUpSet & ~defined) != 0) fail(at + ": names a power-up that is not defined");
+      const Fixed limitX = a.halfExtents.x - c.pickup.radius;
+      const Fixed limitY = a.halfExtents.y - c.pickup.radius;
+      if (abs(sp.pos.x) > limitX || abs(sp.pos.y) > limitY) {
+        fail(at + ": pos (" + fixedText(sp.pos.x) + ", " + fixedText(sp.pos.y) +
+             ") is outside the arena");
+      }
+    }
+    // Power-ups never take more than half the pickup pool: grounded bananas
+    // need the rest (a full pool makes a grounded banana vanish).
+    if (alive > sim::kMaxPickups / 2) {
+      fail(where + ": spawners' max_alive add up to " + std::to_string(alive) + " (at most " +
+           std::to_string(sim::kMaxPickups / 2) + ")");
+    }
+  }
+}
+
+}  // namespace
 
 bool validateContent(const ContentDB& c, Diagnostics& diag) {
   const size_t errorsBefore = diag.errorCount();
@@ -794,6 +1162,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     }
     if (m.roundsToWin < 1) fail(where + ": rounds_to_win must be at least 1");
   }
+  validatePowerUps(c, fail);
   return diag.errorCount() == errorsBefore;
 }
 
