@@ -115,15 +115,15 @@ TEST_CASE("a NetSession plays over WebRtcTransport against an in-process NetServ
   INFO(session.statusText());
   REQUIRE(session.running());
   const net::ClientNetStats& st = session.client().netStats();
-  const auto confirmed = session.client().confirmedTick();
-  REQUIRE(confirmed.has_value());
+  REQUIRE(session.client().confirmedTick().has_value());
+  const Tick confirmed = session.client().confirmedTick().value_or(Tick{});
   std::printf(
       "[client-webrtc] synced in %.0f ms; 3 s running: %llu ticks, confirmed %u -> %u, server "
       "tick %u; RTT %.2f ms (jitter %.2f); rollbacks %llu (max depth %u), mispredicted ticks "
       "%llu, substitutions %llu; checksums compared %llu, mismatches %llu, resyncs %llu; bytes "
       "up %llu down %llu\n",
       static_cast<double>(runningSince - start) * 1e-6, static_cast<unsigned long long>(st.ticks),
-      confirmedAtStart, confirmed->value, server.nextTick().value,
+      confirmedAtStart, confirmed.value, server.nextTick().value,
       static_cast<double>(st.rttNs) * 1e-6, static_cast<double>(st.jitterNs) * 1e-6,
       static_cast<unsigned long long>(st.rollbacks), st.maxRollbackDepth,
       static_cast<unsigned long long>(st.mispredictedTicks),
@@ -133,7 +133,7 @@ TEST_CASE("a NetSession plays over WebRtcTransport against an in-process NetServ
       static_cast<unsigned long long>(st.resyncRequests),
       static_cast<unsigned long long>(st.bytesSent),
       static_cast<unsigned long long>(st.bytesReceived));
-  CHECK(confirmed->value > confirmedAtStart + 120);  // ~3 s at 60 Hz, generous margin
+  CHECK(confirmed.value > confirmedAtStart + 120);  // ~3 s at 60 Hz, generous margin
   CHECK(st.checksumsCompared > 0);
   CHECK(st.checksumMismatches == 0);
   CHECK(st.resyncRequests == 0);

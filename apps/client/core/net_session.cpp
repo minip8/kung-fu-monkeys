@@ -91,15 +91,15 @@ const char* disconnectReasonText(net::DisconnectReason reason) {
   return "unknown reason";
 }
 
-NetSession::NetSession(const NetSessionConfig& config, const platform::InputSampler& lobbySampler,
+NetSession::NetSession(NetSessionConfig config, platform::InputSampler lobbySampler,
                        net::ITransport* transport, uint64_t nowNs,
                        std::unique_ptr<net::ITransport> owned, std::string failure)
-    : config_(config),
+    : config_(std::move(config)),
       content_(sim::defaultContent()),
       ownedTransport_(std::move(owned)),
       failure_(std::move(failure)),
       nowNs_(nowNs),
-      sampler_(lobbySampler),
+      sampler_(std::move(lobbySampler)),
       idleWorld_(sim::initialWorld(sim::MatchConfig{.seed = 1, .players = 0})),
       lastFrameNs_(nowNs),
       rateWindowStartNs_(nowNs) {

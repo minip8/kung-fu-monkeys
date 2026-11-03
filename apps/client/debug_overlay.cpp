@@ -2,12 +2,14 @@
 
 #include "core/content_tuning.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content.hpp"
 #include "kfm/sim/tags.hpp"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <optional>
 
 namespace kfm::client {
 
@@ -76,6 +78,8 @@ namespace {
       return "dropped (repeat last)";
     case SlotOwner::Bot:
       return "bot";
+    case SlotOwner::Remote:
+      return "remote";
   }
   return "?";
 }
@@ -200,7 +204,8 @@ void controlsSection(MatchSession& s, uint64_t nowNs) {
   }
 }
 
-void entitySection(const MatchSession& s) {
+template <class Session>
+void entitySection(const Session& s) {
   const sim::WorldState& w = s.curr();
   const sim::ContentDB& c = s.content();
   if (ImGui::TreeNode("players", "players (%u)", static_cast<unsigned>(w.players.size()))) {
@@ -294,6 +299,127 @@ void tuningSection(MatchSession& s, std::string& printed) {
   }
 }
 
+[[nodiscard]] double ms(uint64_t ns) {
+  return static_cast<double>(ns) * 1e-6;
+}
+
+void slotList(sim::PlayerMask m, char (&out)[64]) {
+  out[0] = '\0';
+  std::size_t used = 0;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if ((m & (1u << i)) == 0) continue;
+    const int n = std::snprintf(out + used, sizeof out - used, "%sP%u", used == 0 ? "" : " ",
+                                static_cast<unsigned>(i) + 1U);
+    if (n < 0 || static_cast<std::size_t>(n) >= sizeof out - used) break;
+    used += static_cast<std::size_t>(n);
+  }
+  if (used == 0) std::snprintf(out, sizeof out, "none");
+}
+
+void netSection(const NetSession& s, const std::array<float, 240>& rttMs,
+                const std::array<float, 240>& depth, std::size_t head) {
+  const net::NetClient& c = s.client();
+  const net::ClientNetStats& st = c.netStats();
+  const NetRates& r = s.rates();
+  ImGui::Text("state %s", netPhaseName(s.phase()));
+  ImGui::TextWrapped("%s", s.statusText().c_str());
+  char slots[64];
+  slotList(s.localSlots(), slots);
+  ImGui::Text("local slots %s (requested %u, devices %u)%s", slots,
+              static_cast<unsigned>(s.requestedSlots()), static_cast<unsigned>(s.deviceCount()),
+              c.spectator() && s.running() ? "  SPECTATING" : "");
+  const std::optional<Tick> server = c.estimatedServerTick(s.nowNs());
+  const std::optional<Tick> confirmed = c.confirmedTick();
+  ImGui::Text("local tick L %u, server tick ~%s%u, confirmed %s%u", c.localTick().value,
+              server ? "" : "?", server ? server->value : 0U, confirmed ? "" : "?",
+              confirmed ? confirmed->value : 0U);
+  ImGui::TextDisabled("Pause, step and time scale are off online: the server's clock rules.");
+
+  ImGui::SeparatorText("Link");
+  ImGui::Text("RTT %.1f ms (min %.1f, max %.1f), jitter %.1f ms, loss %.2f %%", ms(st.rttNs),
+              ms(st.minRttNs), ms(st.maxRttNs), ms(st.jitterNs),
+              static_cast<double>(st.lossPpm) * 1e-4);
+  ImGui::Text("lead %d ticks (target %d), arrival margin %d (smoothed %.2f)", st.leadTicks,
+              st.targetLeadTicks, static_cast<int>(st.arrivalMargin),
+              static_cast<double>(st.arrivalMarginQ8) / 256.0);
+  ImGui::Text("clock rate %.2f %%, hard jumps %llu, dropped ticks %llu",
+              static_cast<double>(st.ratePpm) * 1e-4, static_cast<unsigned long long>(st.hardJumps),
+              static_cast<unsigned long long>(st.clockDroppedTicks));
+  ImGui::PlotLines("RTT ms", rttMs.data(), static_cast<int>(rttMs.size()), static_cast<int>(head),
+                   nullptr, 0.0f, FLT_MAX, ImVec2(0, 40));
+
+  ImGui::SeparatorText("Rollback");
+  ImGui::PlotLines("depth/frame", depth.data(), static_cast<int>(depth.size()),
+                   static_cast<int>(head), nullptr, 0.0f, FLT_MAX, ImVec2(0, 40));
+  // The histogram up to the deepest bucket seen (at least 16 buckets).
+  std::array<float, net::kRollbackDepthBuckets> hist{};
+  int buckets = 16;
+  for (std::size_t d = 0; d < hist.size(); ++d) {
+    hist[d] = static_cast<float>(st.rollbackDepth[d]);
+    if (st.rollbackDepth[d] != 0) buckets = std::max(buckets, static_cast<int>(d) + 1);
+  }
+  ImGui::PlotHistogram("depth hist", hist.data(), buckets, 0, nullptr, 0.0f, FLT_MAX,
+                       ImVec2(0, 50));
+  ImGui::TextDisabled("  bins: rollback depth 0, 1, ... %d ticks (of %u; the last is >= %u)",
+                      buckets - 1, net::kRollbackDepthBuckets, net::kRollbackDepthBuckets - 1);
+  ImGui::Text("rollbacks %llu (%.1f/s), max depth %u, re-simulated %llu ticks",
+              static_cast<unsigned long long>(st.rollbacks), r.rollbacksPerSec, st.maxRollbackDepth,
+              static_cast<unsigned long long>(st.resimulatedTicks));
+  ImGui::Text("mispredicted ticks %llu (%.1f/s): remote %llu, local %llu, roster %llu",
+              static_cast<unsigned long long>(st.mispredictedTicks), r.mispredictedTicksPerSec,
+              static_cast<unsigned long long>(st.mispredictedRemote),
+              static_cast<unsigned long long>(st.mispredictedLocal),
+              static_cast<unsigned long long>(st.mispredictedPresent));
+  ImGui::Text("substitutions seen %llu (%.2f/s), past the ring %llu, overflows %llu",
+              static_cast<unsigned long long>(st.substitutionsSeen), r.substitutionsPerSec,
+              static_cast<unsigned long long>(st.anchorRollbacks),
+              static_cast<unsigned long long>(st.rollbackOverflows));
+  const net::EventJournalStats& j = c.journal().stats();
+  ImGui::Text(
+      "events: delivered %llu, deduplicated %llu, dropped %llu, retracted %llu",
+      static_cast<unsigned long long>(j.delivered), static_cast<unsigned long long>(j.deduplicated),
+      static_cast<unsigned long long>(j.dropped), static_cast<unsigned long long>(j.retracted));
+
+  ImGui::SeparatorText("Consistency and traffic");
+  ImGui::Text("checksums compared %llu, mismatched %llu, skipped %llu",
+              static_cast<unsigned long long>(st.checksumsCompared),
+              static_cast<unsigned long long>(st.checksumMismatches),
+              static_cast<unsigned long long>(st.checksumsSkipped));
+  ImGui::Text("resync requests %llu, snapshots loaded %llu",
+              static_cast<unsigned long long>(st.resyncRequests),
+              static_cast<unsigned long long>(st.snapshotsLoaded));
+  ImGui::Text("up %.0f B/s, down %.0f B/s (total %llu / %llu B, %llu / %llu packets)",
+              r.bytesUpPerSec, r.bytesDownPerSec, static_cast<unsigned long long>(st.bytesSent),
+              static_cast<unsigned long long>(st.bytesReceived),
+              static_cast<unsigned long long>(st.packetsSent),
+              static_cast<unsigned long long>(st.packetsReceived));
+  ImGui::Text("ticks %llu (%.1f/s), decode errors %llu", static_cast<unsigned long long>(st.ticks),
+              r.ticksPerSec, static_cast<unsigned long long>(st.decodeErrors));
+}
+
+void netMatchSection(NetSession& s, const presentation::RendererStats& r) {
+  const ImGuiIO& io = ImGui::GetIO();
+  const sim::WorldState& w = s.curr();
+  ImGui::Text("frame %.2f ms  (%.1f fps), %u ticks this frame, %zu events",
+              static_cast<double>(io.Framerate > 0 ? 1000.0f / io.Framerate : 0.0f),
+              static_cast<double>(io.Framerate), s.ticksThisFrame(), s.frameEvents().size());
+  ImGui::Text("sim phase %s (%u ticks in phase), round %u", phaseName(w.rules.phase),
+              w.rules.ticksInPhase, static_cast<unsigned>(w.rules.round));
+  ImGui::Text("tick %u  checksum 0x%08X  content hash 0x%08X", w.tick.value, s.checksum(),
+              sim::contentHash(s.content()));
+  ImGui::Text("seed 0x%llX (from the server)",
+              static_cast<unsigned long long>(s.client().matchConfig().seed));
+  int policy = static_cast<int>(s.interpolationPolicy());
+  constexpr const char* kPolicies[] = {"Auto", "Interpolate", "Newest tick"};
+  if (ImGui::Combo("render policy", &policy, kPolicies, 3)) {
+    s.setInterpolationPolicy(static_cast<InterpolationPolicy>(policy));
+  }
+  ImGui::Text("display %.1f Hz, %s, alpha %.3f", s.displayHz(),
+              s.rendersNewest() ? "rendering the newest tick" : "interpolating",
+              static_cast<double>(s.renderAlpha()));
+  ImGui::Text("renderer: %u draw calls, %u triangles", r.drawCalls, r.triangles);
+}
+
 }  // namespace
 
 void DebugOverlay::recordFrame(double frameSeconds) {
@@ -318,6 +444,32 @@ void DebugOverlay::draw(MatchSession& session, const presentation::RendererStats
     if (ImGui::CollapsingHeader("Interpolation")) interpolationSection(session);
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
     if (ImGui::CollapsingHeader("Feel tuning")) tuningSection(session, printedCpp_);
+  }
+  ImGui::End();
+}
+
+}  // namespace kfm::client
+
+namespace kfm::client {
+
+void DebugOverlay::draw(NetSession& session, const presentation::RendererStats& renderer) {
+  rttMs_[netHead_] = static_cast<float>(ms(session.client().netStats().rttNs));
+  depth_[netHead_] = static_cast<float>(session.client().frameReport().maxDepth);
+  netHead_ = (netHead_ + 1) % rttMs_.size();
+  if (!open) return;
+  ImGui::SetNextWindowPos(ImVec2(12.0f, 70.0f), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(470.0f, 640.0f), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowBgAlpha(0.9f);
+  if (ImGui::Begin("Debug (F1)", &open)) {
+    if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::PlotLines("frame ms", frameMs_.data(), static_cast<int>(frameMs_.size()),
+                       static_cast<int>(frameHead_), nullptr, 0.0f, 50.0f, ImVec2(0, 50));
+      netMatchSection(session, renderer);
+    }
+    if (ImGui::CollapsingHeader("Net", ImGuiTreeNodeFlags_DefaultOpen)) {
+      netSection(session, rttMs_, depth_, netHead_);
+    }
+    if (ImGui::CollapsingHeader("Entities")) entitySection(session);
   }
   ImGui::End();
 }

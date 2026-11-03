@@ -274,11 +274,12 @@ TEST_CASE("a remote client's mispredictions engage rollback smoothing, which dec
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
     if (s.owner(PlayerId{i}) == SlotOwner::Remote) remote = i;
   REQUIRE(remote.has_value());
+  const uint8_t other = remote.value_or(0);
 
   float maxOffset = 0.0f;
   std::optional<presentation::PresentationState> snapshot;
   r.afterFrame = [&] {
-    const float o = offsetLength(s.presentation().players[*remote].motion);
+    const float o = offsetLength(s.presentation().players[other].motion);
     if (s.client().frameReport().rolledBack && o > maxOffset) {
       maxOffset = o;
       snapshot = s.presentation();
@@ -294,16 +295,16 @@ TEST_CASE("a remote client's mispredictions engage rollback smoothing, which dec
   CHECK(maxOffset <= presentation::kSmoothingSnapDistance);
 
   // Without further corrections the offset decays (τ = 120 ms for remotes).
-  presentation::PresentationState ps = *snapshot;
+  presentation::PresentationState ps = snapshot.value_or(presentation::PresentationState{});
   presentation::RenderState rs;
   const sim::WorldState& w = s.curr();
-  const float before = offsetLength(ps.players[*remote].motion);
+  const float before = offsetLength(ps.players[other].motion);
   presentation::buildRenderState(ps, w, w, 1.0f, {}, s.content(), 0.05f, rs);
-  const float after = offsetLength(ps.players[*remote].motion);
+  const float after = offsetLength(ps.players[other].motion);
   CHECK(after < before);
   for (int i = 0; i < 40; ++i)
     presentation::buildRenderState(ps, w, w, 1.0f, {}, s.content(), 0.05f, rs);
-  CHECK(offsetLength(ps.players[*remote].motion) == 0.0f);
+  CHECK(offsetLength(ps.players[other].motion) == 0.0f);
   CHECK(s.client().netStats().checksumMismatches == 0);
 }
 

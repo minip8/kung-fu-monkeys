@@ -100,7 +100,7 @@ class NetSession {
 
   // `transport` must outlive the session; `owned` (optional) is destroyed
   // with it. A null transport puts the session in Failed with `failure`.
-  NetSession(const NetSessionConfig& config, const platform::InputSampler& lobbySampler,
+  NetSession(NetSessionConfig config, platform::InputSampler lobbySampler,
              net::ITransport* transport, uint64_t nowNs,
              std::unique_ptr<net::ITransport> owned = nullptr, std::string failure = {});
   ~NetSession();

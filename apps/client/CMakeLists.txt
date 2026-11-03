@@ -52,12 +52,15 @@ if(EMSCRIPTEN)
     -sMAX_WEBGL_VERSION=2
     -sENVIRONMENT=web)
   set_property(TARGET kfm_client APPEND PROPERTY LINK_DEPENDS "${kfm_client_shell}")
-  if(KFM_WEBRTC)
-    # M3's client integration (NetClient over WebRtcTransport) uses this; linked
-    # ahead of it so the page is known to load with wasm exceptions and
-    # datachannel-wasm's JS libraries. Nothing references it yet.
-    target_link_libraries(kfm_client PRIVATE kfm::net_webrtc)
-  endif()
+endif()
+
+# Network mode (--connect) runs NetSession over WebRtcTransport, natively and
+# in the browser (datachannel-wasm: kfm::net_webrtc brings -fwasm-exceptions,
+# its --js-library files and the EXPORTED_RUNTIME_METHODS it needs). Without
+# KFM_WEBRTC the client builds and --connect reports that it cannot connect.
+if(KFM_WEBRTC)
+  target_link_libraries(kfm_client PRIVATE kfm::net_webrtc)
+  target_compile_definitions(kfm_client PRIVATE KFM_CLIENT_WEBRTC=1)
 endif()
 
 # Rendering smoke test without a human: 60 frames of a started match with
@@ -73,6 +76,14 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
     # Force X11 + llvmpipe so the test never depends on the host GPU or a
     # Wayland compositor; LSan reports leaks inside Mesa/X11, not ours.
     set_tests_properties(client_smoke PROPERTIES
+      TIMEOUT 120
+      ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
+    # Network mode without a server: the connecting/disconnected screen
+    # renders and the client exits 0 (nothing listens on port 1).
+    add_test(NAME client_smoke_net
+      COMMAND ${KFM_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+              $<TARGET_FILE:kfm_client> --connect ws://127.0.0.1:1 --exit-after-frames 60)
+    set_tests_properties(client_smoke_net PROPERTIES
       TIMEOUT 120
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
   endif()

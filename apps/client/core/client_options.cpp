@@ -1,5 +1,6 @@
 #include "client_options.hpp"
 
+#include "kfm/net/messages.hpp"
 #include "kfm/sim/constants.hpp"
 
 #include <charconv>
@@ -22,6 +23,20 @@ namespace {
 }
 
 }  // namespace
+
+NetSessionConfig netSessionConfig(const ClientOptions& options, bool atStartup) {
+  NetSessionConfig c;
+  c.serverLabel = options.connect;
+  for (const char ch : options.token)
+    c.token.push_back(static_cast<std::byte>(ch));
+  c.spectate = options.spectate;
+  if (options.players != 0) {
+    c.requestedSlots = options.players;
+  } else {
+    c.requestedSlots = atStartup ? 1 : 0;
+  }
+  return c;
+}
 
 bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, std::string& error) {
   const auto value = [&](std::size_t& i, uint64_t& dst) {
@@ -70,6 +85,37 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       if (!value(i, out.seed)) return false;
     } else if (arg == "--players-seed") {
       if (!value(i, out.playersSeed)) return false;
+    } else if (arg == "--connect" || arg == "--token" || arg == "--stun") {
+      if (i + 1 >= args.size()) {
+        error = std::string(arg) + " needs a value";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      if (arg == "--connect") {
+        if (!v.starts_with("ws://") && !v.starts_with("wss://")) {
+          error = "--connect needs a ws:// URL, got '" + std::string(v) + "'";
+          return false;
+        }
+        out.connect = v;
+      } else if (arg == "--token") {
+        if (v.size() > net::kMaxTokenBytes) {
+          error = "--token is at most " + std::to_string(net::kMaxTokenBytes) + " bytes";
+          return false;
+        }
+        out.token = v;
+      } else {
+        out.stun = v;
+      }
+    } else if (arg == "--spectate") {
+      out.spectate = true;
+    } else if (arg == "--players") {
+      uint64_t n = 0;
+      if (!value(i, n)) return false;
+      if (n == 0 || n > sim::kMaxPlayers) {
+        error = "--players must be 1.." + std::to_string(sim::kMaxPlayers);
+        return false;
+      }
+      out.players = static_cast<uint8_t>(n);
     } else {
       error = "unknown argument '" + std::string(arg) + "'";
       return false;
