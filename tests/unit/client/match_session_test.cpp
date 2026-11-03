@@ -600,3 +600,80 @@ TEST_CASE("session: returning to the lobby resets the match visuals", "[client][
   CHECK(d.s->presentation().players[0].bodyYaw == 0.0f);
   CHECK(d.s->presentation().players[0].flashRemaining == 0.0f);
 }
+
+TEST_CASE("session: a button pressed during a pause does not fire on resume", "[client][session]") {
+  Driver d(SessionConfig{.seed = 4, .bots = 1});
+  d.start();
+  d.frame(2);
+  d.s->setPaused(true);
+  d.push(key(Key::K, true));  // Dash goes down during the pause and stays held
+  d.frame(1);
+  d.frame(1);
+  d.s->setPaused(false);
+  d.frame(1);
+  REQUIRE(d.s->ticksThisFrame() == 1);
+  CHECK_FALSE(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
+  CHECK(d.s->curr().players.items[0].intent.pressed == 0);
+  d.frame(3);
+  CHECK_FALSE(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
+  // Released and pressed again: a real press.
+  d.push(key(Key::K, false));
+  d.frame(1);
+  d.push(key(Key::K, true));
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
+  CHECK(d.s->curr().players.items[0].intent.pressed == sim::buttonBit(sim::Button::Dash));
+
+  // A single step while paused ignores the held key too, but takes a press
+  // made in the stepped frame.
+  d.s->setPaused(true);
+  d.push(key(Key::K, false));
+  d.push(key(Key::J, true));
+  d.frame(1);
+  d.s->requestSingleStep();
+  d.frame(1);
+  REQUIRE(d.s->ticksThisFrame() == 1);
+  CHECK(d.s->lastFrame().inputs[0].buttons == 0);
+  d.push(key(Key::K, true));
+  d.s->requestSingleStep();
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].buttons == sim::buttonBit(sim::Button::Dash));
+}
+
+TEST_CASE("session: a button held from the lobby does not fire at the start", "[client][session]") {
+  Driver d(SessionConfig{.seed = 4, .bots = 1});
+  d.push(key(Key::Space, true));  // Throw held while Enter starts the match
+  d.push(key(Key::Enter, true));
+  d.frame(1);
+  REQUIRE(d.s->phase() == SessionPhase::Match);
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].buttons == 0);
+}
+
+TEST_CASE("session: the press that takes over a dropped slot is not sampled", "[client][session]") {
+  Driver d(SessionConfig{.seed = 5, .bots = 1, .bindKeyboardToSlot0 = false});
+  d.push(padEvent(9, InputEventKind::PadAdded));
+  d.push(padButton(9, PadButton::South, true));
+  d.frame(1);
+  d.push(padButton(9, PadButton::South, false));
+  d.start();
+  d.frame(1);
+  d.push(padEvent(9, InputEventKind::PadRemoved));
+  d.frame(1);
+  REQUIRE(d.s->owner(PlayerId{0}) == SlotOwner::Dropped);
+
+  // Dash takes the slot over: no dash in that tick, nor while it stays held.
+  d.push(key(Key::K, true));
+  d.frame(1);
+  REQUIRE(d.s->owner(PlayerId{0}) == SlotOwner::Local);
+  CHECK(d.s->lastFrame().inputs[0].buttons == 0);
+  CHECK(d.s->lastFrame().inputs[0].subTick == 0);
+  d.frame(2);
+  CHECK(d.s->lastFrame().inputs[0].buttons == 0);
+  d.push(key(Key::K, false));
+  d.frame(1);
+  // The next press is a normal one.
+  d.push(key(Key::J, true));
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].buttons == sim::buttonBit(sim::Button::Throw));
+}

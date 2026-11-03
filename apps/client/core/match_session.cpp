@@ -87,8 +87,13 @@ void MatchSession::advance(uint64_t nowNs) {
     const uint64_t start = clock_.tickStartNs(i);
     stepOnce(start, wall, i + 1 < ticks ? start + wall : platform::kNoCutoff);
   }
-  // While paused, presses are discarded rather than piling up for the next tick.
-  if (ticks == 0 && clock_.paused()) sampler_.endTick();
+  // While paused, presses are discarded rather than piling up for the next
+  // tick, and a Throw/Dash pressed during the pause and still held counts as
+  // used until released, so nothing fires on resume (or on a single step).
+  if (ticks == 0 && clock_.paused()) {
+    sampler_.endTick();
+    sampler_.consumeAllButtons();
+  }
 }
 
 void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t tickEndNs) {
@@ -166,6 +171,9 @@ void MatchSession::handleRebinds() {
     const std::optional<platform::DeviceBinding> device = sampler_.pollJoin();
     if (!device) break;
     (void)sampler_.bind(PlayerId{*slot}, *device, lastInputs_[*slot].aimDir);
+    // The press that took the slot over is used by the join, not sampled as
+    // a Throw/Dash in this tick.
+    sampler_.consumeButtons(PlayerId{*slot});
   }
 }
 
@@ -224,6 +232,7 @@ void MatchSession::beginMatch(sim::PlayerMask present, sim::PlayerMask local, ui
   presentation_ = presentation::PresentationState{};
   sampler_.clearDropped();
   sampler_.endTick();
+  sampler_.consumeAllButtons();  // a button held from the lobby does not fire at start
   startRequested_ = false;
   clock_.setPaused(false);  // a new match never starts frozen; also drops a pending step
   clock_.reset(nowNs);

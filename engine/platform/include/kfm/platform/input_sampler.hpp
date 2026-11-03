@@ -30,6 +30,11 @@
 //     SDL's +Y-down is flipped to the sim's +y-up.
 //   - Aim: the right stick when outside its deadzone, else the current move
 //     direction, else the previous aim (it never snaps back to 0).
+//   - Consumed buttons: consumeButtons() marks a slot's Throw/Dash presses
+//     recorded so far, and the buttons held at that moment, as used up: they
+//     set no bit and no subTick until the action has been released. Used for
+//     a join press and for presses made while the match was paused, so
+//     neither reaches the sim as a press edge.
 #pragma once
 
 #include "kfm/core/types.hpp"
@@ -178,8 +183,8 @@ class InputSampler {
 
   // The input for `slot` this tick, from every pending transition;
   // PlayerInput{} for an unbound slot. tickStartNs is on the
-  // InputEvent::timestampNs clock. Updates the slot's retained aim; does not clear the tick's press
-  // records (endTick() does).
+  // InputEvent::timestampNs clock. Updates the slot's retained aim and its
+  // consumed buttons; does not clear the tick's press records (endTick() does).
   [[nodiscard]] sim::PlayerInput sample(PlayerId slot, uint64_t tickStartNs,
                                         uint64_t tickDurationNs);
 
@@ -192,6 +197,13 @@ class InputSampler {
 
   // Ends the tick: clears every pending press record.
   void endTick();
+
+  // Throw/Dash presses of `slot` recorded so far and the buttons it holds now
+  // are consumed: they set no bit and no subTick until the action has been
+  // released. Presses after this call sample normally. bind() clears it.
+  void consumeButtons(PlayerId slot);
+  // consumeButtons() for every slot.
+  void consumeAllButtons();
 
  private:
   struct PadState {
@@ -206,6 +218,11 @@ class InputSampler {
   struct Slot {
     DeviceBinding device{};
     uint8_t aim{0};
+    // Per action (only Throw/Dash are ever set): consumed until released.
+    std::array<bool, kActionCount> consumed{};
+    // Index into transitions_ at which consumption happened: earlier press
+    // edges of a consumed action never count.
+    std::size_t consumedFrom{0};
   };
 
   // Key/button transitions this tick, in order (repeats filtered out).

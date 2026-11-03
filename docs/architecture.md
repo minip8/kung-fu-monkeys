@@ -293,7 +293,9 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   direction, otherwise the previous aim (never reset). Keyboard aim follows movement.
 - Local multiplayer: a device feeds at most one slot; `PadRemoved` unbinds its slot and flags it
   as dropped (nothing rebinds automatically); `pollJoin()` reports the first unbound device
-  that pressed Throw or Dash this tick, which is how "press a button to join" works. Default
+  that pressed Throw or Dash this tick, which is how "press a button to join" works;
+  `consumeButtons()` then marks the slot's presses so far and its held Throw/Dash as used until
+  released, so the joining press never reaches the sim as a press edge. Default
   bindings: keyboard profile 0 is WASD with J or Space to throw and K or Left Shift to dash;
   profile 1 is the arrow keys with Period or Right Ctrl to throw and Slash or Right Shift to
   dash; gamepads move with the left stick (dpad fallback), aim with the right stick, throw with
@@ -657,9 +659,11 @@ C++ server library is mature. The seam makes that swap a contained change.
   immediately before its `step()`; the windows of a frame's batch end at the frame's own
   timestamp (the time up to which events were read) and count back in whole ticks, so the
   leftover accumulator only sets the render alpha and never pushes a press past its tick's
-  end. Pausing freezes the accumulator and discards pending presses so nothing fires on
-  resume; a new match, a restart or a return to the lobby clears the pause and any pending
-  single step, and a return to the lobby also resets the presentation state. Render policy "auto": the newest tick is drawn directly when the
+  end. Pausing freezes the accumulator and discards pending presses, and a Throw or Dash
+  pressed during the pause and still held reads as released until it is let go, so nothing
+  fires on resume or on a single step; a new match, a restart or a return to the lobby clears
+  the pause and any pending single step, and a return to the lobby also resets the
+  presentation state. Render policy "auto": the newest tick is drawn directly when the
   measured display rate (EMA of frame intervals) is at least 0.95 × `kTickHz` × time scale (the
   tolerance covers 59.94 Hz displays), otherwise frames interpolate with
   `alpha = accumulator / tickCost`; the overlay can force either.
@@ -732,7 +736,9 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   Enter, pad Start, the Start button or `--autostart` creates the world. After `MatchEnded`,
   Enter or Start returns to the lobby with bindings kept. A removed pad's slot repeats its last
   full input (held buttons cannot re-fire thanks to edge detection) until the next free device
-  presses a button, and becomes a bot on restart. Restart "same seed" reproduces the run
+  presses a button (that press is used by the takeover and does not throw or dash), and
+  becomes a bot on restart. A Throw or Dash held from the lobby does not fire when the match
+  starts. Restart "same seed" reproduces the run
   exactly. Live content editing from the F1 overlay (dash phases and window, banana flight,
   player speed, hit-stun, mode) is a local-only debug feature: the overlay shows the content
   hash, marks it TUNED when it differs from the defaults, and prints the values as C++ so a

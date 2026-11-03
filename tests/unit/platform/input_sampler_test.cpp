@@ -391,3 +391,52 @@ TEST_CASE("sampleFrame keeps transitions after the tick end for the next tick", 
   CHECK(f.inputs[0].buttons == kfm::sim::buttonBit(Button::Dash));  // held, no new edge
   CHECK(f.inputs[0].subTick == 0);
 }
+
+TEST_CASE("consumed buttons stay silent until released", "[input]") {
+  InputSampler s;
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  SECTION("a pending press and a held key are consumed") {
+    s.push(key(Key::J, true, tickStart(0) + (kDur / 4)));
+    s.consumeButtons(kP0);
+    PlayerInput in = tick(s, kP0, 0);
+    CHECK(in.buttons == 0);
+    CHECK(in.subTick == 0);
+    CHECK(tick(s, kP0, 1).buttons == 0);  // still held
+    s.push(key(Key::J, false, tickStart(2)));
+    CHECK(tick(s, kP0, 2).buttons == 0);
+    s.push(key(Key::J, true, tickStart(3) + (kDur / 2)));
+    in = tick(s, kP0, 3);
+    CHECK(in.has(Button::Throw));
+    CHECK(in.subTick == 128);
+  }
+  SECTION("a press after the consume in the same tick counts") {
+    s.push(key(Key::J, true, tickStart(0) + (kDur / 4)));
+    s.push(key(Key::J, false, tickStart(0) + (kDur / 3)));
+    s.consumeButtons(kP0);
+    s.push(key(Key::K, true, tickStart(0) + (kDur / 2)));
+    const PlayerInput in = tick(s, kP0, 0);
+    CHECK(in.buttons == kfm::sim::buttonBit(Button::Dash));
+    CHECK(in.subTick == 128);
+  }
+  SECTION("release and re-press within one tick is a press") {
+    s.push(key(Key::K, true, tickStart(0)));
+    (void)tick(s, kP0, 0);
+    s.consumeButtons(kP0);
+    s.push(key(Key::K, false, tickStart(1) + (kDur / 4)));
+    s.push(key(Key::K, true, tickStart(1) + (kDur / 2)));
+    const PlayerInput in = tick(s, kP0, 1);
+    CHECK(in.has(Button::Dash));
+    CHECK(in.subTick == 128);
+  }
+  SECTION("movement is never consumed") {
+    s.push(key(Key::D, true, tickStart(0)));
+    s.consumeButtons(kP0);
+    CHECK(tick(s, kP0, 0).moveMag == 255);
+  }
+  SECTION("bind clears it") {
+    s.push(key(Key::J, true, tickStart(0)));
+    s.consumeButtons(kP0);
+    REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+    CHECK(tick(s, kP0, 0).has(Button::Throw));
+  }
+}

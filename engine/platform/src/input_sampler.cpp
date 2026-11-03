@@ -53,11 +53,14 @@ struct ActionSample {
 // Replays the first `count` pending transitions of one device against the
 // state at tick start, at action granularity: an action is down while any of
 // its aliases is down, so pressing a second alias of an already-held action
-// is not an edge. `held` is the replayed state, or
+// is not an edge. `consumed` (in/out) suppresses an action's press edges
+// before index `consumedFrom` and its held state until it is seen fully up at
+// or after that index, which clears it. `held` is the replayed state, or
 // downNow when every pending transition is replayed (`all`).
 template <class Transitions, class DownAtStart, class DownNow>
 ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
                            const Transitions& transitions, std::size_t count, bool all,
+                           std::array<bool, kActionCount>& consumed, std::size_t consumedFrom,
                            DownAtStart downAtStart, DownNow downNow) {
   ActionSample out;
   std::array<std::array<bool, kMaxAliases>, kActionCount> aliasDown{};
@@ -72,7 +75,13 @@ ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
   const auto anyDown = [](const std::array<bool, kMaxAliases>& v) {
     return std::ranges::any_of(v, [](bool b) { return b; });
   };
+  const auto releaseConsumed = [&] {
+    for (std::size_t a = 0; a < kActionCount; ++a) {
+      if (consumed[a] && !anyDown(aliasDown[a])) consumed[a] = false;
+    }
+  };
   for (std::size_t j = 0; j < count; ++j) {
+    if (j == consumedFrom) releaseConsumed();
     const auto& t = transitions[j];
     if (t.deviceId != deviceId) continue;
     for (std::size_t a = 0; a < kActionCount; ++a) {
@@ -80,7 +89,7 @@ ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
         if (codes[a][k] != t.code) continue;
         const bool before = anyDown(aliasDown[a]);
         aliasDown[a][k] = t.down;
-        if (!before && anyDown(aliasDown[a])) {
+        if (!before && anyDown(aliasDown[a]) && !consumed[a]) {
           out.pressed[a] = true;
           if (a == idx(Action::Throw) || a == idx(Action::Dash)) {
             out.buttonPressed = true;
@@ -89,10 +98,12 @@ ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
         }
       }
     }
+    if (j >= consumedFrom) releaseConsumed();
   }
-  if (!all) {
-    for (std::size_t a = 0; a < kActionCount; ++a)
-      out.held[a] = anyDown(aliasDown[a]);
+  if (consumedFrom == count) releaseConsumed();
+  for (std::size_t a = 0; a < kActionCount; ++a) {
+    if (!all) out.held[a] = anyDown(aliasDown[a]);
+    if (consumed[a]) out.held[a] = false;
   }
   return out;
 }
@@ -363,11 +374,11 @@ sim::PlayerInput InputSampler::sampleSlot(PlayerId slot, uint64_t tickStartNs,
   if (s.device.kind == DeviceKind::Keyboard) {
     act = sampleActions(
         codesOf(keyProfiles_[s.device.keyboardProfile]), kKeyboardDevice, transitions_, count, all,
-        [&](uint16_t c) { return keyDownAtTickStart_[c]; },
+        s.consumed, s.consumedFrom, [&](uint16_t c) { return keyDownAtTickStart_[c]; },
         [&](uint16_t c) { return keyDown_[c]; });
   } else if (const PadState* pad = findPad(s.device.padId)) {
     act = sampleActions(
-        codesOf(padProfile_), s.device.padId, transitions_, count, all,
+        codesOf(padProfile_), s.device.padId, transitions_, count, all, s.consumed, s.consumedFrom,
         [&](uint16_t c) { return pad->downAtTickStart[c]; },
         [&](uint16_t c) { return pad->down[c]; });
     const auto axis = [&](PadAxis a) { return pad->axes[static_cast<std::size_t>(a)]; };
@@ -432,6 +443,8 @@ void InputSampler::endTickAfter(std::size_t count) {
     keyDownAtTickStart_ = keyDown_;
     for (auto& p : pads_)
       p.downAtTickStart = p.down;
+    for (auto& s : slots_)
+      s.consumedFrom = 0;
     return;
   }
   // Apply the sampled prefix to the tick-start state; the rest stays pending.
@@ -445,6 +458,21 @@ void InputSampler::endTickAfter(std::size_t count) {
   }
   transitions_.erase(transitions_.begin(),
                      transitions_.begin() + static_cast<std::ptrdiff_t>(count));
+  for (auto& s : slots_)
+    s.consumedFrom = s.consumedFrom > count ? s.consumedFrom - count : 0;
+}
+
+void InputSampler::consumeButtons(PlayerId slot) {
+  if (!validSlot(slot)) return;
+  Slot& s = slots_[slot.value];
+  s.consumed[idx(Action::Throw)] = true;
+  s.consumed[idx(Action::Dash)] = true;
+  s.consumedFrom = transitions_.size();
+}
+
+void InputSampler::consumeAllButtons() {
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
+    consumeButtons(PlayerId{i});
 }
 
 }  // namespace kfm::platform
