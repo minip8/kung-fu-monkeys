@@ -421,6 +421,23 @@ void netMatchSection(NetSession& s, const presentation::RendererStats& r) {
   ImGui::Text("renderer: %u draw calls, %u triangles", r.drawCalls, r.triangles);
 }
 
+// Audio (§7): mute, master volume, device status and the mixer's voices.
+// Works online too: sound is presentation, not the sim.
+void audioSection(ClientAudio& a) {
+  bool muted = a.muted();
+  if (ImGui::Checkbox("mute", &muted)) a.setMuted(muted);
+  int volume = a.volumePercent();
+  if (ImGui::SliderInt("volume", &volume, 0, 100, "%d %%")) a.setVolumePercent(volume);
+  if (ImGui::Button("test click")) a.click();
+  ImGui::TextWrapped("device: %s", a.statusText().c_str());
+  const presentation::Mixer& m = a.mixer();
+  ImGui::Text("voices %d / %d, started %llu, stolen %llu", m.activeVoices(),
+              presentation::kMixerVoices, static_cast<unsigned long long>(m.started()),
+              static_cast<unsigned long long>(m.stolenVoices()));
+  ImGui::Text("queued %zu frames, underruns %llu", a.device().queuedFrames(),
+              static_cast<unsigned long long>(a.device().underruns()));
+}
+
 }  // namespace
 
 void DebugOverlay::recordFrame(double frameSeconds) {
@@ -445,6 +462,7 @@ void DebugOverlay::draw(MatchSession& session, const presentation::RendererStats
     if (ImGui::CollapsingHeader("Interpolation")) interpolationSection(session);
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
     if (ImGui::CollapsingHeader("Feel tuning")) tuningSection(session, printedCpp_);
+    if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
   }
   ImGui::End();
 }
@@ -471,6 +489,7 @@ void DebugOverlay::draw(NetSession& session, const presentation::RendererStats& 
       netSection(session, rttMs_, depth_, netHead_);
     }
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
+    if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
   }
   ImGui::End();
 }

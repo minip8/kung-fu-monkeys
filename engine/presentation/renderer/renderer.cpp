@@ -63,6 +63,9 @@ constexpr Color kGold{1.0f, 0.82f, 0.18f};
 constexpr Color kWhite{1.0f, 1.0f, 1.0f};
 constexpr Color kHitRed{1.0f, 0.16f, 0.10f};
 constexpr Color kShieldBlue{0.45f, 0.85f, 1.0f};
+constexpr Color kSpark{1.0f, 0.62f, 0.25f};
+constexpr Color kSmoke{0.72f, 0.72f, 0.74f};
+constexpr Color kDust{0.62f, 0.52f, 0.38f};
 
 constexpr float kWallHeight = 0.35f;
 constexpr float kWallThickness = 0.3f;
@@ -78,6 +81,15 @@ constexpr float kMaxAnimStepSeconds = 0.25f;  // a stalled frame must not skip w
 
 [[nodiscard]] constexpr Color mix(Color a, Color b, float t) {
   return {lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t)};
+}
+
+[[nodiscard]] constexpr float easeOut(float t) {
+  return 1.0f - ((1.0f - t) * (1.0f - t));
+}
+
+// A sim-plane direction as a world vector on the ground (world_basis.hpp).
+[[nodiscard]] constexpr Vec3 planeToWorld(Vec2f d) {
+  return {d.x, 0.0f, -d.y};
 }
 
 [[nodiscard]] Vec3 yawDirection(float yaw) {
@@ -364,6 +376,40 @@ class FrameDrawer {
   std::size_t currentPipeline_{kNone};
   std::size_t currentMesh_{kNone};
 };
+
+// n billboards flying out from an effect's position: around the full circle,
+// or within `spread` radians of `bias` when it is non-zero. `seed` rotates
+// the pattern so overlapping bursts differ.
+struct SparkStyle {
+  int count{0};
+  float reach{0.0f};   // distance travelled at t = 1
+  float size{0.0f};    // billboard radius at t = 0
+  float shrink{0.0f};  // fraction of size lost by t = 1
+  float rise{0.0f};    // height gained by t = 1
+  float spread{0.0f};  // radians around bias (ignored without a bias)
+  Color color{};
+  float alpha{0.0f};
+  DecalMode mode{DecalMode::Burst};
+};
+
+void drawSparks(FrameDrawer& d, const RenderEffect& e, const SparkStyle& s) {
+  const float t = e.progress();
+  const float fade = 1.0f - t;
+  const bool cone = length(e.direction) > 1e-4f;
+  const float base =
+      cone ? std::atan2(e.direction.y, e.direction.x) : 0.61f * static_cast<float>(e.slot + 2);
+  const float reach = s.reach * easeOut(t);
+  for (int k = 0; k < s.count; ++k) {
+    const float u = s.count > 1 ? static_cast<float>(k) / static_cast<float>(s.count - 1) : 0.5f;
+    const float a = cone ? base + (s.spread * (u - 0.5f))
+                         : base + (kTwoPi * static_cast<float>(k) / static_cast<float>(s.count));
+    // Alternate spark lengths a little so the burst is not a perfect circle.
+    const float r = reach * ((k % 2 == 0) ? 1.0f : 0.75f);
+    const Vec3 at =
+        e.position + (planeToWorld({std::cos(a), std::sin(a)}) * r) + Vec3{0.0f, s.rise * t, 0.0f};
+    d.billboard(at, s.size * (1.0f - (s.shrink * t)), s.color, s.alpha * fade, s.mode, 0.15f);
+  }
+}
 
 }  // namespace
 
@@ -667,6 +713,45 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
         // Alpha-blended: additive red over a grey floor would read as pink.
         d.billboard(e.position, lerp(0.6f, 1.4f, t), kHitRed, 0.9f * fade, DecalMode::Burst, 0.3f);
         break;
+      case EffectKind::DashAnticipation: {
+        // A ring collapsing onto the dasher: the dash reads as deliberate at
+        // the press, whatever it resolves to later (§12).
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.5f) : kWhite;
+        const float rr = r * lerp(2.6f, 1.0f, easeOut(t));
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.9f * fade, DecalMode::Ring, 0.8f);
+        break;
+      }
+      case EffectKind::DashTrail: {
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.3f) : kWhite;
+        d.billboard(e.position, r * lerp(1.0f, 0.4f, t), c, 0.45f * fade, DecalMode::Burst, 0.3f);
+        break;
+      }
+      case EffectKind::EliminationPoof:
+        drawSparks(d, e,
+                   SparkStyle{.count = kEliminationPuffs,
+                              .reach = 0.9f,
+                              .size = 0.3f,
+                              .shrink = -1.0f,
+                              .rise = 0.8f,
+                              .spread = 0.0f,
+                              .color = kSmoke,
+                              .alpha = 0.6f,
+                              .mode = DecalMode::Burst});
+        break;
+      case EffectKind::GroundDust:
+        drawSparks(d, e,
+                   SparkStyle{.count = kDustPuffs,
+                              .reach = 0.6f,
+                              .size = 0.16f,
+                              .shrink = -1.2f,
+                              .rise = 0.15f,
+                              .spread = 0.0f,
+                              .color = kDust,
+                              .alpha = 0.5f,
+                              .mode = DecalMode::Burst});
+        break;
       default:
         break;
     }
@@ -688,6 +773,58 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
         break;
       case EffectKind::ThrowPuff:
         d.billboard(e.position, lerp(0.2f, 0.55f, t), kWhite, 0.55f * fade, DecalMode::Burst, 0.1f);
+        break;
+      case EffectKind::DashAnticipation: {
+        // A flash just ahead of the dasher, along the dash.
+        const Vec3 ahead = e.position + (planeToWorld(e.direction) * (r * 1.3f)) +
+                           Vec3{0.0f, kEffectBodyHeight * 0.6f, 0.0f};
+        d.billboard(ahead, lerp(0.5f, 0.2f, t), kWhite, 0.8f * fade, DecalMode::Burst, 0.1f);
+        break;
+      }
+      case EffectKind::BananaTrail: {
+        Color c = kBananaColor;
+        if (e.slot >= 0) c = mix(c, playerColor(static_cast<uint32_t>(e.slot)), kOwnerTint);
+        d.billboard(e.position, lerp(0.16f, 0.04f, t), c, 0.6f * fade, DecalMode::Burst, 0.1f);
+        break;
+      }
+      case EffectKind::PerfectCatchBurst:
+        drawSparks(d, e,
+                   SparkStyle{.count = kPerfectCatchSparks,
+                              .reach = 1.8f,
+                              .size = 0.14f,
+                              .shrink = 0.5f,
+                              .rise = 0.3f,
+                              .spread = 0.0f,
+                              .color = kGold,
+                              .alpha = 1.0f,
+                              .mode = DecalMode::Burst});
+        break;
+      case EffectKind::HitSpark:
+        drawSparks(d, e,
+                   SparkStyle{.count = kHitSparks,
+                              .reach = 1.2f,
+                              .size = 0.12f,
+                              .shrink = 0.6f,
+                              .rise = 0.2f,
+                              .spread = 1.6f,
+                              .color = kSpark,
+                              .alpha = 1.0f,
+                              .mode = DecalMode::Burst});
+        break;
+      case EffectKind::PickupSparkle:
+        drawSparks(d, e,
+                   SparkStyle{.count = kPickupTwinkles,
+                              .reach = 0.35f,
+                              .size = 0.12f,
+                              .shrink = 0.7f,
+                              .rise = 0.6f,
+                              .spread = 0.0f,
+                              .color = mix(kGold, kWhite, 0.4f),
+                              .alpha = 1.0f,
+                              .mode = DecalMode::Burst});
+        break;
+      case EffectKind::BounceSpark:
+        d.billboard(e.position, lerp(0.15f, 0.45f, t), kWhite, 0.8f * fade, DecalMode::Burst, 0.1f);
         break;
       default:
         break;  // rings and alpha bursts are drawn above; banners are HUD work

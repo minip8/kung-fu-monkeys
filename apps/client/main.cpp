@@ -3,14 +3,16 @@
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
 //              [--content DIR] [--arena NAME] [--mode NAME] [--no-hot-reload]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
+//              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //
 // Frame: pollEvents (ImGui first, then SDL -> InputEvent into the session)
 // -> MatchSession::advance (0..4 fixed 60 Hz ticks, inputs sampled right
 // before each step) or, in network mode, NetSession::advance (pump,
 // reconcile, onRollback, the rate-controlled ticks, journal events) ->
-// buildRenderState -> arena camera -> HUD / lobby / network status / debug
-// overlay (ImGui) -> debugUiFlush -> default pass: renderer.draw, then
+// buildRenderState -> audio (the frame's sound cues into the mixer, the
+// device queue topped up) -> arena camera -> HUD / lobby / network status /
+// debug overlay (ImGui) -> debugUiFlush -> default pass: renderer.draw, then
 // debugUiDraw -> present.
 //
 // Network mode (--connect): connects at startup with one local slot (or
@@ -30,6 +32,7 @@
 // disconnects and returns to the local lobby), - / = bot count in the lobby,
 // Enter / pad Start starts the match or connects (and leaves the match-over
 // screen). Pause, step and the bot keys do nothing online.
+#include "client_audio.hpp"
 #include "core/client_options.hpp"
 #include "core/match_session.hpp"
 #include "core/net_session.hpp"
@@ -90,6 +93,7 @@ struct App {
   bool connectRequested = false;  // the lobby's Start, online: connect next frame
   client::GamepadSet pads;
   client::DebugOverlay overlay;
+  client::ClientAudio audio;
   presentation::RenderState renderState;
   std::uint64_t frames = 0;
   std::uint64_t lastFrameNs = 0;
@@ -244,8 +248,22 @@ void handleShortcut(App& app, const SDL_Event& event) {
   }
 }
 
+// Input that counts as a user gesture for the browser's autoplay policy.
+[[nodiscard]] bool isGesture(const SDL_Event& event) {
+  switch (event.type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+      return true;
+    default:
+      return false;
+  }
+}
+
 void onEvent(void* user, const SDL_Event& event) {
   auto* app = static_cast<App*>(user);
+  if (isGesture(event)) app->audio.onUserGesture();
   app->pads.onEvent(event);
   handleShortcut(*app, event);
   const auto input = client::translateSdlEvent(event);
@@ -295,6 +313,7 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   platform::debugUiNewFrame(w, h, dt, density);
   if (s.phase() == SessionPhase::Lobby) {
     if (client::drawLobby(s, app.options.connect)) {
+      app.audio.click();
       if (app.options.networkMode()) {
         app.connectRequested = true;
       } else {
@@ -307,6 +326,7 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
   }
   app.overlay.draw(s, app.renderer.stats(), now);
+  app.audio.frame(app.renderState);
   return camera;
 }
 
@@ -333,6 +353,7 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   }
   if (!n.running()) client::drawNetStatus(n);
   app.overlay.draw(n, app.renderer.stats());
+  app.audio.frame(app.renderState);
   return camera;
 }
 
@@ -380,6 +401,7 @@ void onExit(void* user) {
   app->rendererReady = false;
   platform::debugUiShutdown();
   platform::gfxShutdown();
+  app->audio.shutdown();
   app->pads.closeAll();
   app->window.shutdown();
   if (app->net) {
@@ -471,6 +493,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
 
   app.overlay.open = app.options.overlay;
+  app.overlay.audio = &app.audio;
+  app.audio.init(app.options.mute, app.options.volume);
   app.lastFrameNs = platform::Window::nowNs();
   if (online) {
     // --connect connects at startup with the devices bound so far (keyboard

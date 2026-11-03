@@ -31,7 +31,7 @@ target_link_libraries(kfm_client_sdl
 kfm_no_exceptions_rtti(kfm_client_sdl)
 set_target_properties(kfm_client_sdl PROPERTIES FOLDER apps)
 
-add_executable(kfm_client main.cpp hud.cpp debug_overlay.cpp)
+add_executable(kfm_client main.cpp hud.cpp debug_overlay.cpp client_audio.cpp)
 target_link_libraries(kfm_client PRIVATE
   kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client)

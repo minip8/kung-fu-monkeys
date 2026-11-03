@@ -73,6 +73,16 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.overlay = true;
     } else if (arg == "--capsules") {
       out.capsules = true;
+    } else if (arg == "--mute") {
+      out.mute = true;
+    } else if (arg == "--volume") {
+      uint64_t n = 0;
+      if (!value(i, n)) return false;
+      if (n > 100) {
+        error = "--volume must be 0..100";
+        return false;
+      }
+      out.volume = static_cast<uint8_t>(n);
     } else if (arg == "--bots") {
       uint64_t n = 0;
       if (!value(i, n)) return false;

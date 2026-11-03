@@ -70,6 +70,7 @@ kfm_add_test_exe(kfm_presentation_tests
   presentation/builder_test.cpp
   presentation/meshes_test.cpp
   presentation/animation_test.cpp
+  presentation/audio_test.cpp
 )
 target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation)
 if(NOT KFM_HEADLESS)
@@ -104,6 +105,7 @@ if(NOT KFM_HEADLESS)
     client/content_tuning_test.cpp
     client/sdl_input_test.cpp
     client/net_session_test.cpp
+    client/event_fx_rollback_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
 

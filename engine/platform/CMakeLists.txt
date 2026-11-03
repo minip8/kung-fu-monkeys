@@ -30,6 +30,7 @@ add_library(kfm_platform STATIC
   src/gfx.cpp
   src/debug_ui.cpp
   src/main_loop.cpp
+  src/audio_device.cpp
 )
 add_library(kfm::platform ALIAS kfm_platform)
 target_include_directories(kfm_platform

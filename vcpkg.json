@@ -20,6 +20,10 @@
         {
           "name": "x11",
           "platform": "linux"
+        },
+        {
+          "name": "alsa",
+          "platform": "linux"
         }
       ]
     },

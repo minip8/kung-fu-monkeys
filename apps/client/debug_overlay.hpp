@@ -4,9 +4,11 @@
 // controls, and feel-tuning sliders over the session's ContentDB copy.
 // In network mode: the net panel (connection, RTT/jitter/loss, lead, rate,
 // rollback depth histogram, mispredictions, checksums, traffic, net graph)
-// instead of the local-only controls and tuning.
+// instead of the local-only controls and tuning. Both modes show the Audio
+// panel (mute, volume, device status, voices) when `audio` is set.
 #pragma once
 
+#include "client_audio.hpp"
 #include "core/match_session.hpp"
 #include "core/net_session.hpp"
 #include "kfm/presentation/renderer.hpp"
@@ -21,6 +23,7 @@ namespace kfm::client {
 class DebugOverlay {
  public:
   bool open{false};
+  ClientAudio* audio{nullptr};  // the app's sound; the Audio panel edits it
 
   // Every frame, overlay open or not, so the frame-time graph is continuous.
   void recordFrame(double frameSeconds);

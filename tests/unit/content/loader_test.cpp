@@ -20,18 +20,35 @@ using sim::ContentDB;
 
 namespace {
 
-// The canonical serialized form, the bytes contentHash() hashes.
-std::vector<std::byte> bytesOf(const ContentDB& c) {
-  std::vector<std::byte> buf(sizeof(ContentDB));
+// The canonical serialized form of any def (what contentHash() hashes for
+// the whole DB), so two defs compare field by field through the visitor.
+template <class T>
+std::vector<std::byte> bytesOf(const T& def) {
+  std::vector<std::byte> buf(sizeof(T) * 2 + 16);
   BitWriter w(buf);
-  REQUIRE(sim::writeTo(w, c));
+  REQUIRE(sim::writeTo(w, def));
   buf.resize(w.bytesWritten());
   return buf;
 }
 
-void requireSameContent(const ContentDB& a, const ContentDB& b) {
-  CHECK(sim::contentHash(a) == sim::contentHash(b));
-  CHECK(bytesOf(a) == bytesOf(b));
+// defaultContent() is the minimal fixture and content/ a superset (§5.10):
+// the singletons, every ability the fixture defines, arena 0 and mode 0
+// must agree; further abilities, arenas and modes are TOML-only.
+void requireAgreesWithFixture(const ContentDB& loaded) {
+  const ContentDB& fixture = sim::defaultContent();
+  CHECK(bytesOf(loaded.player) == bytesOf(fixture.player));
+  CHECK(bytesOf(loaded.boomerang) == bytesOf(fixture.boomerang));
+  CHECK(bytesOf(loaded.pickup) == bytesOf(fixture.pickup));
+  CHECK(bytesOf(loaded.dashAttack) == bytesOf(fixture.dashAttack));
+  REQUIRE(loaded.abilityCount >= fixture.abilityCount);
+  for (uint8_t i = 0; i < fixture.abilityCount; ++i) {
+    INFO("ability " << int{i});
+    CHECK(bytesOf(loaded.abilities[i]) == bytesOf(fixture.abilities[i]));
+  }
+  REQUIRE(loaded.arenaCount >= 1);
+  REQUIRE(loaded.modeCount >= 1);
+  CHECK(bytesOf(loaded.arenas[0]) == bytesOf(fixture.arenas[0]));
+  CHECK(bytesOf(loaded.modes[0]) == bytesOf(fixture.modes[0]));
 }
 
 // A minimal complete content set; tests break one piece at a time.
@@ -99,14 +116,14 @@ bool contains(const std::string& haystack, std::string_view needle) {
 
 }  // namespace
 
-TEST_CASE("content/ loads to exactly defaultContent()", "[content][loader]") {
+TEST_CASE("content/ agrees with defaultContent() on the default match", "[content][loader]") {
   ContentDB loaded{};
   Diagnostics diag;
   const bool ok = loadContentDir(KFM_CONTENT_DIR, loaded, diag);
   INFO(diag.format());
   REQUIRE(ok);
   CHECK(diag.items().empty());
-  requireSameContent(loaded, sim::defaultContent());
+  requireAgreesWithFixture(loaded);
   CHECK(loaded.arenas[0].name.view() == "dojo");
   CHECK(loaded.modes[0].name.view() == "rounds");
 }
@@ -123,7 +140,31 @@ TEST_CASE("the embedded copy is the content/ directory", "[content][loader]") {
   }
   ContentDB loaded{};
   REQUIRE(loadEmbeddedContent(loaded, diag));
-  requireSameContent(loaded, sim::defaultContent());
+  requireAgreesWithFixture(loaded);
+  ContentDB fromDir{};
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, fromDir, diag));
+  CHECK(sim::contentHash(loaded) == sim::contentHash(fromDir));
+}
+
+TEST_CASE("the fixture comparison ignores content beyond the default match", "[content][loader]") {
+  // A superset (an extra arena, as Phase 2 adds) still agrees: only the
+  // whole-DB hash differs.
+  std::vector<ContentSource> sources;
+  Diagnostics diag;
+  REQUIRE(readContentDir(KFM_CONTENT_DIR, sources, diag));
+  sources.push_back(ContentSource{"zz_extra.toml", R"(
+[[arena]]
+name = "zz-pit"
+half_extents = [6, 4]
+spawn_points = [[-2, 0], [2, 0]]
+)"});
+  ContentDB loaded{};
+  const bool ok = parseContent(sources, loaded, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  CHECK(loaded.arenaCount >= 2);
+  requireAgreesWithFixture(loaded);
+  CHECK(sim::contentHash(loaded) != sim::contentHash(sim::defaultContent()));
 }
 
 TEST_CASE("defaultContent() passes the loader's validation", "[content][loader]") {
@@ -320,13 +361,14 @@ TEST_CASE("app content: --content wins, else the embedded copy", "[content][app]
   Diagnostics diag;
   REQUIRE(loadAppContent("", "", c, diag));
   CHECK(c.embedded());
-  CHECK(c.hash == sim::contentHash(sim::defaultContent()));
+  CHECK(c.hash == sim::contentHash(c.db));
+  const uint32_t embeddedHash = c.hash;
   CHECK(contains(c.describe(), "content: embedded (hash 0x"));
-  CHECK(contains(c.describe(), "1 arena, 1 mode)"));
+  CHECK(contains(c.describe(), " arena"));
 
   REQUIRE(loadAppContent(KFM_CONTENT_DIR, "", c, diag));
   CHECK_FALSE(c.embedded());
-  CHECK(c.hash == sim::contentHash(sim::defaultContent()));
+  CHECK(c.hash == embeddedHash);
 
   // An explicit directory that does not load is an error, not a fallback.
   CHECK_FALSE(loadAppContent("/nonexistent/kfm-content", "", c, diag));

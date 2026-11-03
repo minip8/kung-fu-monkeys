@@ -23,6 +23,11 @@ Checks (each PASS/FAIL, plus INFO lines):
               reported (INFO only: bots move too, so a pixel diff cannot isolate P1; with
               ?overlay the debug window's Entities section lists the banana count; P1's ammo
               dot above its head turns dark once it has thrown)
+  audio       the client opens its audio device on the first input event (browser
+              autoplay policy, architecture §7): the "kfm_client: audio open" or
+              "kfm_client: silent: ..." line it prints after the key presses and the
+              state of SDL's AudioContext ("running" once resumed) (INFO only:
+              whether headless Chromium has an audio output depends on the machine)
 
 Screenshots: <out>/01-loaded.png, 02-later.png, 03-before-input.png, 04-after-move.png,
 05-after-throw.png. Exit status 0 when every PASS/FAIL check passed.
@@ -259,6 +264,15 @@ def run(args) -> int:
         changed = changed_fraction(before, after_move) * 100
         report.info("input", f"held W 1 s then pressed J; {changed:.2f}% of pixels changed; review "
                              "03/04/05 (P1 moves up, then a banana appears in front of it)")
+
+        time.sleep(0.5)
+        audio = [line for line in console_lines
+                 if "kfm_client: audio" in line or "kfm_client: silent" in line]
+        state = page.evaluate("() => (window.Module && Module.SDL3 && Module.SDL3.audioContext)"
+                              " ? Module.SDL3.audioContext.state : 'no AudioContext'")
+        report.info("audio", (audio[-1] if audio else
+                              "no audio line: the device was not opened after the key presses")
+                    + f"; AudioContext {state}")
 
         report.check("console", not console_errors and not page_errors,
                      f"{len(console_errors)} console errors, {len(page_errors)} page errors, "

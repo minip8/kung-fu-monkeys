@@ -54,13 +54,14 @@ build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players
 #   content compiled into the binary); `info` prints the replay's arena/mode and both content hashes
 build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
-build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay]   # playable client
+build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay] [--mute] [--volume 0..100]   # playable client
 build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
 #   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
 #   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
+#   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
-ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, content/ == defaultContent()
+ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
 #   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window
@@ -122,9 +123,11 @@ change that regenerates the corpus; say which. The corpus is listed in
 content hash) and rewrites the `.checksums`. A new corpus replay needs a manifest line.
 
 **Content is data (§5.10).** `content/*.toml` (loaded by `engine/content`, toml++) is the source
-of truth; `defaultContent()` in `engine/sim/src/content.cpp` mirrors it as the sim tests' fixture
-and `kfm_content_tests` fails until both agree, so a content change edits both and then runs
-`regen-replay-corpus` (the content hash changes; existing checksums must not). New def kind:
+of truth; `defaultContent()` in `engine/sim/src/content.cpp` is the minimal sim-test fixture
+(base kit, dojo, rounds) and the TOML a superset: new arenas, modes, power-ups and abilities are
+TOML only, while `kfm_content_tests` checks the base kit, arena 0 and mode 0 agree field by field.
+Adding content changes the content hash, so run `regen-replay-corpus` (existing checksums must
+not change). New def kind:
 struct in `engine/sim/include/kfm/sim/content/`, a `ContentDB` field, its `visit()`, a parser
 in `engine/content/src/loader.cpp` (a `Section` call per key; unknown keys are errors) and a
 TOML file. Decimals become `Fixed` by exact truncation (never `double`); speeds are per second

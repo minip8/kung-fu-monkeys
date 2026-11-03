@@ -1,5 +1,6 @@
 #include "kfm/presentation/builder.hpp"
 
+#include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/world_basis.hpp"
 
 #include <algorithm>
@@ -14,7 +15,6 @@ using sim::AbilityState;
 using sim::Boomerang;
 using sim::BoomerangPhase;
 using sim::ContentDB;
-using sim::EventKind;
 using sim::Player;
 using sim::SimEvent;
 using sim::Tag;
@@ -165,19 +165,6 @@ void pushShadow(RenderState& out, Vec3 ground, float radius, float height, Shado
 
 // --- effects ------------------------------------------------------------------
 
-void addEffect(PresentationState& ps, const RenderEffect& e) {
-  if (ps.effectCount < kMaxRenderEffects) {
-    ps.effects[ps.effectCount++] = e;
-    return;
-  }
-  // Full: replace the effect closest to expiring.
-  uint16_t victim = 0;
-  for (uint16_t i = 1; i < ps.effectCount; ++i) {
-    if (ps.effects[i].remaining < ps.effects[victim].remaining) victim = i;
-  }
-  ps.effects[victim] = e;
-}
-
 void ageEffects(PresentationState& ps, float dt) {
   uint16_t kept = 0;
   for (uint16_t i = 0; i < ps.effectCount; ++i) {
@@ -188,92 +175,32 @@ void ageEffects(PresentationState& ps, float dt) {
   ps.effectCount = kept;
 }
 
-[[nodiscard]] RenderEffect makeEffect(EffectKind kind, int8_t slot, Vec3 pos, float seconds,
-                                      Vec2f dir = {}) {
-  return RenderEffect{kind, slot, pos, dir, seconds, seconds};
+// Counts a trail timer down; true when an afterimage is due (and rearms it).
+[[nodiscard]] bool trailDue(float& timer, float dt, float interval) {
+  timer -= dt;
+  if (timer > 0.0f) return false;
+  timer = std::max(timer + interval, 0.0f);
+  return true;
 }
 
-void addShake(PresentationState& ps, float amount) {
-  ps.shake = std::min(ps.shake + amount, kShakeMax);
-}
-
-void flashPlayer(PresentationState& ps, PlayerId id, float seconds) {
-  if (!id.isValid() || id.value >= sim::kMaxPlayers) return;
-  PlayerTrack& t = ps.players[id.value];
-  if (seconds >= t.flashRemaining) {
-    t.flashRemaining = seconds;
-    t.flashDuration = seconds;
+// Count-in on entering the countdown and on every whole second it crosses;
+// "go" when play starts.
+void phaseSounds(PresentationState& ps, const RenderHud& hud, RenderState& out) {
+  const int whole = hud.phase == HudPhase::RoundStarting
+                        ? std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)))
+                        : 0;
+  if (ps.hudSeen) {
+    if (hud.phase == HudPhase::RoundStarting &&
+        (ps.lastHudPhase != HudPhase::RoundStarting || whole < ps.lastCountdownWhole)) {
+      pushSound(out, SoundCue{SoundId::CountIn, 1.0f, 0.0f});
+    }
+    if (hud.phase == HudPhase::Playing && ps.lastHudPhase == HudPhase::RoundStarting) {
+      pushSound(out, SoundCue{SoundId::RoundGo, 1.0f, 0.0f});
+    }
   }
-}
-
-// Where a player is for an event: drawn this frame if alive, else its
-// position in prev (eliminated this tick), else the last drawn position.
-[[nodiscard]] Vec2f playerPlaneForEvent(const PresentationState& ps, const WorldState& prev,
-                                        const WorldState& curr, PlayerId id) {
-  if (!id.isValid() || id.value >= sim::kMaxPlayers) return Vec2f{};
-  if (curr.playerBySlot(id) != nullptr) return ps.players[id.value].motion.lastDrawn;
-  if (const Player* p = prev.playerBySlot(id)) return toFloat(p->transform.pos);
-  return ps.players[id.value].motion.lastDrawn;
-}
-
-void applyEvent(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                const SimEvent& e) {
-  const auto bodyAt = [&](PlayerId id) {
-    return simToWorld(playerPlaneForEvent(ps, prev, curr, id), kEffectBodyHeight);
-  };
-  const int8_t slot = slotOrNone(e.player);
-  switch (e.kind) {
-    case EventKind::PlayerDashed: {
-      Vec2f dir{};
-      if (const Player* p = curr.playerBySlot(e.player)) dir = toFloat(dashSlot(*p).dir);
-      const Vec2f plane = playerPlaneForEvent(ps, prev, curr, e.player);
-      addEffect(ps, makeEffect(EffectKind::DashRing, slot, simToWorld(plane, kEffectGroundHeight),
-                               kDashRingSeconds, dir));
-      break;
-    }
-    case EventKind::BoomerangThrown: {
-      Vec3 pos = bodyAt(e.player);
-      Vec2f dir{};
-      if (const Boomerang* b = curr.boomerangs.get(e.entity)) {
-        pos = simToWorld(toFloat(b->transform.pos), kBananaHandHeight);
-        dir = toFloat(Vec2::fromAngle(b->transform.facing));
-      }
-      addEffect(ps, makeEffect(EffectKind::ThrowPuff, slot, pos, kThrowPuffSeconds, dir));
-      break;
-    }
-    case EventKind::BoomerangCaught: {
-      const bool perfect = e.a == static_cast<uint32_t>(sim::CatchHow::Perfect);
-      const float seconds = perfect ? kPerfectCatchFlashSeconds : kAutoCatchFlashSeconds;
-      addEffect(ps, makeEffect(perfect ? EffectKind::PerfectCatchFlash : EffectKind::AutoCatchFlash,
-                               slot, bodyAt(e.player), seconds));
-      flashPlayer(ps, e.player, seconds);
-      if (perfect) addShake(ps, kShakeOnPerfectCatch);
-      break;
-    }
-    case EventKind::PlayerHit:
-    case EventKind::PlayerDashHit:  // a dash hit reads like a banana hit (§5.9)
-      addEffect(ps, makeEffect(EffectKind::HitFlash, slot, bodyAt(e.player), kHitFlashSeconds));
-      flashPlayer(ps, e.player, kHitFlashSeconds);
-      addShake(ps, kShakeOnHit);
-      break;
-    case EventKind::PlayerEliminated:
-      addEffect(ps, makeEffect(EffectKind::EliminationBurst, slot, bodyAt(e.player),
-                               kEliminationBurstSeconds));
-      addShake(ps, kShakeOnElimination);
-      break;
-    case EventKind::RoundStarted:
-      addEffect(
-          ps, makeEffect(EffectKind::RoundStartBanner, kNoSlot, Vec3{}, kRoundStartBannerSeconds));
-      break;
-    case EventKind::RoundEnded:
-      addEffect(ps, makeEffect(EffectKind::RoundEndBanner, slot, Vec3{}, kRoundEndBannerSeconds));
-      break;
-    case EventKind::MatchEnded:
-      addEffect(ps, makeEffect(EffectKind::MatchEndBanner, slot, Vec3{}, kMatchEndBannerSeconds));
-      break;
-    default:
-      break;
-  }
+  ps.hudSeen = true;
+  ps.lastHudPhase = hud.phase;
+  ps.lastCountdownWhole = whole;
 }
 
 // --- entities -------------------------------------------------------------------
@@ -305,6 +232,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     if (fresh) {
       track.flashRemaining = 0.0f;
       track.flashDuration = 0.0f;
+      track.trailTimer = 0.0f;
     }
     decayOffset(track.motion, dt);
     track.bodyTarget = bodyTargetFor(cp, content, track.bodyTarget);
@@ -339,6 +267,18 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.dashCooldown =
         cd > 0 ? clamp01(static_cast<float>(dash.cooldownTicks) / static_cast<float>(cd)) : 0.0f;
     pushShadow(out, rp.ground, radius, height, ShadowOwner::Player);
+
+    // Dash trail: afterimages while the Dash is active.
+    if (dashActive(cp, content) && !cp.tags.has(Tag::Eliminated)) {
+      if (trailDue(track.trailTimer, dt, kDashTrailInterval)) {
+        const Vec2f dir = toFloat(dashSlot(cp).dir);
+        addEffect(ps, RenderEffect{EffectKind::DashTrail, static_cast<int8_t>(i),
+                                   simToWorld(drawn, height + (kEffectBodyHeight * 0.6f)), dir,
+                                   kDashTrailSeconds, kDashTrailSeconds});
+      }
+    } else {
+      track.trailTimer = 0.0f;  // the next dash leaves an afterimage at once
+    }
   }
 }
 
@@ -354,7 +294,10 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     const Boomerang& cb = curr.boomerangs.items[i];
     const Boomerang* pb = matching(prev.boomerangs, i, gen);
     BananaTrack& track = ps.bananas[i];
-    if (refreshTrack(track.motion, gen)) track.returnStartDistance = -1.0f;
+    if (refreshTrack(track.motion, gen)) {
+      track.returnStartDistance = -1.0f;
+      track.trailTimer = 0.0f;
+    }
     decayOffset(track.motion, dt);
 
     const Vec2f currPos = toFloat(cb.transform.pos);
@@ -390,6 +333,14 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     rb.phase = bananaPhase(cb.phase);
     rb.ownerSlot = slotOrNone(cb.owner);
     pushShadow(out, rb.ground, radius, height, ShadowOwner::Banana);
+
+    // A short trail behind a flying banana.
+    if (cb.phase != BoomerangPhase::Grounded &&
+        trailDue(track.trailTimer, dt, kBananaTrailInterval)) {
+      addEffect(ps, RenderEffect{EffectKind::BananaTrail, rb.ownerSlot, rb.position,
+                                 Vec2f{std::cos(heading), std::sin(heading)}, kBananaTrailSeconds,
+                                 kBananaTrailSeconds});
+    }
   }
 }
 
@@ -495,17 +446,19 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   out.pickupCount = 0;
   out.shadowCount = 0;
   out.effectCount = 0;
+  out.soundCount = 0;
 
+  // Effects: age the running ones first; trails sampled by the entity passes
+  // and the new events' effects then start at full duration. Player tracks
+  // are still valid for players eliminated this tick.
+  ageEffects(ps, dt);
   buildPlayers(ps, prev, curr, alpha, content, dt, out);
   buildBananas(ps, prev, curr, alpha, content, dt, out);
   buildPickups(ps, curr, content, dt, out);
 
-  // Effects: age the running ones, then start those of the new events at full
-  // duration. Player tracks are still valid for players eliminated this tick.
-  ageEffects(ps, dt);
   ps.shake *= std::exp(-dt / kShakeTau);
   for (const SimEvent& e : newEvents)
-    applyEvent(ps, prev, curr, e);
+    applyEventFx(ps, prev, curr, e, match, out);
   // Flashes started by this frame's events show this frame.
   for (uint16_t i = 0; i < out.playerCount; ++i) {
     RenderPlayer& rp = out.players[i];
@@ -529,6 +482,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   out.bananaRadius = content.boomerang.radius.toFloat();
   out.time = ps.time;
   buildHud(curr, match, out.hud);
+  phaseSounds(ps, out.hud, out);
 }
 
 void onRollback(PresentationState& ps, const WorldState& newPrev, const WorldState& newCurr,
