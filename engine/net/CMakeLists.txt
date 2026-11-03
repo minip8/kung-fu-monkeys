@@ -6,6 +6,7 @@
 add_library(kfm_net STATIC
   src/transport.cpp
   src/loopback.cpp
+  src/messages.cpp
 )
 add_library(kfm::net ALIAS kfm_net)
 

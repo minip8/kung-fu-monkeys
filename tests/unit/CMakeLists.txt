@@ -39,6 +39,8 @@ target_link_libraries(kfm_transport_contract INTERFACE kfm::net Catch2::Catch2)
 kfm_add_test_exe(kfm_net_tests
   net/transport_test.cpp
   net/loopback_test.cpp
+  net/messages_test.cpp
+  net/messages_fuzz_test.cpp
 )
 target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
 
