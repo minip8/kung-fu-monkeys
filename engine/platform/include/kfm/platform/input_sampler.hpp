@@ -30,7 +30,7 @@
 //     SDL's +Y-down is flipped to the sim's +y-up.
 //   - Aim: the right stick when outside its deadzone, else the current move
 //     direction, else the previous aim (it never snaps back to 0).
-//   - Consumed buttons: consumeButtons() marks a slot's Throw/Dash presses
+//   - Consumed buttons: consumeButtons() marks a slot's Throw/Dash/Ability presses
 //     recorded so far, and the buttons held at that moment, as used up: they
 //     set no bit and no subTick until the action has been released. Used for
 //     a join press and for presses made while the match was paused, so
@@ -52,7 +52,8 @@
 namespace kfm::platform {
 
 // Digital actions a profile binds. Move directions only drive movement;
-// Throw and Dash map to sim::Button bits.
+// Throw, Dash and (v0.21) Ability, the third ability slot's button, map to
+// sim::Button bits.
 enum class Action : uint8_t {
   Up,
   Down,
@@ -60,7 +61,8 @@ enum class Action : uint8_t {
   Right,
   Throw,
   Dash,
-  kCount,  // NOLINT(readability-identifier-naming): count sentinel
+  Ability,  // sim::Button::Ability1 (the third slot, v0.21)
+  kCount,   // NOLINT(readability-identifier-naming): count sentinel
 };
 inline constexpr std::size_t kActionCount = static_cast<std::size_t>(Action::kCount);
 
@@ -100,13 +102,15 @@ struct GamepadProfile {
 };
 
 // Default keyboard profile 0 (left side of the keyboard): WASD move,
-// throw J or Space, dash K or LeftShift.
+// throw J or Space, dash K or LeftShift, ability L or E.
 [[nodiscard]] KeyboardProfile defaultKeyboardProfile1();
 // Default keyboard profile 1 (right side): arrow keys move,
-// throw Period or RightCtrl, dash Slash or RightShift.
+// throw Period or RightCtrl, dash Slash or RightShift, ability Semicolon or
+// Apostrophe.
 [[nodiscard]] KeyboardProfile defaultKeyboardProfile2();
 // Default gamepad profile: left stick (or dpad) moves, right stick aims,
-// throw West or RightShoulder, dash South or LeftShoulder, deadzones 0.2.
+// throw West or RightShoulder, dash South or LeftShoulder, ability North or
+// East, deadzones 0.2.
 [[nodiscard]] GamepadProfile defaultGamepadProfile();
 
 // Number of keyboard profiles the sampler holds (two people per keyboard by
@@ -176,7 +180,7 @@ class InputSampler {
   void push(const InputEvent& event);
 
   // The first device not bound to any slot that pressed a button this tick,
-  // in event order: a keyboard profile whose Throw or Dash key went down
+  // in event order: a keyboard profile whose Throw, Dash or Ability key went down
   // (lowest profile index on a shared key), or a connected pad on which any
   // button went down. Call before endTick()/sampleFrame().
   [[nodiscard]] std::optional<DeviceBinding> pollJoin() const;
@@ -198,7 +202,7 @@ class InputSampler {
   // Ends the tick: clears every pending press record.
   void endTick();
 
-  // Throw/Dash presses of `slot` recorded so far and the buttons it holds now
+  // Throw/Dash/Ability presses of `slot` recorded so far and the buttons it holds now
   // are consumed: they set no bit and no subTick until the action has been
   // released. Presses after this call sample normally. bind() clears it.
   void consumeButtons(PlayerId slot);
@@ -218,7 +222,7 @@ class InputSampler {
   struct Slot {
     DeviceBinding device{};
     uint8_t aim{0};
-    // Per action (only Throw/Dash are ever set): consumed until released.
+    // Per action (only the button actions are ever set): consumed until released.
     std::array<bool, kActionCount> consumed{};
     // Index into transitions_ at which consumption happened: earlier press
     // edges of a consumed action never count.

@@ -340,9 +340,11 @@ void deviceText(const platform::DeviceBinding& d, char (&out)[96]) {
   switch (d.kind) {
     case platform::DeviceKind::Keyboard:
       if (d.keyboardProfile == 0) {
-        std::snprintf(out, sizeof out, "Keyboard left: WASD, throw J/Space, dash K/LShift");
+        std::snprintf(out, sizeof out,
+                      "Keyboard left: WASD, throw J/Space, dash K/LShift, ability L/E");
       } else if (d.keyboardProfile == 1) {
-        std::snprintf(out, sizeof out, "Keyboard right: arrows, throw ./RCtrl, dash //RShift");
+        std::snprintf(out, sizeof out,
+                      "Keyboard right: arrows, throw ./RCtrl, dash //RShift, ability ;/'");
       } else {
         std::snprintf(out, sizeof out, "Keyboard profile %u",
                       static_cast<unsigned>(d.keyboardProfile));
@@ -482,9 +484,12 @@ bool drawLobby(MatchSession& session, const std::string& connectUrl) {
     ImGui::Spacing();
     ImGui::TextUnformatted(
         "Join: press Throw or Dash on a free keyboard side, or any button on a pad");
-    ImGui::BulletText("Keyboard left:  WASD move, J/Space throw, K/LShift dash");
-    ImGui::BulletText("Keyboard right: arrows move, ./RCtrl throw, //RShift dash");
-    ImGui::BulletText("Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash");
+    ImGui::BulletText("Keyboard left:  WASD move, J/Space throw, K/LShift dash, L/E ability");
+    ImGui::BulletText("Keyboard right: arrows move, ./RCtrl throw, //RShift dash, ;/' ability");
+    ImGui::BulletText(
+        "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "
+        "ability");
+    ImGui::BulletText("The ability button fires the third slot (modes such as rounds_slam)");
     ImGui::TextDisabled("Aim follows the move direction on keyboards. F1: debug overlay");
 
     ImGui::Spacing();

@@ -491,6 +491,11 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   profile 1 is the arrow keys with Period or Right Ctrl to throw and Slash or Right Shift to
   dash; gamepads move with the left stick (dpad fallback), aim with the right stick, throw with
   West or Right Shoulder and dash with South or Left Shoulder.
+- Ability button (v0.21): a third action, `Action::Ability`, sets `Button::Ability1` (bit 2,
+  the third ability slot) with the same tap, held, sub-tick, join and consume semantics as
+  Throw and Dash. Default bindings: L or E (keyboard profile 0), Semicolon or Apostrophe
+  (profile 1), North or East (gamepads). `PlayerInput` stays 5 bytes: the bit already existed.
+  The in-game controls help lists it; the browser page needs nothing (SDL maps the keys).
 
 ### 5.5 Abilities (the modularity core)
 
