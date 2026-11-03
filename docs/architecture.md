@@ -29,7 +29,7 @@ hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, ke
 rules gain an ownership field and a boomerang-phase mask.
 v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7);
 the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the pickup radius
-(§5.10).
+(§5.10); bananas spawn clear of the thrower (§5.7).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -309,6 +309,8 @@ it just threw (16 u/s) would catch it straight back.
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
   eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
   contact point.
+- A throw spawns the banana `spawnOffset` (1.0) ahead of the thrower along the aim, clear of
+  the thrower's contact radius (0.5 + 0.35), so no throw starts with a contact against its owner.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
 - Bananas fly only while the match phase is `Playing`. During `RoundStarting`, `RoundEnded`
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and

@@ -65,6 +65,8 @@ TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][con
   CHECK(c.boomerang.damage >= c.player.maxHp);  // base game: one hit kills
   CHECK(c.mode.roundsToWin == 3);
   CHECK(c.pickup.radius == Fixed::half());
+  // A fresh banana spawns clear of its thrower.
+  CHECK(c.boomerang.spawnOffset > c.player.radius + c.boomerang.radius);
 }
 
 TEST_CASE("arena spawn points are distinct and inside the arena", "[sim][content]") {

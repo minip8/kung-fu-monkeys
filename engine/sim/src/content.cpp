@@ -63,7 +63,8 @@ constexpr ContentDB makeDefaultContent() {
   c.boomerang.maxReturnTicks = 240;
   c.boomerang.turnRateBam = 1200;
   c.boomerang.restitution = Fixed::one();
-  c.boomerang.spawnOffset = Fixed::fromRatio(8, 10);
+  // Clear of the thrower's contact radius (0.5 + 0.35): no own contact on the spawn tick.
+  c.boomerang.spawnOffset = Fixed::one();
   c.boomerang.damage = 1;
   c.boomerang.pierce = 0;
 
