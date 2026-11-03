@@ -26,4 +26,4 @@ kfm_add_test_exe(kfm_sim_tests
   sim/lifecycle_test.cpp
   sim/rules_test.cpp
 )
-target_link_libraries(kfm_sim_tests PRIVATE kfm::sim)
+target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)

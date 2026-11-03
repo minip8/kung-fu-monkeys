@@ -25,11 +25,20 @@ add_library(kfm_sim STATIC
 )
 add_library(kfm::sim ALIAS kfm_sim)
 
-target_include_directories(kfm_sim PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_include_directories(kfm_sim
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(kfm_sim
   PUBLIC kfm::core
   PRIVATE kfm::warnings)
 kfm_no_exceptions_rtti(kfm_sim)
 
 set_target_properties(kfm_sim PROPERTIES FOLDER engine)
+
+# Internal headers under src/ (collision internals, angleOf) for white-box
+# unit tests only: `#include "systems/collision_internal.hpp"`. Never link
+# this from apps or other engine modules.
+add_library(kfm_sim_internal INTERFACE)
+add_library(kfm::sim_internal ALIAS kfm_sim_internal)
+target_include_directories(kfm_sim_internal INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(kfm_sim_internal INTERFACE kfm::sim)

@@ -1,10 +1,10 @@
 // CollisionSystem (contract step 6, architecture §5.3, §5.11): grid layout,
 // swept circle narrowphase against a double reference, grid broadphase
 // against brute force on random worlds, contact contents and determinism.
-#include "../../../engine/sim/src/systems/collision_internal.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/systems.hpp"
 #include "sim_test_util.hpp"
+#include "systems/collision_internal.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 

@@ -1,11 +1,11 @@
 // ProjectileSystem (contract step 5, architecture §5.7): phase timeline,
 // return steering, wall bounces, grounding, counters, and the internal
 // integer atan2 it steers with.
-#include "../../../engine/sim/src/systems/angle_of.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/step.hpp"
 #include "kfm/sim/systems.hpp"
 #include "sim_test_util.hpp"
+#include "systems/angle_of.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
