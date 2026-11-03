@@ -11,6 +11,7 @@
 #   kfm::cgltf   cgltf 1.15 (header only; the includer that defines CGLTF_IMPLEMENTATION owns it)
 #   kfm::datachannel  libdatachannel 0.24.6 natively (vcpkg, or FetchContent static with OpenSSL),
 #                datachannel-wasm f9200eb under Emscripten; only when KFM_WEBRTC (headless too)
+#   kfm::tomlplusplus  toml++ 3.4.0 (header only, TOML_EXCEPTIONS=0), for engine/content (headless too)
 # None of them link kfm::warnings: third-party code is compiled with its own
 # flags and its headers are SYSTEM includes, so it never trips -Werror.
 
@@ -159,6 +160,35 @@ if(KFM_WEBRTC)
     endif()
   endif()
 endif()
+
+# ---------------------------------------------------------------------------
+# toml++ 3.4.0 (header only), the content file parser (engine/content,
+# architecture §5.10). Every host loads content, so the headless server
+# needs it too. kfm::tomlplusplus pins the configuration every includer must
+# share: no exceptions (parse errors come back as toml::parse_result, which
+# the loader turns into diagnostics) and no formatters (never printed back).
+# ---------------------------------------------------------------------------
+find_package(tomlplusplus 3.4.0 EXACT CONFIG QUIET)
+if(tomlplusplus_FOUND)
+  message(STATUS "KFM: toml++ ${tomlplusplus_VERSION} from find_package")
+else()
+  message(STATUS "KFM: toml++ not found via find_package, fetching v3.4.0")
+  FetchContent_Declare(tomlplusplus
+    URL      https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz
+    URL_HASH SHA256=8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR  kfm-no-cmake)  # header only: the include directory is all we use
+  FetchContent_MakeAvailable(tomlplusplus)
+  add_library(tomlplusplus_tomlplusplus INTERFACE)
+  target_include_directories(tomlplusplus_tomlplusplus SYSTEM INTERFACE
+    ${tomlplusplus_SOURCE_DIR}/include)
+  add_library(tomlplusplus::tomlplusplus ALIAS tomlplusplus_tomlplusplus)
+endif()
+add_library(kfm_tomlplusplus INTERFACE)
+target_link_libraries(kfm_tomlplusplus INTERFACE tomlplusplus::tomlplusplus)
+target_compile_definitions(kfm_tomlplusplus INTERFACE
+  TOML_EXCEPTIONS=0 TOML_ENABLE_FORMATTERS=0 TOML_HEADER_ONLY=1)
+add_library(kfm::tomlplusplus ALIAS kfm_tomlplusplus)
 
 # Everything below is the client stack (window, GPU, debug UI, assets). The
 # headless server build never needs it.
