@@ -1098,6 +1098,19 @@ accepted from vcpkg only when its header banner reads `Version: 1.15`.
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
+Progress: M3 in progress (v0.17). `NetServer` and `NetClient` run end to end over the loopback
+emulator in `kfm_netcode_tests` (`tests/netcode/netsim.hpp`: one deterministic loop, 1 ms steps,
+the server ticking every 1/60 s, clients on their own rate-controlled clocks, `scriptedInput` fake
+humans). 10 clients, 100 ms RTT, ±10 ms jitter, 2 % loss, 60 s: no checksum mismatch or resync,
+rollback depth max 11 / p99 9 ticks, about 53 mispredicted ticks/s per client (the scripted aim
+jitters every tick), lead 4.7 ticks against a 5.3 target, 0.03 server substitutions/s per client,
+about 1.1 KB/s up and 4.0 KB/s down per client before transport overhead. 300 ms RTT and 10 %
+loss: still no desync, depth max 25 / p99 22, lead 10.7 (target 11.3). Both soaks take 1.7 s in
+Release and 12 s in Debug. Also covered: zero-latency tick-for-tick checksums, mid-match join,
+spectating, reconnect within and after the grace window, checksum resync after a corrupted
+client, input delay. Left for M3: `WebRtcTransport`, the `netsim` app and wiring the client and a
+dedicated server app to these classes.
+
 Progress: M2 landed in v0.15 (pending human playtest of the exit criterion). The client opens
 an SDL3 window with a GL 4.3 core context (4.1 on macOS) through the vendored glad loader,
 draws the arena, players, bananas, pickups, blob shadows and effects with sokol_gfx from a
