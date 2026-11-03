@@ -77,7 +77,8 @@ jobs:
       - name: Install SDL3 build dependencies and the client smoke-test display
         if: runner.os == 'Linux'
         # xvfb + Mesa (llvmpipe) let ctest run `client_smoke`: kfm_client renders
-        # 30 frames on a virtual X server (registered only when xvfb-run exists).
+        # 60 frames of a bot match on a virtual X server (registered only when
+        # xvfb-run exists).
         run: |
           sudo apt-get update
           sudo apt-get install -y $KFM_SDL_APT_PACKAGES xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri libegl-mesa0

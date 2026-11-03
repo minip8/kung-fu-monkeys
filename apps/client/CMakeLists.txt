@@ -52,15 +52,16 @@ if(EMSCRIPTEN)
   set_property(TARGET kfm_client APPEND PROPERTY LINK_DEPENDS "${kfm_client_shell}")
 endif()
 
-# Rendering smoke test without a human: 30 frames on a virtual X server with
-# Mesa's software rasteriser. Linux only, and only when xvfb-run exists at
+# Rendering smoke test without a human: 60 frames of a started match with
+# three bots on a virtual X server with Mesa's software rasteriser; a renderer
+# that fails to initialise exits non-zero. Linux only, and only when xvfb-run exists at
 # configure time (CI installs xvfb and libgl1-mesa-dri).
 if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
   find_program(KFM_XVFB_RUN xvfb-run)
   if(KFM_XVFB_RUN)
     add_test(NAME client_smoke
       COMMAND ${KFM_XVFB_RUN} -a -s "-screen 0 1280x720x24"
-              $<TARGET_FILE:kfm_client> --exit-after-frames 30)
+              $<TARGET_FILE:kfm_client> --autostart --bots 3 --exit-after-frames 60)
     # Force X11 + llvmpipe so the test never depends on the host GPU or a
     # Wayland compositor; LSan reports leaks inside Mesa/X11, not ours.
     set_tests_properties(client_smoke PROPERTIES

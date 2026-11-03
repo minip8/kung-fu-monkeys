@@ -244,9 +244,17 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
 
   app.session = std::make_unique<MatchSession>(client::SessionConfig{
       .seed = app.options.seed, .botSeed = app.options.playersSeed, .bots = app.options.bots});
+  // A renderer that cannot create its buffers, shaders or pipelines is fatal
+  // (so client_smoke catches it); a missing character model is not.
   app.rendererReady = app.renderer.init(app.session->content());
-  if (!app.rendererReady) std::fprintf(stderr, "warning: the renderer failed to initialise\n");
-  if (app.rendererReady && !app.options.capsules) {
+  if (!app.rendererReady) {
+    std::fprintf(stderr, "error: the renderer failed to initialise\n");
+    platform::debugUiShutdown();
+    platform::gfxShutdown();
+    app.window.shutdown();
+    return EXIT_FAILURE;
+  }
+  if (!app.options.capsules) {
     const std::string modelPath = characterModelPath();
     if (!app.renderer.loadCharacterModel(modelPath.c_str())) {
       std::fprintf(stderr, "warning: drawing capsules: %s\n",

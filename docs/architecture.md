@@ -864,8 +864,11 @@ art is identical up to the export step, and nothing below the presentation layer
   ends so every timed tick is live gameplay.
 - Client smoke test (v0.15): `kfm_client --exit-after-frames N [--screenshot out.ppm]` renders
   N frames and exits, so rendering is checked without a human: on Linux CI a `client_smoke`
-  ctest runs it under `xvfb-run` with Mesa's software rasteriser (X11, `LIBGL_ALWAYS_SOFTWARE`),
-  registered only when `xvfb-run` exists at configure time. The browser page sets
+  ctest runs it (`--autostart --bots 3 --exit-after-frames 60`, a started match) under
+  `xvfb-run` with Mesa's software rasteriser (X11, `LIBGL_ALWAYS_SOFTWARE`), registered only
+  when `xvfb-run` exists at configure time. A renderer that cannot create its buffers, shaders
+  or pipelines makes the client exit non-zero, so the test fails on a broken renderer; a
+  missing character model only warns and draws capsules. The browser page sets
   `webglContextAttributes` (`desynchronized`, `powerPreference`, no antialias) and, because SDL3
   creates its context through `emscripten_webgl_create_context` which ignores that setting,
   also wraps `getContext('webgl2')` to merge the same attributes.

@@ -64,7 +64,7 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 
 The `wasm` preset runs the same tests under node and builds `kfm_client.html`. CI runs the lint
 job, the four native toolchains in Debug and Release (Linux on Ubuntu 26.04, where a
-`client_smoke` ctest renders 30 frames under xvfb), ASan+UBSan and wasm
+`client_smoke` ctest renders 60 frames of a bot match under xvfb), ASan+UBSan and wasm
 (`.github/workflows/ci.yml`). clang-format and clang-tidy never run over `third_party/`.
 
 ## Architecture in one screen
