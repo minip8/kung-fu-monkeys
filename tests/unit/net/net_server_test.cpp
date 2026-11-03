@@ -72,13 +72,16 @@ class Raw {
   // The newest message of a type; fails the test when there is none.
   template <class M>
   [[nodiscard]] M last(MessageType type) const {
+    M m{};
+    bool found = false;
     for (const Received& r : std::views::reverse(inbox)) {
-      if (r.type != type) continue;
-      M m{};
-      if (decode(r.bytes, m)) return m;
+      if (r.type == type && decode(r.bytes, m)) {
+        found = true;
+        break;
+      }
     }
-    FAIL("no message of type " << static_cast<int>(type));
-    return M{};
+    if (!found) FAIL("no message of type " << static_cast<int>(type));
+    return m;
   }
 
   LoopbackTransport* t_;

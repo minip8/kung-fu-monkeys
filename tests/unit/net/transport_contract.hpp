@@ -118,11 +118,10 @@ class Pump {
   void track(ITransport& t) { endpoints_.push_back(Endpoint{&t, {}}); }
 
   [[nodiscard]] Inbox& inbox(const ITransport& t) {
-    for (Endpoint& e : endpoints_) {
-      if (e.transport == &t) return e.inbox;
-    }
-    FAIL("endpoint not tracked");
-    return endpoints_.front().inbox;
+    const auto it = std::find_if(endpoints_.begin(), endpoints_.end(),
+                                 [&t](const Endpoint& e) { return e.transport == &t; });
+    if (it == endpoints_.end()) FAIL("endpoint not tracked");
+    return it->inbox;
   }
 
   void step() {
