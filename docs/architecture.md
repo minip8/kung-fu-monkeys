@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.13 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.14 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -34,6 +34,13 @@ iff `moveMag == 0` (§5.4); rule-table semantics and the `HitStun` tick conventi
 `PerfectDash` covers the sub-tick end of the window (§5.5); the wall bounce stays in
 `ProjectileSystem` (§5.6, §5.7); scripted-input scaffolding and `kfm_replay bench` in place of
 Google Benchmark for now (§9); wasm stack size (§12).
+v0.14 changes: M1 review fixes. §5.11 tie-break rewritten to match §5.6 and the code (`tHit`,
+then press time, then pool index); §5.5 `AbilityState` lists its real fields instead of a scratch
+union; `subTick` is the stamp of the latest press edge, releases never move it (§5.4, §5.11);
+the snapshot reader rejects out-of-range enums, ids and indices (§5.2); the replay corpus is
+defined by a checked-in manifest and re-recorded on regeneration, with no content-hash exemption
+(§9); the sim float check also rejects float literals, `fromDouble`/`toFloat`/`toDouble` and
+`<cmath>` (§5.1).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -162,6 +169,8 @@ Dependency rules (enforced via CMake target link visibility):
   match `build_id`. Both are exchanged at connect.
 - Enforcement: a replay corpus is run in CI on Linux, Windows and macOS, Debug and Release;
   per-tick checksums must be identical. This is a merge gate, not a nice-to-have.
+  `tools/ci/check_sim_no_float.sh` (lint job) rejects float types, float literals, the `Fixed`
+  float conversions and `<cmath>` anywhere in `engine/sim` (v0.14).
 
 Why fixed-point instead of floats: floats can be made deterministic on one toolchain, but the
 server (Linux, GCC/Clang) and clients (MSVC/Clang, Windows/macOS) differ in compilers, libm and
@@ -258,8 +267,10 @@ repeated-input prediction is unaffected. The input sampler that fills it arrives
 
 - `AbilityDef` (content): `kind`, cooldown, phase durations (startup / active / recovery),
   numeric params, and the `Tags` granted during each phase.
-- `AbilityState` (per slot, POD): `defIndex`, `phase`, `phaseTicks`, `cooldownTicks`, a small
-  `scratch` union for kind-specific data.
+- `AbilityState` (per slot, POD): `defIndex`, `phase`, `phaseTicks`, `cooldownTicks`, and the
+  activation record `activatedTick`, `activatedSubTick` (press time, read by the catch rule and
+  the tie-break) and `dir` (dash or throw direction captured at activation). There is no
+  kind-specific scratch union; a kind that needs more state adds a named field (v0.14).
 - `AbilityBehavior` registry: a table indexed by `AbilityKind` holding function pointers
   `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. The table is a `constexpr`
   array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
@@ -414,8 +425,12 @@ What uses it:
   fighting games treat a frame as the finest meaningful window. The stamp removes the ±1 tick
   jitter at the window edges, which is what makes timing feel inconsistent. The dash itself still
   starts at the tick boundary; only the judgment uses the stamp.
-- **Deterministic tie-breaking.** Two monkeys dashing for the same banana in the same tick: the
-  earlier `subTick` wins, then the lower player index.
+- **Deterministic tie-breaking.** Two monkeys dashing for the same banana in the same tick:
+  `InteractionSystem` resolves contacts in `tHit` order, so the monkey the banana reaches first
+  wins; on equal `tHit` the earlier dash press wins, compared as (`activatedTick`,
+  `activatedSubTick`) of a player holding `PerfectDash`, and a player without it sorts after
+  every dashing one; then the lower pool index (`kindA, indexA, kindB, indexB`), which for
+  players is the slot (§5.6, v0.14).
 - **Telemetry.** The sim knows the true press time, so input-to-effect latency can be measured
   in real matches.
 
