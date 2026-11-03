@@ -10,6 +10,7 @@ add_library(kfm_net STATIC
   src/input_history.cpp
   src/clock_sync.cpp
   src/event_journal.cpp
+  src/net_server.cpp
 )
 add_library(kfm::net ALIAS kfm_net)
 

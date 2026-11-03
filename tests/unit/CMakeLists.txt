@@ -44,6 +44,7 @@ kfm_add_test_exe(kfm_net_tests
   net/input_history_test.cpp
   net/clock_sync_test.cpp
   net/event_journal_test.cpp
+  net/net_server_test.cpp
 )
 target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
 

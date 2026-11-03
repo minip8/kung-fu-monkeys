@@ -54,7 +54,10 @@ now emits and `InteractionSystem` tries in both orientations; `DashAttackDef` co
 §5.11, §9, §12).
 v0.17 changes: the `InputFrame` present mask is the authoritative roster: `InputSystem` copies it
 into `MatchRules::present` every tick and `RulesSystem` despawns absent players at a round start,
-so a mid-match joiner plays from the next round (§5.4, §6.6).
+so a mid-match joiner plays from the next round (§5.4, §6.6). `NetServer` (§6.6, §6.7): handshake
+checks, slot assignment, reconnect reservations (10 s), timeouts (5 s), checksum cadence (every 10
+ticks), input validation, a token-bucket rate limit (tick rate + 30 messages/s) and kicks after 32
+protocol errors in 10 s; the `ResyncRequest` message (§6.3).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -617,6 +620,7 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | `Snapshot` | S→C | reliable (transport fragments) | full `WorldState` via visitor, LZ4-compressed, plus tick |
 | Control | both | reliable | Hello/Connect (token), ContentHash/BuildId, JoinMatch, PlayerJoined/Left, MatchConfig, Chat, Disconnect |
 | Ping | both | transport stats plus our own tick-stamped ping | — |
+| `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
 consecutive packets vanish. Unreliable messages stay under 1200 bytes so they never fragment;
@@ -691,6 +695,25 @@ C++ server library is mature. The seam makes that swap a contained change.
 - Reconnect within a grace window reuses the reserved slot through the same flow.
 - A joiner's slot is present in the authoritative frames from the tick after its `Welcome`; it
   spawns at the next round start (§5.4 roster, v0.17).
+- `NetServer` (v0.17) is driven by its host: `pump(nowNs)` drains the transport between ticks,
+  `tick(nowNs)` assembles, steps and broadcasts one tick; it owns no clock. Handshake: `Hello` on
+  the reliable lane is checked for protocol version, content hash, build id, token (a host
+  callback; empty accepts all) and room, then answered with `Welcome` (slots, `MatchConfig`,
+  server tick), a `Snapshot` of the current world and a `PlayerJoined` broadcast, or `Reject`.
+  Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
+  a peer's slots later. Server-side bots are slots the host marks with `setBot()`; they get
+  `scriptedInput` every tick (§8).
+- Each `AuthInputs` carries the frames the peer has not acknowledged (its `lastAuthTick` from
+  `Input`, at most 16), the minimum arrival margin of its inputs since the previous send (§6.2) and,
+  every `checksumEveryTicks` = 10 ticks, the checksum of the world after the newest frame.
+- Checksum mismatch: the client sends `ResyncRequest{tick, its checksum}` (reliable); the server
+  answers with a fresh `Snapshot`, at most once per 250 ms per peer.
+- Reconnect: a peer that drops (transport close or 5 s without a packet) while holding slots and a
+  non-empty token leaves them reserved for `reconnectGraceTicks` (10 s): still present, fed an idle
+  input (not "repeat last", so a held stick does not run the monkey into a wall). A `Hello` with
+  the same token reclaims them and gets a fresh snapshot; a `Hello` whose token belongs to a
+  still-connected peer takes its slots over (the client noticed the drop first). After the window,
+  or on `Disconnect{Quit}`, the slots leave the roster (`PlayerLeft`).
 
 ### 6.7 Authority and abuse resistance
 
@@ -700,6 +723,13 @@ C++ server library is mature. The seam makes that swap a contained change.
   rides in the first reliable message. GNS and WebRTC encrypt in transit. Rate limits per address.
   Message decoders are fuzzed.
 - Aim assistance cannot be prevented server-side; acceptable for a party game.
+- `NetServer` numbers (v0.17): inputs are stored only for slots the sending peer owns (foreign
+  slots are ignored and counted), only with defined button bits (Throw..Taunt), and only for ticks
+  in the assembler window (up to 64 ticks ahead; copies of assembled ticks are redundancy, not
+  errors). `Input` messages pass a per-peer token bucket of `kTickHz + 30` messages per second with
+  a one-second burst; the rest are dropped and counted. Undecodable messages, messages before the
+  handshake, foreign slots, bad buttons and too-early ticks are protocol errors; more than 32 in
+  10 s get `Disconnect{ProtocolError}` and the slots are released at once.
 
 ### 6.8 Perceived latency budget (local actions)
 
