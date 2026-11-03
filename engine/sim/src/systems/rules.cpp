@@ -40,6 +40,13 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const ContentDB& content) {
 void startRound(WorldState& s, const ContentDB& content, EventSink& sink) {
   s.boomerangs.clear();
   s.pickups.clear();
+  // A player who left the roster mid-round (§6.6) is removed here; the
+  // pool slot is reused if the slot rejoins later.
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (!maskHas(s.rules.present, PlayerId{i}) && s.players.isAliveIndex(i)) {
+      s.players.despawn(s.players.idAt(i));
+    }
+  }
 
   const ArenaDef& arena = content.arena;
   const uint32_t points = arena.spawnPointCount;

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.16 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.17 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -52,6 +52,9 @@ banana damages it, through a new rule row on Player × Player contacts, which `C
 now emits and `InteractionSystem` tries in both orientations; `DashAttackDef` content switch,
 `PlayerDashHit` event, a scripted-bot behaviour that exercises it (§5.3, §5.6, §5.9, §5.10,
 §5.11, §9, §12).
+v0.17 changes: the `InputFrame` present mask is the authoritative roster: `InputSystem` copies it
+into `MatchRules::present` every tick and `RulesSystem` despawns absent players at a round start,
+so a mid-match joiner plays from the next round (§5.4, §6.6).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -278,6 +281,13 @@ players: a held button never re-fires. `subTick` is explained in §5.11. Precise
 the sub-tick stamp of the latest press (0 → 1) edge of any button within this tick; releases
 never update it, so it only carries meaning on a tick where a press edge occurred and
 repeated-input prediction is unaffected. The input sampler that fills it arrives in M2.
+
+Roster (v0.17): `InputFrame::present` is the authoritative roster. `InputSystem` copies it into
+`MatchRules::present` each tick; `RulesSystem` spawns the present slots and despawns any alive
+player whose slot is no longer present when a round starts. A slot that joins mid-round therefore
+waits for the next round (its bit counts toward the two-player minimum at once), and a slot that
+leaves mid-round keeps its idle monkey until it is eliminated or the round ends. The server
+changes the mask only through its frames, so prediction, rollback and replays need nothing else.
 
 Input sampler (v0.15, `engine/platform`, SDL-free and unit-tested headlessly): the client
 translates OS events into a platform-neutral `InputEvent` (key, pad button, pad axis, pad
@@ -679,6 +689,8 @@ C++ server library is mature. The seam makes that swap a contained change.
 - Late joiners and spectators receive a snapshot at tick T plus the authoritative input stream
   from T onward. Spectators are clients without a player slot.
 - Reconnect within a grace window reuses the reserved slot through the same flow.
+- A joiner's slot is present in the authoritative frames from the tick after its `Welcome`; it
+  spawns at the next round start (§5.4 roster, v0.17).
 
 ### 6.7 Authority and abuse resistance
 
