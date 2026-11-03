@@ -1477,7 +1477,18 @@ art is identical up to the export step, and nothing below the presentation layer
   `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
   the corpus is re-recorded; the checksums of existing entries must stay identical, because
   content that is only added never changes the default match (a scenario test asserts this for
-  extra arenas and modes).
+  extra arenas and modes). v0.23 adds `scripted_4p_deathmatch_3600t` and
+  `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode block and the
+  survival flow are under the cross-platform gate.
+- Mode tests (v0.23): `mode_scenario.cpp` (deathmatch scoring, respawn exactly `respawnTicks`
+  after the elimination at the farthest spawn point, spawn protection blocking a hit for
+  `respawnInvulnTicks`, `scoreToWin`, the clock with the leader winning or a draw on a tied
+  lead and the 10/3/2/1 warnings, late joiners and leavers; survival's last-standing and
+  timeout tie-breaks; rounds never writing the mode block; a mid-respawn round trip through the
+  visitor; determinism), the visitor's optional-block encoding, loader validation (unknown kind,
+  `score_to_win = 0`, `respawn_ticks = 0` in deathmatch), the HUD fields and mode effects and
+  sounds, a server restarting a deathmatch and a survival match, a local deathmatch ending on
+  its clock, and a 4-client deathmatch over the emulator at 100 ms / 2% staying in sync.
 - Content tests (v0.18, `kfm_content_tests`): the exact decimal conversion (truncation, digit
   separators, range, per-second division), `content/` and the embedded copy agreeing with
   `defaultContent()` on the base kit, arena 0 and mode 0 (and being identical to each other), validation of `defaultContent()`, one diagnostic per kind of mistake
