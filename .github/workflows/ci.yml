@@ -36,7 +36,7 @@ env:
   # `alsa` port behind sdl3's `alsa` feature (architecture §7, v0.19) runs
   # autoreconf. The FetchContent path uses the system libasound2-dev instead.
   KFM_VCPKG_APT_PACKAGES: >-
-    autoconf automake libtool
+    autoconf autoconf-archive automake libtool
 
 jobs:
   lint:
