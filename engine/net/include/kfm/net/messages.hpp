@@ -54,21 +54,22 @@ inline constexpr sim::PlayerMask kAllPlayersMask =
     static_cast<sim::PlayerMask>((1u << sim::kMaxPlayers) - 1u);
 
 enum class MessageType : uint8_t {
-  Input = 1,     // C→S unreliable
-  AuthInputs,    // S→C unreliable
-  Snapshot,      // S→C reliable
-  Hello,         // C→S reliable
-  Welcome,       // S→C reliable
-  Reject,        // S→C reliable
-  JoinMatch,     // C→S reliable
-  PlayerJoined,  // S→C reliable
-  PlayerLeft,    // S→C reliable
-  MatchConfig,   // S→C reliable
-  Disconnect,    // both, reliable
-  Ping,          // both, unreliable
-  Pong,          // both, unreliable
+  Input = 1,      // C→S unreliable
+  AuthInputs,     // S→C unreliable
+  Snapshot,       // S→C reliable
+  Hello,          // C→S reliable
+  Welcome,        // S→C reliable
+  Reject,         // S→C reliable
+  JoinMatch,      // C→S reliable
+  PlayerJoined,   // S→C reliable
+  PlayerLeft,     // S→C reliable
+  MatchConfig,    // S→C reliable
+  Disconnect,     // both, reliable
+  Ping,           // both, unreliable
+  Pong,           // both, unreliable
+  ResyncRequest,  // C→S reliable
 };
-inline constexpr uint8_t kMessageTypeCount = 13;  // values 1..kMessageTypeCount
+inline constexpr uint8_t kMessageTypeCount = 14;  // values 1..kMessageTypeCount
 
 enum class DecodeError : uint8_t {
   Truncated = 0,     // ran past the end of the buffer
@@ -226,6 +227,15 @@ struct DisconnectMsg {
   constexpr bool operator==(const DisconnectMsg&) const = default;
 };
 
+// The client's state disagreed with the server's checksum at `tick` (§6.6);
+// the server answers with a fresh Snapshot. `checksum` is the client's own,
+// for the server's log.
+struct ResyncRequestMsg {
+  Tick tick{};
+  uint32_t checksum{0};
+  constexpr bool operator==(const ResyncRequestMsg&) const = default;
+};
+
 // --- sizes --------------------------------------------------------------------
 
 // Upper bounds on the encoded sizes, from the layouts in messages.cpp. Both
@@ -270,6 +280,7 @@ static_assert(kAuthInputsMsgMaxBytes <= kMaxUnreliableBytes);
 [[nodiscard]] size_t encode(const PlayerLeftMsg& m, std::span<std::byte> out);
 [[nodiscard]] size_t encode(const MatchConfigMsg& m, std::span<std::byte> out);
 [[nodiscard]] size_t encode(const DisconnectMsg& m, std::span<std::byte> out);
+[[nodiscard]] size_t encode(const ResyncRequestMsg& m, std::span<std::byte> out);
 
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, InputMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, AuthInputsMsg& out);
@@ -285,6 +296,7 @@ static_assert(kAuthInputsMsgMaxBytes <= kMaxUnreliableBytes);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, PlayerLeftMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, MatchConfigMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, DisconnectMsg& out);
+[[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, ResyncRequestMsg& out);
 
 // The delta coding of one PlayerInput against `prev` (exposed for tests and
 // for size estimates).

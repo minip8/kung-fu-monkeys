@@ -189,6 +189,8 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
   roundTrip(MatchConfigMsg{sim::MatchConfig{0xFFFF'FFFF'FFFF'FFFFull, 0x2AA}, Tick{60}});
   for (uint8_t r = 0; r < kDisconnectReasonCount; ++r)
     roundTrip(DisconnectMsg{static_cast<DisconnectReason>(r)});
+  roundTrip(ResyncRequestMsg{Tick{0}, 0});
+  roundTrip(ResyncRequestMsg{Tick{0xFFFF'FFFFu}, 0xDEAD'BEEFu});
 }
 
 TEST_CASE("Encoders refuse invalid messages", "[net][messages]") {

@@ -23,6 +23,7 @@
 //   Disconnect  reason u8
 //   Ping        sendNs u64, tick u32
 //   Pong        echoSendNs u64, tick u32, holdNs u32
+//   ResyncRequest tick u32, checksum u32
 #include "kfm/net/messages.hpp"
 
 #include "kfm/core/bitstream.hpp"
@@ -38,7 +39,7 @@ namespace {
 constexpr int kMaskBits = sim::kMaxPlayers;
 constexpr int kCountBits = 4;
 static_assert((1u << kCountBits) == kMaxInputRedundancy);
-static_assert(kMessageTypeCount == static_cast<uint8_t>(MessageType::Pong));
+static_assert(kMessageTypeCount == static_cast<uint8_t>(MessageType::ResyncRequest));
 static_assert(kRejectReasonCount == static_cast<uint8_t>(RejectReason::ServerShuttingDown) + 1);
 static_assert(kDisconnectReasonCount ==
               static_cast<uint8_t>(DisconnectReason::ServerShuttingDown) + 1);
@@ -536,6 +537,22 @@ DecodeResult decode(std::span<const std::byte> bytes, DisconnectMsg& out) {
     const uint8_t reason = r.readU8();
     if (reason >= kDisconnectReasonCount) return unexpected(DecodeError::OutOfRange);
     out.reason = static_cast<DisconnectReason>(reason);
+    return {};
+  });
+}
+
+size_t encode(const ResyncRequestMsg& m, std::span<std::byte> out) {
+  return encodeWith(out, MessageType::ResyncRequest, [&](BitWriter& w) {
+    writeTick(w, m.tick);
+    w.writeU32(m.checksum);
+    return true;
+  });
+}
+
+DecodeResult decode(std::span<const std::byte> bytes, ResyncRequestMsg& out) {
+  return decodeWith(bytes, MessageType::ResyncRequest, [&](BitReader& r) -> DecodeResult {
+    out.tick = readTick(r);
+    out.checksum = r.readU32();
     return {};
   });
 }
