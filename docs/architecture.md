@@ -839,6 +839,19 @@ art is identical up to the export step, and nothing below the presentation layer
   `webglContextAttributes` (`desynchronized`, `powerPreference`, no antialias) and, because SDL3
   creates its context through `emscripten_webgl_create_context` which ignores that setting,
   also wraps `getContext('webgl2')` to merge the same attributes.
+- Feel-tuning instrumentation (v0.15): `kfm_replay stats` (and `record-scripted --stats`) runs
+  scripted matches and reports round lengths, throws, hits, dashes, perfect and auto catches,
+  catch attempts and their conversion, `tHit − pressTime` for every attempt, throw-to-outcome
+  times, time spent without ammo and the banana supply floor. The catch inputs exist only
+  inside `step()`, so the tool runs the ten systems itself and inspects the contact list before
+  `InteractionSystem`; a shadow world advanced by `step()` is compared by checksum every tick so
+  the mirror cannot drift from the sim, and no instrumentation lives in `engine/sim`.
+- Browser check (v0.15): `tools/web/serve.py` serves the wasm build (`--page`, optional
+  COOP/COEP headers) and `tools/web/check_browser.py` drives it in headless Chromium through
+  Playwright (page loads, no console errors, WebGL2 context attributes, frame intervals,
+  keyboard input, screenshots). It is a developer tool, not a CI step: a browser download per
+  run and timed waits would make the gate slow and flaky, and `client_smoke` already covers
+  rendering on CI.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
   hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
@@ -983,7 +996,22 @@ baseline moved to C++23 (§9).
   semantics and default bindings (§5.4); dependency sourcing (§10).
 - Open (M2 feel tuning): a perfect catch at full ammo destroys the banana, so with `ammoMax = 1`
   the thrower stays empty-handed until it finds a pickup. Alternatives: catch only below
-  `ammoMax`, or drop the caught banana as a pickup.
+  `ammoMax`, or drop the caught banana as a pickup. Numbers from `kfm_replay stats` over 20
+  scripted matches each (v0.15): 15% (2p), 30% (4p) and 40% (10p) of perfect catches happen at
+  full ammo; at 4p about half of those throwers are eliminated before regaining ammo and the
+  rest wait a median 1.1 s (p90 6 s), about the same as after any catch, because the thrower
+  loses its banana either way. The round's banana supply (held + in flight + pickups) never
+  reaches zero with two or more players alive (a hit grounds the hitting banana; a full-ammo
+  catcher still holds one), pinned by `banana_supply_scenario.cpp`; the cost of the current rule
+  is scarcity (lowest supply per player in a round: median 1.0 at 2p, 0.5 at 4p, 0.3 at 10p).
+  Recommendation, not yet applied: drop the caught banana as a pickup at the contact point
+  (reusing the grounding path of `damagePlayer`, still emitting `BoomerangCaught{Perfect}`), which
+  keeps the dash a defence at any ammo and gives the thrower a chance to win it back; "catch
+  only below `ammoMax`" would send 30–40% of today's perfect catches through to `DamagePlayer`.
+  First feel-tuning pass (v0.15): no content change. Catch attempts convert at 82–86% and
+  almost every miss is a press stamped a fraction of a tick after impact, not a short window;
+  short rounds (4p median 4.6 s) come from the scripted bot's 2 Hz near-perfect throwing, not
+  from the content (a 4× slower thrower gives a 9.9 s median). Human playtests decide the rest.
 - Open: team modes; WebTransport as a later replacement for WebRTC; mobile
   browsers and touch controls.
 

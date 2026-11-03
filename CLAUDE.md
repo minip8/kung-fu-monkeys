@@ -54,8 +54,10 @@ ctest --preset dev -R kfm_client_tests                 # headless client core (c
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
 #   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window
-source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py
-#   then open http://127.0.0.1:8000/kfm_client.html (browser build of the same client)
+build/dev/apps/replay/kfm_replay stats --players 4 --matches 20   # feel-tuning stats over scripted matches
+source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py [--page kfm_render_probe.html]
+#   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
+python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
 ```
 
 The `wasm` preset runs the same tests under node and builds `kfm_client.html`. CI runs the lint
