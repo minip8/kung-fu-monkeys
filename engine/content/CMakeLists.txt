@@ -5,6 +5,15 @@
 # ContentDB, ContentSource and Diagnostics.
 set(KFM_CONTENT_SOURCE_DIR "${PROJECT_SOURCE_DIR}/content")
 file(GLOB_RECURSE kfm_content_files CONFIGURE_DEPENDS "${KFM_CONTENT_SOURCE_DIR}/*.toml")
+list(SORT kfm_content_files)
+# The file list itself is a dependency: CONFIGURE_DEPENDS re-globs on every
+# build, and file(CONFIGURE) rewrites the list only when it changed, so
+# adding, moving or deleting a TOML file (which a timestamp check on the
+# remaining files would miss) makes the list newer than embedded.cpp and the
+# generator runs again, with any generator.
+set(kfm_content_list "${CMAKE_CURRENT_BINARY_DIR}/content_files.txt")
+string(REPLACE ";" "\n" kfm_content_list_text "${kfm_content_files}")
+file(CONFIGURE OUTPUT "${kfm_content_list}" CONTENT "${kfm_content_list_text}\n" @ONLY)
 set(kfm_content_embedded "${CMAKE_CURRENT_BINARY_DIR}/embedded.cpp")
 add_custom_command(
   OUTPUT "${kfm_content_embedded}"
@@ -12,7 +21,8 @@ add_custom_command(
     "-DKFM_CONTENT_DIR=${KFM_CONTENT_SOURCE_DIR}"
     "-DKFM_OUT=${kfm_content_embedded}"
     -P "${CMAKE_CURRENT_SOURCE_DIR}/EmbedContent.cmake"
-  DEPENDS ${kfm_content_files} "${CMAKE_CURRENT_SOURCE_DIR}/EmbedContent.cmake"
+  DEPENDS ${kfm_content_files} "${kfm_content_list}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/EmbedContent.cmake"
   COMMENT "Embedding content/*.toml"
   VERBATIM)
 
