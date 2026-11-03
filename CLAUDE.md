@@ -13,7 +13,10 @@ Milestones M0 (skeleton) and M1 (headless sim) have landed: build system, `engin
 full `engine/sim` tick pipeline (FFA rounds, Dash, Throw, banana flight and return, swept
 collision, the interaction rules table, modifiers, lifecycle) over `constexpr` content, a
 scripted input generator, `kfm_replay` (record, verify, bench) and the determinism gate over a
-corpus of empty and scripted replays. M2 (playable local client) is next. `docs/architecture.md` is the
+corpus of empty and scripted replays. M2 (playable local client) is in progress on
+`feat/m2-playable-local`: `engine/platform` (SDL3 window + GL context, sokol_gfx, Dear ImGui,
+the SDL-free input sampler), `engine/presentation` (float math, fixed arena camera, RenderState
+builder, procedural meshes, the sokol renderer) and `apps/client`. `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -23,8 +26,11 @@ a changelog line. Do not let code and doc disagree silently.
 Toolchain: CMake ≥ 3.25, Ninja, a C++23 compiler: GCC ≥ 14 or Clang ≥ 19 on Linux (Ubuntu
 24.04's GCC 13 and Clang 18 do not work), MSVC 2022, Apple Clang 16+, Emscripten 4+; verified on
 GCC 15, Clang 21, MSVC 19.51, Apple Clang 21, Emscripten 6. Optional: vcpkg (`VCPKG_ROOT`; without it
-Catch2 is fetched at configure time at the same pinned version) and emsdk (`EMSDK`, set by
+every dependency is fetched at configure time at the same pinned version) and emsdk (`EMSDK`, set by
 `source ~/emsdk/emsdk_env.sh`) for the `wasm` preset. Build directories are `build/<preset>`.
+The client needs no system GL headers (GL is loaded through the vendored glad loader in
+`third_party/glad`); building SDL3 on Linux needs the X11/Wayland dev packages listed in
+`.github/workflows/ci.yml`.
 
 ```sh
 cmake --preset dev                      # configure; presets: dev, release, asan, server-headless, wasm
@@ -42,11 +48,16 @@ build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|ver
 build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
 build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
+build/dev/apps/client/kfm_client                       # playable client (F1 debug overlay)
+build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
+source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py
+#   then open http://127.0.0.1:8000/kfm_client.html (browser build of the same client)
 ```
 
-The `wasm` preset runs the same tests under node. CI runs the lint job, the four native
-toolchains in Debug and Release (Linux on Ubuntu 26.04), ASan+UBSan and wasm
-(`.github/workflows/ci.yml`).
+The `wasm` preset runs the same tests under node and builds `kfm_client.html`. CI runs the lint
+job, the four native toolchains in Debug and Release (Linux on Ubuntu 26.04, where a
+`client_smoke` ctest renders 30 frames under xvfb), ASan+UBSan and wasm
+(`.github/workflows/ci.yml`). clang-format and clang-tidy never run over `third_party/`.
 
 ## Architecture in one screen
 
@@ -113,6 +124,16 @@ are `LoopbackTransport` + `NetEmulator` (all netcode tests run here), `WebRtcTra
 **Platform seams (§13).** Web first; the native client is the development/profiling build;
 Steam is optional. Only `ITransport` and `IPlatformServices` may know which platform they are on.
 The browser client is single-threaded by design; do not introduce threads into the client path.
+
+**Presentation and platform (§7, v0.15).** `presentation` is float code over sim state: sim
+`(x, y)` is world `(x, h, −y)`, +y up, sim +x is screen right and sim +y screen up; the camera is
+fixed per arena. `kfm_presentation` (RenderState builder, camera, meshes) is headless and unit
+tested; `kfm_renderer` (sokol_gfx, GL backends only, hand-written GLSL with a `#version` prefix
+per backend) links `kfm::sokol`, never `kfm::platform`. `platform` owns SDL3, the GL context
+(4.3 core natively via glad, GLES3/WebGL2 in the browser) and Dear ImGui. Input goes
+`SDL_Event` → `platform::InputEvent` → `InputSampler` → `PlayerInput` once per tick, right
+before `step()`; the sampler is SDL-free and tested headlessly. Tuning constants live in
+`kfm/presentation/tuning.hpp`, never as literals in the renderer.
 
 **Bots and ML (§8).** Agents implement `IAgent` and produce `PlayerInput` exactly like a human;
 they live outside the sim. Server-side bots write into the authoritative frame directly. The
