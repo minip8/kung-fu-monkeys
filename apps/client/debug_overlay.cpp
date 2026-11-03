@@ -223,6 +223,11 @@ void entitySection(const Session& s) {
         ImGui::Text("    %s: %s %u ticks, cooldown %u", abilityName(c.abilityAt(ab.defIndex).kind),
                     abilityPhaseName(ab.phase), ab.phaseTicks, ab.cooldownTicks);
       }
+      for (uint8_t m = 0; m < p.modifiers.count && m < sim::kMaxModifiers; ++m) {
+        const sim::ActiveModifier& am = p.modifiers.items[m];
+        ImGui::Text("    power-up %s: %u ticks left", c.powerUpAt(am.powerUp).name.cStr(),
+                    am.ticksLeft);
+      }
     }
     ImGui::TreePop();
   }
@@ -236,7 +241,9 @@ void entitySection(const Session& s) {
   }
   if (ImGui::TreeNode("pickups", "pickups (%u)", static_cast<unsigned>(w.pickups.size()))) {
     w.pickups.forEachAlive([&](EntityId id, const sim::Pickup& p) {
-      ImGui::Text("#%u.%u banana at (%.2f, %.2f)", id.index, id.generation, p.pos.x.toDouble(),
+      const char* what =
+          p.kind == sim::PickupKind::PowerUp ? c.powerUpAt(p.powerUpIndex).name.cStr() : "banana";
+      ImGui::Text("#%u.%u %s at (%.2f, %.2f)", id.index, id.generation, what, p.pos.x.toDouble(),
                   p.pos.y.toDouble());
     });
     ImGui::TreePop();

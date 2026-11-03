@@ -1338,7 +1338,8 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `BoomerangCaught` Auto | AutoCatchFlash 0.2 s, flash | CatchAuto (tick) |
 | `PlayerHit`, `PlayerDashHit` | HitFlash 0.2 s, HitSpark 0.25 s (6 sparks in a cone away from the banana or attacker), flash, shake | Hit (thud) |
 | `PlayerEliminated` | EliminationBurst 0.6 s, EliminationPoof 0.7 s (5 smoke puffs), shake | Elimination |
-| `PickupTaken` | PickupSparkle 0.35 s at the pickup | Pickup |
+| `PickupTaken` | PickupSparkle 0.35 s at the pickup; a power-up (v0.20) adds PowerUpBurst 0.5 s (a ring and 8 sparks in the taker's colour) | Pickup; PowerUp (rising arpeggio) for a power-up |
+| `ShieldBroken` (v0.20) | ShieldShatter 0.4 s (a blue ring, flash and 7 shards), flash, shake | ShieldBreak (glassy crack) |
 | `BoomerangGrounded` | GroundDust 0.35 s where it landed | BananaGround |
 | `BoomerangBounced` | BounceSpark 0.15 s | WallBounce |
 | `RoundStarted`, `RoundEnded`, `MatchEnded` | banners 1 / 1.5 / 3 s; the HUD text pops in at 1.35× and settles over the first quarter (`bannerScale`) | — , RoundEnd, MatchEnd |
@@ -1357,10 +1358,21 @@ re-simulation therefore never re-triggers an effect or a sound, an event retract
 drained spawns neither, and one already played stays played (it is counted as retracted).
 State-sampled trails follow whatever timeline is drawn.
 
+Power-ups (v0.20, §5.8). A power-up pickup (`RenderPickup::kind == PowerUp`, with the def's
+`colorIndex`, `shape` and index) is drawn from the placeholder meshes in its palette colour,
+spinning 0.45 units up with a slight glow: `Orb` a capsule squashed to a ball, `Cube` a tilted
+cube, `Diamond` a cube on its corner, `Coin` a flat capsule on its edge (`kPowerUpSize` 0.6), over
+a pulsing ground ring in the same colour; a grounded banana looks as before. `RenderPlayer`
+carries its live power-ups (`powerUps[0..powerUpCount)`: index, colour, shape, seconds left,
+fraction left) and the HUD draws them under the ammo pips as small pies in the power-up's colour
+with whole seconds beside them. A shielded player keeps the blue ground ring of `Shielded`. The
+F1 overlay lists each player's power-ups and each pickup's def.
+
 Audio (v0.19, M4). Everything SDL-free is in `presentation` and headless-tested; only the device
 is in `platform`.
 - `SoundBank` (`sound_bank.hpp`): 14 clips (`SoundId`: throw, dash, perfect and auto catch, hit,
-  elimination, pickup, banana landing, wall bounce, count-in, go, round end, match end, UI click)
+  elimination, pickup, banana landing, wall bounce, count-in, go, round end, match end, UI click;
+  v0.20 adds power-up and shield-break, 16)
   synthesised once at startup from sines, inharmonic bell partials, state-variable-filtered
   xorshift noise and envelopes, mono float at 48 kHz, each normalised to a 0.8 peak with 1 ms /
   4 ms end fades, deterministic (fixed noise seeds), about 4.6 s of audio in total. No audio

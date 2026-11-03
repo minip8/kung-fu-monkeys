@@ -694,3 +694,90 @@ TEST_CASE("banners pop in and settle", "[presentation][builder][vfx]") {
   rs = build(ps, s, s, 1.0f, {}, kRoundStartBannerSeconds * 0.5f);
   CHECK(bannerScale(rs, EffectKind::RoundStartBanner) == Approx(1.0f));
 }
+
+TEST_CASE("power-up pickups render per def; players carry their timers",
+          "[presentation][builder][powerup]") {
+  ContentDB content = defaultContent();
+  const uint8_t shield = addPowerUp(content, "shield", 120, {tagGrant(Tag::Shielded)});
+  content.powerUps[shield].visual = PowerUpVisual{1, PowerUpShape::Coin};
+  const uint8_t speed = addPowerUp(
+      content, "speed", 600, {statGrant(StatKind::MoveSpeed, Fixed::fromInt(2), Fixed::zero())});
+  content.powerUps[speed].visual = PowerUpVisual{6, PowerUpShape::Diamond};
+
+  WorldState s = makePlayingWorld(24, 0b11, content);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  (void)spawnPickup(s, Vec2{Fixed::zero(), Fixed::fromInt(4)});
+  (void)spawnPowerUpPickup(s, Vec2{Fixed::fromInt(5), Fixed::fromInt(-4)}, speed);
+  givePowerUp(playerAt(s, kP0), shield, 30);
+  givePowerUp(playerAt(s, kP0), speed, 600);
+
+  PresentationState ps;
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, content, kDt);
+  REQUIRE(rs.pickupCount == 2);
+  const RenderPickup& banana = rs.pickups[0];
+  const RenderPickup& power = rs.pickups[1];
+  CHECK(banana.kind == PickupKindView::Banana);
+  CHECK(power.kind == PickupKindView::PowerUp);
+  CHECK(power.powerUp == speed);
+  CHECK(power.colorIndex == 6);
+  CHECK(power.shape == PowerUpShapeView::Diamond);
+  CHECK(worldToSim(power.ground).x == Approx(5.0f));
+
+  const RenderPlayer& p0 = playerIn(rs, 0);
+  REQUIRE(p0.powerUpCount == 2);
+  CHECK(p0.powerUps[0].powerUp == shield);
+  CHECK(p0.powerUps[0].colorIndex == 1);
+  CHECK(p0.powerUps[0].shape == PowerUpShapeView::Coin);
+  CHECK(p0.powerUps[0].secondsLeft == Approx(0.5f));
+  CHECK(p0.powerUps[0].fraction == Approx(0.25f));
+  CHECK(p0.powerUps[1].fraction == Approx(1.0f));
+  CHECK(playerIn(rs, 1).powerUpCount == 0);
+}
+
+TEST_CASE("a power-up pickup bursts and chimes; a broken shield shatters",
+          "[presentation][builder][powerup][audio]") {
+  using enum EventKind;
+  const auto id = [](EventKind k, uint32_t a = 0) {
+    return soundForEvent(SimEvent{k, Tick{0}, kP0, EntityId{}, a, 0})
+        .value_or(SoundCue{SoundId::Count, 0.0f, 0.0f})
+        .id;
+  };
+  CHECK(id(PickupTaken, static_cast<uint32_t>(PickupKind::Banana)) == SoundId::Pickup);
+  CHECK(id(PickupTaken, static_cast<uint32_t>(PickupKind::PowerUp)) == SoundId::PowerUp);
+  CHECK(id(ShieldBroken) == SoundId::ShieldBreak);
+
+  WorldState s = makePlayingWorld(25, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  const EntityId pickup = spawnPowerUpPickup(s, Vec2{Fixed::fromInt(2), Fixed::one()}, 0);
+  PresentationState ps;
+  const WorldState prev = s;
+  WorldState curr = s;
+  curr.pickups.despawn(pickup);
+  const std::vector<SimEvent> events = {
+      SimEvent{PickupTaken, curr.tick, kP1, pickup, static_cast<uint32_t>(PickupKind::PowerUp), 0},
+      SimEvent{ShieldBroken, curr.tick, kP0, EntityId{}, 1, 0},
+  };
+  build(ps, prev, prev, 1.0f);
+  const RenderState rs = build(ps, prev, curr, 1.0f, events);
+  CHECK(countEffects(rs, EffectKind::PickupSparkle) == 1);
+  REQUIRE(countEffects(rs, EffectKind::PowerUpBurst) == 1);
+  REQUIRE(countEffects(rs, EffectKind::ShieldShatter) == 1);
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& e = rs.effects[i];
+    if (e.kind == EffectKind::PowerUpBurst) {
+      CHECK(e.slot == 1);
+      CHECK(worldToSim(e.position).x == Approx(2.0f));
+    }
+    if (e.kind == EffectKind::ShieldShatter) CHECK(e.slot == 0);
+  }
+  int powerUpSounds = 0;
+  int shieldSounds = 0;
+  for (uint16_t i = 0; i < rs.soundCount; ++i) {
+    if (rs.sounds[i].id == SoundId::PowerUp) ++powerUpSounds;
+    if (rs.sounds[i].id == SoundId::ShieldBreak) ++shieldSounds;
+  }
+  CHECK(powerUpSounds == 1);
+  CHECK(shieldSounds == 1);
+}

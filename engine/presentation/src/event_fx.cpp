@@ -95,7 +95,10 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::PlayerEliminated:
       return cue(SoundId::Elimination);
     case EventKind::PickupTaken:
-      return cue(SoundId::Pickup);
+      return cue(e.a == static_cast<uint32_t>(sim::PickupKind::PowerUp) ? SoundId::PowerUp
+                                                                        : SoundId::Pickup);
+    case EventKind::ShieldBroken:
+      return cue(SoundId::ShieldBreak);
     case EventKind::BoomerangGrounded:
       return cue(SoundId::BananaGround);
     case EventKind::BoomerangBounced:
@@ -224,9 +227,20 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       const Vec2f at = pickupPlane(ps, prev, curr, e.entity).value_or(player);
       addEffect(ps, makeEffect(EffectKind::PickupSparkle, slot, simToWorld(at, kPickupHeight),
                                kPickupSparkleSeconds));
+      if (e.a == static_cast<uint32_t>(sim::PickupKind::PowerUp)) {
+        addEffect(ps, makeEffect(EffectKind::PowerUpBurst, slot, simToWorld(at, kPickupHeight),
+                                 kPowerUpBurstSeconds));
+      }
       soundAt = at;
       break;
     }
+    case EventKind::ShieldBroken:
+      addEffect(ps,
+                makeEffect(EffectKind::ShieldShatter, slot, bodyAt(player), kShieldShatterSeconds));
+      flashPlayer(ps, e.player, kHitFlashSeconds);
+      addShake(ps, kShakeOnHit);
+      soundAt = player;
+      break;
     case EventKind::BoomerangGrounded: {
       const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity);
       if (at) {

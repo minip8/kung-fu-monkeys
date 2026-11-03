@@ -218,6 +218,29 @@ struct Mat4 {
   return r;
 }
 
+// Right-handed rotations about +x (+y turns toward +z) and +z (+x turns
+// toward +y), for tilting placeholder shapes (power-up pickups).
+[[nodiscard]] inline Mat4 rotateX(float radians) {
+  const float c = std::cos(radians);
+  const float s = std::sin(radians);
+  Mat4 r = Mat4::identity();
+  r.at(1, 1) = c;
+  r.at(1, 2) = -s;
+  r.at(2, 1) = s;
+  r.at(2, 2) = c;
+  return r;
+}
+[[nodiscard]] inline Mat4 rotateZ(float radians) {
+  const float c = std::cos(radians);
+  const float s = std::sin(radians);
+  Mat4 r = Mat4::identity();
+  r.at(0, 0) = c;
+  r.at(0, 1) = -s;
+  r.at(1, 0) = s;
+  r.at(1, 1) = c;
+  return r;
+}
+
 // General 4×4 inverse (cofactor expansion). Returns the identity for a
 // singular matrix.
 [[nodiscard]] Mat4 inverse(const Mat4& a);

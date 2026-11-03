@@ -23,7 +23,9 @@ enum class SoundId : uint8_t {
   RoundGo,  // the round starts (RoundStarting -> Playing)
   RoundEnd,
   MatchEnd,
-  UiClick,  // played by the app (lobby, menus), never by an event
+  UiClick,      // played by the app (lobby, menus), never by an event
+  PowerUp,      // a power-up taken: a rising arpeggio (v0.20)
+  ShieldBreak,  // a shield absorbed a hit: a glassy crack (v0.20)
   Count,
 };
 
@@ -59,6 +61,10 @@ inline constexpr uint8_t kSoundCount = static_cast<uint8_t>(SoundId::Count);
       return "match-end";
     case SoundId::UiClick:
       return "ui-click";
+    case SoundId::PowerUp:
+      return "power-up";
+    case SoundId::ShieldBreak:
+      return "shield-break";
     case SoundId::Count:
       break;
   }

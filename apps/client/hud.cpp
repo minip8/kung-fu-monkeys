@@ -113,6 +113,32 @@ void drawScoreBar(ImDrawList* dl, const HudView& session, const presentation::Re
   centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y + kSize + 18.0f), kWhite, round);
 }
 
+// Live power-ups (§5.8) under the ammo pips: one pie per power-up in its
+// colour, the filled part the time left, with whole seconds beside it.
+void drawPowerUpTimers(ImDrawList* dl, const presentation::RenderPlayer& p, ImVec2 centre) {
+  if (p.powerUpCount == 0) return;
+  constexpr float kPieR = 6.0f;
+  constexpr float kStep = 30.0f;
+  float x = centre.x - (static_cast<float>(p.powerUpCount - 1) * kStep * 0.5f) - 6.0f;
+  for (uint8_t i = 0; i < p.powerUpCount; ++i) {
+    const presentation::RenderPowerUp& pu = p.powerUps[i];
+    const ImVec2 c{x, centre.y};
+    dl->AddCircleFilled(c, kPieR, kEmptyPip);
+    if (pu.fraction > 0.0f) {
+      // Clockwise from 12 o'clock, shrinking as the timer runs down.
+      const float start = -0.5f * presentation::kPi;
+      dl->PathLineTo(c);
+      dl->PathArcTo(c, kPieR, start, start + (2.0f * presentation::kPi * pu.fraction), 20);
+      dl->PathFillConvex(slotColor(pu.colorIndex));
+    }
+    dl->AddCircle(c, kPieR, kShadow, 0, 1.0f);
+    char secs[8];
+    std::snprintf(secs, sizeof secs, "%d", static_cast<int>(std::ceil(pu.secondsLeft)));
+    centredText(dl, 12.0f, ImVec2(c.x + kPieR + 7.0f, c.y), kWhite, secs);
+    x += kStep;
+  }
+}
+
 void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) {
   const presentation::RenderState& rs = *in.state;
   for (uint16_t k = 0; k < rs.playerCount; ++k) {
@@ -141,6 +167,7 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
       dl->AddCircle(c, kPipR, kShadow, 0, 1.0f);
       x += (kPipR * 2.0f) + 3.0f;
     }
+    drawPowerUpTimers(dl, p, ImVec2(at.x, at.y + 14.0f));
   }
 }
 

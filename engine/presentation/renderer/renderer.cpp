@@ -411,6 +411,45 @@ void drawSparks(FrameDrawer& d, const RenderEffect& e, const SparkStyle& s) {
   }
 }
 
+// A power-up pickup (§5.8): the def's shape in its palette colour, spinning
+// and glowing a little, from the placeholder meshes. playerRadius and
+// playerHeight are the capsule mesh's dimensions (orb and coin are scaled
+// capsules).
+void drawPowerUp(FrameDrawer& d, const RenderPickup& p, float playerRadius, float playerHeight,
+                 float time) {
+  const Color c = playerColor(p.colorIndex);
+  const float glow = 0.25f + (0.15f * std::sin(kTwoPi * kPowerUpRingPulseHz * time));
+  const float s = kPowerUpSize;
+  const Vec3 at = p.position + Vec3{0.0f, kPowerUpHeight - kPickupHeight, 0.0f};
+  const Mat4 base = translate(at) * rotateY(p.spin);
+  const float rx = playerRadius > 0.0f ? (0.5f * s) / playerRadius : 1.0f;
+  const float hy = playerHeight > 0.0f ? 1.0f / playerHeight : 1.0f;
+  switch (p.shape) {
+    case PowerUpShapeView::Orb:
+      // The capsule squashed to its own width: a ball centred on `at`.
+      d.lit(kCapsuleMesh, base * translate({0.0f, -0.5f * s, 0.0f}) * scale({rx, s * hy, rx}), c,
+            0.0f, glow);
+      break;
+    case PowerUpShapeView::Cube:
+      d.lit(kCubeMesh, base * rotateX(0.35f) * scale({0.75f * s, 0.75f * s, 0.75f * s}), c, 0.0f,
+            glow);
+      break;
+    case PowerUpShapeView::Diamond:
+      d.lit(kCubeMesh,
+            base * rotateZ(0.25f * kPi) * rotateX(0.25f * kPi) *
+                scale({0.62f * s, 0.62f * s, 0.62f * s}),
+            c, 0.0f, glow);
+      break;
+    case PowerUpShapeView::Coin:
+      // A flat capsule stood on its edge.
+      d.lit(kCapsuleMesh,
+            base * rotateX(0.5f * kPi) * translate({0.0f, -0.1f * s, 0.0f}) *
+                scale({rx, 0.2f * s * hy, rx}),
+            c, 0.0f, glow);
+      break;
+  }
+}
+
 }  // namespace
 
 bool Renderer::init(const sim::MatchContent& match) {
@@ -658,7 +697,11 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   }
   for (uint16_t i = 0; i < state.pickupCount; ++i) {
     const RenderPickup& p = state.pickups[i];
-    d.lit(kBananaMesh, translate(p.position) * rotateY(p.spin), kPickupColor, 0.0f, 0.1f);
+    if (p.kind == PickupKindView::PowerUp) {
+      drawPowerUp(d, p, r, bodyHeight, state.time);
+    } else {
+      d.lit(kBananaMesh, translate(p.position) * rotateY(p.spin), kPickupColor, 0.0f, 0.1f);
+    }
   }
 
   // --- ground decals (alpha) -------------------------------------------------------
@@ -687,6 +730,14 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       d.groundDisc(p.ground, kDecalLift, 0.0f, r * 1.5f, r * 1.5f, kShieldBlue, 0.7f,
                    DecalMode::Ring, 0.8f);
     }
+  }
+  // A pulsing ring in the power-up's colour marks a power-up pickup.
+  for (uint16_t i = 0; i < state.pickupCount; ++i) {
+    const RenderPickup& p = state.pickups[i];
+    if (p.kind != PickupKindView::PowerUp) continue;
+    const float pulse = 0.5f + (0.5f * std::sin(kTwoPi * kPowerUpRingPulseHz * state.time));
+    d.groundDisc(p.ground, kDecalLift, 0.0f, kPowerUpRingRadius, kPowerUpRingRadius,
+                 playerColor(p.colorIndex), lerp(0.45f, 0.9f, pulse), DecalMode::Ring, 0.75f);
   }
   for (uint16_t i = 0; i < state.effectCount; ++i) {
     const RenderEffect& e = state.effects[i];
@@ -740,6 +791,18 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
                               .alpha = 0.6f,
                               .mode = DecalMode::Burst});
         break;
+      case EffectKind::PowerUpBurst: {
+        const Color c = e.slot >= 0 ? playerColor(static_cast<uint32_t>(e.slot)) : kWhite;
+        const float rr = lerp(kPowerUpRingRadius, 2.2f, easeOut(t));
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.9f * fade, DecalMode::Ring, 0.8f);
+        break;
+      }
+      case EffectKind::ShieldShatter: {
+        const float rr = r * lerp(1.5f, 2.8f, easeOut(t));
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, kShieldBlue, 0.9f * fade,
+                     DecalMode::Ring, 0.85f);
+        break;
+      }
       case EffectKind::GroundDust:
         drawSparks(d, e,
                    SparkStyle{.count = kDustPuffs,
@@ -825,6 +888,34 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
         break;
       case EffectKind::BounceSpark:
         d.billboard(e.position, lerp(0.15f, 0.45f, t), kWhite, 0.8f * fade, DecalMode::Burst, 0.1f);
+        break;
+      case EffectKind::PowerUpBurst:
+        drawSparks(d, e,
+                   SparkStyle{.count = kPowerUpSparks,
+                              .reach = 1.1f,
+                              .size = 0.14f,
+                              .shrink = 0.6f,
+                              .rise = 0.7f,
+                              .spread = 0.0f,
+                              .color = e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)),
+                                                         kWhite, 0.35f)
+                                                   : kWhite,
+                              .alpha = 1.0f,
+                              .mode = DecalMode::Burst});
+        break;
+      case EffectKind::ShieldShatter:
+        d.billboard(e.position, lerp(0.7f, 1.5f, t), kShieldBlue, 0.8f * fade, DecalMode::Burst,
+                    0.3f);
+        drawSparks(d, e,
+                   SparkStyle{.count = kShieldShards,
+                              .reach = 1.0f,
+                              .size = 0.12f,
+                              .shrink = 0.5f,
+                              .rise = 0.3f,
+                              .spread = 0.0f,
+                              .color = mix(kShieldBlue, kWhite, 0.4f),
+                              .alpha = 1.0f,
+                              .mode = DecalMode::Burst});
         break;
       default:
         break;  // rings and alpha bursts are drawn above; banners are HUD work

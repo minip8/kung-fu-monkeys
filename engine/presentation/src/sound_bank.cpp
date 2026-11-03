@@ -7,6 +7,7 @@
 #include "kfm/presentation/math.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -35,6 +36,8 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.70f, 0.75f},   // RoundEnd
     {1.50f, 0.85f},   // MatchEnd
     {0.035f, 0.50f},  // UiClick
+    {0.36f, 0.60f},   // PowerUp
+    {0.30f, 0.70f},   // ShieldBreak
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -213,6 +216,24 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         v = (env(t, 0.0005f, 0.006f) * osc.next(1500.0f, sr)) +
             (0.3f * env(t, 0.0f, 0.002f) * svf2.band());
         break;
+      case SoundId::PowerUp: {
+        // A rising major arpeggio (C6, E6, G6, C7), 80 ms per note.
+        constexpr std::array<float, 4> kNotes = {1046.5f, 1318.5f, 1568.0f, 2093.0f};
+        const auto note = std::min<std::size_t>(static_cast<std::size_t>(t / 0.08f), 3);
+        const float start = static_cast<float>(note) * 0.08f;
+        osc.next(kNotes[note], sr);
+        v = env(t - start, 0.003f, note == 3 ? 0.12f : 0.06f) * harmonics(osc.phase(), 0.0f, 0.25f);
+        break;
+      }
+      case SoundId::ShieldBreak: {
+        // A glassy crack: bright band-passed noise over a falling ring.
+        const float hz = 1800.0f + (1400.0f * std::exp(-t / 0.05f));
+        svf.step(noise.next(), 4200.0f, sr, 0.4f);
+        osc.next(hz, sr);
+        v = (0.7f * env(t, 0.001f, 0.05f) * svf.band()) +
+            (env(t, 0.002f, 0.12f) * harmonics(osc.phase(), 0.4f, 0.2f));
+        break;
+      }
       case SoundId::Count:
         break;
     }

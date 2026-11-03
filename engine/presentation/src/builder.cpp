@@ -262,6 +262,19 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.ammoMax = cp.stats.ammoMax;
     rp.hp = cp.hp;
     rp.maxHp = cp.stats.maxHp;
+    for (uint8_t m = 0; m < cp.modifiers.count && m < sim::kMaxModifiers; ++m) {
+      const sim::ActiveModifier& am = cp.modifiers.items[m];
+      const sim::PowerUpDef& def = content.powerUpAt(am.powerUp);
+      RenderPowerUp& pu = rp.powerUps[rp.powerUpCount++];
+      pu.powerUp = am.powerUp;
+      pu.colorIndex = def.visual.color;
+      pu.shape = static_cast<PowerUpShapeView>(def.visual.shape);
+      pu.secondsLeft = static_cast<float>(am.ticksLeft) / static_cast<float>(sim::kTickHz);
+      pu.fraction =
+          def.durationTicks > 0
+              ? clamp01(static_cast<float>(am.ticksLeft) / static_cast<float>(def.durationTicks))
+              : 0.0f;
+    }
     const AbilityState& dash = dashSlot(cp);
     const uint16_t cd = content.abilityAt(dash.defIndex).cooldownTicks;
     rp.dashCooldown =
@@ -369,6 +382,13 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
     rp.spin = wrapRadians((kPickupSpinRadPerSec * ps.time) + phase);
     rp.radius = radius;
     rp.kind = PickupKindView::Banana;
+    if (cp.kind == sim::PickupKind::PowerUp) {
+      const sim::PowerUpDef& def = content.powerUpAt(cp.powerUpIndex);
+      rp.kind = PickupKindView::PowerUp;
+      rp.colorIndex = def.visual.color;
+      rp.shape = static_cast<PowerUpShapeView>(def.visual.shape);
+      rp.powerUp = cp.powerUpIndex;
+    }
     pushShadow(out, rp.ground, radius, height, ShadowOwner::Pickup);
   }
 }

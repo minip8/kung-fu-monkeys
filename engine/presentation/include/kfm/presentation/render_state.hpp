@@ -15,6 +15,7 @@
 #include "kfm/presentation/math.hpp"
 #include "kfm/presentation/sound.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/world_state.hpp"
 
 #include <array>
 #include <cstdint>
@@ -46,6 +47,17 @@ enum class PlayerFlag : uint8_t {
   return static_cast<uint16_t>(f);
 }
 
+// A power-up's placeholder shape (sim::PowerUpVisual::shape, §5.8).
+enum class PowerUpShapeView : uint8_t { Orb = 0, Cube, Diamond, Coin };
+// A live power-up on a player, for the HUD timers (§5.8).
+struct RenderPowerUp {
+  uint8_t powerUp{0};     // index into ContentDB::powerUps
+  uint8_t colorIndex{0};  // palette.hpp
+  PowerUpShapeView shape{PowerUpShapeView::Orb};
+  float secondsLeft{0.0f};
+  float fraction{0.0f};  // remaining / duration, 1 = just picked up
+};
+
 struct RenderPlayer {
   uint8_t slot{0};
   uint8_t colorIndex{0};  // = slot; palette.hpp
@@ -62,7 +74,9 @@ struct RenderPlayer {
   uint8_t ammoMax{0};
   uint8_t hp{0};
   uint8_t maxHp{0};
-  float dashCooldown{0.0f};  // 0 = ready, 1 = just used
+  float dashCooldown{0.0f};                                  // 0 = ready, 1 = just used
+  std::array<RenderPowerUp, sim::kMaxModifiers> powerUps{};  // in slot (pickup) order
+  uint8_t powerUpCount{0};
 
   [[nodiscard]] constexpr bool has(PlayerFlag f) const { return (flags & flagBit(f)) != 0; }
 };
@@ -79,7 +93,7 @@ struct RenderBanana {
   int8_t ownerSlot{kNoSlot};
 };
 
-enum class PickupKindView : uint8_t { Banana = 0 };
+enum class PickupKindView : uint8_t { Banana = 0, PowerUp };
 
 struct RenderPickup {
   Vec3 position{};  // world space, hovering slightly
@@ -87,6 +101,10 @@ struct RenderPickup {
   float spin{0.0f};
   float radius{0.0f};  // sim contact radius
   PickupKindView kind{PickupKindView::Banana};
+  // PowerUp only: the def's look (palette.hpp index, shape) and its index.
+  uint8_t colorIndex{0};
+  PowerUpShapeView shape{PowerUpShapeView::Orb};
+  uint8_t powerUp{0};
 };
 
 enum class ShadowOwner : uint8_t { Player = 0, Banana, Pickup };
@@ -120,6 +138,9 @@ enum class EffectKind : uint8_t {
   PickupSparkle,      // twinkles where a pickup was taken
   GroundDust,         // dust where a banana landed
   BounceSpark,        // a banana bounced off a wall
+  // v0.20 (power-ups):
+  PowerUpBurst,   // ring and sparks where a power-up was taken (slot = taker)
+  ShieldShatter,  // a shield absorbed a hit (slot = the shielded player)
 };
 
 struct RenderEffect {

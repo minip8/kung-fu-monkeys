@@ -80,6 +80,17 @@ inline constexpr int kHitSparks = 6;
 inline constexpr int kEliminationPuffs = 5;
 inline constexpr int kPickupTwinkles = 4;
 inline constexpr int kDustPuffs = 4;
+// Power-ups (v0.20). A power-up pickup is the def's shape in its palette
+// colour, hovering higher than a banana with a glowing ground ring; taking it
+// bursts a ring and sparks in the taker's colour; a broken shield shatters.
+inline constexpr float kPowerUpHeight = 0.45f;
+inline constexpr float kPowerUpSize = 0.6f;  // shape size, units (the contact radius is 0.5)
+inline constexpr float kPowerUpRingRadius = 0.55f;
+inline constexpr float kPowerUpRingPulseHz = 1.2f;
+inline constexpr float kPowerUpBurstSeconds = 0.5f;
+inline constexpr int kPowerUpSparks = 8;
+inline constexpr float kShieldShatterSeconds = 0.4f;
+inline constexpr int kShieldShards = 7;
 // Banners in the HUD pop in: scale 1 + this at the start, settling to 1 over
 // the first quarter of the banner's life.
 inline constexpr float kBannerPop = 0.35f;
