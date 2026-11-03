@@ -1147,6 +1147,19 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   orthographic; tuned in M2), looking down at the plane. No camera rotation in gameplay, so the
   tilt is part of the arena's design. A real depth buffer resolves overlaps; only transparent
   effects are sorted.
+- **Arena statics (v0.22).** `makeArenaCamera(arena, ...)` frames each arena from its own
+  `halfExtents` (fixed pitch and field of view, distance solved per arena and viewport), so a
+  36 × 20 `corridors` sits further away than the 32 × 18 `dojo`; interior walls are drawn below
+  `framingHeight` and never leave the frame. `buildArenaPieces()` turns the arena's walls and
+  hazards into `RenderState::arenaPieces` (world-space boxes, walls first, then hazards, then
+  pit rims); the renderer draws each as the unit cube scaled to it: walls as
+  `kArenaWallHeight` (1.2) stone blocks, above a banana in flight so a bounce reads as hitting
+  one; pits as a near-black slab just above the floor with a brown rim strip
+  (`kPitRimWidth`) along every stretch of edge that meets open floor (adjoining pit boxes and
+  the outer wall get none, so a ring of boxes reads as one pit); slow patches as a mud slab.
+  Slabs stay under the blob shadows. Colours are `kArenaWallColor`, `kArenaPitColor`,
+  `kArenaPitRimColor`, `kArenaSlowColor` in `palette.hpp`, sizes in `tuning.hpp`.
+  `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
   quad on the ground) at its true sim position, and the shadow is where the hitbox is. This
