@@ -50,6 +50,8 @@ build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
 build/dev/apps/client/kfm_client                       # playable client (F1 debug overlay)
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
+build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
+#   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window
 source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py
 #   then open http://127.0.0.1:8000/kfm_client.html (browser build of the same client)
 ```

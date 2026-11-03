@@ -748,6 +748,23 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   every texture black; 4.3 matches sokol's own Win32 loader. sokol is its own CMake target
   (`kfm::sokol`: one implementation TU, backend define as a public compile definition) so the
   renderer in `presentation` can use it without depending on `platform`.
+- Renderer (`kfm_renderer`): two programs, `lit` (opaque meshes and the floor) and `decal`
+  (unlit discs for shadows, rings and bursts). Uniform blocks are flat `vec4` arrays in std140
+  layout (matrices as four columns; the C++ structs are built only from `Mat4`/`Vec4` and
+  static-asserted to 16·N bytes, so there is no vec3 padding to get wrong); at most 8 vec4s per
+  stage, far below WebGL2 limits. One directional light with a three-band toon ramp; a player
+  flash mixes toward white, dashing adds emissive, invulnerability blinks. The floor grid is
+  `fract(uv)` with `fwidth` anti-aliasing. Blob shadows are alpha-blended discs just above the
+  ground with depth test on, depth write off and a depth bias, darker at the rim so the hitbox
+  edge reads; a gold ring around the feet shows the `PerfectDash` window, a stretched trail disc
+  shows a dash, a small banana in hand shows ammo, flying bananas are tinted toward the owner's
+  colour. Draw order: opaque, alpha ground decals and billboards, additive billboards; nothing is
+  sorted. The per-frame path allocates nothing. Measured 47–55 draw calls and under 5k triangles
+  for 10 players; budget 100 draw calls per frame before instancing is worth doing.
+- `kfm_render_probe` (`apps/render-probe`) renders a scripted match through the same builder and
+  renderer with `--screenshot`, `--exit-after-frames`, `--exit-on <event>` and `--hide-ui`, so
+  rendering is verified from screenshots without a human; it is the second xvfb smoke test on
+  Linux CI and builds for the browser too.
 
 Character drawing sits behind one interface in `presentation` so that nothing else knows
 whether a character is a skinned mesh or a quad. The earlier plan, pre-rendered 8-direction
