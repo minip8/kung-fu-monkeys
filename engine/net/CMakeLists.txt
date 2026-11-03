@@ -17,3 +17,32 @@ target_link_libraries(kfm_net
 kfm_no_exceptions_rtti(kfm_net)
 
 set_target_properties(kfm_net PROPERTIES FOLDER engine)
+
+# ---------------------------------------------------------------------------
+# kfm_net_webrtc: WebRtcTransport, the production ITransport (§6.4), over
+# libdatachannel natively and datachannel-wasm in the browser (kfm::datachannel,
+# cmake/KfmDependencies.cmake). A separate target because the rtc:: API
+# throws: this one is compiled WITH exceptions (no kfm_no_exceptions_rtti)
+# and catches everything at its boundary, so kfm_net and the apps stay
+# exception-free. Its public headers include nothing from rtc::.
+# ---------------------------------------------------------------------------
+if(KFM_WEBRTC)
+  add_library(kfm_net_webrtc STATIC
+    src/webrtc/signaling.cpp
+    src/webrtc/webrtc_transport.cpp
+  )
+  add_library(kfm::net_webrtc ALIAS kfm_net_webrtc)
+  target_include_directories(kfm_net_webrtc
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  # kfm::net only for the ITransport seam it implements.
+  target_link_libraries(kfm_net_webrtc
+    PUBLIC kfm::net
+    PRIVATE kfm::datachannel kfm::warnings)
+  if(EMSCRIPTEN)
+    # Real try/catch around datachannel-wasm (Emscripten's default turns a
+    # throw into an abort); kfm::datachannel adds the matching link flag.
+    target_compile_options(kfm_net_webrtc PRIVATE -fwasm-exceptions)
+  endif()
+  set_target_properties(kfm_net_webrtc PROPERTIES FOLDER engine)
+endif()
