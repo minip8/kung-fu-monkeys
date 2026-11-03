@@ -1,4 +1,4 @@
-add_executable(kfm_replay main.cpp)
+add_executable(kfm_replay main.cpp stats.cpp)
 target_link_libraries(kfm_replay PRIVATE kfm::sim kfm::warnings)
 set_target_properties(kfm_replay PROPERTIES FOLDER apps)
 
