@@ -48,7 +48,7 @@ bool near(Fixed a, Fixed b, int32_t rawTol = 4) {
 }  // namespace
 
 TEST_CASE("registry maps kinds to behaviours", "[sim][ability]") {
-  STATIC_REQUIRE(kAbilitySlots == 2);
+  STATIC_REQUIRE(kAbilitySlots == 3);
   CHECK(behaviorFor(AbilityKind::Dash).canActivate != nullptr);
   CHECK(behaviorFor(AbilityKind::Throw).onPhaseChange != nullptr);
   // Out-of-range kinds get the inert None behaviour, which never activates.

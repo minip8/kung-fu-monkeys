@@ -114,6 +114,29 @@ serialised unconditionally, which changed every world checksum, and the corpus w
 and power-up tags compose (§5.8). A
 scripted-bot behaviour, the `scripted_4p_powerups_1800t` corpus entry and `kfm_replay stats`
 power-up counts (§9). Pickups render per def and the HUD shows power-up timers (§7).
+v0.21 changes: more abilities (§5.4, §5.5, §5.6, §5.9). Buttons belong to ability slots, not
+kinds (slot 0 Dash button, slot 1 Throw, slot 2 the new Ability button); a kind's own tags
+(PerfectDash) come from an `AbilityBehavior::kindTags` hook, and the catch rule and the tie-break
+read the slot that grants the tag. Scripted bots use the new abilities and three corpus entries
+exercise them (§9). A third ability slot (`kAbilitySlots` 3) on
+`Button::Ability1`, empty (`none`) in the base kit so the default match plays as before (the
+extra `AbilityState` per player changed every world checksum; the corpus was regenerated and
+checked equal with slot 3 left out of the visitor). Loadouts list 2 or 3 names; a mode may carry
+its own (`ModeDef::abilities`, read through `MatchContent::loadout()`); any kind may sit in any
+slot or be granted by an `AbilityOverride` (the same-kind rule is gone) as long as the dash and
+throw buttons fire something; `kMaxAbilityDefs` 16 (§5.8, §5.10). New kinds, each a behaviour
+file, a def in `content/abilities.toml`, one registry line and a scenario test, reached through
+`rounds_*` modes whose loadout puts them on the ability button: Blink (a teleport dash, no tags
+of its own so a telegraphed blinker is still hit; `PlayerBlinked`); Slam (a radial impulse:
+`Tag::Slamming` on the impact tick widens the slammer's contact radius in `CollisionSystem`,
+contacts made only through that reach carry `Contact::reach` and match only rows flagged
+`reachA`, the new rows 16 (ground a non-own banana) and 26 (push a monkey through the new
+`Player::knockback`, which `MovementSystem` adds to the velocity); `SlamLanded`,
+`PlayerSlammed`; the new state fields changed every checksum, verified equal with them left out
+of the visitor); Parry (`Tag::Parrying` while its window may be open, row 15 judged to the press
+sub-tick reflects a non-own banana back at its thrower as the parrier's own, a mistimed parry
+falls through to damage, the perfect catch wins a tie; `PlayerParryStarted`,
+`BoomerangParried`).
 v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
 `kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
 `Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
@@ -378,6 +401,9 @@ place), a pickup spawned at the end of tick T is touchable from T+1 like a groun
 the spawner timeline is a function of `MatchRules::ticksInPhase` that the post-tick has not yet
 advanced. The order of the ten systems is unchanged.
 the tests as the oracle: a property test asserts both produce the same pair set.
+Slam reach (v0.21): a player holding `Tag::Slamming` is inserted with its slam's reach
+(`param0`) as radius, and a pair is tested at the body radii first, then at the widened ones;
+a contact found only the second way carries `Contact::reach` (§5.6).
 Statics (v0.22) never enter the grid: walls are resolved while integrating (steps 4 and 5,
 §5.10), and after the narrowphase `CollisionSystem` appends one Player × Hazard contact per
 hazard box holding a player's centre at the end of the tick (player slot order, then hazard
@@ -421,7 +447,7 @@ struct PlayerInput {            // 5 bytes on the wire, bit-packed smaller
   uint8_t moveDir;              // 0..255 angle, 0 = +x (digital input uses 8 of them)
   uint8_t moveMag;              // analog magnitude; 0 = idle, 255 for digital input
   uint8_t aimDir;               // 0..255 angle (twin-stick aim)
-  uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1, bit3 Ability2, bit4 Taunt ...
+  uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1 (slot 3, v0.21), bit3 Ability2, bit4 Taunt ...
   uint8_t subTick;              // stamp of the latest press edge within the tick (1/256 tick ≈ 65 µs)
 };
 struct InputFrame {
@@ -480,6 +506,11 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   profile 1 is the arrow keys with Period or Right Ctrl to throw and Slash or Right Shift to
   dash; gamepads move with the left stick (dpad fallback), aim with the right stick, throw with
   West or Right Shoulder and dash with South or Left Shoulder.
+- Ability button (v0.21): a third action, `Action::Ability`, sets `Button::Ability1` (bit 2,
+  the third ability slot) with the same tap, held, sub-tick, join and consume semantics as
+  Throw and Dash. Default bindings: L or E (keyboard profile 0), Semicolon or Apostrophe
+  (profile 1), North or East (gamepads). `PlayerInput` stays 5 bytes: the bit already existed.
+  The in-game controls help lists it; the browser page needs nothing (SDL maps the keys).
 
 ### 5.5 Abilities (the modularity core)
 
@@ -490,16 +521,53 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   the tie-break) and `dir` (dash or throw direction captured at activation). There is no
   kind-specific scratch union; a kind that needs more state adds a named field (v0.14).
 - `AbilityBehavior` registry: a table indexed by `AbilityKind` holding function pointers
-  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. The table is a `constexpr`
+  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd` and (v0.21) `kindTags`, the
+  tags the kind itself grants from the slot's state on top of the def's phase tags (Dash:
+  `PerfectDash`); `AbilitySystem` re-derives every bit in `kAbilityKindTags` each tick. The table is a `constexpr`
   array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
   a scenario test.
-- Players have N ability slots. Base kit is {Dash, Throw}. Power-ups may override a slot
+- Players have N ability slots. Base kit is {Dash, Throw}. Buttons belong to slots, not to
+  kinds (v0.21, `slotButton()`): slot 0 fires on `Button::Dash`, slot 1 on `Button::Throw`,
+  whatever kind the slot runs. The catch rule and the tie-break (§5.11) read the press time of
+  the slot that grants the tag they key on (`slotGranting()`), the dash slot in the base kit. Power-ups may override a slot
   (for example a teleport dash) or add a temporary slot.
 - Phase tags: Dash's active phase grants `Tag::Dashing`; its first `perfectWindowTicks` also
   grant `Tag::PerfectDash`, plus the tick after them when the press had a non-zero `subTick`,
   because the window `[press, press + perfectWindowTicks)` measured from the press instant
   closes inside that tick (§5.11). The tag says "the window may be open this tick"; the catch
   rule judges the exact instant. Tags are a bitset read by the interaction rules.
+- Kinds beyond the base kit (v0.21), each one behaviour file under `src/abilities/`, a def in
+  `content/abilities.toml`, one registry line and a scenario test; they read only `AbilityDef`
+  numbers and add no `AbilityState` field:
+  - Blink (`blink.cpp`): the direction is captured at the press (stick, else facing); on the
+    Startup → Active transition the monkey moves by `dir × speed × activeTicks` through
+    `statics::moveCircle` (Slide, outer box included), so walls stop it like a walk. The jump
+    happens in `AbilitySystem`, before `MovementSystem` sets `prevPos`, so the swept collision
+    never sees the path: bananas and monkeys on it are passed, not touched. Blink grants no
+    tags. Decided against `Dashing` during the startup: that tag arms the dash attack (row 25),
+    so a standing blinker would strike whoever walked into it; without it the startup is a
+    plain, readable telegraph during which a banana hits as usual, and nothing in the rules
+    table changes. `PlayerBlinked` carries the origin. Shipped: 6-tick startup, a 5-unit jump
+    (30 u/s over 10 ticks), 1.5 s cooldown, in mode `rounds_blink`.
+  - Slam (`slam.cpp`, `rules/slam.cpp`): the behaviour only marks the impact. `kindTags`
+    grants `Tag::Slamming` on the first Active tick only (phaseTicks 0), so a slam acts once
+    however long its active phase; the Startup → Active transition emits `SlamLanded`. While a
+    player is `Slamming`, `CollisionSystem` uses the slam def's `param0` (the reach, from the
+    slammer's centre) as its contact radius, so the broadphase finds what the slam reaches; the
+    rules table does the rest (rows 16 and 26, §5.6). A pushed monkey gets
+    `Player::knockback = away × param1 / activeTicks` and `knockbackTicks = activeTicks`;
+    `MovementSystem` adds the knockback to whatever velocity it computed (stick, dash, stun)
+    and counts it down, its only change. The slammer walks during the startup (no `Dashing`,
+    as for Blink). Shipped: 0.2 s startup, reach 3, push 4 units over 0.2 s, 2 s cooldown, in
+    mode `rounds_slam`. New state: `Player::knockback`, `knockbackTicks` (visited).
+  - Parry (`parry.cpp`, `rules/parry.cpp`): the window is `[press + startupTicks, press +
+    startupTicks + activeTicks)` from the press instant (`activatedTick + activatedSubTick /
+    256`), like the perfect dash's. `kindTags` grants `Tag::Parrying` on the Active ticks plus
+    the first Recovery tick when the press had a non-zero sub-tick (the window closes inside
+    it; the loader requires `recovery_ticks >= 1`); the rule judges the exact instant (§5.6).
+    `PlayerParryStarted` on the press (the stance effect). Shipped: 2-tick startup, an 8-tick
+    window, 14 ticks of recovery (a whiff is punishable), 1 s cooldown, in mode
+    `rounds_parry`.
 
 ### 5.6 Interaction rules (where the twists live)
 
@@ -516,15 +584,45 @@ or pick up again.
 ```
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
+ 15   Player[Parrying, !HitStun] Boomerang[InFlight, !own]      ParryBoomerang (declines outside the window)
+ 16   Player[Slamming, !HitStun] Boomerang[InFlight, !own] (reach) SlamGroundsBanana
  20   Player[Shielded, !HitStun] Boomerang[InFlight, !own]      ShieldBlocksBanana
  24   Player[Dashing, !HitStun]  Player[Shielded, !HitStun]     ShieldBlocksDash (declines below minAmmo)
  25   Player[Dashing, !HitStun]  Player[!HitStun, !Invulnerable] DashAttack (declines below minAmmo)
+ 26   Player[Slamming, !HitStun] Player[] (reach)               SlamPushesPlayer
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[Banana]                 TakePickup (declines at ammoMax)
  51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
  60   Player[]                   Hazard[Pit]                    FallIntoPit
 ```
+
+Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
+`0 <= (tick + tHit) − (pressTime + startupTicks) < activeTicks`; outside the window the handler
+declines and the scan falls through to the slam, shield and damage rows, so a mistimed parry is
+a hit. A parried banana becomes the parrier's (owner swap), `Outbound` with a fresh
+`outboundTicks` timer, placed at the contact point and heading for the thrower's current
+position (straight back when the thrower is gone), at its own speed with its projectile
+modifiers kept; `BoomerangParried{parrier, banana, a = thrower}`. As the parrier's own outbound
+banana it passes through the parrier, may hit the thrower (credited to the parrier) and returns
+to the parrier, so a parry gains a banana. Order: below the perfect catch (rows 10/11) because
+both reward timing and the catch also puts the banana in hand at once, so it wins a tie (a
+dasher at full ammo declines the catch and the parry takes it); above the slam, shield and
+damage rows, which it pre-empts the way the catch pre-empts damage. It ignores own bananas: a
+returning own banana is still auto-caught (row 40).
+
+Slam (v0.21, rows 16 and 26, `rules/slam.cpp`). A contact made only through a slammer's widened
+radius (§5.3, §5.5) carries `Contact::reach` (`kReachA`/`kReachB`, swapped with the orientation)
+and matches only a row with `reachA` set, from the slammer's side: the reach never catches,
+damages, picks up, dash-attacks or blocks. Row 16 grounds a non-own banana in flight where it
+is (it becomes a pickup like any grounded banana); it sits below the catch rows (a perfect catch
+still gains the banana) and the parry, and above the shield and damage rows, so a banana that
+reaches the slammer's body on the impact tick is knocked down too. Row 26 pushes any monkey that
+is not eliminated (a push is no hit: shields and spawn protection ignore it) and emits
+`PlayerSlammed`; it sits after the dash attack, so a dasher's attack on the slammer at the same
+`tHit` lands first. A stunned slammer (`HitStun` earlier in the tick) slams nothing. Both
+require `Slamming`, which only the impact tick grants: before it a banana hits the slammer as
+usual (the fall-through).
 
 M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
 restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below) and
@@ -673,9 +771,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   never reads either. A `PowerUpGrant` has a `GrantKind` and the fields of its kind:
   - `Stat`: `StatModifier{stat, mul, add}` over `MoveSpeed` (mul and add), `MaxHp` and `AmmoMax`
     (whole `add` only; the loader rejects a `mul`).
-  - `AbilityOverride{slot, ability}`: the slot runs that ability def (same kind as the loadout's,
-    so the button mapping holds; validated) while the power-up is live; the last override in
-    slot order wins.
+  - `AbilityOverride{slot, ability}`: the slot (`dash`, `throw` or, v0.21, `ability`) runs that
+    ability def while the power-up is live; the last override in slot order wins. Buttons
+    belong to slots (v0.21), so the def may be of any kind, and an override of the empty third
+    slot adds an ability for the power-up's duration.
   - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd, pierce}`, each mul in
     (0, 4].
   - `Tag`: `shielded` or `invulnerable` (the others belong to abilities and the damage rules).
@@ -747,6 +846,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
   respawn or late join; `PlayerSpawned` stays the round-start spawn), `TimerWarning{seconds}`
   (10, 3, 2, 1 s left on the mode clock).
+  v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`,
+  `SlamLanded{player = the slammer, entity, a = the reach's raw value}` (the impact, for the
+  shockwave), `PlayerSlammed{player = the pushed monkey, entity = the slammer, a = its slot}`,
+  `PlayerParryStarted{player, entity}` (the press), `BoomerangParried{player = the parrier, now
+  the owner, entity = the banana, a = the thrower's slot}`.
   `RoundEnded`, ...
 - v0.20: `PickupSpawned` and `PickupTaken` carry the pickup's `PickupKind` in `a` and, for a
   power-up, its def index in `b` (a banana pickup's payload stays 0/0), which is all a
@@ -846,10 +950,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   ability index 0 is the built-in inert `none`. Arena and mode names are how command lines and
   the lobby choose (`ContentDB::findArena` / `findMode`); the sim only sees indices.
 - Validation: duplicate names, unresolved references, counts against the capacities
-  (`kMaxAbilityDefs` 4, `kMaxArenas` 8, `kMaxModes` 8, `kMaxPowerUps` 16; at least one arena
+  (`kMaxAbilityDefs` 16 since v0.21, `kMaxArenas` 8, `kMaxModes` 8, `kMaxPowerUps` 16; at least one arena
   and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
-  on `defaultContent()` by a test): the loadout's slot kinds, a dash with no startup and its
+  on `defaultContent()` by a test): every loadout (the player's and each mode's) fills the dash
+  and throw slots (v0.21; only the third may be `none`), a dash with no startup and its
   perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
   keep a monkey inside (and, v0.22, clear of walls and out of pits), walls and hazards that are
   non-empty boxes inside the arena, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
@@ -900,7 +1005,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   read (they keep their struct defaults and are hashed like every field). Validation: a known
   kind, `rounds_to_win >= 1`, and in deathmatch `score_to_win >= 1` and `respawn_ticks >= 1`.
   The file ships `rounds` (index 0, the M1 numbers), `deathmatch` (first to 10, 3 min, 2 s
-  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). The modes stay
+  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). Any kind may
+  carry `abilities = [...]` (v0.21): its own loadout of 2 or 3 ability names replacing
+  `[player] abilities` for the match (`ModeDef::hasAbilities`/`abilities`, applied at spawn and
+  by `ModifierSystem` through `MatchContent::loadout()`). The modes stay
   in one file so their order, and so their indices, is explicit.
 - `DashAttackDef` (v0.16): `damage` (1), `minAmmo` (1: a banana in hand), `consumesAmmo`
   (0: kept). Visited for the content hash like every other def; the TOML key is
@@ -1602,6 +1710,11 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
 | `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer) | Score (coin blip) |
 | `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
+| `PlayerBlinked` (v0.21) | BlinkFlash 0.3 s at the origin (from the payload) and at the landing, in the slot colour; the jump exceeds `kSnapDistance`, so the body snaps | Blink (rising zap) |
+| `SlamLanded` (v0.21) | SlamShockwave 0.45 s (a ring racing out to the reach, carried in `RenderEffect::size`), GroundDust, shake | Slam (deep boom) |
+| `PlayerSlammed` (v0.21) | GroundDust under the pushed monkey, flash | — (the slam sounds once) |
+| `PlayerParryStarted` (v0.21) | ParryGuard 0.2 s (a pale ring flaring at the parrier) | — |
+| `BoomerangParried` (v0.21) | ParrySpark 0.35 s (a white flash and 8 sparks at the banana), flash, shake | Parry (metallic clang) |
 
 Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
 (0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
@@ -1804,6 +1917,14 @@ art is identical up to the export step, and nothing below the presentation layer
   names it (`all`, `none` or comma-separated names, default all), and
   `scripted_4p_powerset_1800t` (dojo_powerups with only shield and big_banana) keeps the
   intersection under the gate.
+  v0.21 adds `scripted_4p_blink_1800t`, `scripted_4p_slam_1800t` and `scripted_4p_parry_1800t`
+  (dojo, the `rounds_*` ability modes): the scripted bots use the third slot when it holds an
+  ability (blink sideways out of an incoming banana's path or now and then, slam with an enemy or
+  incoming banana within the reach, parry a close incoming banana) and draw nothing from their
+  Rng while it is empty, so the base-kit entries keep their inputs. `kfm_replay stats` counts
+  blinks, slams, pushes and parries (and now sums the power-up counters over matches). The third
+  `AbilityState` and `Player::knockback`/`knockbackTicks` changed every checksum and
+  regenerated the corpus.
   v0.23 adds `scripted_4p_deathmatch_3600t` and
   `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
   survival flow are under the cross-platform gate. v0.20 adds `scripted_4p_powerups_1800t`

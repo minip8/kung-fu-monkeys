@@ -1,7 +1,10 @@
 // CollisionSystem (architecture §5.3 step 6, §5.11): uniform-grid broadphase
 // checked against brute force, swept circle narrowphase with time of impact.
 // Emits Player × Boomerang, Player × Pickup, (v0.16) Player × Player and
-// (v0.22) Player × Hazard contacts. Player pairs are purely geometric (no tag
+// (v0.22) Player × Hazard contacts. A slammer on its impact tick (v0.21,
+// Tag::Slamming) has its contact radius widened to the slam's reach; a pair
+// that touches only through it gets Contact::reach, which only the slam rows
+// accept. Player pairs are purely geometric (no tag
 // filter: the rules table decides what a touch means) and listed once, with
 // indexA < indexB. Walls never produce contacts: MovementSystem and
 // ProjectileSystem already resolved them (systems/statics.hpp).
@@ -28,8 +31,18 @@ static_assert(kMaxPlayers <= 16, "player sets below are uint16_t bit masks");
   return content.db.pickup.radius;
 }
 
+// A player's contact radius: its body, or (v0.21) a slammer's reach on its
+// impact tick (the def's param0), so the broadphase finds what the slam hits.
+[[nodiscard]] Fixed contactRadius(const Player& p, const MatchContent& content) {
+  const Fixed body = content.db.player.radius;
+  if (!p.tags.has(Tag::Slamming)) return body;
+  const AbilityState* slam = slotGranting(p, content, Tag::Slamming);
+  if (slam == nullptr) return body;
+  return max(body, content.db.abilityAt(slam->defIndex).param0);
+}
+
 [[nodiscard]] Aabb playerBox(const Player& p, const MatchContent& content) {
-  return collision::sweptAabb(p.transform.prevPos, p.transform.pos, content.db.player.radius);
+  return collision::sweptAabb(p.transform.prevPos, p.transform.pos, contactRadius(p, content));
 }
 // A banana's contact radius: the def's, scaled by its projectile modifier (§5.8).
 [[nodiscard]] Fixed boomerangRadius(const Boomerang& b, const MatchContent& content) {
@@ -165,13 +178,16 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
   Vec2 prevB{};
   Vec2 posB{};
   Fixed radiusB{};
+  Fixed reachB{};
   EntityId idB{};
   switch (pair.kindB) {
     case EntityKind::Player: {
-      const Transform& tb = s.players.items[pair.indexB].transform;
+      const Player& other = s.players.items[pair.indexB];
+      const Transform& tb = other.transform;
       prevB = tb.prevPos;
       posB = tb.pos;
       radiusB = content.db.player.radius;
+      reachB = contactRadius(other, content);
       idB = s.players.idAt(pair.indexB);
       break;
     }
@@ -194,8 +210,19 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
       return;  // statics never come out of the broadphase
   }
 
-  const collision::SweptHit hit = collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB,
-                                                            content.db.player.radius + radiusB);
+  if (reachB < radiusB) reachB = radiusB;
+  const Fixed radiusA = content.db.player.radius;
+  const Fixed reachA = contactRadius(player, content);
+  collision::SweptHit hit =
+      collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB, radiusA + radiusB);
+  // v0.21: a slammer reaches further; a contact found only through the
+  // widened radius is marked so only the slam rows take it.
+  uint8_t reach = 0;
+  if (!hit.hit && (reachA > radiusA || reachB > radiusB)) {
+    hit = collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB, reachA + reachB);
+    reach =
+        static_cast<uint8_t>((reachA > radiusA ? kReachA : 0) | (reachB > radiusB ? kReachB : 0));
+  }
   if (!hit.hit) return;
 
   const Vec2 atA = lerp(ta.prevPos, ta.pos, hit.tHit);
@@ -210,7 +237,8 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
                    .b = idB,
                    .tHit = hit.tHit,
                    .point = point,
-                   .normal = normal});
+                   .normal = normal,
+                   .reach = reach});
 }
 
 // Player × Hazard (v0.22): one contact per hazard whose closed box holds the

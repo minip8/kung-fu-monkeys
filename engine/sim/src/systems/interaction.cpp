@@ -40,12 +40,16 @@ struct SortKey {
   friend bool operator<(const SortKey& l, const SortKey& r) { return l.tied() < r.tied(); }
 };
 
-[[nodiscard]] uint64_t pressTimeOf(const WorldState& s, const Contact& c) {
+[[nodiscard]] uint64_t pressTimeOf(const WorldState& s, const MatchContent& content,
+                                   const Contact& c) {
   if (c.kindA != EntityKind::Player) return std::numeric_limits<uint64_t>::max();
   const Player* p = s.players.get(c.a);
   const Tag keyed = c.kindB == EntityKind::Player ? Tag::Dashing : Tag::PerfectDash;
   if (p == nullptr || !p->tags.has(keyed)) return std::numeric_limits<uint64_t>::max();
-  const AbilityState& dash = p->abilities[kAbilitySlotDash];
+  // The slot granting the keyed tag (the base kit's dash slot); a tag set by
+  // something else (a test) falls back to the dash slot.
+  const AbilityState* slot = slotGranting(*p, content, keyed);
+  const AbilityState& dash = slot != nullptr ? *slot : p->abilities[kAbilitySlotDash];
   return (static_cast<uint64_t>(dash.activatedTick.value) << 8) | dash.activatedSubTick;
 }
 
@@ -72,6 +76,8 @@ struct SortKey {
 
 [[nodiscard]] bool ruleMatches(const WorldState& s, const InteractionRule& rule, const Contact& c) {
   if (rule.kindA != c.kindA || rule.kindB != c.kindB) return false;
+  // Through a slam's reach (v0.21): only a slam row, from the slammer's side.
+  if (c.reach != 0 && (rule.reachA == 0 || (c.reach & kReachA) == 0)) return false;
   if (!playerTagsMatch(s, c.kindA, c.a, rule.requireA, rule.forbidA)) return false;
   if (!playerTagsMatch(s, c.kindB, c.b, rule.requireB, rule.forbidB)) return false;
   if (c.kindB == EntityKind::Pickup) {
@@ -108,7 +114,7 @@ void interactionSystem(WorldState& s, const MatchContent& content, const Contact
   uint16_t n = 0;
   const auto add = [&](const Contact& c, uint16_t index, bool reversed) {
     order[n++] = SortKey{c.tHit,
-                         pressTimeOf(s, c),
+                         pressTimeOf(s, content, c),
                          static_cast<uint8_t>(c.kindA),
                          c.a.index,
                          static_cast<uint8_t>(c.kindB),

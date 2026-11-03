@@ -16,10 +16,11 @@ void dashOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const Ability
                        EventSink& sink);
 void dashOnEnd(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
                const MatchContent& content, EventSink& sink);
+Tags dashKindTags(const AbilityState& st, const AbilityDef& def);
 
 [[nodiscard]] constexpr AbilityBehavior dashBehavior() {
-  return AbilityBehavior{&dashCanActivate, &dashOnActivate, &dashOnTick, &dashOnPhaseChange,
-                         &dashOnEnd};
+  return AbilityBehavior{&dashCanActivate,   &dashOnActivate, &dashOnTick,
+                         &dashOnPhaseChange, &dashOnEnd,      &dashKindTags};
 }
 
 }  // namespace kfm::sim

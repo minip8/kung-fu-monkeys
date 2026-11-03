@@ -14,6 +14,9 @@
 #   score_to_win         deathmatch: eliminations that win (at least 1)
 #   respawn_ticks        deathmatch: from an elimination to the respawn (>= 1)
 #   respawn_invuln_ticks deathmatch: spawn protection after a respawn
+#   abilities            all kinds (optional): the mode's own loadout, 2 or 3
+#                        ability names [dash button, throw button, ability
+#                        button] replacing [player] abilities
 
 [[mode]]
 name = "rounds"             # free-for-all rounds: last monkey standing scores
@@ -39,3 +42,28 @@ rounds_to_win = 3
 time_limit_ticks = 3600     # 60 s per round
 round_start_ticks = 60
 round_end_ticks = 120
+
+# Ability modes (v0.21): rounds with a third ability on the ability button.
+[[mode]]
+name = "rounds_blink"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "blink"]
+
+[[mode]]
+name = "rounds_slam"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "slam"]
+
+[[mode]]
+name = "rounds_parry"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "parry"]

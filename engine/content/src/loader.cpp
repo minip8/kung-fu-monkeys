@@ -73,9 +73,12 @@ struct AbilityKindName {
   std::string_view name;
   AbilityKind kind;
 };
-constexpr std::array<AbilityKindName, 2> kAbilityKinds = {{
+constexpr std::array<AbilityKindName, 5> kAbilityKinds = {{
     {"dash", AbilityKind::Dash},
     {"throw", AbilityKind::Throw},
+    {"blink", AbilityKind::Blink},
+    {"slam", AbilityKind::Slam},
+    {"parry", AbilityKind::Parry},
 }};
 static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
               "every AbilityKind but None needs a TOML name in kAbilityKinds");
@@ -96,13 +99,15 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 6> kTagNames = {{
+constexpr std::array<TagName, 8> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
     {"shielded", Tag::Shielded},
     {"invulnerable", Tag::Invulnerable},
     {"eliminated", Tag::Eliminated},
+    {"slamming", Tag::Slamming},
+    {"parrying", Tag::Parrying},
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -135,7 +140,8 @@ static_assert(kShapeNames.size() == static_cast<size_t>(PowerUpShape::Coin) + 1,
               "every PowerUpShape needs a TOML name in kShapeNames");
 
 // Ability slots by the button that fires them (the [player] loadout order).
-constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash", "throw"};
+constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash", "throw",
+                                                                         "ability"};
 
 // Tags a power-up may grant: the rest are owned by AbilitySystem (dashing,
 // perfect_dash) or by the damage rules (hit_stun, eliminated).
@@ -520,7 +526,7 @@ class Builder {
     requirePresent(dashAttackAt_, "[dash_attack]");
     if (db_.arenaCount == 0) diag_.error("", 0, "no [[arena]] defined (need at least one)");
     if (db_.modeCount == 0) diag_.error("", 0, "no [[mode]] defined (need at least one)");
-    resolveLoadout();
+    resolveLoadouts();
     resolvePowerUpNames();
     if (diag_.hasErrors()) return false;
     if (!validateContent(db_, diag_)) return false;
@@ -529,6 +535,23 @@ class Builder {
   }
 
  private:
+  struct PendingName {
+    std::string name;
+    std::string where;
+    uint32_t line{0};
+    std::string file;
+  };
+  struct SpawnerName {
+    uint8_t arena{0};
+    uint8_t spawner{0};
+    PendingName name;
+  };
+  using Loadout = std::array<std::optional<PendingName>, sim::kAbilitySlots>;
+  struct ModeLoadout {
+    uint8_t mode{0};
+    Loadout names;
+  };
+
   template <class F>
   void single(const File& file, const toml::node& node, const char* what,
               std::optional<Origin>& seen, F&& parse) {
@@ -590,25 +613,27 @@ class Builder {
     s.integer("ammo_max", p.ammoMax, 0, 255);
     s.integer("ammo_start", p.ammoStart, 0, 255);
     s.integer("hit_stun_ticks", p.hitStunTicks, 0, 65535);
-    if (const toml::node* n = s.take("abilities", true)) {
-      const toml::array* arr = n->as_array();
-      if (arr == nullptr || arr->size() != sim::kAbilitySlots) {
-        s.error(*n, "'abilities' must list " + std::to_string(sim::kAbilitySlots) +
-                        " ability names (one per slot: dash button, throw button)");
-      } else {
-        for (size_t i = 0; i < arr->size(); ++i) {
-          const toml::node* item = arr->get(i);
-          if (item == nullptr)
-            continue;  // get() is nullable; GCC's -Wnull-dereference wants it seen
-          const toml::value<std::string>* name = item->as_string();
-          if (name == nullptr) {
-            s.error(*item, "'abilities' entries must be ability names");
-            continue;
-          }
-          loadout_[i] =
-              PendingName{name->get(), s.where(), lineOf(*item), std::string(s.file().name)};
-        }
+    if (const toml::node* n = s.take("abilities", true)) parseLoadout(s, *n, loadout_);
+  }
+
+  // A loadout: 2 or 3 ability names, one per slot (dash button, throw button,
+  // ability button); "none" leaves a slot empty, a missing third is "none".
+  static void parseLoadout(Section& s, const toml::node& n, Loadout& out) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->size() < 2 || arr->size() > sim::kAbilitySlots) {
+      s.error(n, "'abilities' must list 2 or " + std::to_string(sim::kAbilitySlots) +
+                     " ability names (one per slot: dash button, throw button, ability button)");
+      return;
+    }
+    for (size_t i = 0; i < arr->size(); ++i) {
+      const toml::node* item = arr->get(i);
+      if (item == nullptr) continue;  // get() is nullable; GCC's -Wnull-dereference wants it seen
+      const toml::value<std::string>* name = item->as_string();
+      if (name == nullptr) {
+        s.error(*item, "'abilities' entries must be ability names");
+        continue;
       }
+      out[i] = PendingName{name->get(), s.where(), lineOf(*item), std::string(s.file().name)};
     }
   }
 
@@ -965,29 +990,45 @@ class Builder {
     s.integer("score_to_win", m.scoreToWin, 0, 255);
     s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
     s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
+    Loadout loadout{};
+    if (const toml::node* n = s.take("abilities")) {
+      parseLoadout(s, *n, loadout);
+      m.hasAbilities = 1;
+    }
     if (!name || !uniqueName(s, *name, db_.modes, db_.modeCount, "mode")) return;
     if (db_.modeCount >= sim::kMaxModes) {
       s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
       return;
     }
+    if (m.hasAbilities != 0) modeLoadouts_.push_back(ModeLoadout{db_.modeCount, loadout});
     db_.modes[db_.modeCount++] = m;
   }
 
-  void resolveLoadout() {
-    for (size_t slot = 0; slot < loadout_.size(); ++slot) {
-      const std::optional<PendingName>& p = loadout_[slot];
-      if (!p) continue;
-      bool found = false;
-      for (uint8_t i = 1; i < db_.abilityCount; ++i) {
-        if (db_.abilities[i].name.view() == p->name) {
-          db_.player.abilities[slot] = i;
-          found = true;
-        }
-      }
-      if (!found) {
-        diag_.error(p->file, p->line,
-                    p->where + ": 'abilities' names unknown ability " + inQuotes(p->name));
-      }
+  // An ability name in a loadout: "none" is index 0.
+  [[nodiscard]] std::optional<uint8_t> loadoutIndex(const PendingName& p) {
+    if (p.name == kNoneAbility) return uint8_t{0};
+    for (uint8_t i = 1; i < db_.abilityCount; ++i) {
+      if (db_.abilities[i].name.view() == p.name) return i;
+    }
+    diag_.error(p.file, p.line,
+                p.where + ": 'abilities' names unknown ability " + inQuotes(p.name));
+    return std::nullopt;
+  }
+
+  void resolveLoadout(const Loadout& names, std::array<uint8_t, sim::kAbilitySlots>& out) {
+    for (size_t slot = 0; slot < names.size(); ++slot) {
+      const std::optional<PendingName>& name = names[slot];
+      if (!name.has_value()) continue;
+      if (const std::optional<uint8_t> i = loadoutIndex(*name)) out[slot] = *i;
+    }
+  }
+
+  void resolveLoadouts() {
+    resolveLoadout(loadout_, db_.player.abilities);
+    for (const ModeLoadout& m : modeLoadouts_) {
+      sim::ModeDef& mode = db_.modes[m.mode];
+      mode.abilities = {};
+      resolveLoadout(m.names, mode.abilities);
     }
   }
 
@@ -1018,17 +1059,6 @@ class Builder {
     }
   }
 
-  struct PendingName {
-    std::string name;
-    std::string where;
-    uint32_t line{0};
-    std::string file;
-  };
-  struct SpawnerName {
-    uint8_t arena{0};
-    uint8_t spawner{0};
-    PendingName name;
-  };
   struct OverrideName {
     uint8_t powerUp{0};
     uint8_t grant{0};
@@ -1041,7 +1071,8 @@ class Builder {
   std::optional<Origin> boomerangAt_;
   std::optional<Origin> pickupAt_;
   std::optional<Origin> dashAttackAt_;
-  std::array<std::optional<PendingName>, sim::kAbilitySlots> loadout_{};
+  Loadout loadout_{};
+  std::vector<ModeLoadout> modeLoadouts_;
   std::vector<SpawnerName> spawnerNames_;
   std::vector<OverrideName> overrideNames_;
 };
@@ -1118,13 +1149,7 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
             fail(at + ": ability index " + std::to_string(grant.ability) + " is not defined");
             break;
           }
-          // The slot keeps its button (dash or throw): the override must be
-          // the same kind as the loadout's def.
-          const uint8_t base = c.player.abilities[grant.slot];
-          if (base < c.abilityCount && c.abilities[grant.ability].kind != c.abilities[base].kind) {
-            fail(at + ": ability " + inQuotes(c.abilities[grant.ability].name.view()) +
-                 " is not the same kind as the " + std::string(kSlotNames[grant.slot]) + " slot's");
-          }
+          // Buttons belong to slots (v0.21): any kind may run in any slot.
           break;
         }
         case GrantKind::Projectile:
@@ -1278,19 +1303,50 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (d.kind == AbilityKind::Dash && d.activeTicks <= d.perfectWindowTicks) {
       fail(where + ": active_ticks must exceed perfect_window_ticks");
     }
+    // A blink jumps speed × active_ticks (v0.21).
+    if (d.kind == AbilityKind::Blink && (d.activeTicks < 1 || d.speed <= Fixed::zero())) {
+      fail(where + ": a blink needs active_ticks >= 1 and a positive speed (its distance)");
+    }
+    // A slam reaches param0 (beyond the player's own radius, at most 8 so
+    // the widened contact box stays a few grid cells) and pushes param1
+    // units over active_ticks (v0.21).
+    if (d.kind == AbilityKind::Slam && (d.activeTicks < 1 || d.param0 <= c.player.radius ||
+                                        d.param0 > Fixed::fromInt(8) || d.param1 < Fixed::zero())) {
+      fail(where +
+           ": a slam needs active_ticks >= 1, param0 (reach) in (player radius, 8] and "
+           "param1 (push) >= 0");
+    }
+    // A parry's window needs an active phase, and a recovery tick for its
+    // sub-tick tail (v0.21).
+    if (d.kind == AbilityKind::Parry && (d.activeTicks < 1 || d.recoveryTicks < 1)) {
+      fail(where + ": a parry needs active_ticks >= 1 and recovery_ticks >= 1");
+    }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");
     }
   }
 
-  // AbilitySystem maps the dash button to slot 0 and throw to slot 1.
-  const auto slotKind = [&](uint8_t slot) {
-    const uint8_t index = c.player.abilities[slot];
-    return index < c.abilityCount ? c.abilities[index].kind : AbilityKind::None;
+  // Loadouts (v0.21): buttons belong to slots, so any kind may sit in any
+  // slot, but the dash and throw buttons always fire something; the ability
+  // button's slot may stay "none".
+  const auto checkLoadout = [&](const std::array<uint8_t, sim::kAbilitySlots>& slots,
+                                const std::string& where) {
+    for (uint8_t slot = 0; slot < sim::kAbilitySlots; ++slot) {
+      if (slots[slot] >= c.abilityCount) {
+        fail(where + " abilities: slot " + std::to_string(slot) + " names an undefined ability");
+      } else if (slot != sim::kAbilitySlotExtra && slots[slot] == 0) {
+        fail(where + " abilities: the " + std::string(kSlotNames[slot]) +
+             " slot must hold an ability (only the third may be none)");
+      }
+    }
   };
-  if (slotKind(sim::kAbilitySlotDash) != AbilityKind::Dash ||
-      slotKind(sim::kAbilitySlotThrow) != AbilityKind::Throw) {
-    fail("[player] abilities: slot 0 must be a dash and slot 1 a throw (button mapping)");
+  checkLoadout(c.player.abilities, "[player]");
+  for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {
+    if (c.modes[i].hasAbilities > 1)
+      fail("mode " + inQuotes(c.modes[i].name.view()) + ": bad flag");
+    if (c.modes[i].hasAbilities == 1) {
+      checkLoadout(c.modes[i].abilities, "mode " + inQuotes(c.modes[i].name.view()));
+    }
   }
   if (c.player.radius <= Fixed::zero()) fail("[player] radius must be positive");
   if (c.player.maxHp < 1) fail("[player] max_hp must be at least 1");

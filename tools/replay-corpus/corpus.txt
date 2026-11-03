@@ -21,3 +21,6 @@ scripted_4p_powerups_1800t  scripted  0x4B464D20  0x5C1220  4  1800  dojo_poweru
 scripted_4p_powerset_1800t  scripted  0x4B464D25  0x5C1225  4  1800  dojo_powerups  rounds  shield,big_banana
 scripted_4p_deathmatch_3600t  scripted  0x4B464D44  0x5C1244    4        3600   dojo   deathmatch
 scripted_4p_survival_1800t    scripted  0x4B464D53  0x5C1253    4        1800   dojo   survival
+scripted_4p_blink_1800t  scripted  0x4B464D61  0x5C1261  4  1800  dojo  rounds_blink
+scripted_4p_slam_1800t   scripted  0x4B464D62  0x5C1262  4  1800  dojo  rounds_slam
+scripted_4p_parry_1800t  scripted  0x4B464D63  0x5C1263  4  1800  dojo  rounds_parry

@@ -440,3 +440,55 @@ TEST_CASE("consumed buttons stay silent until released", "[input]") {
     CHECK(tick(s, kP0, 0).has(Button::Throw));
   }
 }
+
+TEST_CASE("the ability button (v0.21): bindings, edge stamp, join and consume", "[input]") {
+  SECTION("keyboard profile 0: L or E") {
+    InputSampler s;
+    REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+    s.push(key(Key::L, true, tickStart(0) + (kDur / 2)));
+    PlayerInput in = tick(s, kP0, 0);
+    CHECK(in.buttons == kfm::sim::buttonBit(Button::Ability1));
+    CHECK(in.subTick == 128);                      // a press edge stamps like Throw and Dash
+    CHECK(tick(s, kP0, 1).has(Button::Ability1));  // held
+    s.push(key(Key::L, false, tickStart(2)));
+    CHECK(tick(s, kP0, 2).buttons == 0);
+    s.push(key(Key::E, true, tickStart(3) + (kDur / 4)));
+    in = tick(s, kP0, 3);
+    CHECK(in.has(Button::Ability1));
+    CHECK(in.subTick == 64);
+  }
+  SECTION("keyboard profile 1: Semicolon; the other profile's keys do nothing") {
+    InputSampler s;
+    REQUIRE(s.bind(kP1, DeviceBinding::keyboard(1)));
+    s.push(key(Key::L, true));
+    CHECK(tick(s, kP1, 0).buttons == 0);
+    s.push(key(Key::Semicolon, true, tickStart(1)));
+    CHECK(tick(s, kP1, 1).has(Button::Ability1));
+  }
+  SECTION("gamepad: North") {
+    InputSampler s;
+    s.push(padEvent(7, InputEventKind::PadAdded));
+    REQUIRE(s.bind(kP0, DeviceBinding::pad(7)));
+    s.push(padButton(7, PadButton::North, true, tickStart(0) + (kDur / 2)));
+    const PlayerInput in = tick(s, kP0, 0);
+    CHECK(in.buttons == kfm::sim::buttonBit(Button::Ability1));
+    CHECK(in.subTick == 128);
+  }
+  SECTION("an ability key joins a free keyboard side") {
+    InputSampler s;
+    s.push(key(Key::E, true));
+    CHECK(s.pollJoin() == std::optional{DeviceBinding::keyboard(0)});
+  }
+  SECTION("a consumed ability press stays silent until released") {
+    InputSampler s;
+    REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+    s.push(key(Key::L, true, tickStart(0)));
+    s.consumeButtons(kP0);
+    CHECK(tick(s, kP0, 0).buttons == 0);
+    CHECK(tick(s, kP0, 1).buttons == 0);
+    s.push(key(Key::L, false, tickStart(2)));
+    (void)tick(s, kP0, 2);
+    s.push(key(Key::L, true, tickStart(3)));
+    CHECK(tick(s, kP0, 3).has(Button::Ability1));
+  }
+}

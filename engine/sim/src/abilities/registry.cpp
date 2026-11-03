@@ -2,7 +2,10 @@
 // AbilityKind, in enum order.
 #include "kfm/sim/abilities/registry.hpp"
 
+#include "kfm/sim/abilities/blink.hpp"
 #include "kfm/sim/abilities/dash.hpp"
+#include "kfm/sim/abilities/parry.hpp"
+#include "kfm/sim/abilities/slam.hpp"
 #include "kfm/sim/abilities/throw.hpp"
 
 #include <array>
@@ -20,13 +23,16 @@ void nonePhaseChange(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/,
                      const AbilityDef& /*def*/, AbilityPhase /*from*/, AbilityPhase /*to*/,
                      const MatchContent& /*content*/, EventSink& /*sink*/) {}
 
-constexpr AbilityBehavior kNoneBehavior{&noneCanActivate, &noneHook, &noneHook, &nonePhaseChange,
-                                        &noneHook};
+constexpr AbilityBehavior kNoneBehavior{&noneCanActivate, &noneHook, &noneHook,
+                                        &nonePhaseChange, &noneHook, &noKindTags};
 
 constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> kBehaviors = {
     kNoneBehavior,    // AbilityKind::None
     dashBehavior(),   // AbilityKind::Dash
     throwBehavior(),  // AbilityKind::Throw
+    blinkBehavior(),  // AbilityKind::Blink
+    slamBehavior(),   // AbilityKind::Slam
+    parryBehavior(),  // AbilityKind::Parry
 };
 
 }  // namespace

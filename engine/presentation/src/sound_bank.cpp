@@ -41,6 +41,9 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.12f, 0.65f},   // TimerWarning
     {0.36f, 0.60f},   // PowerUp
     {0.30f, 0.70f},   // ShieldBreak
+    {0.18f, 0.50f},   // Blink
+    {0.50f, 0.95f},   // Slam
+    {0.32f, 0.75f},   // Parry
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -260,6 +263,29 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
             (env(t, 0.002f, 0.12f) * harmonics(osc.phase(), 0.4f, 0.2f));
         break;
       }
+      case SoundId::Blink: {
+        // A rising zap: a sine chirping up two octaves with a band-passed hiss.
+        const float hz = 600.0f * std::pow(4.0f, u);
+        svf.step(noise.next(), 2500.0f + (4000.0f * u), sr, 0.5f);
+        osc.next(hz, sr);
+        v = std::sin(kPi * std::sqrt(u)) *
+            ((0.7f * harmonics(osc.phase(), 0.3f, 0.0f)) + (0.4f * svf.band()));
+        break;
+      }
+      case SoundId::Slam: {
+        // A deep boom (pitch falling to 40 Hz) under a short low-passed crack.
+        const float hz = 40.0f + (80.0f * std::exp(-t / 0.06f));
+        svf.step(noise.next(), 700.0f, sr, 0.9f);
+        osc.next(hz, sr);
+        v = (env(t, 0.003f, 0.18f) * harmonics(osc.phase(), 0.4f, 0.15f)) +
+            (0.7f * env(t, 0.001f, 0.05f) * svf.low());
+        break;
+      }
+      case SoundId::Parry:
+        // A metallic clang: two inharmonic bells over a click.
+        v = bell(t, 1560.0f, 0.12f) + (0.6f * bell(t, 2410.0f, 0.08f)) +
+            (0.5f * env(t, 0.0f, 0.003f) * noise.next());
+        break;
       case SoundId::Count:
         break;
     }

@@ -72,7 +72,7 @@ TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][con
   CHECK(dash.tagsActive.has(Tag::Dashing));
   CHECK(dash.perfectWindowTicks <= dash.activeTicks);
   CHECK(thr.activeTicks >= 1);
-  CHECK(c.abilityCount == static_cast<uint8_t>(AbilityKind::kCount));
+  CHECK(c.abilityCount == 3);  // none, dash, throw: later kinds are TOML-only
   CHECK(c.player.ammoStart <= c.player.ammoMax);
   CHECK(c.boomerang.damage >= c.player.maxHp);  // base game: one hit kills
   CHECK(c.modes[0].roundsToWin == 3);

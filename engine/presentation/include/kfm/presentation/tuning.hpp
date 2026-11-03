@@ -107,6 +107,15 @@ inline constexpr float kPowerUpBurstSeconds = 0.5f;
 inline constexpr int kPowerUpSparks = 8;
 inline constexpr float kShieldShatterSeconds = 0.4f;
 inline constexpr int kShieldShards = 7;
+// Abilities (v0.21). A blink bursts at both ends; a slam's ring races out to
+// its reach (the effect's size) and shakes the camera; a parry flares at the
+// press and clashes in sparks where the banana turned.
+inline constexpr float kBlinkFlashSeconds = 0.3f;
+inline constexpr float kSlamShockwaveSeconds = 0.45f;
+inline constexpr float kShakeOnSlam = 0.25f;
+inline constexpr float kParryGuardSeconds = 0.2f;
+inline constexpr float kParrySparkSeconds = 0.35f;
+inline constexpr int kParrySparks = 8;
 // Banners in the HUD pop in: scale 1 + this at the start, settling to 1 over
 // the first quarter of the banner's life.
 inline constexpr float kBannerPop = 0.35f;

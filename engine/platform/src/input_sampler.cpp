@@ -46,7 +46,7 @@ ActionCodes codesOf(const GamepadProfile& p) {
 struct ActionSample {
   std::array<bool, kActionCount> held{};     // down at the end of the sampled transitions
   std::array<bool, kActionCount> pressed{};  // went 0 -> 1 during the tick
-  bool buttonPressed{false};                 // a Throw/Dash press edge happened
+  bool buttonPressed{false};                 // a Throw/Dash/Ability press edge happened
   uint64_t lastPressNs{0};                   // stamp of the latest such edge
 };
 
@@ -91,7 +91,7 @@ ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
         aliasDown[a][k] = t.down;
         if (!before && anyDown(aliasDown[a]) && !consumed[a]) {
           out.pressed[a] = true;
-          if (a == idx(Action::Throw) || a == idx(Action::Dash)) {
+          if (a == idx(Action::Throw) || a == idx(Action::Dash) || a == idx(Action::Ability)) {
             out.buttonPressed = true;
             out.lastPressNs = t.timestampNs;
           }
@@ -158,6 +158,7 @@ KeyboardProfile defaultKeyboardProfile1() {
   p[Action::Right] = {Key::D, Key::Unknown, Key::Unknown};
   p[Action::Throw] = {Key::J, Key::Space, Key::Unknown};
   p[Action::Dash] = {Key::K, Key::LeftShift, Key::Unknown};
+  p[Action::Ability] = {Key::L, Key::E, Key::Unknown};
   return p;
 }
 
@@ -169,6 +170,7 @@ KeyboardProfile defaultKeyboardProfile2() {
   p[Action::Right] = {Key::Right, Key::Unknown, Key::Unknown};
   p[Action::Throw] = {Key::Period, Key::RightCtrl, Key::Unknown};
   p[Action::Dash] = {Key::Slash, Key::RightShift, Key::Unknown};
+  p[Action::Ability] = {Key::Semicolon, Key::Apostrophe, Key::Unknown};
   return p;
 }
 
@@ -180,6 +182,7 @@ GamepadProfile defaultGamepadProfile() {
   p[Action::Right] = {PadButton::DpadRight, PadButton::kCount};
   p[Action::Throw] = {PadButton::West, PadButton::RightShoulder};
   p[Action::Dash] = {PadButton::South, PadButton::LeftShoulder};
+  p[Action::Ability] = {PadButton::North, PadButton::East};
   p.moveDeadzone = 0.2f;
   p.aimDeadzone = 0.2f;
   return p;
@@ -347,7 +350,9 @@ std::optional<DeviceBinding> InputSampler::pollJoin() const {
             return k != Key::Unknown && static_cast<uint16_t>(k) == t.code;
           });
         };
-        if (matches(Action::Throw) || matches(Action::Dash)) return dev;
+        if (matches(Action::Throw) || matches(Action::Dash) || matches(Action::Ability)) {
+          return dev;
+        }
       }
     } else {
       const DeviceBinding dev = DeviceBinding::pad(t.deviceId);
@@ -404,6 +409,9 @@ sim::PlayerInput InputSampler::sampleSlot(PlayerId slot, uint64_t tickStartNs,
   }
   if (act.held[idx(Action::Dash)] || act.pressed[idx(Action::Dash)]) {
     buttons |= sim::buttonBit(sim::Button::Dash);
+  }
+  if (act.held[idx(Action::Ability)] || act.pressed[idx(Action::Ability)]) {
+    buttons |= sim::buttonBit(sim::Button::Ability1);
   }
 
   sim::PlayerInput in;
@@ -467,6 +475,7 @@ void InputSampler::consumeButtons(PlayerId slot) {
   Slot& s = slots_[slot.value];
   s.consumed[idx(Action::Throw)] = true;
   s.consumed[idx(Action::Dash)] = true;
+  s.consumed[idx(Action::Ability)] = true;
   s.consumedFrom = transitions_.size();
 }
 

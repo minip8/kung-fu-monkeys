@@ -6,8 +6,10 @@
 // use.
 #pragma once
 
+#include "kfm/sim/constants.hpp"
 #include "kfm/sim/content/name.hpp"
 
+#include <array>
 #include <cstdint>
 
 namespace kfm::sim {
@@ -46,6 +48,10 @@ struct ModeDef {
   // the spawn protection after it (Tag::Invulnerable; 0 = none).
   uint16_t respawnTicks{120};
   uint16_t respawnInvulnTicks{90};
+  // v0.21: a loadout of the mode's own (ability def per slot, as
+  // PlayerDef::abilities) when hasAbilities is 1; else the player's.
+  uint8_t hasAbilities{0};
+  std::array<uint8_t, kAbilitySlots> abilities{};
 };
 
 }  // namespace kfm::sim

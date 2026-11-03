@@ -724,9 +724,12 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
     ImGui::Spacing();
     ImGui::TextUnformatted(
         "Join: press Throw or Dash on a free keyboard side, or any button on a pad");
-    ImGui::BulletText("Keyboard left:  WASD move, J/Space throw, K/LShift dash");
-    ImGui::BulletText("Keyboard right: arrows move, ./RCtrl throw, //RShift dash");
-    ImGui::BulletText("Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash");
+    ImGui::BulletText("Keyboard left:  WASD move, J/Space throw, K/LShift dash, L/E ability");
+    ImGui::BulletText("Keyboard right: arrows move, ./RCtrl throw, //RShift dash, ;/' ability");
+    ImGui::BulletText(
+        "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "
+        "ability");
+    ImGui::BulletText("The ability button fires the third slot (modes such as rounds_slam)");
     ImGui::TextDisabled("Aim follows the move direction on keyboards. F1: debug overlay");
 
     ImGui::Spacing();

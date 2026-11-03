@@ -9,6 +9,7 @@
 // in flight then falls through to row 30 (the full-ammo dasher is hit) and an
 // own returning banana to row 40 (auto catch, absorbed even at full ammo).
 #include "kfm/sim/rules/handlers.hpp"
+#include "kfm/sim/systems.hpp"
 
 namespace kfm::sim {
 
@@ -16,7 +17,10 @@ bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, Enti
                     const Contact& contact, EventSink& sink) {
   Player* p = s.players.get(a);
   if (p == nullptr || !s.boomerangs.isAlive(b)) return false;
-  const AbilityState& dash = p->abilities[kAbilitySlotDash];
+  // The slot whose perfect window is open (the base kit's dash slot); a tag
+  // set by something else (a test) falls back to the dash slot.
+  const AbilityState* dashSlot = slotGranting(*p, content, Tag::PerfectDash);
+  const AbilityState& dash = dashSlot != nullptr ? *dashSlot : p->abilities[kAbilitySlotDash];
   const AbilityDef& def = content.db.abilityAt(dash.defIndex);
 
   // Decline reasons, in this order: (1) no room for another banana, (2) the

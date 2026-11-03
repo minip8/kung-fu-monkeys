@@ -16,6 +16,7 @@
 #include "kfm/sim/content/mode.hpp"
 #include "kfm/sim/content/name.hpp"
 #include "kfm/sim/content/powerup.hpp"
+#include "kfm/sim/input.hpp"
 #include "kfm/sim/tags.hpp"
 
 #include <array>
@@ -26,10 +27,27 @@
 
 namespace kfm::sim {
 
-inline constexpr uint8_t kAbilitySlots = 2;
 inline constexpr uint8_t kAbilitySlotDash = 0;
 inline constexpr uint8_t kAbilitySlotThrow = 1;
-inline constexpr uint8_t kMaxAbilityDefs = 4;
+inline constexpr uint8_t kAbilitySlotExtra = 2;  // v0.21: Button::Ability1, None in the base kit
+static_assert(kAbilitySlots == 3);
+
+// The button whose press edge fires an ability slot (v0.21: buttons belong to
+// slots, whatever kind the slot runs).
+[[nodiscard]] constexpr uint8_t slotButton(uint8_t slot) {
+  switch (slot) {
+    case kAbilitySlotDash:
+      return buttonBit(Button::Dash);
+    case kAbilitySlotThrow:
+      return buttonBit(Button::Throw);
+    case kAbilitySlotExtra:
+      return buttonBit(Button::Ability1);
+    default:
+      break;
+  }
+  return 0;
+}
+inline constexpr uint8_t kMaxAbilityDefs = 16;
 inline constexpr uint8_t kMaxArenas = 8;
 inline constexpr uint8_t kMaxModes = 8;
 
@@ -37,6 +55,9 @@ enum class AbilityKind : uint8_t {
   None = 0,
   Dash,
   Throw,
+  Blink,   // v0.21: teleport dash (abilities/blink.cpp)
+  Slam,    // v0.21: radial impulse (abilities/slam.cpp, rules/slam.cpp)
+  Parry,   // v0.21: timed banana reflection (abilities/parry.cpp, rules/parry.cpp)
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 enum class AbilityPhase : uint8_t { Idle = 0, Startup, Active, Recovery };
@@ -49,9 +70,9 @@ struct AbilityDef {
   uint16_t activeTicks{0};
   uint16_t recoveryTicks{0};
   uint16_t perfectWindowTicks{0};  // Dash: first N active ticks grant Tag::PerfectDash
-  Fixed speed{};                   // Dash: dash speed (units/tick). Throw: unused
-  Fixed param0{};                  // kind-specific spare numeric params
-  Fixed param1{};
+  Fixed speed{};   // Dash: dash speed; Blink: distance per active tick (units/tick). Throw: unused
+  Fixed param0{};  // kind-specific numeric params. Slam: reach (radius from its centre)
+  Fixed param1{};  // Slam: push distance, spread over activeTicks
   Tags tagsStartup{};  // tags granted during each phase
   Tags tagsActive{};
   Tags tagsRecovery{};
@@ -81,8 +102,9 @@ struct PlayerDef {
   uint8_t ammoMax{1};
   uint8_t ammoStart{1};
   uint16_t hitStunTicks{0};
-  // Base loadout: slot kAbilitySlotDash, slot kAbilitySlotThrow (indices into
-  // ContentDB::abilities).
+  // Base loadout: slot kAbilitySlotDash, kAbilitySlotThrow, kAbilitySlotExtra
+  // (indices into ContentDB::abilities; 0 = None). A mode may replace it
+  // (ModeDef::abilities, v0.21).
   std::array<uint8_t, kAbilitySlots> abilities{};
 };
 
@@ -181,6 +203,13 @@ struct MatchContent {
         powerUps(powerUpSet) {}
   // NOLINTNEXTLINE(misc-explicit-constructor): implicit on purpose, see above
   constexpr MatchContent(const ContentDB& content) : MatchContent(content, 0, 0) {}
+
+  // The loadout's def index for a slot: the mode's loadout when it has one
+  // (v0.21), else the player's.
+  [[nodiscard]] constexpr uint8_t loadout(uint8_t slot) const {
+    if (slot >= kAbilitySlots) return 0;
+    return mode.hasAbilities != 0 ? mode.abilities[slot] : db.player.abilities[slot];
+  }
 };
 
 // The M1 constexpr tables (default tuning numbers from the M1 contract).

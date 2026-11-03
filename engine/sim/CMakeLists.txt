@@ -9,6 +9,9 @@ add_library(kfm_sim STATIC
   src/abilities/registry.cpp
   src/abilities/dash.cpp
   src/abilities/throw.cpp
+  src/abilities/blink.cpp
+  src/abilities/slam.cpp
+  src/abilities/parry.cpp
   src/modes/mode_flow.cpp
   src/modes/registry.cpp
   src/modes/rounds.cpp
@@ -23,6 +26,8 @@ add_library(kfm_sim STATIC
   src/rules/powerup.cpp
   src/rules/shield.cpp
   src/rules/hazard.cpp
+  src/rules/slam.cpp
+  src/rules/parry.cpp
   src/systems/rules.cpp
   src/systems/input.cpp
   src/systems/ability.cpp

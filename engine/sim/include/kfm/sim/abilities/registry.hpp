@@ -30,7 +30,21 @@ struct AbilityBehavior {
   // Called when the slot returns to Idle.
   void (*onEnd)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
                 const MatchContent& content, EventSink& sink);
+  // Tags the kind itself grants in the slot's current state, on top of the
+  // def's phase tags (Dash: PerfectDash while the perfect window may be open).
+  // Pure: AbilitySystem re-derives every tick from the state alone.
+  Tags (*kindTags)(const AbilityState& st, const AbilityDef& def);
 };
+
+// kindTags for a kind that grants nothing beyond its def's phase tags.
+[[nodiscard]] constexpr Tags noKindTags(const AbilityState& /*st*/, const AbilityDef& /*def*/) {
+  return Tags{};
+}
+
+// Every tag an AbilityBehavior::kindTags may return. AbilitySystem owns these
+// bits (it clears and re-derives them each tick) like the defs' phase tags.
+inline constexpr Tags kAbilityKindTags =
+    Tags::of(Tag::Dashing) | Tag::PerfectDash | Tag::Slamming | Tag::Parrying;
 
 // Behaviour for a kind; out-of-range kinds get the inert None behaviour.
 [[nodiscard]] const AbilityBehavior& behaviorFor(AbilityKind kind);

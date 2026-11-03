@@ -57,6 +57,71 @@ namespace {
   return dir;
 }
 
+// The nearest non-own banana in flight within `radius` that is approaching
+// `pos`, if any.
+[[nodiscard]] bool incomingBanana(const WorldState& s, const Player& p, Fixed radius, Vec2& at) {
+  const Vec2 pos = p.transform.pos;
+  uint64_t best = squareRaw(radius);
+  bool found = false;
+  s.boomerangs.forEachAlive([&](EntityId /*bid*/, const Boomerang& b) {
+    if (b.phase == BoomerangPhase::Grounded || b.owner == p.id) return;
+    const Vec2 rel = b.transform.pos - pos;
+    const uint64_t d = lengthSqRaw(rel);
+    if (d <= best && dot(rel, b.transform.vel) < Fixed::zero()) {
+      best = d;
+      at = b.transform.pos;
+      found = true;
+    }
+  });
+  return found;
+}
+
+// The third slot (v0.21): only when the loadout or a power-up put an ability
+// there, so a base-kit match draws nothing extra from the Rng.
+void useExtraAbility(Rng& rng, const WorldState& s, const MatchContent& content, const Player& p,
+                     uint64_t nearestEnemySq, const ScriptedInputConfig& config, PlayerInput& in) {
+  const AbilityState& slot = p.abilities[kAbilitySlotExtra];
+  const AbilityDef& def = content.db.abilityAt(slot.defIndex);
+  const uint8_t bit = buttonBit(Button::Ability1);
+  if (def.kind == AbilityKind::None || (p.prevButtons & bit) != 0 || !ready(slot)) return;
+  Vec2 threat{};
+  switch (def.kind) {
+    case AbilityKind::Blink:
+      // Blink away from an incoming banana (sideways to its path), or now and then.
+      if (incomingBanana(s, p, config.threatRadius, threat)) {
+        if (rng.below(256) < config.dodgePer256) {
+          in.buttons |= bit;
+          const uint8_t toward = directionTo(p.transform.pos, threat);
+          in.moveDir = static_cast<uint8_t>(toward + (rng.below(2) == 0 ? 64 : 192));
+          in.moveMag = 255;
+        }
+      } else if (oneIn(rng, config.abilityOneIn)) {
+        in.buttons |= bit;
+      }
+      break;
+    case AbilityKind::Slam: {
+      // Slam when an enemy or an incoming banana is within the reach.
+      const uint64_t reachSq = squareRaw(def.param0);
+      const bool target = nearestEnemySq <= reachSq || incomingBanana(s, p, def.param0, threat);
+      if (target && oneIn(rng, config.slamOneIn)) in.buttons |= bit;
+      break;
+    }
+    case AbilityKind::Parry:
+      // Parry an incoming banana that is close; the timing is left to luck.
+      if (incomingBanana(s, p, config.parryRadius, threat) && rng.below(256) < config.parryPer256) {
+        in.buttons |= bit;
+      }
+      break;
+    case AbilityKind::Dash:
+    case AbilityKind::Throw:
+      if (oneIn(rng, config.abilityOneIn)) in.buttons |= bit;
+      break;
+    case AbilityKind::None:
+    case AbilityKind::kCount:
+      break;
+  }
+}
+
 }  // namespace
 
 PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& content, PlayerId id,
@@ -143,6 +208,7 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
         in.buttons |= dashBit;
       }
     }
+    useExtraAbility(rng, s, content, p, nearest, config, in);
   }
   if (in.buttons != 0) in.subTick = static_cast<uint8_t>(rng.below(256));
   return in;

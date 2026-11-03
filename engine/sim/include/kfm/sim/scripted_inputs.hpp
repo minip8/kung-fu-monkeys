@@ -18,6 +18,10 @@
 //     close and approaching (a catch attempt), pressing at a random sub-tick;
 //   - now and then, while holding enough ammo for a dash attack, dash at the
 //     nearest other player when it is close (§5.6);
+//   - (v0.21) with an ability in the third slot: blink sideways out of an
+//     incoming banana's path (or now and then), slam when an enemy or an
+//     incoming banana is within the reach, parry an incoming banana that is
+//     close; nothing at all (no Rng draw) while the slot is empty;
 //   - a button is only pressed when it was up on the previous tick, so every
 //     press is a real edge (a press is held for one tick, then released).
 #pragma once
@@ -47,6 +51,11 @@ struct ScriptedInputConfig {
   Fixed powerUpRadius{Fixed::fromInt(12)};    // how far an armed player goes for a power-up
   Fixed wallMargin{Fixed::fromInt(2)};        // turn back when this close to a wall
   uint8_t aimJitter{2};                       // ± 1/256 turns of random aim error
+  // v0.21, the third slot:
+  uint16_t abilityOneIn{240};            // per-tick chance 1/N of an unprompted blink
+  uint16_t slamOneIn{8};                 // per-tick chance 1/N of a slam with a target in reach
+  uint8_t parryPer256{48};               // per-tick chance of parrying an incoming banana
+  Fixed parryRadius{Fixed::fromInt(3)};  // how close that banana must be
 };
 
 // The input for one player this tick. Returns an idle input for a player
