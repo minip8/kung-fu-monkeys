@@ -57,7 +57,9 @@ into `MatchRules::present` every tick and `RulesSystem` despawns absent players 
 so a mid-match joiner plays from the next round (§5.4, §6.6). `NetServer` (§6.6, §6.7): handshake
 checks, slot assignment, reconnect reservations (10 s), timeouts (5 s), checksum cadence (every 10
 ticks), input validation, a token-bucket rate limit (tick rate + 30 messages/s) and kicks after 32
-protocol errors in 10 s; the `ResyncRequest` message (§6.3).
+protocol errors in 10 s; the `ResyncRequest` message (§6.3). `NetClient` (§6.1, §6.2, §5.9, §6.9):
+the lead controller law and constants, an anchor state that makes rollbacks deeper than the ring
+possible, the event journal, spectator delay and the host call sequence.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -480,6 +482,12 @@ is a defence only for a player who has thrown.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
   are dropped; events for ticks at or before the confirmed tick are final.
+- `EventJournal` (v0.17, `kfm/net/event_journal.hpp`) implements this for `NetClient`: 2048
+  entries in a fixed array sorted by tick, the hash over (kind, player, entity, a, b), equal
+  events of one tick matched by multiplicity. An event the host already drained that a
+  re-simulation does not emit again is counted as retracted (presentation cannot un-play it).
+  Final means at or before the client's verified tick, or older than the ring (no rollback can
+  reach it); delivered final entries are forgotten.
 
 ### 5.10 Arenas and content
 
@@ -593,6 +601,20 @@ netcode model.
 - Optional fixed input delay (0–3 ticks, default 0, per-match setting) trades a little local
   latency for fewer remote mispredictions, the same knob fighting games expose.
 
+Lead control in numbers (v0.17, `kfm/net/clock_sync.hpp`, integer-only): RTT and jitter come
+from `Ping`/`Pong` (every 50 ms until synced, then every 250 ms) with the RFC 6298 gains (1/8,
+1/4), except that the jitter starts at 0 instead of R/2 so the first lead is not twice the RTT.
+The initial sync waits for `Welcome`, the snapshot and three RTT samples, then sets
+`L = estimated server tick + ceil((srtt/2 + 2·jitter)/tick) + 1 − inputDelay`, where the server
+tick is extrapolated from the newest `Pong`'s tick by the time since it plus srtt/2. From then on
+the smoothed margin (EMA, gain 1/8 per `AuthInputs`) drives the rate: 1.0 inside [+1, +2] ticks,
+otherwise `1 − 1 % × (margin − nearest band edge in ticks)`, clamped to 98–102 %. Margin reports
+about inputs sent before a sync or jump are ignored. A smoothed margin below −8 ticks jumps the
+clock forward to the band's middle; the client never jumps backwards. The client's `TickClock`
+accumulates ns × `kTickHz` × rate in ppm (one tick = 10^15 units, no drift) and returns at most 8
+ticks per call. The input delay is 0–3 ticks (default 0): inputs passed at local tick L are for
+tick L + delay.
+
 Client tick, in order:
 
 ```
@@ -603,6 +625,21 @@ Client tick, in order:
 5. saveState(L); step(world, predicted[L], events)
 6. L++; presentation.render(interpolate(prev, curr), smoothingOffsets, events)
 ```
+
+`NetClient` (v0.17) maps that onto one host frame: `beginFrame()`, `pump(now)`, `reconcile()`,
+then `ticksDue(now)` times `tick(localInputs)`, then `onRollback` in presentation when
+`frameReport().rolledBack`, then render `world()`/`prevWorld()` with `drainEvents()`. It keeps the
+ring of 32 saved states (`memcpy`), the frames it stepped each tick with (128 ticks) and an anchor:
+the state at the first tick whose frame is not yet known to be authoritative. A misprediction
+inside the ring restores the saved state of its tick; an older one (a snapshot or a long burst of
+loss put the prediction more than 32 ticks ahead of the authoritative stream) re-simulates from
+the anchor, and only one older than the 128-tick frame history asks for a resync. Remote slots and
+the present mask repeat the newest authoritative frame before the tick; local slots use the
+inputs submitted for it. Inputs are resent back to the newest tick the server has assembled (at
+most 16). Checksums are compared at confirmed ticks against the saved, anchor or current state of
+that tick. A spectator (no slots) never predicts: it steps only authoritative frames and its clock
+keeps it `spectatorDelayTicks` (3) behind the newest one. `sizeof(NetClient)` is about 360 KB
+(the ring is 32 × 5.9 KB), so hosts allocate it on the heap.
 
 ### 6.3 Message layer
 
