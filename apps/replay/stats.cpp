@@ -408,6 +408,15 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
           ++stats_.eliminatedHoldingAmmo;
         }
         break;
+      case EventKind::PickupSpawned:
+        if (e.a == static_cast<uint32_t>(PickupKind::PowerUp)) ++stats_.powerUpsSpawned;
+        break;
+      case EventKind::PickupTaken:
+        if (e.a == static_cast<uint32_t>(PickupKind::PowerUp)) ++stats_.powerUpsTaken;
+        break;
+      case EventKind::ShieldBroken:
+        ++stats_.shieldsBroken;
+        break;
       default:
         break;
     }
@@ -623,6 +632,8 @@ void printSummary(const Stats& st, uint32_t players) {
       "rounds where it hit 0 with 2+ players alive: %u of %zu\n",
       u(st.eliminatedHoldingAmmo), st.roundsSupplyExhausted, st.roundMinSupplyShare.size());
   printDistribution("lowest supply / players, per round", st.roundMinSupplyShare, "");
+  std::printf("power-ups (§5.8): spawned %llu, taken %llu, shields broken %llu\n",
+              u(st.powerUpsSpawned), u(st.powerUpsTaken), u(st.shieldsBroken));
 }
 
 }  // namespace kfm::replay
