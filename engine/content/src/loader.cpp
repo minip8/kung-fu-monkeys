@@ -481,13 +481,16 @@ class Builder {
                         " ability names (one per slot: dash button, throw button)");
       } else {
         for (size_t i = 0; i < arr->size(); ++i) {
-          const toml::value<std::string>* name = arr->get(i)->as_string();
+          const toml::node* item = arr->get(i);
+          if (item == nullptr)
+            continue;  // get() is nullable; GCC's -Wnull-dereference wants it seen
+          const toml::value<std::string>* name = item->as_string();
           if (name == nullptr) {
-            s.error(*arr->get(i), "'abilities' entries must be ability names");
+            s.error(*item, "'abilities' entries must be ability names");
             continue;
           }
           loadout_[i] =
-              PendingName{name->get(), s.where(), lineOf(*arr->get(i)), std::string(s.file().name)};
+              PendingName{name->get(), s.where(), lineOf(*item), std::string(s.file().name)};
         }
       }
     }
