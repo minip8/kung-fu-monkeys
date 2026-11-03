@@ -374,6 +374,47 @@ TEST_CASE("spawners: first beat, interval, maxAlive, the def drawn from the set"
   CHECK(seen[1]);
 }
 
+TEST_CASE("power-up tags and ability-phase tags survive each other's expiry",
+          "[scenario][powerup][tags]") {
+  // The dash's active phase grants Dashing and, here, Shielded too, so the
+  // two sources overlap on one bit.
+  ContentDB content = powerUpContent();
+  AbilityDef& dash = content.abilities[content.player.abilities[kAbilitySlotDash]];
+  dash.tagsActive = Tags::of(Tag::Dashing) | Tag::Shielded;
+  const uint8_t dashTicks = static_cast<uint8_t>(dash.activeTicks);
+  WorldState s = makePlayingWorld(51, 0b11, content);
+  placePlayer(s, kP0, at(-8, 0));
+  placePlayer(s, kP1, at(8, 6));
+  const PlayerInput dashRight{0, 255, kAimRight, kDash, 0};
+
+  SECTION("the power-up expires mid-dash: the dash keeps Shielded and Dashing") {
+    givePowerUp(playerAt(s, kP0), kShield, 3);
+    (void)stepWith(s, content, dashRight);  // press: Active from this tick
+    (void)idle(s, content, 4);              // the power-up is gone, the dash is not
+    const Player& p = playerAt(s, kP0);
+    REQUIRE(p.modifiers.count == 0);
+    CHECK(p.grantedTags == Tags{});
+    CHECK(p.tags.has(Tag::Dashing));
+    CHECK(p.tags.has(Tag::Shielded));
+    (void)idle(s, content, dashTicks);  // the dash ends: nobody holds Shielded
+    CHECK_FALSE(playerAt(s, kP0).tags.has(Tag::Dashing));
+    CHECK_FALSE(playerAt(s, kP0).tags.has(Tag::Shielded));
+  }
+  SECTION("the dash ends first: the power-up keeps Shielded") {
+    givePowerUp(playerAt(s, kP0), kShield, 100);
+    (void)stepWith(s, content, dashRight);
+    CHECK(playerAt(s, kP0).tags.has(Tag::Dashing));
+    CHECK(playerAt(s, kP0).grantedTags.has(Tag::Shielded));
+    (void)idle(s, content, dashTicks + 2);
+    const Player& p = playerAt(s, kP0);
+    CHECK_FALSE(p.tags.has(Tag::Dashing));
+    CHECK(p.tags.has(Tag::Shielded));
+    (void)idle(s, content, 100);  // and the power-up's expiry clears it
+    CHECK_FALSE(playerAt(s, kP0).tags.has(Tag::Shielded));
+    CHECK(playerAt(s, kP0).grantedTags == Tags{});
+  }
+}
+
 TEST_CASE("without spawners nothing spawns and the RNG is untouched in play",
           "[scenario][powerup][spawner]") {
   const ContentDB content = powerUpContent();

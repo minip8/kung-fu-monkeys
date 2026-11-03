@@ -238,6 +238,8 @@ TEST_CASE("every new state field reaches the checksum", "[sim][visit]") {
   CHECK(changed([](WorldState& s) { s.boomerangs.items[1].radiusMul = 3_fx; }));
   CHECK(changed([](WorldState& s) { s.boomerangs.items[1].speedMul = 1_fx; }));
   CHECK(changed([](WorldState& s) { s.boomerangs.items[0].speedMul = 2_fx; }));
+  CHECK(changed([](WorldState& s) { s.pickups.items[0].spawner = 1; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].grantedTags.set(Tag::Shielded); }));
   CHECK(changed([](WorldState& s) { s.rules.round += 1; }));
   CHECK(changed([](WorldState& s) { s.rules.deaths[9] = 1; }));
   CHECK(changed([](WorldState& s) { s.rules.respawnTicks[0] = 1; }));
@@ -334,6 +336,9 @@ TEST_CASE("reader rejects out-of-range enums, ids and indices", "[sim][visit]") 
   SECTION("Pickup.spawner past the spawner table") {
     a.pickups.items[1].spawner = kMaxPickupSpawners;
   }
+  SECTION("Player.grantedTags above Tag::kCount") {
+    a.players.items[0].grantedTags.bits |= uint32_t{1} << static_cast<uint32_t>(Tag::kCount);
+  }
   SECTION("Boomerang.pierce above 1") {
     a.boomerangs.items[0].pierce = 2;
   }
@@ -381,30 +386,4 @@ TEST_CASE("reader accepts boundary values and keeps the checksum", "[sim][visit]
   BitReader r(w.written());
   REQUIRE(readFrom(r, b));
   CHECK(checksum(b) == checksum(a));
-}
-
-// v0.20 keeps the replay corpus valid: a banana without projectile modifiers
-// and a banana pickup serialise exactly as before power-ups existed, the
-// extra fields ride behind the pierce byte's top bit and the pickup kind.
-TEST_CASE("unmodified bananas and banana pickups keep their pre-power-up form",
-          "[sim][visit][powerup]") {
-  const auto bytes = [](const auto& value) {
-    std::array<std::byte, 256> buf{};
-    BitWriter w(buf);
-    REQUIRE(writeTo(w, value));
-    return w.bytesWritten();
-  };
-  Boomerang plain;
-  plain.pierce = 1;
-  Boomerang modified = plain;
-  modified.radiusMul = 2_fx;
-  // owner, phase, transform (3 × Vec2 + facing), spin, ticksAlive,
-  // ticksInPhase, damage, pierce: the M1 layout.
-  CHECK(bytes(plain) == 1 + 1 + (3 * 8 + 2) + 2 + 2 + 2 + 1 + 1);
-  CHECK(bytes(modified) == bytes(plain) + 8);
-
-  const Pickup banana{PickupKind::Banana, Vec2{1_fx, 2_fx}, 0, 0};
-  const Pickup powerUp{PickupKind::PowerUp, Vec2{1_fx, 2_fx}, 3, 1};
-  CHECK(bytes(banana) == 1 + 8 + 1);
-  CHECK(bytes(powerUp) == bytes(banana) + 1);
 }

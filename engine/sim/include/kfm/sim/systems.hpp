@@ -19,6 +19,10 @@ void inputSystem(WorldState& s, const InputFrame& in);
 // 3. Activation, phase state machines, cooldowns, phase tags (systems/ability.cpp,
 //    behaviours in abilities/).
 void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink);
+// The tags the player's ability slots grant in their current phases (Dashing,
+// PerfectDash, def phase tags; never HitStun or Eliminated). AbilitySystem
+// sets exactly these; ModifierSystem keeps them when its own grants end.
+[[nodiscard]] Tags abilityPhaseTags(const Player& p, const MatchContent& content);
 // 4. Intent x stats -> velocity, integrate, arena clamp (systems/movement.cpp).
 void movementSystem(WorldState& s, const MatchContent& content);
 // 5. Boomerang flight, return steering, wall bounce, grounding (systems/projectile.cpp).

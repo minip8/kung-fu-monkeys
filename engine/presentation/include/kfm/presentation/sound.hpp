@@ -29,7 +29,7 @@ enum class SoundId : uint8_t {
   Score,         // an elimination scored in deathmatch: a bright coin blip
   TimerWarning,  // the mode clock: 10, 3, 2, 1 seconds left
   // v0.20 (power-ups):
-  PowerUp,     // a power-up taken: a rising arpeggio (v0.20)
+  PowerUp,      // a power-up taken: a rising arpeggio (v0.20)
   ShieldBreak,  // a shield absorbed a hit: a glassy crack (v0.20)
   Count,
 };

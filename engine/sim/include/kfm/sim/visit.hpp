@@ -429,6 +429,7 @@ void visit(V& v, Player& p) {
   v.u8(p.ammo);
   visit(v, p.tags);
   v.u16(p.hitStunTicks);
+  visit(v, p.grantedTags);
   for (AbilityState& a : p.abilities)
     visit(v, a);
 }
@@ -442,40 +443,22 @@ void visit(V& v, Boomerang& b) {
   v.u16(b.ticksAlive);
   v.u16(b.ticksInPhase);
   v.u8(b.damage);
-  // The projectile modifiers (§5.8) ride behind a flag in the pierce byte's
-  // top bit, so an unmodified banana serialises exactly as it did before
-  // power-ups existed (the replay corpus checksums stay valid).
-  constexpr uint8_t kModifiedBit = 0x80;
-  const bool modified = b.speedMul != Fixed::one() || b.radiusMul != Fixed::one();
-  auto pierceByte = static_cast<uint8_t>(b.pierce | (modified ? kModifiedBit : 0));
-  v.u8(pierceByte);
+  v.u8(b.pierce);
   if constexpr (V::kIsReader) {
-    b.pierce = static_cast<uint8_t>(pierceByte & ~kModifiedBit);
     if (b.pierce > 1) {
       v.markInvalid();
       b.pierce = 1;
     }
   }
-  if ((pierceByte & kModifiedBit) != 0) {
-    visit(v, b.speedMul);
-    visit(v, b.radiusMul);
-  } else if constexpr (V::kIsReader) {
-    b.speedMul = Fixed::one();
-    b.radiusMul = Fixed::one();
-  }
+  visit(v, b.speedMul);  // projectile modifiers (§5.8)
+  visit(v, b.radiusMul);
 }
 template <class V>
 void visit(V& v, Pickup& p) {
   visit(v, p.kind);
   visit(v, p.pos);
   v.u8(p.powerUpIndex);
-  // Power-up pickups also carry their spawner; a banana's payload is as it
-  // was before power-ups existed (the replay corpus checksums stay valid).
-  if (p.kind == PickupKind::PowerUp) {
-    v.u8(p.spawner);
-  } else if constexpr (V::kIsReader) {
-    p.spawner = 0;
-  }
+  v.u8(p.spawner);
   if constexpr (V::kIsReader) {
     if (p.powerUpIndex >= kMaxPowerUps || p.spawner >= kMaxPickupSpawners) {
       v.markInvalid();

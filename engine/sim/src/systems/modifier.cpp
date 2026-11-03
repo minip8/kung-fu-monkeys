@@ -18,8 +18,10 @@
 //      slot switches only while Idle (a running dash or throw finishes on
 //      the def it started with); on the switch its remaining cooldown is
 //      capped at the new def's cooldownTicks.
-//   5. Tags: every tag some power-up def can grant is cleared, then the live
-//      entries' Tag grants are set.
+//   5. Tags: the bits granted last tick (Player::grantedTags) that are no
+//      longer granted are cleared, unless an ability phase or the mode's
+//      spawn protection holds them now; this tick's Tag grants are set and
+//      recorded in grantedTags. Tag sources therefore compose.
 //   6. hitStunTicks-- when positive; Tag::HitStun is cleared whenever the
 //      counter is 0 afterwards.
 //   7. Timers: every live entry's ticksLeft-- (saturating).
@@ -114,33 +116,30 @@ void applyAbilityOverrides(Player& p, const ContentDB& db) {
   }
 }
 
-// Every tag a power-up in the DB can grant (what step 5 owns).
-[[nodiscard]] Tags grantableTags(const ContentDB& db) {
-  Tags owned{};
-  for (uint8_t i = 0; i < db.powerUpCount && i < kMaxPowerUps; ++i) {
-    const PowerUpDef& def = db.powerUps[i];
-    for (uint8_t g = 0; g < def.grantCount && g < kMaxPowerUpGrants; ++g) {
-      if (def.grants[g].kind == GrantKind::Tag) owned.set(def.grants[g].tag);
-    }
-  }
-  owned.clear(Tag::HitStun);  // system-owned, never granted (the loader rejects them too)
-  owned.clear(Tag::Eliminated);
-  return owned;
-}
-
-void applyTags(Player& p, const ContentDB& db, Tags owned) {
+// Step 5. ModifierSystem owns exactly the bits it set last time
+// (Player::grantedTags): it clears those it no longer grants, unless another
+// source holds them right now (an ability phase, or a mode's spawn
+// protection for Invulnerable), sets this tick's grants and records them.
+void applyTags(Player& p, const WorldState& s, const MatchContent& content) {
   Tags granted{};
-  forEachGrant(db, p.modifiers, [&](const PowerUpGrant& g) {
+  forEachGrant(content.db, p.modifiers, [&](const PowerUpGrant& g) {
     if (g.kind == GrantKind::Tag) granted.set(g.tag);
   });
-  p.tags.bits = (p.tags.bits & ~owned.bits) | (granted.bits & owned.bits);
+  granted.clear(Tag::HitStun);  // system-owned, never granted (the loader rejects them too)
+  granted.clear(Tag::Eliminated);
+  Tags held = abilityPhaseTags(p, content);
+  if (p.id.value < kMaxPlayers && s.rules.invulnTicks[p.id.value] > 0) {
+    held.set(Tag::Invulnerable);
+  }
+  const uint32_t dropped = p.grantedTags.bits & ~granted.bits & ~held.bits;
+  p.tags.bits = (p.tags.bits & ~dropped) | granted.bits;
+  p.grantedTags = granted;
 }
 
 }  // namespace
 
 void modifierSystem(WorldState& s, const MatchContent& content) {
   const ContentDB& db = content.db;
-  const Tags owned = grantableTags(db);
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     dropExpired(p.modifiers);
     const uint8_t oldMaxHp = p.stats.maxHp;
@@ -148,7 +147,7 @@ void modifierSystem(WorldState& s, const MatchContent& content) {
     clampHp(p, oldMaxHp, p.stats.maxHp);
     p.ammo = std::min(p.ammo, p.stats.ammoMax);
     applyAbilityOverrides(p, db);
-    applyTags(p, db, owned);
+    applyTags(p, s, content);
     if (p.hitStunTicks > 0) --p.hitStunTicks;
     if (p.hitStunTicks == 0) p.tags.clear(Tag::HitStun);
     countDown(p.modifiers);

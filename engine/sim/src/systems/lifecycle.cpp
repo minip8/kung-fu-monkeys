@@ -36,7 +36,10 @@ void respawnTimers(WorldState& s, const MatchContent& content, EventSink& sink) 
     const PlayerId id{i};
     if (Player* p = s.playerBySlot(id)) {
       if (r.invulnTicks[i] == 0) continue;
-      if (--r.invulnTicks[i] == 0) p->tags.clear(Tag::Invulnerable);
+      // A power-up's Invulnerable (Player::grantedTags, §5.8) outlives it.
+      if (--r.invulnTicks[i] == 0 && !p->grantedTags.has(Tag::Invulnerable)) {
+        p->tags.clear(Tag::Invulnerable);
+      }
       continue;
     }
     if (r.respawnTicks[i] == 0) continue;

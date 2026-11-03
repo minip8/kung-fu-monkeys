@@ -138,12 +138,24 @@ void tickSlot(WorldState& s, Player& p, AbilityState& st, const MatchContent& co
   if (st.phase != AbilityPhase::Idle) behavior.onTick(s, p, st, def, content, sink);
 }
 
+// Power-up tags (Player::grantedTags, §5.8) belong to ModifierSystem: an
+// ability phase that also grants one never clears it.
 void rebuildTags(Player& p, const MatchContent& content) {
   Tags owned = Tags::of(Tag::Dashing) | Tag::PerfectDash;
-  Tags granted{};
   for (const AbilityState& st : p.abilities) {
     const AbilityDef& def = defFor(content, st);
     owned = owned | def.tagsStartup | def.tagsActive | def.tagsRecovery;
+  }
+  owned.bits &= ~(kSystemOwnedTags.bits | p.grantedTags.bits);
+  p.tags.bits = (p.tags.bits & ~owned.bits) | abilityPhaseTags(p, content).bits;
+}
+
+}  // namespace
+
+Tags abilityPhaseTags(const Player& p, const MatchContent& content) {
+  Tags granted{};
+  for (const AbilityState& st : p.abilities) {
+    const AbilityDef& def = defFor(content, st);
     granted = granted | phaseTags(def, st.phase);
     const bool windowOpen = st.phaseTicks < def.perfectWindowTicks ||
                             (st.phaseTicks == def.perfectWindowTicks && st.activatedSubTick != 0);
@@ -151,12 +163,9 @@ void rebuildTags(Player& p, const MatchContent& content) {
       granted.set(Tag::PerfectDash);
     }
   }
-  owned.bits &= ~kSystemOwnedTags.bits;
   granted.bits &= ~kSystemOwnedTags.bits;
-  p.tags.bits = (p.tags.bits & ~owned.bits) | granted.bits;
+  return granted;
 }
-
-}  // namespace
 
 void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink) {
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {

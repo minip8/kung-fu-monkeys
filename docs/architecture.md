@@ -303,7 +303,8 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   neither invalid nor a slot, an ability `defIndex` past the def table, or a tag bit above
   `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
   system would index or shift by. v0.20 adds a power-up index past `kMaxPowerUps`, a pickup
-  spawner past `kMaxPickupSpawners` and a banana `pierce` above 1.
+  spawner past `kMaxPickupSpawners`, a banana `pierce` above 1 and `grantedTags` bits above
+  `Tag::kCount`.
 - Power-up fields (v0.20): a banana's `speedMul` and `radiusMul` (after `pierce`, a plain 0/1
   byte), a pickup's `spawner` and a player's `grantedTags` are visited unconditionally like
   every other field; adding them changed every world checksum and the corpus was regenerated.
@@ -629,7 +630,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `maxHp` in [1, 255], `ammoMax` in [0, 255]); (3) the `hp` clamp of §5.6 and `ammo` capped at
   `ammoMax`; (4) ability overrides; (5) tags: it clears exactly the bits it granted last tick
   (`Player::grantedTags`), sets this tick's grants and records them there, so a tag an ability
-  phase or a mode also grants survives the power-up's expiry and vice versa; (6) `HitStun` countdown; (7) `ticksLeft--`. A power-up picked
+  phase or a mode also grants survives the power-up's expiry and vice versa (AbilitySystem
+  never clears a bit in `grantedTags`, `LifecycleSystem` keeps `Invulnerable` when spawn
+  protection ends while a power-up grants it, and ModifierSystem keeps a bit that an ability
+  phase or spawn protection holds now); (6) `HitStun` countdown; (7) `ticksLeft--`. A power-up picked
   on tick T therefore shapes the state after ticks T..T+D−1 and is gone after T+D, and the list,
   the stats and the tags always agree between ticks.
 - Ability overrides switch a slot only while it is `Idle` (a running dash or throw finishes on
@@ -651,8 +655,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   emits `PickupSpawned`. Its timeline is a function of the round clock, so a spawner has no state
   of its own; round start clears pickups. The loader keeps the arena's `maxAlive` sum at or below
   half the pickup pool so grounded bananas always find room. An arena without spawners never
-  touches the RNG here (the default `dojo` has none, which keeps the default match and its
-  replays unchanged).
+  touches the RNG here (the default `dojo` has none, so the default match plays exactly as
+  before).
 - Shield: rows 20 and 24, §5.6.
 - The shipped set (`content/powerups.toml`), picked up in `dojo_powerups` (the dojo plus four
   spawners near the corners, first at 1 s and 4 s into a round, then every 8 s, one alive each):
@@ -1619,8 +1623,12 @@ art is identical up to the export step, and nothing below the presentation layer
   content that is only added never changes the default match (a scenario test asserts this for
   extra arenas and modes). v0.23 adds `scripted_4p_deathmatch_3600t` and
   `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
-  survival flow are under the cross-platform gate. New `WorldState` fields (v0.23: the mode
-  counters) change every checksum and regenerate the corpus; added content alone must not.
+  survival flow are under the cross-platform gate. v0.20 adds `scripted_4p_powerups_1800t`
+  (`dojo_powerups`, scripted bots that walk to power-ups), so pickups, grants, projectile
+  modifiers and the shield are under the gate too. New `WorldState` fields (v0.23: the mode
+  counters; v0.20: `Boomerang::speedMul`/`radiusMul`, `Pickup::spawner`,
+  `Player::grantedTags`) change every checksum and regenerate the corpus; added content alone
+  must not.
 - Mode tests (v0.23): `mode_scenario.cpp` (deathmatch scoring, respawn exactly `respawnTicks`
   after the elimination at the farthest spawn point, spawn protection blocking a hit for
   `respawnInvulnTicks`, `scoreToWin`, the clock with the leader winning or a draw on a tied

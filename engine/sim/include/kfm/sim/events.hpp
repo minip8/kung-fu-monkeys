@@ -34,8 +34,8 @@ enum class EventKind : uint8_t {
   ScoreChanged,     // player, a = score after (a round win, or an elimination in deathmatch)
   PlayerRespawned,  // player, entity, a = spawn point index (deathmatch respawn or late join)
   TimerWarning,     // a = whole seconds left on the mode's clock (10, 3, 2, 1)
-  ShieldBroken,       // player = shielded victim, entity = the banana or the dashing player,
-                      // a = attacker slot, b = power-up index whose shield broke (§5.8)
+  ShieldBroken,     // player = shielded victim, entity = the banana or the dashing player,
+                    // a = attacker slot, b = power-up index whose shield broke (§5.8)
 };
 
 // BoomerangCaught payload `a`.

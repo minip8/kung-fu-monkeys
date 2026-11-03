@@ -84,6 +84,9 @@ struct Player {
   uint8_t ammo{0};
   Tags tags{};
   uint16_t hitStunTicks{0};  // remaining; HitStun clears at 0
+  // The tag bits ModifierSystem set from power-up Tag grants on its last run
+  // (§5.8): it clears only these, and other tag sources leave them alone.
+  Tags grantedTags{};
   std::array<AbilityState, kAbilitySlots> abilities{};
 };
 
