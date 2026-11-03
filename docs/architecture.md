@@ -1467,7 +1467,10 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   key is skipped with a warning, never fatal), then the command line again, so a flag or URL
   parameter (`?arena=pillars&mode=deathmatch&powerups=shield,big_banana`) wins for the run;
   `--no-settings` neither reads nor writes (the smoke tests use it). In network mode the local
-  lobby hides the panel: the server owns the match.
+  lobby hides the panel: the server owns the match. First browser run (headless Chromium, the
+  wasm build): `?arena=pillars&powerups=shield,big_banana` showed in the panel, arrow and WASD
+  presses changed the mode and a power-up, `localStorage['kfm.settings']` held the new set, a
+  reload without parameters restored it, `?no-settings` ignored it; no console errors.
 - HUD layout (v0.24): the scoreboard is one card per present slot along the top, the lobby's
   card style, sharing one width so the row never jitters and shrinking to fit narrow windows:
   the label and the score on the first line (round-win pips in rounds and survival,
