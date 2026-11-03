@@ -87,14 +87,16 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& conten
   }
 
   // Aim at the nearest other alive player, with a little jitter.
-  uint64_t nearest = std::numeric_limits<uint64_t>::max();
+  uint64_t nearest = std::numeric_limits<uint64_t>::max();  // stays max with nobody else alive
   Vec2 aimAt = pos + Vec2::fromAngle(p.transform.facing);
+  Vec2 enemyAt{};
   s.players.forEachAlive([&](EntityId /*pid*/, const Player& other) {
     if (other.id == p.id) return;
     const uint64_t d = lengthSqRaw(other.transform.pos - pos);
     if (d < nearest) {
       nearest = d;
       aimAt = other.transform.pos;
+      enemyAt = other.transform.pos;
     }
   });
   const int32_t jitter = rng.range(-int32_t{config.aimJitter}, int32_t{config.aimJitter});
@@ -125,9 +127,15 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& conten
           threatPos = b.transform.pos;
         }
       });
+      // A close enemy and enough ammo for a dash attack: dash straight at it.
+      const bool enemyClose = nearest <= squareRaw(config.dashAttackRadius);
       if (threat && rng.below(256) < config.dodgePer256) {
         in.buttons |= dashBit;
         if (threatPos != pos) in.moveDir = directionTo(pos, threatPos);
+      } else if (enemyClose && p.ammo >= content.dashAttack.minAmmo &&
+                 oneIn(rng, config.dashAttackOneIn)) {
+        in.buttons |= dashBit;
+        if (enemyAt != pos) in.moveDir = directionTo(pos, enemyAt);
       } else if (oneIn(rng, config.dashOneIn)) {
         in.buttons |= dashBit;
       }

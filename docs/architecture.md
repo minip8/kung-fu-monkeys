@@ -50,7 +50,8 @@ v0.16 changes: a perfect catch needs room below `ammoMax`; at full ammo the catc
 non-own banana hits the dasher (§5.6, §12). Dash attack: dashing into an enemy while holding a
 banana damages it, through a new rule row on Player × Player contacts, which `CollisionSystem`
 now emits and `InteractionSystem` tries in both orientations; `DashAttackDef` content switch,
-`PlayerDashHit` event (§5.3, §5.6, §5.9, §5.10, §5.11, §12).
+`PlayerDashHit` event, a scripted-bot behaviour that exercises it (§5.3, §5.6, §5.9, §5.10,
+§5.11, §9, §12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -946,7 +947,10 @@ art is identical up to the export step, and nothing below the presentation layer
   manifest line fails the regeneration.
 - Scripted inputs (v0.13): `kfm/sim/scripted_inputs.hpp` generates varied, deterministic
   matches (wander, aim at the nearest player, throw, dash at incoming bananas, fresh button
-  edges) from an `Rng` separate from the world's. It is test and tooling scaffolding shared by
+  edges) from an `Rng` separate from the world's. v0.16 adds a dash attack: while holding at
+  least `DashAttackDef::minAmmo` bananas with another player within `dashAttackRadius` (3 units),
+  a player dashes straight at it with chance 1 in `dashAttackOneIn` (240) per tick, so the
+  determinism corpus exercises row 25. It is test and tooling scaffolding shared by
   the scenario tests, `kfm_replay record-scripted`, the bench and later the netsim, not an
   `IAgent` (§8); it lives in `engine/sim` only because it is float-free, allocation-free and
   never writes `WorldState`.

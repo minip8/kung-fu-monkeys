@@ -68,7 +68,8 @@ TEST_CASE("a scripted 10-player match is deterministic and eventful", "[scenario
   for (const EventKind kind :
        {EventKind::BoomerangThrown, EventKind::PlayerHit, EventKind::PlayerEliminated,
         EventKind::BoomerangCaught, EventKind::RoundEnded, EventKind::PickupTaken,
-        EventKind::BoomerangBounced, EventKind::PlayerDashed, EventKind::PickupSpawned}) {
+        EventKind::BoomerangBounced, EventKind::PlayerDashed, EventKind::PickupSpawned,
+        EventKind::PlayerDashHit}) {
     INFO("event kind " << static_cast<int>(kind));
     CHECK(a.events.contains(kind));
   }
