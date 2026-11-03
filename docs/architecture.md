@@ -56,6 +56,9 @@ v0.17 changes: `WebRtcTransport` as built (§6.4): channel labels and reliabilit
 server-hosted `ws://` signaling socket and its JSON offer/answer/candidate format, the
 callback-queue threading model, size limits, exceptions caught at the `kfm_net_webrtc` boundary;
 the libdatachannel 0.24.6 / datachannel-wasm dependency pins, OpenSSL, `KFM_WEBRTC` (§10).
+Message layer as built (§6.3): delta-coded inputs, worst-case sizes, checksummed snapshots, LZ4
+deferred at 4.7 KB; loopback emulator model and the transport contract suite (§6.4); the
+browser network check and the two datachannel-wasm link fixes (§9, §10).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -621,6 +624,36 @@ packet with its encryption tag, WebRTC ≈ 60–80 bytes with SCTP/DTLS): client
 server downstream per client ≈ 8–14 KB/s; one snapshot ≈ 5–20 KB. A 10-player match costs the
 server well under 150 KB/s.
 
+As built (v0.17, `kfm/net/messages.hpp`, `kProtocolVersion = 1`): every message is a one-byte
+type tag followed by LSB-first bit-packed fields, zero-padded to a byte; decoders are fallible
+without exceptions (`std::expected<void, DecodeError>`: truncated, wrong type, out of range,
+trailing bytes, invalid state, checksum mismatch), reject non-zero padding and trailing bytes,
+and are fuzzed with random and mutated buffers. The `Hello` type byte and version field are
+frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
+- Inputs are delta-coded against the slot's previous input (the first against idle): one
+  "same" bit, else a 5-bit changed-field mask and 8 bits per changed field (46 bits worst
+  case). `Input` carries `startTick`, a count of 1–16 (`kMaxInputRedundancy`), the client's slot
+  mask (a client owns several slots in local multiplayer) and the last authoritative tick it
+  received. `AuthInputs` carries the present mask once plus a "same mask" bit per later frame,
+  an optional saturated `arrivalMargin` (i8) and an optional world checksum for `endTick − back`.
+  Worst cases, asserted at compile time against `kMaxUnreliableBytes`: `Input` 931 B,
+  `AuthInputs` 935 B (10 players × 16 ticks, every field changing); a steady 10-player
+  `AuthInputs` is about 85 B, `Ping` 13 B, `Pong` 17 B.
+- `Snapshot` is the seed, present mask, a `sim::checksum` of the world and the `WorldState`
+  through the visitor; the reader checks both the visitor's validation and the checksum.
+  Measured 4 740 B with every pool full and at most 1 308 B in a scripted 10-player match, so
+  LZ4 (§10) is deferred: uncompressed is under 1/13 of `kMaxReliableBytes`.
+- Control: `Hello` (version, `contentHash`, `buildId`, a token of up to 64 bytes, requested slot
+  count with 0 = spectate), `Welcome` (assigned slots, `MatchConfig`, server tick), `Reject`
+  (protocol, content or build mismatch, bad token, match full, shutting down), `JoinMatch`,
+  `PlayerJoined`, `PlayerLeft`, `MatchConfig` (with its start tick), `Disconnect` (quit, kicked,
+  timeout, protocol error, shutting down). `Ping{sendNs, tick}` / `Pong{echo, tick, holdNs}`.
+- `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
+  with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
+  shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
+  more than 64 ticks / bad slot; `assembleNext` substitutes repeat-last and records it as the
+  authoritative input, so a late arrival can never change a stepped tick).
+
 ### 6.4 Transport abstraction
 
 ```cpp
@@ -638,6 +671,26 @@ Implementations, in priority order:
 - `LoopbackTransport` + `NetEmulator` (latency, jitter, loss, duplication, reorder): N clients and
   a server in one process. This is how the netcode is unit-tested and how the `netsim` app works.
   Every real transport must pass the same contract test suite as the loopback.
+  As built (v0.17, `kfm/net/loopback.hpp`): a `LoopbackNetwork(seed)` hub owns the server
+  endpoint and every client endpoint; each link direction has its own `Rng` seeded from the
+  network seed, the client id and the direction, and every message consumes the same number of
+  draws whatever the probabilities, so changing one link's conditions never shifts another's and
+  a run is identical for the same seed and calls. `LaneConditions` per lane: latency, jitter
+  (uniform, capped near 4.29 s), loss, duplication and reorder in ppm, a reorder hold-back and a
+  retransmit delay. Unreliable copies arrive at send time + latency + jitter (+ hold-back);
+  the reliable lane adds `retransmitNs` per lost attempt (at most 31) and never delivers before
+  the previous reliable message on that direction, so it is exactly-once and in order.
+  A send is stamped with the sender's last poll time; a message becomes readable on the first
+  `poll(now)` at or after its delivery time, ordered by (delivery time, send order), and
+  `receivedNs` is that delivery time raised to the receiver's previous poll. Connected is seen
+  after the reliable latency on each side; `cut()` emulates a timeout on both. Client PeerIds
+  start at 1 and are never reused; the receive queue holds 8192 messages.
+  The contract suite (`tests/unit/net/transport_contract.hpp`, target
+  `kfm::transport_contract`) takes a harness (server, client, optional extra client, clock,
+  advance, timeout) and generates eleven cases: connect, both lanes both ways, reliable order and
+  exactly-once over 300 messages, both size limits with one byte over rejected, unknown peers,
+  disconnect from either side, exact stats deltas, `recv` span rules, peer identity. It runs over
+  a clean loopback and over a 30 ± 20 ms link with 20% reliable retransmits.
 - `WebRtcTransport`, the single production transport. WebRTC data channels over DTLS/SCTP/UDP:
   one channel with `ordered: false, maxRetransmits: 0` for the unreliable lane, one ordered
   reliable channel for control and snapshots. The server and the native client use libdatachannel
@@ -973,6 +1026,23 @@ art is identical up to the export step, and nothing below the presentation layer
   keyboard input, screenshots). It is a developer tool, not a CI step: a browser download per
   run and timed waits would make the gate slow and flaky, and `client_smoke` already covers
   rendering on CI.
+- Browser network check (v0.17): `apps/net-probe` (`kfm_net_probe --serve PORT` natively,
+  `--connect ws://host:port` natively, `kfm_net_probe.html?connect=...` in the browser) runs a
+  `WebRtcTransport` echo exchange: idle pings for RTT, then N messages per lane of varied sizes
+  including each lane's maximum and one oversize message per lane that must be refused, and
+  prints `KFM_NET_PROBE PASS|FAIL ...` (also in `window.kfmNetProbeResult`).
+  `tools/web/check_webrtc.py` starts the native server, serves the wasm page and drives it in
+  headless Chromium; `net_probe_loopback` (`--loopback`, label `network`) covers the probe
+  natively in ctest. First browser run: 200/200 on each lane, 0 lost, 0 corrupt, 0 out of
+  order, idle RTT median 1.2 ms, connect 98 ms, no Chromium flags (the browser's host candidate
+  is an mDNS name; the server's is its interface address, so a server behind NAT needs STUN or
+  a public address). It found two datachannel-wasm link defects fixed at the build level
+  (§10): its JS glue uses `_malloc`/`_free` without declaring them (a forced dependency stub,
+  `engine/net/src/webrtc/datachannel_wasm_deps.js`) and reads `Module['HEAPU8'|'HEAPU32']`,
+  which Emscripten 4+ only exports on request (`-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32` on
+  `kfm_net_webrtc`'s interface link options; the setting is last-wins, so an executable that
+  sets its own list must keep both). Linking the transport into `kfm_client.html` costs about
+  4 KB gzipped (23 KB once referenced) and nothing in frame pacing.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
   hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
@@ -1115,7 +1185,8 @@ baseline moved to C++23 (§9).
   1–2 tick input delay, and, if needed, rendering remote players 1–2 ticks behind confirmed.
 - **Catch feel under latency.** Catcher-favouring is inherent; the thrower sees the catch
   ≈ RTT late. Add anticipation VFX on the dash so the result reads as intentional.
-- **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4.
+- **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4. Measured (v0.17): at
+  most 4.7 KB uncompressed with every pool full, so LZ4 is deferred until a cap rises (§6.3).
 - **Lobby/matchmaking/NAT** is a service problem, deferred behind the connection-token boundary.
 - **Browser as the primary client.** One to two frames more input latency than a tuned native
   client, Safari quirks (audio gesture, gamepad, WebGL), tab throttling (covered by snapshot
