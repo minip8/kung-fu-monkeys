@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 
 namespace kfm::sim {
@@ -70,7 +71,8 @@ void buildPlayerGrid(const WorldState& s, const ContentDB& content, PlayerGrid& 
   std::array<CellRange, kMaxPlayers> ranges{};
 
   // Pass 1: count entries per cell.
-  std::fill(g.cellStart.begin(), g.cellStart.begin() + cellCount + 1, uint16_t{0});
+  std::fill(g.cellStart.begin(), g.cellStart.begin() + static_cast<std::ptrdiff_t>(cellCount) + 1,
+            uint16_t{0});
   s.players.forEachAlive([&](EntityId id, const Player& p) {
     const uint16_t slot = id.index;
     g.alive |= static_cast<uint16_t>(1u << slot);
@@ -92,7 +94,8 @@ void buildPlayerGrid(const WorldState& s, const ContentDB& content, PlayerGrid& 
   }
   // Pass 2: fill, in slot order within each cell.
   std::array<uint16_t, collision::kMaxGridCells> cursor{};
-  std::copy(g.cellStart.begin(), g.cellStart.begin() + cellCount, cursor.begin());
+  std::copy(g.cellStart.begin(), g.cellStart.begin() + static_cast<std::ptrdiff_t>(cellCount),
+            cursor.begin());
   for (uint16_t slot = 0; slot < kMaxPlayers; ++slot) {
     const auto bit = static_cast<uint16_t>(1u << slot);
     if ((g.alive & bit) == 0 || (g.oversized & bit) != 0) continue;
