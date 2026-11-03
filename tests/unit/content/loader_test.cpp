@@ -801,9 +801,9 @@ TEST_CASE("content/ ships blink, slam and parry with a mode each (v0.21)",
   for (const auto& [name, kind] : kinds) {
     INFO(name);
     const std::string modeName = "rounds_" + std::string(name);
-    const std::optional<uint8_t> mode = loaded.findMode(modeName);
-    REQUIRE(mode.has_value());
-    const sim::ModeDef& m = loaded.modes[*mode];
+    const uint8_t mode = loaded.findMode(modeName).value_or(0);
+    REQUIRE(mode != 0);
+    const sim::ModeDef& m = loaded.modes[mode];
     CHECK(m.kind == sim::ModeKind::Rounds);
     REQUIRE(m.hasAbilities == 1);
     CHECK(m.abilities[sim::kAbilitySlotDash] == loaded.player.abilities[sim::kAbilitySlotDash]);

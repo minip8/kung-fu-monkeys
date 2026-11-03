@@ -477,9 +477,7 @@ TEST_CASE("the ability button (v0.21): bindings, edge stamp, join and consume", 
   SECTION("an ability key joins a free keyboard side") {
     InputSampler s;
     s.push(key(Key::E, true));
-    const std::optional<DeviceBinding> join = s.pollJoin();
-    REQUIRE(join.has_value());
-    CHECK(*join == DeviceBinding::keyboard(0));
+    CHECK(s.pollJoin() == std::optional{DeviceBinding::keyboard(0)});
   }
   SECTION("a consumed ability press stays silent until released") {
     InputSampler s;

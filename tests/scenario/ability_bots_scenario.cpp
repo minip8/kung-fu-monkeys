@@ -51,7 +51,7 @@ struct ModeWith {
     mode.hasAbilities = 1;
     mode.abilities = {db.player.abilities[0], db.player.abilities[1], index};
   }
-  [[nodiscard]] MatchContent content() const { return MatchContent(db, 0, 1); }
+  [[nodiscard]] MatchContent content() const { return {db, 0, 1}; }
 };
 
 }  // namespace

@@ -618,7 +618,7 @@ class Builder {
 
   // A loadout: 2 or 3 ability names, one per slot (dash button, throw button,
   // ability button); "none" leaves a slot empty, a missing third is "none".
-  void parseLoadout(Section& s, const toml::node& n, Loadout& out) {
+  static void parseLoadout(Section& s, const toml::node& n, Loadout& out) {
     const toml::array* arr = n.as_array();
     if (arr == nullptr || arr->size() < 2 || arr->size() > sim::kAbilitySlots) {
       s.error(n, "'abilities' must list 2 or " + std::to_string(sim::kAbilitySlots) +
@@ -1017,8 +1017,9 @@ class Builder {
 
   void resolveLoadout(const Loadout& names, std::array<uint8_t, sim::kAbilitySlots>& out) {
     for (size_t slot = 0; slot < names.size(); ++slot) {
-      if (!names[slot]) continue;
-      if (const std::optional<uint8_t> i = loadoutIndex(*names[slot])) out[slot] = *i;
+      const std::optional<PendingName>& name = names[slot];
+      if (!name.has_value()) continue;
+      if (const std::optional<uint8_t> i = loadoutIndex(*name)) out[slot] = *i;
     }
   }
 

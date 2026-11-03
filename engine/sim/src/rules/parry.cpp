@@ -19,7 +19,7 @@ namespace kfm::sim {
 
 bool parryBoomerang(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                     const Contact& contact, EventSink& sink) {
-  Player* p = s.players.get(a);
+  const Player* p = s.players.get(a);
   Boomerang* banana = s.boomerangs.get(b);
   if (p == nullptr || banana == nullptr) return false;
   const AbilityState* slot = slotGranting(*p, content, Tag::Parrying);

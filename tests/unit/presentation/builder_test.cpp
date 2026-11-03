@@ -944,7 +944,7 @@ TEST_CASE("ability events (v0.21): blink, slam and parry effects and sounds",
                                       Vec2{Fixed::one(), Fixed::zero()});
   PresentationState ps;
   const WorldState prev = s;
-  WorldState curr = s;
+  const WorldState curr = s;
   // P0 blinked from (-8, 0) to (-3, 0).
   const Fixed fromX = Fixed::fromInt(-8);
   const std::vector<SimEvent> events = {
