@@ -27,3 +27,15 @@ kfm_add_test_exe(kfm_sim_tests
   sim/rules_test.cpp
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
+
+kfm_add_test_exe(kfm_presentation_tests
+  presentation/render_state_test.cpp
+)
+target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation)
+
+if(NOT KFM_HEADLESS)
+  kfm_add_test_exe(kfm_platform_tests
+    platform/input_sampler_test.cpp
+  )
+  target_link_libraries(kfm_platform_tests PRIVATE kfm::platform_input)
+endif()
