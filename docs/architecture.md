@@ -66,7 +66,9 @@ checks, slot assignment, reconnect reservations (10 s), timeouts (5 s), checksum
 ticks), input validation, a token-bucket rate limit (tick rate + 30 messages/s) and kicks after 32
 protocol errors in 10 s; the `ResyncRequest` message (§6.3). `NetClient` (§6.1, §6.2, §5.9, §6.9):
 the lead controller law and constants, an anchor state that makes rollbacks deeper than the ring
-possible, the event journal, spectator delay and the host call sequence.
+possible, the event journal, spectator delay and the host call sequence. The client's network
+mode (`NetSession`, `--connect`, the net overlay panel, per-tick input windows on the
+rate-controlled clock) and when `onRollback` is called (§6.9, §7).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -902,6 +904,14 @@ pixels. M2 numbers (v0.15): offsets are keyed by pool index and generation and d
 1.5 units snaps; offsets below 1e-3 are cleared. Offsets move only the model: the blob shadow
 stays on the interpolated sim position, which is the hitbox. `onRollback()` exists from M2 and
 is only exercised by tests until M3.
+As wired in M3 (v0.17, `apps/client/core/net_session.cpp`): `onRollback` is called right after
+`reconcile()`, before the frame's new ticks, with the states and alpha the previous frame drew,
+so the offset is the correction alone. Called after the ticks it would also absorb the frame's
+own motion, and with a rollback on most frames (bots mispredict about 60 ticks/s) that compounds
+into a standing lag of roughly 1/(1 − e^(−dt/τ)) frames, about 120 ms for remote players. A hard
+clock jump inside the tick batch gets a second call with the new states. Presentation draws only
+the events the journal delivers (§5.9), never the raw per-tick sink; retracted events are counted
+and not yet undone on screen.
 
 ---
 
@@ -964,6 +974,31 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   windows. The browser page turns its query string into the same flags
   (`?autostart&bots=3&seed=7&overlay`).
 
+- M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
+  beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
+  `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.
+  `--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]` (the browser
+  takes the same names in the query string) creates a `WebRtcTransport` client and a
+  `NetClient`; the host sequence is `beginFrame`, `pump`, `reconcile`, `onRollback` if needed,
+  one `tick` per `ticksDue` with inputs sampled over that tick's wall-clock window (the batch
+  ends at the frame's time and earlier ticks count back at the 98–102 % rate the batch ran at,
+  `NetClient::tickStartNs(i)`), then `drainEvents` into the frame events. The lobby's bound
+  devices in slot order become devices 0, 1, …; their count is the requested slot count
+  (`--players` overrides, `--spectate` requests 0); when the session reaches Running, device i is
+  bound to the i-th set bit of `localSlots()` and held buttons are consumed. A slot without a
+  device repeats its last input and can be taken over by a free device's press as in M2.
+  Status flow: Connecting → Syncing → Running, or Rejected / Disconnected / Failed with a reason
+  on a status window that replaces the lobby; Escape disconnects and returns to the local lobby,
+  whose Start then reconnects. Online, pause, step, time scale, bot keys, restart and content
+  tuning do nothing (the server's clock and content rule; a content edit would break the hash)
+  and the overlay says so. The F1 overlay gains the §7 net panel: RTT/jitter/loss with a graph,
+  lead against target, arrival margin, clock rate, rollback depth graph and histogram,
+  mispredictions and substitutions per second, journal counts, checksums compared/mismatched,
+  resyncs, bytes/s each way. Remote humans and server bots both read `P<n>` (the roster carries
+  no bot flag). First end-to-end runs: a native client and the browser page each joined a real
+  `NetServer` over WebRTC on one machine (RTT about 3 ms in the browser, roughly 60 rollbacks/s
+  of depth ≤ 3 against bots, 0 checksum mismatches); the 3 s real-socket client test
+  (`kfm_client_net_tests`, label `network`) syncs in about 185 ms.
 M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp`:
 - World basis: sim `(x, y)` at cosmetic height `h` is world `(x, h, −y)`, right-handed, +y up.
   The camera sits on world +z (the sim −y side), so with an ordinary right-handed `lookAt` and

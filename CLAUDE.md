@@ -60,6 +60,8 @@ build/dev/apps/replay/kfm_replay stats --players 4 --matches 20   # feel-tuning 
 source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py [--page kfm_render_probe.html]
 #   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
 python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
+build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL]   # join a server
+#   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves; pause/step/time scale/tuning are off online
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
 build/dev/apps/net-probe/kfm_net_probe --connect ws://127.0.0.1:9123 --messages 300   # native end-to-end check
