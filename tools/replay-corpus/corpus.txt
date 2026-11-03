@@ -1,0 +1,10 @@
+# Replay corpus manifest (architecture §9). RegenCorpus.cmake re-records every
+# entry with kfm_replay and then rewrites its .checksums, so the corpus can be
+# regenerated after a content change (a replay carries the content hash and
+# kfm_replay refuses one recorded with different content).
+#
+# name                kind      seed        input-seed  players  ticks
+empty_2p_60t          empty     0x7         -           2        60
+empty_10p_600t        empty     0x4B464D00  -           10       600
+scripted_4p_1200t     scripted  0x4B464D04  0x5C1204    4        1200
+scripted_10p_3600t    scripted  0x4B464D10  0x5C121D    10       3600

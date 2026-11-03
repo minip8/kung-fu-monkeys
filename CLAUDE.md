@@ -33,7 +33,7 @@ ctest --preset dev                      # unit tests + determinism corpus + C++2
 cmake --workflow --preset dev           # configure + build + test in one go
 ctest --preset dev -R kfm_core_tests    # one test executable (kfm_core_tests, kfm_sim_tests, kfm_scenario_tests, determinism_*)
 build/dev/tests/unit/kfm_core_tests "[fixed]"      # one Catch2 tag or test name
-cmake --build --preset dev --target regen-replay-corpus   # after an intentional gameplay change only
+cmake --build --preset dev --target regen-replay-corpus   # after an intentional gameplay/content change only
 # (re-run `cmake --preset dev` after adding a .kfmr: the gate globs the corpus at configure time)
 tools/ci/check_sim_no_float.sh          # no float/double in engine/sim
 clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | grep -v sin_table)
@@ -76,7 +76,9 @@ the stack and Emscripten's 64 KB default overflows silently in Release.
 
 A replay corpus with per-tick checksums is the CI merge gate across Linux/Windows/macOS/wasm and
 Debug/Release. Any sim change that alters checksums is either a bug or an intentional gameplay
-change that regenerates the corpus; say which.
+change that regenerates the corpus; say which. The corpus is listed in
+`tools/replay-corpus/corpus.txt`; `regen-replay-corpus` re-records every entry (replays carry the
+content hash) and rewrites the `.checksums`. A new corpus replay needs a manifest line.
 
 **Gameplay is added through tables, not special cases (§5.5–5.8).**
 - Abilities: `AbilityDef` (content) + POD `AbilityState` per slot + an `AbilityBehavior` function

@@ -103,8 +103,7 @@ bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, F&& onTic
   }
   const ContentDB& content = defaultContent();
   const uint32_t buildContentHash = contentHash(content);
-  // 0 marks a legacy replay recorded before content was hashed (M0).
-  if (header.contentHash != 0 && header.contentHash != buildContentHash) {
+  if (header.contentHash != buildContentHash) {
     std::fprintf(stderr,
                  "error: content hash mismatch: replay 0x%08x, this build 0x%08x "
                  "(recorded with different content)\n",

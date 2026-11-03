@@ -686,7 +686,12 @@ art is identical up to the export step, and nothing below the presentation layer
   `step()` over scripted matches (with and without input generation), restarting a match that
   ends so every timed tick is live gameplay.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
-  macOS, Debug and Release.
+  macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
+  hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
+  manifest, `tools/replay-corpus/corpus.txt` (name, kind, seed, input seed, players, ticks), and
+  `regen-replay-corpus` re-records every entry before regenerating its `.checksums` (v0.14). A
+  content or gameplay change regenerates the corpus in the same commit; a `.kfmr` without a
+  manifest line fails the regeneration.
 - Scripted inputs (v0.13): `kfm/sim/scripted_inputs.hpp` generates varied, deterministic
   matches (wander, aim at the nearest player, throw, dash at incoming bananas, fresh button
   edges) from an `Rng` separate from the world's. It is test and tooling scaffolding shared by

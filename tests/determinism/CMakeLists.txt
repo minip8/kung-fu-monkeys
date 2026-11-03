@@ -27,8 +27,10 @@ foreach(replay IN LISTS KFM_CORPUS_REPLAYS)
   set_tests_properties(determinism_${name} PROPERTIES LABELS determinism)
 endforeach()
 
-# Regenerates every expected checksum file from the current build. Run only
-# after an intentional gameplay change, and say so in the commit message.
+# Re-records every replay listed in tools/replay-corpus/corpus.txt and
+# regenerates its expected checksum file from the current build. Run only
+# after an intentional gameplay or content change, and say so in the commit
+# message.
 add_custom_target(regen-replay-corpus
   COMMAND ${CMAKE_COMMAND}
     -DKFM_REPLAY_EXE=$<TARGET_FILE:kfm_replay>
@@ -36,5 +38,5 @@ add_custom_target(regen-replay-corpus
     -DKFM_CORPUS_DIR=${KFM_REPLAY_CORPUS_DIR}
     -P ${PROJECT_SOURCE_DIR}/tools/ci/RegenCorpus.cmake
   DEPENDS kfm_replay
-  COMMENT "Regenerating replay corpus checksums"
+  COMMENT "Re-recording the replay corpus and regenerating checksums"
   VERBATIM)
