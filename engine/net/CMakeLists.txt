@@ -8,6 +8,8 @@ add_library(kfm_net STATIC
   src/loopback.cpp
   src/messages.cpp
   src/input_history.cpp
+  src/clock_sync.cpp
+  src/event_journal.cpp
 )
 add_library(kfm::net ALIAS kfm_net)
 
