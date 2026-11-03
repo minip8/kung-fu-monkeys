@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.17 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.19 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -71,6 +71,15 @@ mode (`NetSession`, `--connect`, the net overlay panel, per-tick input windows o
 rate-controlled clock) and when `onRollback` is called (§6.9, §7). Match restart and shutdown
 semantics (§6.6), `kfm_server` as the one-match-per-process host (§6.5), `kfm_netsim` and the
 soak and network ctests plus the `server-headless` CI job (§9), M3 landed (§11).
+v0.19 changes: M4 audio and VFX (§7 "Effects", "Audio"). Event-driven effects grow to 18 kinds
+(dash anticipation and afterimage trail, banana trail, perfect-catch sparks, hit sparks,
+elimination smoke, pickup sparkle, landing dust, bounce spark, banner pop-in) with the event →
+effect and event → sound mapping side by side in `event_fx`; trails are sampled from state;
+128 live effects. Procedural `SoundBank` (14 synthesised clips, no audio assets), a 16-voice
+`Mixer` with a pull API, the SDL3 `AudioDevice` in `platform` (main-thread queue top-up, silent
+without a device, opened on the first input in the browser), `--mute` / `--volume` and the F1
+Audio panel. SDL3 is built with ALSA on Linux (vcpkg `alsa` feature, or the FetchContent build
+when `libasound2-dev` is present), no new dependency (§10). Tests (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -1044,7 +1053,7 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   stretches the forward axis by 0.18 and hit-stun squashes height by up to 0.2.
 - Effects from events: dash ring 0.25 s, perfect-catch flash 0.4 s, auto-catch flash 0.2 s, hit
   flash 0.2 s, throw puff 0.25 s, elimination burst 0.6 s, round-start / round-end / match-end
-  banners 1 / 1.5 / 3 s; at most 64 live effects, the one nearest expiry is replaced when full.
+  banners 1 / 1.5 / 3 s; at most 64 live effects (128 since v0.19, "Effects" below), the one nearest expiry is replaced when full.
   Screen shake adds 0.12 per hit, 0.3 per elimination, 0.08 per perfect catch, capped at 0.5,
   decays with τ = 0.15 s and oscillates at 23 Hz.
 - Palette (slot order): red, blue, yellow, green, orange, purple, cyan, pink, white, charcoal;
@@ -1099,6 +1108,79 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   rendering is verified from screenshots without a human; it is the second xvfb smoke test on
   Linux CI and builds for the browser too.
 
+Effects (v0.19, M4; `event_fx.{hpp,cpp}`, constants in `tuning.hpp`). Every effect lives in the
+`PresentationState` effect list (at most 128, the one nearest expiry replaced when full), is
+copied into `RenderState::effects` with its remaining and total seconds, and is drawn by
+`kfm_renderer` from the disc mesh as ground decals or camera-facing billboards (alpha or
+additive); no shader changed. Event-driven (`applyEventFx`, one call per new `SimEvent`):
+
+| Event | Effects | Sound |
+|---|---|---|
+| `PlayerDashed` | DashRing 0.25 s, DashAnticipation 0.12 s (a ring collapsing onto the dasher and a flash ahead along the dash, §12) | DashSwish |
+| `BoomerangThrown` | ThrowPuff 0.25 s | ThrowWhoosh |
+| `BoomerangCaught` Perfect | PerfectCatchFlash 0.4 s, PerfectCatchBurst 0.45 s (8 gold sparks), flash, shake | CatchPerfect (two-note chime) |
+| `BoomerangCaught` Auto | AutoCatchFlash 0.2 s, flash | CatchAuto (tick) |
+| `PlayerHit`, `PlayerDashHit` | HitFlash 0.2 s, HitSpark 0.25 s (6 sparks in a cone away from the banana or attacker), flash, shake | Hit (thud) |
+| `PlayerEliminated` | EliminationBurst 0.6 s, EliminationPoof 0.7 s (5 smoke puffs), shake | Elimination |
+| `PickupTaken` | PickupSparkle 0.35 s at the pickup | Pickup |
+| `BoomerangGrounded` | GroundDust 0.35 s where it landed | BananaGround |
+| `BoomerangBounced` | BounceSpark 0.15 s | WallBounce |
+| `RoundStarted`, `RoundEnded`, `MatchEnded` | banners 1 / 1.5 / 3 s; the HUD text pops in at 1.35× and settles over the first quarter (`bannerScale`) | — , RoundEnd, MatchEnd |
+
+Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
+(0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
+30 ms; the count-in sound plays on entering `RoundStarting` and at every whole second the
+countdown crosses, RoundGo on `RoundStarting` → `Playing`. Entity positions for events come from
+`curr`, else `prev` (despawned this tick), else the entity's presentation track. Player colours
+come from `palette.hpp`. Bursts cost one draw call per spark; a busy 10-player frame measured
+72–90 draw calls.
+
+Rollback rule: effects and sounds are started only from the event stream the builder is given,
+each event once: locally the per-tick sink, online `EventJournal::drain()` (§5.9). A
+re-simulation therefore never re-triggers an effect or a sound, an event retracted before it was
+drained spawns neither, and one already played stays played (it is counted as retracted).
+State-sampled trails follow whatever timeline is drawn.
+
+Audio (v0.19, M4). Everything SDL-free is in `presentation` and headless-tested; only the device
+is in `platform`.
+- `SoundBank` (`sound_bank.hpp`): 14 clips (`SoundId`: throw, dash, perfect and auto catch, hit,
+  elimination, pickup, banana landing, wall bounce, count-in, go, round end, match end, UI click)
+  synthesised once at startup from sines, inharmonic bell partials, state-variable-filtered
+  xorshift noise and envelopes, mono float at 48 kHz, each normalised to a 0.8 peak with 1 ms /
+  4 ms end fades, deterministic (fixed noise seeds), about 4.6 s of audio in total. No audio
+  asset ships and the browser download does not grow. Each clip has a mix gain.
+- `Mixer` (`mixer.hpp`): 16 voices; `play(id, gain, pan)` takes a free voice or steals the
+  oldest; gain = cue × clip × master volume; constant-power pan; muted or volume 0 mixes silence
+  while voices keep advancing (unmuting never replays stale sounds); the sum is hard-limited to
+  [−1, 1]; `mixInto(float* interleaved, frames)` is the pull API. No allocation after
+  construction.
+- Cues: the builder writes the frame's `SoundCue`s into `RenderState::sounds` (at most 32) from
+  the table above. Positioned sounds pan by world x: 0.6 × x / arena half width. The same sound
+  twice in one frame merges into one cue, +25 % gain per repeat up to 1.75× (identical clips
+  started on the same sample only double in amplitude).
+- `platform::AudioDevice`: the default playback device as an `SDL_AudioStream`, float32 stereo
+  at 48 kHz (SDL converts to the device), opened lazily with `SDL_InitSubSystem(SDL_INIT_AUDIO)`
+  and attempted once. No driver, no device or any failure leaves it closed and the client silent,
+  never an error: CI, xvfb and `--exit-after-frames` runs print one `kfm_client: silent: ...`
+  line. There is no audio callback: every frame, on the main thread, `pump()` tops the stream's
+  queue up to 50 ms by calling `Mixer::mixInto`, so the client stays single-threaded (SDL's
+  device thread natively, or the Web Audio callback in the browser, only drains the queue). The
+  queue length is the sound latency and the stall a frame survives without a gap; underruns are
+  counted.
+- Browser gesture rule (§13): an `AudioContext` may only start after a user gesture, so the
+  browser client opens the device on the first key, mouse button, touch or pad button, and SDL3
+  resumes its context once `navigator.userActivation.hasBeenActive`. Natively the device opens on
+  the first frame with sound enabled.
+- `kfm_client --mute` and `--volume 0..100` (default 80; `?mute&volume=50` in the browser) set
+  the mixer; the F1 overlay's Audio panel (local and online) toggles mute, sets the volume, plays
+  a test click and shows the device status, voices, steals and underruns. The client glue is
+  `apps/client/client_audio.{hpp,cpp}` (`ClientAudio`: `init`, `frame`, `onUserGesture`,
+  `click`, `setMuted`, `setVolumePercent`), which the lobby UI uses for its own controls and
+  clicks.
+- Not yet: music, distance attenuation, per-player local-vs-remote mixing and saving the settings
+  between runs (they live in `ClientOptions` for the run); no event exists yet for power-ups (M4
+  power-ups add theirs to the table).
+
 Character drawing sits behind one interface in `presentation` so that nothing else knows
 whether a character is a skinned mesh or a quad. The earlier plan, pre-rendered 8-direction
 sprites from the same Blender models, remains the fallback if the 3D renderer stalls M2: the
@@ -1148,6 +1230,17 @@ art is identical up to the export step, and nothing below the presentation layer
   `webglContextAttributes` (`desynchronized`, `powerPreference`, no antialias) and, because SDL3
   creates its context through `emscripten_webgl_create_context` which ignores that setting,
   also wraps `getContext('webgl2')` to merge the same attributes.
+- Audio and VFX tests (v0.19): `kfm_presentation_tests` checks every event's effects and cue,
+  effect lifetimes and expiry, dash and banana trails, entity positions of pickup and landing
+  effects, the count-in/go sequence, same-frame cue merging and pan, banner pop-in, and over a
+  scripted 10-player match that every new effect kind and sound appears with pans and gains in
+  range; the synthesiser (every clip's length, finite, normalised under the peak, faded ends,
+  deterministic, sample-rate aware) and the mixer (gain × clip gain × volume, constant-power
+  pan, voices ending, silence when muted or at volume 0, stealing the oldest voice, the
+  [−1, 1] limiter, no bank). `kfm_client_tests` checks that an event a rollback retracted
+  before it was drained spawns no effect or sound and that a re-simulated duplicate plays once,
+  through the real `EventJournal`, plus the `--mute`/`--volume` flags. `client_smoke` and
+  `--exit-after-frames --screenshot` run unchanged without an audio device.
 - Feel-tuning instrumentation (v0.15): `kfm_replay stats` (and `record-scripted --stats`) runs
   scripted matches and reports round lengths, throws, hits, dashes, perfect and auto catches,
   catch attempts and their conversion, `tHit − pressTime` for every attempt, throw-to-outcome
@@ -1253,8 +1346,8 @@ Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `se
 M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
 x11`, or FetchContent `release-3.4.18` built static with the same optional subsystems switched
 off as the port, so both paths build the same SDL; SDL 3.4 aborts configuration on Linux when an
-enabled optional dependency is missing, and neither path has Linux audio until the `alsa`
-feature is added); Dear ImGui 1.93.0 (FetchContent only: the vcpkg `imgui[sdl3-binding]` port
+enabled optional dependency is missing; v0.19 adds the `alsa` feature for Linux audio, below);
+Dear ImGui 1.93.0 (FetchContent only: the vcpkg `imgui[sdl3-binding]` port
 re-enables sdl3's default `ibus`/`dbus` features and drags in libsystemd and meson); sokol
 pinned to floooh/sokol `efeb776` (FetchContent only, the vcpkg port is a 2023 snapshot); glad2
 2.0.8 vendored; cgltf 1.15 (vcpkg or FetchContent). FetchContent uses release tarballs with
@@ -1277,6 +1370,13 @@ On Windows the vcpkg dependencies are linked statically (triplet `x64-windows-st
 the top-level `CMakeLists.txt` unless a triplet is given): the libdatachannel DLL's import library
 exports `std::vector<std::byte>`'s members, which collide with the byte vectors every other
 object file instantiates for itself (LNK2005); the static library has no dllimport side.
+Audio (v0.19) adds no dependency: SDL3's audio subsystem plays everything and the sounds are
+synthesised in code. On Linux SDL3 is now built with ALSA (vcpkg `sdl3[alsa]`; the FetchContent
+build switches `SDL_ALSA` on when pkg-config finds `alsa`, i.e. `libasound2-dev`, and warns and
+builds silent otherwise), dlopened at run time (`SDL_ALSA_SHARED`) so a machine without
+libasound or a sound card just has no device; PipeWire and PulseAudio are reached through their
+ALSA plugins. CI installs `libasound2-dev`. Windows (WASAPI), macOS (CoreAudio) and Emscripten
+(Web Audio) need nothing.
 
 ---
 
@@ -1376,7 +1476,8 @@ baseline moved to C++23 (§9).
 - **Visual noise from predicting 9 remote players.** Mitigate with smoothing, the optional
   1–2 tick input delay, and, if needed, rendering remote players 1–2 ticks behind confirmed.
 - **Catch feel under latency.** Catcher-favouring is inherent; the thrower sees the catch
-  ≈ RTT late. Add anticipation VFX on the dash so the result reads as intentional.
+  ≈ RTT late. Add anticipation VFX on the dash so the result reads as intentional (v0.19: the
+  DashAnticipation ring and flash at the press, §7).
 - **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4. Measured (v0.17): at
   most 4.7 KB uncompressed with every pool full, so LZ4 is deferred until a cap rises (§6.3).
 - **Lobby/matchmaking/NAT** is a service problem, deferred behind the connection-token boundary.
