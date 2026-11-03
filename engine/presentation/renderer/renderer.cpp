@@ -852,6 +852,21 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
         d.groundDisc(e.position, kDecalLift, 0.0f, r * lerp(1.2f, 3.2f, easeOut(t)),
                      r * lerp(1.2f, 3.2f, easeOut(t)), kGold, 0.9f * fade, DecalMode::Ring, 0.85f);
         break;
+      case EffectKind::SlamShockwave: {
+        // A ring racing out to the reach: what it touches is pushed.
+        const float rr = std::max(e.size, r) * lerp(0.3f, 1.0f, easeOut(t));
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.4f) : kWhite;
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.9f * fade, DecalMode::Ring, 0.9f);
+        break;
+      }
+      case EffectKind::ParryGuard: {
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.6f) : kWhite;
+        const float rr = r * lerp(1.0f, 1.8f, easeOut(t));
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.8f * fade, DecalMode::Ring, 0.85f);
+        break;
+      }
       default:
         break;
     }
@@ -951,6 +966,26 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
                               .rise = 0.3f,
                               .spread = 0.0f,
                               .color = mix(kShieldBlue, kWhite, 0.4f),
+                              .alpha = 1.0f,
+                              .mode = DecalMode::Burst});
+        break;
+      case EffectKind::BlinkFlash: {
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.5f) : kWhite;
+        d.billboard(e.position, lerp(1.1f, 0.2f, easeOut(t)), c, 0.9f * fade, DecalMode::Burst,
+                    0.3f);
+        break;
+      }
+      case EffectKind::ParrySpark:
+        d.billboard(e.position, lerp(0.5f, 1.2f, t), kWhite, 0.9f * fade, DecalMode::Burst, 0.2f);
+        drawSparks(d, e,
+                   SparkStyle{.count = kParrySparks,
+                              .reach = 1.3f,
+                              .size = 0.13f,
+                              .shrink = 0.5f,
+                              .rise = 0.2f,
+                              .spread = 1.2f,
+                              .color = mix(kGold, kWhite, 0.6f),
                               .alpha = 1.0f,
                               .mode = DecalMode::Burst});
         break;

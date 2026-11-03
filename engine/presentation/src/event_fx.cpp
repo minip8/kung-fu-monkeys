@@ -20,7 +20,7 @@ using sim::WorldState;
 
 [[nodiscard]] RenderEffect makeEffect(EffectKind kind, int8_t slot, Vec3 pos, float seconds,
                                       Vec2f dir = {}) {
-  return RenderEffect{kind, slot, pos, dir, seconds, seconds};
+  return RenderEffect{kind, slot, pos, dir, seconds, seconds, 0.0f};
 }
 
 void addShake(PresentationState& ps, float amount) {
@@ -99,6 +99,12 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
                                                                         : SoundId::Pickup);
     case EventKind::ShieldBroken:
       return cue(SoundId::ShieldBreak);
+    case EventKind::PlayerBlinked:
+      return cue(SoundId::Blink);
+    case EventKind::SlamLanded:
+      return cue(SoundId::Slam);
+    case EventKind::BoomerangParried:
+      return cue(SoundId::Parry);
     case EventKind::BoomerangGrounded:
       return cue(SoundId::BananaGround);
     case EventKind::BoomerangBounced:
@@ -290,6 +296,51 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
     case EventKind::TimerWarning:
       addEffect(ps, makeEffect(EffectKind::TimerBanner, kNoSlot, Vec3{}, kTimerBannerSeconds));
       break;
+    case EventKind::PlayerBlinked: {
+      // a/b: the origin's raw Q16.16 coordinates; the landing is in curr.
+      const Vec2f from = toFloat(Vec2{Fixed::fromRaw(static_cast<int32_t>(e.a)),
+                                      Fixed::fromRaw(static_cast<int32_t>(e.b))});
+      Vec2f to = player;
+      if (const Player* p = curr.playerBySlot(e.player)) to = toFloat(p->transform.pos);
+      const Vec2f dir = directionOr(to - from, Vec2f{});
+      addEffect(ps,
+                makeEffect(EffectKind::BlinkFlash, slot, bodyAt(from), kBlinkFlashSeconds, dir));
+      addEffect(ps, makeEffect(EffectKind::BlinkFlash, slot, bodyAt(to), kBlinkFlashSeconds, dir));
+      soundAt = to;
+      break;
+    }
+    case EventKind::SlamLanded: {
+      RenderEffect wave =
+          makeEffect(EffectKind::SlamShockwave, slot, groundAt(player), kSlamShockwaveSeconds);
+      wave.size = Fixed::fromRaw(static_cast<int32_t>(e.a)).toFloat();
+      addEffect(ps, wave);
+      addEffect(ps,
+                makeEffect(EffectKind::GroundDust, kNoSlot, groundAt(player), kGroundDustSeconds));
+      addShake(ps, kShakeOnSlam);
+      soundAt = player;
+      break;
+    }
+    case EventKind::PlayerSlammed:
+      // Dust kicked up under the pushed monkey; the slam itself sounds once.
+      addEffect(ps,
+                makeEffect(EffectKind::GroundDust, kNoSlot, groundAt(player), kGroundDustSeconds));
+      flashPlayer(ps, e.player, kHitFlashSeconds);
+      break;
+    case EventKind::PlayerParryStarted:
+      addEffect(ps, makeEffect(EffectKind::ParryGuard, slot, bodyAt(player), kParryGuardSeconds));
+      break;
+    case EventKind::BoomerangParried: {
+      const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity);
+      Vec2f dir{};
+      if (const Boomerang* b = curr.boomerangs.get(e.entity)) dir = toFloat(b->transform.vel);
+      addEffect(ps, makeEffect(EffectKind::ParrySpark, slot,
+                               simToWorld(at.value_or(player), kBananaHandHeight),
+                               kParrySparkSeconds, directionOr(dir, Vec2f{})));
+      flashPlayer(ps, e.player, kParrySparkSeconds);
+      addShake(ps, kShakeOnHit);
+      soundAt = at.value_or(player);
+      break;
+    }
     default:
       break;
   }

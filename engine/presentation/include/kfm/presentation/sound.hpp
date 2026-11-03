@@ -31,6 +31,10 @@ enum class SoundId : uint8_t {
   // v0.20 (power-ups):
   PowerUp,      // a power-up taken: a rising arpeggio (v0.20)
   ShieldBreak,  // a shield absorbed a hit: a glassy crack (v0.20)
+  // v0.21 (abilities):
+  Blink,  // a blink: a rising zap
+  Slam,   // a slam lands: a deep boom with a dusty crack
+  Parry,  // a banana parried: a bright metallic clang
   Count,
 };
 
@@ -76,6 +80,12 @@ inline constexpr uint8_t kSoundCount = static_cast<uint8_t>(SoundId::Count);
       return "power-up";
     case SoundId::ShieldBreak:
       return "shield-break";
+    case SoundId::Blink:
+      return "blink";
+    case SoundId::Slam:
+      return "slam";
+    case SoundId::Parry:
+      return "parry";
     case SoundId::Count:
       break;
   }

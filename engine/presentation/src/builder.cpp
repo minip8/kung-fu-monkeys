@@ -291,7 +291,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
         const Vec2f dir = toFloat(dashSlot(cp).dir);
         addEffect(ps, RenderEffect{EffectKind::DashTrail, static_cast<int8_t>(i),
                                    simToWorld(drawn, height + (kEffectBodyHeight * 0.6f)), dir,
-                                   kDashTrailSeconds, kDashTrailSeconds});
+                                   kDashTrailSeconds, kDashTrailSeconds, 0.0f});
       }
     } else {
       track.trailTimer = 0.0f;  // the next dash leaves an afterimage at once
@@ -356,7 +356,7 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
         trailDue(track.trailTimer, dt, kBananaTrailInterval)) {
       addEffect(ps, RenderEffect{EffectKind::BananaTrail, rb.ownerSlot, rb.position,
                                  Vec2f{std::cos(heading), std::sin(heading)}, kBananaTrailSeconds,
-                                 kBananaTrailSeconds});
+                                 kBananaTrailSeconds, 0.0f});
     }
   }
 }

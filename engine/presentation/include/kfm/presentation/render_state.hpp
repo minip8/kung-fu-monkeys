@@ -147,6 +147,11 @@ enum class EffectKind : uint8_t {
   // v0.20 (power-ups):
   PowerUpBurst,   // ring and sparks where a power-up was taken (slot = taker)
   ShieldShatter,  // a shield absorbed a hit (slot = the shielded player)
+  // v0.21 (abilities):
+  BlinkFlash,     // a burst where a blink left and where it landed (slot colour)
+  SlamShockwave,  // a ring racing out to the slam's reach (size = reach, units)
+  ParryGuard,     // the parry stance flaring up at the press (slot colour)
+  ParrySpark,     // a bright clash where a banana was parried (direction: its new heading)
 };
 
 struct RenderEffect {
@@ -156,6 +161,7 @@ struct RenderEffect {
   Vec2f direction{};      // sim-plane direction where it matters (dash, throw); else zero
   float remaining{0.0f};  // seconds
   float duration{0.0f};   // seconds; progress = 1 - remaining / duration
+  float size{0.0f};       // world size where it matters (SlamShockwave: the reach); else 0
 
   [[nodiscard]] constexpr float progress() const {
     return duration > 0.0f ? clamp01(1.0f - (remaining / duration)) : 1.0f;

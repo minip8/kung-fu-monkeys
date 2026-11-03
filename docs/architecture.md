@@ -1647,6 +1647,11 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
 | `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer) | Score (coin blip) |
 | `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
+| `PlayerBlinked` (v0.21) | BlinkFlash 0.3 s at the origin (from the payload) and at the landing, in the slot colour; the jump exceeds `kSnapDistance`, so the body snaps | Blink (rising zap) |
+| `SlamLanded` (v0.21) | SlamShockwave 0.45 s (a ring racing out to the reach, carried in `RenderEffect::size`), GroundDust, shake | Slam (deep boom) |
+| `PlayerSlammed` (v0.21) | GroundDust under the pushed monkey, flash | — (the slam sounds once) |
+| `PlayerParryStarted` (v0.21) | ParryGuard 0.2 s (a pale ring flaring at the parrier) | — |
+| `BoomerangParried` (v0.21) | ParrySpark 0.35 s (a white flash and 8 sparks at the banana), flash, shake | Parry (metallic clang) |
 
 Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
 (0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every

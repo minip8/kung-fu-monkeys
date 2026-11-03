@@ -922,3 +922,69 @@ TEST_CASE("arena walls and hazards become world-space pieces", "[presentation][b
   // x = -2 to 16 (18), +y edge (22), -x edge (2); its +x edge is the wall.
   CHECK(rimLength == Approx(4.0f + 4.0f + 4.0f + 18.0f + 22.0f + 2.0f));
 }
+
+TEST_CASE("ability events (v0.21): blink, slam and parry effects and sounds",
+          "[presentation][builder][audio]") {
+  using enum EventKind;
+  const auto id = [](EventKind k) {
+    return soundForEvent(SimEvent{k, Tick{0}, kP0, EntityId{}, 0, 0})
+        .value_or(SoundCue{SoundId::Count, 0.0f, 0.0f})
+        .id;
+  };
+  CHECK(id(PlayerBlinked) == SoundId::Blink);
+  CHECK(id(SlamLanded) == SoundId::Slam);
+  CHECK(id(BoomerangParried) == SoundId::Parry);
+  CHECK(id(PlayerSlammed) == SoundId::Count);       // the slam sounds once
+  CHECK(id(PlayerParryStarted) == SoundId::Count);  // the stance is silent
+
+  WorldState s = makePlayingWorld(27, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  const EntityId banana = spawnBanana(s, kP0, Vec2{Fixed::fromInt(2), Fixed::zero()},
+                                      Vec2{Fixed::one(), Fixed::zero()});
+  PresentationState ps;
+  const WorldState prev = s;
+  WorldState curr = s;
+  // P0 blinked from (-8, 0) to (-3, 0).
+  const Fixed fromX = Fixed::fromInt(-8);
+  const std::vector<SimEvent> events = {
+      SimEvent{PlayerBlinked, curr.tick, kP0, EntityId{}, static_cast<uint32_t>(fromX.raw), 0},
+      SimEvent{SlamLanded, curr.tick, kP1, EntityId{}, static_cast<uint32_t>(Fixed::fromInt(3).raw),
+               0},
+      SimEvent{PlayerSlammed, curr.tick, kP0, EntityId{}, 1, 0},
+      SimEvent{PlayerParryStarted, curr.tick, kP0, EntityId{}, 0, 0},
+      SimEvent{BoomerangParried, curr.tick, kP0, banana, 1, 0},
+  };
+  build(ps, prev, prev, 1.0f);
+  const RenderState rs = build(ps, prev, curr, 1.0f, events);
+  REQUIRE(countEffects(rs, EffectKind::BlinkFlash) == 2);
+  REQUIRE(countEffects(rs, EffectKind::SlamShockwave) == 1);
+  CHECK(countEffects(rs, EffectKind::ParryGuard) == 1);
+  CHECK(countEffects(rs, EffectKind::ParrySpark) == 1);
+  float blinkXs = 0.0f;
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& e = rs.effects[i];
+    if (e.kind == EffectKind::BlinkFlash) {
+      CHECK(e.slot == 0);
+      blinkXs += worldToSim(e.position).x;
+    }
+    if (e.kind == EffectKind::SlamShockwave) {
+      CHECK(e.slot == 1);
+      CHECK(e.size == Approx(3.0f));
+      CHECK(worldToSim(e.position).x == Approx(3.0f));
+    }
+    if (e.kind == EffectKind::ParrySpark) CHECK(worldToSim(e.position).x == Approx(2.0f));
+  }
+  CHECK(blinkXs == Approx(-11.0f));  // both ends: -8 and -3
+  int blink = 0;
+  int slam = 0;
+  int parry = 0;
+  for (uint16_t i = 0; i < rs.soundCount; ++i) {
+    if (rs.sounds[i].id == SoundId::Blink) ++blink;
+    if (rs.sounds[i].id == SoundId::Slam) ++slam;
+    if (rs.sounds[i].id == SoundId::Parry) ++parry;
+  }
+  CHECK(blink == 1);
+  CHECK(slam == 1);
+  CHECK(parry == 1);
+}
