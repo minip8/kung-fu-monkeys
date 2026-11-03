@@ -48,12 +48,17 @@ struct Stats {
   uint64_t autoCatches{0};
 
   // Catch attempts: dashes whose PerfectDash window met a banana the catch
-  // rows accept (rows 10/11 were consulted for at least one contact).
+  // rows accept (rows 10/11 were consulted for at least one contact) while
+  // the dasher had room below ammoMax.
   uint64_t attemptDashes{0};
   uint64_t convertedDashes{0};
-  uint64_t consultedContacts{0};
-  uint64_t declinedContacts{0};        // consulted, outside [0, window): fell through
-  std::vector<double> consultedDelta;  // tHit - pressTime (ticks) of consulted contacts
+  uint64_t consultedContacts{0};       // rows 10/11 consulted, below ammoMax
+  uint64_t declinedContacts{0};        // ... outside [0, window): fell through
+  std::vector<double> consultedDelta;  // tHit - pressTime (ticks) of those contacts
+  // Rows 10/11 consulted with the dasher at ammoMax: the catch declines
+  // (v0.16) and the contact falls through to damage or auto catch.
+  uint64_t fullAmmoDeclined{0};
+  uint64_t fullAmmoDeclinedInWindow{0};  // ... that would have been caught before v0.16
 
   // Danger contacts: a non-own banana in flight touching a live player.
   uint64_t dangerContacts{0};
@@ -73,7 +78,7 @@ struct Stats {
   std::vector<double> emptySpellSeconds;  // completed spells (ammo came back)
   uint64_t emptySpellsCensored{0};        // ended by elimination or round end
 
-  // §12: a perfect catch at full ammo destroys the banana.
+  // §12: perfect catches by ammo before the catch (v0.16: never at full ammo).
   uint64_t perfectAtFullAmmo{0};
   uint64_t perfectBelowFullAmmo{0};
   uint64_t autoAtFullAmmo{0};

@@ -189,6 +189,8 @@ void Stats::merge(const Stats& o) {
   convertedDashes += o.convertedDashes;
   consultedContacts += o.consultedContacts;
   declinedContacts += o.declinedContacts;
+  fullAmmoDeclined += o.fullAmmoDeclined;
+  fullAmmoDeclinedInWindow += o.fullAmmoDeclinedInWindow;
   append(consultedDelta, o.consultedDelta);
   dangerContacts += o.dangerContacts;
   dangerContactsRecentDash += o.dangerContactsRecentDash;
@@ -236,11 +238,17 @@ void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
   // Rows 10 and 11 of the rules table (rules/table.cpp).
   const bool catchable = !own || b->phase == BoomerangPhase::Returning;
   if (catchable && p->tags.has(Tag::PerfectDash)) {
-    ++stats_.consultedContacts;
-    stats_.consultedDelta.push_back(delta);
     const uint16_t window = content.abilityAt(dash.defIndex).perfectWindowTicks;
-    if (delta < 0.0 || delta >= static_cast<double>(window)) ++stats_.declinedContacts;
-    attempted_.emplace(static_cast<uint8_t>(p->id.value), dash.activatedTick.value);
+    const bool inWindow = delta >= 0.0 && delta < static_cast<double>(window);
+    if (p->ammo >= p->stats.ammoMax) {  // the catch declines first on ammo (rules/catch.cpp)
+      ++stats_.fullAmmoDeclined;
+      if (inWindow) ++stats_.fullAmmoDeclinedInWindow;
+    } else {
+      ++stats_.consultedContacts;
+      stats_.consultedDelta.push_back(delta);
+      if (!inWindow) ++stats_.declinedContacts;
+      attempted_.emplace(static_cast<uint8_t>(p->id.value), dash.activatedTick.value);
+    }
   }
   if (!own) {
     ++stats_.dangerContacts;
@@ -521,11 +529,15 @@ void printSummary(const Stats& st, uint32_t players) {
   std::printf("hit rate: %.1f%% of throws hit a player\n", 100.0 * ratio(st.hits, st.throws));
 
   std::printf(
-      "catch attempts (dashes whose window met a catchable banana): %llu, converted "
-      "%llu (%.1f%%); consulted contacts %llu, declined at the sub-tick edge %llu\n",
+      "catch attempts (dashes below ammoMax whose window met a catchable banana): %llu, "
+      "converted %llu (%.1f%%); consulted contacts %llu, declined at the sub-tick edge %llu\n",
       u(st.attemptDashes), u(st.convertedDashes),
       100.0 * ratio(st.convertedDashes, st.attemptDashes), u(st.consultedContacts),
       u(st.declinedContacts));
+  std::printf(
+      "catch declined at full ammo (v0.16): %llu contacts, %llu of them inside the perfect "
+      "window\n",
+      u(st.fullAmmoDeclined), u(st.fullAmmoDeclinedInWindow));
   std::printf(
       "danger contacts (non-own banana in flight touches a live player): %llu, %llu "
       "(%.1f%%) within a dash's cooldown\n",
@@ -548,7 +560,7 @@ void printSummary(const Stats& st, uint32_t players) {
               u(st.emptySpellsCensored));
 
   std::printf(
-      "perfect catch at full ammo (banana destroyed): %llu of %llu perfect catches "
+      "perfect catch at full ammo (0 since v0.16): %llu of %llu perfect catches "
       "(%.1f%%); auto catches at full ammo %llu\n",
       u(st.perfectAtFullAmmo), u(st.perfectCatches),
       100.0 * ratio(st.perfectAtFullAmmo, st.perfectCatches), u(st.autoAtFullAmmo));
