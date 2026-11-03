@@ -8,10 +8,12 @@
 // Yaws are radians about world +y in the sim's angle convention: rotateY(yaw)
 // turns a model's +x (forward) onto the heading. A renderer iterates
 // players[0..playerCount), bananas[0..bananaCount), pickups[0..pickupCount),
-// shadows[0..shadowCount) and effects[0..effectCount), and reads hud.
+// shadows[0..shadowCount) and effects[0..effectCount), and reads hud; the
+// app plays sounds[0..soundCount) (the cues started this frame).
 #pragma once
 
 #include "kfm/presentation/math.hpp"
+#include "kfm/presentation/sound.hpp"
 #include "kfm/sim/constants.hpp"
 
 #include <array>
@@ -24,7 +26,8 @@ inline constexpr uint16_t kMaxRenderBananas = sim::kMaxBoomerangs;
 inline constexpr uint16_t kMaxRenderPickups = sim::kMaxPickups;
 inline constexpr uint16_t kMaxRenderShadows =
     kMaxRenderPlayers + kMaxRenderBananas + kMaxRenderPickups;
-inline constexpr uint16_t kMaxRenderEffects = 64;
+inline constexpr uint16_t kMaxRenderEffects = 128;
+inline constexpr uint16_t kMaxRenderSounds = 32;
 
 inline constexpr int8_t kNoSlot = -1;
 
@@ -107,6 +110,16 @@ enum class EffectKind : uint8_t {
   RoundStartBanner,  // HUD: "Round N"
   RoundEndBanner,    // HUD: winner of the round (slot) or a draw (kNoSlot)
   MatchEndBanner,    // HUD: match winner (slot)
+  // v0.19 (M4 audio/VFX):
+  DashAnticipation,   // ring collapsing onto the dasher + flash ahead (direction)
+  DashTrail,          // afterimage of a dashing player (sampled while Dashing)
+  BananaTrail,        // short trail behind a flying banana (slot = owner)
+  PerfectCatchBurst,  // gold sparks radiating from a dash-catch
+  HitSpark,           // sparks at the victim (direction: away from the attacker, if known)
+  EliminationPoof,    // grey smoke puffs drifting up
+  PickupSparkle,      // twinkles where a pickup was taken
+  GroundDust,         // dust where a banana landed
+  BounceSpark,        // a banana bounced off a wall
 };
 
 struct RenderEffect {
@@ -157,6 +170,9 @@ struct RenderState {
   float bananaRadius{0.0f};
   float time{0.0f};  // seconds of presentation time (accumulated dt)
   RenderHud hud{};
+  // Sounds started this frame (event_fx.hpp); same-id cues are merged.
+  std::array<SoundCue, kMaxRenderSounds> sounds{};
+  uint16_t soundCount{0};
 };
 
 }  // namespace kfm::presentation

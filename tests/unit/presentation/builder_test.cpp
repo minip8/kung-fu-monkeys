@@ -6,6 +6,7 @@
 
 #include "../sim/sim_test_util.hpp"
 #include "kfm/core/rng.hpp"
+#include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/world_basis.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
 
@@ -321,13 +322,20 @@ TEST_CASE("events start effects whose timers count down", "[presentation][builde
       SimEvent{EventKind::BoomerangGrounded, s.tick, PlayerId::invalid(), EntityId{}, 0, 0},
   };
   RenderState rs = build(ps, s, s, 1.0f, events);
-  CHECK(rs.effectCount == 6);  // BoomerangGrounded has no effect
+  // BoomerangGrounded of an unknown banana has no position: a sound, no dust.
+  CHECK(rs.effectCount == 10);
   CHECK(countEffects(rs, EffectKind::DashRing) == 1);
+  CHECK(countEffects(rs, EffectKind::DashAnticipation) == 1);
   CHECK(countEffects(rs, EffectKind::PerfectCatchFlash) == 1);
+  CHECK(countEffects(rs, EffectKind::PerfectCatchBurst) == 1);
   CHECK(countEffects(rs, EffectKind::HitFlash) == 1);
+  CHECK(countEffects(rs, EffectKind::HitSpark) == 1);
   CHECK(countEffects(rs, EffectKind::ThrowPuff) == 1);
   CHECK(countEffects(rs, EffectKind::EliminationBurst) == 1);
+  CHECK(countEffects(rs, EffectKind::EliminationPoof) == 1);
   CHECK(countEffects(rs, EffectKind::RoundEndBanner) == 1);
+  CHECK(countEffects(rs, EffectKind::GroundDust) == 0);
+  CHECK(rs.soundCount == 7);
   for (uint16_t i = 0; i < rs.effectCount; ++i) {
     const RenderEffect& e = rs.effects[i];
     CHECK(e.remaining == e.duration);
@@ -349,13 +357,16 @@ TEST_CASE("events start effects whose timers count down", "[presentation][builde
 
   // Timers count down with dt; shorter effects expire first.
   rs = build(ps, s, s, 1.0f, {}, 0.21f);
+  CHECK(countEffects(rs, EffectKind::DashAnticipation) == 0);   // 0.12 s
   CHECK(countEffects(rs, EffectKind::HitFlash) == 0);           // 0.2 s
   CHECK(countEffects(rs, EffectKind::DashRing) == 1);           // 0.25 s
+  CHECK(countEffects(rs, EffectKind::HitSpark) == 1);           // 0.25 s
   CHECK(countEffects(rs, EffectKind::PerfectCatchFlash) == 1);  // 0.4 s
   for (uint16_t i = 0; i < rs.effectCount; ++i) {
     CHECK(rs.effects[i].remaining == Approx(rs.effects[i].duration - 0.21f));
     CHECK(rs.effects[i].progress() > 0.0f);
   }
+  CHECK(rs.soundCount == 0);  // sounds are cued once, on the event's frame
   CHECK(rs.shakeAmplitude < kShakeOnElimination);
   CHECK(playerIn(rs, 1).flash < 1.0f);
   rs = build(ps, s, s, 1.0f, {}, 2.0f);
@@ -376,8 +387,9 @@ TEST_CASE("a dash hit flashes like a banana hit", "[presentation][builder]") {
   };
   const RenderState banana = effectsOf(EventKind::PlayerHit);
   const RenderState dash = effectsOf(EventKind::PlayerDashHit);
-  REQUIRE(dash.effectCount == 1);
+  REQUIRE(dash.effectCount == 2);
   CHECK(countEffects(dash, EffectKind::HitFlash) == 1);
+  CHECK(countEffects(dash, EffectKind::HitSpark) == 1);
   CHECK(dash.effects[0].slot == 1);
   CHECK(dash.effects[0].duration == banana.effects[0].duration);
   CHECK(dash.effects[0].position.x == banana.effects[0].position.x);
@@ -453,6 +465,7 @@ TEST_CASE("a scripted 10-player match renders consistently every frame",
   Rng inputs = Rng::seeded(0x5C121D);
   EventSink sink;
   std::set<EffectKind> seen;
+  std::set<SoundId> heard;
   const float hx = content.arena.halfExtents.x.toFloat();
   const float hy = content.arena.halfExtents.y.toFloat();
   for (int k = 0; k < 2400; ++k) {
@@ -490,12 +503,192 @@ TEST_CASE("a scripted 10-player match renders consistently every frame",
         seen.insert(rs->effects[i].kind);
         CHECK(rs->effects[i].remaining > 0.0f);
       }
+      for (uint16_t i = 0; i < rs->soundCount; ++i) {
+        const SoundCue& c = rs->sounds[i];
+        heard.insert(c.id);
+        CHECK(std::fabs(c.pan) <= kPanWidth + 1e-6f);
+        CHECK(c.gain > 0.0f);
+        CHECK(c.gain <= kSoundStackMax);
+      }
       CHECK(rs->shakeAmplitude <= kShakeMax);
     }
+  }
+  for (const EffectKind k :
+       {EffectKind::DashAnticipation, EffectKind::DashTrail, EffectKind::BananaTrail,
+        EffectKind::HitSpark, EffectKind::EliminationPoof, EffectKind::GroundDust,
+        EffectKind::PickupSparkle}) {
+    CHECK(seen.contains(k));
+  }
+  for (const SoundId id : {SoundId::ThrowWhoosh, SoundId::DashSwish, SoundId::Hit,
+                           SoundId::Elimination, SoundId::BananaGround, SoundId::Pickup,
+                           SoundId::CountIn, SoundId::RoundGo, SoundId::RoundEnd}) {
+    CHECK(heard.contains(id));
   }
   CHECK(seen.contains(EffectKind::DashRing));
   CHECK(seen.contains(EffectKind::ThrowPuff));
   CHECK(seen.contains(EffectKind::EliminationBurst));
   CHECK(seen.contains(EffectKind::RoundStartBanner));
   CHECK(seen.contains(EffectKind::RoundEndBanner));
+}
+
+TEST_CASE("dashing players and flying bananas leave trails", "[presentation][builder][vfx]") {
+  WorldState s = makePlayingWorld(21, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  PresentationState ps;
+  WorldState prev = s;
+  RenderState rs = build(ps, prev, s, 1.0f);
+  CHECK(countEffects(rs, EffectKind::DashTrail) == 0);
+
+  // Dash: the press frame has the anticipation, the active ticks leave
+  // afterimages roughly every kDashTrailInterval.
+  PlayerInput dash{};
+  dash.buttons = kDashBit;
+  prev = s;
+  EventLog log = stepWith(s, dash);
+  rs = build(ps, prev, s, 1.0f, log);
+  CHECK(countEffects(rs, EffectKind::DashAnticipation) == 1);
+  CHECK(countEffects(rs, EffectKind::DashTrail) == 1);
+  int trails = 0;
+  for (int k = 0; k < 10; ++k) {
+    prev = s;
+    log = stepWith(s, PlayerInput{});
+    rs = build(ps, prev, s, 1.0f, log);
+    trails = std::max(trails, countEffects(rs, EffectKind::DashTrail));
+  }
+  CHECK(trails >= 5);
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    if (rs.effects[i].kind == EffectKind::DashTrail) CHECK(rs.effects[i].slot == 0);
+  }
+  // After the dash every afterimage fades out and no new one starts.
+  for (int k = 0; k < 30; ++k) {
+    prev = s;
+    log = stepWith(s, PlayerInput{});
+    rs = build(ps, prev, s, 1.0f, log);
+  }
+  CHECK(countEffects(rs, EffectKind::DashTrail) == 0);
+
+  // Throw (a fresh round, the dash may have hit player 1): the banana leaves
+  // a trail tinted by its owner while it flies.
+  s = makePlayingWorld(21, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::fromInt(4)});
+  ps = PresentationState{};
+  PlayerInput thr{};
+  thr.buttons = kThrowBit;
+  bool sawTrail = false;
+  for (int k = 0; k < 20; ++k) {
+    prev = s;
+    log = stepWith(s, k == 0 ? thr : PlayerInput{});
+    rs = build(ps, prev, s, 1.0f, log);
+    for (uint16_t i = 0; i < rs.effectCount; ++i) {
+      if (rs.effects[i].kind != EffectKind::BananaTrail) continue;
+      sawTrail = true;
+      CHECK(rs.effects[i].slot == 0);
+      CHECK(rs.effects[i].position.y >= kBananaHandHeight);
+    }
+  }
+  CHECK(sawTrail);
+}
+
+TEST_CASE("pickup, landing and bounce effects sit at the entity", "[presentation][builder][vfx]") {
+  WorldState s = makePlayingWorld(22, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  const EntityId pickup = s.pickups.spawn();
+  REQUIRE(pickup.isValid());
+  s.pickups.items[pickup.index].pos = Vec2{Fixed::fromInt(2), Fixed::fromInt(1)};
+  PresentationState ps;
+  const WorldState prev = s;
+  WorldState curr = s;
+  curr.pickups.despawn(pickup);  // taken this tick: only prev has it
+  const std::vector<SimEvent> events = {
+      SimEvent{EventKind::PickupTaken, curr.tick, kP1, pickup, 0, 0},
+  };
+  build(ps, prev, prev, 1.0f);
+  const RenderState rs = build(ps, prev, curr, 1.0f, events);
+  REQUIRE(countEffects(rs, EffectKind::PickupSparkle) == 1);
+  const RenderEffect& e = rs.effects[0];
+  CHECK(worldToSim(e.position).x == Approx(2.0f));
+  CHECK(worldToSim(e.position).y == Approx(1.0f));
+  CHECK(e.slot == 1);
+  REQUIRE(rs.soundCount == 1);
+  CHECK(rs.sounds[0].id == SoundId::Pickup);
+  CHECK(rs.sounds[0].pan == Approx(soundPan(2.0f, defaultContent().arena.halfExtents.x.toFloat())));
+  CHECK(rs.sounds[0].pan > 0.0f);
+}
+
+TEST_CASE("sound cues: table, pan and same-frame merging", "[presentation][builder][audio]") {
+  using enum EventKind;
+  const auto id = [](EventKind k, uint32_t a = 0) {
+    // SoundId::Count stands for "no sound".
+    return soundForEvent(SimEvent{k, Tick{0}, kP0, EntityId{}, a, 0})
+        .value_or(SoundCue{SoundId::Count, 0.0f, 0.0f})
+        .id;
+  };
+  CHECK(id(PlayerDashed) == SoundId::DashSwish);
+  CHECK(id(BoomerangThrown) == SoundId::ThrowWhoosh);
+  CHECK(id(BoomerangCaught, static_cast<uint32_t>(CatchHow::Perfect)) == SoundId::CatchPerfect);
+  CHECK(id(BoomerangCaught, static_cast<uint32_t>(CatchHow::Auto)) == SoundId::CatchAuto);
+  CHECK(id(PlayerHit) == SoundId::Hit);
+  CHECK(id(PlayerDashHit) == SoundId::Hit);
+  CHECK(id(PlayerEliminated) == SoundId::Elimination);
+  CHECK(id(PickupTaken) == SoundId::Pickup);
+  CHECK(id(BoomerangGrounded) == SoundId::BananaGround);
+  CHECK(id(BoomerangBounced) == SoundId::WallBounce);
+  CHECK(id(RoundEnded) == SoundId::RoundEnd);
+  CHECK(id(MatchEnded) == SoundId::MatchEnd);
+  CHECK(id(PlayerSpawned) == SoundId::Count);
+  CHECK(id(PickupSpawned) == SoundId::Count);
+
+  CHECK(soundPan(0.0f, 10.0f) == 0.0f);
+  CHECK(soundPan(-10.0f, 10.0f) == Approx(-kPanWidth));
+  CHECK(soundPan(50.0f, 10.0f) == Approx(kPanWidth));
+
+  // Ten throws in one frame play one louder whoosh, never more than the cap.
+  WorldState s = makePlayingWorld(23, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  PresentationState ps;
+  build(ps, s, s, 1.0f);
+  const std::vector<SimEvent> events(10, SimEvent{BoomerangThrown, s.tick, kP0, EntityId{}, 0, 0});
+  const RenderState rs = build(ps, s, s, 1.0f, events);
+  REQUIRE(rs.soundCount == 1);
+  CHECK(rs.sounds[0].id == SoundId::ThrowWhoosh);
+  CHECK(rs.sounds[0].gain == Approx(kSoundStackMax));
+  CHECK(rs.sounds[0].pan < 0.0f);
+}
+
+TEST_CASE("count-in follows the round-start countdown, then go", "[presentation][builder][audio]") {
+  const ContentDB& content = defaultContent();
+  WorldState s = initialWorld(MatchConfig{24, 0b11});
+  PresentationState ps;
+  RenderState rs = build(ps, s, s, 1.0f);  // lobby: nothing
+  CHECK(rs.soundCount == 0);
+  std::vector<SoundId> heard;
+  for (int k = 0; k < content.mode.roundStartTicks + 5; ++k) {
+    const WorldState prev = s;
+    const EventLog log = stepWith(s, PlayerInput{});
+    rs = build(ps, prev, s, 1.0f, log);
+    for (uint16_t i = 0; i < rs.soundCount; ++i)
+      heard.push_back(rs.sounds[i].id);
+  }
+  // One count-in per whole second of countdown, then go.
+  const auto whole = static_cast<std::size_t>((content.mode.roundStartTicks + 59) / 60);
+  REQUIRE(heard.size() == whole + 1);
+  for (std::size_t i = 0; i < whole; ++i)
+    CHECK(heard[i] == SoundId::CountIn);
+  CHECK(heard.back() == SoundId::RoundGo);
+}
+
+TEST_CASE("banners pop in and settle", "[presentation][builder][vfx]") {
+  const WorldState s = makePlayingWorld(25, 0b1);
+  PresentationState ps;
+  build(ps, s, s, 1.0f);
+  const std::vector<SimEvent> events = {
+      SimEvent{EventKind::RoundStarted, s.tick, PlayerId::invalid(), EntityId{}, 1, 0}};
+  RenderState rs = build(ps, s, s, 1.0f, events);
+  CHECK(bannerScale(rs, EffectKind::RoundStartBanner) == Approx(1.0f + kBannerPop));
+  CHECK(bannerScale(rs, EffectKind::RoundEndBanner) == 1.0f);
+  rs = build(ps, s, s, 1.0f, {}, kRoundStartBannerSeconds * 0.5f);
+  CHECK(bannerScale(rs, EffectKind::RoundStartBanner) == Approx(1.0f));
 }

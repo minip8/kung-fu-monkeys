@@ -9,8 +9,10 @@
 //   - alpha in [0, 1]: 0 draws prev, 1 draws curr (the browser renders the
 //     newest tick directly with alpha = 1, §6.8);
 //   - newEvents: the SimEvents of every tick stepped since the previous call,
-//     each exactly once (empty on frames that stepped nothing). Effects and
-//     flashes are triggered from them;
+//     each exactly once (empty on frames that stepped nothing). Effects,
+//     flashes and sound cues are triggered from them (event_fx.hpp); trails
+//     are sampled from state; the count-in and "go" sounds follow the HUD
+//     countdown;
 //   - dtSeconds: wall time since the previous call; drives smoothing decay,
 //     the body turn rate and effect timers.
 //
@@ -54,11 +56,13 @@ struct PlayerTrack {
   float bodyTarget{0.0f};
   float flashRemaining{0.0f};
   float flashDuration{0.0f};
+  float trailTimer{0.0f};  // seconds until the next dash afterimage
 };
 
 struct BananaTrack {
   EntityTrack motion{};
   float returnStartDistance{-1.0f};  // owner distance when first seen Returning; < 0 = unset
+  float trailTimer{0.0f};            // seconds until the next trail puff
 };
 
 // Everything presentation remembers between frames. Trivially copyable,
@@ -71,6 +75,11 @@ struct PresentationState {
   uint16_t effectCount{0};
   float shake{0.0f};  // amplitude, world units
   float time{0.0f};   // accumulated dtSeconds
+  // The HUD phase and whole countdown second of the previous build, for the
+  // count-in and "go" sounds (hudSeen: false until the first build).
+  HudPhase lastHudPhase{HudPhase::Lobby};
+  int lastCountdownWhole{0};
+  bool hudSeen{false};
 };
 
 void buildRenderState(PresentationState& ps, const sim::WorldState& prev,

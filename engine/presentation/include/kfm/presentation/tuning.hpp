@@ -58,6 +58,47 @@ inline constexpr float kRoundEndBannerSeconds = 1.5f;
 inline constexpr float kMatchEndBannerSeconds = 3.0f;
 inline constexpr float kEffectBodyHeight = 0.8f;     // flashes, puffs, bursts
 inline constexpr float kEffectGroundHeight = 0.02f;  // rings, just above the floor
+// M4 effects (v0.19). Dash anticipation: a ring collapsing onto the dasher
+// and a flash ahead of it, so a dash whose catch resolves late still reads as
+// intentional at the press (§12).
+inline constexpr float kDashAnticipationSeconds = 0.12f;
+// Trails are sampled from state, not events: a dashing player and a flying
+// banana leave one afterimage every interval, each living this long.
+inline constexpr float kDashTrailSeconds = 0.18f;
+inline constexpr float kDashTrailInterval = 0.025f;
+inline constexpr float kBananaTrailSeconds = 0.12f;
+inline constexpr float kBananaTrailInterval = 0.03f;
+inline constexpr float kPerfectCatchBurstSeconds = 0.45f;  // gold sparks, beside the flash
+inline constexpr float kHitSparkSeconds = 0.25f;
+inline constexpr float kEliminationPoofSeconds = 0.7f;  // grey smoke puffs drifting up
+inline constexpr float kPickupSparkleSeconds = 0.35f;
+inline constexpr float kGroundDustSeconds = 0.35f;
+inline constexpr float kBounceSparkSeconds = 0.15f;
+// Spark and puff counts per burst (each is one billboard draw call).
+inline constexpr int kPerfectCatchSparks = 8;
+inline constexpr int kHitSparks = 6;
+inline constexpr int kEliminationPuffs = 5;
+inline constexpr int kPickupTwinkles = 4;
+inline constexpr int kDustPuffs = 4;
+// Banners in the HUD pop in: scale 1 + this at the start, settling to 1 over
+// the first quarter of the banner's life.
+inline constexpr float kBannerPop = 0.35f;
+
+// --- audio (v0.19) -----------------------------------------------------------------
+inline constexpr int kAudioSampleRate = 48000;  // the stream's rate; SDL converts
+inline constexpr int kMixerVoices = 16;
+// The device queue is topped up to this much audio each frame: the sound
+// latency, and the stall a frame can survive without a gap.
+inline constexpr float kAudioQueueSeconds = 0.05f;
+inline constexpr float kDefaultMasterVolume = 0.8f;  // --volume 80
+// Positioned sounds pan by world x over the arena half width, scaled by this
+// (a light pan: nothing fully leaves one ear).
+inline constexpr float kPanWidth = 0.6f;
+// The same sound cued twice in one frame plays once, louder by this per
+// extra cue, up to kSoundStackMax × its gain (identical clips started on the
+// same sample would only double in amplitude and clip).
+inline constexpr float kSoundStackGain = 0.25f;
+inline constexpr float kSoundStackMax = 1.75f;
 
 // --- screen shake ------------------------------------------------------------------
 inline constexpr float kShakeOnHit = 0.12f;  // world units of amplitude added
