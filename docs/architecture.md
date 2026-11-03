@@ -277,9 +277,11 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   second alias of a held action is not an edge; key repeats are ignored.
 - Tap semantics: a button bit is set if the action is held at sampling time or was pressed
   during the tick, so a tap shorter than one tick yields exactly one pressed tick followed by a
-  released one. Every event pushed since the previous sample belongs to the tick being sampled;
-  events are not split across ticks by timestamp (a frame that runs two steps gives all presses
-  to the first).
+  released one. Each tick samples the key and button events stamped inside its wall-clock
+  window: a frame that runs several steps gives each press to the tick whose window contains
+  it (later events stay pending for the next tick of the batch), and the batch's last tick,
+  which ends at the frame's sample time, takes everything still pending. "Held" means held at
+  the end of the tick's window; stick axes are state and are read at sampling time.
 - `subTick = clamp((pressNs − tickStartNs) · 256 / tickDurationNs, 0, 255)` for the latest
   Throw or Dash press edge of the tick; movement keys and releases never stamp; 0 without a
   press edge; late presses clamp to 0 and presses after the tick end to 255.
@@ -652,7 +654,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   at 1×; the time scale, clamped to 0.25–2×, scales the units added per frame); at most 4 ticks
   run per frame (adjustable 1–4) and any further backlog is dropped and counted, never
   simulated late. Inputs for tick i are sampled over the wall-clock window that tick covers,
-  immediately before its `step()`; pausing freezes the accumulator and discards pending presses
+  immediately before its `step()`; the windows of a frame's batch end at the frame's own
+  timestamp (the time up to which events were read) and count back in whole ticks, so the
+  leftover accumulator only sets the render alpha and never pushes a press past its tick's end; pausing freezes the accumulator and discards pending presses
   so nothing fires on resume. Render policy "auto": the newest tick is drawn directly when the
   measured display rate (EMA of frame intervals) is at least 0.95 × `kTickHz` × time scale (the
   tolerance covers 59.94 Hz displays), otherwise frames interpolate with

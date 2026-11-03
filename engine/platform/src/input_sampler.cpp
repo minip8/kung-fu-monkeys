@@ -44,19 +44,21 @@ ActionCodes codesOf(const GamepadProfile& p) {
 }
 
 struct ActionSample {
-  std::array<bool, kActionCount> held{};     // down at sampling time
+  std::array<bool, kActionCount> held{};     // down at the end of the sampled transitions
   std::array<bool, kActionCount> pressed{};  // went 0 -> 1 during the tick
   bool buttonPressed{false};                 // a Throw/Dash press edge happened
   uint64_t lastPressNs{0};                   // stamp of the latest such edge
 };
 
-// Replays this tick's transitions of one device against the state at tick
-// start, at action granularity: an action is down while any of its aliases is
-// down, so pressing a second alias of an already-held action is not an edge.
+// Replays the first `count` pending transitions of one device against the
+// state at tick start, at action granularity: an action is down while any of
+// its aliases is down, so pressing a second alias of an already-held action
+// is not an edge. `held` is the replayed state, or
+// downNow when every pending transition is replayed (`all`).
 template <class Transitions, class DownAtStart, class DownNow>
 ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
-                           const Transitions& transitions, DownAtStart downAtStart,
-                           DownNow downNow) {
+                           const Transitions& transitions, std::size_t count, bool all,
+                           DownAtStart downAtStart, DownNow downNow) {
   ActionSample out;
   std::array<std::array<bool, kMaxAliases>, kActionCount> aliasDown{};
   for (std::size_t a = 0; a < kActionCount; ++a) {
@@ -64,13 +66,14 @@ ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
       const uint16_t c = codes[a][k];
       if (c == kNoCode) continue;
       aliasDown[a][k] = downAtStart(c);
-      out.held[a] = out.held[a] || downNow(c);
+      if (all) out.held[a] = out.held[a] || downNow(c);
     }
   }
   const auto anyDown = [](const std::array<bool, kMaxAliases>& v) {
     return std::ranges::any_of(v, [](bool b) { return b; });
   };
-  for (const auto& t : transitions) {
+  for (std::size_t j = 0; j < count; ++j) {
+    const auto& t = transitions[j];
     if (t.deviceId != deviceId) continue;
     for (std::size_t a = 0; a < kActionCount; ++a) {
       for (std::size_t k = 0; k < kMaxAliases; ++k) {
@@ -86,6 +89,10 @@ ActionSample sampleActions(const ActionCodes& codes, uint32_t deviceId,
         }
       }
     }
+  }
+  if (!all) {
+    for (std::size_t a = 0; a < kActionCount; ++a)
+      out.held[a] = anyDown(aliasDown[a]);
   }
   return out;
 }
@@ -341,20 +348,26 @@ std::optional<DeviceBinding> InputSampler::pollJoin() const {
 
 sim::PlayerInput InputSampler::sample(PlayerId slot, uint64_t tickStartNs,
                                       uint64_t tickDurationNs) {
+  return sampleSlot(slot, tickStartNs, tickDurationNs, transitions_.size());
+}
+
+sim::PlayerInput InputSampler::sampleSlot(PlayerId slot, uint64_t tickStartNs,
+                                          uint64_t tickDurationNs, std::size_t count) {
   if (!isBound(slot)) return {};
   Slot& s = slots_[slot.value];
+  const bool all = count >= transitions_.size();
 
   ActionSample act;
   Move move;
   std::optional<uint8_t> stickAim;
   if (s.device.kind == DeviceKind::Keyboard) {
     act = sampleActions(
-        codesOf(keyProfiles_[s.device.keyboardProfile]), kKeyboardDevice, transitions_,
+        codesOf(keyProfiles_[s.device.keyboardProfile]), kKeyboardDevice, transitions_, count, all,
         [&](uint16_t c) { return keyDownAtTickStart_[c]; },
         [&](uint16_t c) { return keyDown_[c]; });
   } else if (const PadState* pad = findPad(s.device.padId)) {
     act = sampleActions(
-        codesOf(padProfile_), s.device.padId, transitions_,
+        codesOf(padProfile_), s.device.padId, transitions_, count, all,
         [&](uint16_t c) { return pad->downAtTickStart[c]; },
         [&](uint16_t c) { return pad->down[c]; });
     const auto axis = [&](PadAxis a) { return pad->axes[static_cast<std::size_t>(a)]; };
@@ -392,19 +405,46 @@ sim::PlayerInput InputSampler::sample(PlayerId slot, uint64_t tickStartNs,
 }
 
 sim::PlayerMask InputSampler::sampleFrame(sim::InputFrame& frame, uint64_t tickStartNs,
-                                          uint64_t tickDurationNs) {
+                                          uint64_t tickDurationNs, uint64_t tickEndNs) {
+  const std::size_t count = countBefore(tickEndNs);
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
-    frame.inputs[i] = sample(PlayerId{i}, tickStartNs, tickDurationNs);
+    frame.inputs[i] = sampleSlot(PlayerId{i}, tickStartNs, tickDurationNs, count);
   }
-  endTick();
+  endTickAfter(count);
   return boundSlots();
 }
 
+std::size_t InputSampler::countBefore(uint64_t endNs) const {
+  if (endNs == kNoCutoff) return transitions_.size();
+  std::size_t n = 0;
+  while (n < transitions_.size() && transitions_[n].timestampNs < endNs)
+    ++n;
+  return n;
+}
+
 void InputSampler::endTick() {
-  transitions_.clear();
-  keyDownAtTickStart_ = keyDown_;
-  for (auto& p : pads_)
-    p.downAtTickStart = p.down;
+  endTickAfter(transitions_.size());
+}
+
+void InputSampler::endTickAfter(std::size_t count) {
+  if (count >= transitions_.size()) {
+    transitions_.clear();
+    keyDownAtTickStart_ = keyDown_;
+    for (auto& p : pads_)
+      p.downAtTickStart = p.down;
+    return;
+  }
+  // Apply the sampled prefix to the tick-start state; the rest stays pending.
+  for (std::size_t j = 0; j < count; ++j) {
+    const Transition& t = transitions_[j];
+    if (t.deviceId == kKeyboardDevice) {
+      keyDownAtTickStart_[t.code] = t.down;
+    } else if (PadState* pad = findPad(t.deviceId)) {
+      pad->downAtTickStart[t.code] = t.down;
+    }
+  }
+  transitions_.erase(transitions_.begin(),
+                     transitions_.begin() + static_cast<std::ptrdiff_t>(count));
 }
 
 }  // namespace kfm::platform

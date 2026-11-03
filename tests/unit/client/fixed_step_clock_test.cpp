@@ -100,6 +100,27 @@ TEST_CASE("clock: tick start times tile the frame interval", "[client][clock]") 
   CHECK(c.tickStartNs(1) == kT0 + 16'666'667);
   CHECK(c.tickStartNs(2) == kT0 + 33'333'333);
   CHECK(c.tickWallNs() == 16'666'667);
+
+  // A leftover accumulator does not move the windows: the batch still ends at
+  // now (the frame samples every event up to now), counting back whole ticks.
+  FixedStepClock d;
+  d.reset(kT0);
+  const uint64_t now1 = kT0 + 41'666'667;  // 2.5 ticks
+  REQUIRE(d.advance(now1) == 2);
+  CHECK(d.alpha() == Catch::Approx(0.5).margin(1e-6));
+  CHECK(d.tickStartNs(1) == now1 - 16'666'667);
+  CHECK(d.tickStartNs(0) == now1 - 33'333'333);
+  // The next 60 Hz frame's single tick starts where the last batch ended.
+  const uint64_t now2 = now1 + 16'666'667;
+  REQUIRE(d.advance(now2) == 1);
+  CHECK(d.alpha() == Catch::Approx(0.5).margin(1e-6));
+  CHECK(d.tickStartNs(0) == now1);
+  // A paused single step also ends at now.
+  d.setPaused(true);
+  d.requestStep();
+  const uint64_t now3 = now2 + 5'000'000;
+  REQUIRE(d.advance(now3) == 1);
+  CHECK(d.tickStartNs(0) == now3 - 16'666'667);
 }
 
 TEST_CASE("clock: display rate measurement", "[client][clock]") {

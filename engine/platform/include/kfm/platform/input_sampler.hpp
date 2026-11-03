@@ -9,6 +9,13 @@
 //      before sim::step(). endTick() clears this tick's press records; key,
 //      button and axis states persist.
 //
+// When one frame runs several ticks, sampleFrame(frame, start, dur, endNs)
+// takes only the key/button transitions stamped before endNs (the tick's
+// wall-clock end) and keeps the later ones for the next tick of the batch,
+// so every press is stamped against the tick whose window contains it; the
+// batch's last tick passes kNoCutoff and takes everything still pending.
+// Analog axes are state, not transitions, and are read as of sampling time.
+//
 // Semantics (the decisions the architecture doc records):
 //   - A button bit is set if the action is held at sampling time OR was
 //     pressed during the tick, so a tap shorter than a tick still yields one
@@ -33,6 +40,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -101,6 +109,8 @@ struct GamepadProfile {
 inline constexpr std::size_t kMaxKeyboardProfiles = 4;
 // Pads tracked at once (connected or bound).
 inline constexpr std::size_t kMaxPads = 16;
+// sampleFrame() end time that takes every pending transition.
+inline constexpr uint64_t kNoCutoff = std::numeric_limits<uint64_t>::max();
 
 enum class DeviceKind : uint8_t { None, Keyboard, Gamepad };
 
@@ -166,19 +176,21 @@ class InputSampler {
   // button went down. Call before endTick()/sampleFrame().
   [[nodiscard]] std::optional<DeviceBinding> pollJoin() const;
 
-  // The input for `slot` this tick; PlayerInput{} for an unbound slot.
-  // tickStartNs is on the InputEvent::timestampNs clock. Updates the slot's
-  // retained aim; does not clear the tick's press records (endTick() does).
+  // The input for `slot` this tick, from every pending transition;
+  // PlayerInput{} for an unbound slot. tickStartNs is on the
+  // InputEvent::timestampNs clock. Updates the slot's retained aim; does not clear the tick's press
+  // records (endTick() does).
   [[nodiscard]] sim::PlayerInput sample(PlayerId slot, uint64_t tickStartNs,
                                         uint64_t tickDurationNs);
 
-  // Samples every slot into frame.inputs (unbound slots get PlayerInput{}),
-  // then calls endTick(). Leaves frame.tick and frame.present to the caller.
-  // Returns boundSlots().
-  sim::PlayerMask sampleFrame(sim::InputFrame& frame, uint64_t tickStartNs,
-                              uint64_t tickDurationNs);
+  // Samples every slot into frame.inputs (unbound slots get PlayerInput{})
+  // from the pending transitions stamped before tickEndNs, then ends the tick
+  // for those; later transitions stay pending for the next tick. Leaves
+  // frame.tick and frame.present to the caller. Returns boundSlots().
+  sim::PlayerMask sampleFrame(sim::InputFrame& frame, uint64_t tickStartNs, uint64_t tickDurationNs,
+                              uint64_t tickEndNs = kNoCutoff);
 
-  // Ends the tick: clears this tick's press records.
+  // Ends the tick: clears every pending press record.
   void endTick();
 
  private:
@@ -208,6 +220,12 @@ class InputSampler {
   [[nodiscard]] const PadState* findPad(uint32_t id) const;
   PadState* findOrAddPad(uint32_t id);
   [[nodiscard]] std::optional<PlayerId> slotOf(DeviceBinding device) const;
+  [[nodiscard]] sim::PlayerInput sampleSlot(PlayerId slot, uint64_t tickStartNs,
+                                            uint64_t tickDurationNs, std::size_t count);
+  // Pending transitions stamped before endNs (a prefix, in arrival order).
+  [[nodiscard]] std::size_t countBefore(uint64_t endNs) const;
+  // Ends the tick for the first `count` pending transitions.
+  void endTickAfter(std::size_t count);
 
   std::array<KeyboardProfile, kMaxKeyboardProfiles> keyProfiles_{};
   GamepadProfile padProfile_{};

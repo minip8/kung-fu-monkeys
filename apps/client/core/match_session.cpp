@@ -79,16 +79,21 @@ void MatchSession::advance(uint64_t nowNs) {
   }
   startRequested_ = false;
 
+  // Tick i of the batch takes the presses stamped inside its wall-clock
+  // window; the last one ends at nowNs and takes everything still pending.
   const uint32_t ticks = clock_.advance(nowNs);
-  for (uint32_t i = 0; i < ticks; ++i)
-    stepOnce(clock_.tickStartNs(i), clock_.tickWallNs());
+  const uint64_t wall = clock_.tickWallNs();
+  for (uint32_t i = 0; i < ticks; ++i) {
+    const uint64_t start = clock_.tickStartNs(i);
+    stepOnce(start, wall, i + 1 < ticks ? start + wall : platform::kNoCutoff);
+  }
   // While paused, presses are discarded rather than piling up for the next tick.
   if (ticks == 0 && clock_.paused()) sampler_.endTick();
 }
 
-void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs) {
+void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t tickEndNs) {
   sim::InputFrame frame{};
-  const sim::PlayerMask bound = sampler_.sampleFrame(frame, tickStartNs, tickWallNs);
+  const sim::PlayerMask bound = sampler_.sampleFrame(frame, tickStartNs, tickWallNs, tickEndNs);
   frame.tick = curr_.tick;
   frame.present = curr_.rules.present;
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {

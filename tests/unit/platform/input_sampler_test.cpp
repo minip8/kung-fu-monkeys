@@ -372,3 +372,22 @@ TEST_CASE("pad removal unbinds its slot", "[input]") {
   REQUIRE(s.bind(kP1, DeviceBinding::pad(6)));
   CHECK(s.droppedSlots() == 0);
 }
+
+TEST_CASE("sampleFrame keeps transitions after the tick end for the next tick", "[input]") {
+  InputSampler s;
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  // Throw tapped in tick 0; Dash pressed in tick 1 and held.
+  s.push(key(Key::J, true, tickStart(0) + (kDur / 4)));
+  s.push(key(Key::J, false, tickStart(0) + (kDur / 2)));
+  s.push(key(Key::K, true, tickStart(1) + (kDur / 2)));
+  kfm::sim::InputFrame f{};
+  (void)s.sampleFrame(f, tickStart(0), kDur, tickStart(1));
+  CHECK(f.inputs[0].buttons == kfm::sim::buttonBit(Button::Throw));
+  CHECK(f.inputs[0].subTick == 64);
+  (void)s.sampleFrame(f, tickStart(1), kDur);
+  CHECK(f.inputs[0].buttons == kfm::sim::buttonBit(Button::Dash));
+  CHECK(f.inputs[0].subTick == 128);
+  (void)s.sampleFrame(f, tickStart(2), kDur);
+  CHECK(f.inputs[0].buttons == kfm::sim::buttonBit(Button::Dash));  // held, no new edge
+  CHECK(f.inputs[0].subTick == 0);
+}

@@ -19,7 +19,6 @@ void FixedStepClock::reset(uint64_t nowNs) {
   stepRequested_ = false;
   lastNowNs_ = nowNs;
   accumulator_ = 0;
-  batchTailUnits_ = 0;
   lastTicks_ = 0;
 }
 
@@ -51,7 +50,6 @@ uint32_t FixedStepClock::advance(uint64_t nowNs) {
     if (stepRequested_) {
       stepRequested_ = false;
       ticks = 1;
-      batchTailUnits_ = 0;  // the single tick ends now
     }
   } else {
     const uint64_t scaled = timeScale_ == 1.0
@@ -69,7 +67,6 @@ uint32_t FixedStepClock::advance(uint64_t nowNs) {
     }
     ticks = static_cast<uint32_t>(due);
     accumulator_ -= due * kTickCost;
-    batchTailUnits_ = accumulator_;
   }
 
   lastTicks_ = ticks;
@@ -84,9 +81,10 @@ uint64_t FixedStepClock::tickWallNs() const {
 }
 
 uint64_t FixedStepClock::tickStartNs(uint32_t i) const {
-  // Units of ns × kTickHz × timeScale before lastNowNs_ at which tick i starts.
+  // Units of ns × kTickHz × timeScale before lastNowNs_ at which tick i
+  // starts: the batch's last tick ends exactly at lastNowNs_.
   const uint32_t n = std::max(lastTicks_, i + 1);
-  const uint64_t unitsBefore = batchTailUnits_ + (static_cast<uint64_t>(n - i) * kTickCost);
+  const uint64_t unitsBefore = static_cast<uint64_t>(n - i) * kTickCost;
   const double nsBefore =
       static_cast<double>(unitsBefore) / (static_cast<double>(sim::kTickHz) * timeScale_);
   const auto before = static_cast<uint64_t>(std::llround(nsBefore));

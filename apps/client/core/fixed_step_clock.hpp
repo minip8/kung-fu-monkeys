@@ -13,6 +13,15 @@
 //     sample inputs for [tickStartNs(i), tickStartNs(i) + tickWallNs()); step();
 //   }
 //   draw with alpha();
+//
+// Input windows: the batch's last tick ends at the advance()'s nowNs, and
+// the ticks before it count back from there in whole tickWallNs() steps. The
+// frame samples every event pushed up to nowNs, so anchoring the windows at
+// nowNs (rather than at nowNs minus the leftover accumulator, the instant the
+// tick boundary was crossed on the accumulator timeline) is what makes every
+// press fall inside the window of the tick it is sampled into: a press late
+// in the frame is stamped near the end of the last tick instead of clamping
+// to 255. The leftover accumulator only drives the render alpha.
 #pragma once
 
 #include <array>
@@ -53,7 +62,7 @@ class FixedStepClock {
 
   // Wall-clock start of the i-th tick handed out by the last advance(), on the
   // nowNs clock; each tick spans tickWallNs(). The last tick of the batch ends
-  // at that advance()'s nowNs minus the leftover accumulator.
+  // at that advance()'s nowNs (see the header comment).
   [[nodiscard]] uint64_t tickStartNs(uint32_t i) const;
   // Wall duration of one tick at the current time scale.
   [[nodiscard]] uint64_t tickWallNs() const;
@@ -91,8 +100,7 @@ class FixedStepClock {
   double timeScale_{1.0};
   uint32_t maxTicksPerFrame_{kDefaultMaxTicksPerFrame};
   uint64_t lastNowNs_{0};
-  uint64_t accumulator_{0};     // units of ns × kTickHz; < kTickCost between frames
-  uint64_t batchTailUnits_{0};  // the last batch's final tick ended this long before lastNowNs_
+  uint64_t accumulator_{0};  // units of ns × kTickHz; < kTickCost between frames
   double frameNsEma_{0.0};
   uint32_t lastTicks_{0};
   ClockStats stats_{};

@@ -8,7 +8,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -208,6 +210,120 @@ TEST_CASE("session: a pushed press lands in the next tick's frame", "[client][se
   d.frame(2);
   CHECK(d.s->lastFrame().inputs[0].moveMag == 255);
   CHECK(d.s->lastFrame().inputs[0].moveDir == 0);  // +x
+}
+
+namespace {
+
+struct StampStats {
+  int presses{0};
+  int stamped255{0};
+  int wrongBy2OrMore{0};
+  double mean{0.0};
+};
+
+// One Throw press per tick, spread evenly over the tick's window, on frames
+// of `ticksPerFrame` ticks whose clock carries a leftover accumulator of
+// `phase` ticks. Returns how the presses were stamped.
+[[nodiscard]] StampStats stampPresses(double phase, uint32_t ticksPerFrame, int frames) {
+  MatchSession s(SessionConfig{.seed = 3, .bots = 1});
+  constexpr uint64_t kStart = 2'000'000'000ULL;
+  REQUIRE(s.startMatch(kStart));
+  // Wall time at which `ticks` (fractional) ticks have accumulated.
+  const auto at = [&](double ticks) {
+    return kStart + static_cast<uint64_t>(std::llround(ticks * 1e9 / 60.0));
+  };
+  s.advance(at(phase));  // sets the leftover; no tick due yet
+  REQUIRE(s.ticksThisFrame() == 0);
+
+  StampStats st;
+  long sum = 0;
+  const int total = frames * static_cast<int>(ticksPerFrame);
+  int n = 0;
+  for (int f = 0; f < frames; ++f) {
+    const double frameStart = phase + (static_cast<double>(f) * ticksPerFrame);
+    // Each tick of this frame gets one press at fraction `frac` of its window.
+    std::vector<double> fracs;
+    for (uint32_t t = 0; t < ticksPerFrame; ++t, ++n) {
+      const double frac = (static_cast<double>(n) + 0.5) / total;
+      fracs.push_back(frac);
+      InputEvent down = key(Key::J, true);
+      down.timestampNs = at(frameStart + t + frac);
+      s.push(down);
+      InputEvent up = key(Key::J, false);
+      up.timestampNs = at(frameStart + t + frac) + 1;
+      s.push(up);
+    }
+    s.advance(at(frameStart + ticksPerFrame));
+    REQUIRE(s.ticksThisFrame() == ticksPerFrame);
+    // Only the last tick's frame is visible: check its stamp.
+    const sim::PlayerInput in = s.lastFrame().inputs[0];
+    REQUIRE(in.has(sim::Button::Throw));
+    const double frac = fracs.back();
+    const int expected = static_cast<int>(frac * 256.0);
+    ++st.presses;
+    if (in.subTick == 255 && frac < 255.0 / 256.0) ++st.stamped255;
+    if (std::abs(static_cast<int>(in.subTick) - expected) >= 2) ++st.wrongBy2OrMore;
+    sum += in.subTick;
+  }
+  st.mean = static_cast<double>(sum) / st.presses;
+  return st;
+}
+
+}  // namespace
+
+TEST_CASE("session: presses are stamped against the tick whose window holds them",
+          "[client][session]") {
+  // 60 Hz frames with a non-zero leftover accumulator: every press lands in
+  // its own tick's window whatever the phase (it used to clamp to 255 for a
+  // share of presses equal to the phase).
+  for (const double phase : {0.06, 0.48, 0.90}) {
+    CAPTURE(phase);
+    const StampStats st = stampPresses(phase, 1, 600);
+    CHECK(st.presses == 600);
+    CHECK(st.stamped255 == 0);
+    CHECK(st.wrongBy2OrMore == 0);
+    CHECK(st.mean > 108.0);
+    CHECK(st.mean < 148.0);
+  }
+  // Two ticks per frame (a 30 Hz display): each press goes to the tick whose
+  // window contains it, not all to the first.
+  for (const double phase : {0.02, 0.48}) {
+    CAPTURE(phase);
+    const StampStats st = stampPresses(phase, 2, 300);
+    CHECK(st.stamped255 == 0);
+    CHECK(st.wrongBy2OrMore == 0);
+    CHECK(st.mean > 108.0);
+    CHECK(st.mean < 148.0);
+  }
+}
+
+TEST_CASE("session: a frame of two ticks splits presses by timestamp", "[client][session]") {
+  MatchSession s(SessionConfig{.seed = 3, .bots = 1});
+  constexpr uint64_t kStart = 2'000'000'000ULL;
+  REQUIRE(s.startMatch(kStart));
+  const uint64_t t1 = kStart + 16'666'667;
+  const uint64_t t2 = kStart + 33'333'334;
+  // Throw tapped in the first tick, Dash pressed (and held) in the second.
+  InputEvent j = key(Key::J, true);
+  j.timestampNs = kStart + 4'166'667;  // a quarter into tick 0
+  s.push(j);
+  j = key(Key::J, false);
+  j.timestampNs = kStart + 8'000'000;
+  s.push(j);
+  InputEvent k = key(Key::K, true);
+  k.timestampNs = t1 + 8'333'333;  // half way into tick 1
+  s.push(k);
+  s.advance(t2);
+  REQUIRE(s.ticksThisFrame() == 2);
+  // Tick 0 (the state before the last step) saw only the Throw tap, stamped
+  // a quarter in; the Dash was not down yet.
+  const sim::Player& p0 = s.prev().players.items[0];
+  CHECK(p0.prevButtons == sim::buttonBit(sim::Button::Throw));
+  CHECK(static_cast<int>(p0.intent.subTick) == 63);
+  const sim::PlayerInput last = s.lastFrame().inputs[0];
+  CHECK(last.has(sim::Button::Dash));
+  CHECK_FALSE(last.has(sim::Button::Throw));
+  CHECK(static_cast<int>(last.subTick) == 127);
 }
 
 TEST_CASE("session: bots fill the non-local present slots", "[client][session]") {

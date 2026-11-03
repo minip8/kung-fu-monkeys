@@ -171,7 +171,7 @@ class MatchSession {
   void beginMatch(sim::PlayerMask present, sim::PlayerMask local, uint64_t nowNs);
   void handleLobbyJoins();
   void handleRebinds();
-  void stepOnce(uint64_t tickStartNs, uint64_t tickWallNs);
+  void stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t tickEndNs);
   void appendEvents(const sim::EventSink& sink);
 
   SessionPhase phase_{SessionPhase::Lobby};
