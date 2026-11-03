@@ -592,9 +592,13 @@ uint32_t NetClient::spectatorRatePpm() const {
 
 uint32_t NetClient::ticksDue(uint64_t nowNs) {
   nowNs_ = nowNs;
-  if (state_ != ClientState::Running) return 0;
+  if (state_ != ClientState::Running) {
+    recordBatch(nowNs, 0, kRateOnePpm);
+    return 0;
+  }
   if (spectator()) {
-    const uint32_t n = clock_.advance(nowNs, spectatorRatePpm(), config_.maxTicksPerCall);
+    const uint32_t rate = spectatorRatePpm();
+    const uint32_t n = clock_.advance(nowNs, rate, config_.maxTicksPerCall);
     int32_t avail = confirmed_ ? confirmed_->plus(1).minus(world_.tick) : 0;
     const int32_t delay = config_.spectatorDelayTicks;
     if (avail > delay + static_cast<int32_t>(kRollbackWindow)) {
@@ -603,7 +607,9 @@ uint32_t NetClient::ticksDue(uint64_t nowNs) {
       avail = delay;
     }
     stats_.clockDroppedTicks = clock_.droppedTicks();
-    return std::min<uint32_t>(n, static_cast<uint32_t>(std::max(avail, 0)));
+    const uint32_t due = std::min<uint32_t>(n, static_cast<uint32_t>(std::max(avail, 0)));
+    recordBatch(nowNs, due, rate);
+    return due;
   }
   stats_.ratePpm = lead_.ratePpm();
   const uint32_t n = clock_.advance(nowNs, stats_.ratePpm, config_.maxTicksPerCall);
@@ -618,7 +624,19 @@ uint32_t NetClient::ticksDue(uint64_t nowNs) {
   if (const std::optional<Tick> server = estimatedServerTick(nowNs)) {
     stats_.leadTicks = world_.tick.minus(*server);
   }
+  recordBatch(nowNs, n, stats_.ratePpm);
   return n;
+}
+
+void NetClient::recordBatch(uint64_t nowNs, uint32_t ticks, uint32_t ratePpm) {
+  dueNowNs_ = nowNs;
+  dueTicks_ = ticks;
+  dueRatePpm_ = ratePpm;
+}
+
+uint64_t NetClient::tickStartNs(uint32_t i) const {
+  const uint64_t back = uint64_t{dueTicks_ > i ? dueTicks_ - i : 0} * tickWallNs();
+  return dueNowNs_ > back ? dueNowNs_ - back : 0;
 }
 
 void NetClient::tick(std::span<const sim::PlayerInput> inputs) {
