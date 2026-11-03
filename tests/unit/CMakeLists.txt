@@ -25,8 +25,24 @@ kfm_add_test_exe(kfm_sim_tests
   sim/modifier_test.cpp
   sim/lifecycle_test.cpp
   sim/rules_test.cpp
+  sim/statics_test.cpp
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
+
+kfm_add_test_exe(kfm_content_tests
+  content/decimal_test.cpp
+  content/loader_test.cpp
+)
+target_link_libraries(kfm_content_tests PRIVATE kfm::content)
+# The loader test reads the repo's content/ from disk: in place natively,
+# embedded at /content in the wasm module under node.
+if(EMSCRIPTEN)
+  target_link_options(kfm_content_tests PRIVATE
+    "SHELL:--embed-file \"${KFM_CONTENT_SOURCE_DIR}@/content\"")
+  target_compile_definitions(kfm_content_tests PRIVATE KFM_CONTENT_DIR="/content")
+else()
+  target_compile_definitions(kfm_content_tests PRIVATE KFM_CONTENT_DIR="${KFM_CONTENT_SOURCE_DIR}")
+endif()
 
 # The transport contract suite (net/transport_contract.hpp) is header-only;
 # a test executable for another transport links this target and expands
@@ -55,6 +71,7 @@ kfm_add_test_exe(kfm_presentation_tests
   presentation/builder_test.cpp
   presentation/meshes_test.cpp
   presentation/animation_test.cpp
+  presentation/audio_test.cpp
 )
 target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation)
 if(NOT KFM_HEADLESS)
@@ -89,8 +106,10 @@ if(NOT KFM_HEADLESS)
     client/content_tuning_test.cpp
     client/sdl_input_test.cpp
     client/net_session_test.cpp
+    client/event_fx_rollback_test.cpp
+    client/lobby_test.cpp
   )
-  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
+  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
 
   if(KFM_WEBRTC AND NOT EMSCRIPTEN)
     # The client's network mode over real sockets: NetServer on

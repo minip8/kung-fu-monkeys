@@ -3,7 +3,7 @@
 # Headless and transport-free, so it builds everywhere (under Emscripten as a
 # node CLI, like kfm_replay).
 add_executable(kfm_netsim main.cpp)
-target_link_libraries(kfm_netsim PRIVATE kfm::netsim kfm::warnings)
+target_link_libraries(kfm_netsim PRIVATE kfm::netsim kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_netsim)
 set_target_properties(kfm_netsim PROPERTIES FOLDER apps)
 

@@ -1,0 +1,78 @@
+# Abilities (architecture §5.5). Each [[ability]] is one AbilityDef; the
+# player's loadout (player.toml) refers to them by name. Index 0 is the
+# built-in inert "none" ability, so the first entry here is index 1. Indices
+# are part of the content hash: append new abilities, never reorder.
+#
+# Units: durations in ticks (60 per second), speeds in arena units per
+# second (the loader divides by 60 and truncates toward zero, like
+# Fixed::fromRatio). Every key but name and kind is optional (0 / empty).
+#
+# Keys: name, kind (dash | throw | blink | slam | parry), cooldown_ticks, startup_ticks,
+# active_ticks, recovery_ticks, perfect_window_ticks, speed, param0, param1,
+# tags_startup, tags_active, tags_recovery (lists of tag names: dashing,
+# perfect_dash, hit_stun, shielded, invulnerable, eliminated, slamming, parrying).
+
+[[ability]]
+name = "dash"
+kind = "dash"
+cooldown_ticks = 45         # 0.75 s from press to the next dash
+startup_ticks = 0           # must stay 0: PerfectDash is granted from the press tick
+active_ticks = 12           # 0.2 s of dash movement
+recovery_ticks = 6          # 0.1 s before the stick moves the monkey again
+perfect_window_ticks = 4    # first 4 active ticks catch a banana (plus the press sub-tick)
+speed = 22                  # units/s while active: 4.4 units per dash
+tags_active = ["dashing"]
+
+[[ability]]
+name = "throw"
+kind = "throw"
+cooldown_ticks = 20         # a third of a second between throws
+startup_ticks = 2           # wind-up before the banana leaves the hand
+active_ticks = 1            # the banana spawns on the Startup -> Active transition
+recovery_ticks = 6          # follow-through
+
+# Fast Hands (powerups.toml) runs the throw slot on this def while it lasts.
+[[ability]]
+name = "throw_fast"
+kind = "throw"
+cooldown_ticks = 8          # a banana every 8 ticks while the hands are fast
+startup_ticks = 1
+active_ticks = 1
+recovery_ticks = 3
+
+# Blink (v0.21): a teleport dash. After a short telegraph the monkey jumps
+# speed x active_ticks along its stick (or facing), stopped by walls; nothing
+# on the path is touched. No tags: a banana still hits during the startup.
+[[ability]]
+name = "blink"
+kind = "blink"
+cooldown_ticks = 90         # 1.5 s from press to the next blink
+startup_ticks = 6           # 0.1 s telegraph before the jump
+active_ticks = 10           # the jump: speed x active_ticks = 5 units
+recovery_ticks = 6
+speed = 30                  # units/s over the active ticks
+
+# Slam (v0.21): a jump, then a shockwave on the first active tick. Within
+# param0 of the slammer's centre, monkeys are pushed param1 units away over
+# active_ticks and bananas in flight (not its own) drop to the ground.
+[[ability]]
+name = "slam"
+kind = "slam"
+cooldown_ticks = 120        # 2 s from press to the next slam
+startup_ticks = 12          # 0.2 s in the air: the telegraph
+active_ticks = 12           # the push lasts 0.2 s
+recovery_ticks = 12         # landing lag
+param0 = 3                  # reach: 3 units from the slammer's centre
+param1 = 4                  # push: 4 units away from the slammer
+
+# Parry (v0.21): a short timed window. A banana that is not the parrier's,
+# reaching it within [press + startup, press + startup + active) (judged to
+# the sub-tick), flies back at its thrower as the parrier's own banana.
+# Mistimed, the banana hits as usual.
+[[ability]]
+name = "parry"
+kind = "parry"
+cooldown_ticks = 60         # 1 s from press to the next parry
+startup_ticks = 2           # the guard comes up
+active_ticks = 8            # 0.13 s window
+recovery_ticks = 14         # a whiff leaves the monkey open

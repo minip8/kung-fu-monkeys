@@ -62,9 +62,9 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
   // from the world RNG: seed 7 draws offset 2, slot 9 has rank 2 -> point 4.
   {
     Rng rng = Rng::seeded(7);
-    REQUIRE(rng.below(content.arena.spawnPointCount) == 2);
+    REQUIRE(rng.below(content.arenas[0].spawnPointCount) == 2);
   }
-  CHECK(p9.transform.pos == content.arena.spawnPoints[4]);
+  CHECK(p9.transform.pos == content.arenas[0].spawnPoints[4]);
   CHECK(p9.hp == content.player.maxHp);
   CHECK(p9.ammo == content.player.ammoStart);
   CHECK(p9.stats.moveSpeed == content.player.moveSpeed);

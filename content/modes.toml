@@ -1,0 +1,69 @@
+# Modes (ModeDef, architecture §5.3, §5.10). A match picks one by index
+# (MatchConfig::mode); command lines and the lobby use the name. The first
+# mode loaded is index 0, the default. Indices go into replay headers and are
+# part of the content hash: append new modes, never reorder.
+#
+# Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
+# kind reads (a kind ignores the others). Durations in ticks (60 per second).
+#   kind                 rounds (default), deathmatch or survival
+#   round_start_ticks    all kinds: countdown with everyone spawned and frozen
+#   round_end_ticks      all kinds: pause after a round before the next one
+#   rounds_to_win        rounds, survival: round wins that take the match
+#   time_limit_ticks     deathmatch: length of the match; survival: of each
+#                        round; 0 = no clock
+#   score_to_win         deathmatch: eliminations that win (at least 1)
+#   respawn_ticks        deathmatch: from an elimination to the respawn (>= 1)
+#   respawn_invuln_ticks deathmatch: spawn protection after a respawn
+#   abilities            all kinds (optional): the mode's own loadout, 2 or 3
+#                        ability names [dash button, throw button, ability
+#                        button] replacing [player] abilities
+
+[[mode]]
+name = "rounds"             # free-for-all rounds: last monkey standing scores
+kind = "rounds"
+rounds_to_win = 3           # first to three round wins takes the match
+round_end_ticks = 120       # 2 s pause after a round before the next one
+round_start_ticks = 60      # 1 s countdown with everyone spawned and frozen
+
+[[mode]]
+name = "deathmatch"         # eliminations score; the eliminated respawn
+kind = "deathmatch"
+score_to_win = 10           # first to ten eliminations wins
+time_limit_ticks = 10800    # else the leader after 3 minutes (a tied lead is a draw)
+respawn_ticks = 120         # back in 2 s after an elimination
+respawn_invuln_ticks = 90   # 1.5 s of spawn protection
+round_start_ticks = 60
+round_end_ticks = 120
+
+[[mode]]
+name = "survival"           # rounds on a clock: last monkey standing, or the
+kind = "survival"           # healthiest (then fewest deaths) when time runs out
+rounds_to_win = 3
+time_limit_ticks = 3600     # 60 s per round
+round_start_ticks = 60
+round_end_ticks = 120
+
+# Ability modes (v0.21): rounds with a third ability on the ability button.
+[[mode]]
+name = "rounds_blink"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "blink"]
+
+[[mode]]
+name = "rounds_slam"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "slam"]
+
+[[mode]]
+name = "rounds_parry"
+kind = "rounds"
+rounds_to_win = 3
+round_end_ticks = 120
+round_start_ticks = 60
+abilities = ["dash", "throw", "parry"]

@@ -25,7 +25,9 @@ namespace kfm::client {
 [[nodiscard]] std::string fixedToCpp(Fixed v, bool perSecond);
 
 // The tunable fields of `c` as assignment lines in makeDefaultContent()'s style
-// (dash.*, thr.*, c.boomerang.*, c.player.*, c.mode.*), one per line.
+// (dash.*, thr.*, c.boomerang.*, c.player.*, rounds.* = modes[0]), one per
+// line. content/*.toml is the source of truth; these lines keep
+// defaultContent() (the test fixture) in step with it.
 [[nodiscard]] std::string contentToCpp(const sim::ContentDB& c);
 
 }  // namespace kfm::client

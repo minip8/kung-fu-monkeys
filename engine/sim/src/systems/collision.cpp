@@ -1,12 +1,18 @@
 // CollisionSystem (architecture §5.3 step 6, §5.11): uniform-grid broadphase
 // checked against brute force, swept circle narrowphase with time of impact.
-// Emits Player × Boomerang, Player × Pickup and (v0.16) Player × Player
-// contacts. Player pairs are purely geometric (no tag filter: the rules table
-// decides what a touch means) and listed once, with indexA < indexB.
+// Emits Player × Boomerang, Player × Pickup, (v0.16) Player × Player and
+// (v0.22) Player × Hazard contacts. A slammer on its impact tick (v0.21,
+// Tag::Slamming) has its contact radius widened to the slam's reach; a pair
+// that touches only through it gets Contact::reach, which only the slam rows
+// accept. Player pairs are purely geometric (no tag
+// filter: the rules table decides what a touch means) and listed once, with
+// indexA < indexB. Walls never produce contacts: MovementSystem and
+// ProjectileSystem already resolved them (systems/statics.hpp).
 // Reads state only; every scratch array is local to the call (no heap, no
 // state in WorldState).
 #include "kfm/sim/systems.hpp"
 #include "systems/collision_internal.hpp"
+#include "systems/statics.hpp"
 
 #include <algorithm>
 #include <array>
@@ -21,17 +27,31 @@ using collision::GridLayout;
 
 static_assert(kMaxPlayers <= 16, "player sets below are uint16_t bit masks");
 
-[[nodiscard]] Fixed pickupRadius(const ContentDB& content) {
-  return content.pickup.radius;
+[[nodiscard]] Fixed pickupRadius(const MatchContent& content) {
+  return content.db.pickup.radius;
 }
 
-[[nodiscard]] Aabb playerBox(const Player& p, const ContentDB& content) {
-  return collision::sweptAabb(p.transform.prevPos, p.transform.pos, content.player.radius);
+// A player's contact radius: its body, or (v0.21) a slammer's reach on its
+// impact tick (the def's param0), so the broadphase finds what the slam hits.
+[[nodiscard]] Fixed contactRadius(const Player& p, const MatchContent& content) {
+  const Fixed body = content.db.player.radius;
+  if (!p.tags.has(Tag::Slamming)) return body;
+  const AbilityState* slam = slotGranting(p, content, Tag::Slamming);
+  if (slam == nullptr) return body;
+  return max(body, content.db.abilityAt(slam->defIndex).param0);
 }
-[[nodiscard]] Aabb boomerangBox(const Boomerang& b, const ContentDB& content) {
-  return collision::sweptAabb(b.transform.prevPos, b.transform.pos, content.boomerang.radius);
+
+[[nodiscard]] Aabb playerBox(const Player& p, const MatchContent& content) {
+  return collision::sweptAabb(p.transform.prevPos, p.transform.pos, contactRadius(p, content));
 }
-[[nodiscard]] Aabb pickupBox(const Pickup& p, const ContentDB& content) {
+// A banana's contact radius: the def's, scaled by its projectile modifier (§5.8).
+[[nodiscard]] Fixed boomerangRadius(const Boomerang& b, const MatchContent& content) {
+  return content.db.boomerang.radius * b.radiusMul;
+}
+[[nodiscard]] Aabb boomerangBox(const Boomerang& b, const MatchContent& content) {
+  return collision::sweptAabb(b.transform.prevPos, b.transform.pos, boomerangRadius(b, content));
+}
+[[nodiscard]] Aabb pickupBox(const Pickup& p, const MatchContent& content) {
   return collision::sweptAabb(p.pos, p.pos, pickupRadius(content));
 }
 
@@ -68,7 +88,7 @@ struct PlayerGrid {
   }
 };
 
-void buildPlayerGrid(const WorldState& s, const ContentDB& content, PlayerGrid& g) {
+void buildPlayerGrid(const WorldState& s, const MatchContent& content, PlayerGrid& g) {
   g.layout = collision::gridLayout(content.arena.halfExtents);
   const uint32_t cellCount = uint32_t{g.layout.nx} * g.layout.ny;
   std::array<CellRange, kMaxPlayers> ranges{};
@@ -151,28 +171,32 @@ void pushPairs(uint16_t playerMask, EntityKind kindB, uint16_t indexB, Candidate
 }
 
 // Narrowphase for one candidate pair; pushes a Contact on a hit.
-void narrowphase(const WorldState& s, const ContentDB& content, const CandidatePair& pair,
+void narrowphase(const WorldState& s, const MatchContent& content, const CandidatePair& pair,
                  Contacts& out) {
   const Player& player = s.players.items[pair.indexA];
   const Transform& ta = player.transform;
   Vec2 prevB{};
   Vec2 posB{};
   Fixed radiusB{};
+  Fixed reachB{};
   EntityId idB{};
   switch (pair.kindB) {
     case EntityKind::Player: {
-      const Transform& tb = s.players.items[pair.indexB].transform;
+      const Player& other = s.players.items[pair.indexB];
+      const Transform& tb = other.transform;
       prevB = tb.prevPos;
       posB = tb.pos;
-      radiusB = content.player.radius;
+      radiusB = content.db.player.radius;
+      reachB = contactRadius(other, content);
       idB = s.players.idAt(pair.indexB);
       break;
     }
     case EntityKind::Boomerang: {
-      const Transform& tb = s.boomerangs.items[pair.indexB].transform;
+      const Boomerang& banana = s.boomerangs.items[pair.indexB];
+      const Transform& tb = banana.transform;
       prevB = tb.prevPos;
       posB = tb.pos;
-      radiusB = content.boomerang.radius;
+      radiusB = boomerangRadius(banana, content);
       idB = s.boomerangs.idAt(pair.indexB);
       break;
     }
@@ -182,10 +206,23 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
       radiusB = pickupRadius(content);
       idB = s.pickups.idAt(pair.indexB);
       break;
+    case EntityKind::Hazard:
+      return;  // statics never come out of the broadphase
   }
 
-  const collision::SweptHit hit =
-      collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB, content.player.radius + radiusB);
+  if (reachB < radiusB) reachB = radiusB;
+  const Fixed radiusA = content.db.player.radius;
+  const Fixed reachA = contactRadius(player, content);
+  collision::SweptHit hit =
+      collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB, radiusA + radiusB);
+  // v0.21: a slammer reaches further; a contact found only through the
+  // widened radius is marked so only the slam rows take it.
+  uint8_t reach = 0;
+  if (!hit.hit && (reachA > radiusA || reachB > radiusB)) {
+    hit = collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB, reachA + reachB);
+    reach =
+        static_cast<uint8_t>((reachA > radiusA ? kReachA : 0) | (reachB > radiusB ? kReachB : 0));
+  }
   if (!hit.hit) return;
 
   const Vec2 atA = lerp(ta.prevPos, ta.pos, hit.tHit);
@@ -200,12 +237,37 @@ void narrowphase(const WorldState& s, const ContentDB& content, const CandidateP
                    .b = idB,
                    .tHit = hit.tHit,
                    .point = point,
-                   .normal = normal});
+                   .normal = normal,
+                   .reach = reach});
+}
+
+// Player × Hazard (v0.22): one contact per hazard whose closed box holds the
+// player's centre at the end of the tick, in (player slot, hazard index)
+// order, timed at the centre's entry into the box. Statics need no
+// broadphase: at most kMaxArenaHazards boxes per player.
+void pushHazardContacts(const WorldState& s, const MatchContent& content, Contacts& out) {
+  const ArenaDef& arena = content.arena;
+  if (arena.hazardCount == 0) return;
+  s.players.forEachAlive([&](EntityId id, const Player& p) {
+    const Transform& t = p.transform;
+    for (uint8_t i = 0; i < arena.hazardCount && i < kMaxArenaHazards; ++i) {
+      const Hazard& h = arena.hazards[i];
+      if (!boxContains(h.min, h.max, t.pos)) continue;
+      out.push(Contact{.kindA = EntityKind::Player,
+                       .a = id,
+                       .kindB = EntityKind::Hazard,
+                       .b = EntityId{i, 0},
+                       .tHit = statics::entryTime(t.prevPos, t.pos, h.min, h.max),
+                       .point = t.pos,
+                       .normal = Vec2::zero()});
+    }
+  });
 }
 
 }  // namespace
 
-void collisionBroadphaseGrid(const WorldState& s, const ContentDB& content, CandidatePairs& out) {
+void collisionBroadphaseGrid(const WorldState& s, const MatchContent& content,
+                             CandidatePairs& out) {
   out.clear();
   PlayerGrid grid;
   buildPlayerGrid(s, content, grid);
@@ -223,7 +285,7 @@ void collisionBroadphaseGrid(const WorldState& s, const ContentDB& content, Cand
   sortPairs(out);
 }
 
-void collisionBroadphaseBruteForce(const WorldState& s, const ContentDB& content,
+void collisionBroadphaseBruteForce(const WorldState& s, const MatchContent& content,
                                    CandidatePairs& out) {
   out.clear();
   s.players.forEachAlive([&](EntityId pid, const Player& p) {
@@ -247,13 +309,14 @@ void collisionBroadphaseBruteForce(const WorldState& s, const ContentDB& content
   sortPairs(out);
 }
 
-void collisionSystem(const WorldState& s, const ContentDB& content, Contacts& out) {
+void collisionSystem(const WorldState& s, const MatchContent& content, Contacts& out) {
   out.clear();
   CandidatePairs pairs;
   collisionBroadphaseGrid(s, content, pairs);
   for (const CandidatePair& pair : pairs) {
     narrowphase(s, content, pair, out);
   }
+  pushHazardContacts(s, content, out);
 }
 
 }  // namespace kfm::sim

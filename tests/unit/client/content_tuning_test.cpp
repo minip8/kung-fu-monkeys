@@ -40,7 +40,7 @@ TEST_CASE("tuning: contentToCpp prints the tuned fields in content.cpp style", "
   CHECK(def.find("  c.boomerang.turnRateBam = 1200;\n") != std::string::npos);
   CHECK(def.find("  c.boomerang.restitution = Fixed::one();\n") != std::string::npos);
   CHECK(def.find("  c.player.moveSpeed = perSecond(7);\n") != std::string::npos);
-  CHECK(def.find("  c.mode.roundsToWin = 3;\n") != std::string::npos);
+  CHECK(def.find("  rounds.roundsToWin = 3;\n") != std::string::npos);
 
   c.abilities[static_cast<uint8_t>(sim::AbilityKind::Dash)].perfectWindowTicks = 6;
   c.player.moveSpeed = perSecondToPerTick(8.5f);
@@ -119,4 +119,21 @@ TEST_CASE("client options: network flags", "[client][options]") {
   CHECK_FALSE(parseClientOptions(zeroPlayers, bad, err));
   const std::array<const char*, 2> noUrl = {"kfm_client", "--connect"};
   CHECK_FALSE(parseClientOptions(noUrl, bad, err));
+}
+
+TEST_CASE("client options: audio flags", "[client][options][audio]") {
+  std::string err;
+  const ClientOptions defaults;
+  CHECK_FALSE(defaults.mute);
+  CHECK(defaults.volume == 80);
+  ClientOptions o;
+  const std::array<const char*, 4> args = {"kfm_client", "--mute", "--volume", "35"};
+  REQUIRE(parseClientOptions(args, o, err));
+  CHECK(o.mute);
+  CHECK(o.volume == 35);
+  ClientOptions bad;
+  const std::array<const char*, 3> loud = {"kfm_client", "--volume", "101"};
+  CHECK_FALSE(parseClientOptions(loud, bad, err));
+  const std::array<const char*, 2> missing = {"kfm_client", "--volume"};
+  CHECK_FALSE(parseClientOptions(missing, bad, err));
 }

@@ -1,13 +1,15 @@
 // Pickup taken (prio 50, architecture §5.6). A grounded banana restores one
-// ammo; a player already at ammoMax leaves it lying where it is.
+// ammo; a player already at ammoMax leaves it lying where it is. Power-up
+// pickups are row 51 (rules/powerup.cpp).
 #include "kfm/sim/rules/handlers.hpp"
 
 namespace kfm::sim {
 
-bool takePickup(WorldState& s, const ContentDB& /*content*/, EntityId a, EntityId b,
+bool takePickup(WorldState& s, const MatchContent& /*content*/, EntityId a, EntityId b,
                 const Contact& /*contact*/, EventSink& sink) {
   Player* p = s.players.get(a);
-  if (p == nullptr || !s.pickups.isAlive(b)) return false;
+  const Pickup* pickup = s.pickups.get(b);
+  if (p == nullptr || pickup == nullptr || pickup->kind != PickupKind::Banana) return false;
   if (p->ammo >= p->stats.ammoMax) return false;
   ++p->ammo;
   s.pickups.despawn(b);

@@ -23,6 +23,7 @@ endif()
 
 add_executable(kfm_server main.cpp)
 target_link_libraries(kfm_server PRIVATE kfm::server_host kfm::net_webrtc kfm::net kfm::sim
-  kfm::warnings)
+  kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_server)
 set_target_properties(kfm_server PROPERTIES FOLDER apps)
+kfm_use_content(kfm_server)

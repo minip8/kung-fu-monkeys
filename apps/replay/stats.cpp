@@ -85,6 +85,8 @@ void mergeWait(Stats::ThrowerWait& to, const Stats::ThrowerWait& from) {
       return s.boomerangs.isAlive(id);
     case EntityKind::Pickup:
       return s.pickups.isAlive(id);
+    case EntityKind::Hazard:
+      return true;  // arena statics never despawn
   }
   return false;
 }
@@ -225,6 +227,14 @@ void Stats::merge(const Stats& o) {
   append(roundMinSupplyShare, o.roundMinSupplyShare);
   mergeWait(afterFullCatch, o.afterFullCatch);
   mergeWait(afterBelowFullCatch, o.afterBelowFullCatch);
+  powerUpsSpawned += o.powerUpsSpawned;
+  powerUpsTaken += o.powerUpsTaken;
+  shieldsBroken += o.shieldsBroken;
+  blinks += o.blinks;
+  slams += o.slams;
+  slammed += o.slammed;
+  parryPresses += o.parryPresses;
+  parries += o.parries;
 }
 
 void StatsCollector::beginContacts(const WorldState& s) {
@@ -408,6 +418,30 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
           ++stats_.eliminatedHoldingAmmo;
         }
         break;
+      case EventKind::PickupSpawned:
+        if (e.a == static_cast<uint32_t>(PickupKind::PowerUp)) ++stats_.powerUpsSpawned;
+        break;
+      case EventKind::PickupTaken:
+        if (e.a == static_cast<uint32_t>(PickupKind::PowerUp)) ++stats_.powerUpsTaken;
+        break;
+      case EventKind::ShieldBroken:
+        ++stats_.shieldsBroken;
+        break;
+      case EventKind::PlayerBlinked:
+        ++stats_.blinks;
+        break;
+      case EventKind::SlamLanded:
+        ++stats_.slams;
+        break;
+      case EventKind::PlayerSlammed:
+        ++stats_.slammed;
+        break;
+      case EventKind::PlayerParryStarted:
+        ++stats_.parryPresses;
+        break;
+      case EventKind::BoomerangParried:
+        ++stats_.parries;
+        break;
       default:
         break;
     }
@@ -488,7 +522,7 @@ void StatsCollector::finish(const WorldState& s) {
   stats_.dashAttackWithoutAmmo = dashAttackWithoutAmmo_.size();
 }
 
-void statsStep(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& sink,
+void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink,
                StatsCollector& collector) {
   // The order of step() (step.cpp, architecture §5.3); callers compare the
   // checksum with a step() shadow every tick.
@@ -623,6 +657,12 @@ void printSummary(const Stats& st, uint32_t players) {
       "rounds where it hit 0 with 2+ players alive: %u of %zu\n",
       u(st.eliminatedHoldingAmmo), st.roundsSupplyExhausted, st.roundMinSupplyShare.size());
   printDistribution("lowest supply / players, per round", st.roundMinSupplyShare, "");
+  std::printf("power-ups (§5.8): spawned %llu, taken %llu, shields broken %llu\n",
+              u(st.powerUpsSpawned), u(st.powerUpsTaken), u(st.shieldsBroken));
+  std::printf(
+      "abilities (v0.21): blinks %llu, slams %llu (monkeys pushed %llu), parries %llu of %llu "
+      "presses\n",
+      u(st.blinks), u(st.slams), u(st.slammed), u(st.parries), u(st.parryPresses));
 }
 
 }  // namespace kfm::replay

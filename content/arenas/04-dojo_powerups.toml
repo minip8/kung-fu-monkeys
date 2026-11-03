@@ -1,0 +1,25 @@
+# The dojo with power-ups (architecture §5.8, §5.10): the same 32 x 18 box
+# and spawn ellipse as "dojo", plus four power-up spawners near the corners.
+# The default arena has no spawners, so the default match never sees a
+# power-up; pick this one with --arena dojo_powerups.
+#
+# Spawner keys (each entry of `spawners`, up to 8 per arena):
+#   pos = [x, y]          where its pickups appear (inside the arena)
+#   power_ups = [names]   the set it draws from, uniformly with the world RNG
+#                         (optional: every power-up in powerups.toml)
+#   first_ticks           Playing tick of its first spawn (0 = the first one)
+#   interval_ticks        then every this many ticks (0 = only once)
+#   max_alive             it skips a beat while this many of its pickups lie there
+# The max_alive of an arena's spawners add up to at most 16 (half the pickup
+# pool; grounded bananas need the rest).
+
+[[arena]]
+name = "dojo_powerups"
+half_extents = [16, 9]
+spawn_ellipse = { radii = [12, 6], step_degrees = 36, order = [0, 5, 2, 7, 4, 9, 6, 1, 8, 3] }
+spawners = [
+  { pos = [-8, 4], first_ticks = 60, interval_ticks = 480, max_alive = 1 },
+  { pos = [8, -4], first_ticks = 60, interval_ticks = 480, max_alive = 1 },
+  { pos = [8, 4], first_ticks = 240, interval_ticks = 480, max_alive = 1 },
+  { pos = [-8, -4], first_ticks = 240, interval_ticks = 480, max_alive = 1 },
+]

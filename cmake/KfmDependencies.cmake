@@ -11,6 +11,7 @@
 #   kfm::cgltf   cgltf 1.15 (header only; the includer that defines CGLTF_IMPLEMENTATION owns it)
 #   kfm::datachannel  libdatachannel 0.24.6 natively (vcpkg, or FetchContent static with OpenSSL),
 #                datachannel-wasm f9200eb under Emscripten; only when KFM_WEBRTC (headless too)
+#   kfm::tomlplusplus  toml++ 3.4.0 (header only, TOML_EXCEPTIONS=0), for engine/content (headless too)
 # None of them link kfm::warnings: third-party code is compiled with its own
 # flags and its headers are SYSTEM includes, so it never trips -Werror.
 
@@ -160,6 +161,41 @@ if(KFM_WEBRTC)
   endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# toml++ 3.4.0 (header only), the content file parser (engine/content,
+# architecture §5.10). Every host loads content, so the headless server
+# needs it too. kfm::tomlplusplus pins the configuration every includer must
+# share: no exceptions (parse errors come back as toml::parse_result, which
+# the loader turns into diagnostics) and no formatters (never printed back).
+# ---------------------------------------------------------------------------
+# Only the headers are used on both paths. The vcpkg port builds toml++ as a
+# library whose target defines TOML_HEADER_ONLY=0 and links it (and was
+# compiled with exceptions on, which toml++ requires every includer to
+# match), so linking that target would both redefine the macro and mix
+# configurations; its include directory alone gives the same headers.
+add_library(kfm_tomlplusplus INTERFACE)
+find_package(tomlplusplus 3.4.0 EXACT CONFIG QUIET)
+if(tomlplusplus_FOUND)
+  message(STATUS "KFM: toml++ ${tomlplusplus_VERSION} headers from find_package")
+  get_target_property(kfm_toml_include tomlplusplus::tomlplusplus INTERFACE_INCLUDE_DIRECTORIES)
+  if(NOT kfm_toml_include)
+    message(FATAL_ERROR "tomlplusplus::tomlplusplus has no INTERFACE_INCLUDE_DIRECTORIES")
+  endif()
+  target_include_directories(kfm_tomlplusplus SYSTEM INTERFACE ${kfm_toml_include})
+else()
+  message(STATUS "KFM: toml++ not found via find_package, fetching v3.4.0")
+  FetchContent_Declare(tomlplusplus
+    URL      https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz
+    URL_HASH SHA256=8517f65938a4faae9ccf8ebb36631a38c1cadfb5efa85d9a72e15b9e97d25155
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR  kfm-no-cmake)  # header only: the include directory is all we use
+  FetchContent_MakeAvailable(tomlplusplus)
+  target_include_directories(kfm_tomlplusplus SYSTEM INTERFACE ${tomlplusplus_SOURCE_DIR}/include)
+endif()
+target_compile_definitions(kfm_tomlplusplus INTERFACE
+  TOML_EXCEPTIONS=0 TOML_ENABLE_FORMATTERS=0 TOML_HEADER_ONLY=1)
+add_library(kfm::tomlplusplus ALIAS kfm_tomlplusplus)
+
 # Everything below is the client stack (window, GPU, debug UI, assets). The
 # headless server build never needs it.
 if(KFM_HEADLESS)
@@ -195,19 +231,41 @@ else()
   set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
   set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
   set(SDL_UNINSTALL OFF CACHE BOOL "" FORCE)
-  # Mirror the vcpkg sdl3 port at the features vcpkg.json selects (x11 and
-  # wayland on Linux, no ibus/dbus/alsa/vulkan) so both paths build the same
-  # SDL. The port also switches off every optional host library that would
+  # Mirror the vcpkg sdl3 port at the features vcpkg.json selects (x11,
+  # wayland and alsa on Linux, no ibus/dbus/vulkan) so both paths build the
+  # same SDL. The port also switches off every optional host library that would
   # silently change SDL's capabilities from one machine to the next; SDL's
   # own CMake otherwise fails on Linux when any enabled one is missing.
   foreach(opt
-      SDL_DBUS SDL_IBUS SDL_ALSA SDL_VULKAN SDL_LIBUDEV SDL_LIBURING
+      SDL_DBUS SDL_IBUS SDL_VULKAN SDL_LIBUDEV SDL_LIBURING
       SDL_FRIBIDI SDL_JACK SDL_KMSDRM SDL_LIBTHAI SDL_PIPEWIRE SDL_PULSEAUDIO
       SDL_ROCKCHIP SDL_RPI SDL_SNDIO SDL_WAYLAND_LIBDECOR
       SDL_X11_XCURSOR SDL_X11_XDBE SDL_X11_XFIXES SDL_X11_XINPUT SDL_X11_XRANDR
       SDL_X11_XSHAPE SDL_X11_XSCRNSAVER SDL_X11_XSYNC SDL_X11_XTEST)
     set(${opt} OFF CACHE BOOL "" FORCE)
   endforeach()
+  # Audio (architecture §7, v0.19): ALSA is the one Linux backend, as with
+  # vcpkg's `alsa` feature; PipeWire and PulseAudio reach it through their
+  # ALSA plugins. SDL dlopens libasound at run time (SDL_ALSA_SHARED), so a
+  # machine without it, or without a sound card (CI, xvfb), just gets no audio
+  # device and the client stays silent. Only the build needs the headers
+  # (libasound2-dev); without them the client builds silent with a warning
+  # instead of failing SDL's configure.
+  set(kfm_sdl_alsa OFF)
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(KFM_ALSA QUIET alsa)
+    endif()
+    if(KFM_ALSA_FOUND)
+      set(kfm_sdl_alsa ON)
+    else()
+      message(WARNING "KFM: ALSA headers (libasound2-dev) not found: SDL3 builds without "
+                      "Linux audio and the client is silent")
+    endif()
+  endif()
+  set(SDL_ALSA ${kfm_sdl_alsa} CACHE BOOL "" FORCE)
+  set(SDL_ALSA_SHARED ON CACHE BOOL "" FORCE)
   set(SDL_REVISION "release-3.4.18" CACHE STRING "" FORCE)
   FetchContent_MakeAvailable(SDL3)
 endif()

@@ -16,14 +16,15 @@ env:
   # Headers SDL3 3.4.18 needs on Linux for the features we build (vcpkg sdl3
   # with x11 + wayland, and the identical FetchContent configuration in
   # cmake/KfmDependencies.cmake): X11 + Xext (+ Xft, which the port asks
-  # for), Wayland client + xkbcommon + EGL, and pkg-config to find them.
-  # Everything else SDL can use (ibus, dbus, alsa, pulse, pipewire, udev,
-  # kmsdrm, libdecor, the X extensions) is switched off on both paths, so it
-  # is not installed. GL needs no headers:
+  # for), Wayland client + xkbcommon + EGL, ALSA for audio (dlopened at run
+  # time; the runners have no sound card, so the client stays silent), and
+  # pkg-config to find them. Everything else SDL can use (ibus, dbus, pulse,
+  # pipewire, udev, kmsdrm, libdecor, the X extensions) is switched off on
+  # both paths, so it is not installed. GL needs no headers:
   # the GL loader is vendored (third_party/glad).
   KFM_SDL_APT_PACKAGES: >-
     pkg-config libx11-dev libxext-dev libxft-dev
-    libwayland-dev libxkbcommon-dev libegl-dev wayland-protocols
+    libwayland-dev libxkbcommon-dev libegl-dev wayland-protocols libasound2-dev
   # The WebRTC transport (kfm_net_webrtc, architecture §6.4) on the
   # FetchContent path (no vcpkg: the lint job's compile database, local
   # builds): libdatachannel 0.24.6 links the system OpenSSL for DTLS and the
@@ -31,6 +32,11 @@ env:
   # macOS) the manifest builds openssl itself and this is unused.
   KFM_NET_APT_PACKAGES: >-
     libssl-dev
+  # Host tools the vcpkg Linux jobs need for ports built with autotools: the
+  # `alsa` port behind sdl3's `alsa` feature (architecture §7, v0.19) runs
+  # autoreconf. The FetchContent path uses the system libasound2-dev instead.
+  KFM_VCPKG_APT_PACKAGES: >-
+    autoconf autoconf-archive automake libtool
 
 jobs:
   lint:
@@ -91,7 +97,7 @@ jobs:
         # xvfb-run exists).
         run: |
           sudo apt-get update
-          sudo apt-get install -y $KFM_SDL_APT_PACKAGES $KFM_NET_APT_PACKAGES xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri libegl-mesa0
+          sudo apt-get install -y $KFM_SDL_APT_PACKAGES $KFM_NET_APT_PACKAGES $KFM_VCPKG_APT_PACKAGES xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri libegl-mesa0
       - uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
@@ -151,7 +157,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
       - name: Install SDL3 and WebRTC build dependencies
-        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES $KFM_NET_APT_PACKAGES
+        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES $KFM_NET_APT_PACKAGES $KFM_VCPKG_APT_PACKAGES
       - uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg

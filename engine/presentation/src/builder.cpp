@@ -1,9 +1,14 @@
 #include "kfm/presentation/builder.hpp"
 
+#include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/world_basis.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <span>
+#include <utility>
 
 namespace kfm::presentation {
 namespace {
@@ -14,7 +19,6 @@ using sim::AbilityState;
 using sim::Boomerang;
 using sim::BoomerangPhase;
 using sim::ContentDB;
-using sim::EventKind;
 using sim::Player;
 using sim::SimEvent;
 using sim::Tag;
@@ -165,19 +169,6 @@ void pushShadow(RenderState& out, Vec3 ground, float radius, float height, Shado
 
 // --- effects ------------------------------------------------------------------
 
-void addEffect(PresentationState& ps, const RenderEffect& e) {
-  if (ps.effectCount < kMaxRenderEffects) {
-    ps.effects[ps.effectCount++] = e;
-    return;
-  }
-  // Full: replace the effect closest to expiring.
-  uint16_t victim = 0;
-  for (uint16_t i = 1; i < ps.effectCount; ++i) {
-    if (ps.effects[i].remaining < ps.effects[victim].remaining) victim = i;
-  }
-  ps.effects[victim] = e;
-}
-
 void ageEffects(PresentationState& ps, float dt) {
   uint16_t kept = 0;
   for (uint16_t i = 0; i < ps.effectCount; ++i) {
@@ -188,92 +179,32 @@ void ageEffects(PresentationState& ps, float dt) {
   ps.effectCount = kept;
 }
 
-[[nodiscard]] RenderEffect makeEffect(EffectKind kind, int8_t slot, Vec3 pos, float seconds,
-                                      Vec2f dir = {}) {
-  return RenderEffect{kind, slot, pos, dir, seconds, seconds};
+// Counts a trail timer down; true when an afterimage is due (and rearms it).
+[[nodiscard]] bool trailDue(float& timer, float dt, float interval) {
+  timer -= dt;
+  if (timer > 0.0f) return false;
+  timer = std::max(timer + interval, 0.0f);
+  return true;
 }
 
-void addShake(PresentationState& ps, float amount) {
-  ps.shake = std::min(ps.shake + amount, kShakeMax);
-}
-
-void flashPlayer(PresentationState& ps, PlayerId id, float seconds) {
-  if (!id.isValid() || id.value >= sim::kMaxPlayers) return;
-  PlayerTrack& t = ps.players[id.value];
-  if (seconds >= t.flashRemaining) {
-    t.flashRemaining = seconds;
-    t.flashDuration = seconds;
+// Count-in on entering the countdown and on every whole second it crosses;
+// "go" when play starts.
+void phaseSounds(PresentationState& ps, const RenderHud& hud, RenderState& out) {
+  const int whole = hud.phase == HudPhase::RoundStarting
+                        ? std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)))
+                        : 0;
+  if (ps.hudSeen) {
+    if (hud.phase == HudPhase::RoundStarting &&
+        (ps.lastHudPhase != HudPhase::RoundStarting || whole < ps.lastCountdownWhole)) {
+      pushSound(out, SoundCue{SoundId::CountIn, 1.0f, 0.0f});
+    }
+    if (hud.phase == HudPhase::Playing && ps.lastHudPhase == HudPhase::RoundStarting) {
+      pushSound(out, SoundCue{SoundId::RoundGo, 1.0f, 0.0f});
+    }
   }
-}
-
-// Where a player is for an event: drawn this frame if alive, else its
-// position in prev (eliminated this tick), else the last drawn position.
-[[nodiscard]] Vec2f playerPlaneForEvent(const PresentationState& ps, const WorldState& prev,
-                                        const WorldState& curr, PlayerId id) {
-  if (!id.isValid() || id.value >= sim::kMaxPlayers) return Vec2f{};
-  if (curr.playerBySlot(id) != nullptr) return ps.players[id.value].motion.lastDrawn;
-  if (const Player* p = prev.playerBySlot(id)) return toFloat(p->transform.pos);
-  return ps.players[id.value].motion.lastDrawn;
-}
-
-void applyEvent(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                const SimEvent& e) {
-  const auto bodyAt = [&](PlayerId id) {
-    return simToWorld(playerPlaneForEvent(ps, prev, curr, id), kEffectBodyHeight);
-  };
-  const int8_t slot = slotOrNone(e.player);
-  switch (e.kind) {
-    case EventKind::PlayerDashed: {
-      Vec2f dir{};
-      if (const Player* p = curr.playerBySlot(e.player)) dir = toFloat(dashSlot(*p).dir);
-      const Vec2f plane = playerPlaneForEvent(ps, prev, curr, e.player);
-      addEffect(ps, makeEffect(EffectKind::DashRing, slot, simToWorld(plane, kEffectGroundHeight),
-                               kDashRingSeconds, dir));
-      break;
-    }
-    case EventKind::BoomerangThrown: {
-      Vec3 pos = bodyAt(e.player);
-      Vec2f dir{};
-      if (const Boomerang* b = curr.boomerangs.get(e.entity)) {
-        pos = simToWorld(toFloat(b->transform.pos), kBananaHandHeight);
-        dir = toFloat(Vec2::fromAngle(b->transform.facing));
-      }
-      addEffect(ps, makeEffect(EffectKind::ThrowPuff, slot, pos, kThrowPuffSeconds, dir));
-      break;
-    }
-    case EventKind::BoomerangCaught: {
-      const bool perfect = e.a == static_cast<uint32_t>(sim::CatchHow::Perfect);
-      const float seconds = perfect ? kPerfectCatchFlashSeconds : kAutoCatchFlashSeconds;
-      addEffect(ps, makeEffect(perfect ? EffectKind::PerfectCatchFlash : EffectKind::AutoCatchFlash,
-                               slot, bodyAt(e.player), seconds));
-      flashPlayer(ps, e.player, seconds);
-      if (perfect) addShake(ps, kShakeOnPerfectCatch);
-      break;
-    }
-    case EventKind::PlayerHit:
-    case EventKind::PlayerDashHit:  // a dash hit reads like a banana hit (§5.9)
-      addEffect(ps, makeEffect(EffectKind::HitFlash, slot, bodyAt(e.player), kHitFlashSeconds));
-      flashPlayer(ps, e.player, kHitFlashSeconds);
-      addShake(ps, kShakeOnHit);
-      break;
-    case EventKind::PlayerEliminated:
-      addEffect(ps, makeEffect(EffectKind::EliminationBurst, slot, bodyAt(e.player),
-                               kEliminationBurstSeconds));
-      addShake(ps, kShakeOnElimination);
-      break;
-    case EventKind::RoundStarted:
-      addEffect(
-          ps, makeEffect(EffectKind::RoundStartBanner, kNoSlot, Vec3{}, kRoundStartBannerSeconds));
-      break;
-    case EventKind::RoundEnded:
-      addEffect(ps, makeEffect(EffectKind::RoundEndBanner, slot, Vec3{}, kRoundEndBannerSeconds));
-      break;
-    case EventKind::MatchEnded:
-      addEffect(ps, makeEffect(EffectKind::MatchEndBanner, slot, Vec3{}, kMatchEndBannerSeconds));
-      break;
-    default:
-      break;
-  }
+  ps.hudSeen = true;
+  ps.lastHudPhase = hud.phase;
+  ps.lastCountdownWhole = whole;
 }
 
 // --- entities -------------------------------------------------------------------
@@ -305,6 +236,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     if (fresh) {
       track.flashRemaining = 0.0f;
       track.flashDuration = 0.0f;
+      track.trailTimer = 0.0f;
     }
     decayOffset(track.motion, dt);
     track.bodyTarget = bodyTargetFor(cp, content, track.bodyTarget);
@@ -334,11 +266,36 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.ammoMax = cp.stats.ammoMax;
     rp.hp = cp.hp;
     rp.maxHp = cp.stats.maxHp;
+    for (uint8_t m = 0; m < cp.modifiers.count && m < sim::kMaxModifiers; ++m) {
+      const sim::ActiveModifier& am = cp.modifiers.items[m];
+      const sim::PowerUpDef& def = content.powerUpAt(am.powerUp);
+      RenderPowerUp& pu = rp.powerUps[rp.powerUpCount++];
+      pu.powerUp = am.powerUp;
+      pu.colorIndex = def.visual.color;
+      pu.shape = static_cast<PowerUpShapeView>(def.visual.shape);
+      pu.secondsLeft = static_cast<float>(am.ticksLeft) / static_cast<float>(sim::kTickHz);
+      pu.fraction =
+          def.durationTicks > 0
+              ? clamp01(static_cast<float>(am.ticksLeft) / static_cast<float>(def.durationTicks))
+              : 0.0f;
+    }
     const AbilityState& dash = dashSlot(cp);
     const uint16_t cd = content.abilityAt(dash.defIndex).cooldownTicks;
     rp.dashCooldown =
         cd > 0 ? clamp01(static_cast<float>(dash.cooldownTicks) / static_cast<float>(cd)) : 0.0f;
     pushShadow(out, rp.ground, radius, height, ShadowOwner::Player);
+
+    // Dash trail: afterimages while the Dash is active.
+    if (dashActive(cp, content) && !cp.tags.has(Tag::Eliminated)) {
+      if (trailDue(track.trailTimer, dt, kDashTrailInterval)) {
+        const Vec2f dir = toFloat(dashSlot(cp).dir);
+        addEffect(ps, RenderEffect{EffectKind::DashTrail, static_cast<int8_t>(i),
+                                   simToWorld(drawn, height + (kEffectBodyHeight * 0.6f)), dir,
+                                   kDashTrailSeconds, kDashTrailSeconds, 0.0f});
+      }
+    } else {
+      track.trailTimer = 0.0f;  // the next dash leaves an afterimage at once
+    }
   }
 }
 
@@ -354,7 +311,10 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     const Boomerang& cb = curr.boomerangs.items[i];
     const Boomerang* pb = matching(prev.boomerangs, i, gen);
     BananaTrack& track = ps.bananas[i];
-    if (refreshTrack(track.motion, gen)) track.returnStartDistance = -1.0f;
+    if (refreshTrack(track.motion, gen)) {
+      track.returnStartDistance = -1.0f;
+      track.trailTimer = 0.0f;
+    }
     decayOffset(track.motion, dt);
 
     const Vec2f currPos = toFloat(cb.transform.pos);
@@ -390,6 +350,14 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     rb.phase = bananaPhase(cb.phase);
     rb.ownerSlot = slotOrNone(cb.owner);
     pushShadow(out, rb.ground, radius, height, ShadowOwner::Banana);
+
+    // A short trail behind a flying banana.
+    if (cb.phase != BoomerangPhase::Grounded &&
+        trailDue(track.trailTimer, dt, kBananaTrailInterval)) {
+      addEffect(ps, RenderEffect{EffectKind::BananaTrail, rb.ownerSlot, rb.position,
+                                 Vec2f{std::cos(heading), std::sin(heading)}, kBananaTrailSeconds,
+                                 kBananaTrailSeconds, 0.0f});
+    }
   }
 }
 
@@ -418,11 +386,18 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
     rp.spin = wrapRadians((kPickupSpinRadPerSec * ps.time) + phase);
     rp.radius = radius;
     rp.kind = PickupKindView::Banana;
+    if (cp.kind == sim::PickupKind::PowerUp) {
+      const sim::PowerUpDef& def = content.powerUpAt(cp.powerUpIndex);
+      rp.kind = PickupKindView::PowerUp;
+      rp.colorIndex = def.visual.color;
+      rp.shape = static_cast<PowerUpShapeView>(def.visual.shape);
+      rp.powerUp = cp.powerUpIndex;
+    }
     pushShadow(out, rp.ground, radius, height, ShadowOwner::Pickup);
   }
 }
 
-void buildHud(const WorldState& curr, const ContentDB& content, RenderHud& hud) {
+void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHud& hud) {
   const sim::MatchRules& r = curr.rules;
   hud.phase = hudPhase(r.phase);
   hud.ticksInPhase = r.ticksInPhase;
@@ -440,6 +415,27 @@ void buildHud(const WorldState& curr, const ContentDB& content, RenderHud& hud) 
       r.phase == sim::MatchPhase::RoundStarting ? secondsLeft(content.mode.roundStartTicks) : 0.0f;
   hud.roundEndSeconds =
       r.phase == sim::MatchPhase::RoundEnded ? secondsLeft(content.mode.roundEndTicks) : 0.0f;
+
+  const sim::ModeDef& mode = content.mode;
+  hud.mode = mode.kind;
+  hud.scoreToWin = mode.scoreToWin;
+  hud.hasClock = mode.kind != sim::ModeKind::Rounds && mode.timeLimitTicks > 0;
+  hud.clockSeconds = 0.0f;
+  if (hud.hasClock) {
+    if (r.phase == sim::MatchPhase::Playing) {
+      hud.clockSeconds = secondsLeft(mode.timeLimitTicks);
+    } else if (r.phase == sim::MatchPhase::RoundStarting || r.phase == sim::MatchPhase::Lobby) {
+      hud.clockSeconds = static_cast<float>(mode.timeLimitTicks) * kTickSeconds;
+    }
+  }
+  hud.aliveCount = 0;
+  curr.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+    if (!p.tags.has(sim::Tag::Eliminated)) ++hud.aliveCount;
+  });
+  hud.deaths = r.deaths;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    hud.respawnSeconds[i] = static_cast<float>(r.respawnTicks[i]) * kTickSeconds;
+  }
 }
 
 }  // namespace
@@ -483,8 +479,9 @@ float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnSta
 }
 
 void buildRenderState(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                      float alpha, std::span<const SimEvent> newEvents, const ContentDB& content,
-                      float dtSeconds, RenderState& out) {
+                      float alpha, std::span<const SimEvent> newEvents,
+                      const sim::MatchContent& match, float dtSeconds, RenderState& out) {
+  const ContentDB& content = match.db;
   const float dt = std::max(dtSeconds, 0.0f);
   alpha = clamp01(alpha);
   ps.time += dt;
@@ -494,17 +491,19 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   out.pickupCount = 0;
   out.shadowCount = 0;
   out.effectCount = 0;
+  out.soundCount = 0;
 
+  // Effects: age the running ones first; trails sampled by the entity passes
+  // and the new events' effects then start at full duration. Player tracks
+  // are still valid for players eliminated this tick.
+  ageEffects(ps, dt);
   buildPlayers(ps, prev, curr, alpha, content, dt, out);
   buildBananas(ps, prev, curr, alpha, content, dt, out);
   buildPickups(ps, curr, content, dt, out);
 
-  // Effects: age the running ones, then start those of the new events at full
-  // duration. Player tracks are still valid for players eliminated this tick.
-  ageEffects(ps, dt);
   ps.shake *= std::exp(-dt / kShakeTau);
   for (const SimEvent& e : newEvents)
-    applyEvent(ps, prev, curr, e);
+    applyEventFx(ps, prev, curr, e, match, out);
   // Flashes started by this frame's events show this frame.
   for (uint16_t i = 0; i < out.playerCount; ++i) {
     RenderPlayer& rp = out.players[i];
@@ -522,12 +521,106 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   const float w = kTwoPi * kShakeHz * ps.time;
   out.shakeOffset =
       Vec3{ps.shake * std::sin(w), ps.shake * 0.6f * std::sin((1.37f * w) + 1.1f), 0.0f};
-  out.arenaHalfExtents = toFloat(content.arena.halfExtents);
+  out.arenaHalfExtents = toFloat(match.arena.halfExtents);
+  buildArenaPieces(match.arena, out);
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
   out.bananaRadius = content.boomerang.radius.toFloat();
   out.time = ps.time;
-  buildHud(curr, content, out.hud);
+  buildHud(curr, match, out.hud);
+  phaseSounds(ps, out.hud, out);
+}
+
+namespace {
+
+struct Box2f {
+  Vec2f lo;
+  Vec2f hi;
+};
+
+[[nodiscard]] float axisOf(Vec2f v, int axis) {
+  return axis == 0 ? v.x : v.y;
+}
+
+// The stretches of one pit edge that border open floor. The edge lies at
+// `at` on `axis` (0 = x, 1 = y), spans [from, to] on the other axis, and
+// faces `outward` (+1 or -1). A stretch is covered when another pit holds
+// the points just outside it, or when the edge lies on the outer box.
+template <class Emit>
+void floorStretches(std::span<const Box2f> pits, size_t self, int axis, float at, float outward,
+                    float from, float to, float halfExtent, Emit&& emit) {
+  if (std::fabs(at) >= halfExtent) return;  // on the outer wall
+  std::array<std::pair<float, float>, sim::kMaxArenaHazards> covered{};
+  size_t n = 0;
+  const int other = 1 - axis;
+  for (size_t j = 0; j < pits.size(); ++j) {
+    if (j == self) continue;
+    const float lo = axisOf(pits[j].lo, axis);
+    const float hi = axisOf(pits[j].hi, axis);
+    const bool holdsOutside = outward > 0.0f ? (lo <= at && hi > at) : (lo < at && hi >= at);
+    if (!holdsOutside) continue;
+    const float a = std::max(from, axisOf(pits[j].lo, other));
+    const float b = std::min(to, axisOf(pits[j].hi, other));
+    if (a < b) covered[n++] = {a, b};
+  }
+  std::sort(covered.begin(), covered.begin() + static_cast<std::ptrdiff_t>(n));
+  float cursor = from;
+  for (size_t k = 0; k < n; ++k) {
+    if (covered[k].first > cursor) emit(cursor, covered[k].first);
+    cursor = std::max(cursor, covered[k].second);
+  }
+  if (cursor < to) emit(cursor, to);
+}
+
+}  // namespace
+
+void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out) {
+  uint16_t n = 0;
+  const auto add = [&](ArenaPieceKind kind, Vec2f lo, Vec2f hi, float height) {
+    if (n >= out.arenaPieces.size() || lo.x >= hi.x || lo.y >= hi.y) return;
+    // Sim y maps to world -z, so the box's z extent is its sim y extent.
+    out.arenaPieces[n++] =
+        RenderArenaPiece{.kind = kind,
+                         .center = simToWorld(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}),
+                         .size = Vec3{hi.x - lo.x, height, hi.y - lo.y}};
+  };
+  for (uint8_t i = 0; i < arena.wallCount && i < sim::kMaxArenaWalls; ++i) {
+    add(ArenaPieceKind::Wall, toFloat(arena.walls[i].min), toFloat(arena.walls[i].max),
+        kArenaWallHeight);
+  }
+  std::array<Box2f, sim::kMaxArenaHazards> pits{};
+  size_t pitCount = 0;
+  for (uint8_t i = 0; i < arena.hazardCount && i < sim::kMaxArenaHazards; ++i) {
+    const sim::Hazard& h = arena.hazards[i];
+    const bool pit = h.kind == sim::HazardKind::Pit;
+    add(pit ? ArenaPieceKind::Pit : ArenaPieceKind::Slow, toFloat(h.min), toFloat(h.max),
+        kHazardSlabHeight);
+    if (pit) pits[pitCount++] = Box2f{toFloat(h.min), toFloat(h.max)};
+  }
+  const std::span<const Box2f> pitSpan(pits.data(), pitCount);
+  const Vec2f half = toFloat(arena.halfExtents);
+  const float rim = kPitRimWidth;
+  uint16_t rims = 0;
+  const auto addRim = [&](Vec2f lo, Vec2f hi) {
+    if (rims >= kMaxRenderPitRims) return;
+    ++rims;
+    add(ArenaPieceKind::PitRim, lo, hi, kHazardSlabHeight);
+  };
+  for (size_t i = 0; i < pitCount; ++i) {
+    const Box2f& b = pits[i];
+    const float wx = std::min(rim, 0.5f * (b.hi.x - b.lo.x));
+    const float wy = std::min(rim, 0.5f * (b.hi.y - b.lo.y));
+    // -y and +y edges (axis y fixed), then -x and +x (axis x fixed).
+    floorStretches(pitSpan, i, 1, b.lo.y, -1.0f, b.lo.x, b.hi.x, half.y,
+                   [&](float a, float c) { addRim({a, b.lo.y}, {c, b.lo.y + wy}); });
+    floorStretches(pitSpan, i, 1, b.hi.y, 1.0f, b.lo.x, b.hi.x, half.y,
+                   [&](float a, float c) { addRim({a, b.hi.y - wy}, {c, b.hi.y}); });
+    floorStretches(pitSpan, i, 0, b.lo.x, -1.0f, b.lo.y, b.hi.y, half.x,
+                   [&](float a, float c) { addRim({b.lo.x, a}, {b.lo.x + wx, c}); });
+    floorStretches(pitSpan, i, 0, b.hi.x, 1.0f, b.lo.y, b.hi.y, half.x,
+                   [&](float a, float c) { addRim({b.hi.x - wx, a}, {b.hi.x, c}); });
+  }
+  out.arenaPieceCount = n;
 }
 
 void onRollback(PresentationState& ps, const WorldState& newPrev, const WorldState& newCurr,

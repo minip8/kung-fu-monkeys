@@ -223,6 +223,11 @@ void entitySection(const Session& s) {
         ImGui::Text("    %s: %s %u ticks, cooldown %u", abilityName(c.abilityAt(ab.defIndex).kind),
                     abilityPhaseName(ab.phase), ab.phaseTicks, ab.cooldownTicks);
       }
+      for (uint8_t m = 0; m < p.modifiers.count && m < sim::kMaxModifiers; ++m) {
+        const sim::ActiveModifier& am = p.modifiers.items[m];
+        ImGui::Text("    power-up %s: %u ticks left", c.powerUpAt(am.powerUp).name.cStr(),
+                    am.ticksLeft);
+      }
     }
     ImGui::TreePop();
   }
@@ -236,7 +241,9 @@ void entitySection(const Session& s) {
   }
   if (ImGui::TreeNode("pickups", "pickups (%u)", static_cast<unsigned>(w.pickups.size()))) {
     w.pickups.forEachAlive([&](EntityId id, const sim::Pickup& p) {
-      ImGui::Text("#%u.%u banana at (%.2f, %.2f)", id.index, id.generation, p.pos.x.toDouble(),
+      const char* what =
+          p.kind == sim::PickupKind::PowerUp ? c.powerUpAt(p.powerUpIndex).name.cStr() : "banana";
+      ImGui::Text("#%u.%u %s at (%.2f, %.2f)", id.index, id.generation, what, p.pos.x.toDouble(),
                   p.pos.y.toDouble());
     });
     ImGui::TreePop();
@@ -281,9 +288,16 @@ void tuningSection(MatchSession& s, std::string& printed) {
   c.player.ammoStart = std::min(c.player.ammoStart, c.player.ammoMax);
 
   ImGui::SeparatorText("Mode");
-  sliderU8("rounds to win", c.mode.roundsToWin, 1, 9);
-  sliderU16("round start ticks", c.mode.roundStartTicks, 0, 300);
-  sliderU16("round end ticks", c.mode.roundEndTicks, 0, 600);
+  sim::ModeDef& mode = c.modes[s.matchConfig().mode];
+  ImGui::Text("%s", mode.name.cStr());
+  if (mode.kind != sim::ModeKind::Deathmatch) sliderU8("rounds to win", mode.roundsToWin, 1, 9);
+  sliderU16("round start ticks", mode.roundStartTicks, 0, 300);
+  sliderU16("round end ticks", mode.roundEndTicks, 0, 600);
+  if (mode.kind == sim::ModeKind::Deathmatch) {
+    sliderU8("score to win", mode.scoreToWin, 1, 50);
+    sliderU16("respawn ticks", mode.respawnTicks, 1, 600);
+    sliderU16("spawn protection ticks", mode.respawnInvulnTicks, 0, 600);
+  }
 
   ImGui::Spacing();
   if (ImGui::Button("reset to defaults")) s.resetContent();
@@ -420,6 +434,23 @@ void netMatchSection(NetSession& s, const presentation::RendererStats& r) {
   ImGui::Text("renderer: %u draw calls, %u triangles", r.drawCalls, r.triangles);
 }
 
+// Audio (§7): mute, master volume, device status and the mixer's voices.
+// Works online too: sound is presentation, not the sim.
+void audioSection(ClientAudio& a) {
+  bool muted = a.muted();
+  if (ImGui::Checkbox("mute", &muted)) a.setMuted(muted);
+  int volume = a.volumePercent();
+  if (ImGui::SliderInt("volume", &volume, 0, 100, "%d %%")) a.setVolumePercent(volume);
+  if (ImGui::Button("test click")) a.click();
+  ImGui::TextWrapped("device: %s", a.statusText().c_str());
+  const presentation::Mixer& m = a.mixer();
+  ImGui::Text("voices %d / %d, started %llu, stolen %llu", m.activeVoices(),
+              presentation::kMixerVoices, static_cast<unsigned long long>(m.started()),
+              static_cast<unsigned long long>(m.stolenVoices()));
+  ImGui::Text("queued %zu frames, underruns %llu", a.device().queuedFrames(),
+              static_cast<unsigned long long>(a.device().underruns()));
+}
+
 }  // namespace
 
 void DebugOverlay::recordFrame(double frameSeconds) {
@@ -444,6 +475,7 @@ void DebugOverlay::draw(MatchSession& session, const presentation::RendererStats
     if (ImGui::CollapsingHeader("Interpolation")) interpolationSection(session);
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
     if (ImGui::CollapsingHeader("Feel tuning")) tuningSection(session, printedCpp_);
+    if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
   }
   ImGui::End();
 }
@@ -470,6 +502,7 @@ void DebugOverlay::draw(NetSession& session, const presentation::RendererStats& 
       netSection(session, rttMs_, depth_, netHead_);
     }
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
+    if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
   }
   ImGui::End();
 }

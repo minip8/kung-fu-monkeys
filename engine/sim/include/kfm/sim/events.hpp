@@ -18,7 +18,7 @@ enum class EventKind : uint8_t {
   PlayerSpawned,      // player, entity
   RoundStarted,       // a = round
   RoundEnded,         // player = winner (invalid on a draw), a = round
-  MatchEnded,         // player = winner
+  MatchEnded,         // player = winner (invalid on a draw)
   PlayerDashed,       // player, entity = player
   BoomerangThrown,    // player = owner, entity = boomerang
   BoomerangCaught,    // player = catcher, entity = boomerang, a = CatchHow
@@ -26,10 +26,22 @@ enum class EventKind : uint8_t {
   BoomerangBounced,   // entity = boomerang
   PlayerHit,          // player = victim, entity = boomerang, a = attacker slot, b = hp after
   PlayerEliminated,   // player = victim, a = killer slot or 0xFF
-  PickupSpawned,      // entity = pickup
-  PickupTaken,        // player, entity = pickup
+  PickupSpawned,      // entity = pickup, a = PickupKind, b = power-up index (PowerUp)
+  PickupTaken,        // player, entity = pickup, a = PickupKind, b = power-up index (PowerUp)
   PlayerDashHit,      // player = victim, entity = attacker's player, a = attacker slot,
                       // b = hp after (a dash attack, §5.6; PlayerHit is a banana hit)
+  // v0.23 (modes, §5.3):
+  ScoreChanged,     // player, a = score after (a round win, or an elimination in deathmatch)
+  PlayerRespawned,  // player, entity, a = spawn point index (deathmatch respawn or late join)
+  TimerWarning,     // a = whole seconds left on the mode's clock (10, 3, 2, 1)
+  ShieldBroken,     // player = shielded victim, entity = the banana or the dashing player,
+                    // a = attacker slot, b = power-up index whose shield broke (§5.8)
+  // v0.21 (abilities, §5.5):
+  PlayerBlinked,       // player, entity = player, a/b = origin x/y (raw Q16.16 bits as uint32)
+  SlamLanded,          // player = slammer, entity = player, a = reach (raw Q16.16 bits)
+  PlayerSlammed,       // player = pushed monkey, entity = slammer's player, a = slammer slot
+  PlayerParryStarted,  // player, entity = player (a parry pressed: the stance)
+  BoomerangParried,    // player = parrier (the new owner), entity = boomerang, a = thrower slot
 };
 
 // BoomerangCaught payload `a`.

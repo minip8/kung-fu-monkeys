@@ -1,15 +1,19 @@
 // kfm_client: the playable client (architecture §3, §6.8, §7, §11 M2, M3).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
-//              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
+//              [--no-hot-reload] [--no-settings] [--overlay] [--capsules] [--exit-after-frames N]
+//              [--screenshot out.ppm]
+//              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //
 // Frame: pollEvents (ImGui first, then SDL -> InputEvent into the session)
 // -> MatchSession::advance (0..4 fixed 60 Hz ticks, inputs sampled right
 // before each step) or, in network mode, NetSession::advance (pump,
 // reconcile, onRollback, the rate-controlled ticks, journal events) ->
-// buildRenderState -> arena camera -> HUD / lobby / network status / debug
-// overlay (ImGui) -> debugUiFlush -> default pass: renderer.draw, then
+// buildRenderState -> audio (the frame's sound cues into the mixer, the
+// device queue topped up) -> arena camera -> HUD / lobby / network status /
+// debug overlay (ImGui) -> debugUiFlush -> default pass: renderer.draw, then
 // debugUiDraw -> present.
 //
 // Network mode (--connect): connects at startup with one local slot (or
@@ -17,16 +21,36 @@
 // devices as usual and whose Start connects again, one slot per bound device.
 // The session runs over a WebRtcTransport, natively and in the browser alike.
 //
+// Content (§5.10): loaded at startup from --content, else content/ next to
+// the executable, else the copy built into it (always, in the browser); its
+// hash must match the server's online. Natively, local play polls the
+// content directory about once a second and on a change reloads it and
+// restarts the match with the same seed (errors are printed and the old
+// content kept). Online the server's content and match config rule.
+//
+// Lobby settings (v0.24, core/lobby_menu.hpp, core/lobby_settings.hpp): the
+// local lobby's panel picks the arena, mode, power-up set, bots, volume and
+// mute, from the mouse, the arrow keys / WASD or a joined pad's d-pad and
+// stick. Every change applies to the lobby's MatchSession and the audio at
+// once and is saved (natively in SDL's preference directory, in the browser
+// in localStorage) unless --no-settings; at startup the saved settings come
+// first and the flags (or URL parameters) override them.
+//
 // Keys outside the game bindings: F1 debug overlay, P pause, O single step,
 // Escape back to the lobby (quits from the lobby, natively; online it
 // disconnects and returns to the local lobby), - / = bot count in the lobby,
 // Enter / pad Start starts the match or connects (and leaves the match-over
 // screen). Pause, step and the bot keys do nothing online.
+#include "client_audio.hpp"
 #include "core/client_options.hpp"
+#include "core/lobby_menu.hpp"
+#include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
 #include "core/net_session.hpp"
 #include "debug_overlay.hpp"
 #include "hud.hpp"
+#include "kfm/content/app_content.hpp"
+#include "kfm/content/loader.hpp"
 #include "kfm/platform/debug_ui.hpp"
 #include "kfm/platform/gfx.hpp"
 #include "kfm/platform/main_loop.hpp"
@@ -41,18 +65,25 @@
 #include "kfm/net/webrtc_transport.hpp"
 #endif
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/em_js.h>
+#endif
+
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_scancode.h>
+#include <SDL3/SDL_stdinc.h>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <ios>
 #include <memory>
 #include <span>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -65,15 +96,24 @@ using client::SessionPhase;
 
 struct App {
   client::ClientOptions options;
+  content::LoadedContent content;
+  content::ContentWatcher contentWatcher;  // inactive unless hot reload applies
   platform::Window window;
   presentation::Renderer renderer;
   bool rendererReady = false;
+  // What the renderer's meshes were built from (content hash, arena index):
+  // the floor follows the arena, so a new arena or content re-initialises it.
+  std::uint64_t rendererKey = 0;
   std::unique_ptr<MatchSession> session;
   std::unique_ptr<client::NetSession> net;  // network mode, while connected or showing why not
   client::NetPhase lastNetPhase = client::NetPhase::Connecting;
   bool connectRequested = false;  // the lobby's Start, online: connect next frame
   client::GamepadSet pads;
   client::DebugOverlay overlay;
+  client::ClientAudio audio;
+  client::LobbyMenu lobby;      // the local lobby's settings panel
+  client::MenuInput menuInput;  // raw input -> lobby menu actions
+  bool lobbyChanged = false;    // a menu action changed a setting this frame
   presentation::RenderState renderState;
   std::uint64_t frames = 0;
   std::uint64_t lastFrameNs = 0;
@@ -83,6 +123,97 @@ struct App {
 
 // Static storage: under Emscripten main() is unwound once the loop starts.
 App gApp;
+
+// --- saved lobby settings (lobby_settings.hpp) ------------------------------------
+
+#ifdef __EMSCRIPTEN__
+EM_JS_DEPS(kfm_settings, "$stringToNewUTF8,$UTF8ToString");
+// localStorage can be missing or throw (privacy modes, sandboxed frames): the
+// settings are then simply not remembered. (JavaScript: clang-format would
+// break its operators.)
+// clang-format off
+EM_JS(char*, kfmLoadSettingsJs, (), {
+  try {
+    const s = window.localStorage.getItem("kfm.settings");
+    return s === null ? 0 : stringToNewUTF8(s);
+  } catch (e) {
+    return 0;
+  }
+});
+EM_JS(void, kfmSaveSettingsJs, (const char* text), {
+  try {
+    window.localStorage.setItem("kfm.settings", UTF8ToString(text));
+  } catch (e) {
+  }
+});
+// clang-format on
+#else
+[[nodiscard]] std::filesystem::path settingsPath() {
+  char* dir = SDL_GetPrefPath("kfm", "kung-fu-monkeys");  // created if missing
+  if (dir == nullptr) return {};
+  std::filesystem::path p = std::filesystem::path(dir) / "settings.txt";
+  SDL_free(dir);
+  return p;
+}
+#endif
+
+[[nodiscard]] std::string loadSettingsText() {
+#ifdef __EMSCRIPTEN__
+  char* text = kfmLoadSettingsJs();
+  if (text == nullptr) return {};
+  std::string s(text);
+  std::free(text);  // NOLINT(cppcoreguidelines-no-malloc): allocated by stringToNewUTF8
+  return s;
+#else
+  const std::filesystem::path path = settingsPath();
+  if (path.empty()) return {};
+  const std::ifstream in(path, std::ios::binary);
+  if (!in) return {};
+  std::ostringstream text;
+  text << in.rdbuf();
+  return text.str();
+#endif
+}
+
+void saveSettingsText(const std::string& text) {
+#ifdef __EMSCRIPTEN__
+  kfmSaveSettingsJs(text.c_str());
+#else
+  const std::filesystem::path path = settingsPath();
+  if (path.empty()) return;
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out << text;
+  if (!out)
+    std::fprintf(stderr, "warning: cannot save the settings to %s\n", path.string().c_str());
+#endif
+}
+
+// The lobby's settings changed (panel or keys): apply them to the lobby's
+// session and the audio, write them into the options and save them.
+void applyLobbySettings(App& app) {
+  MatchSession& s = *app.session;
+  client::LobbySettings& ls = app.lobby.settings();
+  if (s.arena() != ls.arena) s.setArena(ls.arena);
+  if (s.mode() != ls.mode) s.setMode(ls.mode);
+  if (s.powerUps() != ls.powerUps) s.setPowerUps(ls.powerUps);
+  s.setBotCount(ls.bots);
+  ls.bots = s.botCount();  // clamped to the free slots
+  app.audio.setMuted(ls.mute);
+  app.audio.setVolumePercent(ls.volume);
+  client::storeLobbySettings(ls, app.content.db, app.options);
+  if (app.options.settings) saveSettingsText(client::settingsText(app.options));
+}
+
+// What changed outside the panel (the - / = keys, joins taking bot slots,
+// the F1 overlay's audio controls) flows back into the panel, and is saved.
+void syncLobbySettings(App& app) {
+  client::LobbySettings& ls = app.lobby.settings();
+  const client::LobbySettings before = ls;
+  ls.bots = app.session->botCount();
+  ls.volume = static_cast<uint8_t>(std::clamp(app.audio.volumePercent(), 0, 100));
+  ls.mute = app.audio.muted();
+  if (!(ls == before)) applyLobbySettings(app);
+}
 
 constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-forward effects
 
@@ -97,6 +228,45 @@ constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-
 #endif
 }
 
+// (Re)initialises the renderer when the match's arena or the loaded
+// content changed since its meshes were built. False only when the renderer
+// cannot be initialised at all.
+bool syncRenderer(App& app, const sim::MatchContent& content, std::uint32_t contentHash,
+                  std::uint8_t arena) {
+  const std::uint64_t key = (std::uint64_t{contentHash} << 8) | arena;
+  if (app.rendererReady && key == app.rendererKey) return true;
+  app.rendererReady = app.renderer.init(content);
+  app.rendererKey = key;
+  if (!app.rendererReady) return false;
+  if (!app.options.capsules) {
+    const std::string modelPath = characterModelPath();
+    if (!app.renderer.loadCharacterModel(modelPath.c_str())) {
+      std::fprintf(stderr, "warning: drawing capsules: %s\n",
+                   app.renderer.characterModelError().c_str());
+    }
+  }
+  return true;
+}
+
+// Hot reload (§5.10): the content directory changed on disk.
+void reloadContent(App& app, std::uint64_t nowNs) {
+  content::LoadedContent reloaded;
+  content::Diagnostics diag;
+  if (!content::loadAppContent(app.content.dir.string(), {}, reloaded, diag)) {
+    std::fprintf(stderr, "kfm_client: content reload failed, keeping the old content:\n%s",
+                 diag.format().c_str());
+    return;
+  }
+  if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
+  app.content = std::move(reloaded);
+  app.session->replaceContent(app.content.db, nowNs);
+  app.lobby.setContent(app.content.db);
+  app.lobby.settings().arena = app.session->arena();  // kept when the new content has it
+  app.lobby.settings().mode = app.session->mode();
+  std::printf("kfm_client: reloaded %s; match restarted\n", app.content.describe().c_str());
+  std::fflush(stdout);
+}
+
 // Whenever an ImGui widget has the keyboard (the overlay's fields, but also
 // the lobby's Bots field with the overlay closed), key presses go to it, not
 // to the game bindings or the app shortcuts.
@@ -108,7 +278,8 @@ constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-
 // the lobby's bound devices. A transport that cannot be created leaves a
 // failed session that shows why.
 void startNetwork(App& app, bool atStartup, std::uint64_t nowNs) {
-  const client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  config.content = &app.content.db;
   const platform::InputSampler& lobby = app.session->sampler();
 #ifdef KFM_CLIENT_WEBRTC
   net::WebRtcClientConfig wc;
@@ -191,8 +362,22 @@ void handleShortcut(App& app, const SDL_Event& event) {
   }
 }
 
+// Input that counts as a user gesture for the browser's autoplay policy.
+[[nodiscard]] bool isGesture(const SDL_Event& event) {
+  switch (event.type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+      return true;
+    default:
+      return false;
+  }
+}
+
 void onEvent(void* user, const SDL_Event& event) {
   auto* app = static_cast<App*>(user);
+  if (isGesture(event)) app->audio.onUserGesture();
   app->pads.onEvent(event);
   handleShortcut(*app, event);
   const auto input = client::translateSdlEvent(event);
@@ -202,9 +387,17 @@ void onEvent(void* user, const SDL_Event& event) {
   if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked()) return;
   if (app->net) {
     app->net->push(*input);
-  } else {
-    app->session->push(*input);
+    return;
   }
+  // The local lobby's settings panel: navigation from the keyboard and the
+  // joined pads (an unbound pad's press is its join). The press still goes
+  // to the session, which ignores bound devices' presses in the lobby.
+  if (app->session->phase() == SessionPhase::Lobby && !app->options.networkMode()) {
+    const client::MenuAction action =
+        app->menuInput.translate(*input, client::eventDeviceBound(app->session->sampler(), *input));
+    if (action != client::MenuAction::None && app->lobby.apply(action)) app->lobbyChanged = true;
+  }
+  app->session->push(*input);
 }
 
 bool writePpm(const std::string& path, int width, int height) {
@@ -233,14 +426,23 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   // Network mode: the lobby's Start connects, from the next frame on.
   if (s.takeStartRequest()) app.connectRequested = true;
   presentation::buildRenderState(
-      s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(), s.content(),
-      static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
+      s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(),
+      s.matchContent(), static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
   const presentation::Camera camera = presentation::makeArenaCamera(
-      s.content().arena, static_cast<float>(w), static_cast<float>(h));
+      s.matchContent().arena, static_cast<float>(w), static_cast<float>(h));
+  (void)syncRenderer(app, s.matchContent(), app.content.hash, s.matchConfig().arena);
 
   platform::debugUiNewFrame(w, h, dt, density);
   if (s.phase() == SessionPhase::Lobby) {
-    if (client::drawLobby(s, app.options.connect)) {
+    if (!app.options.networkMode()) syncLobbySettings(app);
+    const client::LobbyOutcome lobby = client::drawLobby(s, app.lobby, app.options.connect);
+    if (lobby.changed || app.lobbyChanged) {
+      applyLobbySettings(app);
+      app.audio.click();
+    }
+    app.lobbyChanged = false;
+    if (lobby.start) {
+      app.audio.click();
       if (app.options.networkMode()) {
         app.connectRequested = true;
       } else {
@@ -253,6 +455,7 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
   }
   app.overlay.draw(s, app.renderer.stats(), now);
+  app.audio.frame(app.renderState);
   return camera;
 }
 
@@ -268,7 +471,8 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   }
   n.build(static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
   const presentation::Camera camera = presentation::makeArenaCamera(
-      n.content().arena, static_cast<float>(w), static_cast<float>(h));
+      n.matchContent().arena, static_cast<float>(w), static_cast<float>(h));
+  (void)syncRenderer(app, n.matchContent(), app.content.hash, n.client().simConfig().arena);
 
   platform::debugUiNewFrame(w, h, dt, density);
   if (n.everRan()) {
@@ -278,6 +482,7 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   }
   if (!n.running()) client::drawNetStatus(n);
   app.overlay.draw(n, app.renderer.stats());
+  app.audio.frame(app.renderState);
   return camera;
 }
 
@@ -294,6 +499,9 @@ bool frame(void* user) {
   const int w = std::max(size.width, 1);
   const int h = std::max(size.height, 1);
   const float density = app->window.pixelDensity();
+  if (!app->net && app->contentWatcher.poll(static_cast<double>(now) * 1e-9)) {
+    reloadContent(*app, now);
+  }
   if (app->connectRequested && !app->net) startNetwork(*app, false, now);
   app->connectRequested = false;
   const presentation::Camera camera =
@@ -322,6 +530,7 @@ void onExit(void* user) {
   app->rendererReady = false;
   platform::debugUiShutdown();
   platform::gfxShutdown();
+  app->audio.shutdown();
   app->pads.closeAll();
   app->window.shutdown();
   if (app->net) {
@@ -352,6 +561,45 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     std::fprintf(stderr, "error: %s\n%s", error.c_str(), client::kUsage);
     return EXIT_FAILURE;
   }
+  {
+    content::Diagnostics diag;
+    const char* base = SDL_GetBasePath();  // owned by SDL; null under Emscripten is fine
+    const bool loaded = content::loadAppContent(
+        app.options.contentDir,
+        base != nullptr ? std::filesystem::path(base) : std::filesystem::path{}, app.content, diag);
+    if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
+    if (!loaded) {
+      std::fprintf(stderr, "error: the content failed to load\n");
+      return EXIT_FAILURE;
+    }
+    std::printf("kfm_client: %s\n", app.content.describe().c_str());
+    std::fflush(stdout);
+  }
+  // Saved lobby settings first, then the command line (or URL) again on top,
+  // so a flag always wins for this run.
+  if (app.options.settings) {
+    const std::string saved = loadSettingsText();
+    if (!saved.empty()) {
+      client::ClientOptions merged;
+      std::vector<std::string> warnings;
+      client::applySettingsText(saved, app.content.db, merged, warnings);
+      for (const std::string& w : warnings)
+        std::fprintf(stderr, "warning: %s\n", w.c_str());
+      if (client::parseClientOptions(args, merged, error)) app.options = std::move(merged);
+    }
+  }
+  client::LobbySettings lobby;
+  if (!client::lobbySettingsFrom(app.options, app.content.db, lobby, error)) {
+    std::fprintf(stderr, "error: %s\n", error.c_str());
+    return EXIT_FAILURE;
+  }
+  app.lobby.setContent(app.content.db);
+  app.lobby.settings() = lobby;
+#ifndef __EMSCRIPTEN__
+  if (app.options.hotReload && !app.content.embedded()) {
+    app.contentWatcher = content::ContentWatcher(app.content.dir);
+  }
+#endif
   if (!app.window.init({.title = "Kung Fu Monkeys", .width = 1280, .height = 720, .vsync = true})) {
     return EXIT_FAILURE;
   }
@@ -370,28 +618,28 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   const bool online = app.options.networkMode();
   app.session = std::make_unique<MatchSession>(
       client::SessionConfig{.seed = app.options.seed,
+                            .arena = lobby.arena,
+                            .mode = lobby.mode,
+                            .powerUps = lobby.powerUps,
+                            .content = &app.content.db,
                             .botSeed = app.options.playersSeed,
-                            .bots = online ? std::uint8_t{0} : app.options.bots,
+                            .bots = online ? std::uint8_t{0} : lobby.bots,
                             .hostHandlesStart = online});
   // A renderer that cannot create its buffers, shaders or pipelines is fatal
   // (so client_smoke catches it); a missing character model is not.
-  app.rendererReady = app.renderer.init(app.session->content());
-  if (!app.rendererReady) {
+  if (!syncRenderer(app, app.session->matchContent(), app.content.hash,
+                    app.session->matchConfig().arena)) {
     std::fprintf(stderr, "error: the renderer failed to initialise\n");
     platform::debugUiShutdown();
     platform::gfxShutdown();
     app.window.shutdown();
     return EXIT_FAILURE;
   }
-  if (!app.options.capsules) {
-    const std::string modelPath = characterModelPath();
-    if (!app.renderer.loadCharacterModel(modelPath.c_str())) {
-      std::fprintf(stderr, "warning: drawing capsules: %s\n",
-                   app.renderer.characterModelError().c_str());
-    }
-  }
 
   app.overlay.open = app.options.overlay;
+  app.overlay.audio = &app.audio;
+  app.audio.init(lobby.mute, lobby.volume);
+  if (!online) app.lobby.settings().bots = app.session->botCount();
   app.lastFrameNs = platform::Window::nowNs();
   if (online) {
     // --connect connects at startup with the devices bound so far (keyboard

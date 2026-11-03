@@ -71,6 +71,17 @@ TEST_CASE("rotateY turns +x toward -z, matching sim angles", "[presentation][mat
   }
 }
 
+TEST_CASE("rotateX and rotateZ are right-handed", "[presentation][math]") {
+  CHECK(near(transformDirection(rotateX(0.5f * kPi), Vec3{0.0f, 1.0f, 0.0f}),
+             Vec3{0.0f, 0.0f, 1.0f}));
+  CHECK(near(transformDirection(rotateZ(0.5f * kPi), Vec3{1.0f, 0.0f, 0.0f}),
+             Vec3{0.0f, 1.0f, 0.0f}));
+  // Rotations keep lengths.
+  const Vec3 v{1.0f, 2.0f, -3.0f};
+  CHECK(std::abs(length(transformDirection(rotateX(0.9f) * rotateZ(-0.4f), v)) - length(v)) <
+        1e-4f);
+}
+
 TEST_CASE("perspective matches hand-computed values", "[presentation][math]") {
   // fovY 90 degrees: f = 1. aspect 2, near 1, far 3.
   const Mat4 p = perspective(0.5f * kPi, 2.0f, 1.0f, 3.0f);

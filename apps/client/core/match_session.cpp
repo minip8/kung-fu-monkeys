@@ -38,9 +38,13 @@ constexpr sim::PlayerMask kAllSlots = static_cast<sim::PlayerMask>((1u << sim::k
 
 MatchSession::MatchSession(const SessionConfig& config)
     : seed_(config.seed),
+      powerUps_(config.powerUps),
       botSeed_(config.botSeed),
       hostHandlesStart_(config.hostHandlesStart),
-      content_(sim::defaultContent()) {
+      loaded_(config.content != nullptr ? *config.content : sim::defaultContent()),
+      content_(loaded_) {
+  arena_ = config.arena < loaded_.arenaCount ? config.arena : 0;
+  mode_ = config.mode < loaded_.modeCount ? config.mode : 0;
   clock_.setMaxTicksPerFrame(std::min(config.maxTicksPerFrame, kDefaultMaxTicksPerFrame));
   if (config.bindKeyboardToSlot0) {
     (void)sampler_.bind(PlayerId{0}, platform::DeviceBinding::keyboard(0));
@@ -111,7 +115,7 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
     if (!has(frame.present, i)) {
       frame.inputs[i] = sim::PlayerInput{};
     } else if (has(botMask_, i)) {
-      frame.inputs[i] = sim::scriptedInput(botRng_, curr_, content_, PlayerId{i});
+      frame.inputs[i] = sim::scriptedInput(botRng_, curr_, matchContent(), PlayerId{i});
     } else if (has(localMask_, i) && !has(bound, i)) {
       frame.inputs[i] = lastInputs_[i];  // dropped pad: repeat last input
     }
@@ -121,7 +125,7 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
 
   prev_ = curr_;
   sink_.clear();
-  sim::step(curr_, frame, content_, sink_);
+  sim::step(curr_, frame, matchContent(), sink_);
   appendEvents(sink_);
   ++ticksThisFrame_;
 }
@@ -227,8 +231,33 @@ void MatchSession::setSeed(uint64_t seed) {
   if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
 }
 
+void MatchSession::setArena(uint8_t arena) {
+  arena_ = arena < content_.arenaCount ? arena : 0;
+  if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
+}
+
+void MatchSession::setMode(uint8_t mode) {
+  mode_ = mode < content_.modeCount ? mode : 0;
+  if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
+}
+
+void MatchSession::setPowerUps(uint16_t powerUps) {
+  powerUps_ = powerUps;
+  if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
+}
+
+void MatchSession::replaceContent(const sim::ContentDB& content, uint64_t nowNs) {
+  loaded_ = content;
+  content_ = content;
+  if (arena_ >= content_.arenaCount) arena_ = 0;
+  if (mode_ >= content_.modeCount) mode_ = 0;
+  restart(nowNs, false);
+}
+
 void MatchSession::createWorld(sim::PlayerMask present) {
-  curr_ = sim::initialWorld(sim::MatchConfig{.seed = seed_, .players = present});
+  matchConfig_ = sim::MatchConfig{
+      .seed = seed_, .players = present, .arena = arena_, .mode = mode_, .powerUps = powerUps_};
+  curr_ = sim::initialWorld(matchConfig_);
   prev_ = curr_;
 }
 
@@ -278,7 +307,7 @@ float MatchSession::renderAlpha() const {
 }
 
 void MatchSession::resetContent() {
-  content_ = sim::defaultContent();
+  content_ = loaded_;
 }
 
 uint32_t MatchSession::contentHash() const {
@@ -286,7 +315,7 @@ uint32_t MatchSession::contentHash() const {
 }
 
 bool MatchSession::contentIsDefault() const {
-  return contentHash() == sim::contentHash(sim::defaultContent());
+  return contentHash() == sim::contentHash(loaded_);
 }
 
 SlotOwner MatchSession::owner(PlayerId slot) const {

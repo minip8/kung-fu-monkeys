@@ -8,11 +8,16 @@
 // Yaws are radians about world +y in the sim's angle convention: rotateY(yaw)
 // turns a model's +x (forward) onto the heading. A renderer iterates
 // players[0..playerCount), bananas[0..bananaCount), pickups[0..pickupCount),
-// shadows[0..shadowCount) and effects[0..effectCount), and reads hud.
+// shadows[0..shadowCount) and effects[0..effectCount), and reads hud; the
+// app plays sounds[0..soundCount) (the cues started this frame).
 #pragma once
 
 #include "kfm/presentation/math.hpp"
+#include "kfm/presentation/sound.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content/arena.hpp"
+#include "kfm/sim/content/mode.hpp"
+#include "kfm/sim/world_state.hpp"
 
 #include <array>
 #include <cstdint>
@@ -24,7 +29,8 @@ inline constexpr uint16_t kMaxRenderBananas = sim::kMaxBoomerangs;
 inline constexpr uint16_t kMaxRenderPickups = sim::kMaxPickups;
 inline constexpr uint16_t kMaxRenderShadows =
     kMaxRenderPlayers + kMaxRenderBananas + kMaxRenderPickups;
-inline constexpr uint16_t kMaxRenderEffects = 64;
+inline constexpr uint16_t kMaxRenderEffects = 128;
+inline constexpr uint16_t kMaxRenderSounds = 32;
 
 inline constexpr int8_t kNoSlot = -1;
 
@@ -43,6 +49,17 @@ enum class PlayerFlag : uint8_t {
   return static_cast<uint16_t>(f);
 }
 
+// A power-up's placeholder shape (sim::PowerUpVisual::shape, §5.8).
+enum class PowerUpShapeView : uint8_t { Orb = 0, Cube, Diamond, Coin };
+// A live power-up on a player, for the HUD timers (§5.8).
+struct RenderPowerUp {
+  uint8_t powerUp{0};     // index into ContentDB::powerUps
+  uint8_t colorIndex{0};  // palette.hpp
+  PowerUpShapeView shape{PowerUpShapeView::Orb};
+  float secondsLeft{0.0f};
+  float fraction{0.0f};  // remaining / duration, 1 = just picked up
+};
+
 struct RenderPlayer {
   uint8_t slot{0};
   uint8_t colorIndex{0};  // = slot; palette.hpp
@@ -59,7 +76,9 @@ struct RenderPlayer {
   uint8_t ammoMax{0};
   uint8_t hp{0};
   uint8_t maxHp{0};
-  float dashCooldown{0.0f};  // 0 = ready, 1 = just used
+  float dashCooldown{0.0f};                                  // 0 = ready, 1 = just used
+  std::array<RenderPowerUp, sim::kMaxModifiers> powerUps{};  // in slot (pickup) order
+  uint8_t powerUpCount{0};
 
   [[nodiscard]] constexpr bool has(PlayerFlag f) const { return (flags & flagBit(f)) != 0; }
 };
@@ -76,7 +95,7 @@ struct RenderBanana {
   int8_t ownerSlot{kNoSlot};
 };
 
-enum class PickupKindView : uint8_t { Banana = 0 };
+enum class PickupKindView : uint8_t { Banana = 0, PowerUp };
 
 struct RenderPickup {
   Vec3 position{};  // world space, hovering slightly
@@ -84,6 +103,10 @@ struct RenderPickup {
   float spin{0.0f};
   float radius{0.0f};  // sim contact radius
   PickupKindView kind{PickupKindView::Banana};
+  // PowerUp only: the def's look (palette.hpp index, shape) and its index.
+  uint8_t colorIndex{0};
+  PowerUpShapeView shape{PowerUpShapeView::Orb};
+  uint8_t powerUp{0};
 };
 
 enum class ShadowOwner : uint8_t { Player = 0, Banana, Pickup };
@@ -107,6 +130,28 @@ enum class EffectKind : uint8_t {
   RoundStartBanner,  // HUD: "Round N"
   RoundEndBanner,    // HUD: winner of the round (slot) or a draw (kNoSlot)
   MatchEndBanner,    // HUD: match winner (slot)
+  // v0.19 (M4 audio/VFX):
+  DashAnticipation,   // ring collapsing onto the dasher + flash ahead (direction)
+  DashTrail,          // afterimage of a dashing player (sampled while Dashing)
+  BananaTrail,        // short trail behind a flying banana (slot = owner)
+  PerfectCatchBurst,  // gold sparks radiating from a dash-catch
+  HitSpark,           // sparks at the victim (direction: away from the attacker, if known)
+  EliminationPoof,    // grey smoke puffs drifting up
+  PickupSparkle,      // twinkles where a pickup was taken
+  GroundDust,         // dust where a banana landed
+  BounceSpark,        // a banana bounced off a wall
+  // v0.23 (modes):
+  RespawnBurst,  // a column of light where a monkey respawns (slot colour)
+  ScorePop,      // gold ring at a monkey that scored an elimination (deathmatch)
+  TimerBanner,   // HUD: the mode clock pops at 10, 3, 2, 1 seconds left
+  // v0.20 (power-ups):
+  PowerUpBurst,   // ring and sparks where a power-up was taken (slot = taker)
+  ShieldShatter,  // a shield absorbed a hit (slot = the shielded player)
+  // v0.21 (abilities):
+  BlinkFlash,     // a burst where a blink left and where it landed (slot colour)
+  SlamShockwave,  // a ring racing out to the slam's reach (size = reach, units)
+  ParryGuard,     // the parry stance flaring up at the press (slot colour)
+  ParrySpark,     // a bright clash where a banana was parried (direction: its new heading)
 };
 
 struct RenderEffect {
@@ -116,11 +161,34 @@ struct RenderEffect {
   Vec2f direction{};      // sim-plane direction where it matters (dash, throw); else zero
   float remaining{0.0f};  // seconds
   float duration{0.0f};   // seconds; progress = 1 - remaining / duration
+  float size{0.0f};       // world size where it matters (SlamShockwave: the reach); else 0
 
   [[nodiscard]] constexpr float progress() const {
     return duration > 0.0f ? clamp01(1.0f - (remaining / duration)) : 1.0f;
   }
 };
+
+// Arena statics (v0.22): the interior walls, then the hazards, in content
+// order, then the pit rims. Boxes in world space: `center` is the box centre
+// on the ground (y = 0), `size` its world extents (x, y = the drawn height,
+// z). Built from content, so constant for a match.
+enum class ArenaPieceKind : uint8_t {
+  Wall = 0,  // solid block, drawn kArenaWallHeight tall
+  Pit,       // near-black floor slab
+  PitRim,    // a strip inside a pit along an edge it shares with the floor
+  Slow,      // mud patch
+};
+
+struct RenderArenaPiece {
+  ArenaPieceKind kind{ArenaPieceKind::Wall};
+  Vec3 center{};
+  Vec3 size{};
+};
+
+// Rim strips are capped; a pit layout needing more draws without the excess.
+inline constexpr uint16_t kMaxRenderPitRims = 64;
+inline constexpr uint16_t kMaxRenderArenaPieces =
+    sim::kMaxArenaWalls + sim::kMaxArenaHazards + kMaxRenderPitRims;
 
 enum class HudPhase : uint8_t { Lobby = 0, RoundStarting, Playing, RoundEnded, MatchEnded };
 
@@ -135,6 +203,15 @@ struct RenderHud {
   std::array<uint8_t, sim::kMaxPlayers> scores{};
   int8_t lastRoundWinner{kNoSlot};  // kNoSlot before the first round end or after a draw
   int8_t matchWinner{kNoSlot};      // set in MatchEnded
+  // v0.23 (modes): what the scoreboard shows. scores are round wins in
+  // rounds/survival and eliminations in deathmatch.
+  sim::ModeKind mode{sim::ModeKind::Rounds};
+  uint8_t scoreToWin{0};     // deathmatch
+  bool hasClock{false};      // the mode has a time limit
+  float clockSeconds{0.0f};  // time left on it (full during the countdown, 0 after)
+  uint8_t aliveCount{0};     // monkeys still in play
+  std::array<uint8_t, sim::kMaxPlayers> deaths{};
+  std::array<float, sim::kMaxPlayers> respawnSeconds{};  // > 0: dead, back in this long
 };
 
 struct RenderState {
@@ -152,11 +229,16 @@ struct RenderState {
   float shakeAmplitude{0.0f};  // world units
   Vec3 shakeOffset{};          // add to the camera eye and target this frame
   Vec2f arenaHalfExtents{};    // sim units, for the floor and wall rim
+  std::array<RenderArenaPiece, kMaxRenderArenaPieces> arenaPieces{};  // interior walls, hazards
+  uint16_t arenaPieceCount{0};
   float playerRadius{0.0f};
   float playerHeight{0.0f};
   float bananaRadius{0.0f};
   float time{0.0f};  // seconds of presentation time (accumulated dt)
   RenderHud hud{};
+  // Sounds started this frame (event_fx.hpp); same-id cues are merged.
+  std::array<SoundCue, kMaxRenderSounds> sounds{};
+  uint16_t soundCount{0};
 };
 
 }  // namespace kfm::presentation

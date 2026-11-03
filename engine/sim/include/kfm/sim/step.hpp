@@ -13,9 +13,10 @@ namespace kfm::sim {
 
 // Advances the world by exactly one tick using the inputs for that tick.
 // Precondition: in.tick == s.tick. Content is explicit so tests can pass
-// custom defs (and M4 loaded ones); it must be the same for every tick of a
+// custom defs and hosts the loaded ones with the arena and mode of their
+// MatchConfig (matchContent()); it must be the same for every tick of a
 // match. Events for the tick are appended to sink (the caller clears it).
-void step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& sink);
+void step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink);
 
 // Per-tick state checksum through the visitor.
 [[nodiscard]] uint32_t checksum(const WorldState& s);

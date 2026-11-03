@@ -136,7 +136,7 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
   const ContentDB& content = defaultContent();
   WorldState s = initialWorld(MatchConfig{42, 0b11});
   EventLog log;
-  for (uint8_t round = 1; round <= content.mode.roundsToWin; ++round) {
+  for (uint8_t round = 1; round <= content.modes[0].roundsToWin; ++round) {
     INFO("round " << int{round});
     // Through the countdown with idle inputs.
     for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::Playing; ++i) {
@@ -173,7 +173,7 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
                   {EventKind::BoomerangThrown, EventKind::PlayerHit, EventKind::PlayerEliminated,
                    EventKind::BoomerangGrounded, EventKind::PickupSpawned, EventKind::RoundEnded,
                    EventKind::MatchEnded, EventKind::BoomerangCaught}) ==
-          (round < content.mode.roundsToWin
+          (round < content.modes[0].roundsToWin
                ? std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
                                         EventKind::PlayerEliminated, EventKind::BoomerangGrounded,
                                         EventKind::PickupSpawned, EventKind::RoundEnded}
@@ -192,12 +192,12 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
   }
   CHECK(s.rules.phase == MatchPhase::MatchEnded);
   CHECK(onlyEvent(log, EventKind::MatchEnded).player == kP1);
-  CHECK(countEvents(log, EventKind::RoundStarted) == content.mode.roundsToWin);
+  CHECK(countEvents(log, EventKind::RoundStarted) == content.modes[0].roundsToWin);
   CHECK(countEvents(log, EventKind::MatchStarted) == 1);
 
   // MatchEnded is terminal: nothing restarts, nothing happens.
   EventLog after;
-  runTicks(s, frameFor(s), content.mode.roundEndTicks * 2, content, after);
+  runTicks(s, frameFor(s), content.modes[0].roundEndTicks * 2, content, after);
   CHECK(after.empty());
   CHECK(s.rules.phase == MatchPhase::MatchEnded);
 }

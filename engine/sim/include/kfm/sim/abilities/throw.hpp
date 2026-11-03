@@ -8,18 +8,18 @@ namespace kfm::sim {
 
 bool throwCanActivate(const WorldState& s, const Player& p, const AbilityDef& def);
 void throwOnActivate(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                     const ContentDB& content, EventSink& sink);
+                     const MatchContent& content, EventSink& sink);
 void throwOnTick(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                 const ContentDB& content, EventSink& sink);
+                 const MatchContent& content, EventSink& sink);
 void throwOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                        AbilityPhase from, AbilityPhase to, const ContentDB& content,
+                        AbilityPhase from, AbilityPhase to, const MatchContent& content,
                         EventSink& sink);
 void throwOnEnd(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                const ContentDB& content, EventSink& sink);
+                const MatchContent& content, EventSink& sink);
 
 [[nodiscard]] constexpr AbilityBehavior throwBehavior() {
-  return AbilityBehavior{&throwCanActivate, &throwOnActivate, &throwOnTick, &throwOnPhaseChange,
-                         &throwOnEnd};
+  return AbilityBehavior{&throwCanActivate,   &throwOnActivate, &throwOnTick,
+                         &throwOnPhaseChange, &throwOnEnd,      &noKindTags};
 }
 
 }  // namespace kfm::sim

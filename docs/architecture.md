@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.17 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.25 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -71,6 +71,120 @@ mode (`NetSession`, `--connect`, the net overlay panel, per-tick input windows o
 rate-controlled clock) and when `onRollback` is called (§6.9, §7). Match restart and shutdown
 semantics (§6.6), `kfm_server` as the one-match-per-process host (§6.5), `kfm_netsim` and the
 soak and network ctests plus the `server-headless` CI job (§9), M3 landed (§11).
+v0.18 changes: content is data (§5.10). `engine/content` (`kfm::content`, a new module beside
+`net`/`presentation`, used by apps and tests only, §4) parses TOML (toml++ 3.4.0, no exceptions,
+§10) from `content/*.toml` into a validated `ContentDB`; fixed-point values are exact decimals
+truncated toward zero like `Fixed::fromRatio`, speeds are written per second; defs reference
+each other by name and are stored as indices; `defaultContent()` stays as the minimal sim test
+fixture and the TOML is a superset of it (the base kit, arena 0 and mode 0 must match). `ContentDB` holds up to 8 named arenas and 8
+named modes; `MatchConfig` gains `arena` and `mode` indices (not part of `WorldState`, so
+checksums are unchanged), and every system, ability hook and rule handler receives a
+`MatchContent` (the DB plus the selected arena and mode). The replay header (version 2), the
+corpus manifest, `kfm_replay`/`kfm_server`/`kfm_netsim`/`kfm_render_probe`/`kfm_client`
+(`--content`, `--arena`, `--mode`) and the join path (`Welcome`, `Snapshot`, `MatchConfig`
+messages, protocol version 2) carry the config (§6.6, §9). Apps load `--content DIR`, else
+`content/` next to the executable (copied by the build), else the copy compiled into the binary
+(the browser's and the replay gate's source); the native client hot-reloads the content
+directory in local play.
+v0.19 changes: M4 audio and VFX (§7 "Effects", "Audio"). Event-driven effects grow to 18 kinds
+(dash anticipation and afterimage trail, banana trail, perfect-catch sparks, hit sparks,
+elimination smoke, pickup sparkle, landing dust, bounce spark, banner pop-in) with the event →
+effect and event → sound mapping side by side in `event_fx`; trails are sampled from state;
+128 live effects. Procedural `SoundBank` (14 synthesised clips, no audio assets), a 16-voice
+`Mixer` with a pull API, the SDL3 `AudioDevice` in `platform` (main-thread queue top-up, silent
+without a device, opened on the first input in the browser), `--mute` / `--volume` and the F1
+Audio panel. SDL3 is built with ALSA on Linux (vcpkg `alsa` feature, or the FetchContent build
+when `libasound2-dev` is present), no new dependency (§10). Tests (§9).
+v0.20 changes: power-ups as built (§5.8). `PowerUpDef` (content, `[[powerup]]` in
+`content/powerups.toml`): a duration, a visual (palette colour + shape) and up to 4 grants of four
+kinds: `StatModifier`, `AbilityOverride`, `ProjectileModifier` (snapshotted onto the banana at the
+throw), `Tag` (`shielded`, `invulnerable`). A `ModifierList` entry is now `{powerUp, ticksLeft}`;
+`ModifierSystem` drops expired entries, derives stats, swaps overridden ability slots while idle
+(cooldown capped at the new def's) and sets granted tags, then counts down, so a power-up picked on
+tick T shapes the state after T..T+D−1. Pickups gain `PickupKind::PowerUp` and the arena gains
+up to 8 `PickupSpawner`s run at the end of `LifecycleSystem` from `ticksInPhase` and the world RNG
+(§5.3). Rules rows 20/24 (the shield absorbs one banana hit or dash attack, staggers the victim,
+stops the dash, ends its power-up) and 50/51 (pickups split by kind through a new
+`pickupMaskB`) (§5.6). `ShieldBroken` event; `PickupSpawned`/`PickupTaken` carry the pickup kind
+and power-up (§5.9). Six power-ups, the `throw_fast` ability and the `dojo_powerups` arena; the
+default `dojo` has no spawners, so the default match plays exactly as before; the new state
+fields (`Boomerang::speedMul`/`radiusMul`, `Pickup::spawner`, `Player::grantedTags`) are
+serialised unconditionally, which changed every world checksum, and the corpus was regenerated
+(§5.2). `ModifierSystem` owns the tag bits it granted (`Player::grantedTags`), so ability-phase
+and power-up tags compose (§5.8). A
+scripted-bot behaviour, the `scripted_4p_powerups_1800t` corpus entry and `kfm_replay stats`
+power-up counts (§9). Pickups render per def and the HUD shows power-up timers (§7).
+v0.21 changes: more abilities (§5.4, §5.5, §5.6, §5.9). Buttons belong to ability slots, not
+kinds (slot 0 Dash button, slot 1 Throw, slot 2 the new Ability button); a kind's own tags
+(PerfectDash) come from an `AbilityBehavior::kindTags` hook, and the catch rule and the tie-break
+read the slot that grants the tag. Scripted bots use the new abilities and three corpus entries
+exercise them (§9). A third ability slot (`kAbilitySlots` 3) on
+`Button::Ability1`, empty (`none`) in the base kit so the default match plays as before (the
+extra `AbilityState` per player changed every world checksum; the corpus was regenerated and
+checked equal with slot 3 left out of the visitor). Loadouts list 2 or 3 names; a mode may carry
+its own (`ModeDef::abilities`, read through `MatchContent::loadout()`); any kind may sit in any
+slot or be granted by an `AbilityOverride` (the same-kind rule is gone) as long as the dash and
+throw buttons fire something; `kMaxAbilityDefs` 16 (§5.8, §5.10). New kinds, each a behaviour
+file, a def in `content/abilities.toml`, one registry line and a scenario test, reached through
+`rounds_*` modes whose loadout puts them on the ability button: Blink (a teleport dash, no tags
+of its own so a telegraphed blinker is still hit; `PlayerBlinked`); Slam (a radial impulse:
+`Tag::Slamming` on the impact tick widens the slammer's contact radius in `CollisionSystem`,
+contacts made only through that reach carry `Contact::reach` and match only rows flagged
+`reachA`, the new rows 16 (ground a non-own banana) and 26 (push a monkey through the new
+`Player::knockback`, which `MovementSystem` adds to the velocity); `SlamLanded`,
+`PlayerSlammed`; the new state fields changed every checksum, verified equal with them left out
+of the visitor); Parry (`Tag::Parrying` while its window may be open, row 15 judged to the press
+sub-tick reflects a non-own banana back at its thrower as the parrier's own, a mistimed parry
+falls through to damage, the perfect catch wins a tie; `PlayerParryStarted`,
+`BoomerangParried`).
+v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
+`kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
+`Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
+of scope. Players (stick and dash alike) and bananas move through one code path,
+`statics::moveCircle`: per-axis swept faces then rounded corners, `Slide` for players (a dash
+stops at a wall, its phases run on) and `Bounce` for bananas (restitution, `BoomerangBounced`),
+the outer box included, bit-identical to M1 without walls; a throw's spawn offset travels the
+same path. No spatial structure for statics: a plain loop over ≤ 32 boxes. A pit is a rules-table
+row (prio 60, `Player × Hazard`, `fallIntoPit`: eliminated, killer 0xFF) fed by a new
+`EntityKind::Hazard` contact; bananas fly over hazards; a slow patch multiplies move speed in
+`ModifierSystem`'s derived stats (§5.3, §5.6–§5.8). The loader reads `walls`/`hazards` and
+rejects spawn points overlapping a wall or in a pit. Arenas `pillars`, `corridors`, `island` in
+`content/arenas/`, `dojo` unchanged; walls and pits drawn from `RenderState` statics (§7); one
+corpus replay per new arena (§9).
+v0.23 changes: game modes are content (§5.3, §5.9, §5.10, §6.6). `ModeDef` gains a `kind`
+(`rounds`, `deathmatch`, `survival`) and per-kind numbers (`timeLimitTicks`, `scoreToWin`,
+`respawnTicks`, `respawnInvulnTicks`); `RulesSystem` keeps the shared phase machine and
+dispatches the per-mode decisions through a `ModeBehavior` table indexed by kind (`onPlaying`,
+`onEliminated`), like the ability registry. `MatchRules` gains per-player `deaths`,
+`respawnTicks` and `invulnTicks`; `ticksInPhase` is the mode clock. Deathmatch respawns go
+through `LifecycleSystem` at the spawn point farthest from the other monkeys (world RNG on ties)
+with `Tag::Invulnerable` as spawn protection, which the damage and dash-attack rows already
+forbid. The visitor serialises the new counters like every other field, so every world
+checksum changed and the corpus was regenerated; the rounds mode itself plays exactly as before
+(it never sets a counter). New events `ScoreChanged`, `PlayerRespawned`, `TimerWarning`; `content/modes.toml`
+ships `rounds`, `deathmatch` and `survival`. Presentation (§7): RespawnBurst, ScorePop and
+TimerBanner effects, Respawn, Score and TimerWarning sounds, a per-mode HUD scoreboard and clock.
+Team modes stay open (§12).
+v0.24 changes: the lobby UI (§5.8, §6.6, §7, §9). `MatchConfig` gains `powerUps`, a per-match
+power-up set (bit i = `ContentDB::powerUps[i]`, default `kAllPowerUps`): spawners draw from
+their own set intersected with it, and an empty intersection neither spawns nor draws the RNG, so
+the default config plays exactly as before. It rides in `MatchContent`, the replay header
+(format version 3, a ninth optional manifest column) and the join messages (protocol version 3);
+`--powerups all|none|a,b` on `kfm_server`, `kfm_client` and `kfm_replay`. The local lobby gains
+a settings panel (`LobbyMenu`, headless in `kfm_client_core`): arena with a preview drawn from the
+def, mode with its key numbers, one toggle per power-up, bots, volume and mute, driven by the
+mouse, arrows/WASD or a joined pad's d-pad and stick (never by game buttons, so joins and any
+future ability button stay free), saved between runs (SDL's preference directory natively,
+`localStorage` in the browser; flags and URL parameters win; `--no-settings`). Online, the status
+window shows the server's `MatchConfig` read-only with the roster, and the match-over banner the
+announced next match. The HUD scoreboard becomes one card per slot (palette colour, label, score,
+power-up timers), the same card the lobby draws per slot (§7).
+v0.25 changes: M4 landed (§11). Integration decisions: `defaultContent()` is the minimal
+headless fixture and the TOML under `content/` is a superset extended as data only (§5.10);
+state fields added for a feature are visited unconditionally and the corpus is regenerated
+rather than kept checksum-stable through conditional encodings (§5.2, §9); toml++ headers only
+from the vcpkg port, Windows links vcpkg statically, autotools for the vcpkg `alsa` port (§10);
+clang-format 19.1.7 is the formatter of record (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -152,8 +266,10 @@ kung-fu-monkeys/
   engine/
     core/                Fixed (Q16.16), Vec2, Angle, Pool<T,N>, RingBuffer, BitWriter/Reader,
                          Rng (xoshiro128**), hash (xxHash), log, assert, strong typedefs
-    sim/                 WorldState, step(), systems/, abilities/, rules/, content/, events,
+    sim/                 WorldState, step(), systems/, abilities/, rules/, content defs, events,
                          serialization (visitor), checksum
+    content/             TOML content files -> validated ContentDB (toml++), the embedded copy,
+                         app-side loading (--content/--arena/--mode) and hot-reload polling
     net/                 messages/ (bit-packed frames, redundancy), transport/ (webrtc, loopback+emulator, optional gns),
                          clock sync, NetClient, NetServer, snapshot codec
     ai/                  IAgent, Observation builder, scripted bots, OnnxAgent
@@ -161,7 +277,8 @@ kung-fu-monkeys/
                          interpolation+smoothing
     platform/            SDL3 window/input/audio/gamepads, filesystem, main loop, config,
                          services/ (IPlatformServices: steam, web, null)
-  content/               data files: abilities/ powerups/ arenas/ modes/ models/ audio/
+  content/               data files (*.toml: player, abilities, boomerang, arenas, modes; later
+                         power-ups) and source models/ audio/
   apps/
     client/              playable client (also hosts local multiplayer)
     server/              headless dedicated server
@@ -177,7 +294,10 @@ Dependency rules (enforced via CMake target link visibility):
 - `core` depends on nothing but the standard library.
 - `sim` depends only on `core`. It never includes `net`, `presentation` or `platform`.
 - `net`, `ai`, `presentation` depend on `sim` and `core`, never on each other.
-- Apps wire everything together. Only apps and `platform` touch the OS.
+- `content` (v0.18) depends on `sim` and `core` (and privately on toml++); only apps and tests
+  link it, so `net`, `ai` and `presentation` keep taking a `ContentDB` and never parse files.
+- Apps wire everything together. Only apps, `content` and `platform` touch the OS (`content`
+  reads files and nothing else).
 
 ---
 
@@ -239,21 +359,31 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   alive player whose id is not its slot, a player reference (banana owner, round winner) that is
   neither invalid nor a slot, an ability `defIndex` past the def table, or a tag bit above
   `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
-  system would index or shift by.
+  system would index or shift by. v0.20 adds a power-up index past `kMaxPowerUps`, a pickup
+  spawner past `kMaxPickupSpawners`, a banana `pierce` above 1 and `grantedTags` bits above
+  `Tag::kCount`.
+- Power-up fields (v0.20): a banana's `speedMul` and `radiusMul` (after `pierce`, a plain 0/1
+  byte), a pickup's `spawner` and a player's `grantedTags` are visited unconditionally like
+  every other field; adding them changed every world checksum and the corpus was regenerated.
+  A `ModifierList` visits only its live prefix, as before.
+- Mode counters (v0.23): `MatchRules`' per-player `deaths`, `respawnTicks` and `invulnTicks`
+  are visited unconditionally after the M1 fields, like every other field. Adding them changed
+  every world checksum (the corpus was regenerated); a new state field for a real feature is
+  the legitimate case for that, not a reason for a second encoding.
 
 ### 5.3 Tick pipeline
 
 ```
 step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& events):
-   1. RulesSystem::preTick      round start/end, spawn waves, pickup spawners
+   1. RulesSystem::preTick      round start/end, spawn waves
    2. InputSystem               decode PlayerInput → Intent; press-edge detection
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
-   4. MovementSystem            intent × derived stats → velocity; integrate; arena clamp
-   5. ProjectileSystem          boomerang flight: outbound → return steering → grounded
+   4. MovementSystem            intent × derived stats → velocity; integrate sliding along walls; arena clamp
+   5. ProjectileSystem          boomerang flight: outbound → return steering → grounded; wall bounces
    6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
    7. InteractionSystem         resolves Contacts via the rules table (hit, catch, dash attack, pickup)
-   8. ModifierSystem            tick timers, expire, recompute derived Stats
-   9. LifecycleSystem           eliminations, respawns, despawns
+   8. ModifierSystem            expire, recompute derived Stats (incl. slow hazards), overrides and tags, tick timers
+   9. LifecycleSystem           eliminations, respawns, despawns, power-up spawners (v0.20)
   10. RulesSystem::postTick     win conditions, scoring
   11. s.tick++
 ```
@@ -268,10 +398,53 @@ Player × Pickup and (v0.16) Player × Player; a player pair is listed once with
 the midpoint of the two centres at `tHit` so it reads the same from either side. Player pairs are
 purely geometric: every touching pair is a contact whatever its tags (at most 45 with 10
 players), and the rules table decides what a touch means. A brute-force all-pairs broadphase stays in
+the tests as the oracle: a property test asserts both produce the same pair set. A banana's
+contact radius is `BoomerangDef::radius × Boomerang::radiusMul` (v0.20, §5.8).
+
+Power-up spawners (v0.20) run at the end of `LifecycleSystem`, not in `RulesSystem::preTick`:
+entity creation and removal already live there (grounded bananas become pickups in the same
+place), a pickup spawned at the end of tick T is touchable from T+1 like a grounded banana, and
+the spawner timeline is a function of `MatchRules::ticksInPhase` that the post-tick has not yet
+advanced. The order of the ten systems is unchanged.
 the tests as the oracle: a property test asserts both produce the same pair set.
+Slam reach (v0.21): a player holding `Tag::Slamming` is inserted with its slam's reach
+(`param0`) as radius, and a pair is tested at the body radii first, then at the widened ones;
+a contact found only the second way carries `Contact::reach` (§5.6).
+Statics (v0.22) never enter the grid: walls are resolved while integrating (steps 4 and 5,
+§5.10), and after the narrowphase `CollisionSystem` appends one Player × Hazard contact per
+hazard box holding a player's centre at the end of the tick (player slot order, then hazard
+index), with `tHit` the centre's entry time into the box and `b` the hazard's index.
 
 Systems are stateless free functions; the order is fixed and documented; each reads state and
 inputs and writes state and events. Nothing else mutates `WorldState`.
+
+Rules dispatch (v0.23). `RulesSystem` owns the phase machine every mode shares: Lobby →
+(`MatchStarted`, round 1) RoundStarting (the present slots spawned at the arena's spawn points,
+`roundStartTicks` of countdown) → Playing → RoundEnded (`roundEndTicks`) → next round, or
+MatchEnded (terminal). What ends a round or the match and what an elimination means are the
+mode's: a `ModeBehavior` table indexed by `ModeDef::kind` (`kfm/sim/modes/registry.hpp`, one
+file per mode under `src/modes/`, shared steps in `src/modes/mode_flow.*`), constexpr like the
+ability registry. `onPlaying(s, content, sink)` runs in post-tick on every Playing tick after
+`ticksInPhase` advanced; `onEliminated(s, content, victim, killer, sink)` runs in the damage step
+right after `PlayerEliminated`. `ticksInPhase` is the mode clock: a time limit counts Playing
+ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour file +
+`ModeKind` + its TOML name + one registry row + a scenario test.
+
+| Kind | Round / match end | Elimination | Notes |
+|---|---|---|---|
+| `rounds` | at most one monkey left (two or more present): the survivor wins the round (none: draw); first to `roundsToWin` round wins takes the match | nothing | the M1 rules; never sets a mode counter |
+| `deathmatch` | one round; the first to `scoreToWin` eliminations, or the leader once `timeLimitTicks` of play pass (a tied lead: draw) ends the match (`RoundEnded` + `MatchEnded`) | +1 score for the attacker (`ScoreChanged`), +1 death, respawn due in `respawnTicks` | a present slot without a monkey or a pending respawn (a late joiner) is scheduled like a respawn; a slot that left keeps its monkey until eliminated, then forfeits its score |
+| `survival` | as rounds, plus a per-round `timeLimitTicks`: on timeout the survivor with the most hp wins the round, then the one with the fewest deaths this match, else a draw | +1 death | no respawn within a round |
+
+Respawn (`LifecycleSystem`, v0.23) is driven only by the timers: during Playing a dead present slot
+with a pending `respawnTicks` counts down before this tick's despawns and respawns at 0, so a
+player eliminated on tick T is back on tick T + `respawnTicks`. It takes the spawn point whose
+nearest other monkey is farthest away (squared distance in raw fixed point), the world RNG
+choosing among equal points (one draw per respawn), and gets `Tag::Invulnerable` with
+`invulnTicks = respawnInvulnTicks`, which counts down on the same pass and clears the tag at 0:
+protected for the interactions of the next `respawnInvulnTicks` ticks. The damage (30) and
+dash-attack (25) rows already forbid `Invulnerable` on the victim; a protected monkey can still
+attack and catch. A round start clears every timer.
 
 ### 5.4 Input model
 
@@ -280,7 +453,7 @@ struct PlayerInput {            // 5 bytes on the wire, bit-packed smaller
   uint8_t moveDir;              // 0..255 angle, 0 = +x (digital input uses 8 of them)
   uint8_t moveMag;              // analog magnitude; 0 = idle, 255 for digital input
   uint8_t aimDir;               // 0..255 angle (twin-stick aim)
-  uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1, bit3 Ability2, bit4 Taunt ...
+  uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1 (slot 3, v0.21), bit3 Ability2, bit4 Taunt ...
   uint8_t subTick;              // stamp of the latest press edge within the tick (1/256 tick ≈ 65 µs)
 };
 struct InputFrame {
@@ -302,7 +475,9 @@ Roster (v0.17): `InputFrame::present` is the authoritative roster. `InputSystem`
 `MatchRules::present` each tick; `RulesSystem` spawns the present slots and despawns any alive
 player whose slot is no longer present when a round starts. A slot that joins mid-round therefore
 waits for the next round (its bit counts toward the two-player minimum at once), and a slot that
-leaves mid-round keeps its idle monkey until it is eliminated or the round ends. The server
+leaves mid-round keeps its idle monkey until it is eliminated or the round ends. In deathmatch
+(v0.23), whose match is one round, a joiner spawns `respawnTicks` after it appears and a leaver's
+eliminated monkey does not respawn (§5.3). The server
 changes the mask only through its frames, so prediction, rollback and replays need nothing else.
 
 Input sampler (v0.15, `engine/platform`, SDL-free and unit-tested headlessly): the client
@@ -337,6 +512,11 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   profile 1 is the arrow keys with Period or Right Ctrl to throw and Slash or Right Shift to
   dash; gamepads move with the left stick (dpad fallback), aim with the right stick, throw with
   West or Right Shoulder and dash with South or Left Shoulder.
+- Ability button (v0.21): a third action, `Action::Ability`, sets `Button::Ability1` (bit 2,
+  the third ability slot) with the same tap, held, sub-tick, join and consume semantics as
+  Throw and Dash. Default bindings: L or E (keyboard profile 0), Semicolon or Apostrophe
+  (profile 1), North or East (gamepads). `PlayerInput` stays 5 bytes: the bit already existed.
+  The in-game controls help lists it; the browser page needs nothing (SDL maps the keys).
 
 ### 5.5 Abilities (the modularity core)
 
@@ -347,16 +527,53 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   the tie-break) and `dir` (dash or throw direction captured at activation). There is no
   kind-specific scratch union; a kind that needs more state adds a named field (v0.14).
 - `AbilityBehavior` registry: a table indexed by `AbilityKind` holding function pointers
-  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. The table is a `constexpr`
+  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd` and (v0.21) `kindTags`, the
+  tags the kind itself grants from the slot's state on top of the def's phase tags (Dash:
+  `PerfectDash`); `AbilitySystem` re-derives every bit in `kAbilityKindTags` each tick. The table is a `constexpr`
   array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
   a scenario test.
-- Players have N ability slots. Base kit is {Dash, Throw}. Power-ups may override a slot
+- Players have N ability slots. Base kit is {Dash, Throw}. Buttons belong to slots, not to
+  kinds (v0.21, `slotButton()`): slot 0 fires on `Button::Dash`, slot 1 on `Button::Throw`,
+  whatever kind the slot runs. The catch rule and the tie-break (§5.11) read the press time of
+  the slot that grants the tag they key on (`slotGranting()`), the dash slot in the base kit. Power-ups may override a slot
   (for example a teleport dash) or add a temporary slot.
 - Phase tags: Dash's active phase grants `Tag::Dashing`; its first `perfectWindowTicks` also
   grant `Tag::PerfectDash`, plus the tick after them when the press had a non-zero `subTick`,
   because the window `[press, press + perfectWindowTicks)` measured from the press instant
   closes inside that tick (§5.11). The tag says "the window may be open this tick"; the catch
   rule judges the exact instant. Tags are a bitset read by the interaction rules.
+- Kinds beyond the base kit (v0.21), each one behaviour file under `src/abilities/`, a def in
+  `content/abilities.toml`, one registry line and a scenario test; they read only `AbilityDef`
+  numbers and add no `AbilityState` field:
+  - Blink (`blink.cpp`): the direction is captured at the press (stick, else facing); on the
+    Startup → Active transition the monkey moves by `dir × speed × activeTicks` through
+    `statics::moveCircle` (Slide, outer box included), so walls stop it like a walk. The jump
+    happens in `AbilitySystem`, before `MovementSystem` sets `prevPos`, so the swept collision
+    never sees the path: bananas and monkeys on it are passed, not touched. Blink grants no
+    tags. Decided against `Dashing` during the startup: that tag arms the dash attack (row 25),
+    so a standing blinker would strike whoever walked into it; without it the startup is a
+    plain, readable telegraph during which a banana hits as usual, and nothing in the rules
+    table changes. `PlayerBlinked` carries the origin. Shipped: 6-tick startup, a 5-unit jump
+    (30 u/s over 10 ticks), 1.5 s cooldown, in mode `rounds_blink`.
+  - Slam (`slam.cpp`, `rules/slam.cpp`): the behaviour only marks the impact. `kindTags`
+    grants `Tag::Slamming` on the first Active tick only (phaseTicks 0), so a slam acts once
+    however long its active phase; the Startup → Active transition emits `SlamLanded`. While a
+    player is `Slamming`, `CollisionSystem` uses the slam def's `param0` (the reach, from the
+    slammer's centre) as its contact radius, so the broadphase finds what the slam reaches; the
+    rules table does the rest (rows 16 and 26, §5.6). A pushed monkey gets
+    `Player::knockback = away × param1 / activeTicks` and `knockbackTicks = activeTicks`;
+    `MovementSystem` adds the knockback to whatever velocity it computed (stick, dash, stun)
+    and counts it down, its only change. The slammer walks during the startup (no `Dashing`,
+    as for Blink). Shipped: 0.2 s startup, reach 3, push 4 units over 0.2 s, 2 s cooldown, in
+    mode `rounds_slam`. New state: `Player::knockback`, `knockbackTicks` (visited).
+  - Parry (`parry.cpp`, `rules/parry.cpp`): the window is `[press + startupTicks, press +
+    startupTicks + activeTicks)` from the press instant (`activatedTick + activatedSubTick /
+    256`), like the perfect dash's. `kindTags` grants `Tag::Parrying` on the Active ticks plus
+    the first Recovery tick when the press had a non-zero sub-tick (the window closes inside
+    it; the loader requires `recovery_ticks >= 1`); the rule judges the exact instant (§5.6).
+    `PlayerParryStarted` on the press (the stance effect). Shipped: 2-tick startup, an 8-tick
+    window, 14 ticks of recovery (a whiff is punishable), 1 s cooldown, in mode
+    `rounds_parry`.
 
 ### 5.6 Interaction rules (where the twists live)
 
@@ -373,21 +590,65 @@ or pick up again.
 ```
 prio  A                          B                              handler
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
- 20   Player[Shielded]           Boomerang[InFlight, !own]      BreakShield
+ 15   Player[Parrying, !HitStun] Boomerang[InFlight, !own]      ParryBoomerang (declines outside the window)
+ 16   Player[Slamming, !HitStun] Boomerang[InFlight, !own] (reach) SlamGroundsBanana
+ 20   Player[Shielded, !HitStun] Boomerang[InFlight, !own]      ShieldBlocksBanana
+ 24   Player[Dashing, !HitStun]  Player[Shielded, !HitStun]     ShieldBlocksDash (declines below minAmmo)
  25   Player[Dashing, !HitStun]  Player[!HitStun, !Invulnerable] DashAttack (declines below minAmmo)
+ 26   Player[Slamming, !HitStun] Player[] (reach)               SlamPushesPlayer
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
- 50   Player[]                   Pickup[]                       GrantPowerUp
- 60   Boomerang[]                Wall                           Bounce
+ 50   Player[]                   Pickup[Banana]                 TakePickup (declines at ammoMax)
+ 51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
+ 60   Player[]                   Hazard[Pit]                    FallIntoPit
 ```
 
+Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
+`0 <= (tick + tHit) − (pressTime + startupTicks) < activeTicks`; outside the window the handler
+declines and the scan falls through to the slam, shield and damage rows, so a mistimed parry is
+a hit. A parried banana becomes the parrier's (owner swap), `Outbound` with a fresh
+`outboundTicks` timer, placed at the contact point and heading for the thrower's current
+position (straight back when the thrower is gone), at its own speed with its projectile
+modifiers kept; `BoomerangParried{parrier, banana, a = thrower}`. As the parrier's own outbound
+banana it passes through the parrier, may hit the thrower (credited to the parrier) and returns
+to the parrier, so a parry gains a banana. Order: below the perfect catch (rows 10/11) because
+both reward timing and the catch also puts the banana in hand at once, so it wins a tie (a
+dasher at full ammo declines the catch and the parry takes it); above the slam, shield and
+damage rows, which it pre-empts the way the catch pre-empts damage. It ignores own bananas: a
+returning own banana is still auto-caught (row 40).
+
+Slam (v0.21, rows 16 and 26, `rules/slam.cpp`). A contact made only through a slammer's widened
+radius (§5.3, §5.5) carries `Contact::reach` (`kReachA`/`kReachB`, swapped with the orientation)
+and matches only a row with `reachA` set, from the slammer's side: the reach never catches,
+damages, picks up, dash-attacks or blocks. Row 16 grounds a non-own banana in flight where it
+is (it becomes a pickup like any grounded banana); it sits below the catch rows (a perfect catch
+still gains the banana) and the parry, and above the shield and damage rows, so a banana that
+reaches the slammer's body on the impact tick is knocked down too. Row 26 pushes any monkey that
+is not eliminated (a push is no hit: shields and spawn protection ignore it) and emits
+`PlayerSlammed`; it sits after the dash attack, so a dasher's attack on the slammer at the same
+`tHit` lands first. A stunned slammer (`HitStun` earlier in the tick) slams nothing. Both
+require `Slamming`, which only the impact tick grants: before it a banana hits the slammer as
+usual (the fall-through).
+
 M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
-restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below). Rows
-20 and 60 do not exist yet. The wall bounce lives in `ProjectileSystem` (§5.7), not in the table:
-the arena is a box, the bounce is a per-axis reflection done while integrating, and
-`CollisionSystem` emits only Player × Boomerang, Player × Pickup and Player × Player contacts. A
-Wall row arrives when arenas gain interior shapes and some banana kinds should not bounce, at
-which point walls become contact sources.
+restores one ammo and stays put at `ammoMax`); v0.16 adds row 25 (the dash attack, below) and
+v0.22 row 60 (the pit, `rules/hazard.cpp`); v0.20 adds rows 20, 24 and 51 (§5.8) and the row
+field `pickupMaskB` (allowed `PickupKind` bits when B is a pickup, like `phaseMaskB` for a
+banana) that splits row 50 from row 51. Walls are not in the
+table (v0.22): interior walls and the outer box are resolved while integrating, players sliding
+in `MovementSystem` and bananas bouncing in `ProjectileSystem`, through one function
+(`statics::moveCircle`, §5.10), so a wall never produces a contact. A `Boomerang × Wall` row
+would come back only when some banana kind should not bounce; it would then be a
+`MoveParams::response` choice made from the banana's modifiers rather than a contact.
+
+Pit (v0.22): `CollisionSystem` emits `Player × Hazard` for every hazard holding a player's
+centre at the end of the tick (`EntityKind::Hazard`, `b.index` = the hazard's index in
+`content.arena.hazards`, `tHit` = the centre's entry time). Row 60 forbids only `Eliminated`:
+no tag (not even `Invulnerable` or a dash) saves a monkey over a pit. `fallIntoPit` declines for
+non-pit kinds (a slow patch acts through stats, §5.8) and otherwise sets hp 0 and `Eliminated`
+and emits `PlayerEliminated` with killer 0xFF and no `PlayerHit`: nobody is credited. Its
+`tHit` orders it among the tick's other contacts, so a banana that reached the monkey before it
+stepped over the edge still scores.
 
 Dash attack (v0.16): dashing into an enemy while holding at least `DashAttackDef::minAmmo`
 bananas damages it. Row 25, `Player[Dashing, !HitStun, !Eliminated] ×
@@ -433,7 +694,14 @@ HP semantics (v0.10):
   (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. The banana grounds at the contact point and becomes a pickup
   unless it has `pierce`, in which case it keeps flying.
 - Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
-  consumed (rule 20); armour is `+maxHp`. A mode or power-up picks one or stacks both.
+  consumed (rule 20, and rule 24 for a dash attack); armour is `+maxHp`. A mode or power-up picks
+  one or stacks both. As built (v0.20): rows 20 and 24 key on the tags of the rows they pre-empt
+  (30 and 25), so a shield breaks only on a hit that would land. The block removes the first
+  `ModifierList` entry whose def grants `Shielded` (ending that power-up), clears the tag and
+  gives the victim `HitStun` for `hitStunTicks` like a hit, without damage; a blocked banana
+  grounds at the contact point even when it pierces; a blocked dash stops (the attacker's dash
+  slot jumps to Recovery and its dash tags drop), because the rest of the dash would otherwise
+  land once the stagger ran out. Both emit `ShieldBroken`.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
 are rule-table decisions, not code changes. M1 decides the first: the catch is two rows,
 `Player[PerfectDash] × Boomerang[InFlight, !own]` (prio 10) and
@@ -450,8 +718,11 @@ is a defence only for a player who has thrown.
 ### 5.7 Boomerang model
 
 - State: `owner`, `phase` {Outbound, Returning, Grounded}, `pos`, `vel`, `spin`, `ticksAlive`,
-  `damage` (default 1, a one-hit kill against base `maxHp`), modifiers (size, speed, bounces,
-  pierce).
+  `damage` (default 1, a one-hit kill against base `maxHp`), `pierce`, and (v0.20) the
+  projectile modifiers `speedMul` and `radiusMul` snapshotted at the throw (§5.8): the banana
+  flies at `BoomerangDef::speed × speedMul` out and back, and its wall limits and contact radius
+  use `BoomerangDef::radius × radiusMul`. Bananas already bounce off every wall without limit, so
+  an "extra bounces" modifier has nothing to extend and is not built.
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
   eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
@@ -466,6 +737,17 @@ is a defence only for a player who has thrown.
   outbound banana keeps flying after its thrower is eliminated and grounds once it turns back.
   Walls reflect per axis with `restitution` and emit one `BoomerangBounced` per bounce tick,
   also when a corner reflects both axes in the same tick.
+- Walls (v0.22): the banana moves by its velocity through `statics::moveCircle` with the
+  `Bounce` response (§5.10), the same code path for interior walls and the outer box: a crossed
+  wall face mirrors the overshoot and reflects that velocity component times `restitution`, a
+  wall corner reflects the velocity about the corner normal, and the outer box keeps the M1
+  per-axis reflection bit for bit. Still one `BoomerangBounced` per bounce tick. A throw's
+  `spawnOffset` travels the same path from the thrower's centre (interior walls only, the outer
+  box stays with `ProjectileSystem` as in M1), so a throw into an adjacent wall bounces back at
+  once (plus `BoomerangBounced`) instead of spawning inside or behind it. A returning banana
+  keeps homing after a bounce; its 6.6°/tick turn rate means it needs many ticks to turn back
+  into the wall, and `maxReturnTicks` grounds one that cannot get home, so there is no extra
+  bounce cap (and no new `Boomerang` state). Bananas fly over hazards.
 - Bananas fly only while the match phase is `Playing`. During `RoundStarting`, `RoundEnded`
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
   `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
@@ -479,7 +761,84 @@ is a defence only for a player who has thrown.
   recomputes derived `Stats` each tick as `base × Π mul + Σ add`, iterating in slot order.
   Integer stats (`maxHp`, `ammoMax`) accept `add` only; `hp` is clamped to the new `maxHp` as
   described in §5.6.
+- Slow hazards (v0.22) go through the same derivation: `moveSpeed = base × Π mul × hazard + Σ
+  add`, where `hazard` is the product of `speedMul` over the `Slow` hazards holding the player's
+  centre after this tick's movement (1 elsewhere, and then not multiplied in at all, so an arena
+  without slow patches derives bit-identical stats). Like a modifier, it shapes the next tick's
+  movement; `MovementSystem` has no hazard code.
 - Pickup entities reference a `PowerUpDef` by index and are spawned by arena spawners.
+
+As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/powerup.cpp`,
+`rules/shield.cpp`, `systems/lifecycle.cpp`):
+
+- `PowerUpDef{name, durationTicks (>= 1), visual{color, shape}, grants[4], grantCount}` in
+  `ContentDB::powerUps` (`kMaxPowerUps` 16, `powerUpAt`, `findPowerUp`). `visual.color` indexes
+  the player palette (0–9) and `visual.shape` is `Orb`, `Cube`, `Diamond` or `Coin`; the sim
+  never reads either. A `PowerUpGrant` has a `GrantKind` and the fields of its kind:
+  - `Stat`: `StatModifier{stat, mul, add}` over `MoveSpeed` (mul and add), `MaxHp` and `AmmoMax`
+    (whole `add` only; the loader rejects a `mul`).
+  - `AbilityOverride{slot, ability}`: the slot (`dash`, `throw` or, v0.21, `ability`) runs that
+    ability def while the power-up is live; the last override in slot order wins. Buttons
+    belong to slots (v0.21), so the def may be of any kind, and an override of the empty third
+    slot adds an ability for the power-up's duration.
+  - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd, pierce}`, each mul in
+    (0, 4].
+  - `Tag`: `shielded` or `invulnerable` (the others belong to abilities and the damage rules).
+- State: a `ModifierList` entry is `ActiveModifier{powerUp, ticksLeft}`; the grants are read
+  from the def every tick, never copied. Row 51 (`grantPowerUp`) adds an entry with
+  `ticksLeft = durationTicks`; the same power-up again restarts the existing entry's timer in its
+  slot (no stacking of one def); a full list (8) declines and the pickup stays. Like the banana
+  pickup (row 50) it ignores `HitStun` and dashing.
+- `ModifierSystem` per player: (1) drop entries at `ticksLeft == 0`, compacting in slot order;
+  (2) `Stats` from `PlayerDef` and every `Stat` grant in slot order (`moveSpeed` never negative,
+  `maxHp` in [1, 255], `ammoMax` in [0, 255]); (3) the `hp` clamp of §5.6 and `ammo` capped at
+  `ammoMax`; (4) ability overrides; (5) tags: it clears exactly the bits it granted last tick
+  (`Player::grantedTags`), sets this tick's grants and records them there, so a tag an ability
+  phase or a mode also grants survives the power-up's expiry and vice versa (AbilitySystem
+  never clears a bit in `grantedTags`, `LifecycleSystem` keeps `Invulnerable` when spawn
+  protection ends while a power-up grants it, and ModifierSystem keeps a bit that an ability
+  phase or spawn protection holds now); (6) `HitStun` countdown; (7) `ticksLeft--`. A power-up picked
+  on tick T therefore shapes the state after ticks T..T+D−1 and is gone after T+D, and the list,
+  the stats and the tags always agree between ticks.
+- Ability overrides switch a slot only while it is `Idle` (a running dash or throw finishes on
+  the def it started with); on the switch the slot's remaining cooldown is capped at the new
+  def's `cooldownTicks` (gaining a faster throw takes effect at once; losing it never lengthens
+  a cooldown already running). Expiry restores the loadout's def the same way.
+- Ammo: an `AmmoMax` add tops the ammo up by the same amount on every pickup (rule 51), then
+  `ModifierSystem` caps it at the new `ammoMax`; on expiry the cap falls back and extra bananas in
+  hand are lost (bananas in flight still return and are caught up to the cap).
+- Projectile modifiers are combined at the throw (`abilities/throw.cpp`) over the thrower's live
+  `Projectile` grants in slot order (muls multiply, `damageAdd` adds onto `BoomerangDef::damage`
+  saturating at 255, `pierce` ors) and stored on the `Boomerang` (`damage`, `pierce`, `speedMul`,
+  `radiusMul`), so a banana keeps them after the power-up expires or its thrower is eliminated.
+- Spawners: `ArenaDef::pickupSpawners` (`kMaxPickupSpawners` 8): `PickupSpawner{pos,
+  powerUpSet (bit i = power-up i, 0 = all), firstTicks, intervalTicks (0 = once), maxAlive}`.
+  At the end of `LifecycleSystem`, while `Playing`, a spawner fires when `ticksInPhase ==
+  firstTicks + k × intervalTicks`, unless `maxAlive` of its own pickups (`Pickup::spawner`) lie in
+  the arena; it draws the def uniformly from its set with one `rng.below()` of the world RNG and
+  emits `PickupSpawned`. Its timeline is a function of the round clock, so a spawner has no state
+  of its own; round start clears pickups. The loader keeps the arena's `maxAlive` sum at or below
+  half the pickup pool so grounded bananas always find room. An arena without spawners never
+  touches the RNG here (the default `dojo` has none, so the default match plays exactly as
+  before). Per match (v0.24) `MatchConfig::powerUps` (bit i = power-up i, `kAllPowerUps` by
+  default, carried to the systems in `MatchContent::powerUps`) narrows every spawner's set: the
+  def is drawn from the intersection, and a spawner whose intersection is empty skips its beat
+  without touching the RNG. The lobby's power-up toggles and `--powerups` set it.
+- Shield: rows 20 and 24, §5.6.
+- The shipped set (`content/powerups.toml`), picked up in `dojo_powerups` (the dojo plus four
+  spawners near the corners, first at 1 s and 4 s into a round, then every 8 s, one alive each):
+
+  | name | duration | grants |
+  |---|---|---|
+  | `speed_boost` | 8 s | `move_speed` × 1.5 |
+  | `big_banana` | 10 s | bananas radius × 2, speed × 0.85 |
+  | `piercing_banana` | 10 s | bananas pierce |
+  | `triple_banana` | 15 s | `ammo_max` + 2 (tops up 2 bananas) |
+  | `shield` | 15 s | `shielded`: absorbs one hit |
+  | `fast_hands` | 10 s | throw slot runs `throw_fast` (cooldown 8 instead of 20, startup 1) |
+
+  Fast Hands is an `AbilityOverride` rather than a cooldown stat: a new def needs no new
+  `StatKind` and no special case in `AbilitySystem`.
 
 ### 5.9 Events
 
@@ -488,7 +847,22 @@ is a defence only for a player who has thrown.
   `PlayerDashHit{victim, attacker, hpAfter}` (v0.16: a dash attack; `entity` is the attacking
   player where `PlayerHit` carries the banana, and presentation shows both the same way),
   `PlayerEliminated{victim, killer}`,
-  `PowerUpPicked`, `RoundEnded`, ...
+  `RoundEnded{winner}`, `MatchEnded{winner}` (an invalid winner is a draw),
+  ... v0.23 (modes): `ScoreChanged{player, score}` (a deathmatch elimination scored; round wins
+  are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
+  respawn or late join; `PlayerSpawned` stays the round-start spawn), `TimerWarning{seconds}`
+  (10, 3, 2, 1 s left on the mode clock).
+  v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`,
+  `SlamLanded{player = the slammer, entity, a = the reach's raw value}` (the impact, for the
+  shockwave), `PlayerSlammed{player = the pushed monkey, entity = the slammer, a = its slot}`,
+  `PlayerParryStarted{player, entity}` (the press), `BoomerangParried{player = the parrier, now
+  the owner, entity = the banana, a = the thrower's slot}`.
+  `RoundEnded`, ...
+- v0.20: `PickupSpawned` and `PickupTaken` carry the pickup's `PickupKind` in `a` and, for a
+  power-up, its def index in `b` (a banana pickup's payload stays 0/0), which is all a
+  `PowerUpPicked` would carry, so there is no separate event. `ShieldBroken{victim, entity = the
+  banana or the dashing player, a = attacker slot, b = the power-up whose shield broke}` (§5.6).
+  No event marks a power-up's expiry: presentation reads the `ModifierList` timers from state.
 - Consumers: presentation (VFX/SFX), scoring, RL rewards, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
@@ -502,20 +876,163 @@ is a defence only for a player who has thrown.
 
 ### 5.10 Arenas and content
 
-- Arena: static collision shapes (AABBs / convex polygons on a grid), spawn points, pickup
-  spawners, hazards. Loaded into an immutable `Arena` struct with a prebuilt spatial hash.
-- Content pipeline: TOML or JSON → validated → `ContentDB`; `content_hash` is the xxHash of
-  the canonical serialized form. Hot reload in dev builds (restarts the match).
-- Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) are `constexpr`
-  tables in `engine/sim`, assembled into the same immutable `ContentDB` and hashed through the
-  visitor, so `content_hash` exists from M1 on. M4 replaces the `constexpr` source with the
-  TOML/JSON loader without touching systems. Every number a system needs lives there, including
-  the ones that are easy to forget: the pickup contact radius is `PickupDef::radius` (0.5),
-  not the banana's flight radius (0.35), so a grounded banana is easier to walk over than to dodge.
+- Arena: static collision shapes, spawn points, pickup spawners, hazards, in the immutable
+  `ArenaDef`. As built (v0.22), see "Arena statics" below: axis-aligned boxes only (convex
+  polygons dropped until an arena needs one) and no prebuilt spatial hash (a plain loop is
+  cheap at ≤ 32 walls).
+- Arena statics (v0.22, `kfm/sim/content/arena.hpp`, `engine/sim/src/systems/statics.hpp`):
+  - `ArenaDef` = `name`, `halfExtents` (the outer box), `spawnPoints`, `walls[kMaxArenaWalls =
+    32]` + `wallCount`, `hazards[kMaxArenaHazards = 16]` + `hazardCount` (pickup spawners for
+    power-ups get their own block). `Wall{min, max}` is a solid axis-aligned box;
+    `Hazard{min, max, kind, speedMul}` with `HazardKind::Pit` and `Slow` acts on a player whose
+    centre is in the closed box and never blocks anything. All of it is visited, so it is part
+    of the content hash; unused slots stay zero.
+  - One code path for circles against statics, `statics::moveCircle(arena, from, delta, vel,
+    {radius, response, restitution, outerBox})`: (1) x moves by `delta.x`; among the walls whose
+    face band `[min.y, max.y]` holds the circle's y, the nearest face it crosses (start on or
+    outside `min.x − r`, end past it, so nothing tunnels at any speed) stops it (`Slide`: at the
+    face, `vel.x = 0`) or reflects it (`Bounce`: overshoot mirrored, `vel.x = −vel.x ×
+    restitution`); (2) rounded corners: every wall the circle still overlaps (only a corner
+    zone can be entered this way, never the box) pushes it out along the normal from the
+    closest box point to exactly `r`, removing (`Slide`) or reflecting with restitution
+    (`Bounce`) the inward velocity; a centre found inside a box leaves through the nearest
+    face; (3) y the same way, then corners again; (4) the outer box: `Slide` clamps per axis to
+    `halfExtents − r` and `Bounce` mirrors per axis, the M1 code unchanged. With no walls the
+    function is exactly M1's `pos += vel` and clamp/reflect, so the default match keeps its
+    checksums. Players use `Slide` with their velocity (stick or dash: a dash stops at a wall
+    and its phases and perfect window still run their ticks); bananas `Bounce`, and a throw's
+    spawn offset travels it with `outerBox = false` (§5.7). Walls are visited in content order;
+    a pass takes the nearest face, so order inside a pass never matters.
+  - Statics live only in content: nothing is built at load or in `initialWorld`, nothing is in
+    `WorldState`, snapshots and rollback are unaffected. Each move tests ≤ 32 boxes with a band
+    rejection, cheaper than maintaining a grid. Measured with `kfm_replay bench --ticks 36000
+    --players 10` (Release, GCC 15, the shared WSL2 development machine, `step()` alone, noisy
+    within about ±15%): `dojo` 0.75–0.85 M ticks/s (1.2–1.3 µs/tick, the M1 figure: no walls
+    takes the M1 path), `pillars` 0.74 M, `corridors` 0.85 M, `island` 0.83 M, and a synthetic
+    worst case of 32 walls 0.37–0.47 M ticks/s (2.1–2.7 µs/tick). Even the worst case is about
+    0.2% of a 60 Hz frame per simulated tick, so a rollback of 10 ticks stays far below a
+    millisecond: no grid until an arena needs more than 32 statics.
+  - Hazards: the pit is a rules-table row fed by a `Player × Hazard` contact (§5.3, §5.6); a
+    slow patch multiplies move speed in `ModifierSystem` (§5.8). Bananas ignore hazards (a
+    grounded banana can lie in a pit; picking it up costs the monkey).
+  - TOML (`[[arena]]`): `walls = [{ min = [x, y], max = [x, y] }, ...]`,
+    `hazards = [{ kind = "pit" | "slow", min, max, speed_mul = m }, ...]` (`speed_mul` required
+    for `slow`, in (0, 4], and an unknown key for `pit`). Validation: counts, `min < max` on both
+    axes, boxes inside the arena, and no spawn point whose monkey overlaps a wall or whose centre
+    is in a pit (touching a wall is fine). The arena files live in `content/arenas.toml` (`dojo`,
+    index 0) and `content/arenas/NN-name.toml` (sorted after it; the numeric prefix fixes the
+    order, append with a higher one).
+  - Arenas (v0.22): `dojo` (index 0, the 32 × 18 box, unchanged), `pillars` (1: four 2 × 2
+    blocks around an open centre), `corridors` (2: a 36 × 20 box split into four rooms by a cross
+    of 0.6-thick walls with gaps at the centre and the ends, so throws into the next room come
+    back around a wall), `island` (3: a 22 × 12 playfield in a pit that runs to the outer walls,
+    a central block and two mud patches at half speed; bananas bounce off the outer walls back
+    over the pit). Scripted 4-player matches (`kfm_replay stats`, 10 matches each) average
+    rounds of 4.0 s on `dojo`, 5.0 s on `pillars`, 12.8 s on `corridors` (walls block sightlines:
+    15% of throws hit against 37%) and 1.6 s on `island` (most eliminations are falls). One
+    corpus replay per arena (§9).
+- Content pipeline (v0.18, as built): TOML → `engine/content` → validated `ContentDB`;
+  `content_hash` is the XXH32 of the canonical serialized form (the visitor), as before. Every
+  number a system needs lives there, including the ones that are easy to forget: the pickup
+  contact radius is `PickupDef::radius` (0.5), not the banana's flight radius (0.35), so a
+  grounded banana is easier to walk over than to dodge.
+- Files: `content/*.toml` (any depth), read in sorted relative-path order and merged. Top-level
+  keys: `[player]`, `[boomerang]`, `[pickup]`, `[dash_attack]` exactly once in the whole set;
+  `[[ability]]`, `[[arena]]`, `[[mode]]`, `[[powerup]]` (v0.20) appended in load order. Keys are the C++ field names in
+  snake_case; unknown keys and unknown top-level tables are errors (a typo never falls back to a
+  default); keys other than `name`, `kind` and a few required lengths are optional and keep the
+  struct default. Each file's header comment lists its keys and units.
+- Values: integers are range-checked against the field's type; booleans are 0/1 switches;
+  `Fixed` values are written as plain decimals (or integers) and converted exactly: the decimal
+  is the rational n / 10^k and the Q16.16 value is n·65536 / 10^k truncated toward zero, the
+  rounding of `Fixed::fromRatio` that built the M1 tables (so `0.35` is `fromRatio(35, 100)`),
+  never through a `double`; at most 9 decimal places, no exponents. Speeds are written in units
+  per second and divided by `kTickHz` in the same single truncation (`22` is
+  `fromRatio(22, 60)`). Tags are lists of names (`dashing`, `perfect_dash`, ...), ability kinds
+  are names (`dash`, `throw`); the loader's name tables static_assert they cover the enums.
+- Names: abilities, arenas, modes and power-ups have a `ContentName` (`std::array<char, 16>`, NUL padded,
+  1–15 of `a-z 0-9 _ -`), hashed with the def. Defs reference each other by name in TOML (the
+  player's loadout `abilities = ["dash", "throw"]`) and the loader resolves them to indices;
+  ability index 0 is the built-in inert `none`. Arena and mode names are how command lines and
+  the lobby choose (`ContentDB::findArena` / `findMode`); the sim only sees indices.
+- Validation: duplicate names, unresolved references, counts against the capacities
+  (`kMaxAbilityDefs` 16 since v0.21, `kMaxArenas` 8, `kMaxModes` 8, `kMaxPowerUps` 16; at least one arena
+  and one mode), and
+  the properties systems rely on instead of re-checking per tick (`validateContent`, also run
+  on `defaultContent()` by a test): every loadout (the player's and each mode's) fills the dash
+  and throw slots (v0.21; only the third may be `none`), a dash with no startup and its
+  perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
+  keep a monkey inside (and, v0.22, clear of walls and out of pits), walls and hazards that are
+  non-empty boxes inside the arena, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
+  `file:line: error: message` lines; a failed load leaves the previous `ContentDB` untouched.
+- Selection: a `MatchConfig` carries `arena` and `mode` indices (index 0 is the default, the
+  first loaded). They are constant for a match like the content and are not part of
+  `WorldState`, so world checksums and snapshots are unchanged; every host keeps the config next
+  to the world. `step()`, every system, ability hook and rule handler takes a `MatchContent`
+  (`db`, `arena`, `mode` references; `matchContent(db, config)`), and arena- or mode-dependent
+  code reads `content.arena` / `content.mode`. A bare `ContentDB` converts to its default match,
+  which keeps headless tests short. Indices are part of replays and the wire, and the arena and
+  mode lists are part of the content hash: append new ones, never reorder.
+- Where content comes from: every app resolves `--content DIR`, else `content/` next to the
+  executable (CMake's `kfm_use_content()` mirrors the TOML there after each link), else the copy
+  compiled into the binary (`EmbedContent.cmake` turns `content/**/*.toml` into byte arrays at
+  build time). The browser client and every wasm test use the embedded copy (no file system
+  needed); `kfm_replay` and `kfm_netsim` default to it too, so the determinism gate never
+  depends on files beside the binary. Apps print the source directory and hash at startup;
+  `kfm_replay info` shows the replay's and the loaded content's hash and the arena and mode.
+- `defaultContent()` is the minimal headless test fixture: `constexpr` tables in `engine/sim`
+  holding the base kit (the singletons `[player]`, `[boomerang]`, `[pickup]`, `[dash_attack]`,
+  the abilities), the `dojo` arena and the `rounds` mode. It is what the sim unit and scenario
+  tests run on (they must not depend on the loader) and the fallback of the client's sessions.
+  The TOML under `content/` is a superset that Phase 2 extends as data only: new arenas, modes,
+  power-ups and abilities go into TOML without being mirrored into `engine/sim/src/content.cpp`.
+  A content test asserts that `content/` and the embedded copy agree with `defaultContent()`
+  field by field (through the visitor) on the singletons, the abilities `defaultContent()`
+  defines, arena 0 and mode 0, so the default match stays the fixture's; it does not compare the
+  whole-DB hashes. A new field of an existing def struct still gets its default value in
+  `defaultContent()`, because the struct changes anyway.
+- Adding content (any def, an arena or mode included) changes the content hash, which every
+  replay carries, so it is followed by `regen-replay-corpus`; the existing `.checksums` must stay
+  identical, because added content never changes the default match.
+- Hot reload (native client, local play): with content from a directory and without
+  `--no-hot-reload`, the client polls the directory's `*.toml` modification times and sizes
+  about once a second; on a change it reloads, prints diagnostics and keeps the old content on
+  error, else replaces the loaded content (dropping debug-UI tuning edits), keeps the arena and
+  mode when they still exist and restarts the match with the same seed (or re-creates the lobby
+  world). Online the server's content and config rule, so it is off; the browser has no
+  directory to watch.
+- Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) were `constexpr`
+  tables only; M4 put the TOML loader in front without touching how systems read defs.
+- Modes (v0.23, `content/modes.toml`, `ModeDef` in `kfm/sim/content/mode.hpp`): `kind` =
+  `rounds` (the default when the key is absent), `deathmatch` or `survival`; shared
+  `round_start_ticks`, `round_end_ticks`; `rounds_to_win` (rounds, survival);
+  `time_limit_ticks` (deathmatch: the match, survival: each round; 0 = no clock); `score_to_win`,
+  `respawn_ticks`, `respawn_invuln_ticks` (deathmatch). A kind ignores the numbers it does not
+  read (they keep their struct defaults and are hashed like every field). Validation: a known
+  kind, `rounds_to_win >= 1`, and in deathmatch `score_to_win >= 1` and `respawn_ticks >= 1`.
+  The file ships `rounds` (index 0, the M1 numbers), `deathmatch` (first to 10, 3 min, 2 s
+  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). Any kind may
+  carry `abilities = [...]` (v0.21): its own loadout of 2 or 3 ability names replacing
+  `[player] abilities` for the match (`ModeDef::hasAbilities`/`abilities`, applied at spawn and
+  by `ModifierSystem` through `MatchContent::loadout()`). The modes stay
+  in one file so their order, and so their indices, is explicit.
 - `DashAttackDef` (v0.16): `damage` (1), `minAmmo` (1: a banana in hand), `consumesAmmo`
-  (0: kept). Visited for the content hash like every other def; M4's loader exposes it, and
-  `minAmmo = 0` (every dash an attack) is a valid content choice there, while the default content
-  asserts `minAmmo >= 1`.
+  (0: kept). Visited for the content hash like every other def; the TOML key is
+  `[dash_attack]`. The loader's validation requires `minAmmo >= 1` like the M1 tables did;
+  allowing 0 (every dash an attack) is a one-line change there when a mode wants it.
+- Power-ups (v0.20, §5.8): `[[powerup]]` with `name`, `duration_ticks` (required, >= 1),
+  `color` (palette 0–9), `shape` (`orb` | `cube` | `diamond` | `coin`) and `grants` (required,
+  1–4 inline tables): `{ kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max", mul, add }`,
+  `{ kind = "ability", slot = "dash" | "throw", ability = "<name>" }`,
+  `{ kind = "projectile", speed_mul, radius_mul, damage_add, pierce }`,
+  `{ kind = "tag", tag = "shielded" | "invulnerable" }`. An arena's optional `spawners` is a list
+  of up to 8 `{ pos = [x, y], power_ups = ["<name>", ...], first_ticks, interval_ticks,
+  max_alive }` (`power_ups` absent = every power-up). Ability and power-up names resolve after
+  every file is read, so the reference may point into a later file. Validation: unknown names,
+  an unknown grant kind or stat, a `mul` or a fractional `add` on an integer stat, an override of
+  another kind than its slot's def, a tag a power-up may not grant, multipliers outside (0, 4],
+  a spawner outside the arena (by the pickup radius), inside a wall or in a pit (v0.22 statics), spawners without any power-up defined, an
+  arena's `max_alive` sum above 16.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -814,7 +1331,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   prints one log line per join/leave/kick/resync/round/match and a periodic delta stats line,
   and on SIGINT/SIGTERM or an exit limit shuts down (300 ms linger for the reliable lane).
   `--rounds-to-win` is deliberately absent: it would change the content hash and reject every
-  client (content negotiation is M4's). The multi-match host below is the M6 shape.
+  client; a different rule set is a mode in the content, chosen with `--mode` (v0.18). The
+  multi-match host below is the M6 shape.
 - Server (target): `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
   matches on a thread pool (the sim is cheap). One socket I/O thread timestamps arrivals and
   pushes to a single-producer single-consumer queue per match.
@@ -838,6 +1356,13 @@ C++ server library is mature. The seam makes that swap a contained change.
   the reliable lane is checked for protocol version, content hash, build id, token (a host
   callback; empty accepts all) and room, then answered with `Welcome` (slots, `MatchConfig`,
   server tick), a `Snapshot` of the current world and a `PlayerJoined` broadcast, or `Reject`.
+  Content negotiation (v0.18) is the content hash in `Hello`: equal hashes mean identical
+  arena and mode lists, so the `MatchConfig` in `Welcome`, `Snapshot` and `MatchConfig`
+  (seed, roster, arena index, mode index; protocol version 2; the power-up set as a u16 since
+  protocol version 3, v0.24) is all a client needs to simulate the server's arena, mode and
+  power-ups. A client steps with the config of the snapshot it last loaded
+  (`NetClient::simConfig()`); an announced restart's config (`matchConfig()`) takes effect
+  with the new match's snapshot, so a restart into another arena costs no resync.
   Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
   a peer's slots later. Server-side bots are slots the host marks with `setBot()`; they get
   `scriptedInput` every tick (§8).
@@ -852,7 +1377,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   the same token reclaims them and gets a fresh snapshot; a `Hello` whose token belongs to a
   still-connected peer takes its slots over (the client noticed the drop first). After the window,
   or on `Disconnect{Quit}`, the slots leave the roster (`PlayerLeft`).
-- Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` sends
+- Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` (keeps the arena
+  and mode; v0.18 adds `restartMatch(MatchConfig, startTick, botSeed)` to change them) sends
   `MatchConfig{config, startTick}` at once to every peer (and to anyone who joins before
   `startTick`, after their snapshot); the message means "the world from `startTick` is a new
   match whose snapshot follows". At `startTick` the server's world becomes `initialWorld` with
@@ -866,6 +1392,14 @@ C++ server library is mature. The seam makes that swap a contained change.
   announces 3 s ahead. `shutdown()` sends `Disconnect{ServerShuttingDown}` to every peer and
   rejects later `Hello`s; `closeAll()` then drops them. `ServerConfig::maxPlayers` caps the slots
   open to peers and bots.
+- Restart per mode (v0.23): every mode ends in `MatchEnded`, so `kfm_server` and the local
+  `MatchSession` restart the same way whatever the mode: a deathmatch ends on `scoreToWin` or
+  its clock (one round, so `round` stays 1), survival and rounds on `roundsToWin`; a draw
+  (deathmatch's tied lead) is a `MatchEnded` with an invalid winner, logged as "drawn". The
+  restart keeps the mode, and `initialWorld` starts the next match with zeroed mode counters,
+  so nothing (scores, deaths, respawn timers) carries over. A deathmatch joiner does not wait for
+  a next round that never comes: its slot spawns `respawnTicks` after it appears in the frames
+  (§5.3), at the farthest spawn point.
 
 ### 6.7 Authority and abuse resistance
 
@@ -937,6 +1471,12 @@ into a standing lag of roughly 1/(1 − e^(−dt/τ)) frames, about 120 ms for r
 clock jump inside the tick batch gets a second call with the new states. Presentation draws only
 the events the journal delivers (§5.9), never the raw per-tick sink; retracted events are counted
 and not yet undone on screen.
+What is shown online (v0.24): until the match runs, the status window replaces the lobby; once the
+server's `Welcome` arrived (`NetSession::configKnown()`) it adds the server's `MatchConfig`
+read-only: the slot cards (you, online, free), the arena with the same preview as the local lobby,
+the mode with its key numbers and the power-up set. After `MatchEnded` the banner adds the
+announced next match (arena, mode, power-ups) from `NetClient::matchConfig()`. The browser page
+with `?connect=` runs the same code and shows the same. Nothing of it is editable on a client.
 
 ---
 
@@ -950,6 +1490,19 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   orthographic; tuned in M2), looking down at the plane. No camera rotation in gameplay, so the
   tilt is part of the arena's design. A real depth buffer resolves overlaps; only transparent
   effects are sorted.
+- **Arena statics (v0.22).** `makeArenaCamera(arena, ...)` frames each arena from its own
+  `halfExtents` (fixed pitch and field of view, distance solved per arena and viewport), so a
+  36 × 20 `corridors` sits further away than the 32 × 18 `dojo`; interior walls are drawn below
+  `framingHeight` and never leave the frame. `buildArenaPieces()` turns the arena's walls and
+  hazards into `RenderState::arenaPieces` (world-space boxes, walls first, then hazards, then
+  pit rims); the renderer draws each as the unit cube scaled to it: walls as
+  `kArenaWallHeight` (1.2) stone blocks, above a banana in flight so a bounce reads as hitting
+  one; pits as a near-black slab just above the floor with a brown rim strip
+  (`kPitRimWidth`) along every stretch of edge that meets open floor (adjoining pit boxes and
+  the outer wall get none, so a ring of boxes reads as one pit); slow patches as a mud slab.
+  Slabs stay under the blob shadows. Colours are `kArenaWallColor`, `kArenaPitColor`,
+  `kArenaPitRimColor`, `kArenaSlowColor` in `palette.hpp`, sizes in `tuning.hpp`.
+  `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
   quad on the ground) at its true sim position, and the shadow is where the hitbox is. This
@@ -996,8 +1549,50 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   tuned result is pasted back into the `constexpr` tables and the corpus regenerated. The HUD
   (scores, round, countdown, banners, `P<n>`/`BOT<n>` tags with ammo pips placed with
   `worldToScreen`) is drawn on ImGui's background draw list, over the scene and under ImGui
-  windows. The browser page turns its query string into the same flags
+  windows. Per mode (v0.23, from `RenderHud`, which the builder fills from `MatchRules` and the
+  `ModeDef`): rounds shows round-win pips and "Round N (first to K)"; survival the same plus the
+  alive count and the round clock; deathmatch each slot's eliminations (dimmed with a countdown
+  while it waits to respawn), "first to K" and the match clock. The clock is `m:ss`, pops on
+  `TimerWarning` and turns red in the last 10 s; a drawn match shows "Draw!". The browser page turns its query string into the same flags
   (`?autostart&bots=3&seed=7&overlay`).
+- M4 lobby (v0.24, `apps/client/core/lobby_menu.{hpp,cpp}`, `lobby_settings.{hpp,cpp}`, drawn
+  by `hud.cpp`). The lobby window shows a row of ten slot cards (the slot's palette colour as a
+  stripe, `P<n>`/`BOT<n>`, the device: keys left/right, pad #id, bot, or free and dimmed) and,
+  locally, the settings panel beside an arena preview. `LobbyMenu` is a headless state machine
+  over rows built from the content: Arena, Mode, one toggle per `PowerUpDef`, Bots (0–9, then
+  clamped to the free slots), Volume (steps of 10 %), Sound (mute). Up/Down move the focus
+  (wrapping), Left/Right change the focused value (arena and mode cycle with wrap-around, a
+  power-up toggles, numbers clamp); the mouse focuses a row and has the same arrows; Enter/Start
+  still starts. `MenuInput` turns raw `InputEvent`s into those four actions: arrows and WASD on
+  the keyboard, a pad's d-pad and left stick (fires once past 0.6, re-arms under 0.35, per pad),
+  and only for pads already bound to a slot, because an unbound pad's press is its join. It never
+  reads game bindings, so the join keys (Throw/Dash) and a future third ability button stay
+  free. A change applies at once to the lobby's `MatchSession` (`setArena`, `setMode`,
+  `setPowerUps`, `setBotCount`) and to `ClientAudio`; the -/= keys, joins taking bot slots and
+  the F1 audio panel flow back into the panel. The preview draws the arena def top-down (floor,
+  walls, pits with their rim, slow patches, spawn points in slot colours, power-up spawners
+  filled when the selected set leaves them something to spawn, hollow when it switches them
+  off) next to the mode's key numbers (`modeSummary`: "first to 10 eliminations, 3:00, respawn
+  2.0 s (1.5 s protected)") and the power-up set. Persistence: the lobby writes the settings
+  back into `ClientOptions` as names (`--arena`, `--mode`, `--powerups`, `--bots`, `--volume`,
+  `--mute`) and saves them as `key=value` lines (`settings.txt` in `SDL_GetPrefPath("kfm",
+  "kung-fu-monkeys")` natively, `localStorage['kfm.settings']` in the browser). Startup applies
+  defaults, then the saved text (a name the content no longer has, a bad number or an unknown
+  key is skipped with a warning, never fatal), then the command line again, so a flag or URL
+  parameter (`?arena=pillars&mode=deathmatch&powerups=shield,big_banana`) wins for the run;
+  `--no-settings` neither reads nor writes (the smoke tests use it). In network mode the local
+  lobby hides the panel: the server owns the match. First browser run (headless Chromium, the
+  wasm build): `?arena=pillars&powerups=shield,big_banana` showed in the panel, arrow and WASD
+  presses changed the mode and a power-up, `localStorage['kfm.settings']` held the new set, a
+  reload without parameters restored it, `?no-settings` ignored it; no console errors.
+- HUD layout (v0.24): the scoreboard is one card per present slot along the top, the lobby's
+  card style, sharing one width so the row never jitters and shrinking to fit narrow windows:
+  the label and the score on the first line (round-win pips in rounds and survival,
+  eliminations with the respawn countdown in deathmatch), the slot's live power-up timers on the
+  second (a pie per power-up in its colour with whole seconds, only when someone has one); a
+  card dims while its slot waits to respawn or is out of the round. The mode line and clock sit
+  under the cards. Over each monkey the same pies, smaller and without numbers, follow the ammo
+  pips.
 
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
@@ -1044,7 +1639,7 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   stretches the forward axis by 0.18 and hit-stun squashes height by up to 0.2.
 - Effects from events: dash ring 0.25 s, perfect-catch flash 0.4 s, auto-catch flash 0.2 s, hit
   flash 0.2 s, throw puff 0.25 s, elimination burst 0.6 s, round-start / round-end / match-end
-  banners 1 / 1.5 / 3 s; at most 64 live effects, the one nearest expiry is replaced when full.
+  banners 1 / 1.5 / 3 s; at most 64 live effects (128 since v0.19, "Effects" below), the one nearest expiry is replaced when full.
   Screen shake adds 0.12 per hit, 0.3 per elimination, 0.08 per perfect catch, capped at 0.5,
   decays with τ = 0.15 s and oscillates at 23 Hz.
 - Palette (slot order): red, blue, yellow, green, orange, purple, cyan, pink, white, charcoal;
@@ -1099,6 +1694,102 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   rendering is verified from screenshots without a human; it is the second xvfb smoke test on
   Linux CI and builds for the browser too.
 
+Effects (v0.19, M4; `event_fx.{hpp,cpp}`, constants in `tuning.hpp`). Every effect lives in the
+`PresentationState` effect list (at most 128, the one nearest expiry replaced when full), is
+copied into `RenderState::effects` with its remaining and total seconds, and is drawn by
+`kfm_renderer` from the disc mesh as ground decals or camera-facing billboards (alpha or
+additive); no shader changed. Event-driven (`applyEventFx`, one call per new `SimEvent`):
+
+| Event | Effects | Sound |
+|---|---|---|
+| `PlayerDashed` | DashRing 0.25 s, DashAnticipation 0.12 s (a ring collapsing onto the dasher and a flash ahead along the dash, §12) | DashSwish |
+| `BoomerangThrown` | ThrowPuff 0.25 s | ThrowWhoosh |
+| `BoomerangCaught` Perfect | PerfectCatchFlash 0.4 s, PerfectCatchBurst 0.45 s (8 gold sparks), flash, shake | CatchPerfect (two-note chime) |
+| `BoomerangCaught` Auto | AutoCatchFlash 0.2 s, flash | CatchAuto (tick) |
+| `PlayerHit`, `PlayerDashHit` | HitFlash 0.2 s, HitSpark 0.25 s (6 sparks in a cone away from the banana or attacker), flash, shake | Hit (thud) |
+| `PlayerEliminated` | EliminationBurst 0.6 s, EliminationPoof 0.7 s (5 smoke puffs), shake | Elimination |
+| `PickupTaken` | PickupSparkle 0.35 s at the pickup; a power-up (v0.20) adds PowerUpBurst 0.5 s (a ring and 8 sparks in the taker's colour) | Pickup; PowerUp (rising arpeggio) for a power-up |
+| `ShieldBroken` (v0.20) | ShieldShatter 0.4 s (a blue ring, flash and 7 shards), flash, shake | ShieldBreak (glassy crack) |
+| `BoomerangGrounded` | GroundDust 0.35 s where it landed | BananaGround |
+| `BoomerangBounced` | BounceSpark 0.15 s | WallBounce |
+| `RoundStarted`, `RoundEnded`, `MatchEnded` | banners 1 / 1.5 / 3 s; the HUD text pops in at 1.35× and settles over the first quarter (`bannerScale`) | — , RoundEnd, MatchEnd |
+| `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
+| `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer) | Score (coin blip) |
+| `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
+| `PlayerBlinked` (v0.21) | BlinkFlash 0.3 s at the origin (from the payload) and at the landing, in the slot colour; the jump exceeds `kSnapDistance`, so the body snaps | Blink (rising zap) |
+| `SlamLanded` (v0.21) | SlamShockwave 0.45 s (a ring racing out to the reach, carried in `RenderEffect::size`), GroundDust, shake | Slam (deep boom) |
+| `PlayerSlammed` (v0.21) | GroundDust under the pushed monkey, flash | — (the slam sounds once) |
+| `PlayerParryStarted` (v0.21) | ParryGuard 0.2 s (a pale ring flaring at the parrier) | — |
+| `BoomerangParried` (v0.21) | ParrySpark 0.35 s (a white flash and 8 sparks at the banana), flash, shake | Parry (metallic clang) |
+
+Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
+(0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
+30 ms; the count-in sound plays on entering `RoundStarting` and at every whole second the
+countdown crosses, RoundGo on `RoundStarting` → `Playing`. Entity positions for events come from
+`curr`, else `prev` (despawned this tick), else the entity's presentation track. Player colours
+come from `palette.hpp`. Bursts cost one draw call per spark; a busy 10-player frame measured
+72–90 draw calls.
+
+Rollback rule: effects and sounds are started only from the event stream the builder is given,
+each event once: locally the per-tick sink, online `EventJournal::drain()` (§5.9). A
+re-simulation therefore never re-triggers an effect or a sound, an event retracted before it was
+drained spawns neither, and one already played stays played (it is counted as retracted).
+State-sampled trails follow whatever timeline is drawn.
+
+Power-ups (v0.20, §5.8). A power-up pickup (`RenderPickup::kind == PowerUp`, with the def's
+`colorIndex`, `shape` and index) is drawn from the placeholder meshes in its palette colour,
+spinning 0.45 units up with a slight glow: `Orb` a capsule squashed to a ball, `Cube` a tilted
+cube, `Diamond` a cube on its corner, `Coin` a flat capsule on its edge (`kPowerUpSize` 0.6), over
+a pulsing ground ring in the same colour; a grounded banana looks as before. `RenderPlayer`
+carries its live power-ups (`powerUps[0..powerUpCount)`: index, colour, shape, seconds left,
+fraction left) and the HUD draws them under the ammo pips as small pies in the power-up's colour
+with whole seconds beside them. A shielded player keeps the blue ground ring of `Shielded`. The
+F1 overlay lists each player's power-ups and each pickup's def.
+
+Audio (v0.19, M4). Everything SDL-free is in `presentation` and headless-tested; only the device
+is in `platform`.
+- `SoundBank` (`sound_bank.hpp`): 14 clips (`SoundId`: throw, dash, perfect and auto catch, hit,
+  elimination, pickup, banana landing, wall bounce, count-in, go, round end, match end, UI click;
+  v0.20 adds power-up and shield-break, v0.23 respawn, score and timer warning, 19 in all)
+  synthesised once at startup from sines, inharmonic bell partials, state-variable-filtered
+  xorshift noise and envelopes, mono float at 48 kHz, each normalised to a 0.8 peak with 1 ms /
+  4 ms end fades, deterministic (fixed noise seeds), about 4.6 s of audio in total. No audio
+  asset ships and the browser download does not grow. Each clip has a mix gain.
+- `Mixer` (`mixer.hpp`): 16 voices; `play(id, gain, pan)` takes a free voice or steals the
+  oldest; gain = cue × clip × master volume; constant-power pan; muted or volume 0 mixes silence
+  while voices keep advancing (unmuting never replays stale sounds); the sum is hard-limited to
+  [−1, 1]; `mixInto(float* interleaved, frames)` is the pull API. No allocation after
+  construction.
+- Cues: the builder writes the frame's `SoundCue`s into `RenderState::sounds` (at most 32) from
+  the table above. Positioned sounds pan by world x: 0.6 × x / arena half width. The same sound
+  twice in one frame merges into one cue, +25 % gain per repeat up to 1.75× (identical clips
+  started on the same sample only double in amplitude).
+- `platform::AudioDevice`: the default playback device as an `SDL_AudioStream`, float32 stereo
+  at 48 kHz (SDL converts to the device), opened lazily with `SDL_InitSubSystem(SDL_INIT_AUDIO)`
+  and attempted once. No driver, no device or any failure leaves it closed and the client silent,
+  never an error: CI, xvfb and `--exit-after-frames` runs print one `kfm_client: silent: ...`
+  line. There is no audio callback: every frame, on the main thread, `pump()` tops the stream's
+  queue up to 50 ms by calling `Mixer::mixInto`, so the client stays single-threaded (SDL's
+  device thread natively, or the Web Audio callback in the browser, only drains the queue). The
+  queue length is the sound latency and the stall a frame survives without a gap; underruns are
+  counted.
+- Browser gesture rule (§13): an `AudioContext` may only start after a user gesture, so the
+  browser client opens the device on the first key, mouse button, touch or pad button, and SDL3
+  resumes its context once `navigator.userActivation.hasBeenActive`. Natively the device opens on
+  the first frame with sound enabled. First browser run (`check_browser.py`, headless Chromium):
+  no device before input, "audio open: emscripten, 48000 Hz" and a running `AudioContext` after
+  the key presses, 60 fps unchanged, no console errors (one Chromium deprecation warning about
+  SDL's `ScriptProcessorNode`); with `?mute` no `AudioContext` is created.
+- `kfm_client --mute` and `--volume 0..100` (default 80; `?mute&volume=50` in the browser) set
+  the mixer; the F1 overlay's Audio panel (local and online) toggles mute, sets the volume, plays
+  a test click and shows the device status, voices, steals and underruns. The client glue is
+  `apps/client/client_audio.{hpp,cpp}` (`ClientAudio`: `init`, `frame`, `onUserGesture`,
+  `click`, `setMuted`, `setVolumePercent`), which the lobby UI uses for its own controls and
+  clicks.
+- Not yet: music, distance attenuation, per-player local-vs-remote mixing; no event exists yet
+  for power-ups (M4 power-ups add theirs to the table). Volume and mute are saved with the lobby
+  settings since v0.24 (the lobby panel edits them too).
+
 Character drawing sits behind one interface in `presentation` so that nothing else knows
 whether a character is a skinned mesh or a quad. The earlier plan, pre-rendered 8-direction
 sprites from the same Blender models, remains the fallback if the 3D renderer stalls M2: the
@@ -1148,6 +1839,17 @@ art is identical up to the export step, and nothing below the presentation layer
   `webglContextAttributes` (`desynchronized`, `powerPreference`, no antialias) and, because SDL3
   creates its context through `emscripten_webgl_create_context` which ignores that setting,
   also wraps `getContext('webgl2')` to merge the same attributes.
+- Audio and VFX tests (v0.19): `kfm_presentation_tests` checks every event's effects and cue,
+  effect lifetimes and expiry, dash and banana trails, entity positions of pickup and landing
+  effects, the count-in/go sequence, same-frame cue merging and pan, banner pop-in, and over a
+  scripted 10-player match that every new effect kind and sound appears with pans and gains in
+  range; the synthesiser (every clip's length, finite, normalised under the peak, faded ends,
+  deterministic, sample-rate aware) and the mixer (gain × clip gain × volume, constant-power
+  pan, voices ending, silence when muted or at volume 0, stealing the oldest voice, the
+  [−1, 1] limiter, no bank). `kfm_client_tests` checks that an event a rollback retracted
+  before it was drained spawns no effect or sound and that a re-simulated duplicate plays once,
+  through the real `EventJournal`, plus the `--mute`/`--volume` flags. `client_smoke` and
+  `--exit-after-frames --screenshot` run unchanged without an audio device.
 - Feel-tuning instrumentation (v0.15): `kfm_replay stats` (and `record-scripted --stats`) runs
   scripted matches and reports round lengths, throws, hits, dashes, perfect and auto catches,
   catch attempts and their conversion, `tHit − pressTime` for every attempt, throw-to-outcome
@@ -1206,7 +1908,54 @@ art is identical up to the export step, and nothing below the presentation layer
   manifest, `tools/replay-corpus/corpus.txt` (name, kind, seed, input seed, players, ticks), and
   `regen-replay-corpus` re-records every entry before regenerating its `.checksums` (v0.14). A
   content or gameplay change regenerates the corpus in the same commit; a `.kfmr` without a
-  manifest line fails the regeneration.
+  manifest line fails the regeneration. v0.18: replays (format version 2) store the arena and
+  mode indices, the manifest takes two optional trailing columns (arena and mode names, default
+  the first of each), and `kfm_replay` records and plays back with the embedded content unless
+  `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
+  the corpus is re-recorded; the checksums of existing entries must stay identical, because
+  content that is only added never changes the default match (a scenario test asserts this for
+  extra arenas and modes). v0.22 adds one 4-player scripted replay per walled arena
+  (`scripted_4p_pillars_1800t`, `scripted_4p_corridors_1800t`, `scripted_4p_island_1800t`), so
+  wall slides, bounces, pit falls and slow patches are under the cross-platform gate. The
+  embedded content depends on the globbed file list as well as the files (a list file rewritten
+  only when it changes), so adding, moving or deleting a TOML file re-embeds before a regen.
+  v0.24: replays (format version 3) store the per-match power-up set; a ninth optional column
+  names it (`all`, `none` or comma-separated names, default all), and
+  `scripted_4p_powerset_1800t` (dojo_powerups with only shield and big_banana) keeps the
+  intersection under the gate.
+  v0.21 adds `scripted_4p_blink_1800t`, `scripted_4p_slam_1800t` and `scripted_4p_parry_1800t`
+  (dojo, the `rounds_*` ability modes): the scripted bots use the third slot when it holds an
+  ability (blink sideways out of an incoming banana's path or now and then, slam with an enemy or
+  incoming banana within the reach, parry a close incoming banana) and draw nothing from their
+  Rng while it is empty, so the base-kit entries keep their inputs. `kfm_replay stats` counts
+  blinks, slams, pushes and parries (and now sums the power-up counters over matches). The third
+  `AbilityState` and `Player::knockback`/`knockbackTicks` changed every checksum and
+  regenerated the corpus.
+  v0.23 adds `scripted_4p_deathmatch_3600t` and
+  `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
+  survival flow are under the cross-platform gate. v0.20 adds `scripted_4p_powerups_1800t`
+  (`dojo_powerups`, scripted bots that walk to power-ups), so pickups, grants, projectile
+  modifiers and the shield are under the gate too. New `WorldState` fields (v0.23: the mode
+  counters; v0.20: `Boomerang::speedMul`/`radiusMul`, `Pickup::spawner`,
+  `Player::grantedTags`) change every checksum and regenerate the corpus; added content alone
+  must not.
+- Mode tests (v0.23): `mode_scenario.cpp` (deathmatch scoring, respawn exactly `respawnTicks`
+  after the elimination at the farthest spawn point, spawn protection blocking a hit for
+  `respawnInvulnTicks`, `scoreToWin`, the clock with the leader winning or a draw on a tied
+  lead and the 10/3/2/1 warnings, late joiners and leavers; survival's last-standing and
+  timeout tie-breaks; rounds never setting a mode counter; a mid-respawn round trip through the
+  visitor; determinism), the counters' visitor round trip, loader validation (unknown kind,
+  `score_to_win = 0`, `respawn_ticks = 0` in deathmatch), the HUD fields and mode effects and
+  sounds, a server restarting a deathmatch and a survival match, a local deathmatch ending on
+  its clock, and a 4-client deathmatch over the emulator at 100 ms / 2% staying in sync.
+- Content tests (v0.18, `kfm_content_tests`): the exact decimal conversion (truncation, digit
+  separators, range, per-second division), `content/` and the embedded copy agreeing with
+  `defaultContent()` on the base kit, arena 0 and mode 0 (and being identical to each other), validation of `defaultContent()`, one diagnostic per kind of mistake
+  (syntax with line, unknown key, missing section or key, bad name, duplicate, unresolved
+  reference, ranges, capacities, contradictory spawn keys) and the app-side resolution.
+  `match_config_scenario` checks that the selected arena places and bounds players and the
+  selected mode decides the countdown and the match end; a netcode test runs a server on a
+  second arena and mode and restarts it into the default one with no checksum mismatch.
 - Scripted inputs (v0.13): `kfm/sim/scripted_inputs.hpp` generates varied, deterministic
   matches (wander, aim at the nearest player, throw, dash at incoming bananas, fresh button
   edges) from an `Rng` separate from the world's. v0.16 adds a dash attack: while holding at
@@ -1253,8 +2002,8 @@ Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `se
 M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
 x11`, or FetchContent `release-3.4.18` built static with the same optional subsystems switched
 off as the port, so both paths build the same SDL; SDL 3.4 aborts configuration on Linux when an
-enabled optional dependency is missing, and neither path has Linux audio until the `alsa`
-feature is added); Dear ImGui 1.93.0 (FetchContent only: the vcpkg `imgui[sdl3-binding]` port
+enabled optional dependency is missing; v0.19 adds the `alsa` feature for Linux audio, below);
+Dear ImGui 1.93.0 (FetchContent only: the vcpkg `imgui[sdl3-binding]` port
 re-enables sdl3's default `ibus`/`dbus` features and drags in libsystemd and meson); sokol
 pinned to floooh/sokol `efeb776` (FetchContent only, the vcpkg port is a 2023 snapshot); glad2
 2.0.8 vendored; cgltf 1.15 (vcpkg or FetchContent). FetchContent uses release tarballs with
@@ -1273,10 +2022,26 @@ commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS back
 `libssl-dev` on the FetchContent path, the vcpkg port otherwise), and datachannel-wasm pinned to
 `f9200eb` (v0.4.0 plus a missing-include fix) for Emscripten, linked with its two
 `--js-library` files and `-fwasm-exceptions`. Both are exposed as one target, `kfm::datachannel`.
+Content parser (v0.18): toml++ 3.4.0, header only (the include directory of the vcpkg
+`tomlplusplus` port, whose compiled-library target is not linked because it fixes
+`TOML_HEADER_ONLY=0` and was built with exceptions on; or FetchContent of the release tarball by
+hash), in the headless server build too. `kfm::tomlplusplus` pins
+`TOML_EXCEPTIONS=0` (parse errors come back as `toml::parse_result` and become diagnostics; the
+loader compiles without exceptions or RTTI like the engine) and `TOML_ENABLE_FORMATTERS=0`;
+only `engine/content/src/loader.cpp` includes it. TOML over JSON because tuning files need
+comments. toml++ parses floats as `double`; the loader never uses that value but re-reads the
+literal from the document text at the node's source position (§5.10).
 On Windows the vcpkg dependencies are linked statically (triplet `x64-windows-static-md`, set by
 the top-level `CMakeLists.txt` unless a triplet is given): the libdatachannel DLL's import library
 exports `std::vector<std::byte>`'s members, which collide with the byte vectors every other
 object file instantiates for itself (LNK2005); the static library has no dllimport side.
+Audio (v0.19) adds no dependency: SDL3's audio subsystem plays everything and the sounds are
+synthesised in code. On Linux SDL3 is now built with ALSA (vcpkg `sdl3[alsa]`; the FetchContent
+build switches `SDL_ALSA` on when pkg-config finds `alsa`, i.e. `libasound2-dev`, and warns and
+builds silent otherwise), dlopened at run time (`SDL_ALSA_SHARED`) so a machine without
+libasound or a sound card just has no device; PipeWire and PulseAudio are reached through their
+ALSA plugins. CI installs `libasound2-dev`. Windows (WASAPI), macOS (CoreAudio) and Emscripten
+(Web Audio) need nothing.
 
 ---
 
@@ -1323,6 +2088,36 @@ roster reaches the world one tick after start), bots that yield a slot to a huma
 id constant, retracted events undone on screen, reconnect-with-token from the UI, a server-chosen
 match config, multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
 a human playtest over a real link.
+
+Progress: M4 landed in v0.25. Content is data: `engine/content` parses the TOML under `content/`
+(toml++ 3.4.0, exact decimal to Q16.16, names resolved to indices, validation with file:line
+diagnostics) into the same `ContentDB`, embedded into every binary and mirrored next to the
+executables, hot-reloaded in local play; `MatchConfig{seed, players, arena, mode, powerUps}` rides
+in replays (format 3), the join messages (protocol 3) and every host's flags (v0.18, v0.24).
+Six power-ups through `PowerUpDef` grants (stat, ability override, projectile, tag) resolved by
+`ModifierSystem` with owned `grantedTags`, power-up pickups from arena spawners, the shield rows
+(v0.20); Blink, Slam and Parry as a third slot/button through content loadouts or an override,
+with their rule rows and the slam reach contact (v0.21); interior walls and pit/slow hazards
+through one swept circle-vs-statics path, four new arenas (v0.22); rounds, deathmatch and
+survival through a `RulesSystem` mode table with respawn and spawn protection (v0.23); the lobby
+settings panel with an arena preview, per-match power-up set and saved settings, the online
+read-only view (v0.24); event-driven VFX and procedural audio over SDL3 (v0.19). Exit criterion
+("content added without touching system code"): `dojo_powerups`, `pillars`, `corridors`,
+`island`, the three modes and the six power-ups are TOML files plus loader keys; adding another
+of any of them is a file. Verified: GCC 15 Debug (31 ctest targets incl. the 14-entry corpus,
+both soak gates and the real-socket tests), GCC 15 Release, Emscripten 6 (28 tests under node,
+the browser page at 60 fps on `pillars`/`deathmatch` with audio open and 0 console errors),
+netsim 8 clients on `pillars`/`deathmatch` and 6 on `dojo_powerups`/`rounds_slam` under loss
+with 0 mismatches; MSVC, Apple Clang, Clang 21 and ASan+UBSan on CI. Bench (Release, 10
+players, step only): 1.23 µs/tick on `dojo`/`rounds` (1.15 before M4), 2.25 µs/tick on
+`pillars`/`deathmatch`, 1.22 µs/tick on `dojo_powerups`/`rounds_slam`. Replay checksums changed
+in M4 (the content hash in every header; `MatchRules` counters, banana/pickup modifier fields, a
+third ability slot and knockback in the state); gameplay of the default match is unchanged, which
+each state addition was checked against before the corpus was regenerated. Follow-ups: a
+power-up that grants an ability in shipped content, `--powerups` on `kfm_netsim` and the render
+probe, a protocol/replay version bump for the M4 snapshot layout (peers already match on content
+hash and build id), convex arena shapes, team modes (§12), rooting during Blink/Slam startup,
+music and distance attenuation, listening to the mix on a machine with audio, a human playtest.
 
 Progress: M2 landed in v0.15 (pending human playtest of the exit criterion). The client opens
 an SDL3 window with a GL 4.3 core context (4.1 on macOS) through the vendored glad loader,
@@ -1376,7 +2171,8 @@ baseline moved to C++23 (§9).
 - **Visual noise from predicting 9 remote players.** Mitigate with smoothing, the optional
   1–2 tick input delay, and, if needed, rendering remote players 1–2 ticks behind confirmed.
 - **Catch feel under latency.** Catcher-favouring is inherent; the thrower sees the catch
-  ≈ RTT late. Add anticipation VFX on the dash so the result reads as intentional.
+  ≈ RTT late. Add anticipation VFX on the dash so the result reads as intentional (v0.19: the
+  DashAnticipation ring and flash at the press, §7).
 - **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4. Measured (v0.17): at
   most 4.7 KB uncompressed with every pool full, so LZ4 is deferred until a cap rises (§6.3).
 - **Lobby/matchmaking/NAT** is a service problem, deferred behind the connection-token boundary.
@@ -1435,8 +2231,10 @@ baseline moved to C++23 (§9).
   almost every miss is a press stamped a fraction of a tick after impact, not a short window;
   short rounds (4p median 4.6 s) come from the scripted bot's 2 Hz near-perfect throwing, not
   from the content (a 4× slower thrower gives a 9.9 s median). Human playtests decide the rest.
-- Open: team modes; WebTransport as a later replacement for WebRTC; mobile
-  browsers and touch controls.
+- Open: team modes (v0.23 leaves them out: they need a team per slot in `MatchConfig`, team
+  scoring in a `ModeBehavior` and a friendly-fire decision in the rules table; the mode table
+  and the per-player mode counters are the seams); WebTransport as a later replacement for WebRTC;
+  mobile browsers and touch controls.
 
 ---
 

@@ -13,6 +13,8 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
+#include <string_view>
 #include <vector>
 
 namespace kfm::sim::test {
@@ -30,7 +32,7 @@ using EventLog = std::vector<SimEvent>;
 
 // Steps n ticks with the same per-player inputs (frame.tick is rewritten to
 // the world's tick each time) and appends every event to log.
-inline void runTicks(WorldState& s, const InputFrame& frame, int n, const ContentDB& content,
+inline void runTicks(WorldState& s, const InputFrame& frame, int n, const MatchContent& content,
                      EventLog& log) {
   EventSink sink;
   InputFrame f = frame;
@@ -106,6 +108,66 @@ inline EntityId spawnPickup(WorldState& s, Vec2 pos) {
   Pickup& p = s.pickups.items[id.index];
   p.kind = PickupKind::Banana;
   p.pos = pos;
+  return id;
+}
+
+// --- power-ups (§5.8) ------------------------------------------------------
+
+[[nodiscard]] inline PowerUpGrant statGrant(StatKind stat, Fixed mul, Fixed add) {
+  PowerUpGrant g;
+  g.kind = GrantKind::Stat;
+  g.stat = StatModifier{stat, mul, add};
+  return g;
+}
+[[nodiscard]] inline PowerUpGrant abilityGrant(uint8_t slot, uint8_t ability) {
+  PowerUpGrant g;
+  g.kind = GrantKind::AbilityOverride;
+  g.slot = slot;
+  g.ability = ability;
+  return g;
+}
+[[nodiscard]] inline PowerUpGrant projectileGrant(const ProjectileModifier& m) {
+  PowerUpGrant g;
+  g.kind = GrantKind::Projectile;
+  g.projectile = m;
+  return g;
+}
+[[nodiscard]] inline PowerUpGrant tagGrant(Tag t) {
+  PowerUpGrant g;
+  g.kind = GrantKind::Tag;
+  g.tag = t;
+  return g;
+}
+
+// Appends a power-up def to `c`; returns its index.
+inline uint8_t addPowerUp(ContentDB& c, std::string_view name, uint16_t durationTicks,
+                          std::initializer_list<PowerUpGrant> grants) {
+  REQUIRE(c.powerUpCount < kMaxPowerUps);
+  REQUIRE(grants.size() <= kMaxPowerUpGrants);
+  PowerUpDef& d = c.powerUps[c.powerUpCount];
+  d = PowerUpDef{};
+  d.name = ContentName::of(name);
+  d.durationTicks = durationTicks;
+  for (const PowerUpGrant& g : grants)
+    d.grants[d.grantCount++] = g;
+  return c.powerUpCount++;
+}
+
+// Puts a ModifierList entry on a player directly (as the pickup rule would).
+inline void givePowerUp(Player& p, uint8_t powerUp, uint16_t ticksLeft) {
+  REQUIRE(p.modifiers.count < kMaxModifiers);
+  p.modifiers.items[p.modifiers.count++] = ActiveModifier{powerUp, ticksLeft};
+}
+
+// Spawns a power-up pickup of def `powerUp` lying at pos.
+inline EntityId spawnPowerUpPickup(WorldState& s, Vec2 pos, uint8_t powerUp, uint8_t spawner = 0) {
+  const EntityId id = s.pickups.spawn();
+  REQUIRE(id.isValid());
+  Pickup& p = s.pickups.items[id.index];
+  p.kind = PickupKind::PowerUp;
+  p.pos = pos;
+  p.powerUpIndex = powerUp;
+  p.spawner = spawner;
   return id;
 }
 

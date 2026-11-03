@@ -40,4 +40,12 @@ inline constexpr std::array<Color, sim::kMaxPlayers> kPlayerColors = {{
   return kPlayerColors[slot % kPlayerColors.size()];
 }
 
+// Arena statics (v0.22): chosen to stay apart from every player colour and
+// from the mid-grey-green floor. Walls are a warm stone, a pit is near black
+// with a brown rim (depth under a fixed camera), mud is a desaturated brown.
+inline constexpr Color kArenaWallColor{0.62f, 0.55f, 0.46f};
+inline constexpr Color kArenaPitRimColor{0.20f, 0.15f, 0.11f};
+inline constexpr Color kArenaPitColor{0.03f, 0.03f, 0.04f};
+inline constexpr Color kArenaSlowColor{0.40f, 0.31f, 0.20f};
+
 }  // namespace kfm::presentation

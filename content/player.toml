@@ -1,0 +1,22 @@
+# The monkey (PlayerDef), grounded-banana pickups (PickupDef) and the dash
+# attack rule's switches (DashAttackDef). Architecture §5.5-§5.7.
+#
+# Units: lengths in arena units, speeds in units per second (stored per tick,
+# divided by 60 and truncated toward zero), durations in ticks.
+
+[player]
+radius = 0.5                # contact radius
+move_speed = 7              # units/s at full stick
+max_hp = 1                  # one hit and you are out of the round
+ammo_max = 1                # bananas a monkey can hold
+ammo_start = 1              # bananas in hand at round start
+hit_stun_ticks = 6          # 0.1 s stagger after a non-lethal hit
+abilities = ["dash", "throw"]   # base loadout: [dash button, throw button(, ability button)]; a missing third is "none"
+
+[pickup]
+radius = 0.5                # a grounded banana's contact radius against a monkey
+
+[dash_attack]
+damage = 1                  # a dash into an enemy while holding a banana eliminates it
+min_ammo = 1                # bananas in hand needed; 0 would make every dash an attack
+consumes_ammo = false       # the banana stays in hand after a dash hit

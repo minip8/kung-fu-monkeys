@@ -20,6 +20,10 @@
         {
           "name": "x11",
           "platform": "linux"
+        },
+        {
+          "name": "alsa",
+          "platform": "linux"
         }
       ]
     },
@@ -35,6 +39,10 @@
         "ws"
       ],
       "platform": "!emscripten"
+    },
+    {
+      "name": "tomlplusplus",
+      "version>=": "3.4.0"
     }
   ],
   "builtin-baseline": "af839a44c17a927468f35c7a65e200aeba337da4"

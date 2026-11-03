@@ -42,6 +42,7 @@ void NetClient::resetSession() {
   state_ = ClientState::Idle;
   disconnectReason_.reset();
   matchConfig_ = {};
+  simConfig_ = {};
   localSlots_ = 0;
   haveWelcome_ = false;
   haveSnapshot_ = false;
@@ -309,6 +310,7 @@ void NetClient::onSnapshot(const Packet& packet) {
   if (state_ == ClientState::Syncing) {
     haveSnapshot_ = true;
     matchConfig_ = snapshot_.config;
+    simConfig_ = snapshot_.config;
     if (restart) restartTick_.reset();
     tryStart(nowNs_);
     return;
@@ -317,6 +319,7 @@ void NetClient::onSnapshot(const Packet& packet) {
   if (restart) {
     restartTick_.reset();
     matchConfig_ = snapshot_.config;
+    simConfig_ = snapshot_.config;
     ++stats_.matchRestarts;
     report_.matchRestarted = true;
   }
@@ -443,7 +446,7 @@ void NetClient::stepOne() {
   used.authoritative = authoritative;
   journal_.beginTick(t);
   sink_.clear();
-  sim::step(world_, f, *content_, sink_);
+  sim::step(world_, f, sim::matchContent(*content_, simConfig_), sink_);
   for (const sim::SimEvent& e : sink_)
     journal_.record(e);
   journal_.endTick();
@@ -467,7 +470,7 @@ void NetClient::advanceVerified() {
     const UsedFrame* u = usedAt(anchor_.tick);
     KFM_CHECK(u != nullptr && u->authoritative);
     scratchSink_.clear();
-    sim::step(anchor_, u->frame, *content_, scratchSink_);
+    sim::step(anchor_, u->frame, sim::matchContent(*content_, simConfig_), scratchSink_);
   }
 }
 

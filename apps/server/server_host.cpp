@@ -96,8 +96,11 @@ ServerHost::ServerHost(net::ITransport& transport, const sim::ContentDB& content
   }
   lastStatsNs_ = nowNs;
   nextStatsNs_ = config_.statsEveryNs > 0 ? nowNs + config_.statsEveryNs : 0;
-  log("start seed=0x{:x} bots={} slots={} max_players={} tokens={}", config_.server.match.seed,
-      placed, slotList(server_->bots()), config_.server.maxPlayers,
+  log("start seed=0x{:x} arena={} mode={} power_ups=0x{:04x} bots={} slots={} max_players={} "
+      "tokens={}",
+      config_.server.match.seed, content.arenaAt(config_.server.match.arena).name.view(),
+      content.modeAt(config_.server.match.mode).name.view(), config_.server.match.powerUps, placed,
+      slotList(server_->bots()), config_.server.maxPlayers,
       config_.server.acceptToken ? "checked" : "any");
 }
 
@@ -166,8 +169,14 @@ void ServerHost::onTick() {
       case sim::EventKind::MatchEnded: {
         ++stats_.matchesCompleted;
         const uint64_t seed = server_->matchConfig().seed;
-        log("match {} won by slot {} after {} rounds; seed=0x{:x} scores {}",
-            server_->matchIndex() + 1, e.player.value, w.rules.round, seed, scoreList(w));
+        if (e.player.isValid()) {
+          log("match {} won by slot {} after {} rounds; seed=0x{:x} scores {}",
+              server_->matchIndex() + 1, e.player.value, w.rules.round, seed, scoreList(w));
+        } else {
+          // A tied lead when a mode's clock ran out (deathmatch).
+          log("match {} drawn after {} rounds; seed=0x{:x} scores {}", server_->matchIndex() + 1,
+              w.rules.round, seed, scoreList(w));
+        }
         if (config_.exitAfterMatches != 0 && stats_.matchesCompleted >= config_.exitAfterMatches) {
           done_ = true;
           log("exit after {} matches", stats_.matchesCompleted);

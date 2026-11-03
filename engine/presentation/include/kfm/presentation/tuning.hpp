@@ -37,6 +37,18 @@ inline constexpr float kPickupBobHeight = 0.08f;
 inline constexpr float kPickupBobHz = 0.8f;
 inline constexpr float kPickupSpinRadPerSec = 1.5f;
 
+// --- arena statics (§7, v0.22) -------------------------------------------------------
+// Interior walls are drawn as blocks this tall: above a banana in flight
+// (hand height + arc) so a bounce reads as hitting the wall, below the
+// camera's framing height so a wall near the far edge never leaves frame.
+inline constexpr float kArenaWallHeight = 1.2f;
+// Hazards are flat slabs lying on the floor; their top sits this high so
+// they never z-fight the floor, below blob shadows (renderer kShadowLift).
+inline constexpr float kHazardSlabHeight = 0.008f;
+// A pit is drawn as a rim and a darker inset bottom, which reads as depth
+// under the fixed camera; the inset is this far in from the hazard box.
+inline constexpr float kPitRimWidth = 0.18f;
+
 // --- facing (§7) ---------------------------------------------------------------------
 // Body yaw follows the move direction at most this fast (720°/s: a half turn
 // in 0.25 s); aim yaw follows the aim directly.
@@ -58,6 +70,71 @@ inline constexpr float kRoundEndBannerSeconds = 1.5f;
 inline constexpr float kMatchEndBannerSeconds = 3.0f;
 inline constexpr float kEffectBodyHeight = 0.8f;     // flashes, puffs, bursts
 inline constexpr float kEffectGroundHeight = 0.02f;  // rings, just above the floor
+// M4 effects (v0.19). Dash anticipation: a ring collapsing onto the dasher
+// and a flash ahead of it, so a dash whose catch resolves late still reads as
+// intentional at the press (§12).
+inline constexpr float kDashAnticipationSeconds = 0.12f;
+// Trails are sampled from state, not events: a dashing player and a flying
+// banana leave one afterimage every interval, each living this long.
+inline constexpr float kDashTrailSeconds = 0.18f;
+inline constexpr float kDashTrailInterval = 0.025f;
+inline constexpr float kBananaTrailSeconds = 0.12f;
+inline constexpr float kBananaTrailInterval = 0.03f;
+inline constexpr float kPerfectCatchBurstSeconds = 0.45f;  // gold sparks, beside the flash
+inline constexpr float kHitSparkSeconds = 0.25f;
+inline constexpr float kEliminationPoofSeconds = 0.7f;  // grey smoke puffs drifting up
+inline constexpr float kPickupSparkleSeconds = 0.35f;
+inline constexpr float kGroundDustSeconds = 0.35f;
+inline constexpr float kBounceSparkSeconds = 0.15f;
+// Mode effects (v0.23).
+inline constexpr float kRespawnBurstSeconds = 0.6f;
+inline constexpr float kScorePopSeconds = 0.5f;
+inline constexpr float kTimerBannerSeconds = 0.8f;
+// Spark and puff counts per burst (each is one billboard draw call).
+inline constexpr int kPerfectCatchSparks = 8;
+inline constexpr int kHitSparks = 6;
+inline constexpr int kEliminationPuffs = 5;
+inline constexpr int kPickupTwinkles = 4;
+inline constexpr int kDustPuffs = 4;
+// Power-ups (v0.20). A power-up pickup is the def's shape in its palette
+// colour, hovering higher than a banana with a glowing ground ring; taking it
+// bursts a ring and sparks in the taker's colour; a broken shield shatters.
+inline constexpr float kPowerUpHeight = 0.45f;
+inline constexpr float kPowerUpSize = 0.6f;  // shape size, units (the contact radius is 0.5)
+inline constexpr float kPowerUpRingRadius = 0.55f;
+inline constexpr float kPowerUpRingPulseHz = 1.2f;
+inline constexpr float kPowerUpBurstSeconds = 0.5f;
+inline constexpr int kPowerUpSparks = 8;
+inline constexpr float kShieldShatterSeconds = 0.4f;
+inline constexpr int kShieldShards = 7;
+// Abilities (v0.21). A blink bursts at both ends; a slam's ring races out to
+// its reach (the effect's size) and shakes the camera; a parry flares at the
+// press and clashes in sparks where the banana turned.
+inline constexpr float kBlinkFlashSeconds = 0.3f;
+inline constexpr float kSlamShockwaveSeconds = 0.45f;
+inline constexpr float kShakeOnSlam = 0.25f;
+inline constexpr float kParryGuardSeconds = 0.2f;
+inline constexpr float kParrySparkSeconds = 0.35f;
+inline constexpr int kParrySparks = 8;
+// Banners in the HUD pop in: scale 1 + this at the start, settling to 1 over
+// the first quarter of the banner's life.
+inline constexpr float kBannerPop = 0.35f;
+
+// --- audio (v0.19) -----------------------------------------------------------------
+inline constexpr int kAudioSampleRate = 48000;  // the stream's rate; SDL converts
+inline constexpr int kMixerVoices = 16;
+// The device queue is topped up to this much audio each frame: the sound
+// latency, and the stall a frame can survive without a gap.
+inline constexpr float kAudioQueueSeconds = 0.05f;
+inline constexpr float kDefaultMasterVolume = 0.8f;  // --volume 80
+// Positioned sounds pan by world x over the arena half width, scaled by this
+// (a light pan: nothing fully leaves one ear).
+inline constexpr float kPanWidth = 0.6f;
+// The same sound cued twice in one frame plays once, louder by this per
+// extra cue, up to kSoundStackMax × its gain (identical clips started on the
+// same sample would only double in amplitude and clip).
+inline constexpr float kSoundStackGain = 0.25f;
+inline constexpr float kSoundStackMax = 1.75f;
 
 // --- screen shake ------------------------------------------------------------------
 inline constexpr float kShakeOnHit = 0.12f;  // world units of amplitude added

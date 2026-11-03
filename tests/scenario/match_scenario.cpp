@@ -56,7 +56,7 @@ std::vector<uint32_t> playMatch(WorldState& s, const std::vector<uint8_t>& winne
 
 TEST_CASE("first to roundsToWin takes the match; MatchEnded is terminal", "[scenario][match]") {
   const ContentDB& content = defaultContent();
-  REQUIRE(content.mode.roundsToWin == 3);
+  REQUIRE(content.modes[0].roundsToWin == 3);
   WorldState s = initialWorld(MatchConfig{51, 0b11});
   EventLog log;
   static_cast<void>(playMatch(s, {0, 1, 0, 0}, log));

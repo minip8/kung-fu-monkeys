@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cstdlib>
 #include <cstring>
 
 using namespace kfm;
@@ -141,6 +142,15 @@ TEST_CASE("InputFrame equality ignores absent players", "[sim][visit]") {
 }
 
 namespace {
+// The item of a freshly spawned entity. Aborts on a full pool (never the
+// case here), which also tells GCC's Release flow analysis that the index is
+// in range (-Wstringop-overflow otherwise).
+template <class PoolT>
+auto& spawned(PoolT& pool, EntityId id) {
+  if (!id.isValid() || id.index >= pool.items.size()) std::abort();
+  return pool.items[id.index];
+}
+
 // A world exercising every M1 entity type and field the visitor carries.
 WorldState richWorld() {
   WorldState s = sampleWorld();
@@ -149,8 +159,8 @@ WorldState richWorld() {
   p.tags.set(Tag::HitStun);
   p.hitStunTicks = 4;
   p.modifiers.count = 2;
-  p.modifiers.items[0] = StatModifier{StatKind::MoveSpeed, Fixed::fromRatio(3, 2), 0_fx, 30};
-  p.modifiers.items[1] = StatModifier{StatKind::MaxHp, Fixed::one(), 1_fx, 60};
+  p.modifiers.items[0] = ActiveModifier{0, 30};
+  p.modifiers.items[1] = ActiveModifier{3, 60};
   p.abilities[1].phase = AbilityPhase::Recovery;
   p.abilities[1].activatedTick = Tick{3};
   p.abilities[1].activatedSubTick = 99;
@@ -159,7 +169,7 @@ WorldState richWorld() {
   s.rules.scores[3] = 1;
   s.rules.lastRoundWinner = PlayerId{3};
   const EntityId b = s.boomerangs.spawn();
-  s.boomerangs.items[b.index] =
+  spawned(s.boomerangs, b) =
       Boomerang{PlayerId{1},
                 BoomerangPhase::Returning,
                 Transform{Vec2{2_fx, 3_fx}, Vec2{1_fx, 3_fx}, Vec2{1_fx, 0_fx}, Angle::fromBam(5)},
@@ -169,7 +179,16 @@ WorldState richWorld() {
                 1,
                 0};
   const EntityId k = s.pickups.spawn();
-  s.pickups.items[k.index] = Pickup{PickupKind::Banana, Vec2{-4_fx, 5_fx}, 0};
+  spawned(s.pickups, k) = Pickup{PickupKind::Banana, Vec2{-4_fx, 5_fx}, 0, 0};
+  // v0.20: a power-up pickup and a banana carrying projectile modifiers.
+  const EntityId k2 = s.pickups.spawn();
+  spawned(s.pickups, k2) = Pickup{PickupKind::PowerUp, Vec2{6_fx, -2_fx}, 4, 2};
+  const EntityId b2 = s.boomerangs.spawn();
+  Boomerang& big = spawned(s.boomerangs, b2);
+  big.owner = PlayerId{0};
+  big.pierce = 1;
+  big.radiusMul = 2_fx;
+  big.speedMul = Fixed::fromRatio(17, 20);
   return s;
 }
 }  // namespace
@@ -186,13 +205,21 @@ TEST_CASE("write/read round-trips every M1 state type", "[sim][visit]") {
   CHECK(checksum(a) == checksum(b));
   CHECK(b.rules.lastRoundWinner == PlayerId{3});
   CHECK(b.rules.scores[3] == 1);
-  CHECK(b.boomerangs.size() == 1);
+  CHECK(b.boomerangs.size() == 2);
+  CHECK(b.boomerangs.items[1].radiusMul == 2_fx);
+  CHECK(b.boomerangs.items[1].speedMul == Fixed::fromRatio(17, 20));
+  CHECK(b.boomerangs.items[1].pierce == 1);
+  CHECK(b.boomerangs.items[0].radiusMul == Fixed::one());
+  CHECK(b.pickups.items[1].kind == PickupKind::PowerUp);
+  CHECK(b.pickups.items[1].powerUpIndex == 4);
+  CHECK(b.pickups.items[1].spawner == 2);
   CHECK(b.boomerangs.items[0].phase == BoomerangPhase::Returning);
   CHECK(b.boomerangs.items[0].transform.prevPos == Vec2{1_fx, 3_fx});
   CHECK(b.pickups.items[0].pos == Vec2{-4_fx, 5_fx});
   const Player& p = b.players.items[0];
   CHECK(p.modifiers.count == 2);
-  CHECK(p.modifiers.items[1].stat == StatKind::MaxHp);
+  CHECK(p.modifiers.items[1].powerUp == 3);
+  CHECK(p.modifiers.items[1].ticksLeft == 60);
   CHECK(p.tags.has(Tag::HitStun));
   CHECK(p.abilities[1].phase == AbilityPhase::Recovery);
   CHECK(p.abilities[1].activatedSubTick == 99);
@@ -216,14 +243,41 @@ TEST_CASE("every new state field reaches the checksum", "[sim][visit]") {
   CHECK(changed([](WorldState& s) { s.players.items[0].abilities[0].cooldownTicks = 9; }));
   CHECK(changed([](WorldState& s) { s.boomerangs.items[0].spin += Angle::fromBam(1); }));
   CHECK(changed([](WorldState& s) { s.pickups.items[0].powerUpIndex = 1; }));
+  CHECK(changed([](WorldState& s) { s.pickups.items[1].spawner = 3; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].modifiers.items[0].powerUp = 5; }));
+  CHECK(changed([](WorldState& s) { s.boomerangs.items[1].radiusMul = 3_fx; }));
+  CHECK(changed([](WorldState& s) { s.boomerangs.items[1].speedMul = 1_fx; }));
+  CHECK(changed([](WorldState& s) { s.boomerangs.items[0].speedMul = 2_fx; }));
+  CHECK(changed([](WorldState& s) { s.pickups.items[0].spawner = 1; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].grantedTags.set(Tag::Shielded); }));
   CHECK(changed([](WorldState& s) { s.rules.round += 1; }));
+  CHECK(changed([](WorldState& s) { s.rules.deaths[9] = 1; }));
+  CHECK(changed([](WorldState& s) { s.rules.respawnTicks[0] = 1; }));
+  CHECK(changed([](WorldState& s) { s.rules.invulnTicks[4] = 1; }));
+}
+
+TEST_CASE("write/read round-trips the per-player mode counters", "[sim][visit]") {
+  WorldState a = richWorld();
+  a.rules.deaths[2] = 3;
+  a.rules.respawnTicks[2] = 40;
+  a.rules.invulnTicks[7] = 9;
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, a));
+  WorldState b{};
+  BitReader r(w.written());
+  REQUIRE(readFrom(r, b));
+  CHECK(r.atEnd());
+  CHECK(checksum(b) == checksum(a));
+  CHECK(b.rules.deaths[2] == 3);
+  CHECK(b.rules.respawnTicks[2] == 40);
+  CHECK(b.rules.invulnTicks[7] == 9);
 }
 
 TEST_CASE("ModifierList past count is canonicalised", "[sim][visit]") {
   const WorldState a = richWorld();
   WorldState garbage = a;
-  garbage.players.items[0].modifiers.items[5] =
-      StatModifier{StatKind::AmmoMax, 7_fx, 7_fx, 777};  // past count = 2
+  garbage.players.items[0].modifiers.items[5] = ActiveModifier{7, 777};  // past count = 2
   CHECK(checksum(garbage) == checksum(a));
 
   std::array<std::byte, 16384> buf{};
@@ -281,10 +335,22 @@ TEST_CASE("reader rejects out-of-range enums, ids and indices", "[sim][visit]") 
     raw(a.boomerangs.items[0].phase, 40);
   }
   SECTION("PickupKind") {
-    raw(a.pickups.items[0].kind, 1);
+    raw(a.pickups.items[0].kind, 2);
   }
-  SECTION("StatKind") {
-    raw(a.players.items[0].modifiers.items[0].stat, 3);
+  SECTION("ActiveModifier.powerUp past the def table") {
+    a.players.items[0].modifiers.items[0].powerUp = kMaxPowerUps;
+  }
+  SECTION("Pickup.powerUpIndex past the def table") {
+    a.pickups.items[0].powerUpIndex = kMaxPowerUps;
+  }
+  SECTION("Pickup.spawner past the spawner table") {
+    a.pickups.items[1].spawner = kMaxPickupSpawners;
+  }
+  SECTION("Player.grantedTags above Tag::kCount") {
+    a.players.items[0].grantedTags.bits |= uint32_t{1} << static_cast<uint32_t>(Tag::kCount);
+  }
+  SECTION("Boomerang.pierce above 1") {
+    a.boomerangs.items[0].pierce = 2;
   }
   SECTION("player id differs from its slot (would index scores[200])") {
     a.players.items[0].id = PlayerId{200};
@@ -319,7 +385,8 @@ TEST_CASE("reader accepts boundary values and keeps the checksum", "[sim][visit]
   a.boomerangs.items[0].owner = PlayerId::invalid();
   a.boomerangs.items[0].phase = BoomerangPhase::Grounded;
   a.players.items[0].abilities[0].defIndex = kMaxAbilityDefs - 1;
-  a.players.items[0].modifiers.items[0].stat = StatKind::AmmoMax;
+  a.players.items[0].modifiers.items[0].powerUp = kMaxPowerUps - 1;
+  a.pickups.items[1].spawner = kMaxPickupSpawners - 1;
   a.players.items[0].tags.set(Tag::Eliminated);
   a.rules.lastRoundWinner = PlayerId{kMaxPlayers - 1};
   std::array<std::byte, 16384> buf{};

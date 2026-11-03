@@ -3,8 +3,24 @@
 # regenerated after a content change (a replay carries the content hash and
 # kfm_replay refuses one recorded with different content).
 #
-# name                kind      seed        input-seed  players  ticks
+# Two optional trailing columns name the arena and mode (kfm_replay --arena /
+# --mode); a line without them records the first arena and mode in
+# content/, the default match. A third optional column after them is the
+# per-match power-up set (kfm_replay --powerups: all, none or comma-separated
+# names; default all).
+#
+# name                kind      seed        input-seed  players  ticks  [arena  mode  [powerups]]
 empty_2p_60t          empty     0x7         -           2        60
 empty_10p_600t        empty     0x4B464D00  -           10       600
 scripted_4p_1200t     scripted  0x4B464D04  0x5C1204    4        1200
 scripted_10p_3600t    scripted  0x4B464D10  0x5C121D    10       3600
+scripted_4p_pillars_1800t    scripted  0x4B464D21  0x5C1221  4  1800  pillars    rounds
+scripted_4p_corridors_1800t  scripted  0x4B464D22  0x5C1222  4  1800  corridors  rounds
+scripted_4p_island_1800t     scripted  0x4B464D23  0x5C1223  4  1800  island     rounds
+scripted_4p_powerups_1800t  scripted  0x4B464D20  0x5C1220  4  1800  dojo_powerups  rounds
+scripted_4p_powerset_1800t  scripted  0x4B464D25  0x5C1225  4  1800  dojo_powerups  rounds  shield,big_banana
+scripted_4p_deathmatch_3600t  scripted  0x4B464D44  0x5C1244    4        3600   dojo   deathmatch
+scripted_4p_survival_1800t    scripted  0x4B464D53  0x5C1253    4        1800   dojo   survival
+scripted_4p_blink_1800t  scripted  0x4B464D61  0x5C1261  4  1800  dojo  rounds_blink
+scripted_4p_slam_1800t   scripted  0x4B464D62  0x5C1262  4  1800  dojo  rounds_slam
+scripted_4p_parry_1800t  scripted  0x4B464D63  0x5C1263  4  1800  dojo  rounds_parry

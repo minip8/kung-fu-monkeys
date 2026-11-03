@@ -38,19 +38,16 @@ struct Stats {
   uint8_t ammoMax{0};
 };
 
-enum class StatKind : uint8_t { MoveSpeed = 0, MaxHp, AmmoMax };
-
-// M1: the type exists, lists stay empty. Integer stats accept `add` only.
-struct StatModifier {
-  StatKind stat{StatKind::MoveSpeed};
-  Fixed mul{Fixed::one()};
-  Fixed add{};
+// One live power-up on a player (§5.8): its def and the ticks it has left.
+// The grants are read from the def every tick, never copied here.
+struct ActiveModifier {
+  uint8_t powerUp{0};  // index into ContentDB::powerUps
   uint16_t ticksLeft{0};
 };
 
-// Fixed capacity; items[0..count) are live, in slot order.
+// Fixed capacity; items[0..count) are live, in slot order (pickup order).
 struct ModifierList {
-  std::array<StatModifier, kMaxModifiers> items{};
+  std::array<ActiveModifier, kMaxModifiers> items{};
   uint8_t count{0};
 };
 
@@ -87,7 +84,14 @@ struct Player {
   uint8_t ammo{0};
   Tags tags{};
   uint16_t hitStunTicks{0};  // remaining; HitStun clears at 0
+  // The tag bits ModifierSystem set from power-up Tag grants on its last run
+  // (§5.8): it clears only these, and other tag sources leave them alone.
+  Tags grantedTags{};
   std::array<AbilityState, kAbilitySlots> abilities{};
+  // v0.21: a slam's push, added to the velocity by MovementSystem on each of
+  // the next knockbackTicks ticks (units per tick).
+  Vec2 knockback{};
+  uint16_t knockbackTicks{0};
 };
 
 enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded };
@@ -100,15 +104,20 @@ struct Boomerang {
   uint16_t ticksAlive{0};
   uint16_t ticksInPhase{0};
   uint8_t damage{1};
-  uint8_t pierce{0};
+  uint8_t pierce{0};  // 0/1
+  // Projectile modifiers of the thrower's power-ups, snapshotted at the throw
+  // (§5.8): speed and contact radius are the BoomerangDef's times these.
+  Fixed speedMul{Fixed::one()};
+  Fixed radiusMul{Fixed::one()};
 };
 
-enum class PickupKind : uint8_t { Banana = 0 };  // M1: a grounded banana; M4 adds power-ups
+enum class PickupKind : uint8_t { Banana = 0, PowerUp };
 
 struct Pickup {
   PickupKind kind{PickupKind::Banana};
   Vec2 pos{};
-  uint8_t powerUpIndex{0};
+  uint8_t powerUpIndex{0};  // PowerUp: index into ContentDB::powerUps
+  uint8_t spawner{0};       // PowerUp: index into the arena's pickupSpawners
 };
 
 // --- match --------------------------------------------------------------------
@@ -121,13 +130,30 @@ enum class MatchPhase : uint8_t {
   MatchEnded,
 };
 
+// The match flow shared by every mode (architecture §5.3) plus the per-player
+// mode state. ticksInPhase is also the match clock: a mode's time limit runs
+// over the Playing phase (deathmatch: the whole match; survival: one round).
 struct MatchRules {
   MatchPhase phase{MatchPhase::Lobby};
   PlayerMask present{0};
   uint32_t ticksInPhase{0};
   uint8_t round{0};
+  // Round wins (rounds, survival) or eliminations scored (deathmatch).
   std::array<uint8_t, kMaxPlayers> scores{};
   PlayerId lastRoundWinner{PlayerId::invalid()};
+  // v0.23 per-player mode counters: only deathmatch and survival write them,
+  // so they stay zero in the rounds mode.
+  std::array<uint8_t, kMaxPlayers> deaths{};         // eliminations suffered this match
+  std::array<uint16_t, kMaxPlayers> respawnTicks{};  // dead: ticks until respawn; 0 = none due
+  std::array<uint16_t, kMaxPlayers> invulnTicks{};   // alive: spawn protection left (Invulnerable)
+
+  // Any of the mode counters is non-zero.
+  [[nodiscard]] constexpr bool hasModeCounters() const {
+    for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+      if (deaths[i] != 0 || respawnTicks[i] != 0 || invulnTicks[i] != 0) return true;
+    }
+    return false;
+  }
 };
 
 struct WorldState {
@@ -154,11 +180,26 @@ struct WorldState {
 };
 static_assert(std::is_trivially_copyable_v<WorldState>);
 
-// Match configuration that seeds a fresh world.
+// Match configuration that seeds a fresh world. arena and mode are indices
+// into ContentDB::arenas / ::modes (0 = the default); powerUps is the set of
+// power-ups the arena's spawners may draw (bit i = ContentDB::powerUps[i],
+// kAllPowerUps = the arena as defined). None of them is part of WorldState:
+// they are constant for the match like the content itself, so every host
+// carries the config next to the world (replay header, join path).
 struct MatchConfig {
   uint64_t seed{0};
   PlayerMask players{0};
+  uint8_t arena{0};
+  uint8_t mode{0};
+  uint16_t powerUps{kAllPowerUps};
+  constexpr bool operator==(const MatchConfig&) const = default;
 };
+
+// The content a match with this config simulates with.
+[[nodiscard]] constexpr MatchContent matchContent(const ContentDB& content,
+                                                  const MatchConfig& config) {
+  return MatchContent{content, config.arena, config.mode, config.powerUps};
+}
 
 // Builds the initial state for a match: tick 0, seeded RNG, lobby phase.
 [[nodiscard]] WorldState initialWorld(const MatchConfig& config);

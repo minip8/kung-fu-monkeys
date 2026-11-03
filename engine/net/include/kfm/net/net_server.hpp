@@ -181,7 +181,11 @@ class NetServer {
   // Schedules a new match with `seed` and the then-current roster at
   // startTick (raised to nextTick() when earlier); see the header comment.
   // MatchConfig goes out now; a later call before startTick replaces it.
+  // The first form keeps the current arena, mode and power-up set; the
+  // second takes them from `config` (indices into the server's content; its
+  // seed is the new seed, its players are ignored: the roster carries over).
   void restartMatch(uint64_t seed, Tick startTick, uint64_t botSeed);
+  void restartMatch(const sim::MatchConfig& config, Tick startTick, uint64_t botSeed);
   [[nodiscard]] std::optional<Tick> pendingRestart() const;
   // 0 for the first match, +1 per restart that took effect.
   [[nodiscard]] uint32_t matchIndex() const { return matchIndex_; }
@@ -282,10 +286,17 @@ class NetServer {
   SnapshotMsg snapshot_{};      // encode scratch
   ConnectionEvents connEvents_{};
   struct PendingRestart {
-    uint64_t seed{0};
+    sim::MatchConfig config{};  // its players are ignored (announced())
     uint64_t botSeed{0};
     Tick startTick{};
   };
+  // The match config clients are told: seed, arena, mode and power-up set
+  // with the current roster.
+  [[nodiscard]] sim::MatchConfig announced(const sim::MatchConfig& config) const {
+    sim::MatchConfig c = config;
+    c.players = present_;
+    return c;
+  }
   std::optional<PendingRestart> restart_;
   void applyRestart(Tick t, const PendingRestart& r);
   uint32_t matchIndex_{0};

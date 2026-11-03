@@ -13,12 +13,14 @@ add_library(kfm_client_core STATIC
   core/content_tuning.cpp
   core/client_options.cpp
   core/net_session.cpp
+  core/lobby_settings.cpp
+  core/lobby_menu.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kfm_client_core
   PUBLIC kfm::sim kfm::net kfm::presentation kfm::platform_input
-  PRIVATE kfm::warnings)
+  PRIVATE kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client_core)
 set_target_properties(kfm_client_core PROPERTIES FOLDER apps)
 
@@ -31,13 +33,15 @@ target_link_libraries(kfm_client_sdl
 kfm_no_exceptions_rtti(kfm_client_sdl)
 set_target_properties(kfm_client_sdl PROPERTIES FOLDER apps)
 
-add_executable(kfm_client main.cpp hud.cpp debug_overlay.cpp)
+add_executable(kfm_client main.cpp hud.cpp debug_overlay.cpp client_audio.cpp)
 target_link_libraries(kfm_client PRIVATE
-  kfm::client_core kfm::client_sdl kfm::renderer kfm::platform kfm::warnings)
+  kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client)
 set_target_properties(kfm_client PROPERTIES FOLDER apps)
 # The rigged test model next to the executable (embedded under Emscripten).
 kfm_use_test_rig(kfm_client)
+# content/*.toml next to the executable (the browser build uses the embedded copy).
+kfm_use_content(kfm_client)
 
 if(EMSCRIPTEN)
   # Browser build: kfm_client.html + .js + .wasm from a custom shell (canvas
@@ -72,7 +76,7 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
   if(KFM_XVFB_RUN)
     add_test(NAME client_smoke
       COMMAND ${KFM_XVFB_RUN} -a -s "-screen 0 1280x720x24"
-              $<TARGET_FILE:kfm_client> --autostart --bots 3 --exit-after-frames 60)
+              $<TARGET_FILE:kfm_client> --autostart --bots 3 --exit-after-frames 60 --no-settings)
     # Force X11 + llvmpipe so the test never depends on the host GPU or a
     # Wayland compositor; LSan reports leaks inside Mesa/X11, not ours.
     set_tests_properties(client_smoke PROPERTIES
@@ -82,7 +86,8 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
     # renders and the client exits 0 (nothing listens on port 1).
     add_test(NAME client_smoke_net
       COMMAND ${KFM_XVFB_RUN} -a -s "-screen 0 1280x720x24"
-              $<TARGET_FILE:kfm_client> --connect ws://127.0.0.1:1 --exit-after-frames 60)
+              $<TARGET_FILE:kfm_client> --connect ws://127.0.0.1:1 --exit-after-frames 60
+              --no-settings)
     set_tests_properties(client_smoke_net PROPERTIES
       TIMEOUT 120
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")

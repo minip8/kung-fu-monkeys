@@ -5,6 +5,7 @@
 //   kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bots N]
 //              [--bots-seed S] [--max-players N] [--token T]... [--restart-delay S]
 //              [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
 //              [--verbose]
 //
 // --port P             signaling port (default 9000; 0 = ephemeral, printed)
@@ -19,12 +20,20 @@
 // --restart-delay S    seconds between a match's end and the next (default 3)
 // --exit-after-seconds N, --exit-after-matches N   stop cleanly (0 = never)
 // --stats-every S      one line of server stat deltas every S seconds
+// --content DIR        content directory (default: content/ next to the
+//                      executable, else the copy built into it)
+// --arena NAME, --mode NAME   the matches' arena and mode (default: the first
+//                      of each); clients receive them in Welcome/MatchConfig
+// --powerups LIST      the power-ups the arena's spawners may draw: all
+//                      (default), none or comma-separated names
+//                      (shield,speed_boost); sent with the arena and mode
 // --verbose            match/round starts, per-peer stats, libdatachannel at Info
 //
-// Prints "KFM_SERVER listening ws://ADDR:PORT" once the socket is bound. The
-// content is sim::defaultContent() and the build id 0, which a client must
-// match (Reject otherwise). SIGINT/SIGTERM disconnect every peer with
+// Prints the content it loaded (directory, hash) and then "KFM_SERVER
+// listening ws://ADDR:PORT" once the socket is bound. A client must match
+// the content hash and the build id 0 (Reject otherwise). SIGINT/SIGTERM disconnect every peer with
 // ServerShuttingDown and exit 0.
+#include "kfm/content/app_content.hpp"
 #include "kfm/net/net_server.hpp"
 #include "kfm/net/webrtc_transport.hpp"
 #include "kfm/sim/content.hpp"
@@ -64,6 +73,10 @@ struct Options {
   uint32_t exitAfterSeconds{0};
   uint32_t exitAfterMatches{0};
   uint32_t statsEverySeconds{0};
+  std::string contentDir;  // empty: next to the executable, else embedded
+  std::string arena;       // names; empty = the first one
+  std::string mode;
+  std::string powerUps;  // --powerups list; empty = all
   bool verbose{false};
 };
 
@@ -71,7 +84,9 @@ constexpr const char* kUsage =
     "usage: kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bots N]\n"
     "                  [--bots-seed S] [--max-players N] [--token T]... [--restart-delay S]\n"
     "                  [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]\n"
-    "                  [--verbose]\n";
+    "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
+    "                  [--verbose]\n"
+    "  --powerups LIST  all (default), none or comma-separated power-up names\n";
 
 // How long peers get to receive Disconnect{ServerShuttingDown} before the
 // connections are closed.
@@ -141,6 +156,14 @@ template <typename T>
       ok = parseNumber(v, o.exitAfterMatches);
     } else if (arg == "--stats-every") {
       ok = parseNumber(v, o.statsEverySeconds);
+    } else if (arg == "--content") {
+      o.contentDir = v;
+    } else if (arg == "--arena") {
+      o.arena = v;
+    } else if (arg == "--mode") {
+      o.mode = v;
+    } else if (arg == "--powerups") {
+      o.powerUps = v;
     } else {
       std::fprintf(stderr, "error: unknown argument '%s'\n%s", argv[i - 1], kUsage);
       return false;
@@ -159,8 +182,9 @@ extern "C" void onSignal(int /*signal*/) {
   gStop = 1;
 }
 
-[[nodiscard]] server::HostConfig hostConfig(const Options& o) {
+[[nodiscard]] server::HostConfig hostConfig(const Options& o, const sim::MatchConfig& match) {
   server::HostConfig c;
+  c.server.match = match;
   c.server.match.seed = o.seed;
   c.server.botSeed = o.botsSeed;
   c.server.maxPlayers = static_cast<uint8_t>(o.maxPlayers);
@@ -190,6 +214,23 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     o.seed = server::nextMatchSeed(
         static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count()));
   }
+  content::LoadedContent loaded;
+  sim::MatchConfig match{};
+  {
+    content::Diagnostics diag;
+    const bool ok =
+        content::loadAppContent(o.contentDir, content::executableDir(argv[0]), loaded, diag);
+    if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
+    std::string error;
+    if (!ok || !content::resolveMatchNames(loaded.db, o.arena, o.mode, match, error) ||
+        !content::resolvePowerUpList(loaded.db, o.powerUps, match.powerUps, error)) {
+      std::fprintf(stderr, "error: %s\n", ok ? error.c_str() : "the content failed to load");
+      return EXIT_FAILURE;
+    }
+    std::printf("KFM_SERVER %s\n", loaded.describe().c_str());
+    std::printf("KFM_SERVER power-ups: %s\n",
+                content::powerUpListText(loaded.db, match.powerUps).c_str());
+  }
   net::WebRtcTransport::initLogging(o.verbose ? net::WebRtcLogLevel::Info
                                               : net::WebRtcLogLevel::Error);
 
@@ -210,8 +251,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   (void)std::signal(SIGTERM, onSignal);
 
   const uint64_t start = nowNs();
-  auto host = std::make_unique<server::ServerHost>(**transport, sim::defaultContent(),
-                                                   hostConfig(o), start);
+  auto host =
+      std::make_unique<server::ServerHost>(**transport, loaded.db, hostConfig(o, match), start);
   const uint64_t limit = uint64_t{o.exitAfterSeconds} * 1'000'000'000ull;
   while (gStop == 0 && !host->done() && (limit == 0 || nowNs() - start < limit)) {
     host->frame(nowNs());

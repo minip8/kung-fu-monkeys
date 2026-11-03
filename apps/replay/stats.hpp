@@ -93,6 +93,16 @@ struct Stats {
   uint64_t perfectBelowFullAmmo{0};
   uint64_t autoAtFullAmmo{0};
   uint64_t eliminatedHoldingAmmo{0};  // the held banana vanishes with the player
+  // §5.8 power-ups (arenas with spawners only).
+  uint64_t powerUpsSpawned{0};
+  uint64_t powerUpsTaken{0};
+  uint64_t shieldsBroken{0};
+  // Abilities in the third slot (v0.21).
+  uint64_t blinks{0};
+  uint64_t slams{0};
+  uint64_t slammed{0};
+  uint64_t parryPresses{0};
+  uint64_t parries{0};
   // Banana supply: ammo held + bananas in flight + pickups. With ammoMax = 1
   // a destroyed banana is gone for the round; at 0 with two or more players
   // alive nobody can ever be hit again and the round cannot end.
@@ -155,7 +165,7 @@ class StatsCollector {
 };
 
 // step() with the collector looking at the contact list (see above).
-void statsStep(sim::WorldState& s, const sim::InputFrame& in, const sim::ContentDB& content,
+void statsStep(sim::WorldState& s, const sim::InputFrame& in, const sim::MatchContent& content,
                sim::EventSink& sink, StatsCollector& collector);
 
 // One line per match.

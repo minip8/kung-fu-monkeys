@@ -244,3 +244,82 @@ TEST_CASE("an immediate restart on a lossless link needs no resync either", "[ne
     CHECK(st.resyncRequests == 0);
   }
 }
+
+namespace {
+
+// Default content (endless) plus a small second arena and a second mode, so
+// a peer simulating the wrong arena or mode diverges within seconds.
+const sim::ContentDB& twoArenaContent() {
+  static const sim::ContentDB c = [] {
+    sim::ContentDB x = endless(sim::defaultContent());
+    sim::ArenaDef& pit = x.arenas[1];
+    pit.name = sim::ContentName::of("pit");
+    pit.halfExtents = Vec2{Fixed::fromInt(6), Fixed::fromInt(4)};
+    for (uint16_t i = 0; i < sim::kMaxPlayers; ++i) {
+      const auto k = static_cast<int32_t>(i);
+      pit.spawnPoints[i] = Vec2{Fixed::fromInt((k % 5) - 2), Fixed::fromInt(((k / 5) * 2) - 1)};
+    }
+    pit.spawnPointCount = sim::kMaxPlayers;
+    x.arenaCount = 2;
+    sim::ModeDef& quick = x.modes[1];
+    quick = x.modes[0];
+    quick.name = sim::ContentName::of("quick");
+    quick.roundStartTicks = 20;
+    quick.roundEndTicks = 30;
+    x.modeCount = 2;
+    return x;
+  }();
+  return c;
+}
+
+}  // namespace
+
+TEST_CASE("the server's arena and mode reach every client, also across a restart",
+          "[netcode][config]") {
+  ServerConfig sc;
+  sc.match = sim::MatchConfig{.seed = 0xA2E, .players = 0, .arena = 1, .mode = 1};
+  NetSim s(sc, 31, twoArenaContent());
+  const LinkConditions l = link(40 * kMs, 5 * kMs, 10'000);
+  s.addClient(l, l, tokenConfig("a"));
+  s.addClient(l, l, tokenConfig("b"));
+  s.addClient(l, l, tokenConfig("watcher", 0));
+  REQUIRE(s.server().setBot(PlayerId{5}, true));
+  REQUIRE(s.runUntil([&] { return allRunning(s); }, 3 * kSec));
+  s.runFor(6 * kSec);
+  CHECK(s.server().matchConfig().arena == 1);
+  for (const ClientRig& r : s.rigs()) {
+    CHECK(r.client->matchConfig().arena == 1);
+    CHECK(r.client->matchConfig().mode == 1);
+    CHECK(r.client->simConfig() == r.client->matchConfig());
+    CHECK(&r.client->matchContent().arena == &r.client->matchContent().db.arenas[1]);
+    CHECK(r.client->netStats().checksumMismatches == 0);
+    CHECK(r.client->netStats().checksumsCompared > 20);
+  }
+  // Every live player is inside the small arena.
+  const Fixed limit = Fixed::fromInt(6) - twoArenaContent().player.radius;
+  for (uint16_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if (!s.server().world().players.isAliveIndex(i)) continue;
+    CHECK(abs(s.server().world().players.items[i].transform.pos.x) <= limit);
+  }
+
+  // Back to the default arena and mode for the next match.
+  const Tick start = s.server().nextTick().plus(60);
+  s.server().restartMatch(sim::MatchConfig{.seed = 0xA2F}, start, 7);
+  const auto allRestarted = [&] {
+    return std::ranges::all_of(
+        s.rigs(), [](const ClientRig& r) { return r.client->netStats().matchRestarts == 1; });
+  };
+  REQUIRE(s.runUntil(allRestarted, 4 * kSec));
+  const uint64_t comparedBefore = s.rigs().front().client->netStats().checksumsCompared;
+  s.runFor(5 * kSec);
+  CHECK(s.server().matchConfig().arena == 0);
+  CHECK(s.server().matchConfig().mode == 0);
+  for (const ClientRig& r : s.rigs()) {
+    CHECK(r.client->simConfig().arena == 0);
+    CHECK(r.client->simConfig().mode == 0);
+    CHECK(r.client->simConfig().seed == 0xA2F);
+    CHECK(r.client->netStats().checksumMismatches == 0);
+    CHECK(r.client->netStats().resyncRequests == 0);
+  }
+  CHECK(s.rigs().front().client->netStats().checksumsCompared > comparedBefore + 20);
+}

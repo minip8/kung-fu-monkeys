@@ -13,6 +13,9 @@ TEST_CASE("Replay header round-trip and validation", "[sim][replay]") {
   h.contentHash = 0xC0FFEE;
   h.buildHash = 0xB01D;
   h.players = 0x3FF;
+  h.arena = 3;
+  h.mode = 5;
+  h.powerUps = 0x0A5;
   h.tickCount = 600;
 
   std::vector<std::byte> buf(replayMaxBytes(h));
@@ -28,8 +31,11 @@ TEST_CASE("Replay header round-trip and validation", "[sim][replay]") {
   CHECK(g.buildHash == h.buildHash);
   CHECK(g.players == h.players);
   CHECK(g.tickCount == h.tickCount);
-  CHECK(g.matchConfig().seed == h.seed);
-  CHECK(g.matchConfig().players == h.players);
+  CHECK(g.arena == 3);
+  CHECK(g.mode == 5);
+  CHECK(g.powerUps == 0x0A5);
+  CHECK(g.matchConfig() == MatchConfig{h.seed, h.players, 3, 5, 0x0A5});
+  CHECK(ReplayHeader{}.powerUps == kAllPowerUps);
 
   buf[0] = std::byte{'X'};
   BitReader bad(w.written());

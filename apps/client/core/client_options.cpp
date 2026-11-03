@@ -73,6 +73,16 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.overlay = true;
     } else if (arg == "--capsules") {
       out.capsules = true;
+    } else if (arg == "--mute") {
+      out.mute = true;
+    } else if (arg == "--volume") {
+      uint64_t n = 0;
+      if (!value(i, n)) return false;
+      if (n > 100) {
+        error = "--volume must be 0..100";
+        return false;
+      }
+      out.volume = static_cast<uint8_t>(n);
     } else if (arg == "--bots") {
       uint64_t n = 0;
       if (!value(i, n)) return false;
@@ -85,6 +95,25 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       if (!value(i, out.seed)) return false;
     } else if (arg == "--players-seed") {
       if (!value(i, out.playersSeed)) return false;
+    } else if (arg == "--content" || arg == "--arena" || arg == "--mode" || arg == "--powerups") {
+      if (i + 1 >= args.size()) {
+        error = std::string(arg) + " needs a value";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      if (arg == "--content") {
+        out.contentDir = v;
+      } else if (arg == "--arena") {
+        out.arena = v;
+      } else if (arg == "--mode") {
+        out.mode = v;
+      } else {
+        out.powerUps = v;
+      }
+    } else if (arg == "--no-hot-reload") {
+      out.hotReload = false;
+    } else if (arg == "--no-settings") {
+      out.settings = false;
     } else if (arg == "--connect" || arg == "--token" || arg == "--stun") {
       if (i + 1 >= args.size()) {
         error = std::string(arg) + " needs a value";

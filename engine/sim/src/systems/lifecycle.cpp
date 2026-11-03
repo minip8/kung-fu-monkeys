@@ -1,13 +1,117 @@
-// LifecycleSystem (architecture §5.3 step 9, §5.7): despawns players tagged
-// Eliminated (already reported by InteractionSystem) and turns grounded
-// boomerangs into banana pickups at their position.
+// LifecycleSystem (architecture §5.3 step 9, §5.7, §5.8): spawn protection and
+// respawns (v0.23), despawns players tagged Eliminated (already reported by
+// InteractionSystem), turns grounded boomerangs into banana pickups at their
+// position, and runs the arena's power-up spawners (v0.20).
+//
+// Respawns are driven by MatchRules' timers, which only modes that respawn
+// (deathmatch) set, so the code is the same for every mode: during Playing a
+// dead present slot with a pending respawnTicks counts down and respawns at
+// 0 (modes/mode_flow.hpp: farthest spawn point from the other monkeys,
+// Tag::Invulnerable for respawnInvulnTicks); an alive player's invulnTicks
+// counts down and clears the tag at 0. The countdown runs before this tick's
+// despawns, so a player eliminated on tick T respawns on tick
+// T + respawnTicks and is protected for the interactions of the next
+// respawnInvulnTicks ticks.
+//
+// Spawners (§5.8) fire only while the match phase is Playing, on the ticks
+// where ticksInPhase (0 on the first Playing tick) equals firstTicks +
+// k × intervalTicks (k >= 0; intervalTicks 0 = only once), in arena order,
+// after the bananas. A spawner with maxAlive of its own pickups lying in the
+// arena skips that beat. The power-up is drawn from its set with the world
+// RNG (one rng.below() per spawn, none otherwise), so an arena without
+// spawners never touches the RNG here. The spawner's timeline is a function
+// of ticksInPhase, not state of its own; a pickup remembers its spawner.
 #include "kfm/sim/systems.hpp"
+#include "modes/mode_flow.hpp"
+
+#include <bit>
+#include <cstdint>
 
 namespace kfm::sim {
+namespace {
 
-void lifecycleSystem(WorldState& s, const ContentDB& /*content*/, EventSink& sink) {
+void respawnTimers(WorldState& s, const MatchContent& content, EventSink& sink) {
+  MatchRules& r = s.rules;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    const PlayerId id{i};
+    if (Player* p = s.playerBySlot(id)) {
+      if (r.invulnTicks[i] == 0) continue;
+      // A power-up's Invulnerable (Player::grantedTags, §5.8) outlives it.
+      if (--r.invulnTicks[i] == 0 && !p->grantedTags.has(Tag::Invulnerable)) {
+        p->tags.clear(Tag::Invulnerable);
+      }
+      continue;
+    }
+    if (r.respawnTicks[i] == 0) continue;
+    if (!maskHas(r.present, id)) {
+      r.respawnTicks[i] = 0;  // left while dead: no respawn
+      continue;
+    }
+    if (--r.respawnTicks[i] == 0) respawnPlayer(s, content, id, sink);
+  }
+}
+
+[[nodiscard]] bool spawnerBeat(const PickupSpawner& sp, uint32_t t) {
+  if (t < sp.firstTicks) return false;
+  const uint32_t since = t - sp.firstTicks;
+  return sp.intervalTicks == 0 ? since == 0 : since % sp.intervalTicks == 0;
+}
+
+[[nodiscard]] uint32_t aliveFrom(const WorldState& s, uint8_t spawner) {
+  uint32_t n = 0;
+  s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+    if (k.kind == PickupKind::PowerUp && k.spawner == spawner) ++n;
+  });
+  return n;
+}
+
+// The power-ups a spawner may draw: its set (0 = all) within the DB and the
+// match's power-up set (MatchConfig::powerUps).
+[[nodiscard]] uint32_t candidates(const PickupSpawner& sp, const MatchContent& content) {
+  const ContentDB& db = content.db;
+  const uint32_t all = db.powerUpCount >= 32 ? UINT32_MAX : (uint32_t{1} << db.powerUpCount) - 1u;
+  const uint32_t own = sp.powerUpSet == 0 ? all : (uint32_t{sp.powerUpSet} & all);
+  return own & content.powerUps;
+}
+
+// Index of the n-th set bit of `bits` (n < popcount(bits)).
+[[nodiscard]] uint8_t nthSetBit(uint32_t bits, uint32_t n) {
+  for (uint32_t i = 0; i < n; ++i)
+    bits &= bits - 1u;  // drop the lowest set bit
+  return static_cast<uint8_t>(std::countr_zero(bits));
+}
+
+void runSpawners(WorldState& s, const MatchContent& content, EventSink& sink) {
+  if (s.rules.phase != MatchPhase::Playing) return;
+  const ArenaDef& arena = content.arena;
+  const uint32_t t = s.rules.ticksInPhase;
+  for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {
+    const PickupSpawner& sp = arena.pickupSpawners[i];
+    if (!spawnerBeat(sp, t) || aliveFrom(s, i) >= sp.maxAlive) continue;
+    const uint32_t set = candidates(sp, content);
+    if (set == 0) continue;
+    const EntityId id = s.pickups.spawn();
+    if (!id.isValid()) return;  // pickup pool full: no spawner fires this tick
+    const uint8_t def = nthSetBit(set, s.rng.below(static_cast<uint32_t>(std::popcount(set))));
+    Pickup& pickup = s.pickups.items[id.index];
+    pickup.kind = PickupKind::PowerUp;
+    pickup.pos = sp.pos;
+    pickup.powerUpIndex = def;
+    pickup.spawner = i;
+    sink.push(SimEvent{EventKind::PickupSpawned, s.tick, PlayerId::invalid(), id,
+                       static_cast<uint32_t>(PickupKind::PowerUp), def});
+  }
+}
+
+}  // namespace
+
+void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
+  if (s.rules.phase == MatchPhase::Playing) respawnTimers(s, content, sink);
+
   s.players.forEachAlive([&](EntityId id, const Player& p) {
-    if (p.tags.has(Tag::Eliminated)) s.players.despawn(id);
+    if (!p.tags.has(Tag::Eliminated)) return;
+    s.rules.invulnTicks[id.index] = 0;
+    s.players.despawn(id);
   });
 
   // Iterates boomerangs and spawns pickups: a different pool, so the
@@ -25,6 +129,8 @@ void lifecycleSystem(WorldState& s, const ContentDB& /*content*/, EventSink& sin
     pickup.powerUpIndex = 0;
     sink.push(SimEvent{EventKind::PickupSpawned, s.tick, PlayerId::invalid(), pickupId, 0, 0});
   });
+
+  runSpawners(s, content, sink);
 }
 
 }  // namespace kfm::sim

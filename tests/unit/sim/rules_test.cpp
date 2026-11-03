@@ -33,7 +33,7 @@ void removePlayers(WorldState& s, std::initializer_list<uint8_t> slots) {
 // The spawn-point offset that explains every present player's position, or
 // -1 when the positions are not a rotation of the spawn list in slot order.
 int spawnOffsetOf(const WorldState& s, const ContentDB& content) {
-  const ArenaDef& arena = content.arena;
+  const ArenaDef& arena = content.arenas[0];
   for (size_t offset = 0; offset < arena.spawnPointCount; ++offset) {
     bool all = true;
     size_t rank = 0;
@@ -75,11 +75,11 @@ TEST_CASE("lobby -> RoundStarting -> Playing timeline", "[sim][rules]") {
     CHECK(e.tick == Tick{0});
 
   // The countdown lasts exactly roundStartTicks ticks (0 .. roundStartTicks-1).
-  for (uint32_t t = 1; t < content.mode.roundStartTicks; ++t) {
+  for (uint32_t t = 1; t < content.modes[0].roundStartTicks; ++t) {
     CHECK(stepIdle(s).empty());
     REQUIRE(s.rules.phase == MatchPhase::RoundStarting);
   }
-  CHECK(s.tick == Tick{content.mode.roundStartTicks});
+  CHECK(s.tick == Tick{content.modes[0].roundStartTicks});
   CHECK(stepIdle(s).empty());
   CHECK(s.rules.phase == MatchPhase::Playing);
   CHECK(s.rules.ticksInPhase == 1);
@@ -107,7 +107,7 @@ TEST_CASE("spawned players get content stats and a full reset", "[sim][rules]") 
 
 TEST_CASE("a zero-length countdown goes straight to Playing", "[sim][rules]") {
   ContentDB content = defaultContent();
-  content.mode.roundStartTicks = 0;
+  content.modes[0].roundStartTicks = 0;
   WorldState s = initialWorld(MatchConfig{1, 0b11});
   static_cast<void>(stepIdle(s, content));
   CHECK(s.rules.phase == MatchPhase::Playing);
@@ -153,13 +153,13 @@ TEST_CASE("the round counter saturates instead of wrapping", "[sim][rules]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(1, 0b11);
   s.rules.phase = MatchPhase::RoundEnded;
-  s.rules.ticksInPhase = content.mode.roundEndTicks;
+  s.rules.ticksInPhase = content.modes[0].roundEndTicks;
   s.rules.round = UINT8_MAX - 1;
   EventSink sink;
   rulesPreTick(s, content, sink);
   CHECK(s.rules.round == UINT8_MAX);
   s.rules.phase = MatchPhase::RoundEnded;
-  s.rules.ticksInPhase = content.mode.roundEndTicks;
+  s.rules.ticksInPhase = content.modes[0].roundEndTicks;
   rulesPreTick(s, content, sink);
   CHECK(s.rules.round == UINT8_MAX);
   CHECK(s.rules.phase == MatchPhase::RoundStarting);
@@ -197,7 +197,7 @@ TEST_CASE("RoundEnded lasts roundEndTicks, then everyone respawns", "[sim][rules
   // Player 0 holds Dash through the pause and into the next round.
   InputFrame holdDash = frameFor(s);
   holdDash.inputs[0].buttons = buttonBit(Button::Dash);
-  for (uint32_t t = 0; t < content.mode.roundEndTicks; ++t) {
+  for (uint32_t t = 0; t < content.modes[0].roundEndTicks; ++t) {
     REQUIRE(s.rules.phase == MatchPhase::RoundEnded);
     EventLog quiet;
     runTicks(s, holdDash, 1, content, quiet);
@@ -236,12 +236,12 @@ TEST_CASE("RoundEnded lasts roundEndTicks, then everyone respawns", "[sim][rules
 TEST_CASE("match ends when a player reaches roundsToWin", "[sim][rules]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(1, 0b11);
-  s.rules.scores[1] = static_cast<uint8_t>(content.mode.roundsToWin - 1);
-  s.rules.round = content.mode.roundsToWin;
+  s.rules.scores[1] = static_cast<uint8_t>(content.modes[0].roundsToWin - 1);
+  s.rules.round = content.modes[0].roundsToWin;
   removePlayers(s, {0});
   const EventLog log = stepIdle(s);
   CHECK(s.rules.phase == MatchPhase::MatchEnded);
-  CHECK(s.rules.scores[1] == content.mode.roundsToWin);
+  CHECK(s.rules.scores[1] == content.modes[0].roundsToWin);
   REQUIRE(log.size() == 2);
   CHECK(log[0].kind == EventKind::RoundEnded);
   CHECK(log[0].player == PlayerId{1});
@@ -250,7 +250,7 @@ TEST_CASE("match ends when a player reaches roundsToWin", "[sim][rules]") {
 
   // Terminal: the sim keeps ticking, nothing restarts.
   EventLog after;
-  runTicks(s, frameFor(s), content.mode.roundEndTicks * 3, content, after);
+  runTicks(s, frameFor(s), content.modes[0].roundEndTicks * 3, content, after);
   CHECK(after.empty());
   CHECK(s.rules.phase == MatchPhase::MatchEnded);
 }
@@ -280,9 +280,9 @@ TEST_CASE("spawn uses ranks among present slots, not raw slots", "[sim][rules]")
   const int offset = spawnOffsetOf(s, content);
   REQUIRE(offset >= 0);
   const auto first = static_cast<size_t>(offset);
-  CHECK(playerAt(s, PlayerId{5}).transform.pos == content.arena.spawnPoints[first]);
+  CHECK(playerAt(s, PlayerId{5}).transform.pos == content.arenas[0].spawnPoints[first]);
   CHECK(playerAt(s, PlayerId{9}).transform.pos ==
-        content.arena.spawnPoints[(first + 1) % content.arena.spawnPointCount]);
+        content.arenas[0].spawnPoints[(first + 1) % content.arenas[0].spawnPointCount]);
 }
 
 TEST_CASE("the frame's present mask is the roster: joiners spawn at the next round",
@@ -303,7 +303,7 @@ TEST_CASE("the frame's present mask is the roster: joiners spawn at the next rou
   runTicks(s, f, 1, content, log);
   CHECK(s.rules.present == 0b101);
   REQUIRE(s.rules.phase == MatchPhase::RoundEnded);
-  runTicks(s, f, content.mode.roundEndTicks + 1, content, log);
+  runTicks(s, f, content.modes[0].roundEndTicks + 1, content, log);
   CHECK(s.rules.phase == MatchPhase::RoundStarting);
   CHECK(s.playerBySlot(PlayerId{0}) != nullptr);
   CHECK(s.playerBySlot(PlayerId{1}) == nullptr);
@@ -325,7 +325,7 @@ TEST_CASE("a player who left the roster is despawned at the next round start", "
   runTicks(s, f, 1, content, log);
   REQUIRE(s.rules.phase == MatchPhase::RoundEnded);
   // Slot 2 is still absent at the next round start, so it is not respawned.
-  runTicks(s, f, content.mode.roundEndTicks + 1, content, log);
+  runTicks(s, f, content.modes[0].roundEndTicks + 1, content, log);
   CHECK(s.playerBySlot(PlayerId{2}) == nullptr);
   CHECK(s.players.size() == 2);
 }

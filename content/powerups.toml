@@ -1,0 +1,63 @@
+# Power-ups (PowerUpDef, architecture §5.8). Arena spawners (see
+# arenas/04-dojo_powerups.toml) drop them as pickups; a monkey that touches one
+# gains its grants for duration_ticks. Indices go into the world state and
+# are part of the content hash: append new power-ups, never reorder.
+#
+# Keys: name (lowercase, up to 15 of a-z 0-9 _ -), duration_ticks (>= 1, 60
+# per second), color (palette index 0-9: 0 red, 1 blue, 2 yellow, 3 green,
+# 4 orange, 5 purple, 6 cyan, 7 pink, 8 white, 9 charcoal), shape (orb |
+# cube | diamond | coin), grants = a list of 1 to 4 tables, each one of
+#   { kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max", mul, add }
+#       stat = base x product of mul + sum of add over the live power-ups;
+#       max_hp and ammo_max are integer stats: whole 'add' only, no 'mul'.
+#       ammo_max also tops the ammo up by 'add' on every pickup.
+#   { kind = "ability", slot = "dash" | "throw" | "ability", ability = "<ability name>" }
+#       the slot runs that ability (any kind: buttons belong to slots) while live;
+#       it switches when the slot is idle, its cooldown capped at the new def's.
+#   { kind = "projectile", speed_mul, radius_mul, damage_add, pierce }
+#       applied to each banana thrown while live and kept by that banana.
+#   { kind = "tag", tag = "shielded" | "invulnerable" }
+#       shielded absorbs one banana hit or dash attack, then the power-up ends.
+# The same power-up picked up again restarts its timer.
+
+[[powerup]]
+name = "speed_boost"
+duration_ticks = 480        # 8 s
+color = 6                   # cyan
+shape = "diamond"
+grants = [{ kind = "stat", stat = "move_speed", mul = 1.5 }]
+
+[[powerup]]
+name = "big_banana"
+duration_ticks = 600        # 10 s
+color = 2                   # yellow
+shape = "orb"
+grants = [{ kind = "projectile", radius_mul = 2, speed_mul = 0.85 }]
+
+[[powerup]]
+name = "piercing_banana"
+duration_ticks = 600
+color = 5                   # purple
+shape = "cube"
+grants = [{ kind = "projectile", pierce = true }]
+
+[[powerup]]
+name = "triple_banana"
+duration_ticks = 900        # 15 s
+color = 4                   # orange
+shape = "coin"
+grants = [{ kind = "stat", stat = "ammo_max", add = 2 }]
+
+[[powerup]]
+name = "shield"
+duration_ticks = 900
+color = 1                   # blue
+shape = "orb"
+grants = [{ kind = "tag", tag = "shielded" }]
+
+[[powerup]]
+name = "fast_hands"
+duration_ticks = 600
+color = 3                   # green
+shape = "cube"
+grants = [{ kind = "ability", slot = "throw", ability = "throw_fast" }]

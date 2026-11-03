@@ -11,6 +11,9 @@ add_library(kfm_presentation STATIC
   src/meshes.cpp
   src/skinned_model.cpp
   src/animation.cpp
+  src/event_fx.cpp
+  src/sound_bank.cpp
+  src/mixer.cpp
 )
 add_library(kfm::presentation ALIAS kfm_presentation)
 

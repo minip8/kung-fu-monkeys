@@ -69,19 +69,31 @@ inline constexpr uint8_t kEnumCount = 0;  // no specialisation: not visitable
 template <>
 inline constexpr uint8_t kEnumCount<AbilityKind> = static_cast<uint8_t>(AbilityKind::kCount);
 template <>
+inline constexpr uint8_t kEnumCount<HazardKind> = static_cast<uint8_t>(HazardKind::kCount);
+template <>
 inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<StatKind> = 3;
 template <>
 inline constexpr uint8_t kEnumCount<BoomerangPhase> = 3;
 template <>
-inline constexpr uint8_t kEnumCount<PickupKind> = 1;
+inline constexpr uint8_t kEnumCount<PickupKind> = 2;
 template <>
 inline constexpr uint8_t kEnumCount<MatchPhase> = 5;
+template <>
+inline constexpr uint8_t kEnumCount<ModeKind> = static_cast<uint8_t>(ModeKind::kCount);
+template <>
+inline constexpr uint8_t kEnumCount<GrantKind> = 5;
+template <>
+inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
+template <>
+inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
 static_assert(static_cast<uint8_t>(StatKind::AmmoMax) + 1 == kEnumCount<StatKind>);
 static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
-static_assert(static_cast<uint8_t>(PickupKind::Banana) + 1 == kEnumCount<PickupKind>);
+static_assert(static_cast<uint8_t>(PickupKind::PowerUp) + 1 == kEnumCount<PickupKind>);
+static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);
+static_assert(static_cast<uint8_t>(PowerUpShape::Coin) + 1 == kEnumCount<PowerUpShape>);
 static_assert(static_cast<uint8_t>(MatchPhase::MatchEnded) + 1 == kEnumCount<MatchPhase>);
 
 template <class V, class E>
@@ -154,7 +166,23 @@ void visit(V& v, Tags& t) {
 // --- content (hashed for content_hash, architecture §5.10) ------------------
 
 template <class V>
+void visit(V& v, ContentName& n) {
+  if constexpr (V::kIsReader) {
+    for (char& c : n.chars) {
+      uint8_t byte = 0;
+      v.u8(byte);
+      c = static_cast<char>(byte);
+    }
+  } else {
+    for (const char c : n.chars) {
+      auto byte = static_cast<uint8_t>(c);
+      v.u8(byte);
+    }
+  }
+}
+template <class V>
 void visit(V& v, AbilityDef& d) {
+  visit(v, d.name);
   visit(v, d.kind);
   v.u16(d.cooldownTicks);
   v.u16(d.startupTicks);
@@ -196,17 +224,82 @@ void visit(V& v, PlayerDef& d) {
     v.u8(a);
 }
 template <class V>
+void visit(V& v, PickupSpawner& d) {
+  visit(v, d.pos);
+  v.u16(d.powerUpSet);
+  v.u16(d.firstTicks);
+  v.u16(d.intervalTicks);
+  v.u8(d.maxAlive);
+}
+template <class V>
+void visit(V& v, StatModifier& m) {
+  visit(v, m.stat);
+  visit(v, m.mul);
+  visit(v, m.add);
+}
+template <class V>
+void visit(V& v, ProjectileModifier& m) {
+  visit(v, m.speedMul);
+  visit(v, m.radiusMul);
+  v.u8(m.damageAdd);
+  v.u8(m.pierce);
+}
+template <class V>
+void visit(V& v, PowerUpGrant& g) {
+  visit(v, g.kind);
+  visit(v, g.stat);
+  v.u8(g.slot);
+  v.u8(g.ability);
+  visit(v, g.projectile);
+  visit(v, g.tag);
+}
+template <class V>
+void visit(V& v, PowerUpDef& d) {
+  visit(v, d.name);
+  v.u16(d.durationTicks);
+  v.u8(d.visual.color);
+  visit(v, d.visual.shape);
+  for (PowerUpGrant& g : d.grants)
+    visit(v, g);
+  v.u8(d.grantCount);
+}
+template <class V>
 void visit(V& v, ArenaDef& d) {
+  visit(v, d.name);
   visit(v, d.halfExtents);
   for (Vec2& p : d.spawnPoints)
     visit(v, p);
   v.u8(d.spawnPointCount);
+  for (Wall& w : d.walls) {
+    visit(v, w.min);
+    visit(v, w.max);
+  }
+  v.u8(d.wallCount);
+  for (Hazard& h : d.hazards) {
+    visit(v, h.min);
+    visit(v, h.max);
+    visit(v, h.kind);
+    visit(v, h.speedMul);
+  }
+  v.u8(d.hazardCount);
+  for (PickupSpawner& sp : d.pickupSpawners)
+    visit(v, sp);
+  v.u8(d.pickupSpawnerCount);
 }
 template <class V>
 void visit(V& v, ModeDef& d) {
+  visit(v, d.name);
   v.u8(d.roundsToWin);
   v.u16(d.roundEndTicks);
   v.u16(d.roundStartTicks);
+  visit(v, d.kind);
+  v.u32(d.timeLimitTicks);
+  v.u8(d.scoreToWin);
+  v.u16(d.respawnTicks);
+  v.u16(d.respawnInvulnTicks);
+  v.u8(d.hasAbilities);
+  for (uint8_t& a : d.abilities)
+    v.u8(a);
 }
 template <class V>
 void visit(V& v, DashAttackDef& d) {
@@ -222,9 +315,16 @@ void visit(V& v, ContentDB& c) {
   visit(v, c.boomerang);
   visit(v, c.pickup);
   visit(v, c.player);
-  visit(v, c.arena);
-  visit(v, c.mode);
   visit(v, c.dashAttack);
+  for (ArenaDef& d : c.arenas)
+    visit(v, d);
+  v.u8(c.arenaCount);
+  for (ModeDef& d : c.modes)
+    visit(v, d);
+  v.u8(c.modeCount);
+  for (PowerUpDef& d : c.powerUps)
+    visit(v, d);
+  v.u8(c.powerUpCount);
 }
 
 // --- input and state ---------------------------------------------------------
@@ -259,6 +359,12 @@ void visit(V& v, MatchRules& r) {
     v.u8(score);
   visit(v, r.lastRoundWinner);
   validatePlayerRef(v, r.lastRoundWinner);
+  for (uint8_t& d : r.deaths)
+    v.u8(d);
+  for (uint16_t& t : r.respawnTicks)
+    v.u16(t);
+  for (uint16_t& t : r.invulnTicks)
+    v.u16(t);
 }
 template <class V>
 void visit(V& v, Transform& t) {
@@ -274,10 +380,14 @@ void visit(V& v, Stats& st) {
   v.u8(st.ammoMax);
 }
 template <class V>
-void visit(V& v, StatModifier& m) {
-  visit(v, m.stat);
-  visit(v, m.mul);
-  visit(v, m.add);
+void visit(V& v, ActiveModifier& m) {
+  v.u8(m.powerUp);
+  if constexpr (V::kIsReader) {
+    if (m.powerUp >= kMaxPowerUps) {
+      v.markInvalid();
+      m.powerUp = 0;
+    }
+  }
   v.u16(m.ticksLeft);
 }
 // Only the live prefix is visited; slots past count are canonicalised on
@@ -296,7 +406,7 @@ void visit(V& v, ModifierList& m) {
     if (i < m.count) {
       visit(v, m.items[i]);
     } else if constexpr (V::kIsReader) {
-      m.items[i] = StatModifier{};
+      m.items[i] = ActiveModifier{};
     }
   }
 }
@@ -336,8 +446,11 @@ void visit(V& v, Player& p) {
   v.u8(p.ammo);
   visit(v, p.tags);
   v.u16(p.hitStunTicks);
+  visit(v, p.grantedTags);
   for (AbilityState& a : p.abilities)
     visit(v, a);
+  visit(v, p.knockback);
+  v.u16(p.knockbackTicks);
 }
 template <class V>
 void visit(V& v, Boomerang& b) {
@@ -350,12 +463,28 @@ void visit(V& v, Boomerang& b) {
   v.u16(b.ticksInPhase);
   v.u8(b.damage);
   v.u8(b.pierce);
+  if constexpr (V::kIsReader) {
+    if (b.pierce > 1) {
+      v.markInvalid();
+      b.pierce = 1;
+    }
+  }
+  visit(v, b.speedMul);  // projectile modifiers (§5.8)
+  visit(v, b.radiusMul);
 }
 template <class V>
 void visit(V& v, Pickup& p) {
   visit(v, p.kind);
   visit(v, p.pos);
   v.u8(p.powerUpIndex);
+  v.u8(p.spawner);
+  if constexpr (V::kIsReader) {
+    if (p.powerUpIndex >= kMaxPowerUps || p.spawner >= kMaxPickupSpawners) {
+      v.markInvalid();
+      p.powerUpIndex = 0;
+      p.spawner = 0;
+    }
+  }
 }
 template <class V>
 void visit(V& v, WorldState& s) {

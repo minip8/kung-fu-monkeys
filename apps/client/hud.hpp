@@ -4,6 +4,7 @@
 // under ImGui windows such as the debug overlay), the lobby as a window.
 #pragma once
 
+#include "core/lobby_menu.hpp"
 #include "core/match_session.hpp"
 #include "core/net_session.hpp"
 #include "kfm/presentation/camera.hpp"
@@ -28,6 +29,9 @@ struct HudView {
   bool paused{false};
   bool network{false};     // a networked match: no "back to the lobby" by Enter
   std::string statusLine;  // network: a small connection status line
+  // Network: the server's announced next match (arena, mode, power-ups),
+  // shown under the match-over banner.
+  std::string nextMatch;
 };
 [[nodiscard]] HudView hudView(const MatchSession& session);
 [[nodiscard]] HudView hudView(const NetSession& session);
@@ -41,14 +45,23 @@ inline void drawMatchHud(const MatchSession& session, const HudInput& in) {
 }
 
 // Network mode before the match is drawn, or after it ended: the connection
-// status (connecting, syncing, rejected or disconnected with the reason) and
-// how to get back to the local lobby.
+// status (connecting, syncing, rejected or disconnected with the reason), the
+// server's match once its Welcome arrived (read-only: slot cards, arena with
+// a preview, mode with its key numbers, power-up set) and how to get back to
+// the local lobby.
 void drawNetStatus(const NetSession& session);
 
-// The lobby: bound devices, join prompt with the default bindings, bot count
-// and the start button. Returns true when the start button was pressed. With
-// a connectUrl (network mode) the button connects and bots and seed are
-// hidden: the server owns them.
-[[nodiscard]] bool drawLobby(MatchSession& session, const std::string& connectUrl = {});
+// The lobby (v0.24): a card per slot (colour, label, device or bot), then
+// locally the settings panel (LobbyMenu rows: arena, mode, power-up toggles,
+// bots, volume, mute; mouse, keyboard or pad) beside an arena preview and
+// the mode's key numbers, the join help and the start button. With a
+// connectUrl (network mode) the settings are hidden: the server owns them
+// and drawNetStatus() shows them once connected.
+struct LobbyOutcome {
+  bool start{false};    // the start (or connect) button was pressed
+  bool changed{false};  // a setting changed through the panel's mouse controls
+};
+[[nodiscard]] LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu,
+                                     const std::string& connectUrl = {});
 
 }  // namespace kfm::client

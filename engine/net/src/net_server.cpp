@@ -221,9 +221,15 @@ void NetServer::kick(PeerId peer, DisconnectReason reason) {
 }
 
 void NetServer::restartMatch(uint64_t seed, Tick startTick, uint64_t botSeed) {
+  sim::MatchConfig config = config_.match;
+  config.seed = seed;
+  restartMatch(config, startTick, botSeed);
+}
+
+void NetServer::restartMatch(const sim::MatchConfig& config, Tick startTick, uint64_t botSeed) {
   const Tick start = std::max(startTick, nextTick());
-  restart_ = PendingRestart{seed, botSeed, start};
-  const MatchConfigMsg m{sim::MatchConfig{seed, present_}, start};
+  restart_ = PendingRestart{config, botSeed, start};
+  const MatchConfigMsg m{announced(config), start};
   for (Peer& q : peers_) {
     if (q.used && q.info.state == PeerState::Active) sendReliableMsg(q, m);
   }
@@ -235,7 +241,7 @@ std::optional<Tick> NetServer::pendingRestart() const {
 }
 
 void NetServer::applyRestart(Tick t, const PendingRestart& r) {
-  config_.match = sim::MatchConfig{r.seed, present_};
+  config_.match = announced(r.config);
   world_ = sim::initialWorld(config_.match);
   world_.tick = t;  // ticks are monotonic across matches; the sim only uses differences
   botRng_ = Rng::seeded(r.botSeed);
@@ -311,7 +317,7 @@ void NetServer::sendReliableMsg(Peer& p, const M& m) {
 }
 
 void NetServer::sendSnapshot(Peer& p) {
-  snapshot_.config = sim::MatchConfig{config_.match.seed, present_};
+  snapshot_.config = announced(config_.match);
   snapshot_.world = world_;
   const size_t n = encode(snapshot_, buf_);
   if (n == 0) return;
@@ -320,12 +326,10 @@ void NetServer::sendSnapshot(Peer& p) {
 }
 
 void NetServer::welcome(Peer& p) {
-  sendReliableMsg(
-      p, WelcomeMsg{p.info.slots, sim::MatchConfig{config_.match.seed, present_}, nextTick()});
+  sendReliableMsg(p, WelcomeMsg{p.info.slots, announced(config_.match), nextTick()});
   sendSnapshot(p);
   if (restart_) {
-    sendReliableMsg(
-        p, MatchConfigMsg{sim::MatchConfig{restart_->seed, present_}, restart_->startTick});
+    sendReliableMsg(p, MatchConfigMsg{announced(restart_->config), restart_->startTick});
   }
 }
 
@@ -630,7 +634,9 @@ void NetServer::tick(uint64_t nowNs) {
     const PlayerId id{static_cast<PlayerId::rep>(s)};
     if (has(bots_, s)) {
       static_cast<void>(assembler_.put(
-          id, t, sim::scriptedInput(botRng_, world_, *content_, id, config_.botConfig)));
+          id, t,
+          sim::scriptedInput(botRng_, world_, sim::matchContent(*content_, config_.match), id,
+                             config_.botConfig)));
     }
   }
   // A reserved slot stands still until its owner is back.
@@ -653,7 +659,7 @@ void NetServer::tick(uint64_t nowNs) {
     stats_.substitutedLastTick += n;
   }
   sink_.clear();
-  sim::step(world_, frame, *content_, sink_);
+  sim::step(world_, frame, sim::matchContent(*content_, config_.match), sink_);
   static_cast<void>(frames_.put(frame));
   ++stats_.ticks;
   broadcastAuth();

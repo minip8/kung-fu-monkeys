@@ -80,6 +80,10 @@ struct NetSessionConfig {
   bool spectate{false};          // request no slots
   uint8_t requestedSlots{0};     // 0: one per bound lobby device (at least 1)
   uint8_t inputDelayTicks{0};    // §6.2 fixed input delay
+  // The client's loaded content (its hash must match the server's);
+  // nullptr = sim::defaultContent(). Copied. The arena and mode come from
+  // the server (Welcome / Snapshot / MatchConfig).
+  const sim::ContentDB* content{nullptr};
 };
 
 // Per-second rates of the cumulative ClientNetStats, over the last full
@@ -129,6 +133,9 @@ class NetSession {
   [[nodiscard]] uint8_t requestedSlots() const { return requested_; }
   // Whether the session ever reached Running (a disconnect then means "lost").
   [[nodiscard]] bool everRan() const { return everRan_; }
+  // Whether the server's Welcome arrived, so client().matchConfig() is the
+  // server's (arena, mode, power-up set, roster): the online lobby shows it.
+  [[nodiscard]] bool configKnown() const { return configKnown_; }
 
   // --- slots ------------------------------------------------------------------
   [[nodiscard]] sim::PlayerMask localSlots() const { return client_->localSlots(); }
@@ -162,6 +169,8 @@ class NetSession {
     return presentation_;
   }
   [[nodiscard]] const sim::ContentDB& content() const { return content_; }
+  // The content with the arena and mode of the match the server runs.
+  [[nodiscard]] sim::MatchContent matchContent() const { return client_->matchContent(); }
   [[nodiscard]] uint32_t checksum() const;
 
   [[nodiscard]] const net::NetClient& client() const { return *client_; }
@@ -194,6 +203,7 @@ class NetSession {
   std::unique_ptr<net::NetClient> client_;
   std::string failure_;
   bool everRan_{false};
+  bool configKnown_{false};
   bool slotsBound_{false};
   uint64_t nowNs_{0};
 

@@ -9,18 +9,20 @@ bananas that fly like boomerangs; dash is the base ability; a perfectly timed da
 banana). C++23 engine, deterministic simulation, rollback netcode, browser as the primary shipping
 client, with scripted bots and ML-trained agents planned.
 
-Milestones M0 (skeleton), M1 (headless sim), M2 (playable local client) and M3 (netcode) have
-landed: build system, `engine/core`, the
-full `engine/sim` tick pipeline (FFA rounds, Dash, Throw, banana flight and return, swept
-collision, the interaction rules table, modifiers, lifecycle) over `constexpr` content, a
-scripted input generator, `kfm_replay` (record, verify, bench) and the determinism gate over a
-corpus of empty and scripted replays; `engine/platform` (SDL3 window + GL context, sokol_gfx,
-Dear ImGui, the SDL-free input sampler), `engine/presentation` (float math, fixed arena camera,
-RenderState builder, procedural meshes, skinning, the sokol renderer) and `apps/client` (local
-play, bots, HUD, F1 overlay, the browser page); `engine/net` (`ITransport`, loopback + emulator,
-message layer, `NetServer`, `NetClient` with rollback and clock sync, `WebRtcTransport`),
-`apps/server`, `apps/netsim`, `apps/net-probe` and the client's `--connect` mode. Next is M4
-(content). `docs/architecture.md` is the
+Milestones M0 (skeleton), M1 (headless sim), M2 (playable local client), M3 (netcode) and M4
+(content) have landed: build system, `engine/core`, the
+full `engine/sim` tick pipeline (modes, Dash, Throw, Blink, Slam, Parry, banana flight and
+return, swept collision against entities and arena statics, the interaction rules table,
+power-ups and modifiers, lifecycle) over `ContentDB`, a scripted input generator, `kfm_replay`
+(record, verify, bench) and the determinism gate over a corpus of empty and scripted replays;
+`engine/content` (the TOML loader behind `content/`, embedded into every binary, hot reload);
+`engine/platform` (SDL3 window + GL context, audio device, sokol_gfx, Dear ImGui, the SDL-free
+input sampler), `engine/presentation` (float math, fixed arena camera, RenderState builder,
+event-driven effects and procedural sound, procedural meshes, skinning, the sokol renderer) and
+`apps/client` (local play with the lobby settings panel, bots, HUD, F1 overlay, the browser
+page); `engine/net` (`ITransport`, loopback + emulator, message layer, `NetServer`, `NetClient`
+with rollback and clock sync, `WebRtcTransport`), `apps/server`, `apps/netsim`, `apps/net-probe`
+and the client's `--connect` mode. Next is M5 (bots and ML). `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -50,21 +52,37 @@ clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | 
 clang-tidy -p build/dev $(find engine apps tests -name '*.cpp')
 build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|verify ...  # replay tool
 build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
+#   record-*/bench/stats take --arena NAME --mode NAME; every command takes --content DIR (default: the
+#   content compiled into the binary); `info` prints the replay's arena/mode and both content hashes
 build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
-build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay]   # playable client
+build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay] [--mute] [--volume 0..100]   # playable client
+build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
+#   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
+#   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
+#   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock)
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
+#   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
+#   arena (with preview), mode, power-up toggles, bots, volume, mute; saved between runs (SDL pref dir / browser
+#   localStorage), flags win: --arena NAME --mode NAME --powerups all|none|a,b ; --no-settings ignores the saved file
+#   browser: kfm_client.html?arena=pillars&mode=deathmatch&powerups=shield,big_banana
+#   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
+ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
 #   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window
+#   --arena pillars|corridors|island draws an arena with walls / pits / mud (content/arenas/*.toml)
 build/dev/apps/client/kfm_client --capsules                # placeholder capsules instead of the skinned test rig
 #   (the rig is generated by the build from tools/assets/gen_test_rig.py; never commit exported glTF)
 build/dev/apps/replay/kfm_replay stats --players 4 --matches 20   # feel-tuning stats over scripted matches
+build/dev/apps/client/kfm_client --arena dojo_powerups --bots 3   # power-ups: the dojo plus four spawners (content/powerups.toml)
 source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py [--page kfm_render_probe.html]
 #   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
 python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
 build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
+#   also --content DIR --arena NAME --mode NAME (kfm_netsim and kfm_render_probe take the same three)
+#   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
 cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
@@ -88,7 +106,7 @@ Read `docs/architecture.md` §2 (decisions table) first; the rest of this sectio
 are load-bearing when writing code.
 
 **Layering (§4).** `engine/core` → `engine/sim` → {`engine/net`, `engine/ai`,
-`engine/presentation`} → `apps/`. `sim` depends only on `core` and must never include anything
+`engine/presentation`, `engine/content`} → `apps/`. `sim` depends only on `core` and must never include anything
 from `net`, `presentation` or `platform`. `net`, `ai` and `presentation` never depend on each
 other. `presentation` reads sim state and never writes it. Enforce with CMake target visibility,
 not convention.
@@ -113,6 +131,19 @@ Debug/Release. Any sim change that alters checksums is either a bug or an intent
 change that regenerates the corpus; say which. The corpus is listed in
 `tools/replay-corpus/corpus.txt`; `regen-replay-corpus` re-records every entry (replays carry the
 content hash) and rewrites the `.checksums`. A new corpus replay needs a manifest line.
+
+**Content is data (§5.10).** `content/*.toml` (loaded by `engine/content`, toml++) is the source
+of truth; `defaultContent()` in `engine/sim/src/content.cpp` is the minimal sim-test fixture
+(base kit, dojo, rounds) and the TOML a superset: new arenas, modes, power-ups and abilities are
+TOML only, while `kfm_content_tests` checks the base kit, arena 0 and mode 0 agree field by field.
+Adding content changes the content hash, so run `regen-replay-corpus` (existing checksums must
+not change). New def kind:
+struct in `engine/sim/include/kfm/sim/content/`, a `ContentDB` field, its `visit()`, a parser
+in `engine/content/src/loader.cpp` (a `Section` call per key; unknown keys are errors) and a
+TOML file. Decimals become `Fixed` by exact truncation (never `double`); speeds are per second
+in TOML. Arenas and modes are selected per match by `MatchConfig::arena`/`::mode` indices; the
+sim reads them as `content.arena`/`content.mode` from the `MatchContent` every system takes.
+Append arenas/modes, never reorder (indices are in replays and on the wire).
 
 **Gameplay is added through tables, not special cases (§5.5–5.8).**
 - Abilities: `AbilityDef` (content) + POD `AbilityState` per slot + an `AbilityBehavior` function

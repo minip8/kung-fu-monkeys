@@ -21,14 +21,16 @@
 //   [T+S+A, T+S+A+R), Idle again from T+S+A+R. A cooldown C allows the next
 //   activation on tick T+C at the earliest.
 //
-// Tags: after all slots ran, Dashing/PerfectDash and every phase tag granted by
-// the player's slot defs are cleared and re-derived from the current phases
-// (def.tagsStartup/Active/Recovery). PerfectDash marks the ticks on which the
-// perfect window [press, press + perfectWindowTicks) is open: the Dash slot is
-// Active and phaseTicks < perfectWindowTicks, plus tick press + window itself
-// when the press had a non-zero sub-tick (the window closes inside that tick;
-// the catch rule judges the exact instant, §5.11). HitStun and Eliminated are
-// never touched.
+// Buttons belong to slots, not kinds (v0.21): slot kAbilitySlotDash fires on
+// Button::Dash, kAbilitySlotThrow on Button::Throw and kAbilitySlotExtra on
+// Button::Ability1 (slotButton() in content.hpp), whatever kind the slot runs.
+//
+// Tags: after all slots ran, the kind tags (kAbilityKindTags) and every phase
+// tag granted by the player's slot defs are cleared and re-derived from the
+// current phases: def.tagsStartup/Active/Recovery plus what the kind's
+// AbilityBehavior::kindTags grants in a non-Idle slot (Dash: PerfectDash while
+// its perfect window may be open, abilities/dash.cpp). HitStun and Eliminated
+// are never touched.
 #include "kfm/sim/abilities/registry.hpp"
 #include "kfm/sim/systems.hpp"
 
@@ -78,28 +80,14 @@ constexpr Tags kSystemOwnedTags = Tags::of(Tag::HitStun) | Tag::Eliminated;
   return Tags{};
 }
 
-// The button whose press edge activates an ability of this kind.
-[[nodiscard]] constexpr uint8_t activationButton(AbilityKind kind) {
-  switch (kind) {
-    case AbilityKind::Dash:
-      return buttonBit(Button::Dash);
-    case AbilityKind::Throw:
-      return buttonBit(Button::Throw);
-    case AbilityKind::None:
-    case AbilityKind::kCount:
-      break;
-  }
-  return 0;
-}
-
-[[nodiscard]] const AbilityDef& defFor(const ContentDB& content, const AbilityState& st) {
-  return content.abilityAt(st.defIndex);
+[[nodiscard]] const AbilityDef& defFor(const MatchContent& content, const AbilityState& st) {
+  return content.db.abilityAt(st.defIndex);
 }
 
 // Advances through every phase whose duration has elapsed (a loop, so several
 // zero-length phases are skipped in one tick).
 void settle(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-            const AbilityBehavior& behavior, const ContentDB& content, EventSink& sink) {
+            const AbilityBehavior& behavior, const MatchContent& content, EventSink& sink) {
   while (st.phase != AbilityPhase::Idle && st.phaseTicks >= phaseDuration(def, st.phase)) {
     const AbilityPhase from = st.phase;
     const AbilityPhase to = nextPhase(from);
@@ -110,8 +98,9 @@ void settle(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
   }
 }
 
-void tickSlot(WorldState& s, Player& p, AbilityState& st, const ContentDB& content,
+void tickSlot(WorldState& s, Player& p, uint8_t slot, const MatchContent& content,
               EventSink& sink) {
+  AbilityState& st = p.abilities[slot];
   const AbilityDef& def = defFor(content, st);
   const AbilityBehavior& behavior = behaviorFor(def.kind);
 
@@ -122,7 +111,7 @@ void tickSlot(WorldState& s, Player& p, AbilityState& st, const ContentDB& conte
     settle(s, p, st, def, behavior, content, sink);
   }
 
-  const uint8_t button = activationButton(def.kind);
+  const uint8_t button = slotButton(slot);
   if (st.phase == AbilityPhase::Idle && button != 0 && (p.intent.pressed & button) != 0 &&
       st.cooldownTicks == 0 && s.rules.phase == MatchPhase::Playing &&
       behavior.canActivate(s, p, def)) {
@@ -138,30 +127,47 @@ void tickSlot(WorldState& s, Player& p, AbilityState& st, const ContentDB& conte
   if (st.phase != AbilityPhase::Idle) behavior.onTick(s, p, st, def, content, sink);
 }
 
-void rebuildTags(Player& p, const ContentDB& content) {
-  Tags owned = Tags::of(Tag::Dashing) | Tag::PerfectDash;
-  Tags granted{};
+// Power-up tags (Player::grantedTags, §5.8) belong to ModifierSystem: an
+// ability phase that also grants one never clears it.
+void rebuildTags(Player& p, const MatchContent& content) {
+  Tags owned = kAbilityKindTags;
   for (const AbilityState& st : p.abilities) {
     const AbilityDef& def = defFor(content, st);
     owned = owned | def.tagsStartup | def.tagsActive | def.tagsRecovery;
-    granted = granted | phaseTags(def, st.phase);
-    const bool windowOpen = st.phaseTicks < def.perfectWindowTicks ||
-                            (st.phaseTicks == def.perfectWindowTicks && st.activatedSubTick != 0);
-    if (def.kind == AbilityKind::Dash && st.phase == AbilityPhase::Active && windowOpen) {
-      granted.set(Tag::PerfectDash);
-    }
   }
-  owned.bits &= ~kSystemOwnedTags.bits;
-  granted.bits &= ~kSystemOwnedTags.bits;
-  p.tags.bits = (p.tags.bits & ~owned.bits) | granted.bits;
+  owned.bits &= ~(kSystemOwnedTags.bits | p.grantedTags.bits);
+  p.tags.bits = (p.tags.bits & ~owned.bits) | abilityPhaseTags(p, content).bits;
 }
 
 }  // namespace
 
-void abilitySystem(WorldState& s, const ContentDB& content, EventSink& sink) {
+Tags slotPhaseTags(const AbilityState& st, const MatchContent& content) {
+  const AbilityDef& def = defFor(content, st);
+  Tags granted = phaseTags(def, st.phase);
+  if (st.phase != AbilityPhase::Idle) granted = granted | behaviorFor(def.kind).kindTags(st, def);
+  granted.bits &= ~kSystemOwnedTags.bits;
+  return granted;
+}
+
+Tags abilityPhaseTags(const Player& p, const MatchContent& content) {
+  Tags granted{};
+  for (const AbilityState& st : p.abilities) {
+    granted = granted | slotPhaseTags(st, content);
+  }
+  return granted;
+}
+
+const AbilityState* slotGranting(const Player& p, const MatchContent& content, Tag tag) {
+  for (const AbilityState& st : p.abilities) {
+    if (slotPhaseTags(st, content).has(tag)) return &st;
+  }
+  return nullptr;
+}
+
+void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink) {
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
-    for (AbilityState& st : p.abilities) {
-      tickSlot(s, p, st, content, sink);
+    for (uint8_t slot = 0; slot < kAbilitySlots; ++slot) {
+      tickSlot(s, p, slot, content, sink);
     }
     rebuildTags(p, content);
   });

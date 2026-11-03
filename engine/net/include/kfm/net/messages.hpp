@@ -43,7 +43,9 @@ class BitWriter;
 namespace kfm::net {
 
 // Bumped on any change to a message layout. Exchanged in Hello.
-inline constexpr uint16_t kProtocolVersion = 1;
+// v2 (M4): MatchConfig in Welcome, Snapshot and MatchConfig carries arena
+// and mode. v3 (M4 lobby): and the per-match power-up set.
+inline constexpr uint16_t kProtocolVersion = 3;
 
 // Inputs per Input / AuthInputs message: the newest tick and up to 15 before
 // it (§6.3: the last 8–16 are resent every packet).
@@ -161,8 +163,7 @@ struct WelcomeMsg {
   sim::MatchConfig config{};
   Tick serverTick{};
   constexpr bool operator==(const WelcomeMsg& o) const {
-    return assignedSlots == o.assignedSlots && config.seed == o.config.seed &&
-           config.players == o.config.players && serverTick == o.serverTick;
+    return assignedSlots == o.assignedSlots && config == o.config && serverTick == o.serverTick;
   }
 };
 
@@ -208,8 +209,7 @@ struct MatchConfigMsg {
   sim::MatchConfig config{};
   Tick startTick{};
   constexpr bool operator==(const MatchConfigMsg& o) const {
-    return config.seed == o.config.seed && config.players == o.config.players &&
-           startTick == o.startTick;
+    return config == o.config && startTick == o.startTick;
   }
 };
 

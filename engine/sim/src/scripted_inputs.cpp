@@ -35,7 +35,7 @@ namespace {
 
 // Wander direction: the current stick direction (decoded intent), a random
 // new one now and then, and back toward the interior near a wall.
-[[nodiscard]] uint8_t wanderDirection(Rng& rng, const Player& p, const ContentDB& content,
+[[nodiscard]] uint8_t wanderDirection(Rng& rng, const Player& p, const MatchContent& content,
                                       const ScriptedInputConfig& config) {
   const Vec2 move = p.intent.move;
   uint8_t dir =
@@ -57,9 +57,74 @@ namespace {
   return dir;
 }
 
+// The nearest non-own banana in flight within `radius` that is approaching
+// `pos`, if any.
+[[nodiscard]] bool incomingBanana(const WorldState& s, const Player& p, Fixed radius, Vec2& at) {
+  const Vec2 pos = p.transform.pos;
+  uint64_t best = squareRaw(radius);
+  bool found = false;
+  s.boomerangs.forEachAlive([&](EntityId /*bid*/, const Boomerang& b) {
+    if (b.phase == BoomerangPhase::Grounded || b.owner == p.id) return;
+    const Vec2 rel = b.transform.pos - pos;
+    const uint64_t d = lengthSqRaw(rel);
+    if (d <= best && dot(rel, b.transform.vel) < Fixed::zero()) {
+      best = d;
+      at = b.transform.pos;
+      found = true;
+    }
+  });
+  return found;
+}
+
+// The third slot (v0.21): only when the loadout or a power-up put an ability
+// there, so a base-kit match draws nothing extra from the Rng.
+void useExtraAbility(Rng& rng, const WorldState& s, const MatchContent& content, const Player& p,
+                     uint64_t nearestEnemySq, const ScriptedInputConfig& config, PlayerInput& in) {
+  const AbilityState& slot = p.abilities[kAbilitySlotExtra];
+  const AbilityDef& def = content.db.abilityAt(slot.defIndex);
+  const uint8_t bit = buttonBit(Button::Ability1);
+  if (def.kind == AbilityKind::None || (p.prevButtons & bit) != 0 || !ready(slot)) return;
+  Vec2 threat{};
+  switch (def.kind) {
+    case AbilityKind::Blink:
+      // Blink away from an incoming banana (sideways to its path), or now and then.
+      if (incomingBanana(s, p, config.threatRadius, threat)) {
+        if (rng.below(256) < config.dodgePer256) {
+          in.buttons |= bit;
+          const uint8_t toward = directionTo(p.transform.pos, threat);
+          in.moveDir = static_cast<uint8_t>(toward + (rng.below(2) == 0 ? 64 : 192));
+          in.moveMag = 255;
+        }
+      } else if (oneIn(rng, config.abilityOneIn)) {
+        in.buttons |= bit;
+      }
+      break;
+    case AbilityKind::Slam: {
+      // Slam when an enemy or an incoming banana is within the reach.
+      const uint64_t reachSq = squareRaw(def.param0);
+      const bool target = nearestEnemySq <= reachSq || incomingBanana(s, p, def.param0, threat);
+      if (target && oneIn(rng, config.slamOneIn)) in.buttons |= bit;
+      break;
+    }
+    case AbilityKind::Parry:
+      // Parry an incoming banana that is close; the timing is left to luck.
+      if (incomingBanana(s, p, config.parryRadius, threat) && rng.below(256) < config.parryPer256) {
+        in.buttons |= bit;
+      }
+      break;
+    case AbilityKind::Dash:
+    case AbilityKind::Throw:
+      if (oneIn(rng, config.abilityOneIn)) in.buttons |= bit;
+      break;
+    case AbilityKind::None:
+    case AbilityKind::kCount:
+      break;
+  }
+}
+
 }  // namespace
 
-PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& content, PlayerId id,
+PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& content, PlayerId id,
                           const ScriptedInputConfig& config) {
   const Player* self = s.playerBySlot(id);
   if (self == nullptr) return PlayerInput{};
@@ -70,21 +135,24 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& conten
   in.moveMag = 255;
   in.moveDir = wanderDirection(rng, p, content, config);
 
-  // Out of ammo: go for the nearest banana lying within reach.
-  if (p.ammo == 0) {
-    uint64_t best = squareRaw(config.pickupRadius);
-    bool found = false;
-    Vec2 target{};
-    s.pickups.forEachAlive([&](EntityId /*kid*/, const Pickup& k) {
-      const uint64_t d = lengthSqRaw(k.pos - pos);
-      if (d <= best) {
-        best = d;
-        target = k.pos;
-        found = true;
-      }
-    });
-    if (found && target != pos) in.moveDir = directionTo(pos, target);
-  }
+  // Out of ammo: go for the nearest banana lying within reach. Holding a
+  // banana: go for the nearest power-up lying within reach (none in an arena
+  // without spawners, so this never changes a power-up-free match).
+  const bool wantBanana = p.ammo == 0;
+  const PickupKind wanted = wantBanana ? PickupKind::Banana : PickupKind::PowerUp;
+  uint64_t best = squareRaw(wantBanana ? config.pickupRadius : config.powerUpRadius);
+  bool found = false;
+  Vec2 target{};
+  s.pickups.forEachAlive([&](EntityId /*kid*/, const Pickup& k) {
+    if (k.kind != wanted) return;
+    const uint64_t d = lengthSqRaw(k.pos - pos);
+    if (d <= best) {
+      best = d;
+      target = k.pos;
+      found = true;
+    }
+  });
+  if (found && target != pos) in.moveDir = directionTo(pos, target);
 
   // Aim at the nearest other alive player, with a little jitter.
   uint64_t nearest = std::numeric_limits<uint64_t>::max();  // stays max with nobody else alive
@@ -132,7 +200,7 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& conten
       if (threat && rng.below(256) < config.dodgePer256) {
         in.buttons |= dashBit;
         if (threatPos != pos) in.moveDir = directionTo(pos, threatPos);
-      } else if (enemyClose && p.ammo >= content.dashAttack.minAmmo &&
+      } else if (enemyClose && p.ammo >= content.db.dashAttack.minAmmo &&
                  oneIn(rng, config.dashAttackOneIn)) {
         in.buttons |= dashBit;
         if (enemyAt != pos) in.moveDir = directionTo(pos, enemyAt);
@@ -140,12 +208,13 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& conten
         in.buttons |= dashBit;
       }
     }
+    useExtraAbility(rng, s, content, p, nearest, config, in);
   }
   if (in.buttons != 0) in.subTick = static_cast<uint8_t>(rng.below(256));
   return in;
 }
 
-InputFrame scriptedFrame(Rng& rng, const WorldState& s, const ContentDB& content,
+InputFrame scriptedFrame(Rng& rng, const WorldState& s, const MatchContent& content,
                          const ScriptedInputConfig& config) {
   InputFrame f;
   f.tick = s.tick;

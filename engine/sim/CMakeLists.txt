@@ -9,12 +9,25 @@ add_library(kfm_sim STATIC
   src/abilities/registry.cpp
   src/abilities/dash.cpp
   src/abilities/throw.cpp
+  src/abilities/blink.cpp
+  src/abilities/slam.cpp
+  src/abilities/parry.cpp
+  src/modes/mode_flow.cpp
+  src/modes/registry.cpp
+  src/modes/rounds.cpp
+  src/modes/deathmatch.cpp
+  src/modes/survival.cpp
   src/rules/table.cpp
   src/rules/catch.cpp
   src/rules/damage.cpp
   src/rules/dash_attack.cpp
   src/rules/auto_catch.cpp
   src/rules/pickup.cpp
+  src/rules/powerup.cpp
+  src/rules/shield.cpp
+  src/rules/hazard.cpp
+  src/rules/slam.cpp
+  src/rules/parry.cpp
   src/systems/rules.cpp
   src/systems/input.cpp
   src/systems/ability.cpp
