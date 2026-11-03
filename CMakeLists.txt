@@ -24,6 +24,7 @@ option(KFM_BUILD_TESTS "Build unit, scenario and determinism tests" ON)
 option(KFM_BUILD_APPS "Build the apps (replay runner, later client/server)" ON)
 option(KFM_HEADLESS "Headless build: no presentation or platform layer" OFF)
 option(KFM_CXX23_PROBE "Build the C++23 feature probe (architecture §9)" ON)
+option(KFM_WEBRTC "Build the WebRTC transport (libdatachannel / datachannel-wasm, §6.4)" ON)
 set(KFM_SANITIZE "" CACHE STRING "Sanitizers to enable, e.g. address,undefined")
 set(KFM_CXX_STANDARD 23 CACHE STRING "C++ standard for all targets (architecture §9)")
 

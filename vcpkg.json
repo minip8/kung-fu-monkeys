@@ -26,6 +26,15 @@
     {
       "name": "cgltf",
       "version>=": "1.15"
+    },
+    {
+      "name": "libdatachannel",
+      "version>=": "0.24.6",
+      "default-features": false,
+      "features": [
+        "ws"
+      ],
+      "platform": "!emscripten"
     }
   ],
   "builtin-baseline": "af839a44c17a927468f35c7a65e200aeba337da4"
