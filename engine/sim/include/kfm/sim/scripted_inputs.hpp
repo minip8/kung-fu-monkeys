@@ -2,7 +2,7 @@
 // (architecture §8, §9). It drives the replay recorder (`kfm_replay
 // record-scripted`), the bench, the determinism scenarios and later the
 // netsim with a deterministic, varied match, so it lives in engine/sim where
-// all of them can share it. Like the sim it is float-free and allocation-free;
+// all of them can share it. Like the sim it is fixed-point and allocation-free;
 // unlike a system it never writes WorldState. Its only side effect is on the
 // Rng the caller passes in, which must be separate from WorldState::rng.
 //
@@ -33,10 +33,10 @@ namespace kfm::sim {
 // Defaults are tuned so a 10-player match ends its first round within ~20 s
 // with every gameplay event present (scripted_match_scenario.cpp).
 struct ScriptedInputConfig {
-  uint16_t turnOneIn{60};   // per-tick chance 1/N of a new wander direction (~1 s)
-  uint16_t throwOneIn{30};  // per-tick chance 1/N of a throw when able
-  uint16_t dashOneIn{180};  // per-tick chance 1/N of a random dash when able
-  uint8_t dodgePer256{32};  // per-tick chance of dashing at an incoming banana
+  uint16_t turnOneIn{60};                  // per-tick chance 1/N of a new wander direction (~1 s)
+  uint16_t throwOneIn{30};                 // per-tick chance 1/N of a throw when able
+  uint16_t dashOneIn{180};                 // per-tick chance 1/N of a random dash when able
+  uint8_t dodgePer256{32};                 // per-tick chance of dashing at an incoming banana
   Fixed threatRadius{Fixed::fromInt(2)};   // how close an incoming banana must be
   Fixed pickupRadius{Fixed::fromInt(40)};  // how far an empty-handed player looks for ammo
   Fixed wallMargin{Fixed::fromInt(2)};     // turn back when this close to a wall

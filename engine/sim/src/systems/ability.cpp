@@ -147,9 +147,8 @@ void rebuildTags(Player& p, const ContentDB& content) {
     const AbilityDef& def = defFor(content, st);
     owned = owned | def.tagsStartup | def.tagsActive | def.tagsRecovery;
     granted = granted | phaseTags(def, st.phase);
-    const bool windowOpen =
-        st.phaseTicks < def.perfectWindowTicks ||
-        (st.phaseTicks == def.perfectWindowTicks && st.activatedSubTick != 0);
+    const bool windowOpen = st.phaseTicks < def.perfectWindowTicks ||
+                            (st.phaseTicks == def.perfectWindowTicks && st.activatedSubTick != 0);
     if (def.kind == AbilityKind::Dash && st.phase == AbilityPhase::Active && windowOpen) {
       granted.set(Tag::PerfectDash);
     }

@@ -5,8 +5,8 @@
 // (prevPos = pos, no timers advance), like the players: a banana still in
 // flight when the round is decided cannot hit or return to anyone during the
 // RoundEnded pause.
-#include "systems/angle_of.hpp"
 #include "kfm/sim/systems.hpp"
+#include "systems/angle_of.hpp"
 
 #include <algorithm>
 #include <cstdint>

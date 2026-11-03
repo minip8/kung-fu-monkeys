@@ -38,7 +38,8 @@ namespace {
 [[nodiscard]] uint8_t wanderDirection(Rng& rng, const Player& p, const ContentDB& content,
                                       const ScriptedInputConfig& config) {
   const Vec2 move = p.intent.move;
-  uint8_t dir = move == Vec2::zero() ? static_cast<uint8_t>(rng.below(256)) : toInput8(angleOf(move));
+  uint8_t dir =
+      move == Vec2::zero() ? static_cast<uint8_t>(rng.below(256)) : toInput8(angleOf(move));
   if (oneIn(rng, config.turnOneIn)) dir = static_cast<uint8_t>(rng.below(256));
 
   const Vec2 pos = p.transform.pos;

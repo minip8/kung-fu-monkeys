@@ -3,10 +3,9 @@
 // every kind of gameplay event, and a memcpy rollback re-simulates to the
 // same checksums. Inputs come from the shared generator in
 // kfm/sim/scripted_inputs.hpp, the same one `kfm_replay record-scripted` uses.
-#include "scenario_util.hpp"
-
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
+#include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 

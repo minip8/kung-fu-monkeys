@@ -109,9 +109,9 @@ TEST_CASE("a throw at a wall bounces, returns and is auto-caught", "[scenario][p
     if (k == 2) CHECK(s.playerBySlot(kP0)->ammo == 0);  // banana in the air
   }
 
-  CHECK(kindsOf(log, {EventKind::BoomerangThrown, EventKind::BoomerangBounced,
-                      EventKind::BoomerangCaught, EventKind::PlayerHit,
-                      EventKind::BoomerangGrounded}) ==
+  CHECK(kindsOf(log,
+                {EventKind::BoomerangThrown, EventKind::BoomerangBounced,
+                 EventKind::BoomerangCaught, EventKind::PlayerHit, EventKind::BoomerangGrounded}) ==
         std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::BoomerangBounced,
                                EventKind::BoomerangCaught});
   CHECK(phaseAtBounce == BoomerangPhase::Outbound);
@@ -168,10 +168,10 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
       runTicks(s, f, 1, content, roundLog);
     }
 
-    CHECK(kindsOf(roundLog, {EventKind::BoomerangThrown, EventKind::PlayerHit,
-                             EventKind::PlayerEliminated, EventKind::BoomerangGrounded,
-                             EventKind::PickupSpawned, EventKind::RoundEnded,
-                             EventKind::MatchEnded, EventKind::BoomerangCaught}) ==
+    CHECK(kindsOf(roundLog,
+                  {EventKind::BoomerangThrown, EventKind::PlayerHit, EventKind::PlayerEliminated,
+                   EventKind::BoomerangGrounded, EventKind::PickupSpawned, EventKind::RoundEnded,
+                   EventKind::MatchEnded, EventKind::BoomerangCaught}) ==
           (round < content.mode.roundsToWin
                ? std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
                                         EventKind::PlayerEliminated, EventKind::BoomerangGrounded,

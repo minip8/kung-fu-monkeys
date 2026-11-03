@@ -2,8 +2,8 @@
 // checked against brute force, swept circle narrowphase with time of impact.
 // Reads state only; every scratch array is local to the call (no heap, no
 // state in WorldState).
-#include "systems/collision_internal.hpp"
 #include "kfm/sim/systems.hpp"
+#include "systems/collision_internal.hpp"
 
 #include <algorithm>
 #include <array>
