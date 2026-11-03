@@ -10,7 +10,8 @@
 
 namespace kfm::sim {
 
-// Prio 10, rules/catch.cpp: perfect-dash catch judged against press sub-tick (§5.11).
+// Prio 10/11, rules/catch.cpp: perfect-dash catch judged against press sub-tick (§5.11);
+// declines at ammoMax (v0.16).
 bool catchBoomerang(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
                     const Contact& contact, EventSink& sink);
 // Prio 30, rules/damage.cpp: hp loss, HitStun, elimination, banana grounds unless pierce.

@@ -16,7 +16,9 @@ constexpr Tags kGone = Tags::of(Tag::Eliminated);
 // The perfect catch is two rows: any banana in flight that is not the
 // catcher's, and the catcher's own banana only once it is returning. An own
 // outbound banana passes through its thrower (as it does without a dash), so
-// throwing while dashing never catches the banana just thrown.
+// throwing while dashing never catches the banana just thrown. The handler
+// declines when the catcher is already at ammoMax (v0.16): row 30 then hits a
+// full-ammo dasher with a non-own banana, row 40 absorbs an own returning one.
 constexpr std::array<InteractionRule, 5> kRules = {{
     // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},

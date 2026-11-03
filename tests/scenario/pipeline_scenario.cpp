@@ -51,11 +51,12 @@ struct DashPress {
 // banana spawns on tick 2 and closes at 16 u/s). Player 0 faces +x with the
 // stick idle and presses Dash (along facing, toward the banana) on
 // relative tick `press.tick` at `press.subTick`. Without a dash the banana
-// hits on relative tick 25.
-EventLog duel(DashPress press, WorldState* out = nullptr) {
+// hits on relative tick 25. Player 0 holds `catcherAmmo` bananas (default
+// none: a perfect catch needs room below ammoMax, §5.6 v0.16).
+EventLog duel(DashPress press, WorldState* out = nullptr, uint8_t catcherAmmo = 0) {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(31, 0b11);
-  placePlayer(s, kP0, at(-4, 0));
+  placePlayer(s, kP0, at(-4, 0)).ammo = catcherAmmo;
   placePlayer(s, kP1, at(4, 0));
   EventLog log;
   for (int k = 0; k < 90; ++k) {
@@ -206,7 +207,7 @@ TEST_CASE("a perfect dash catches the incoming banana; mistimed dashes get hit",
   const ContentDB& content = defaultContent();
   REQUIRE(content.player.ammoMax == 1);
 
-  SECTION("well timed: caught, no hit, ammo stays at the cap") {
+  SECTION("well timed: caught, no hit, the catcher gains the banana") {
     WorldState s;
     const EventLog log = duel(DashPress{18, 0}, &s);
     const SimEvent& caught = onlyEvent(log, EventKind::BoomerangCaught);
@@ -215,11 +216,17 @@ TEST_CASE("a perfect dash catches the incoming banana; mistimed dashes get hit",
     CHECK(caught.entity == onlyEvent(log, EventKind::BoomerangThrown).entity);
     CHECK(countEvents(log, EventKind::PlayerHit) == 0);
     CHECK(countEvents(log, EventKind::RoundEnded) == 0);
-    // The catcher held a banana already: ammoMax caps it at 1.
-    CHECK(playerAt(s, kP0).ammo == content.player.ammoMax);
+    CHECK(playerAt(s, kP0).ammo == 1);
     // The thrower's banana is gone; it stays empty-handed.
     CHECK(playerAt(s, kP1).ammo == 0);
     CHECK(s.boomerangs.empty());
+  }
+  SECTION("well timed at full ammo: the catch declines and the dasher is hit") {
+    const EventLog log = duel(DashPress{18, 0}, nullptr, content.player.ammoMax);
+    CHECK(countEvents(log, EventKind::PlayerDashed) == 1);
+    CHECK(countEvents(log, EventKind::BoomerangCaught) == 0);
+    CHECK(onlyEvent(log, EventKind::PlayerHit).player == kP0);
+    CHECK(onlyEvent(log, EventKind::RoundEnded).player == kP1);
   }
   SECTION("too early: the window has closed when the banana arrives") {
     const EventLog log = duel(DashPress{8, 0});

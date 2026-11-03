@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.15 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.16 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -46,6 +46,8 @@ arena camera, interpolation/snap/smoothing constants, cosmetic height curves, fa
 palette and placeholder meshes (§7); GL-only sokol backends with hand-written GLSL and a vendored
 glad loader, GL 4.3 core natively (§7, §10); the input sampler's tap, sub-tick and aim semantics
 (§5.4); the M2 dependency set and how each is sourced (§10); the client smoke test (§9).
+v0.16 changes: a perfect catch needs room below `ammoMax`; at full ammo the catch declines and a
+non-own banana hits the dasher (§5.6, §12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -335,7 +337,7 @@ or pick up again.
 
 ```
 prio  A                          B                              handler
- 10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang
+ 10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
  20   Player[Shielded]           Boomerang[InFlight, !own]      BreakShield
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
@@ -379,6 +381,12 @@ are rule-table decisions, not code changes. M1 decides the first: the catch is t
 `Player[PerfectDash] × Boomerang[Returning, own]` (prio 11). An own outbound banana passes
 through its thrower with or without a dash; otherwise a dash (22 u/s) that outruns the banana
 it just threw (16 u/s) would catch it straight back.
+The catch also needs room for the banana (v0.16): `CatchBoomerang` declines when the catcher
+already holds `ammoMax`, checked before the time window. The scan then falls through as for a
+mistimed dash: a non-own banana in flight reaches row 30 and hits the full-ammo dasher (and
+grounds into a pickup), an own returning banana reaches row 40 and is auto-caught (absorbed even
+at full ammo, as without a dash). A perfect catch therefore always gains a banana, and the dash
+is a defence only for a player who has thrown.
 
 ### 5.7 Boomerang model
 
@@ -1054,20 +1062,20 @@ baseline moved to C++23 (§9).
   constants, height curves, facing and effects (§6.8, §6.9, §7); GL-only sokol backends with
   hand-written GLSL, vendored glad loader, GL 4.3 core natively (§7, §10); input sampler
   semantics and default bindings (§5.4); dependency sourcing (§10).
-- Open (M2 feel tuning): a perfect catch at full ammo destroys the banana, so with `ammoMax = 1`
-  the thrower stays empty-handed until it finds a pickup. Alternatives: catch only below
-  `ammoMax`, or drop the caught banana as a pickup. Numbers from `kfm_replay stats` over 20
-  scripted matches each (v0.15): 15% (2p), 30% (4p) and 40% (10p) of perfect catches happen at
-  full ammo; at 4p about half of those throwers are eliminated before regaining ammo and the
-  rest wait a median 1.1 s (p90 6 s), about the same as after any catch, because the thrower
-  loses its banana either way. The round's banana supply (held + in flight + pickups) never
-  reaches zero with two or more players alive (a hit grounds the hitting banana; a full-ammo
-  catcher still holds one), pinned by `banana_supply_scenario.cpp`; the cost of the current rule
-  is scarcity (lowest supply per player in a round: median 1.0 at 2p, 0.5 at 4p, 0.3 at 10p).
-  Recommendation, not yet applied: drop the caught banana as a pickup at the contact point
-  (reusing the grounding path of `damagePlayer`, still emitting `BoomerangCaught{Perfect}`), which
-  keeps the dash a defence at any ammo and gives the thrower a chance to win it back; "catch
-  only below `ammoMax`" would send 30–40% of today's perfect catches through to `DamagePlayer`.
+- Decided (v0.16): catch only below `ammoMax`; a full-ammo perfect dash into a non-own banana
+  takes the hit (§5.6). The record of the alternatives, as it stood open in v0.15: a perfect
+  catch at full ammo destroyed the banana, so with `ammoMax = 1` the thrower stayed empty-handed
+  until it found a pickup. Alternatives: catch only below `ammoMax`, or drop the caught banana
+  as a pickup. Numbers from `kfm_replay stats` over 20 scripted matches each (v0.15): 15% (2p),
+  30% (4p) and 40% (10p) of perfect catches happened at full ammo; at 4p about half of those
+  throwers were eliminated before regaining ammo and the rest waited a median 1.1 s (p90 6 s),
+  about the same as after any catch, because the thrower loses its banana either way. The
+  round's banana supply (held + in flight + pickups) never reached zero with two or more
+  players alive, pinned by `banana_supply_scenario.cpp`; the cost of the old rule was scarcity
+  (lowest supply per player in a round: median 1.0 at 2p, 0.5 at 4p, 0.3 at 10p). The v0.15
+  recommendation was to drop the caught banana as a pickup at the contact point; the owner chose
+  "catch only below `ammoMax`", which sends the 30–40% of former full-ammo catches through to
+  `DamagePlayer` (the hit grounds that banana into a pickup, so the supply floor still holds).
   First feel-tuning pass (v0.15): no content change. Catch attempts convert at 82–86% and
   almost every miss is a press stamped a fraction of a tick after impact, not a short window;
   short rounds (4p median 4.6 s) come from the scripted bot's 2 Hz near-perfect throwing, not

@@ -20,11 +20,13 @@ constexpr uint8_t kAimRight = 0;
 
 // Player 1 throws at player 0 across the arena's x axis; player 0 faces the
 // throw and presses Dash (toward the banana) on the first tick the banana is
-// within `dashGap` of it. Returns the events of the whole exchange.
-EventLog throwAndDash(Fixed dashGap) {
+// within `dashGap` of it. Player 0 holds `catcherAmmo` bananas (default none:
+// a perfect catch needs room below ammoMax, §5.6 v0.16). Returns the events of
+// the whole exchange.
+EventLog throwAndDash(Fixed dashGap, uint8_t catcherAmmo = 0) {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(31, 0b11);
-  placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::zero()});
+  placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::zero()}).ammo = catcherAmmo;
   placePlayer(s, PlayerId{1}, Vec2{Fixed::fromInt(4), Fixed::zero()});
 
   InputFrame f = frameFor(s);
@@ -76,6 +78,22 @@ TEST_CASE("a dash pressed too early is still dashing but gets hit", "[scenario][
   // At a gap of 6 the banana arrives ~8 ticks into the dash: past the perfect
   // window, so the catch declines and the hit applies.
   const EventLog log = throwAndDash(Fixed::fromInt(6));
+  CHECK(countEvents(log, EventKind::PlayerDashed) == 1);
+  CHECK(countEvents(log, EventKind::BoomerangCaught) == 0);
+  const SimEvent* hit = findEvent(log, EventKind::PlayerHit);
+  REQUIRE(hit != nullptr);
+  CHECK(hit->player == PlayerId{0});
+  CHECK(countEvents(log, EventKind::PlayerEliminated) == 1);
+  const SimEvent* ended = findEvent(log, EventKind::RoundEnded);
+  REQUIRE(ended != nullptr);
+  CHECK(ended->player == PlayerId{1});
+}
+
+TEST_CASE("a well-timed dash at full ammo declines the catch and is hit", "[scenario][catch]") {
+  // The same timing as the catch above, but player 0 already holds ammoMax
+  // bananas: the catch rule declines (§5.6, v0.16) and the scan falls through
+  // to the damage rule.
+  const EventLog log = throwAndDash(Fixed::fromInt(2), defaultContent().player.ammoMax);
   CHECK(countEvents(log, EventKind::PlayerDashed) == 1);
   CHECK(countEvents(log, EventKind::BoomerangCaught) == 0);
   const SimEvent* hit = findEvent(log, EventKind::PlayerHit);

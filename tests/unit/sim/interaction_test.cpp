@@ -94,15 +94,34 @@ TEST_CASE("perfect catch inside the window takes the banana and an ammo", "[sim]
   CHECK(sink.events[0].tick == s.tick);
 }
 
-TEST_CASE("perfect catch ammo is capped at ammoMax", "[sim][interaction]") {
+TEST_CASE("a perfect catch at ammoMax declines and falls through", "[sim][interaction]") {
+  // §5.6 (v0.16): the catch needs room below ammoMax. Declining keeps the
+  // scan going: a non-own banana in flight reaches the damage row, an own
+  // returning banana the auto-catch row (absorbed even at full ammo).
   WorldState s = makePlayingWorld(1, 0b11);
   REQUIRE(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
-  const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
   givePerfectDash(s, kP0, s.tick, 0);
-  const EventSink sink =
-      resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
-  CHECK(countEvents(sink, EventKind::BoomerangCaught) == 1);
-  CHECK(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
+
+  SECTION("non-own banana in flight: the full-ammo dasher is hit") {
+    const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
+    const EventSink sink =
+        resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
+    CHECK(countEvents(sink, EventKind::BoomerangCaught) == 0);
+    CHECK(countEvents(sink, EventKind::PlayerHit) == 1);
+    CHECK(playerAt(s, kP0).tags.has(Tag::Eliminated));
+    REQUIRE(s.boomerangs.isAlive(banana));
+    CHECK(s.boomerangs.items[banana.index].phase == BoomerangPhase::Grounded);
+  }
+  SECTION("own returning banana: auto-caught, not perfect") {
+    const EntityId banana =
+        spawnBanana(s, kP0, Vec2::zero(), Vec2::zero(), BoomerangPhase::Returning);
+    const EventSink sink =
+        resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
+    REQUIRE(countEvents(sink, EventKind::BoomerangCaught) == 1);
+    CHECK(firstEvent(sink, EventKind::BoomerangCaught).a == static_cast<uint32_t>(CatchHow::Auto));
+    CHECK_FALSE(s.boomerangs.isAlive(banana));
+    CHECK(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
+  }
 }
 
 TEST_CASE("perfect window edges are judged against press sub-tick and tHit", "[sim][interaction]") {
@@ -129,6 +148,7 @@ TEST_CASE("perfect window edges are judged against press sub-tick and tHit", "[s
   for (const Case& c : cases) {
     DYNAMIC_SECTION(c.name) {
       WorldState s = makePlayingWorld(3, 0b11);
+      playerAt(s, kP0).ammo = 0;
       const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
       givePerfectDash(s, kP0, s.tick.plus(-c.pressTicksAgo), c.pressSubTick);
       const EventSink sink =
@@ -170,6 +190,7 @@ TEST_CASE("a perfect dash passes through an own outbound banana", "[sim][interac
 
 TEST_CASE("a perfect dash catches an own returning banana as Perfect", "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
+  playerAt(s, kP0).ammo = 0;
   const EntityId banana =
       spawnBanana(s, kP0, Vec2::zero(), Vec2::zero(), BoomerangPhase::Returning);
   givePerfectDash(s, kP0, s.tick, 0);
@@ -375,6 +396,8 @@ TEST_CASE("two perfect dashers on one banana: earlier press wins, then lower slo
 
 TEST_CASE("earlier time of impact beats an earlier press", "[sim][interaction]") {
   WorldState s = makePlayingWorld(5, 0b111);
+  playerAt(s, kP0).ammo = 0;
+  playerAt(s, kP1).ammo = 0;
   const EntityId banana = spawnBanana(s, kP2, Vec2::zero(), Vec2::zero());
   givePerfectDash(s, kP0, s.tick.plus(-1), 0);  // pressed a tick earlier
   givePerfectDash(s, kP1, s.tick, 0);
