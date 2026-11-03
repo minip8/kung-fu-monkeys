@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.24 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.25 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -179,6 +179,12 @@ future ability button stay free), saved between runs (SDL's preference directory
 window shows the server's `MatchConfig` read-only with the roster, and the match-over banner the
 announced next match. The HUD scoreboard becomes one card per slot (palette colour, label, score,
 power-up timers), the same card the lobby draws per slot (§7).
+v0.25 changes: M4 landed (§11). Integration decisions: `defaultContent()` is the minimal
+headless fixture and the TOML under `content/` is a superset extended as data only (§5.10);
+state fields added for a feature are visited unconditionally and the corpus is regenerated
+rather than kept checksum-stable through conditional encodings (§5.2, §9); toml++ headers only
+from the vcpkg port, Windows links vcpkg statically, autotools for the vcpkg `alsa` port (§10);
+clang-format 19.1.7 is the formatter of record (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2082,6 +2088,36 @@ roster reaches the world one tick after start), bots that yield a slot to a huma
 id constant, retracted events undone on screen, reconnect-with-token from the UI, a server-chosen
 match config, multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
 a human playtest over a real link.
+
+Progress: M4 landed in v0.25. Content is data: `engine/content` parses the TOML under `content/`
+(toml++ 3.4.0, exact decimal to Q16.16, names resolved to indices, validation with file:line
+diagnostics) into the same `ContentDB`, embedded into every binary and mirrored next to the
+executables, hot-reloaded in local play; `MatchConfig{seed, players, arena, mode, powerUps}` rides
+in replays (format 3), the join messages (protocol 3) and every host's flags (v0.18, v0.24).
+Six power-ups through `PowerUpDef` grants (stat, ability override, projectile, tag) resolved by
+`ModifierSystem` with owned `grantedTags`, power-up pickups from arena spawners, the shield rows
+(v0.20); Blink, Slam and Parry as a third slot/button through content loadouts or an override,
+with their rule rows and the slam reach contact (v0.21); interior walls and pit/slow hazards
+through one swept circle-vs-statics path, four new arenas (v0.22); rounds, deathmatch and
+survival through a `RulesSystem` mode table with respawn and spawn protection (v0.23); the lobby
+settings panel with an arena preview, per-match power-up set and saved settings, the online
+read-only view (v0.24); event-driven VFX and procedural audio over SDL3 (v0.19). Exit criterion
+("content added without touching system code"): `dojo_powerups`, `pillars`, `corridors`,
+`island`, the three modes and the six power-ups are TOML files plus loader keys; adding another
+of any of them is a file. Verified: GCC 15 Debug (31 ctest targets incl. the 14-entry corpus,
+both soak gates and the real-socket tests), GCC 15 Release, Emscripten 6 (28 tests under node,
+the browser page at 60 fps on `pillars`/`deathmatch` with audio open and 0 console errors),
+netsim 8 clients on `pillars`/`deathmatch` and 6 on `dojo_powerups`/`rounds_slam` under loss
+with 0 mismatches; MSVC, Apple Clang, Clang 21 and ASan+UBSan on CI. Bench (Release, 10
+players, step only): 1.23 µs/tick on `dojo`/`rounds` (1.15 before M4), 2.25 µs/tick on
+`pillars`/`deathmatch`, 1.22 µs/tick on `dojo_powerups`/`rounds_slam`. Replay checksums changed
+in M4 (the content hash in every header; `MatchRules` counters, banana/pickup modifier fields, a
+third ability slot and knockback in the state); gameplay of the default match is unchanged, which
+each state addition was checked against before the corpus was regenerated. Follow-ups: a
+power-up that grants an ability in shipped content, `--powerups` on `kfm_netsim` and the render
+probe, a protocol/replay version bump for the M4 snapshot layout (peers already match on content
+hash and build id), convex arena shapes, team modes (§12), rooting during Blink/Slam startup,
+music and distance attenuation, listening to the mix on a machine with audio, a human playtest.
 
 Progress: M2 landed in v0.15 (pending human playtest of the exit criterion). The client opens
 an SDL3 window with a GL 4.3 core context (4.1 on macOS) through the vendored glad loader,

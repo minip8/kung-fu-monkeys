@@ -9,18 +9,20 @@ bananas that fly like boomerangs; dash is the base ability; a perfectly timed da
 banana). C++23 engine, deterministic simulation, rollback netcode, browser as the primary shipping
 client, with scripted bots and ML-trained agents planned.
 
-Milestones M0 (skeleton), M1 (headless sim), M2 (playable local client) and M3 (netcode) have
-landed: build system, `engine/core`, the
-full `engine/sim` tick pipeline (FFA rounds, Dash, Throw, banana flight and return, swept
-collision, the interaction rules table, modifiers, lifecycle) over `constexpr` content, a
-scripted input generator, `kfm_replay` (record, verify, bench) and the determinism gate over a
-corpus of empty and scripted replays; `engine/platform` (SDL3 window + GL context, sokol_gfx,
-Dear ImGui, the SDL-free input sampler), `engine/presentation` (float math, fixed arena camera,
-RenderState builder, procedural meshes, skinning, the sokol renderer) and `apps/client` (local
-play, bots, HUD, F1 overlay, the browser page); `engine/net` (`ITransport`, loopback + emulator,
-message layer, `NetServer`, `NetClient` with rollback and clock sync, `WebRtcTransport`),
-`apps/server`, `apps/netsim`, `apps/net-probe` and the client's `--connect` mode. Next is M4
-(content). `docs/architecture.md` is the
+Milestones M0 (skeleton), M1 (headless sim), M2 (playable local client), M3 (netcode) and M4
+(content) have landed: build system, `engine/core`, the
+full `engine/sim` tick pipeline (modes, Dash, Throw, Blink, Slam, Parry, banana flight and
+return, swept collision against entities and arena statics, the interaction rules table,
+power-ups and modifiers, lifecycle) over `ContentDB`, a scripted input generator, `kfm_replay`
+(record, verify, bench) and the determinism gate over a corpus of empty and scripted replays;
+`engine/content` (the TOML loader behind `content/`, embedded into every binary, hot reload);
+`engine/platform` (SDL3 window + GL context, audio device, sokol_gfx, Dear ImGui, the SDL-free
+input sampler), `engine/presentation` (float math, fixed arena camera, RenderState builder,
+event-driven effects and procedural sound, procedural meshes, skinning, the sokol renderer) and
+`apps/client` (local play with the lobby settings panel, bots, HUD, F1 overlay, the browser
+page); `engine/net` (`ITransport`, loopback + emulator, message layer, `NetServer`, `NetClient`
+with rollback and clock sync, `WebRtcTransport`), `apps/server`, `apps/netsim`, `apps/net-probe`
+and the client's `--connect` mode. Next is M5 (bots and ML). `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
