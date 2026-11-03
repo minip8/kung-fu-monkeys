@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.11 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.12 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -23,6 +23,10 @@ change, `HitStun` tag, banana grounds on a non-lethal hit unless piercing, `Play
 v0.11 changes: presentation flipped from pre-rendered 2.5D sprites to real-time low-poly 3D on
 the same strictly 2D sim (§2, §7, §10, §11, §12). Height stays cosmetic and the shadow still
 marks the hitbox.
+v0.12 changes: M1 interfaces pinned (§5.3, §5.5, §5.6, Appendix A). `step()` takes the
+`ContentDB` explicitly; the ability and rule tables are `constexpr` (no startup registration);
+hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, keep scanning") and
+rules gain an ownership field and a boomerang-phase mask.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -189,7 +193,7 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
 ### 5.3 Tick pipeline
 
 ```
-step(WorldState& s, const InputFrame& in, EventSink& events):
+step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& events):
    1. RulesSystem::preTick      round start/end, spawn waves, pickup spawners
    2. InputSystem               decode PlayerInput → Intent; press-edge detection
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
@@ -242,8 +246,8 @@ on a tick where a button edge occurred, so repeated-input prediction is unaffect
 - `AbilityState` (per slot, POD): `defIndex`, `phase`, `phaseTicks`, `cooldownTicks`, a small
   `scratch` union for kind-specific data.
 - `AbilityBehavior` registry: a table indexed by `AbilityKind` holding function pointers
-  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. Behaviours are registered at
-  startup. Adding an ability touches a new behaviour file, a content def, one registry line and
+  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. The table is a `constexpr`
+  array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
   a scenario test.
 - Players have N ability slots. Base kit is {Dash, Throw}. Power-ups may override a slot
   (for example a teleport dash) or add a temporary slot.
@@ -850,25 +854,33 @@ struct Pool {
 };
 
 // sim/step.hpp
-void step(WorldState&, const InputFrame&, EventSink&);
+void step(WorldState&, const InputFrame&, const ContentDB&, EventSink&);
 uint32_t checksum(const WorldState&);         // via visitor, not raw bytes
 
 // sim/abilities/registry.hpp
 struct AbilityBehavior {
   bool (*canActivate)(const WorldState&, const Player&, const AbilityDef&);
-  void (*onActivate)(WorldState&, Player&, AbilityState&, const AbilityDef&, EventSink&);
-  void (*onTick)(WorldState&, Player&, AbilityState&, const AbilityDef&, EventSink&);
-  void (*onPhaseChange)(WorldState&, Player&, AbilityState&, Phase from, Phase to, EventSink&);
-  void (*onEnd)(WorldState&, Player&, AbilityState&, const AbilityDef&, EventSink&);
+  void (*onActivate)(WorldState&, Player&, AbilityState&, const AbilityDef&, const ContentDB&,
+                     EventSink&);
+  void (*onTick)(WorldState&, Player&, AbilityState&, const AbilityDef&, const ContentDB&,
+                 EventSink&);
+  void (*onPhaseChange)(WorldState&, Player&, AbilityState&, const AbilityDef&,
+                        AbilityPhase from, AbilityPhase to, const ContentDB&, EventSink&);
+  void (*onEnd)(WorldState&, Player&, AbilityState&, const AbilityDef&, const ContentDB&,
+                EventSink&);
 };
-const AbilityBehavior& behaviorFor(AbilityKind);   // table built once at startup
+const AbilityBehavior& behaviorFor(AbilityKind);   // constexpr table indexed by kind
 
 // sim/rules/interaction.hpp
 struct InteractionRule {
   uint8_t  priority;
-  Kind     kindA; Tags requireA; Tags forbidA;
-  Kind     kindB; Tags requireB; Tags forbidB;
-  void   (*resolve)(WorldState&, EntityId a, EntityId b, const Contact&, EventSink&);
+  EntityKind kindA; Tags requireA; Tags forbidA;
+  EntityKind kindB; Tags requireB; Tags forbidB;
+  uint8_t    phaseMaskB;                   // BoomerangPhase bits when B is a boomerang (0 = any)
+  Ownership  ownership;                    // Any, Own, NotOwn: A vs. the owner of B
+  // false = did not apply, keep scanning (a mistimed catch falls through to damage)
+  bool     (*resolve)(WorldState&, const ContentDB&, EntityId a, EntityId b, const Contact&,
+                      EventSink&);
 };
 std::span<const InteractionRule> interactionRules();  // sorted by priority
 ```
