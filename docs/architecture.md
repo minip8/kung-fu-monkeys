@@ -876,8 +876,10 @@ art is identical up to the export step, and nothing below the presentation layer
   scripted matches and reports round lengths, throws, hits, dashes, perfect and auto catches,
   catch attempts and their conversion, `tHit − pressTime` for every attempt, throw-to-outcome
   times, time spent without ammo and the banana supply floor. The catch inputs exist only
-  inside `step()`, so the tool runs the ten systems itself and inspects the contact list before
-  `InteractionSystem`; a shadow world advanced by `step()` is compared by checksum every tick so
+  inside `step()`, so the tool runs the ten systems itself and resolves the contact list one
+  contact at a time in `InteractionSystem`'s order, judging each against the state the rules
+  table sees (a contact whose banana or player an earlier contact of the tick removed or
+  eliminated is not counted, and nothing counts outside `Playing`); a shadow world advanced by `step()` is compared by checksum every tick so
   the mirror cannot drift from the sim, and no instrumentation lives in `engine/sim`.
 - Browser check (v0.15): `tools/web/serve.py` serves the wasm build (`--page`, optional
   COOP/COEP headers) and `tools/web/check_browser.py` drives it in headless Chromium through

@@ -97,11 +97,15 @@ struct Stats {
   void merge(const Stats& o);
 };
 
-// Watches one match. Feed it observeContacts() from statsStep() and
-// afterStep() after every tick, then finish() once.
+// Watches one match. statsStep() feeds it beginContacts() once per tick and
+// observeContact() for every contact InteractionSystem actually consults, in
+// its resolution order and against the state at that moment; then
+// afterStep() after every tick and finish() once.
 class StatsCollector {
  public:
-  void observeContacts(const sim::WorldState& s, const sim::Contacts& contacts);
+  // Records the pre-interaction state afterStep() compares against.
+  void beginContacts(const sim::WorldState& s);
+  void observeContact(const sim::WorldState& s, const sim::Contact& c);
   void afterStep(const sim::WorldState& s, const sim::EventSink& sink);
   void finish(const sim::WorldState& s);
   [[nodiscard]] const Stats& stats() const { return stats_; }
@@ -122,7 +126,7 @@ class StatsCollector {
   uint32_t roundPlayers_{0};
   uint32_t roundMinSupply_{0};
   bool roundExhausted_{false};
-  // This tick, filled by observeContacts and consumed by afterStep.
+  // This tick, filled by beginContacts and consumed by afterStep.
   std::array<uint8_t, sim::kMaxPlayers> ammoBefore_{};
   std::map<uint32_t, PlayerId> ownerBefore_;
   // Throw tick of every banana in flight, keyed by entity (index << 16 | generation).

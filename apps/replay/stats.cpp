@@ -7,7 +7,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <optional>
+#include <tuple>
 #include <utility>
 
 namespace kfm::replay {
@@ -34,6 +36,48 @@ void mergeWait(Stats::ThrowerWait& to, const Stats::ThrowerWait& from) {
   append(to.regainSeconds, from.regainSeconds);
   to.eliminatedFirst += from.eliminatedFirst;
   to.roundEndedFirst += from.roundEndedFirst;
+}
+
+// InteractionSystem's resolution order (systems/interaction.cpp, §5.11):
+// time of impact, then the earlier dash press of a PerfectDash holder, then
+// pool indices, then list position; keys are taken from the state before any
+// contact resolves. Returns indices into contacts.items.
+[[nodiscard]] std::vector<uint16_t> interactionOrder(const WorldState& s,
+                                                     const Contacts& contacts) {
+  using Key = std::tuple<Fixed, uint64_t, uint8_t, uint16_t, uint8_t, uint16_t, uint16_t>;
+  std::vector<Key> keys;
+  keys.reserve(contacts.count);
+  for (uint16_t i = 0; i < contacts.count; ++i) {
+    const Contact& c = contacts.items[i];
+    uint64_t press = std::numeric_limits<uint64_t>::max();
+    if (c.kindA == EntityKind::Player) {
+      const Player* p = s.players.get(c.a);
+      if (p != nullptr && p->tags.has(Tag::PerfectDash)) {
+        const AbilityState& dash = p->abilities[kAbilitySlotDash];
+        press = (static_cast<uint64_t>(dash.activatedTick.value) << 8) | dash.activatedSubTick;
+      }
+    }
+    keys.emplace_back(c.tHit, press, static_cast<uint8_t>(c.kindA), c.a.index,
+                      static_cast<uint8_t>(c.kindB), c.b.index, i);
+  }
+  std::ranges::sort(keys);
+  std::vector<uint16_t> order;
+  order.reserve(keys.size());
+  for (const Key& k : keys)
+    order.push_back(std::get<6>(k));
+  return order;
+}
+
+[[nodiscard]] bool entityAlive(const WorldState& s, EntityKind kind, EntityId id) {
+  switch (kind) {
+    case EntityKind::Player:
+      return s.players.isAlive(id);
+    case EntityKind::Boomerang:
+      return s.boomerangs.isAlive(id);
+    case EntityKind::Pickup:
+      return s.pickups.isAlive(id);
+  }
+  return false;
 }
 
 // The dash press as a fractional tick (§5.11).
@@ -168,7 +212,7 @@ void Stats::merge(const Stats& o) {
   mergeWait(afterBelowFullCatch, o.afterBelowFullCatch);
 }
 
-void StatsCollector::observeContacts(const WorldState& s, const Contacts& contacts) {
+void StatsCollector::beginContacts(const WorldState& s) {
   ownerBefore_.clear();
   ammoBefore_.fill(0);
   s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
@@ -176,33 +220,33 @@ void StatsCollector::observeContacts(const WorldState& s, const Contacts& contac
   });
   s.boomerangs.forEachAlive(
       [&](EntityId id, const Boomerang& b) { ownerBefore_[keyOf(id)] = b.owner; });
+}
 
+void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
+  if (c.kindA != EntityKind::Player || c.kindB != EntityKind::Boomerang) return;
+  const Player* p = s.players.get(c.a);
+  const Boomerang* b = s.boomerangs.get(c.b);
+  if (p == nullptr || b == nullptr || p->tags.has(Tag::Eliminated)) return;
+  if (b->phase == BoomerangPhase::Grounded) return;
   const ContentDB& content = defaultContent();
-  for (const Contact& c : contacts) {
-    if (c.kindA != EntityKind::Player || c.kindB != EntityKind::Boomerang) continue;
-    const Player* p = s.players.get(c.a);
-    const Boomerang* b = s.boomerangs.get(c.b);
-    if (p == nullptr || b == nullptr || p->tags.has(Tag::Eliminated)) continue;
-    if (b->phase == BoomerangPhase::Grounded) continue;
-    const bool own = b->owner == p->id;
-    const AbilityState& dash = p->abilities[kAbilitySlotDash];
-    const double delta = static_cast<double>(s.tick.value) + c.tHit.toDouble() - pressTime(dash);
+  const bool own = b->owner == p->id;
+  const AbilityState& dash = p->abilities[kAbilitySlotDash];
+  const double delta = static_cast<double>(s.tick.value) + c.tHit.toDouble() - pressTime(dash);
 
-    // Rows 10 and 11 of the rules table (rules/table.cpp).
-    const bool catchable = !own || b->phase == BoomerangPhase::Returning;
-    if (catchable && p->tags.has(Tag::PerfectDash)) {
-      ++stats_.consultedContacts;
-      stats_.consultedDelta.push_back(delta);
-      const uint16_t window = content.abilityAt(dash.defIndex).perfectWindowTicks;
-      if (delta < 0.0 || delta >= static_cast<double>(window)) ++stats_.declinedContacts;
-      attempted_.emplace(static_cast<uint8_t>(p->id.value), dash.activatedTick.value);
-    }
-    if (!own) {
-      ++stats_.dangerContacts;
-      if (dash.phase != AbilityPhase::Idle || dash.cooldownTicks > 0) {
-        ++stats_.dangerContactsRecentDash;
-        stats_.dangerDelta.push_back(delta);
-      }
+  // Rows 10 and 11 of the rules table (rules/table.cpp).
+  const bool catchable = !own || b->phase == BoomerangPhase::Returning;
+  if (catchable && p->tags.has(Tag::PerfectDash)) {
+    ++stats_.consultedContacts;
+    stats_.consultedDelta.push_back(delta);
+    const uint16_t window = content.abilityAt(dash.defIndex).perfectWindowTicks;
+    if (delta < 0.0 || delta >= static_cast<double>(window)) ++stats_.declinedContacts;
+    attempted_.emplace(static_cast<uint8_t>(p->id.value), dash.activatedTick.value);
+  }
+  if (!own) {
+    ++stats_.dangerContacts;
+    if (dash.phase != AbilityPhase::Idle || dash.cooldownTicks > 0) {
+      ++stats_.dangerContactsRecentDash;
+      stats_.dangerDelta.push_back(delta);
     }
   }
 }
@@ -398,8 +442,22 @@ void statsStep(WorldState& s, const InputFrame& in, const ContentDB& content, Ev
   projectileSystem(s, content, sink);
   Contacts contacts;
   collisionSystem(s, content, contacts);
-  collector.observeContacts(s, contacts);
-  interactionSystem(s, content, contacts, sink);
+  collector.beginContacts(s);
+  // InteractionSystem one contact at a time, in its resolution order, so each
+  // contact is judged against the state the rules table would see: a contact
+  // whose banana was caught, or whose player was eliminated, earlier in the
+  // same tick is not counted as consulted. The shadow checksum proves the
+  // split resolution matches interactionSystem() over the whole list.
+  if (s.rules.phase == MatchPhase::Playing) {
+    for (const uint16_t i : interactionOrder(s, contacts)) {
+      const Contact& c = contacts.items[i];
+      if (!entityAlive(s, c.kindA, c.a) || !entityAlive(s, c.kindB, c.b)) continue;
+      collector.observeContact(s, c);
+      Contacts one;
+      one.push(c);
+      interactionSystem(s, content, one, sink);
+    }
+  }
   modifierSystem(s, content);
   lifecycleSystem(s, content, sink);
   rulesPostTick(s, content, sink);
