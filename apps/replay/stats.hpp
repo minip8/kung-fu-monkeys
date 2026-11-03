@@ -1,6 +1,7 @@
 // Feel-tuning statistics for kfm_replay (architecture §11 M2, §12): drives
 // scripted matches and measures rounds, throws, hits, dashes, perfect-catch
-// attempts and conversions, banana flight outcomes and time without ammo.
+// attempts and conversions, dash attacks, banana flight outcomes and time
+// without ammo.
 //
 // Everything is read from SimEvents and WorldState, plus the per-tick contact
 // list: statsStep() runs the §5.3 systems in step()'s order and lets the
@@ -39,8 +40,17 @@ struct Stats {
   uint32_t draws{0};
 
   uint64_t throws{0};
-  uint64_t hits{0};
+  uint64_t hits{0};  // banana hits (PlayerHit)
   uint64_t eliminations{0};
+
+  // Dash attacks (row 25, §5.6): dashes that touched a player the row accepts
+  // (attacker Dashing, neither stunned nor eliminated, victim hittable), by
+  // whether the attacker held content.dashAttack.minAmmo; then the hits
+  // (PlayerDashHit) and the eliminations they caused.
+  uint64_t dashAttackWithAmmo{0};
+  uint64_t dashAttackWithoutAmmo{0};
+  uint64_t dashHits{0};
+  uint64_t dashEliminations{0};
   uint64_t dashes{0};
   uint64_t windowsOpened{0};  // rising edges of Tag::PerfectDash
   uint64_t perfectCatches{0};
@@ -139,6 +149,9 @@ class StatsCollector {
   // Dashes (slot, press tick) with a consulted contact, and those that caught.
   std::set<std::pair<uint8_t, uint32_t>> attempted_;
   std::set<std::pair<uint8_t, uint32_t>> converted_;
+  // Dashes (slot, press tick) that met a player row 25 accepts, by ammo.
+  std::set<std::pair<uint8_t, uint32_t>> dashAttackWithAmmo_;
+  std::set<std::pair<uint8_t, uint32_t>> dashAttackWithoutAmmo_;
 };
 
 // step() with the collector looking at the contact list (see above).

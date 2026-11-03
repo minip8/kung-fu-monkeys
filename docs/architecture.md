@@ -923,7 +923,9 @@ art is identical up to the export step, and nothing below the presentation layer
 - Feel-tuning instrumentation (v0.15): `kfm_replay stats` (and `record-scripted --stats`) runs
   scripted matches and reports round lengths, throws, hits, dashes, perfect and auto catches,
   catch attempts and their conversion, `tHit − pressTime` for every attempt, throw-to-outcome
-  times, time spent without ammo and the banana supply floor. The catch inputs exist only
+  times, time spent without ammo and the banana supply floor; v0.16 adds catches declined at
+  full ammo and dash attacks (dashes that met a hittable player, with and without ammo, hits and
+  eliminations by dash). The catch inputs exist only
   inside `step()`, so the tool runs the ten systems itself and resolves the contact list one
   contact at a time in `InteractionSystem`'s order, judging each against the state the rules
   table sees (a contact whose banana or player an earlier contact of the tick removed or
