@@ -4,7 +4,10 @@
 # The sokol_gfx renderer is a separate target added below it and is skipped in
 # KFM_HEADLESS builds.
 add_library(kfm_presentation STATIC
-  src/render_state.cpp
+  src/math.cpp
+  src/camera.cpp
+  src/builder.cpp
+  src/meshes.cpp
 )
 add_library(kfm::presentation ALIAS kfm_presentation)
 
