@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.16 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.17 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -52,6 +52,10 @@ banana damages it, through a new rule row on Player × Player contacts, which `C
 now emits and `InteractionSystem` tries in both orientations; `DashAttackDef` content switch,
 `PlayerDashHit` event, a scripted-bot behaviour that exercises it (§5.3, §5.6, §5.9, §5.10,
 §5.11, §9, §12).
+v0.17 changes: `WebRtcTransport` as built (§6.4): channel labels and reliability, the
+server-hosted `ws://` signaling socket and its JSON offer/answer/candidate format, the
+callback-queue threading model, size limits, exceptions caught at the `kfm_net_webrtc` boundary;
+the libdatachannel 0.24.6 / datachannel-wasm dependency pins, OpenSSL, `KFM_WEBRTC` (§10).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -648,6 +652,37 @@ Implementations, in priority order:
   behind the same interface; the server can run it alongside WebRTC so Steam and browser peers
   share a match.
 
+As built (v0.17), `kfm::net::WebRtcTransport` (`engine/net`, target `kfm_net_webrtc`):
+
+- Channels: the client opens `"r"` (ordered, reliable) and `"u"` (`unordered`,
+  `maxRetransmits = 0`) in-band; the server accepts them. A peer is `Connected` once both are
+  open; a failed or closed peer connection, or either channel closing, is `Disconnected`, and so
+  is a handshake that has not finished within `connectTimeoutMs` (10 s; on the server an
+  unfinished peer is dropped silently because it was never announced). PeerIds are assigned
+  1, 2, 3, ... when a client's signaling socket arrives and are never reused; at most
+  `maxPeers` (≤ `kMaxPeers`) at a time.
+- Limits: sends over `kMaxUnreliableBytes` / `kMaxReliableBytes`, to unknown or unconnected
+  peers, or on the unreliable lane while more than 64 KB is already buffered are dropped and
+  counted in `sendErrors`; oversize arrivals are dropped as `recvDropped`. libdatachannel
+  advertises a 256 KB SCTP max message size (browsers advertise their own 256 KB).
+- Signaling (M3): the dedicated server hosts its own plain `ws://` WebSocket
+  (`rtc::WebSocketServer`, ephemeral port allowed); the lobby service takes it over later.
+  One flat JSON object per text message, `{"type":"offer"|"answer","sdp":...}` or
+  `{"type":"candidate","candidate":...,"mid":...}`, hand-written encoder/decoder
+  (`kfm/net/webrtc_signaling.hpp`). The client offers, the server answers, both trickle
+  candidates; candidates that overtake the SDP are held until it is applied. No TURN; an
+  optional STUN URL in both configs.
+- Threading: libdatachannel's callbacks (its own threads natively, the main thread in the
+  browser) only append to one mutex-guarded queue; `poll()` drains it on the caller's thread and
+  does everything else there (creating and answering peer connections, adopting channels,
+  timeouts), so one implementation serves all three targets. Arrival times are taken on the
+  callback thread and mapped onto the caller's clock in `poll()`. `recv()` pops what `poll()`
+  made readable; its span is backed by the transport until the next `recv()`.
+- The `rtc::` API throws, so `kfm_net_webrtc` alone is built with exceptions (wasm exceptions in
+  the browser) and catches at every entry point; its header includes nothing from `rtc::`, and
+  `kfm_net` stays exception-free. The connection token rides in the client config for the message
+  layer to send; the transport never validates it (§6.7).
+
 Why WebRTC everywhere rather than GNS natively plus WebRTC for the browser: with the browser as
 the primary client there is exactly one transport in production, one code path to harden, and
 native clients cross-play with browsers without server-side bridging. The per-packet overhead
@@ -1003,6 +1038,14 @@ so every build uses the same release of each dependency. The lookups enforce the
 taking whatever is installed: SDL3 is found with `find_package(SDL3 3.4.18 EXACT CONFIG)`, so a
 distro `libsdl3-dev` of another release is ignored, and cgltf, which has no CMake package, is
 accepted from vcpkg only when its header banner reads `Version: 1.15`.
+M3 transport dependencies (v0.17), only with `KFM_WEBRTC` (default on; off builds without any
+network dependency) and also in the headless server build: libdatachannel 0.24.6 natively (vcpkg
+`libdatachannel[ws]` without default features, i.e. no `srtp` media; or FetchContent of the
+release tarball plus its plog, usrsctp and libjuice submodules as separate hashed tarballs at the
+commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS backend (system
+`libssl-dev` on the FetchContent path, the vcpkg port otherwise), and datachannel-wasm pinned to
+`f9200eb` (v0.4.0 plus a missing-include fix) for Emscripten, linked with its two
+`--js-library` files and `-fwasm-exceptions`. Both are exposed as one target, `kfm::datachannel`.
 
 ---
 
