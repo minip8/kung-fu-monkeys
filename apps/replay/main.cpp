@@ -218,7 +218,9 @@ int cmdRecordScripted(const Args& a) {
   return rc;
 }
 
-// Times a scripted match: input generation + step(), and step() alone.
+// Times scripted matches: input generation + step(), and step() alone. A
+// match that ends is replaced by a fresh one (next seed), so every timed tick
+// is live gameplay rather than an idle MatchEnded.
 int cmdBench(const Args& a) {
   if (!checkPlayers(a)) return 2;
   using Clock = std::chrono::steady_clock;
@@ -228,9 +230,14 @@ int cmdBench(const Args& a) {
   Rng inputs = Rng::seeded(a.inputSeed);
   EventSink sink;
   uint64_t events = 0;
+  uint32_t matches = 1;
   Clock::duration stepTime{};
   const Clock::time_point begin = Clock::now();
   for (uint32_t t = 0; t < a.ticks; ++t) {
+    if (world.rules.phase == MatchPhase::MatchEnded) {
+      world = initialWorld(MatchConfig{h.seed + matches, h.players});
+      ++matches;
+    }
     const InputFrame f = scriptedFrame(inputs, world, content);
     sink.clear();
     const Clock::time_point s0 = Clock::now();
@@ -243,10 +250,10 @@ int cmdBench(const Args& a) {
   const double stepUs = std::chrono::duration<double, std::micro>(stepTime).count();
   const double ticks = a.ticks == 0 ? 1.0 : static_cast<double>(a.ticks);
   std::printf(
-      "bench: %u players, %u ticks, %llu events, checksum %08x\n"
+      "bench: %u players, %u ticks, %u matches, %llu events, checksum %08x\n"
       "  step + scripted inputs: %.0f ticks/s, %.2f us/tick\n"
       "  step only:              %.0f ticks/s, %.2f us/tick\n",
-      a.players, a.ticks, static_cast<unsigned long long>(events), checksum(world),
+      a.players, a.ticks, matches, static_cast<unsigned long long>(events), checksum(world),
       ticks / (totalUs * 1e-6), totalUs / ticks, ticks / (stepUs * 1e-6), stepUs / ticks);
   return 0;
 }
