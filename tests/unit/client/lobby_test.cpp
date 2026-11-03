@@ -49,13 +49,14 @@ const sim::ContentDB& shipped() {
 
 [[nodiscard]] std::size_t rowOf(const LobbyMenu& m, LobbyRowKind kind, uint8_t powerUp = 0) {
   const auto rows = m.rows();
-  for (std::size_t i = 0; i < rows.size(); ++i) {
+  std::size_t found = rows.size();
+  for (std::size_t i = 0; i < rows.size() && found == rows.size(); ++i) {
     if (rows[i].kind == kind && (kind != LobbyRowKind::PowerUp || rows[i].powerUp == powerUp)) {
-      return i;
+      found = i;
     }
   }
-  FAIL("no such row");
-  return 0;
+  if (found == rows.size()) FAIL("no such row");  // MSVC: no unreachable return after FAIL
+  return found;
 }
 
 [[nodiscard]] InputEvent key(Key k) {
