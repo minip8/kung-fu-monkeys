@@ -382,8 +382,8 @@ TEST_CASE("unmodified bananas and banana pickups keep their pre-power-up form",
   CHECK(bytes(plain) == 1 + 1 + (3 * 8 + 2) + 2 + 2 + 2 + 1 + 1);
   CHECK(bytes(modified) == bytes(plain) + 8);
 
-  Pickup banana{PickupKind::Banana, Vec2{1_fx, 2_fx}, 0, 0};
-  Pickup powerUp{PickupKind::PowerUp, Vec2{1_fx, 2_fx}, 3, 1};
+  const Pickup banana{PickupKind::Banana, Vec2{1_fx, 2_fx}, 0, 0};
+  const Pickup powerUp{PickupKind::PowerUp, Vec2{1_fx, 2_fx}, 3, 1};
   CHECK(bytes(banana) == 1 + 8 + 1);
   CHECK(bytes(powerUp) == bytes(banana) + 1);
 }

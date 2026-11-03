@@ -344,7 +344,8 @@ namespace {
 
 // kMinimal plus one power-up and an arena with one spawner; tests break one
 // piece at a time.
-const std::string kWithPowerUp = std::string(kMinimal) + R"(
+std::string withPowerUp() {
+  return std::string(kMinimal) + R"(
 [[ability]]
 name = "throw_fast"
 kind = "throw"
@@ -366,6 +367,7 @@ grants = [
   { kind = "ability", slot = "throw", ability = "throw_fast" },
 ]
 )";
+}
 
 }  // namespace
 
@@ -373,7 +375,7 @@ TEST_CASE("power-ups load: grants, visuals, overrides and spawners resolve by na
           "[content][loader][powerup]") {
   ContentDB db{};
   Diagnostics diag;
-  const bool ok = parseContent(kWithPowerUp, "test.toml", db, diag);
+  const bool ok = parseContent(withPowerUp(), "test.toml", db, diag);
   INFO(diag.format());
   REQUIRE(ok);
   REQUIRE(db.powerUpCount == 1);
@@ -390,7 +392,7 @@ TEST_CASE("power-ups load: grants, visuals, overrides and spawners resolve by na
   CHECK(d.grants[1].slot == sim::kAbilitySlotThrow);
   CHECK(d.grants[1].ability == 3);
   REQUIRE(db.findArena("box_pu"));
-  const sim::ArenaDef& a = db.arenas[*db.findArena("box_pu")];
+  const sim::ArenaDef& a = db.arenas[db.findArena("box_pu").value_or(0)];
   REQUIRE(a.pickupSpawnerCount == 1);
   CHECK(a.pickupSpawners[0].pos == Vec2{Fixed::fromInt(3), Fixed::one()});
   CHECK(a.pickupSpawners[0].powerUpSet == 1);
@@ -403,49 +405,49 @@ TEST_CASE("power-ups load: grants, visuals, overrides and spawners resolve by na
 TEST_CASE("power-up validation", "[content][loader][powerup]") {
   // References.
   CHECK(contains(
-      loadErrors(replaced(kWithPowerUp, "ability = \"throw_fast\"", "ability = \"throw_faster\"")),
+      loadErrors(replaced(withPowerUp(), "ability = \"throw_fast\"", "ability = \"throw_faster\"")),
       "'ability' names unknown ability \"throw_faster\""));
   CHECK(contains(
-      loadErrors(replaced(kWithPowerUp, "power_ups = [\"boost\"]", "power_ups = [\"bost\"]")),
+      loadErrors(replaced(withPowerUp(), "power_ups = [\"boost\"]", "power_ups = [\"bost\"]")),
       "'power_ups' names unknown power-up \"bost\""));
   // Slots and kinds.
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "slot = \"throw\"", "slot = \"jump\"")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "slot = \"throw\"", "slot = \"jump\"")),
                  "'slot' must be one of: dash, throw"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "slot = \"throw\"", "slot = \"dash\"")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "slot = \"throw\"", "slot = \"dash\"")),
                  "is not the same kind as the dash slot's"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "kind = \"stat\"", "kind = \"buff\"")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "kind = \"stat\"", "kind = \"buff\"")),
                  "unknown grant kind \"buff\""));
   // Integer stats are add-only and whole.
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "stat = \"move_speed\", mul = 1.5",
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
                                      "stat = \"max_hp\", mul = 2")),
                  "'max_hp' is an integer stat: it takes 'add' only, never 'mul'"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "stat = \"move_speed\", mul = 1.5",
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
                                      "stat = \"ammo_max\", add = 1.5")),
                  "'ammo_max' is an integer stat: 'add' must be whole"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "stat = \"move_speed\"", "stat = \"luck\"")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\"", "stat = \"luck\"")),
                  "'stat' must be one of: move_speed, max_hp, ammo_max"));
   // Tags a power-up may not grant.
   CHECK(contains(
-      loadErrors(replaced(kWithPowerUp, "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
+      loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
                           "{ kind = \"tag\", tag = \"hit_stun\" }")),
       "can grant only 'shielded' or 'invulnerable'"));
   // Values and shapes.
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "duration_ticks = 300", "duration_ticks = 0")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "duration_ticks = 300", "duration_ticks = 0")),
                  "'duration_ticks' must be an integer in [1, 65535]"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "shape = \"diamond\"", "shape = \"blob\"")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "shape = \"diamond\"", "shape = \"blob\"")),
                  "'shape' must be one of: orb, cube, diamond, coin"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "color = 6", "color = 10")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "color = 6", "color = 10")),
                  "'color' must be an integer in [0, 9]"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "mul = 1.5 }", "mul = 1.5, bonus = 1 }")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "mul = 1.5 }", "mul = 1.5, bonus = 1 }")),
                  "unknown key 'bonus'"));
   CHECK(contains(
-      loadErrors(replaced(kWithPowerUp, "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
+      loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
                           "{ kind = \"projectile\", radius_mul = 5 }")),
       "'radius_mul' = 5.000 is outside"));
   // Spawners.
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "pos = [3, 1]", "pos = [12, 1]")),
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "pos = [3, 1]", "pos = [12, 1]")),
                  "spawner 0: pos (12.000, 1.000) is outside the arena"));
-  CHECK(contains(loadErrors(replaced(kWithPowerUp, "interval_ticks = 300 }",
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "interval_ticks = 300 }",
                                      "interval_ticks = 300, max_alive = 17 }")),
                  "max_alive add up to 17"));
   CHECK(contains(loadErrors(std::string(kMinimal) +
@@ -462,16 +464,16 @@ TEST_CASE("content/ ships the six power-ups and an arena that spawns them",
   const std::array<std::string_view, 6> names = {"speed_boost",   "big_banana", "piercing_banana",
                                                  "triple_banana", "shield",     "fast_hands"};
   REQUIRE(db.powerUpCount == names.size());
-  for (uint8_t i = 0; i < names.size(); ++i)
+  for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);
   CHECK(db.arenas[0].pickupSpawnerCount == 0);  // the default match has no power-ups
   const std::optional<uint8_t> arena = db.findArena("dojo_powerups");
   REQUIRE(arena);
-  CHECK(db.arenas[*arena].pickupSpawnerCount == 4);
+  CHECK(db.arenas[arena.value_or(0)].pickupSpawnerCount == 4);
   // dojo_powerups is the dojo plus spawners.
-  CHECK(db.arenas[*arena].halfExtents == db.arenas[0].halfExtents);
-  CHECK(db.arenas[*arena].spawnPoints == db.arenas[0].spawnPoints);
-  const sim::PowerUpGrant& hands = db.powerUps[*db.findPowerUp("fast_hands")].grants[0];
+  CHECK(db.arenas[arena.value_or(0)].halfExtents == db.arenas[0].halfExtents);
+  CHECK(db.arenas[arena.value_or(0)].spawnPoints == db.arenas[0].spawnPoints);
+  const sim::PowerUpGrant& hands = db.powerUps[db.findPowerUp("fast_hands").value_or(0)].grants[0];
   CHECK(hands.kind == sim::GrantKind::AbilityOverride);
   CHECK(db.abilities[hands.ability].name.view() == "throw_fast");
 }

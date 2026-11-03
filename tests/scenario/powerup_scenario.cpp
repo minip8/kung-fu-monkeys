@@ -27,7 +27,12 @@ const PlayerId kP1{1};
 const PlayerId kP2{2};
 
 // Indices of the shipped power-ups, in powerups.toml order.
-enum : uint8_t { kSpeed = 0, kBig, kPierce, kTriple, kShield, kFastHands };
+constexpr uint8_t kSpeed = 0;
+constexpr uint8_t kBig = 1;
+constexpr uint8_t kPierce = 2;
+constexpr uint8_t kTriple = 3;
+constexpr uint8_t kShield = 4;
+constexpr uint8_t kFastHands = 5;
 
 // defaultContent() plus the throw_fast ability and the six power-ups.
 ContentDB powerUpContent() {
@@ -266,7 +271,7 @@ TEST_CASE("fast hands: the throw slot runs the faster def while it lasts", "[sce
   WorldState s = makePlayingWorld(47, 0b11, content);
   placePlayer(s, kP1, at(10, 6));
   (void)pickUp(s, content, kFastHands, at(-4, 0));
-  AbilityState& thr = playerAt(s, kP0).abilities[kAbilitySlotThrow];
+  const AbilityState& thr = playerAt(s, kP0).abilities[kAbilitySlotThrow];
   CHECK(thr.defIndex == content.powerUps[kFastHands].grants[0].ability);
 
   const Tick press = s.tick;
@@ -384,7 +389,7 @@ TEST_CASE("without spawners nothing spawns and the RNG is untouched in play",
 TEST_CASE("scripted bots walk to power-ups on a spawner arena", "[scenario][powerup][scripted]") {
   ContentDB content = powerUpContent();
   const std::array<Vec2, 4> spots = {at(-8, 4), at(8, -4), at(8, 4), at(-8, -4)};
-  for (uint8_t i = 0; i < spots.size(); ++i) {
+  for (size_t i = 0; i < spots.size(); ++i) {
     PickupSpawner& sp = content.arenas[0].pickupSpawners[i];
     sp.pos = spots[i];
     sp.firstTicks = i < 2 ? 60 : 240;
