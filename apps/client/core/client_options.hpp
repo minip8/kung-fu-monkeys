@@ -1,7 +1,8 @@
 // kfm_client command line (headless-testable).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
-//              [--content DIR] [--arena NAME] [--mode NAME] [--no-hot-reload]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
+//              [--no-hot-reload] [--no-settings]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
@@ -18,7 +19,8 @@ namespace kfm::client {
 
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
-    "                  [--content DIR] [--arena NAME] [--mode NAME] [--no-hot-reload]\n"
+    "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
+    "                  [--no-hot-reload] [--no-settings]\n"
     "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
     "                  [--mute] [--volume 0..100]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
@@ -31,8 +33,12 @@ inline constexpr const char* kUsage =
     "                         executable, else the copy built into it\n"
     "  --arena NAME           arena of local matches (default: the first one)\n"
     "  --mode NAME            mode of local matches (default: the first one)\n"
+    "  --powerups LIST        power-ups the spawners of local matches may draw: all\n"
+    "                         (default), none or comma-separated names\n"
     "  --no-hot-reload        do not watch the content directory (native local play\n"
     "                         reloads it on change and restarts the match)\n"
+    "  --no-settings          neither read nor save the lobby settings (arena, mode,\n"
+    "                         power-ups, bots, volume, mute; flags win over saved ones)\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
     "  --capsules             draw players as capsules, not the skinned model\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
@@ -60,7 +66,9 @@ struct ClientOptions {
   std::string contentDir;  // --content; empty = next to the executable, else embedded
   std::string arena;       // --arena / --mode names; empty = index 0
   std::string mode;
+  std::string powerUps;  // --powerups list; empty = all
   bool hotReload{true};
+  bool settings{true};  // read and save the lobby settings (lobby_settings.hpp)
   // Audio (§7): the mixer's starting settings; the overlay can change them.
   bool mute{false};
   uint8_t volume{80};  // percent, = presentation::kDefaultMasterVolume

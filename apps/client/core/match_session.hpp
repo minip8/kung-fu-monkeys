@@ -74,9 +74,10 @@ inline constexpr double kNewestTickRateTolerance = 0.95;
 inline constexpr uint64_t kDefaultBotSeed = 0x5C121DULL;
 
 struct SessionConfig {
-  uint64_t seed{1};  // world seed (MatchConfig::seed)
-  uint8_t arena{0};  // MatchConfig::arena / ::mode: indices into
-  uint8_t mode{0};   //   the content (out of range = 0)
+  uint64_t seed{1};                      // world seed (MatchConfig::seed)
+  uint8_t arena{0};                      // MatchConfig::arena / ::mode: indices into
+  uint8_t mode{0};                       //   the content (out of range = 0)
+  uint16_t powerUps{sim::kAllPowerUps};  // MatchConfig::powerUps
   // The loaded content (content/*.toml); nullptr = sim::defaultContent().
   // Copied: the session owns its content.
   const sim::ContentDB* content{nullptr};
@@ -146,8 +147,11 @@ class MatchSession {
   // the lobby).
   void setArena(uint8_t arena);
   void setMode(uint8_t mode);
+  // The per-match power-up set (MatchConfig::powerUps), same timing.
+  void setPowerUps(uint16_t powerUps);
   [[nodiscard]] uint8_t arena() const { return arena_; }
   [[nodiscard]] uint8_t mode() const { return mode_; }
+  [[nodiscard]] uint16_t powerUps() const { return powerUps_; }
   // The config the current world was created with, and the content step()
   // runs it with (the live copy with this match's arena and mode).
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return matchConfig_; }
@@ -215,6 +219,7 @@ class MatchSession {
   uint64_t seed_{1};
   uint8_t arena_{0};
   uint8_t mode_{0};
+  uint16_t powerUps_{sim::kAllPowerUps};
   sim::MatchConfig matchConfig_{};
   uint64_t botSeed_{kDefaultBotSeed};
   uint8_t bots_{0};

@@ -38,6 +38,7 @@ constexpr sim::PlayerMask kAllSlots = static_cast<sim::PlayerMask>((1u << sim::k
 
 MatchSession::MatchSession(const SessionConfig& config)
     : seed_(config.seed),
+      powerUps_(config.powerUps),
       botSeed_(config.botSeed),
       hostHandlesStart_(config.hostHandlesStart),
       loaded_(config.content != nullptr ? *config.content : sim::defaultContent()),
@@ -240,6 +241,11 @@ void MatchSession::setMode(uint8_t mode) {
   if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
 }
 
+void MatchSession::setPowerUps(uint16_t powerUps) {
+  powerUps_ = powerUps;
+  if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
+}
+
 void MatchSession::replaceContent(const sim::ContentDB& content, uint64_t nowNs) {
   loaded_ = content;
   content_ = content;
@@ -249,8 +255,8 @@ void MatchSession::replaceContent(const sim::ContentDB& content, uint64_t nowNs)
 }
 
 void MatchSession::createWorld(sim::PlayerMask present) {
-  matchConfig_ =
-      sim::MatchConfig{.seed = seed_, .players = present, .arena = arena_, .mode = mode_};
+  matchConfig_ = sim::MatchConfig{
+      .seed = seed_, .players = present, .arena = arena_, .mode = mode_, .powerUps = powerUps_};
   curr_ = sim::initialWorld(matchConfig_);
   prev_ = curr_;
 }

@@ -147,7 +147,15 @@ power-up set (bit i = `ContentDB::powerUps[i]`, default `kAllPowerUps`): spawner
 their own set intersected with it, and an empty intersection neither spawns nor draws the RNG, so
 the default config plays exactly as before. It rides in `MatchContent`, the replay header
 (format version 3, a ninth optional manifest column) and the join messages (protocol version 3);
-`--powerups all|none|a,b` on `kfm_server`, `kfm_client` and `kfm_replay`.
+`--powerups all|none|a,b` on `kfm_server`, `kfm_client` and `kfm_replay`. The local lobby gains
+a settings panel (`LobbyMenu`, headless in `kfm_client_core`): arena with a preview drawn from the
+def, mode with its key numbers, one toggle per power-up, bots, volume and mute, driven by the
+mouse, arrows/WASD or a joined pad's d-pad and stick (never by game buttons, so joins and any
+future ability button stay free), saved between runs (SDL's preference directory natively,
+`localStorage` in the browser; flags and URL parameters win; `--no-settings`). Online, the status
+window shows the server's `MatchConfig` read-only with the roster, and the match-over banner the
+announced next match. The HUD scoreboard becomes one card per slot (palette colour, label, score,
+power-up timers), the same card the lobby draws per slot (§7).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -1349,6 +1357,12 @@ into a standing lag of roughly 1/(1 − e^(−dt/τ)) frames, about 120 ms for r
 clock jump inside the tick batch gets a second call with the new states. Presentation draws only
 the events the journal delivers (§5.9), never the raw per-tick sink; retracted events are counted
 and not yet undone on screen.
+What is shown online (v0.24): until the match runs, the status window replaces the lobby; once the
+server's `Welcome` arrived (`NetSession::configKnown()`) it adds the server's `MatchConfig`
+read-only: the slot cards (you, online, free), the arena with the same preview as the local lobby,
+the mode with its key numbers and the power-up set. After `MatchEnded` the banner adds the
+announced next match (arena, mode, power-ups) from `NetClient::matchConfig()`. The browser page
+with `?connect=` runs the same code and shows the same. Nothing of it is editable on a client.
 
 ---
 
@@ -1427,6 +1441,41 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   while it waits to respawn), "first to K" and the match clock. The clock is `m:ss`, pops on
   `TimerWarning` and turns red in the last 10 s; a drawn match shows "Draw!". The browser page turns its query string into the same flags
   (`?autostart&bots=3&seed=7&overlay`).
+- M4 lobby (v0.24, `apps/client/core/lobby_menu.{hpp,cpp}`, `lobby_settings.{hpp,cpp}`, drawn
+  by `hud.cpp`). The lobby window shows a row of ten slot cards (the slot's palette colour as a
+  stripe, `P<n>`/`BOT<n>`, the device: keys left/right, pad #id, bot, or free and dimmed) and,
+  locally, the settings panel beside an arena preview. `LobbyMenu` is a headless state machine
+  over rows built from the content: Arena, Mode, one toggle per `PowerUpDef`, Bots (0–9, then
+  clamped to the free slots), Volume (steps of 10 %), Sound (mute). Up/Down move the focus
+  (wrapping), Left/Right change the focused value (arena and mode cycle with wrap-around, a
+  power-up toggles, numbers clamp); the mouse focuses a row and has the same arrows; Enter/Start
+  still starts. `MenuInput` turns raw `InputEvent`s into those four actions: arrows and WASD on
+  the keyboard, a pad's d-pad and left stick (fires once past 0.6, re-arms under 0.35, per pad),
+  and only for pads already bound to a slot, because an unbound pad's press is its join. It never
+  reads game bindings, so the join keys (Throw/Dash) and a future third ability button stay
+  free. A change applies at once to the lobby's `MatchSession` (`setArena`, `setMode`,
+  `setPowerUps`, `setBotCount`) and to `ClientAudio`; the -/= keys, joins taking bot slots and
+  the F1 audio panel flow back into the panel. The preview draws the arena def top-down (floor,
+  walls, pits with their rim, slow patches, spawn points in slot colours, power-up spawners
+  filled when the selected set leaves them something to spawn, hollow when it switches them
+  off) next to the mode's key numbers (`modeSummary`: "first to 10 eliminations, 3:00, respawn
+  2.0 s (1.5 s protected)") and the power-up set. Persistence: the lobby writes the settings
+  back into `ClientOptions` as names (`--arena`, `--mode`, `--powerups`, `--bots`, `--volume`,
+  `--mute`) and saves them as `key=value` lines (`settings.txt` in `SDL_GetPrefPath("kfm",
+  "kung-fu-monkeys")` natively, `localStorage['kfm.settings']` in the browser). Startup applies
+  defaults, then the saved text (a name the content no longer has, a bad number or an unknown
+  key is skipped with a warning, never fatal), then the command line again, so a flag or URL
+  parameter (`?arena=pillars&mode=deathmatch&powerups=shield,big_banana`) wins for the run;
+  `--no-settings` neither reads nor writes (the smoke tests use it). In network mode the local
+  lobby hides the panel: the server owns the match.
+- HUD layout (v0.24): the scoreboard is one card per present slot along the top, the lobby's
+  card style, sharing one width so the row never jitters and shrinking to fit narrow windows:
+  the label and the score on the first line (round-win pips in rounds and survival,
+  eliminations with the respawn countdown in deathmatch), the slot's live power-up timers on the
+  second (a pie per power-up in its colour with whole seconds, only when someone has one); a
+  card dims while its slot waits to respawn or is out of the round. The mode line and clock sit
+  under the cards. Over each monkey the same pies, smaller and without numbers, follow the ammo
+  pips.
 
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
@@ -1615,9 +1664,9 @@ is in `platform`.
   `apps/client/client_audio.{hpp,cpp}` (`ClientAudio`: `init`, `frame`, `onUserGesture`,
   `click`, `setMuted`, `setVolumePercent`), which the lobby UI uses for its own controls and
   clicks.
-- Not yet: music, distance attenuation, per-player local-vs-remote mixing and saving the settings
-  between runs (they live in `ClientOptions` for the run); no event exists yet for power-ups (M4
-  power-ups add theirs to the table).
+- Not yet: music, distance attenuation, per-player local-vs-remote mixing; no event exists yet
+  for power-ups (M4 power-ups add theirs to the table). Volume and mute are saved with the lobby
+  settings since v0.24 (the lobby panel edits them too).
 
 Character drawing sits behind one interface in `presentation` so that nothing else knows
 whether a character is a skinned mesh or a quad. The earlier plan, pre-rendered 8-direction

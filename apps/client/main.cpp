@@ -1,8 +1,9 @@
 // kfm_client: the playable client (architecture §3, §6.8, §7, §11 M2, M3).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
-//              [--content DIR] [--arena NAME] [--mode NAME] [--no-hot-reload]
-//              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
+//              [--no-hot-reload] [--no-settings] [--overlay] [--capsules] [--exit-after-frames N]
+//              [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //
@@ -27,6 +28,14 @@
 // restarts the match with the same seed (errors are printed and the old
 // content kept). Online the server's content and match config rule.
 //
+// Lobby settings (v0.24, core/lobby_menu.hpp, core/lobby_settings.hpp): the
+// local lobby's panel picks the arena, mode, power-up set, bots, volume and
+// mute, from the mouse, the arrow keys / WASD or a joined pad's d-pad and
+// stick. Every change applies to the lobby's MatchSession and the audio at
+// once and is saved (natively in SDL's preference directory, in the browser
+// in localStorage) unless --no-settings; at startup the saved settings come
+// first and the flags (or URL parameters) override them.
+//
 // Keys outside the game bindings: F1 debug overlay, P pause, O single step,
 // Escape back to the lobby (quits from the lobby, natively; online it
 // disconnects and returns to the local lobby), - / = bot count in the lobby,
@@ -34,6 +43,8 @@
 // screen). Pause, step and the bot keys do nothing online.
 #include "client_audio.hpp"
 #include "core/client_options.hpp"
+#include "core/lobby_menu.hpp"
+#include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
 #include "core/net_session.hpp"
 #include "debug_overlay.hpp"
@@ -54,9 +65,14 @@
 #include "kfm/net/webrtc_transport.hpp"
 #endif
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten/em_js.h>
+#endif
+
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_scancode.h>
+#include <SDL3/SDL_stdinc.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -67,6 +83,7 @@
 #include <ios>
 #include <memory>
 #include <span>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -94,6 +111,9 @@ struct App {
   client::GamepadSet pads;
   client::DebugOverlay overlay;
   client::ClientAudio audio;
+  client::LobbyMenu lobby;      // the local lobby's settings panel
+  client::MenuInput menuInput;  // raw input -> lobby menu actions
+  bool lobbyChanged = false;    // a menu action changed a setting this frame
   presentation::RenderState renderState;
   std::uint64_t frames = 0;
   std::uint64_t lastFrameNs = 0;
@@ -103,6 +123,94 @@ struct App {
 
 // Static storage: under Emscripten main() is unwound once the loop starts.
 App gApp;
+
+// --- saved lobby settings (lobby_settings.hpp) ------------------------------------
+
+#ifdef __EMSCRIPTEN__
+EM_JS_DEPS(kfm_settings, "$stringToNewUTF8,$UTF8ToString");
+// localStorage can be missing or throw (privacy modes, sandboxed frames): the
+// settings are then simply not remembered.
+EM_JS(char*, kfmLoadSettingsJs, (), {
+  try {
+    const s = window.localStorage.getItem('kfm.settings');
+    return s == = null ? 0 : stringToNewUTF8(s);
+  } catch (e) {
+    return 0;
+  }
+});
+EM_JS(void, kfmSaveSettingsJs, (const char* text), {
+  try {
+    window.localStorage.setItem('kfm.settings', UTF8ToString(text));
+  } catch (e) {
+  }
+});
+#else
+[[nodiscard]] std::filesystem::path settingsPath() {
+  char* dir = SDL_GetPrefPath("kfm", "kung-fu-monkeys");  // created if missing
+  if (dir == nullptr) return {};
+  std::filesystem::path p = std::filesystem::path(dir) / "settings.txt";
+  SDL_free(dir);
+  return p;
+}
+#endif
+
+[[nodiscard]] std::string loadSettingsText() {
+#ifdef __EMSCRIPTEN__
+  char* text = kfmLoadSettingsJs();
+  if (text == nullptr) return {};
+  std::string s(text);
+  std::free(text);  // NOLINT(cppcoreguidelines-no-malloc): allocated by stringToNewUTF8
+  return s;
+#else
+  const std::filesystem::path path = settingsPath();
+  if (path.empty()) return {};
+  const std::ifstream in(path, std::ios::binary);
+  if (!in) return {};
+  std::ostringstream text;
+  text << in.rdbuf();
+  return text.str();
+#endif
+}
+
+void saveSettingsText(const std::string& text) {
+#ifdef __EMSCRIPTEN__
+  kfmSaveSettingsJs(text.c_str());
+#else
+  const std::filesystem::path path = settingsPath();
+  if (path.empty()) return;
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  out << text;
+  if (!out)
+    std::fprintf(stderr, "warning: cannot save the settings to %s\n", path.string().c_str());
+#endif
+}
+
+// The lobby's settings changed (panel or keys): apply them to the lobby's
+// session and the audio, write them into the options and save them.
+void applyLobbySettings(App& app) {
+  MatchSession& s = *app.session;
+  client::LobbySettings& ls = app.lobby.settings();
+  if (s.arena() != ls.arena) s.setArena(ls.arena);
+  if (s.mode() != ls.mode) s.setMode(ls.mode);
+  if (s.powerUps() != ls.powerUps) s.setPowerUps(ls.powerUps);
+  s.setBotCount(ls.bots);
+  ls.bots = s.botCount();  // clamped to the free slots
+  app.audio.setMuted(ls.mute);
+  app.audio.setVolumePercent(ls.volume);
+  client::storeLobbySettings(ls, app.content.db, app.options);
+  if (app.options.settings) saveSettingsText(client::settingsText(app.options));
+}
+
+// What changed outside the panel (the - / = keys, joins taking bot slots,
+// the F1 overlay's audio controls) flows back into the panel, and is saved.
+void syncLobbySettings(App& app) {
+  client::LobbySettings& ls = app.lobby.settings();
+  const client::LobbySettings before = ls;
+  ls.bots = app.session->botCount();
+  ls.volume = static_cast<uint8_t>(std::clamp(app.audio.volumePercent(), 0, 100));
+  ls.mute = app.audio.muted();
+  if (!(ls == before)) applyLobbySettings(app);
+}
 
 constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-forward effects
 
@@ -149,6 +257,9 @@ void reloadContent(App& app, std::uint64_t nowNs) {
   if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
   app.content = std::move(reloaded);
   app.session->replaceContent(app.content.db, nowNs);
+  app.lobby.setContent(app.content.db);
+  app.lobby.settings().arena = app.session->arena();  // kept when the new content has it
+  app.lobby.settings().mode = app.session->mode();
   std::printf("kfm_client: reloaded %s; match restarted\n", app.content.describe().c_str());
   std::fflush(stdout);
 }
@@ -273,9 +384,17 @@ void onEvent(void* user, const SDL_Event& event) {
   if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked()) return;
   if (app->net) {
     app->net->push(*input);
-  } else {
-    app->session->push(*input);
+    return;
   }
+  // The local lobby's settings panel: navigation from the keyboard and the
+  // joined pads (an unbound pad's press is its join). The press still goes
+  // to the session, which ignores bound devices' presses in the lobby.
+  if (app->session->phase() == SessionPhase::Lobby && !app->options.networkMode()) {
+    const client::MenuAction action =
+        app->menuInput.translate(*input, client::eventDeviceBound(app->session->sampler(), *input));
+    if (action != client::MenuAction::None && app->lobby.apply(action)) app->lobbyChanged = true;
+  }
+  app->session->push(*input);
 }
 
 bool writePpm(const std::string& path, int width, int height) {
@@ -312,7 +431,14 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
 
   platform::debugUiNewFrame(w, h, dt, density);
   if (s.phase() == SessionPhase::Lobby) {
-    if (client::drawLobby(s, app.options.connect)) {
+    if (!app.options.networkMode()) syncLobbySettings(app);
+    const client::LobbyOutcome lobby = client::drawLobby(s, app.lobby, app.options.connect);
+    if (lobby.changed || app.lobbyChanged) {
+      applyLobbySettings(app);
+      app.audio.click();
+    }
+    app.lobbyChanged = false;
+    if (lobby.start) {
       app.audio.click();
       if (app.options.networkMode()) {
         app.connectRequested = true;
@@ -446,12 +572,26 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     std::printf("kfm_client: %s\n", app.content.describe().c_str());
     std::fflush(stdout);
   }
-  sim::MatchConfig local{};
-  if (!content::resolveMatchNames(app.content.db, app.options.arena, app.options.mode, local,
-                                  error)) {
+  // Saved lobby settings first, then the command line (or URL) again on top,
+  // so a flag always wins for this run.
+  if (app.options.settings) {
+    const std::string saved = loadSettingsText();
+    if (!saved.empty()) {
+      client::ClientOptions merged;
+      std::vector<std::string> warnings;
+      client::applySettingsText(saved, app.content.db, merged, warnings);
+      for (const std::string& w : warnings)
+        std::fprintf(stderr, "warning: %s\n", w.c_str());
+      if (client::parseClientOptions(args, merged, error)) app.options = std::move(merged);
+    }
+  }
+  client::LobbySettings lobby;
+  if (!client::lobbySettingsFrom(app.options, app.content.db, lobby, error)) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
     return EXIT_FAILURE;
   }
+  app.lobby.setContent(app.content.db);
+  app.lobby.settings() = lobby;
 #ifndef __EMSCRIPTEN__
   if (app.options.hotReload && !app.content.embedded()) {
     app.contentWatcher = content::ContentWatcher(app.content.dir);
@@ -475,11 +615,12 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   const bool online = app.options.networkMode();
   app.session = std::make_unique<MatchSession>(
       client::SessionConfig{.seed = app.options.seed,
-                            .arena = local.arena,
-                            .mode = local.mode,
+                            .arena = lobby.arena,
+                            .mode = lobby.mode,
+                            .powerUps = lobby.powerUps,
                             .content = &app.content.db,
                             .botSeed = app.options.playersSeed,
-                            .bots = online ? std::uint8_t{0} : app.options.bots,
+                            .bots = online ? std::uint8_t{0} : lobby.bots,
                             .hostHandlesStart = online});
   // A renderer that cannot create its buffers, shaders or pipelines is fatal
   // (so client_smoke catches it); a missing character model is not.
@@ -494,7 +635,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
 
   app.overlay.open = app.options.overlay;
   app.overlay.audio = &app.audio;
-  app.audio.init(app.options.mute, app.options.volume);
+  app.audio.init(lobby.mute, lobby.volume);
+  if (!online) app.lobby.settings().bots = app.session->botCount();
   app.lastFrameNs = platform::Window::nowNs();
   if (online) {
     // --connect connects at startup with the devices bound so far (keyboard
