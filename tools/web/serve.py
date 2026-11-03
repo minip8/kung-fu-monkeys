@@ -31,6 +31,7 @@ DEFAULT_PAGE = "kfm_client.html"
 PAGE_DIRS = {
     "kfm_client.html": WASM_APPS / "client",
     "kfm_render_probe.html": WASM_APPS / "render-probe",
+    "kfm_net_probe.html": WASM_APPS / "net-probe",  # driven by check_webrtc.py
 }
 QUERY_EXAMPLES = (
     "?autostart&bots=3&overlay",

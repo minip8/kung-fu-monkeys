@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KFM net probe</title>
+  <style>
+    body { margin: 16px; background: #111; color: #ddd; font: 13px ui-monospace, monospace; }
+    #log { white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <div id="log">Loading…</div>
+  <script>
+    // Command-line flags from the query string:
+    // ?connect=ws://127.0.0.1:9000&messages=200 runs
+    // kfm_net_probe --connect ws://127.0.0.1:9000 --messages 200.
+    // The final "KFM_NET_PROBE PASS|FAIL ..." line also lands in
+    // window.kfmNetProbeResult (set by the probe).
+    const kfmArguments = [];
+    for (const [key, value] of new URLSearchParams(window.location.search)) {
+      kfmArguments.push('--' + key);
+      if (value !== '') kfmArguments.push(value);
+    }
+    const logElement = document.getElementById('log');
+    let logStarted = false;
+    function kfmLog(text) {
+      if (!logStarted) { logElement.textContent = ''; logStarted = true; }
+      logElement.textContent += text + '\n';
+    }
+    var Module = {
+      arguments: kfmArguments,
+      print: (text) => { console.log(text); kfmLog(text); },
+      printErr: (text) => { console.error(text); kfmLog(text); },
+    };
+    window.onerror = (message) => {
+      window.kfmNetProbeResult = window.kfmNetProbeResult || ('KFM_NET_PROBE FAIL: ' + message);
+    };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>

@@ -50,6 +50,12 @@ if(EMSCRIPTEN)
     -sMAX_WEBGL_VERSION=2
     -sENVIRONMENT=web)
   set_property(TARGET kfm_client APPEND PROPERTY LINK_DEPENDS "${kfm_client_shell}")
+  if(KFM_WEBRTC)
+    # M3's client integration (NetClient over WebRtcTransport) uses this; linked
+    # ahead of it so the page is known to load with wasm exceptions and
+    # datachannel-wasm's JS libraries. Nothing references it yet.
+    target_link_libraries(kfm_client PRIVATE kfm::net_webrtc)
+  endif()
 endif()
 
 # Rendering smoke test without a human: 60 frames of a started match with

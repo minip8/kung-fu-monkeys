@@ -65,6 +65,7 @@ endif()
 
 if(KFM_BUILD_APPS)
   add_subdirectory(apps/replay)
+  add_subdirectory(apps/net-probe)        # headless; needs KFM_WEBRTC
   if(NOT KFM_HEADLESS)
     add_subdirectory(apps/client)
     add_subdirectory(apps/render-probe)
