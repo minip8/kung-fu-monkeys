@@ -17,7 +17,7 @@ using namespace kfm::sim::test;
 namespace {
 
 void eliminate(WorldState& s, PlayerId victim, PlayerId attacker, EventLog& log) {
-  const Player& p = *s.playerBySlot(victim);
+  const Player& p = playerAt(s, victim);
   const EntityId banana = spawnBanana(s, attacker, p.transform.pos, Vec2::zero());
   Contact c;
   c.kindA = EntityKind::Player;

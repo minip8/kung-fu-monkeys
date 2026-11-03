@@ -37,7 +37,7 @@ TEST_CASE("speed scales with moveMag / 255 * moveSpeed", "[sim][movement]") {
     const Vec2 start{Fixed::fromInt(2), Fixed::fromInt(3)};
     placePlayer(s, kP0, start);
     moveWith(s, PlayerInput{64, mag, 0, 0, 0});  // +y
-    const Player& p = *s.playerBySlot(kP0);
+    const Player& p = playerAt(s, kP0);
     const Fixed want = content.player.moveSpeed * Fixed::fromRatio(mag, 255);
     INFO("mag = " << int{mag});
     CHECK(p.transform.prevPos == start);
@@ -51,8 +51,8 @@ TEST_CASE("idle input stops the player", "[sim][movement]") {
   WorldState s = makePlayingWorld(2, 0b1);
   placePlayer(s, kP0, Vec2::zero()).transform.vel = Vec2{Fixed::one(), Fixed::one()};
   moveWith(s, PlayerInput{64, 0, 0, 0, 0});  // moveMag 0 = idle
-  CHECK(s.playerBySlot(kP0)->transform.vel == Vec2::zero());
-  CHECK(s.playerBySlot(kP0)->transform.pos == Vec2::zero());
+  CHECK(playerAt(s, kP0).transform.vel == Vec2::zero());
+  CHECK(playerAt(s, kP0).transform.pos == Vec2::zero());
 }
 
 TEST_CASE("derived moveSpeed is used, not the content base", "[sim][movement]") {
@@ -165,6 +165,6 @@ TEST_CASE("movement applies to every alive player in one pass", "[sim][movement]
   f.inputs[2] = PlayerInput{192, 255, 0, 0, 0};
   inputSystem(s, f);
   movementSystem(s, defaultContent());
-  CHECK(s.playerBySlot(PlayerId{0})->transform.pos.y > Fixed::zero());
-  CHECK(s.playerBySlot(PlayerId{2})->transform.pos.y < Fixed::zero());
+  CHECK(playerAt(s, PlayerId{0}).transform.pos.y > Fixed::zero());
+  CHECK(playerAt(s, PlayerId{2}).transform.pos.y < Fixed::zero());
 }

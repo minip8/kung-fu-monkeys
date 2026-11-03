@@ -12,6 +12,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 namespace kfm::sim::test {
@@ -56,14 +57,28 @@ inline void runTicks(WorldState& s, const InputFrame& frame, int n, const Conten
   return s;
 }
 
+// The player in a slot, failing the test when there is none. Use this rather
+// than dereferencing playerBySlot(): the abort tells the optimiser the
+// reference is never null (Release builds with -Wnull-dereference).
+inline Player& playerAt(WorldState& s, PlayerId id) {
+  Player* p = s.playerBySlot(id);
+  if (p == nullptr) {
+    FAIL_CHECK("no player in slot " << int{id.value});
+    std::abort();
+  }
+  return *p;
+}
+inline const Player& playerAt(const WorldState& s, PlayerId id) {
+  return playerAt(const_cast<WorldState&>(s), id);  // NOLINT(cppcoreguidelines-pro-type-const-cast)
+}
+
 // Teleports a player (pos and prevPos, zero velocity).
 inline Player& placePlayer(WorldState& s, PlayerId id, Vec2 pos) {
-  Player* p = s.playerBySlot(id);
-  REQUIRE(p != nullptr);
-  p->transform.pos = pos;
-  p->transform.prevPos = pos;
-  p->transform.vel = Vec2::zero();
-  return *p;
+  Player& p = playerAt(s, id);
+  p.transform.pos = pos;
+  p.transform.prevPos = pos;
+  p.transform.vel = Vec2::zero();
+  return p;
 }
 
 // Spawns a banana owned by `owner` at pos moving with vel (units/tick).
@@ -111,6 +126,18 @@ template <class Events>
     if (e.kind == kind) return &e;
   }
   return nullptr;
+}
+
+// First event of a kind, failing the test when there is none (see playerAt
+// for why this aborts rather than returning a null pointer).
+template <class Events>
+[[nodiscard]] const SimEvent& firstEvent(const Events& events, EventKind kind) {
+  const SimEvent* e = findEvent(events, kind);
+  if (e == nullptr) {
+    FAIL_CHECK("no event of kind " << static_cast<int>(kind));
+    std::abort();
+  }
+  return *e;
 }
 
 }  // namespace kfm::sim::test

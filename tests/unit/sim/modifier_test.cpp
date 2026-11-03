@@ -30,7 +30,7 @@ void addMod(Player& p, const StatModifier& m) {
 }
 
 Player& freshPlayer(WorldState& s) {
-  return *s.playerBySlot(kP0);
+  return playerAt(s, kP0);
 }
 
 }  // namespace

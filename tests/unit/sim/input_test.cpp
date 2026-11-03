@@ -18,7 +18,7 @@ TEST_CASE("held button fires a press edge once", "[sim][input]") {
   f.inputs[0].buttons = kDash;
 
   inputSystem(s, f);
-  const Player& p = *s.playerBySlot(PlayerId{0});
+  const Player& p = playerAt(s, PlayerId{0});
   CHECK(p.intent.pressed == kDash);
   CHECK(p.intent.held == kDash);
   CHECK(p.prevButtons == kDash);
@@ -42,7 +42,7 @@ TEST_CASE("held button fires a press edge once", "[sim][input]") {
   CHECK(p.intent.pressed == kDash);
 
   // The other player never pressed anything.
-  CHECK(s.playerBySlot(PlayerId{1})->intent.pressed == 0);
+  CHECK(playerAt(s, PlayerId{1}).intent.pressed == 0);
 }
 
 TEST_CASE("move, aim, facing and subTick are decoded", "[sim][input]") {
@@ -50,7 +50,7 @@ TEST_CASE("move, aim, facing and subTick are decoded", "[sim][input]") {
   InputFrame f = frameFor(s);
   f.inputs[0] = PlayerInput{64, 255, 128, kThrow, 200};  // move +y at full speed, aim -x
   inputSystem(s, f);
-  const Player& p = *s.playerBySlot(PlayerId{0});
+  const Player& p = playerAt(s, PlayerId{0});
   CHECK(abs(p.intent.move.x) <= Fixed::fromRaw(2));
   CHECK(abs(p.intent.move.y - Fixed::one()) <= Fixed::fromRaw(2));
   CHECK(p.intent.aim == Angle::fromInput8(128));
@@ -79,7 +79,7 @@ TEST_CASE("absent players get a zero input", "[sim][input]") {
   InputFrame f = frameFor(s);
   f.inputs[1] = PlayerInput{10, 255, 77, kDash, 9};
   inputSystem(s, f);
-  const Player& p = *s.playerBySlot(PlayerId{1});
+  const Player& p = playerAt(s, PlayerId{1});
   REQUIRE(p.intent.held == kDash);
 
   f.present = 0b01;  // player 1 dropped out; its stale input must be ignored

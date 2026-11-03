@@ -109,7 +109,7 @@ TEST_CASE("a missed banana returns and is auto-caught by its thrower", "[scenari
   CHECK(caught->player == PlayerId{1});
   CHECK(caught->a == static_cast<uint32_t>(CatchHow::Auto));
   CHECK(s.boomerangs.empty());
-  CHECK(s.playerBySlot(PlayerId{1})->ammo == content.player.ammoStart);
+  CHECK(playerAt(s, PlayerId{1}).ammo == content.player.ammoStart);
   CHECK(s.rules.phase == MatchPhase::Playing);
 }
 
@@ -139,17 +139,17 @@ TEST_CASE("HitStun lasts hitStunTicks counting the hit tick", "[scenario][hit]")
     if (k == n - 1) {
       // A second banana arriving on the last stunned tick: it must land one
       // tick later, on T+N, not on T+N-1.
-      const Player& p0 = *s.playerBySlot(PlayerId{0});
+      const Player& p0 = playerAt(s, PlayerId{0});
       spawnBanana(s, PlayerId{1}, p0.transform.pos + Vec2{Fixed::one(), Fixed::zero()}, incoming,
                   BoomerangPhase::Outbound, content);
     }
-    const Vec2 before = s.playerBySlot(PlayerId{0})->transform.pos;
+    const Vec2 before = playerAt(s, PlayerId{0}).transform.pos;
     EventLog log;
     runTicks(s, f, 1, content, log);
     for (const SimEvent& e : log) {
       if (e.kind == EventKind::PlayerHit) hits.push_back(e);
     }
-    const Player& p0 = *s.playerBySlot(PlayerId{0});
+    const Player& p0 = playerAt(s, PlayerId{0});
     const bool moved = p0.transform.pos != before;
     INFO("tick T+" << k);
     CHECK(moved == (k == 0 || k == n));

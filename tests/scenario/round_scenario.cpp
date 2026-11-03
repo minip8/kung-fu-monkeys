@@ -15,7 +15,7 @@ namespace {
 
 // A banana thrown by `attacker` lands on `victim` (one-hit kill by default).
 void eliminate(WorldState& s, PlayerId victim, PlayerId attacker, EventLog& log) {
-  const Player& p = *s.playerBySlot(victim);
+  const Player& p = playerAt(s, victim);
   const EntityId banana = spawnBanana(s, attacker, p.transform.pos, Vec2::zero());
   Contact c;
   c.kindA = EntityKind::Player;
@@ -84,10 +84,10 @@ TEST_CASE("a three-player round: last one standing wins, then everyone respawns"
   CHECK(s.boomerangs.empty());
   CHECK(countEvents(log, EventKind::PlayerSpawned) == 3);
   REQUIRE(findEvent(log, EventKind::RoundStarted) != nullptr);
-  CHECK(findEvent(log, EventKind::RoundStarted)->a == 2);
+  CHECK(firstEvent(log, EventKind::RoundStarted).a == 2);
   for (uint8_t i = 0; i < 3; ++i) {
-    CHECK(s.playerBySlot(PlayerId{i})->hp == content.player.maxHp);
-    CHECK(s.playerBySlot(PlayerId{i})->tags == Tags{});
+    CHECK(playerAt(s, PlayerId{i}).hp == content.player.maxHp);
+    CHECK(playerAt(s, PlayerId{i}).tags == Tags{});
   }
   runTicks(s, frameFor(s), content.mode.roundStartTicks, content, log);
   CHECK(s.rules.phase == MatchPhase::Playing);

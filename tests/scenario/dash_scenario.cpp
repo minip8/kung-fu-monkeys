@@ -51,7 +51,7 @@ TEST_CASE("a dash along facing covers activeTicks x speed and then stops", "[sce
   // Ticks 1..A-1 of the dash, then recovery and beyond; button released.
   int dashedEvents = 0;
   for (int k = 1; k < dash.activeTicks + dash.recoveryTicks + 10; ++k) {
-    const Player& p = *s.playerBySlot(kP0);
+    const Player& p = playerAt(s, kP0);
     INFO("k = " << k - 1);
     CHECK(p.tags.has(Tag::Dashing) == (k - 1 < dash.activeTicks));
     // Pressed at sub-tick 40: the window closes inside tick T + perfectWindowTicks.
@@ -61,7 +61,7 @@ TEST_CASE("a dash along facing covers activeTicks x speed and then stops", "[sce
   }
   CHECK(dashedEvents == 0);
 
-  const Player& p = *s.playerBySlot(kP0);
+  const Player& p = playerAt(s, kP0);
   CHECK_FALSE(p.tags.has(Tag::Dashing));
   CHECK(p.transform.vel == Vec2::zero());
   // Exactly activeTicks of movement at dash speed along +x (cos 0 is exact).
@@ -80,7 +80,7 @@ TEST_CASE("a dash follows the stick, then walking resumes at move speed", "[scen
   stepWith(s, PlayerInput{64, 255, 128, kDash, 0});
   for (int k = 1; k < int{dash.activeTicks}; ++k)
     stepWith(s, PlayerInput{64, 255, 128, 0, 0});
-  const Player& p = *s.playerBySlot(kP0);
+  const Player& p = playerAt(s, kP0);
   const Fixed dashed = p.transform.pos.y - start.y;
   CHECK(near(dashed, dash.speed * int32_t{dash.activeTicks}, 256));
   CHECK(near(p.transform.pos.x, start.x, 64));
@@ -99,7 +99,7 @@ TEST_CASE("a dash into the wall stops at the arena edge", "[scenario][dash]") {
   stepWith(s, PlayerInput{0, 0, 0, kDash, 0});
   for (int k = 0; k < 20; ++k)
     stepWith(s, PlayerInput{0, 0, 0, 0, 0});
-  const Player& p = *s.playerBySlot(kP0);
+  const Player& p = playerAt(s, kP0);
   CHECK(p.transform.pos.x == limX);
   CHECK(p.transform.pos.y == Fixed::zero());
 }

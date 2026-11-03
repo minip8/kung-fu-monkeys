@@ -106,7 +106,7 @@ TEST_CASE("a throw at a wall bounces, returns and is auto-caught", "[scenario][p
         phaseAtBounce = b->phase;
       }
     }
-    if (k == 2) CHECK(s.playerBySlot(kP0)->ammo == 0);  // banana in the air
+    if (k == 2) CHECK(playerAt(s, kP0).ammo == 0);  // banana in the air
   }
 
   CHECK(kindsOf(log,
@@ -125,7 +125,7 @@ TEST_CASE("a throw at a wall bounces, returns and is auto-caught", "[scenario][p
   CHECK(caught.a == static_cast<uint32_t>(CatchHow::Auto));
   // It flew out for outboundTicks before turning back.
   CHECK(caught.tick.minus(thrown.tick) > content.boomerang.outboundTicks);
-  CHECK(s.playerBySlot(kP0)->ammo == 1);
+  CHECK(playerAt(s, kP0).ammo == 1);
   CHECK(s.boomerangs.empty());
   CHECK(s.pickups.empty());
 }
@@ -216,9 +216,9 @@ TEST_CASE("a perfect dash catches the incoming banana; mistimed dashes get hit",
     CHECK(countEvents(log, EventKind::PlayerHit) == 0);
     CHECK(countEvents(log, EventKind::RoundEnded) == 0);
     // The catcher held a banana already: ammoMax caps it at 1.
-    CHECK(s.playerBySlot(kP0)->ammo == content.player.ammoMax);
+    CHECK(playerAt(s, kP0).ammo == content.player.ammoMax);
     // The thrower's banana is gone; it stays empty-handed.
-    CHECK(s.playerBySlot(kP1)->ammo == 0);
+    CHECK(playerAt(s, kP1).ammo == 0);
     CHECK(s.boomerangs.empty());
   }
   SECTION("too early: the window has closed when the banana arrives") {
@@ -291,20 +291,20 @@ TEST_CASE("walking over a grounded banana picks it up unless at ammoMax", "[scen
   const Vec2 lying = s.pickups.items[spawned.entity.index].pos;
 
   SECTION("at ammoMax the pickup stays") {
-    REQUIRE(s.playerBySlot(kP0)->ammo == content.player.ammoMax);
+    REQUIRE(playerAt(s, kP0).ammo == content.player.ammoMax);
     placePlayer(s, kP0, lying - at(3, 0));
     InputFrame walk = frameFor(s);
     walk.inputs[0] = PlayerInput{kMoveRight, 255, 0, 0, 0};
     EventLog walked;
     runTicks(s, walk, 60, content, walked);  // 7 units: well past the pickup
-    CHECK(s.playerBySlot(kP0)->transform.pos.x > lying.x + Fixed::fromInt(2));
+    CHECK(playerAt(s, kP0).transform.pos.x > lying.x + Fixed::fromInt(2));
     CHECK(countEvents(walked, EventKind::PickupTaken) == 0);
     CHECK(s.pickups.isAlive(spawned.entity));
-    CHECK(s.playerBySlot(kP0)->ammo == content.player.ammoMax);
+    CHECK(playerAt(s, kP0).ammo == content.player.ammoMax);
   }
   SECTION("empty-handed, the player takes it") {
     // Player 1 threw: its ammo is 0. Walk it across the pickup along +x.
-    REQUIRE(s.playerBySlot(kP1)->ammo == 0);
+    REQUIRE(playerAt(s, kP1).ammo == 0);
     placePlayer(s, kP1, lying - at(3, 0));
     InputFrame walk = frameFor(s);
     walk.inputs[1] = PlayerInput{kMoveRight, 255, 0, 0, 0};
@@ -314,6 +314,6 @@ TEST_CASE("walking over a grounded banana picks it up unless at ammoMax", "[scen
     CHECK(taken.player == kP1);
     CHECK(taken.entity == spawned.entity);
     CHECK(s.pickups.empty());
-    CHECK(s.playerBySlot(kP1)->ammo == 1);
+    CHECK(playerAt(s, kP1).ammo == 1);
   }
 }

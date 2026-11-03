@@ -38,7 +38,7 @@ InputFrame withButtons(const WorldState& s, uint8_t buttons, uint8_t aimDir = 0,
 }
 
 const AbilityState& slot(const WorldState& s, uint8_t i) {
-  return s.playerBySlot(kP0)->abilities[i];
+  return playerAt(s, kP0).abilities[i];
 }
 
 bool near(Fixed a, Fixed b, int32_t rawTol = 4) {
@@ -53,7 +53,7 @@ TEST_CASE("registry maps kinds to behaviours", "[sim][ability]") {
   CHECK(behaviorFor(AbilityKind::Throw).onPhaseChange != nullptr);
   // Out-of-range kinds get the inert None behaviour, which never activates.
   const WorldState s = makePlayingWorld(1, 0b1);
-  const Player& p = *s.playerBySlot(kP0);
+  const Player& p = playerAt(s, kP0);
   CHECK_FALSE(behaviorFor(AbilityKind::kCount).canActivate(s, p, AbilityDef{}));
   CHECK_FALSE(behaviorFor(AbilityKind::None).canActivate(s, p, AbilityDef{}));
 }
@@ -82,7 +82,7 @@ TEST_CASE("dash timeline: phases, PerfectDash and cooldown land on exact ticks",
   for (int k = 0; k <= a + r; ++k) {
     if (k > 0) abilityTick(s, withButtons(s, 0), content, sink);  // button released
     INFO("k = " << k);
-    const Player& p = *s.playerBySlot(kP0);
+    const Player& p = playerAt(s, kP0);
     AbilityPhase want = AbilityPhase::Idle;
     if (k < a) {
       want = AbilityPhase::Active;
@@ -170,7 +170,7 @@ TEST_CASE("zero-length phases are skipped in the same tick", "[sim][ability]") {
 
   // Startup 0 alone: banana on the press tick, then Active for its duration.
   thr.activeTicks = 3;
-  s.playerBySlot(kP0)->ammo = 1;
+  playerAt(s, kP0).ammo = 1;
   abilityTick(s, withButtons(s, 0), content, sink);
   abilityTick(s, withButtons(s, kThrow), content, sink);
   CHECK(slot(s, 1).phase == AbilityPhase::Active);
@@ -188,7 +188,7 @@ TEST_CASE("dash direction comes from move, or facing when idle", "[sim][ability]
     InputFrame f = withButtons(s, kDash, 128, 64);
     f.inputs[0].moveMag = 128;
     abilityTick(s, f, content, sink);
-    const Player& p = *s.playerBySlot(kP0);
+    const Player& p = playerAt(s, kP0);
     CHECK(near(slot(s, 0).dir.x, Fixed::zero()));
     CHECK(near(slot(s, 0).dir.y, Fixed::one(), 64));  // normalised, not half length
     CHECK(near(length(p.transform.vel), dash.speed, 64));
@@ -197,7 +197,7 @@ TEST_CASE("dash direction comes from move, or facing when idle", "[sim][ability]
   SECTION("idle move dashes along facing") {
     WorldState s = makePlayingWorld(8, 0b1);
     abilityTick(s, withButtons(s, kDash, 128), content, sink);  // aim -x
-    const Player& p = *s.playerBySlot(kP0);
+    const Player& p = playerAt(s, kP0);
     CHECK(near(slot(s, 0).dir.x, -Fixed::one()));
     CHECK(near(slot(s, 0).dir.y, Fixed::zero()));
     CHECK(near(p.transform.vel.x, -dash.speed));
@@ -215,14 +215,14 @@ TEST_CASE("dash velocity is pinned during Active and the slot leaves it after", 
   EventSink sink;
   abilityTick(s, withButtons(s, kDash, 0), content, sink);  // aim +x
   for (int k = 1; k < int{dash.activeTicks}; ++k) {
-    s.playerBySlot(kP0)->transform.vel = Vec2::zero();  // anything else touching vel is overridden
+    playerAt(s, kP0).transform.vel = Vec2::zero();  // anything else touching vel is overridden
     abilityTick(s, withButtons(s, 0, 0), content, sink);
-    CHECK(s.playerBySlot(kP0)->transform.vel.x == dash.speed);
+    CHECK(playerAt(s, kP0).transform.vel.x == dash.speed);
   }
-  s.playerBySlot(kP0)->transform.vel = Vec2::zero();
+  playerAt(s, kP0).transform.vel = Vec2::zero();
   abilityTick(s, withButtons(s, 0, 0), content, sink);  // first Recovery tick
   CHECK(slot(s, 0).phase == AbilityPhase::Recovery);
-  CHECK(s.playerBySlot(kP0)->transform.vel == Vec2::zero());
+  CHECK(playerAt(s, kP0).transform.vel == Vec2::zero());
 }
 
 TEST_CASE("a press on the tick boundary keeps PerfectDash for exactly the window",
@@ -235,7 +235,7 @@ TEST_CASE("a press on the tick boundary keeps PerfectDash for exactly the window
   for (int k = 0; k <= perfect + 1; ++k) {
     if (k > 0) abilityTick(s, withButtons(s, 0), content, sink);
     INFO("k = " << k);
-    CHECK(s.playerBySlot(kP0)->tags.has(Tag::PerfectDash) == (k < perfect));
+    CHECK(playerAt(s, kP0).tags.has(Tag::PerfectDash) == (k < perfect));
   }
 }
 
@@ -243,7 +243,7 @@ TEST_CASE("tag rebuild leaves HitStun and Eliminated alone", "[sim][ability]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(10, 0b1);
   EventSink sink;
-  Player& p = *s.playerBySlot(kP0);
+  Player& p = playerAt(s, kP0);
   p.tags.set(Tag::HitStun);
   p.tags.set(Tag::Eliminated);
   p.tags.set(Tag::Dashing);  // stale: no dash is running
@@ -269,7 +269,7 @@ TEST_CASE("throw timeline: banana spawns on the Startup -> Active tick", "[sim][
   abilityTick(s, withButtons(s, kThrow, 64), content, sink);
   CHECK(slot(s, 1).phase == AbilityPhase::Startup);
   CHECK(sink.count == 0);
-  CHECK(s.playerBySlot(kP0)->ammo == 1);
+  CHECK(playerAt(s, kP0).ammo == 1);
   // Aim changes during startup do not change the throw direction.
   abilityTick(s, withButtons(s, 0, 0), content, sink);  // T+1
   CHECK(slot(s, 1).phase == AbilityPhase::Startup);
@@ -277,7 +277,7 @@ TEST_CASE("throw timeline: banana spawns on the Startup -> Active tick", "[sim][
   abilityTick(s, withButtons(s, 0, 0), content, sink);  // T+2
   CHECK(slot(s, 1).phase == AbilityPhase::Active);
   REQUIRE(s.boomerangs.size() == 1);
-  CHECK(s.playerBySlot(kP0)->ammo == 0);
+  CHECK(playerAt(s, kP0).ammo == 0);
 
   const SimEvent* e = findEvent(sink, EventKind::BoomerangThrown);
   REQUIRE(e != nullptr);
@@ -312,7 +312,7 @@ TEST_CASE("throw heading matches aim in every direction", "[sim][ability]") {
   content.abilities[content.player.abilities[kAbilitySlotThrow]].startupTicks = 0;
   for (int aim = 0; aim < 256; aim += 7) {
     WorldState s = makePlayingWorld(12, 0b1);
-    s.playerBySlot(kP0)->ammo = 1;
+    playerAt(s, kP0).ammo = 1;
     EventSink sink;
     abilityTick(s, withButtons(s, kThrow, static_cast<uint8_t>(aim)), content, sink);
     const SimEvent* e = findEvent(sink, EventKind::BoomerangThrown);
@@ -327,7 +327,7 @@ TEST_CASE("throw heading matches aim in every direction", "[sim][ability]") {
 TEST_CASE("throw with no ammo does nothing", "[sim][ability]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(13, 0b1);
-  s.playerBySlot(kP0)->ammo = 0;
+  playerAt(s, kP0).ammo = 0;
   EventSink sink;
   for (int k = 0; k < 5; ++k)
     abilityTick(s, withButtons(s, k == 0 ? kThrow : 0), content, sink);
@@ -342,7 +342,7 @@ TEST_CASE("throw into a full boomerang pool spends no ammo", "[sim][ability]") {
   while (!s.boomerangs.full()) {
     spawnBanana(s, kP0, Vec2::zero(), Vec2::zero());
   }
-  s.playerBySlot(kP0)->ammo = 1;
+  playerAt(s, kP0).ammo = 1;
   EventSink sink;
   int thrown = 0;
   for (int k = 0; k < 4; ++k) {
@@ -350,7 +350,7 @@ TEST_CASE("throw into a full boomerang pool spends no ammo", "[sim][ability]") {
     thrown += countEvents(sink, EventKind::BoomerangThrown);
   }
   CHECK(thrown == 0);
-  CHECK(s.playerBySlot(kP0)->ammo == 1);
+  CHECK(playerAt(s, kP0).ammo == 1);
   CHECK(s.boomerangs.size() == kMaxBoomerangs);
 }
 

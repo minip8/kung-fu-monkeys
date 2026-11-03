@@ -43,7 +43,7 @@ Contacts contactsOf(std::initializer_list<Contact> list) {
 
 // Gives a player PerfectDash with the dash pressed at (tick, subTick).
 void givePerfectDash(WorldState& s, PlayerId id, Tick pressTick, uint8_t pressSubTick) {
-  Player& p = *s.playerBySlot(id);
+  Player& p = playerAt(s, id);
   p.tags.set(Tag::Dashing);
   p.tags.set(Tag::PerfectDash);
   AbilityState& dash = p.abilities[kAbilitySlotDash];
@@ -78,14 +78,14 @@ TEST_CASE("rules table is sorted and every row ignores eliminated players", "[si
 
 TEST_CASE("perfect catch inside the window takes the banana and an ammo", "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
-  s.playerBySlot(kP0)->ammo = 0;
+  playerAt(s, kP0).ammo = 0;
   const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2{Fixed::one(), Fixed::zero()});
   givePerfectDash(s, kP0, s.tick, 128);  // pressed half way through this tick
 
   const EventSink sink =
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.75))}));
   CHECK_FALSE(s.boomerangs.isAlive(banana));
-  CHECK(s.playerBySlot(kP0)->ammo == 1);
+  CHECK(playerAt(s, kP0).ammo == 1);
   REQUIRE(sink.count == 1);
   CHECK(sink.events[0].kind == EventKind::BoomerangCaught);
   CHECK(sink.events[0].player == kP0);
@@ -96,13 +96,13 @@ TEST_CASE("perfect catch inside the window takes the banana and an ammo", "[sim]
 
 TEST_CASE("perfect catch ammo is capped at ammoMax", "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
-  REQUIRE(s.playerBySlot(kP0)->ammo == s.playerBySlot(kP0)->stats.ammoMax);
+  REQUIRE(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
   const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
   givePerfectDash(s, kP0, s.tick, 0);
   const EventSink sink =
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
   CHECK(countEvents(sink, EventKind::BoomerangCaught) == 1);
-  CHECK(s.playerBySlot(kP0)->ammo == s.playerBySlot(kP0)->stats.ammoMax);
+  CHECK(playerAt(s, kP0).ammo == playerAt(s, kP0).stats.ammoMax);
 }
 
 TEST_CASE("perfect window edges are judged against press sub-tick and tHit", "[sim][interaction]") {
@@ -142,7 +142,7 @@ TEST_CASE("perfect window edges are judged against press sub-tick and tHit", "[s
         // to the damage rule (the banana is not the catcher's).
         CHECK(countEvents(sink, EventKind::BoomerangCaught) == 0);
         CHECK(countEvents(sink, EventKind::PlayerHit) == 1);
-        CHECK(s.playerBySlot(kP0)->tags.has(Tag::Eliminated));
+        CHECK(playerAt(s, kP0).tags.has(Tag::Eliminated));
       }
     }
   }
@@ -194,7 +194,7 @@ TEST_CASE("own outbound banana matches no rule", "[sim][interaction]") {
 
 TEST_CASE("own returning banana is auto-caught, ammo capped", "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
-  Player& p0 = *s.playerBySlot(kP0);
+  Player& p0 = playerAt(s, kP0);
 
   SECTION("from empty") {
     p0.ammo = 0;
@@ -207,7 +207,7 @@ TEST_CASE("own returning banana is auto-caught, ammo capped", "[sim][interaction
   const EventSink sink =
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.3))}));
   CHECK_FALSE(s.boomerangs.isAlive(banana));
-  CHECK(s.playerBySlot(kP0)->ammo == 1);
+  CHECK(playerAt(s, kP0).ammo == 1);
   REQUIRE(sink.count == 1);
   CHECK(sink.events[0].kind == EventKind::BoomerangCaught);
   CHECK(sink.events[0].player == kP0);
@@ -225,7 +225,7 @@ TEST_CASE("another player's banana damages, stuns and grounds at the contact poi
   const EventSink sink =
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5), point)}));
 
-  const Player& p0 = *s.playerBySlot(kP0);
+  const Player& p0 = playerAt(s, kP0);
   CHECK(p0.hp == 0);
   CHECK(p0.tags.has(Tag::HitStun));
   CHECK(p0.tags.has(Tag::Eliminated));
@@ -254,17 +254,17 @@ TEST_CASE("non-lethal hit keeps the player in play", "[sim][interaction]") {
   ContentDB content = defaultContent();
   content.player.maxHp = 3;
   WorldState s = makePlayingWorld(1, 0b11, content);
-  REQUIRE(s.playerBySlot(kP0)->hp == 3);
+  REQUIRE(playerAt(s, kP0).hp == 3);
   const EntityId banana =
       spawnBanana(s, kP1, Vec2::zero(), Vec2::zero(), BoomerangPhase::Outbound, content);
   s.boomerangs.items[banana.index].damage = 2;
   const EventSink sink = resolve(
       s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, Fixed::zero())}), content);
-  CHECK(s.playerBySlot(kP0)->hp == 1);
-  CHECK_FALSE(s.playerBySlot(kP0)->tags.has(Tag::Eliminated));
+  CHECK(playerAt(s, kP0).hp == 1);
+  CHECK_FALSE(playerAt(s, kP0).tags.has(Tag::Eliminated));
   CHECK(countEvents(sink, EventKind::PlayerEliminated) == 0);
   REQUIRE(findEvent(sink, EventKind::PlayerHit) != nullptr);
-  CHECK(findEvent(sink, EventKind::PlayerHit)->b == 1);
+  CHECK(firstEvent(sink, EventKind::PlayerHit).b == 1);
 }
 
 TEST_CASE("damage saturates at zero hp", "[sim][interaction]") {
@@ -273,7 +273,7 @@ TEST_CASE("damage saturates at zero hp", "[sim][interaction]") {
   s.boomerangs.items[banana.index].damage = 200;
   const EventSink sink =
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, Fixed::zero())}));
-  CHECK(s.playerBySlot(kP0)->hp == 0);
+  CHECK(playerAt(s, kP0).hp == 0);
   CHECK(countEvents(sink, EventKind::PlayerEliminated) == 1);
 }
 
@@ -307,27 +307,27 @@ TEST_CASE("HitStun blocks a second hit; contacts resolve by time of impact", "[s
                           touch(s, kP0, EntityKind::Boomerang, early, ticks(0.2))}),
               content);
   REQUIRE(countEvents(sink, EventKind::PlayerHit) == 1);
-  CHECK(findEvent(sink, EventKind::PlayerHit)->entity == early);
-  CHECK(findEvent(sink, EventKind::PlayerHit)->a == kP2.value);
-  CHECK(s.playerBySlot(kP0)->hp == 2);
+  CHECK(firstEvent(sink, EventKind::PlayerHit).entity == early);
+  CHECK(firstEvent(sink, EventKind::PlayerHit).a == kP2.value);
+  CHECK(playerAt(s, kP0).hp == 2);
   CHECK(s.boomerangs.items[late.index].phase == BoomerangPhase::Outbound);
   CHECK(s.boomerangs.items[early.index].phase == BoomerangPhase::Grounded);
 }
 
 TEST_CASE("Invulnerable players are not damaged", "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
-  s.playerBySlot(kP0)->tags.set(Tag::Invulnerable);
+  playerAt(s, kP0).tags.set(Tag::Invulnerable);
   const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
   const EventSink sink =
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, Fixed::zero())}));
   CHECK(sink.count == 0);
-  CHECK(s.playerBySlot(kP0)->hp == 1);
+  CHECK(playerAt(s, kP0).hp == 1);
 }
 
 TEST_CASE("an eliminated player cannot take a pickup later in the same tick",
           "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
-  s.playerBySlot(kP0)->ammo = 0;
+  playerAt(s, kP0).ammo = 0;
   const EntityId banana = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
   const EntityId pickup = spawnPickup(s, Vec2::zero());
   const EventSink sink =
@@ -336,14 +336,14 @@ TEST_CASE("an eliminated player cannot take a pickup later in the same tick",
   CHECK(countEvents(sink, EventKind::PlayerEliminated) == 1);
   CHECK(countEvents(sink, EventKind::PickupTaken) == 0);
   CHECK(s.pickups.isAlive(pickup));
-  CHECK(s.playerBySlot(kP0)->ammo == 0);
+  CHECK(playerAt(s, kP0).ammo == 0);
 }
 
 TEST_CASE("two perfect dashers on one banana: earlier press wins, then lower slot",
           "[sim][interaction]") {
   WorldState s = makePlayingWorld(5, 0b111);
-  s.playerBySlot(kP0)->ammo = 0;
-  s.playerBySlot(kP1)->ammo = 0;
+  playerAt(s, kP0).ammo = 0;
+  playerAt(s, kP1).ammo = 0;
   const EntityId banana = spawnBanana(s, kP2, Vec2::zero(), Vec2::zero());
 
   PlayerId expected = kP0;
@@ -367,10 +367,10 @@ TEST_CASE("two perfect dashers on one banana: earlier press wins, then lower slo
       resolve(s, contactsOf({touch(s, kP1, EntityKind::Boomerang, banana, ticks(0.5)),
                              touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5))}));
   REQUIRE(countEvents(sink, EventKind::BoomerangCaught) == 1);
-  CHECK(findEvent(sink, EventKind::BoomerangCaught)->player == expected);
+  CHECK(firstEvent(sink, EventKind::BoomerangCaught).player == expected);
   CHECK(countEvents(sink, EventKind::PlayerHit) == 0);
-  CHECK(s.playerBySlot(expected)->ammo == 1);
-  CHECK(s.playerBySlot(expected == kP0 ? kP1 : kP0)->ammo == 0);
+  CHECK(playerAt(s, expected).ammo == 1);
+  CHECK(playerAt(s, expected == kP0 ? kP1 : kP0).ammo == 0);
 }
 
 TEST_CASE("earlier time of impact beats an earlier press", "[sim][interaction]") {
@@ -382,7 +382,7 @@ TEST_CASE("earlier time of impact beats an earlier press", "[sim][interaction]")
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.6)),
                              touch(s, kP1, EntityKind::Boomerang, banana, ticks(0.4))}));
   REQUIRE(findEvent(sink, EventKind::BoomerangCaught) != nullptr);
-  CHECK(findEvent(sink, EventKind::BoomerangCaught)->player == kP1);
+  CHECK(firstEvent(sink, EventKind::BoomerangCaught).player == kP1);
 }
 
 TEST_CASE("pickups restore ammo up to ammoMax; a full player leaves them", "[sim][interaction]") {
@@ -390,23 +390,23 @@ TEST_CASE("pickups restore ammo up to ammoMax; a full player leaves them", "[sim
   const EntityId pickup = spawnPickup(s, Vec2::zero());
 
   SECTION("empty player takes it") {
-    s.playerBySlot(kP0)->ammo = 0;
+    playerAt(s, kP0).ammo = 0;
     const EventSink sink =
         resolve(s, contactsOf({touch(s, kP0, EntityKind::Pickup, pickup, Fixed::zero())}));
     CHECK_FALSE(s.pickups.isAlive(pickup));
-    CHECK(s.playerBySlot(kP0)->ammo == 1);
+    CHECK(playerAt(s, kP0).ammo == 1);
     REQUIRE(sink.count == 1);
     CHECK(sink.events[0].kind == EventKind::PickupTaken);
     CHECK(sink.events[0].player == kP0);
     CHECK(sink.events[0].entity == pickup);
   }
   SECTION("full player leaves it for the next one") {
-    s.playerBySlot(kP1)->ammo = 0;
+    playerAt(s, kP1).ammo = 0;
     const EventSink sink =
         resolve(s, contactsOf({touch(s, kP0, EntityKind::Pickup, pickup, ticks(0.1)),
                                touch(s, kP1, EntityKind::Pickup, pickup, ticks(0.2))}));
-    CHECK(s.playerBySlot(kP0)->ammo == 1);
-    CHECK(s.playerBySlot(kP1)->ammo == 1);
+    CHECK(playerAt(s, kP0).ammo == 1);
+    CHECK(playerAt(s, kP1).ammo == 1);
     REQUIRE(sink.count == 1);
     CHECK(sink.events[0].player == kP1);
     CHECK_FALSE(s.pickups.isAlive(pickup));
@@ -422,7 +422,7 @@ TEST_CASE("contacts with despawned or stale entities are skipped", "[sim][intera
   REQUIRE(reused.index == banana.index);  // same slot, newer generation
   const EventSink sink = resolve(s, contactsOf({stale}));
   CHECK(sink.count == 0);
-  CHECK(s.playerBySlot(kP0)->hp == 1);
+  CHECK(playerAt(s, kP0).hp == 1);
 }
 
 TEST_CASE("handlers decline when their entities are gone", "[sim][interaction]") {
@@ -474,7 +474,7 @@ TEST_CASE("no contact resolves outside the Playing phase", "[sim][interaction]")
     s.rules.phase = phase;
     const EventSink sink = resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, b, {})}));
     CHECK(sink.count == 0);
-    CHECK(s.playerBySlot(kP0)->hp == defaultContent().player.maxHp);
+    CHECK(playerAt(s, kP0).hp == defaultContent().player.maxHp);
     CHECK(s.boomerangs.isAlive(b));
   }
 }

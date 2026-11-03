@@ -40,7 +40,7 @@ TEST_CASE("a throw launches one banana two ticks after the press", "[scenario][t
   WorldState s = makePlayingWorld(1, 0b1);
   const Vec2 origin{Fixed::fromInt(-2), Fixed::one()};
   placePlayer(s, kP0, origin);
-  REQUIRE(s.playerBySlot(kP0)->ammo == content.player.ammoStart);
+  REQUIRE(playerAt(s, kP0).ammo == content.player.ammoStart);
   REQUIRE(content.player.ammoStart == 1);
 
   // Press Throw aiming -y (192), stick idle; release afterwards.
@@ -55,7 +55,7 @@ TEST_CASE("a throw launches one banana two ticks after the press", "[scenario][t
   REQUIRE(thrown != nullptr);
   CHECK(thrown->tick == pressTick.plus(thr.startupTicks));
   CHECK(thrown->player == kP0);
-  CHECK(s.playerBySlot(kP0)->ammo == 0);
+  CHECK(playerAt(s, kP0).ammo == 0);
 
   const Boomerang* b = s.boomerangs.get(thrown->entity);
   REQUIRE(b != nullptr);
@@ -85,8 +85,8 @@ TEST_CASE("throwing with no ammo does nothing; a second banana needs ammo", "[sc
         countEvents(stepWith(s, PlayerInput{0, 0, 0, buttons, 0}), EventKind::BoomerangThrown);
   }
   CHECK(thrown == 1);
-  CHECK(s.playerBySlot(kP0)->ammo == 0);
-  CHECK(s.playerBySlot(kP0)->abilities[kAbilitySlotThrow].phase == AbilityPhase::Idle);
+  CHECK(playerAt(s, kP0).ammo == 0);
+  CHECK(playerAt(s, kP0).abilities[kAbilitySlotThrow].phase == AbilityPhase::Idle);
 }
 
 TEST_CASE("throw while dashing spawns the banana from the moving player", "[scenario][throw]") {
@@ -98,7 +98,7 @@ TEST_CASE("throw while dashing spawns the banana from the moving player", "[scen
   stepWith(s, PlayerInput{0, 0, 0, 0, 0});
   // Abilities run before movement: the banana spawns at the position the
   // player had at the start of the spawn tick.
-  const Vec2 posBeforeSpawnTick = s.playerBySlot(kP0)->transform.pos;
+  const Vec2 posBeforeSpawnTick = playerAt(s, kP0).transform.pos;
   log = stepWith(s, PlayerInput{0, 0, 0, 0, 0});
   const SimEvent* thrown = findEvent(log, EventKind::BoomerangThrown);
   REQUIRE(thrown != nullptr);

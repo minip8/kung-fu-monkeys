@@ -89,7 +89,7 @@ TEST_CASE("spawned players get content stats and a full reset", "[sim][rules]") 
   WorldState s = initialWorld(MatchConfig{3, 0b11});
   static_cast<void>(stepIdle(s));
   for (uint8_t i = 0; i < 2; ++i) {
-    const Player& p = *s.playerBySlot(PlayerId{i});
+    const Player& p = playerAt(s, PlayerId{i});
     CHECK(p.id == PlayerId{i});
     CHECK(p.hp == content.player.maxHp);
     CHECK(p.ammo == content.player.ammoStart);
@@ -162,7 +162,7 @@ TEST_CASE("RoundEnded lasts roundEndTicks, then everyone respawns", "[sim][rules
   spawnPickup(s, Vec2::zero());
   removePlayers(s, {1, 2});
   // Player 0 survives the round battered: everything must be reset.
-  Player& p0 = *s.playerBySlot(PlayerId{0});
+  Player& p0 = playerAt(s, PlayerId{0});
   p0.hp = 0;
   p0.ammo = 0;
   p0.tags.set(Tag::HitStun);
@@ -191,14 +191,14 @@ TEST_CASE("RoundEnded lasts roundEndTicks, then everyone respawns", "[sim][rules
   CHECK(s.rules.round == 2);
   CHECK(countEvents(next, EventKind::PlayerSpawned) == 3);
   REQUIRE(findEvent(next, EventKind::RoundStarted) != nullptr);
-  CHECK(findEvent(next, EventKind::RoundStarted)->a == 2);
+  CHECK(firstEvent(next, EventKind::RoundStarted).a == 2);
   CHECK(countEvents(next, EventKind::MatchStarted) == 0);
   CHECK(s.players.size() == 3);
   CHECK(s.boomerangs.empty());
   CHECK(s.pickups.empty());
   CHECK(spawnOffsetOf(s, content) >= 0);
 
-  const Player& r0 = *s.playerBySlot(PlayerId{0});
+  const Player& r0 = playerAt(s, PlayerId{0});
   CHECK(r0.hp == content.player.maxHp);
   CHECK(r0.ammo == content.player.ammoStart);
   CHECK(r0.tags == Tags{});
@@ -262,7 +262,7 @@ TEST_CASE("spawn uses ranks among present slots, not raw slots", "[sim][rules]")
   const int offset = spawnOffsetOf(s, content);
   REQUIRE(offset >= 0);
   const auto first = static_cast<size_t>(offset);
-  CHECK(s.playerBySlot(PlayerId{5})->transform.pos == content.arena.spawnPoints[first]);
-  CHECK(s.playerBySlot(PlayerId{9})->transform.pos ==
+  CHECK(playerAt(s, PlayerId{5}).transform.pos == content.arena.spawnPoints[first]);
+  CHECK(playerAt(s, PlayerId{9}).transform.pos ==
         content.arena.spawnPoints[(first + 1) % content.arena.spawnPointCount]);
 }
