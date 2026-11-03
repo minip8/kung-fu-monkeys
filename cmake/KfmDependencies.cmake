@@ -168,9 +168,20 @@ endif()
 # share: no exceptions (parse errors come back as toml::parse_result, which
 # the loader turns into diagnostics) and no formatters (never printed back).
 # ---------------------------------------------------------------------------
+# Only the headers are used on both paths. The vcpkg port builds toml++ as a
+# library whose target defines TOML_HEADER_ONLY=0 and links it (and was
+# compiled with exceptions on, which toml++ requires every includer to
+# match), so linking that target would both redefine the macro and mix
+# configurations; its include directory alone gives the same headers.
+add_library(kfm_tomlplusplus INTERFACE)
 find_package(tomlplusplus 3.4.0 EXACT CONFIG QUIET)
 if(tomlplusplus_FOUND)
-  message(STATUS "KFM: toml++ ${tomlplusplus_VERSION} from find_package")
+  message(STATUS "KFM: toml++ ${tomlplusplus_VERSION} headers from find_package")
+  get_target_property(kfm_toml_include tomlplusplus::tomlplusplus INTERFACE_INCLUDE_DIRECTORIES)
+  if(NOT kfm_toml_include)
+    message(FATAL_ERROR "tomlplusplus::tomlplusplus has no INTERFACE_INCLUDE_DIRECTORIES")
+  endif()
+  target_include_directories(kfm_tomlplusplus SYSTEM INTERFACE ${kfm_toml_include})
 else()
   message(STATUS "KFM: toml++ not found via find_package, fetching v3.4.0")
   FetchContent_Declare(tomlplusplus
@@ -179,13 +190,8 @@ else()
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     SOURCE_SUBDIR  kfm-no-cmake)  # header only: the include directory is all we use
   FetchContent_MakeAvailable(tomlplusplus)
-  add_library(tomlplusplus_tomlplusplus INTERFACE)
-  target_include_directories(tomlplusplus_tomlplusplus SYSTEM INTERFACE
-    ${tomlplusplus_SOURCE_DIR}/include)
-  add_library(tomlplusplus::tomlplusplus ALIAS tomlplusplus_tomlplusplus)
+  target_include_directories(kfm_tomlplusplus SYSTEM INTERFACE ${tomlplusplus_SOURCE_DIR}/include)
 endif()
-add_library(kfm_tomlplusplus INTERFACE)
-target_link_libraries(kfm_tomlplusplus INTERFACE tomlplusplus::tomlplusplus)
 target_compile_definitions(kfm_tomlplusplus INTERFACE
   TOML_EXCEPTIONS=0 TOML_ENABLE_FORMATTERS=0 TOML_HEADER_ONLY=1)
 add_library(kfm::tomlplusplus ALIAS kfm_tomlplusplus)
