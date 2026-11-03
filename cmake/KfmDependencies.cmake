@@ -48,7 +48,10 @@ cmake_path(NORMAL_PATH KFM_THIRD_PARTY_DIR)
 # ---------------------------------------------------------------------------
 # SDL3 3.4.18
 # ---------------------------------------------------------------------------
-find_package(SDL3 CONFIG QUIET)
+# EXACT: a distro libsdl3-dev of another release must not be picked up
+# silently. vcpkg's port version is not part of SDL3_VERSION, so the vcpkg
+# sdl3 3.4.18 port matches.
+find_package(SDL3 3.4.18 EXACT CONFIG QUIET)
 if(SDL3_FOUND)
   message(STATUS "KFM: SDL3 ${SDL3_VERSION} from find_package")
 else()
@@ -165,6 +168,17 @@ if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
   find_path(KFM_CGLTF_INCLUDE_DIR cgltf.h
     PATHS "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include"
     NO_DEFAULT_PATH)
+endif()
+# cgltf ships no CMake package, so the pin is checked against the version
+# line in the header's banner; any other release falls back to the fetch.
+if(KFM_CGLTF_INCLUDE_DIR)
+  file(STRINGS "${KFM_CGLTF_INCLUDE_DIR}/cgltf.h" kfm_cgltf_version_line
+    REGEX "^ \\* Version: " LIMIT_COUNT 1)
+  if(NOT kfm_cgltf_version_line MATCHES "Version: 1\\.15$")
+    message(STATUS "KFM: ignoring cgltf in ${KFM_CGLTF_INCLUDE_DIR} ('${kfm_cgltf_version_line}', want 1.15)")
+    unset(KFM_CGLTF_INCLUDE_DIR CACHE)
+    unset(KFM_CGLTF_INCLUDE_DIR)
+  endif()
 endif()
 add_library(kfm_cgltf INTERFACE)
 if(KFM_CGLTF_INCLUDE_DIR)

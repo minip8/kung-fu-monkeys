@@ -943,7 +943,10 @@ pinned to floooh/sokol `efeb776` (FetchContent only, the vcpkg port is a 2023 sn
 SHA256 hashes. The Emscripten build compiles SDL3 from the same source.
 When a package is not found through vcpkg (no `VCPKG_ROOT`, or the `wasm` preset, which sets
 `KFM_USE_VCPKG=OFF`), CMake falls back to FetchContent pinned to the same version as the manifest,
-so every build uses the same release of each dependency.
+so every build uses the same release of each dependency. The lookups enforce the pin rather than
+taking whatever is installed: SDL3 is found with `find_package(SDL3 3.4.18 EXACT CONFIG)`, so a
+distro `libsdl3-dev` of another release is ignored, and cgltf, which has no CMake package, is
+accepted from vcpkg only when its header banner reads `Version: 1.15`.
 
 ---
 
