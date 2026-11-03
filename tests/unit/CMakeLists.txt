@@ -41,6 +41,7 @@ kfm_add_test_exe(kfm_net_tests
   net/loopback_test.cpp
   net/messages_test.cpp
   net/messages_fuzz_test.cpp
+  net/input_history_test.cpp
 )
 target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
 
