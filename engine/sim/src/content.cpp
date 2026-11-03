@@ -89,6 +89,23 @@ constexpr ContentDB makeDefaultContent() {
 
 constexpr ContentDB kDefaultContent = makeDefaultContent();
 
+// Preconditions the systems rely on rather than re-check every tick. M4's
+// loader validates the same properties at load time.
+constexpr const AbilityDef& kDashDef = kDefaultContent.abilityForSlot(kAbilitySlotDash);
+static_assert(kDashDef.kind == AbilityKind::Dash &&
+                  kDefaultContent.abilityForSlot(kAbilitySlotThrow).kind == AbilityKind::Throw,
+              "the base loadout slots hold Dash and Throw (AbilitySystem button mapping)");
+static_assert(kDashDef.startupTicks == 0,
+              "PerfectDash is granted from the press tick (§5.5): the dash has no startup");
+static_assert(kDashDef.activeTicks > kDashDef.perfectWindowTicks,
+              "the perfect window, plus its sub-tick tail, fits inside the active phase");
+static_assert(kDefaultContent.arena.halfExtents.x <= Fixed::fromInt(1024) &&
+                  kDefaultContent.arena.halfExtents.y <= Fixed::fromInt(1024),
+              "the swept narrowphase needs coordinates within ±1024 (collision_internal.hpp)");
+static_assert(kDefaultContent.boomerang.spawnOffset >
+                  kDefaultContent.player.radius + kDefaultContent.boomerang.radius,
+              "a thrown banana spawns clear of its thrower (§5.7)");
+
 }  // namespace
 
 const ContentDB& defaultContent() {
