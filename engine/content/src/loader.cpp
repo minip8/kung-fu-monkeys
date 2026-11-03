@@ -286,8 +286,8 @@ class Section {
       error(n, "'" + std::string(what) + "' must be a pair [x, y]");
       return false;
     }
-    const std::optional<Fixed> x = toFixed(*arr->get(0), what, 1);
-    const std::optional<Fixed> y = toFixed(*arr->get(1), what, 1);
+    const std::optional<Fixed> x = toFixed((*arr)[0], what, 1);
+    const std::optional<Fixed> y = toFixed((*arr)[1], what, 1);
     if (!x || !y) return false;
     out = Vec2{*x, *y};
     return true;
@@ -492,13 +492,13 @@ class Builder {
                         " ability names (one per slot: dash button, throw button)");
       } else {
         for (size_t i = 0; i < arr->size(); ++i) {
-          const toml::value<std::string>* name = arr->get(i)->as_string();
+          const toml::value<std::string>* name = (*arr)[i].as_string();
           if (name == nullptr) {
-            s.error(*arr->get(i), "'abilities' entries must be ability names");
+            s.error((*arr)[i], "'abilities' entries must be ability names");
             continue;
           }
           loadout_[i] =
-              PendingName{name->get(), s.where(), lineOf(*arr->get(i)), std::string(s.file().name)};
+              PendingName{name->get(), s.where(), lineOf((*arr)[i]), std::string(s.file().name)};
         }
       }
     }
@@ -602,7 +602,7 @@ class Builder {
       return;
     }
     for (size_t i = 0; i < arr->size(); ++i) {
-      if (!s.vec2Of(*arr->get(i), "spawn_points", a.spawnPoints[i])) return;
+      if (!s.vec2Of((*arr)[i], "spawn_points", a.spawnPoints[i])) return;
     }
     a.spawnPointCount = static_cast<uint8_t>(arr->size());
   }
@@ -631,7 +631,7 @@ class Builder {
       return;
     }
     for (size_t i = 0; i < order->size(); ++i) {
-      const std::optional<int64_t> k = s.toInteger(*order->get(i), "order", 0, 359);
+      const std::optional<int64_t> k = s.toInteger((*order)[i], "order", 0, 359);
       if (!k) return;
       const Angle angle = Angle::fromDegrees(static_cast<int32_t>(*k) * step);
       a.spawnPoints[i] = Vec2{cos(angle) * radii.x, sin(angle) * radii.y};
