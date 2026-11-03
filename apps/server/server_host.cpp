@@ -167,8 +167,14 @@ void ServerHost::onTick() {
       case sim::EventKind::MatchEnded: {
         ++stats_.matchesCompleted;
         const uint64_t seed = server_->matchConfig().seed;
-        log("match {} won by slot {} after {} rounds; seed=0x{:x} scores {}",
-            server_->matchIndex() + 1, e.player.value, w.rules.round, seed, scoreList(w));
+        if (e.player.isValid()) {
+          log("match {} won by slot {} after {} rounds; seed=0x{:x} scores {}",
+              server_->matchIndex() + 1, e.player.value, w.rules.round, seed, scoreList(w));
+        } else {
+          // A tied lead when a mode's clock ran out (deathmatch).
+          log("match {} drawn after {} rounds; seed=0x{:x} scores {}", server_->matchIndex() + 1,
+              w.rules.round, seed, scoreList(w));
+        }
         if (config_.exitAfterMatches != 0 && stats_.matchesCompleted >= config_.exitAfterMatches) {
           done_ = true;
           log("exit after {} matches", stats_.matchesCompleted);

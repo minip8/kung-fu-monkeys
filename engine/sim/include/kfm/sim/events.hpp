@@ -18,7 +18,7 @@ enum class EventKind : uint8_t {
   PlayerSpawned,      // player, entity
   RoundStarted,       // a = round
   RoundEnded,         // player = winner (invalid on a draw), a = round
-  MatchEnded,         // player = winner
+  MatchEnded,         // player = winner (invalid on a draw)
   PlayerDashed,       // player, entity = player
   BoomerangThrown,    // player = owner, entity = boomerang
   BoomerangCaught,    // player = catcher, entity = boomerang, a = CatchHow
@@ -30,6 +30,10 @@ enum class EventKind : uint8_t {
   PickupTaken,        // player, entity = pickup
   PlayerDashHit,      // player = victim, entity = attacker's player, a = attacker slot,
                       // b = hp after (a dash attack, §5.6; PlayerHit is a banana hit)
+  // v0.23 (modes, §5.3):
+  ScoreChanged,     // player, a = score after (a round win, or an elimination in deathmatch)
+  PlayerRespawned,  // player, entity, a = spawn point index (deathmatch respawn or late join)
+  TimerWarning,     // a = whole seconds left on the mode's clock (10, 3, 2, 1)
 };
 
 // BoomerangCaught payload `a`.

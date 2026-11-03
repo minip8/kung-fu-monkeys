@@ -74,6 +74,18 @@ constexpr std::array<AbilityKindName, 2> kAbilityKinds = {{
 static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
               "every AbilityKind but None needs a TOML name in kAbilityKinds");
 
+struct ModeKindName {
+  std::string_view name;
+  sim::ModeKind kind;
+};
+constexpr std::array<ModeKindName, 3> kModeKinds = {{
+    {"rounds", sim::ModeKind::Rounds},
+    {"deathmatch", sim::ModeKind::Deathmatch},
+    {"survival", sim::ModeKind::Survival},
+}};
+static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
+              "every ModeKind needs a TOML name in kModeKinds");
+
 struct TagName {
   std::string_view name;
   Tag tag;
@@ -492,13 +504,16 @@ class Builder {
                         " ability names (one per slot: dash button, throw button)");
       } else {
         for (size_t i = 0; i < arr->size(); ++i) {
-          const toml::value<std::string>* name = (*arr)[i].as_string();
+          const toml::node* item = arr->get(i);
+          if (item == nullptr)
+            continue;  // get() is nullable; GCC's -Wnull-dereference wants it seen
+          const toml::value<std::string>* name = item->as_string();
           if (name == nullptr) {
-            s.error((*arr)[i], "'abilities' entries must be ability names");
+            s.error(*item, "'abilities' entries must be ability names");
             continue;
           }
           loadout_[i] =
-              PendingName{name->get(), s.where(), lineOf((*arr)[i]), std::string(s.file().name)};
+              PendingName{name->get(), s.where(), lineOf(*item), std::string(s.file().name)};
         }
       }
     }
@@ -705,9 +720,22 @@ class Builder {
     ModeDef m;
     const std::optional<std::string> name = s.name(m.name);
     if (name) s.setWhere("mode " + inQuotes(*name));
+    if (const std::optional<std::string> kind = s.string("kind")) {
+      const auto entry =
+          std::ranges::find_if(kModeKinds, [&](const ModeKindName& k) { return k.name == *kind; });
+      if (entry == kModeKinds.end()) {
+        s.error("unknown kind " + inQuotes(*kind) + " (rounds, deathmatch or survival)");
+      } else {
+        m.kind = entry->kind;
+      }
+    }
     s.integer("rounds_to_win", m.roundsToWin, 1, 255);
     s.integer("round_end_ticks", m.roundEndTicks, 0, 65535);
     s.integer("round_start_ticks", m.roundStartTicks, 0, 65535);
+    s.integer("time_limit_ticks", m.timeLimitTicks, 0, 4294967295);
+    s.integer("score_to_win", m.scoreToWin, 0, 255);
+    s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
+    s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
     if (!name || !uniqueName(s, *name, db_.modes, db_.modeCount, "mode")) return;
     if (db_.modeCount >= sim::kMaxModes) {
       s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
@@ -930,7 +958,12 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     for (uint8_t j = 0; j < i; ++j) {
       if (c.modes[j].name == m.name) fail(where + ": name used twice");
     }
+    if (m.kind >= sim::ModeKind::kCount) fail(where + ": kind must be a real mode kind");
     if (m.roundsToWin < 1) fail(where + ": rounds_to_win must be at least 1");
+    if (m.kind == sim::ModeKind::Deathmatch) {
+      if (m.scoreToWin < 1) fail(where + ": score_to_win must be at least 1 in deathmatch");
+      if (m.respawnTicks < 1) fail(where + ": respawn_ticks must be at least 1 in deathmatch");
+    }
   }
   return diag.errorCount() == errorsBefore;
 }

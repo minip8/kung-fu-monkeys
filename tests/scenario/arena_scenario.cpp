@@ -47,6 +47,15 @@ ContentDB labContent() {
   a.hazards[1] = Hazard{at(5, -3), at(9, 3), HazardKind::Slow, Fixed::half()};
   a.hazardCount = 2;
   c.arenaCount = 2;
+  // Mode 1: a short deathmatch (v0.23) for the pit's mode bookkeeping.
+  ModeDef& dm = c.modes[1];
+  dm.name = ContentName::of("deathmatch");
+  dm.kind = ModeKind::Deathmatch;
+  dm.roundStartTicks = 10;
+  dm.scoreToWin = 3;
+  dm.respawnTicks = 40;
+  dm.respawnInvulnTicks = 25;
+  c.modeCount = 2;
   return c;
 }
 
@@ -56,8 +65,8 @@ struct Lab {
   MatchContent content;
   WorldState s;
 
-  explicit Lab(PlayerMask players)
-      : config{.seed = 0x1AB, .players = players, .arena = 1},
+  explicit Lab(PlayerMask players, uint8_t mode = 0)
+      : config{.seed = 0x1AB, .players = players, .arena = 1, .mode = mode},
         content(matchContent(db, config)),
         s(initialWorld(config)) {
     EventLog log;
@@ -174,6 +183,43 @@ TEST_CASE("walking into a pit eliminates by nobody and ends the round", "[scenar
   CHECK(countEvents(all, EventKind::PlayerHit) == 0);
   CHECK(lab.s.playerBySlot(kP0) == nullptr);
   CHECK(firstEvent(all, EventKind::RoundEnded).player == kP1);
+}
+
+TEST_CASE("a deathmatch pit fall counts a death, scores nobody and respawns",
+          "[scenario][arena][mode]") {
+  Lab lab(0b11, 1);
+  REQUIRE(lab.content.mode.kind == ModeKind::Deathmatch);
+  placePlayer(lab.s, kP0, at(-11, 0));
+  placePlayer(lab.s, kP1, at(10, 0));
+  EventLog all;
+  int fellAt = -1;
+  for (int t = 0; t < 60 && fellAt < 0; ++t) {
+    const EventLog log = lab.step(PlayerInput{kLeft, 255, kLeft, 0, 0});
+    all.insert(all.end(), log.begin(), log.end());
+    if (findEvent(log, EventKind::PlayerEliminated) != nullptr) fellAt = t;
+  }
+  REQUIRE(fellAt >= 0);
+  CHECK(firstEvent(all, EventKind::PlayerEliminated).a == PlayerId::invalid().value);
+  CHECK(lab.s.rules.deaths[0] == 1);
+  CHECK(lab.s.rules.deaths[1] == 0);
+  CHECK(lab.s.rules.scores[0] == 0);
+  CHECK(lab.s.rules.scores[1] == 0);
+  CHECK(countEvents(all, EventKind::ScoreChanged) == 0);
+  CHECK(lab.s.playerBySlot(kP0) == nullptr);
+  CHECK(lab.s.rules.phase == MatchPhase::Playing);  // a deathmatch plays on
+
+  // Idle until the respawn: it comes back at a spawn point, clear of the pit.
+  const SimEvent* respawned = nullptr;
+  for (int t = 0; t < lab.content.mode.respawnTicks + 5 && respawned == nullptr; ++t) {
+    all = lab.step(PlayerInput{});
+    respawned = findEvent(all, EventKind::PlayerRespawned);
+    if (respawned != nullptr) CHECK(respawned->player == kP0);
+  }
+  REQUIRE(respawned != nullptr);
+  const Player& p = playerAt(lab.s, kP0);
+  CHECK(p.hp == lab.db.player.maxHp);
+  CHECK(p.transform.pos.x > Fixed::fromInt(-12));
+  CHECK(lab.s.rules.scores[1] == 0);
 }
 
 TEST_CASE("a banana flies over a pit untouched", "[scenario][arena]") {

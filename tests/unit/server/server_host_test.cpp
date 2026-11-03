@@ -12,6 +12,7 @@
 #include "kfm/sim/scripted_inputs.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <array>
@@ -31,17 +32,16 @@ using kfm::net::netsim::kSec;
 namespace {
 
 struct Rig {
-  explicit Rig(server::HostConfig config) : net(77) {
+  explicit Rig(server::HostConfig config, const sim::ContentDB& db = sim::defaultContent())
+      : content(db), net(77) {
     config.log = [this](std::string_view line) { lines.emplace_back(line); };
-    host = std::make_unique<server::ServerHost>(net.server(), sim::defaultContent(),
-                                                std::move(config), now);
+    host = std::make_unique<server::ServerHost>(net.server(), content, std::move(config), now);
   }
 
   NetClient& addClient(const std::string& token) {
     const LinkConditions l = netsim::link(40 * kMs, 5 * kMs, 10'000);
     LoopbackTransport& t = net.connectClient(now, l, l);
-    clients.push_back(
-        std::make_unique<NetClient>(sim::defaultContent(), netsim::tokenConfig(token)));
+    clients.push_back(std::make_unique<NetClient>(content, netsim::tokenConfig(token)));
     clients.back()->connect(t, now);
     rngs.push_back(Rng::seeded(0xFEED + clients.size()));
     return *clients.back();
@@ -60,7 +60,7 @@ struct Rig {
         size_t k = 0;
         for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
           if (sim::maskHas(c.localSlots(), PlayerId{s}))
-            in[k++] = sim::scriptedInput(rngs[i], c.world(), sim::defaultContent(), PlayerId{s});
+            in[k++] = sim::scriptedInput(rngs[i], c.world(), c.matchContent(), PlayerId{s});
         }
         c.tick(std::span<const sim::PlayerInput>(in.data(), k));
       }
@@ -88,6 +88,7 @@ struct Rig {
         std::ranges::count_if(lines, [&](const std::string& l) { return l.contains(what); }));
   }
 
+  sim::ContentDB content;  // before host and clients, which keep a reference
   uint64_t now{0};
   LoopbackNetwork net;
   std::vector<std::string> lines;
@@ -157,6 +158,48 @@ TEST_CASE("ServerHost plays a match with bots to the end, restarts it and keeps 
   CHECK(w.rules.phase != sim::MatchPhase::MatchEnded);
   CHECK(w.rules.round >= 1);
   CHECK(!rig.host->done());
+}
+
+TEST_CASE("ServerHost restarts a deathmatch and a survival match the same way",
+          "[server][restart][modes]") {
+  // Short modes so a match ends within seconds of simulated time.
+  sim::ContentDB db = sim::defaultContent();
+  sim::ModeDef& dm = db.modes[1];
+  dm.name = sim::ContentName::of("deathmatch");
+  dm.kind = sim::ModeKind::Deathmatch;
+  dm.scoreToWin = 4;
+  dm.timeLimitTicks = 40 * sim::kTickHz;
+  dm.respawnTicks = 60;
+  dm.respawnInvulnTicks = 30;
+  sim::ModeDef& sv = db.modes[2];
+  sv.name = sim::ContentName::of("survival");
+  sv.kind = sim::ModeKind::Survival;
+  sv.roundsToWin = 2;
+  sv.timeLimitTicks = 20 * sim::kTickHz;
+  db.modeCount = 3;
+
+  const uint8_t mode = GENERATE(uint8_t{1}, uint8_t{2});
+  server::HostConfig cfg = botConfig(3);
+  cfg.server.match.mode = mode;
+  Rig rig(cfg, db);
+  NetClient& c = rig.addClient("human");
+  REQUIRE(rig.runUntil([&] { return c.running(); }, 3 * kSec));
+  CHECK(c.simConfig().mode == mode);
+
+  REQUIRE(rig.runUntil([&] { return rig.host->stats().matchesCompleted == 1; }, 300 * kSec));
+  CHECK(rig.linesWith("match 1 won by slot") + rig.linesWith("match 1 drawn") == 1);
+  REQUIRE(rig.runUntil([&] { return c.netStats().matchRestarts == 1; }, 5 * kSec));
+  CHECK(rig.host->server().matchConfig().mode == mode);  // a restart keeps the mode
+  CHECK(c.simConfig().mode == mode);
+  const sim::WorldState& w = rig.host->server().world();
+  CHECK_FALSE(w.rules.hasModeCounters());  // a fresh match: nothing carried over
+  CHECK(w.rules.scores == std::array<uint8_t, sim::kMaxPlayers>{});
+
+  rig.runFor(10 * kSec);
+  CHECK(c.running());
+  CHECK(c.netStats().checksumMismatches == 0);
+  CHECK(c.netStats().resyncRequests == 0);
+  CHECK(rig.host->server().matchIndex() >= 1);
 }
 
 TEST_CASE("ServerHost reports done after --exit-after-matches instead of restarting",

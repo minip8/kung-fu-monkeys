@@ -13,5 +13,6 @@ kfm_add_test_exe(kfm_scenario_tests
   dash_attack_scenario.cpp
   match_config_scenario.cpp
   arena_scenario.cpp
+  mode_scenario.cpp
 )
 target_link_libraries(kfm_scenario_tests PRIVATE kfm::sim)

@@ -21,8 +21,10 @@ struct HitSource {
   uint32_t attackerSlot{0};
 };
 
-// Damages `victim` (whose pool id is victimEntity) by `damage` hits on `tick`.
-void applyDamage(Tick tick, const MatchContent& content, Player& victim, EntityId victimEntity,
+// Damages `victim` (an element of s.players whose pool id is victimEntity) by
+// `damage` hits on s.tick. An elimination is reported to the mode
+// (ModeBehavior::onEliminated: deathmatch scores it, v0.23).
+void applyDamage(WorldState& s, const MatchContent& content, Player& victim, EntityId victimEntity,
                  uint8_t damage, const HitSource& source, EventSink& sink);
 
 }  // namespace kfm::sim

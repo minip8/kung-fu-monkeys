@@ -13,7 +13,8 @@
 #include "kfm/core/vec2.hpp"
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/content/arena.hpp"  // ArenaDef, Wall, Hazard
-#include "kfm/sim/content/name.hpp"   // ContentName
+#include "kfm/sim/content/mode.hpp"
+#include "kfm/sim/content/name.hpp"  // ContentName
 #include "kfm/sim/tags.hpp"
 
 #include <array>
@@ -92,13 +93,6 @@ struct DashAttackDef {
   uint8_t damage{1};
   uint8_t minAmmo{1};
   uint8_t consumesAmmo{0};  // 0/1
-};
-
-struct ModeDef {  // FFA rules
-  ContentName name{};
-  uint8_t roundsToWin{3};
-  uint16_t roundEndTicks{120};   // pause after a round ends before the next starts
-  uint16_t roundStartTicks{60};  // countdown at round start (players spawned, inputs ignored)
 };
 
 struct ContentDB {

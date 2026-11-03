@@ -86,6 +86,10 @@ inline constexpr float kEliminationPoofSeconds = 0.7f;  // grey smoke puffs drif
 inline constexpr float kPickupSparkleSeconds = 0.35f;
 inline constexpr float kGroundDustSeconds = 0.35f;
 inline constexpr float kBounceSparkSeconds = 0.15f;
+// Mode effects (v0.23).
+inline constexpr float kRespawnBurstSeconds = 0.6f;
+inline constexpr float kScorePopSeconds = 0.5f;
+inline constexpr float kTimerBannerSeconds = 0.8f;
 // Spark and puff counts per burst (each is one billboard draw call).
 inline constexpr int kPerfectCatchSparks = 8;
 inline constexpr int kHitSparks = 6;
