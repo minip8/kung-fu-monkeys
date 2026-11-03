@@ -1,7 +1,7 @@
 // kfm_net_probe: end-to-end check of WebRtcTransport (architecture §6.4)
 // between a native server and a native or browser client.
 //
-//   kfm_net_probe --serve PORT [--bind ADDR] [--exit-after-seconds N]      (native)
+//   kfm_net_probe --serve PORT [--bind ADDR] [--exit-after-seconds N] [--verbose]  (native)
 //   kfm_net_probe --connect ws://HOST:PORT [--messages N] [--timeout-seconds S]
 //                 [--min-unreliable-percent P]
 //   kfm_net_probe --loopback [--messages N] [--timeout-seconds S]           (native)
@@ -13,6 +13,7 @@
 // --connect   the client check (probe_client.hpp): N unreliable + N reliable
 //             messages, echoes verified, one "KFM_NET_PROBE PASS|FAIL ..."
 //             line; exit code 0 on PASS.
+// --verbose   (native) libdatachannel logs at Debug instead of Error.
 // --loopback  both in one process on 127.0.0.1 and an ephemeral port (the
 //             native ctest net_probe_loopback).
 //
@@ -20,6 +21,7 @@
 // ?connect=ws://127.0.0.1:9000&messages=200 into those arguments. The probe
 // runs from emscripten_set_main_loop on the main thread and publishes its
 // final line as window.kfmNetProbeResult.
+#include "kfm/net/webrtc_transport.hpp"
 #include "probe_client.hpp"
 
 #include <charconv>
@@ -53,11 +55,12 @@ struct Options {
   uint16_t port{0};
   std::string bind{"0.0.0.0"};
   uint32_t exitAfterSeconds{0};  // 0: until a signal
+  bool verbose{false};           // native: libdatachannel logs at Debug
   netprobe::ProbeConfig probe;
 };
 
 constexpr const char* kUsage =
-    "usage: kfm_net_probe --serve PORT [--bind ADDR] [--exit-after-seconds N]\n"
+    "usage: kfm_net_probe --serve PORT [--bind ADDR] [--exit-after-seconds N] [--verbose]\n"
     "       kfm_net_probe --connect ws://HOST:PORT [--messages N] [--timeout-seconds S]\n"
     "                     [--min-unreliable-percent P]\n"
     "       kfm_net_probe --loopback [--messages N] [--timeout-seconds S]\n";
@@ -88,6 +91,8 @@ template <typename T>
       o.probe.url = argv[++i];
     } else if (arg == "--loopback") {
       o.mode = Mode::Loopback;
+    } else if (arg == "--verbose") {
+      o.verbose = true;
     } else if (arg == "--bind" && hasValue) {
       o.bind = argv[++i];
     } else if (arg == "--exit-after-seconds" && hasValue) {
@@ -248,6 +253,9 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   emscripten_set_main_loop(browserFrame, 0, false);
   return EXIT_SUCCESS;
 #else
+  // Teardown noise (SCTP stream resets, TCP closed) is logged at Warning.
+  net::WebRtcTransport::initLogging(options.verbose ? net::WebRtcLogLevel::Debug
+                                                    : net::WebRtcLogLevel::Error);
   switch (options.mode) {
     case Mode::Serve:
       return serve(options);
