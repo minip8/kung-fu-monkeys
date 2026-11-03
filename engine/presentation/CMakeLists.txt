@@ -5,6 +5,9 @@
 # KFM_HEADLESS builds.
 add_library(kfm_presentation STATIC
   src/render_state.cpp
+  src/math.cpp
+  src/camera.cpp
+  src/meshes.cpp
 )
 add_library(kfm::presentation ALIAS kfm_presentation)
 

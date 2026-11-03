@@ -30,6 +30,9 @@ target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
 kfm_add_test_exe(kfm_presentation_tests
   presentation/render_state_test.cpp
+  presentation/math_test.cpp
+  presentation/camera_test.cpp
+  presentation/meshes_test.cpp
 )
 target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation)
 
