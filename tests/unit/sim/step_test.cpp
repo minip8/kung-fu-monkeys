@@ -7,6 +7,7 @@
 
 #include <cstring>
 #include <type_traits>
+#include <vector>
 
 using namespace kfm;
 using namespace kfm::sim;
@@ -105,18 +106,48 @@ TEST_CASE("stepping the same inputs from the same seed is bit-identical", "[sim]
 }
 
 TEST_CASE("rollback by memcpy restores an identical state", "[sim][step]") {
+  // Reach Playing so movement, abilities and bananas are live, then snapshot,
+  // run a timeline with moving, throwing and dashing inputs, roll back and
+  // re-simulate it: the re-simulated timeline must match tick for tick.
   WorldState s = initialWorld(MatchConfig{5, 0x3});
   EventSink sink;
-  step(s, emptyFrame(s), defaultContent(), sink);
+  for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::Playing; ++i) {
+    sink.clear();
+    step(s, emptyFrame(s), defaultContent(), sink);
+  }
+  REQUIRE(s.rules.phase == MatchPhase::Playing);
+
+  const auto frameAt = [](const WorldState& w, int i) {
+    InputFrame f = emptyFrame(w);
+    f.inputs[0].moveDir = static_cast<uint8_t>(200 + i);
+    f.inputs[0].moveMag = 255;
+    f.inputs[0].aimDir = static_cast<uint8_t>(i * 7);
+    f.inputs[0].buttons = (i % 8 < 2) ? buttonBit(Button::Throw) : uint8_t{0};
+    f.inputs[1].moveDir = 64;
+    f.inputs[1].moveMag = 128;
+    f.inputs[1].buttons = (i % 10 == 3) ? buttonBit(Button::Dash) : uint8_t{0};
+    f.inputs[1].subTick = static_cast<uint8_t>(i * 31);
+    return f;
+  };
+
   WorldState saved{};
   std::memcpy(&saved, &s, sizeof(WorldState));
   const uint32_t savedSum = checksum(s);
-  for (int i = 0; i < 10; ++i) {
-    InputFrame f = emptyFrame(s);
-    f.inputs[0].moveDir = 200;
-    step(s, f, defaultContent(), sink);
+  constexpr int kTicks = 40;
+  std::vector<uint32_t> original;
+  for (int i = 0; i < kTicks; ++i) {
+    sink.clear();
+    step(s, frameAt(s, i), defaultContent(), sink);
+    original.push_back(checksum(s));
   }
   CHECK(checksum(s) != savedSum);
+
   std::memcpy(&s, &saved, sizeof(WorldState));
   CHECK(checksum(s) == savedSum);
+  for (int i = 0; i < kTicks; ++i) {
+    sink.clear();
+    step(s, frameAt(s, i), defaultContent(), sink);
+    INFO("re-simulated tick " << i);
+    REQUIRE(checksum(s) == original[static_cast<size_t>(i)]);
+  }
 }
