@@ -1,8 +1,9 @@
 # Playable client (architecture §3, §11 M2): SDL3 window, sokol_gfx, Dear ImGui.
 #
 #   kfm_client_core  headless match loop (MatchSession, fixed-step clock, lobby,
-#                    bots, content tuning, options); no SDL, sokol or ImGui, so
-#                    tests/unit/client exercises it without a window.
+#                    bots, content tuning, options) and network mode
+#                    (NetSession over any ITransport); no SDL, sokol, ImGui or
+#                    WebRTC, so tests/unit/client exercises it without a window.
 #   kfm_client_sdl   SDL_Event -> platform::InputEvent translation and gamepad
 #                    lifetime (tested too: it is pure apart from SDL headers).
 #   kfm_client       the executable: frame wiring, HUD, lobby, debug overlay.
@@ -11,11 +12,12 @@ add_library(kfm_client_core STATIC
   core/match_session.cpp
   core/content_tuning.cpp
   core/client_options.cpp
+  core/net_session.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kfm_client_core
-  PUBLIC kfm::sim kfm::presentation kfm::platform_input
+  PUBLIC kfm::sim kfm::net kfm::presentation kfm::platform_input
   PRIVATE kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client_core)
 set_target_properties(kfm_client_core PROPERTIES FOLDER apps)
