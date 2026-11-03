@@ -48,6 +48,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <format>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -228,18 +230,11 @@ class CsvWriter {
  public:
   explicit CsvWriter(const std::string& path) {
     if (path.empty()) return;
-    file_ = std::fopen(path.c_str(), "w");  // NOLINT(cppcoreguidelines-owning-memory)
-    if (file_ != nullptr) std::fputs(kCsvHeader, file_);
+    file_.open(path, std::ios::trunc);
+    if (file_.is_open()) file_ << kCsvHeader;
   }
-  ~CsvWriter() {
-    if (file_ != nullptr) std::fclose(file_);  // NOLINT(cppcoreguidelines-owning-memory)
-  }
-  CsvWriter(const CsvWriter&) = delete;
-  CsvWriter& operator=(const CsvWriter&) = delete;
-  CsvWriter(CsvWriter&&) = delete;
-  CsvWriter& operator=(CsvWriter&&) = delete;
 
-  [[nodiscard]] bool open() const { return file_ != nullptr; }
+  [[nodiscard]] bool open() const { return file_.is_open(); }
 
   void row(uint64_t second, Tick serverTick, size_t index, const ClientRig& rig, Sample& last) {
     const NetClient& c = *rig.client;
@@ -247,20 +242,15 @@ class CsvWriter {
     std::array<uint64_t, kRollbackDepthBuckets> delta{};
     for (size_t d = 0; d < delta.size(); ++d)
       delta[d] = st.rollbackDepth[d] - last.depth[d];
-    if (file_ != nullptr) {
-      std::fprintf(
-          file_, "%llu,%u,%zu,%d,%u,%d,%d,%d,%u,%llu,%u,%u,%llu,%llu,%llu,%llu,%llu,%llu,%llu\n",
-          static_cast<unsigned long long>(second), serverTick.value, index, c.running() ? 1 : 0,
-          c.localTick().value, st.leadTicks, st.targetLeadTicks, st.arrivalMarginQ8, st.ratePpm,
-          static_cast<unsigned long long>(st.rollbacks - last.rollbacks), maxBucket(delta),
-          percentile(delta, 99),
-          static_cast<unsigned long long>(st.mispredictedTicks - last.mispredicted),
-          static_cast<unsigned long long>(st.substitutionsSeen - last.substitutions),
-          static_cast<unsigned long long>(st.bytesSent - last.up),
-          static_cast<unsigned long long>(st.bytesReceived - last.down),
-          static_cast<unsigned long long>(st.checksumsCompared),
-          static_cast<unsigned long long>(st.checksumMismatches),
-          static_cast<unsigned long long>(st.resyncRequests));
+    if (file_.is_open()) {
+      file_ << std::format("{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n", second,
+                           serverTick.value, index, c.running() ? 1 : 0, c.localTick().value,
+                           st.leadTicks, st.targetLeadTicks, st.arrivalMarginQ8, st.ratePpm,
+                           st.rollbacks - last.rollbacks, maxBucket(delta), percentile(delta, 99),
+                           st.mispredictedTicks - last.mispredicted,
+                           st.substitutionsSeen - last.substitutions, st.bytesSent - last.up,
+                           st.bytesReceived - last.down, st.checksumsCompared,
+                           st.checksumMismatches, st.resyncRequests);
     }
     last.depth = st.rollbackDepth;
     last.rollbacks = st.rollbacks;
@@ -271,7 +261,7 @@ class CsvWriter {
   }
 
  private:
-  std::FILE* file_{nullptr};
+  std::ofstream file_;
 };
 
 [[nodiscard]] int run(const Options& o) {
