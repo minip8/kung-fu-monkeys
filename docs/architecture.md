@@ -656,8 +656,10 @@ C++ server library is mature. The seam makes that swap a contained change.
   simulated late. Inputs for tick i are sampled over the wall-clock window that tick covers,
   immediately before its `step()`; the windows of a frame's batch end at the frame's own
   timestamp (the time up to which events were read) and count back in whole ticks, so the
-  leftover accumulator only sets the render alpha and never pushes a press past its tick's end; pausing freezes the accumulator and discards pending presses
-  so nothing fires on resume. Render policy "auto": the newest tick is drawn directly when the
+  leftover accumulator only sets the render alpha and never pushes a press past its tick's
+  end. Pausing freezes the accumulator and discards pending presses so nothing fires on
+  resume; a new match, a restart or a return to the lobby clears the pause and any pending
+  single step, and a return to the lobby also resets the presentation state. Render policy "auto": the newest tick is drawn directly when the
   measured display rate (EMA of frame intervals) is at least 0.95 × `kTickHz` × time scale (the
   tolerance covers 59.94 Hz displays), otherwise frames interpolate with
   `alpha = accumulator / tickCost`; the overlay can force either.

@@ -107,13 +107,15 @@ class MatchSession {
   // Creates the world from lobbyPresentMask() and seed() and starts the
   // clock at nowNs. Returns false (and stays in the lobby) when the mask is empty.
   bool startMatch(uint64_t nowNs);
-  // Back to the lobby; bindings are kept.
+  // Back to the lobby; bindings are kept. Clears the pause (and any pending
+  // single step) and the presentation state.
   void returnToLobby();
 
   // --- match control ----------------------------------------------------------
   // Re-creates the world with the same present mask and either the same seed
   // or a new one derived from it, re-seeds the bots and restarts the clock.
-  // Dropped slots become bots.
+  // Dropped slots become bots. Like startMatch(), it clears the pause and any
+  // pending single step.
   void restart(uint64_t nowNs, bool newSeed);
   [[nodiscard]] FixedStepClock& clock() { return clock_; }
   [[nodiscard]] const FixedStepClock& clock() const { return clock_; }

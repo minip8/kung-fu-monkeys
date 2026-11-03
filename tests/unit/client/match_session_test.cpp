@@ -554,3 +554,49 @@ TEST_CASE("session: content edits apply live and reset", "[client][session]") {
   d.s->resetContent();
   CHECK(d.s->contentIsDefault());
 }
+
+TEST_CASE("session: a pause does not carry into the next match", "[client][session]") {
+  Driver d(SessionConfig{.seed = 4, .bots = 1});
+  d.start();
+  d.frame(2);
+  d.s->setPaused(true);
+  d.s->requestSingleStep();  // pending, never consumed by a frame
+  d.s->returnToLobby();      // Escape
+  CHECK_FALSE(d.s->paused());
+  d.push(key(Key::Enter, true));
+  d.frame(1);
+  REQUIRE(d.s->phase() == SessionPhase::Match);
+  CHECK_FALSE(d.s->paused());
+  d.frame(3);
+  CHECK(d.s->curr().tick.value == 3);
+
+  // Restart (the overlay's button) clears the pause and a pending step too.
+  d.s->setPaused(true);
+  d.s->requestSingleStep();
+  d.s->restart(d.now(), false);
+  d.rebase();
+  CHECK_FALSE(d.s->paused());
+  d.frame(2);
+  CHECK(d.s->curr().tick.value == 2);
+  d.s->setPaused(true);
+  d.frame(1);
+  CHECK(d.s->curr().tick.value == 2);  // no stale single step was left behind
+}
+
+TEST_CASE("session: returning to the lobby resets the match visuals", "[client][session]") {
+  Driver d(SessionConfig{.seed = 4, .bots = 1});
+  d.start();
+  d.frame(1);
+  presentation::PresentationState& ps = d.s->presentation();
+  ps.shake = 0.5f;
+  ps.effectCount = 3;
+  ps.time = 12.0f;
+  ps.players[0].bodyYaw = 1.0f;
+  ps.players[0].flashRemaining = 0.2f;
+  d.s->returnToLobby();
+  CHECK(d.s->presentation().shake == 0.0f);
+  CHECK(d.s->presentation().effectCount == 0);
+  CHECK(d.s->presentation().time == 0.0f);
+  CHECK(d.s->presentation().players[0].bodyYaw == 0.0f);
+  CHECK(d.s->presentation().players[0].flashRemaining == 0.0f);
+}

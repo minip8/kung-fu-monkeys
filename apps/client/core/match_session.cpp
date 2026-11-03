@@ -181,6 +181,10 @@ void MatchSession::returnToLobby() {
   localMask_ = 0;
   botMask_ = 0;
   frameEventCount_ = 0;
+  // Match visuals (effects, shake, flash, yaw tracks) and a pause, with any
+  // pending single step, do not outlive the match.
+  presentation_ = presentation::PresentationState{};
+  clock_.setPaused(false);
   setBotCount(bots_);
   createWorld(lobbyPresentMask());
 }
@@ -221,6 +225,7 @@ void MatchSession::beginMatch(sim::PlayerMask present, sim::PlayerMask local, ui
   sampler_.clearDropped();
   sampler_.endTick();
   startRequested_ = false;
+  clock_.setPaused(false);  // a new match never starts frozen; also drops a pending step
   clock_.reset(nowNs);
 }
 
