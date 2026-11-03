@@ -22,7 +22,9 @@
 // with the sender's time (its last poll(), or the connectClient() time before
 // the first poll); a message becomes readable on the receiver's first poll()
 // whose nowNs is at or past its delivery time, in (delivery time, send order)
-// order. All randomness comes from one kfm::Rng per link direction, seeded
+// order. Its Packet::receivedNs is the delivery time, raised to the
+// receiver's previous poll time if the sender's clock was behind. Jitter is
+// capped at about 4.29 s. All randomness comes from one kfm::Rng per link direction, seeded
 // from the network seed and the client's PeerId, so a run is a pure function
 // of the seed and the sequence of calls, and changing the conditions of one
 // link never perturbs another link's draws.
