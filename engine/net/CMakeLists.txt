@@ -46,6 +46,20 @@ if(KFM_WEBRTC)
     # Real try/catch around datachannel-wasm (Emscripten's default turns a
     # throw into an abort); kfm::datachannel adds the matching link flag.
     target_compile_options(kfm_net_webrtc PRIVATE -fwasm-exceptions)
+    # datachannel-wasm's JS library assumes an older Emscripten runtime,
+    # which only shows in a browser (the node tests never reach it):
+    #   - it calls _malloc/_free without declaring them; the extra JS library
+    #     pulls them in (see the file);
+    #   - it reads Module['HEAPU8'] / Module['HEAPU32'], which Emscripten 4+
+    #     only sets (and refreshes on memory growth) when they are exported.
+    #     An executable that sets its own EXPORTED_RUNTIME_METHODS (the
+    #     setting is last-wins) must keep these two in its list.
+    set(kfm_datachannel_deps_js "${CMAKE_CURRENT_SOURCE_DIR}/src/webrtc/datachannel_wasm_deps.js")
+    target_link_options(kfm_net_webrtc INTERFACE
+      "SHELL:--js-library \"${kfm_datachannel_deps_js}\""
+      "-sEXPORTED_RUNTIME_METHODS=HEAPU8,HEAPU32")
+    set_property(TARGET kfm_net_webrtc APPEND PROPERTY INTERFACE_LINK_DEPENDS
+      "${kfm_datachannel_deps_js}")
   endif()
   set_target_properties(kfm_net_webrtc PROPERTIES FOLDER engine)
 endif()
