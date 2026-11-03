@@ -15,6 +15,7 @@ namespace {
   return buf;
 }
 
+#ifndef __EMSCRIPTEN__
 [[nodiscard]] bool hasTomlFile(const std::filesystem::path& dir) {
   std::error_code ec;
   if (!std::filesystem::is_directory(dir, ec)) return false;
@@ -25,6 +26,7 @@ namespace {
   }
   return false;
 }
+#endif
 
 template <class Def, size_t N>
 [[nodiscard]] std::string nameList(const std::array<Def, N>& defs, uint8_t count) {

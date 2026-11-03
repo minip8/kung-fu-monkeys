@@ -522,7 +522,7 @@ class Builder {
     const std::optional<std::string> name = s.name(d.name);
     if (name) s.setWhere("ability " + inQuotes(*name));
     if (const std::optional<std::string> kind = s.string("kind", true)) {
-      const auto* entry = std::ranges::find_if(
+      const auto entry = std::ranges::find_if(
           kAbilityKinds, [&](const AbilityKindName& k) { return k.name == *kind; });
       if (entry == kAbilityKinds.end()) {
         s.error("unknown kind " + inQuotes(*kind));
