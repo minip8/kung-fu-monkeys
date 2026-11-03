@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <cstddef>
+#include <cstdint>
 #include <initializer_list>
 #include <set>
 
@@ -145,6 +146,23 @@ TEST_CASE("round is a draw when nobody is left", "[sim][rules]") {
   REQUIRE(sink.count == 1);
   CHECK(sink.events[0].kind == EventKind::RoundEnded);
   CHECK_FALSE(sink.events[0].player.isValid());
+}
+
+TEST_CASE("the round counter saturates instead of wrapping", "[sim][rules]") {
+  // 254 all-draw rounds would otherwise wrap round from 255 to 0.
+  const ContentDB& content = defaultContent();
+  WorldState s = makePlayingWorld(1, 0b11);
+  s.rules.phase = MatchPhase::RoundEnded;
+  s.rules.ticksInPhase = content.mode.roundEndTicks;
+  s.rules.round = UINT8_MAX - 1;
+  EventSink sink;
+  rulesPreTick(s, content, sink);
+  CHECK(s.rules.round == UINT8_MAX);
+  s.rules.phase = MatchPhase::RoundEnded;
+  s.rules.ticksInPhase = content.mode.roundEndTicks;
+  rulesPreTick(s, content, sink);
+  CHECK(s.rules.round == UINT8_MAX);
+  CHECK(s.rules.phase == MatchPhase::RoundStarting);
 }
 
 TEST_CASE("a solo match never ends a round", "[sim][rules]") {

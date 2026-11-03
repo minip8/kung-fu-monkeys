@@ -76,7 +76,8 @@ void rulesPreTick(WorldState& s, const ContentDB& content, EventSink& sink) {
     r.round = 1;
     startRound(s, content, sink);
   } else if (r.phase == MatchPhase::RoundEnded && r.ticksInPhase >= content.mode.roundEndTicks) {
-    ++r.round;
+    // Saturates: an endless run of draws must not wrap the counter to 0.
+    if (r.round < UINT8_MAX) ++r.round;
     startRound(s, content, sink);
   }
   if (r.phase == MatchPhase::RoundStarting && r.ticksInPhase >= content.mode.roundStartTicks) {
