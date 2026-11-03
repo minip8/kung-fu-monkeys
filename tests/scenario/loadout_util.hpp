@@ -26,6 +26,30 @@ namespace kfm::sim::test {
   return d;
 }
 
+[[nodiscard]] inline AbilityDef slamDef() {
+  AbilityDef d;
+  d.name = ContentName::of("slam");
+  d.kind = AbilityKind::Slam;
+  d.cooldownTicks = 120;
+  d.startupTicks = 12;
+  d.activeTicks = 12;
+  d.recoveryTicks = 12;
+  d.param0 = Fixed::fromInt(3);  // reach
+  d.param1 = Fixed::fromInt(4);  // push
+  return d;
+}
+
+[[nodiscard]] inline AbilityDef parryDef() {
+  AbilityDef d;
+  d.name = ContentName::of("parry");
+  d.kind = AbilityKind::Parry;
+  d.cooldownTicks = 60;
+  d.startupTicks = 2;
+  d.activeTicks = 8;
+  d.recoveryTicks = 14;
+  return d;
+}
+
 // Appends `def` to a copy of `base`; returns its index through `index`.
 [[nodiscard]] inline ContentDB withAbility(const AbilityDef& def, uint8_t& index,
                                            const ContentDB& base = defaultContent()) {

@@ -227,6 +227,14 @@ void Stats::merge(const Stats& o) {
   append(roundMinSupplyShare, o.roundMinSupplyShare);
   mergeWait(afterFullCatch, o.afterFullCatch);
   mergeWait(afterBelowFullCatch, o.afterBelowFullCatch);
+  powerUpsSpawned += o.powerUpsSpawned;
+  powerUpsTaken += o.powerUpsTaken;
+  shieldsBroken += o.shieldsBroken;
+  blinks += o.blinks;
+  slams += o.slams;
+  slammed += o.slammed;
+  parryPresses += o.parryPresses;
+  parries += o.parries;
 }
 
 void StatsCollector::beginContacts(const WorldState& s) {
@@ -418,6 +426,21 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
         break;
       case EventKind::ShieldBroken:
         ++stats_.shieldsBroken;
+        break;
+      case EventKind::PlayerBlinked:
+        ++stats_.blinks;
+        break;
+      case EventKind::SlamLanded:
+        ++stats_.slams;
+        break;
+      case EventKind::PlayerSlammed:
+        ++stats_.slammed;
+        break;
+      case EventKind::PlayerParryStarted:
+        ++stats_.parryPresses;
+        break;
+      case EventKind::BoomerangParried:
+        ++stats_.parries;
         break;
       default:
         break;
@@ -636,6 +659,10 @@ void printSummary(const Stats& st, uint32_t players) {
   printDistribution("lowest supply / players, per round", st.roundMinSupplyShare, "");
   std::printf("power-ups (§5.8): spawned %llu, taken %llu, shields broken %llu\n",
               u(st.powerUpsSpawned), u(st.powerUpsTaken), u(st.shieldsBroken));
+  std::printf(
+      "abilities (v0.21): blinks %llu, slams %llu (monkeys pushed %llu), parries %llu of %llu "
+      "presses\n",
+      u(st.blinks), u(st.slams), u(st.slammed), u(st.parries), u(st.parryPresses));
 }
 
 }  // namespace kfm::replay

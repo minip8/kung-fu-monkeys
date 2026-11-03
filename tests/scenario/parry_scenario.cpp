@@ -23,17 +23,6 @@ Vec2 at(int32_t x, int32_t y) {
   return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)};
 }
 
-AbilityDef parryDef() {
-  AbilityDef d;
-  d.name = ContentName::of("parry");
-  d.kind = AbilityKind::Parry;
-  d.cooldownTicks = 60;
-  d.startupTicks = 2;
-  d.activeTicks = 8;
-  d.recoveryTicks = 14;
-  return d;
-}
-
 // Parrier P0 at the centre, thrower P1 at (8, 0), P2 out of the way. P1's
 // banana starts at (6, 0) flying at P0: it touches P0 about 19.3 ticks later.
 struct Duel {

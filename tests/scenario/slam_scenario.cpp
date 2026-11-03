@@ -22,19 +22,6 @@ Vec2 at(int32_t x, int32_t y) {
   return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)};
 }
 
-AbilityDef slamDef() {
-  AbilityDef d;
-  d.name = ContentName::of("slam");
-  d.kind = AbilityKind::Slam;
-  d.cooldownTicks = 120;
-  d.startupTicks = 12;
-  d.activeTicks = 12;
-  d.recoveryTicks = 12;
-  d.param0 = Fixed::fromInt(3);  // reach
-  d.param1 = Fixed::fromInt(4);  // push
-  return d;
-}
-
 // Slammer P0 at the centre, P1 2 units to its right (inside the reach, not
 // touching), P2 5 units above (outside it).
 WorldState slamWorld(const ContentDB& c) {

@@ -117,7 +117,8 @@ power-up counts (§9). Pickups render per def and the HUD shows power-up timers 
 v0.21 changes: more abilities (§5.4, §5.5, §5.6, §5.9). Buttons belong to ability slots, not
 kinds (slot 0 Dash button, slot 1 Throw, slot 2 the new Ability button); a kind's own tags
 (PerfectDash) come from an `AbilityBehavior::kindTags` hook, and the catch rule and the tie-break
-read the slot that grants the tag. A third ability slot (`kAbilitySlots` 3) on
+read the slot that grants the tag. Scripted bots use the new abilities and three corpus entries
+exercise them (§9). A third ability slot (`kAbilitySlots` 3) on
 `Button::Ability1`, empty (`none`) in the base kit so the default match plays as before (the
 extra `AbilityState` per player changed every world checksum; the corpus was regenerated and
 checked equal with slot 3 left out of the visitor). Loadouts list 2 or 3 names; a mode may carry
@@ -1916,6 +1917,14 @@ art is identical up to the export step, and nothing below the presentation layer
   names it (`all`, `none` or comma-separated names, default all), and
   `scripted_4p_powerset_1800t` (dojo_powerups with only shield and big_banana) keeps the
   intersection under the gate.
+  v0.21 adds `scripted_4p_blink_1800t`, `scripted_4p_slam_1800t` and `scripted_4p_parry_1800t`
+  (dojo, the `rounds_*` ability modes): the scripted bots use the third slot when it holds an
+  ability (blink sideways out of an incoming banana's path or now and then, slam with an enemy or
+  incoming banana within the reach, parry a close incoming banana) and draw nothing from their
+  Rng while it is empty, so the base-kit entries keep their inputs. `kfm_replay stats` counts
+  blinks, slams, pushes and parries (and now sums the power-up counters over matches). The third
+  `AbilityState` and `Player::knockback`/`knockbackTicks` changed every checksum and
+  regenerated the corpus.
   v0.23 adds `scripted_4p_deathmatch_3600t` and
   `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
   survival flow are under the cross-platform gate. v0.20 adds `scripted_4p_powerups_1800t`
