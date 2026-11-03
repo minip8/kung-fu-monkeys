@@ -3,7 +3,10 @@
 //
 // Per player, in this order:
 //   1. Stats from content.db.player, then every live modifier in slot order:
-//      moveSpeed = base × Π mul + Σ add (never negative); maxHp and ammoMax are
+//      moveSpeed = base × Π mul × hazard + Σ add (never negative), where
+//      hazard is the product of the speedMul of every Slow hazard holding the
+//      player's centre (v0.22, statics::speedMulAt; outside them it is 1 and
+//      not multiplied in at all); maxHp and ammoMax are
 //      integer stats, add-only (mul is ignored), clamped to [1, 255] and
 //      [0, 255].
 //   2. HP clamp against the previous tick's maxHp: a rise raises hp by the
@@ -17,6 +20,7 @@
 //   4. hitStunTicks-- when positive; Tag::HitStun is cleared whenever the
 //      counter is 0 afterwards.
 #include "kfm/sim/systems.hpp"
+#include "systems/statics.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -24,7 +28,8 @@
 namespace kfm::sim {
 namespace {
 
-[[nodiscard]] Stats deriveStats(const PlayerDef& base, const ModifierList& mods) {
+[[nodiscard]] Stats deriveStats(const PlayerDef& base, const ModifierList& mods,
+                                Fixed hazardSpeedMul) {
   Fixed mul = Fixed::one();
   Fixed add{};
   int32_t maxHp = base.maxHp;
@@ -44,6 +49,7 @@ namespace {
         break;
     }
   }
+  if (hazardSpeedMul != Fixed::one()) mul = mul * hazardSpeedMul;
   Stats out;
   out.moveSpeed = max(base.moveSpeed * mul + add, Fixed::zero());
   out.maxHp = static_cast<uint8_t>(std::clamp<int32_t>(maxHp, 1, UINT8_MAX));
@@ -79,7 +85,8 @@ void tickModifiers(ModifierList& mods) {
 void modifierSystem(WorldState& s, const MatchContent& content) {
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     const uint8_t oldMaxHp = p.stats.maxHp;
-    p.stats = deriveStats(content.db.player, p.modifiers);
+    p.stats = deriveStats(content.db.player, p.modifiers,
+                          statics::speedMulAt(content.arena, p.transform.pos));
     clampHp(p, oldMaxHp, p.stats.maxHp);
     p.ammo = std::min(p.ammo, p.stats.ammoMax);
     tickModifiers(p.modifiers);
