@@ -23,7 +23,12 @@ bool AudioDevice::open(int sampleRate) {
   }
   subsystem_ = true;
   const SDL_AudioSpec spec{.format = SDL_AUDIO_F32, .channels = 2, .freq = sampleRate};
-  stream_ = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+  // SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK spelled with a C++ cast: the SDL macro
+  // uses a C cast, which -Wold-style-cast rejects where the vcpkg headers are
+  // not system includes.
+  constexpr auto kDefaultPlayback = static_cast<SDL_AudioDeviceID>(0xFFFFFFFFu);
+  static_assert(kDefaultPlayback == SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK);
+  stream_ = SDL_OpenAudioDeviceStream(kDefaultPlayback, &spec, nullptr, nullptr);
   if (stream_ == nullptr) {
     status_ = std::string("silent: no audio device (") + SDL_GetError() + ")";
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
