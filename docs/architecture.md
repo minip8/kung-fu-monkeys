@@ -1028,6 +1028,14 @@ C++ server library is mature. The seam makes that swap a contained change.
   announces 3 s ahead. `shutdown()` sends `Disconnect{ServerShuttingDown}` to every peer and
   rejects later `Hello`s; `closeAll()` then drops them. `ServerConfig::maxPlayers` caps the slots
   open to peers and bots.
+- Restart per mode (v0.23): every mode ends in `MatchEnded`, so `kfm_server` and the local
+  `MatchSession` restart the same way whatever the mode: a deathmatch ends on `scoreToWin` or
+  its clock (one round, so `round` stays 1), survival and rounds on `roundsToWin`; a draw
+  (deathmatch's tied lead) is a `MatchEnded` with an invalid winner, logged as "drawn". The
+  restart keeps the mode, and `initialWorld` starts the next match with an empty mode block,
+  so nothing (scores, deaths, respawn timers) carries over. A deathmatch joiner does not wait for
+  a next round that never comes: its slot spawns `respawnTicks` after it appears in the frames
+  (§5.3), at the farthest spawn point.
 
 ### 6.7 Authority and abuse resistance
 

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <string>
 
 using namespace kfm;
@@ -23,14 +24,25 @@ namespace {
 
 using SoakReport = Report;
 
+// What a soak plays: the content and the mode index (default: the endless
+// default content, mode 0).
+struct SoakMatch {
+  const sim::ContentDB* content{nullptr};
+  uint8_t mode{0};
+  // Optional per-server-tick hook (event counting).
+  std::function<void(const NetServer&)> onServerTick;
+};
+
 // Runs a soak of `clients` clients over symmetric links for `seconds`, then
 // checks the §11 M3 exit criterion.
 SoakReport soak(const char* name, uint32_t clients, uint64_t oneWayNs, uint64_t jitterNs,
-                uint32_t lossPpm, uint32_t seconds) {
+                uint32_t lossPpm, uint32_t seconds, const SoakMatch& match = {}) {
   const auto wallStart = std::chrono::steady_clock::now();
   ServerConfig sc;
   sc.match.seed = 0x50A4;
-  NetSim s(sc, 0xBEEF + clients);
+  sc.match.mode = match.mode;
+  NetSim s(sc, 0xBEEF + clients, match.content != nullptr ? *match.content : endlessContent());
+  if (match.onServerTick) s.afterServerTick = [&] { match.onServerTick(s.server()); };
   const LinkConditions l = link(oneWayNs, jitterNs, lossPpm);
   for (uint32_t i = 0; i < clients; ++i)
     s.addClient(l, l, tokenConfig("player-" + std::to_string(i)));
@@ -110,6 +122,33 @@ TEST_CASE("soak: 10 clients at 100 ms RTT with ±10 ms jitter and 2% loss for 60
   CHECK(r.p99Depth <= kRollbackWindow / 2);
   // Substitutions stay rare after convergence: under 1% of a client's ticks.
   CHECK(r.serverSubstPerSec < 0.6);
+}
+
+TEST_CASE("deathmatch: 4 clients at 100 ms RTT and 2% loss stay in sync through respawns",
+          "[netcode][modes]") {
+  // An endless deathmatch (no score limit, no clock) so it keeps respawning.
+  static const sim::ContentDB content = [] {
+    sim::ContentDB c = sim::defaultContent();
+    sim::ModeDef& dm = c.modes[1];
+    dm.name = sim::ContentName::of("deathmatch");
+    dm.kind = sim::ModeKind::Deathmatch;
+    dm.respawnTicks = 60;
+    dm.respawnInvulnTicks = 30;
+    c.modeCount = 2;
+    return endless(c);
+  }();
+  int respawns = 0;
+  int scores = 0;
+  SoakMatch match{&content, 1, [&](const NetServer& server) {
+                    for (const sim::SimEvent& e : server.tickEvents()) {
+                      if (e.kind == sim::EventKind::PlayerRespawned) ++respawns;
+                      if (e.kind == sim::EventKind::ScoreChanged) ++scores;
+                    }
+                  }};
+  const SoakReport r = soak("deathmatch-100ms-2%", 4, 50 * kMs, 10 * kMs, 20'000, 30, match);
+  CHECK(r.mismatches == 0);
+  CHECK(respawns > 5);
+  CHECK(scores > 5);
 }
 
 TEST_CASE("soak: 10 clients at 300 ms RTT with ±10 ms jitter and 10% loss for 60 s",
