@@ -175,11 +175,9 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
                    EventKind::MatchEnded, EventKind::BoomerangCaught}) ==
           (round < content.modes[0].roundsToWin
                ? std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
-                                        EventKind::PlayerEliminated, EventKind::BoomerangGrounded,
-                                        EventKind::PickupSpawned, EventKind::RoundEnded}
+                                        EventKind::PlayerEliminated, EventKind::RoundEnded}
                : std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
-                                        EventKind::PlayerEliminated, EventKind::BoomerangGrounded,
-                                        EventKind::PickupSpawned, EventKind::RoundEnded,
+                                        EventKind::PlayerEliminated, EventKind::RoundEnded,
                                         EventKind::MatchEnded}));
     const SimEvent& ended = onlyEvent(roundLog, EventKind::RoundEnded);
     CHECK(ended.player == kP1);
@@ -275,10 +273,12 @@ TEST_CASE("the press sub-tick decides a catch at the window edges", "[scenario][
 }
 
 TEST_CASE("walking over a grounded banana picks it up unless at ammoMax", "[scenario][pipeline]") {
-  const ContentDB& content = defaultContent();
+  // Non-piercing bananas (the default pierces, v0.27), so a hit grounds one.
+  ContentDB content = defaultContent();
+  content.boomerang.pierce = 0;
   // Ground a banana: player 1 eliminates player 2 at (0, 0) in a 3-player
   // match (so the round goes on), leaving a pickup near the origin.
-  WorldState s = makePlayingWorld(43, 0b111);
+  WorldState s = makePlayingWorld(43, 0b111, content);
   placePlayer(s, kP0, at(-6, 6));
   placePlayer(s, kP1, at(6, 0));
   placePlayer(s, PlayerId{2}, at(0, 0));

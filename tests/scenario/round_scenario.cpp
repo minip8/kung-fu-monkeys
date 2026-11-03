@@ -17,6 +17,9 @@ namespace {
 void eliminate(WorldState& s, PlayerId victim, PlayerId attacker, EventLog& log) {
   const Player& p = playerAt(s, victim);
   const EntityId banana = spawnBanana(s, attacker, p.transform.pos, Vec2::zero());
+  // Non-piercing, so it grounds into a pickup and the round reset has one to
+  // clear (bananas pierce by default, v0.27).
+  s.boomerangs.items[banana.index].pierce = 0;
   Contact c;
   c.kindA = EntityKind::Player;
   c.a = s.players.idAt(victim.value);

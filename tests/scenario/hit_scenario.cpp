@@ -1,6 +1,6 @@
 // End-to-end hits through step() with scripted inputs (architecture §5.6,
-// §5.7, §9): a thrown banana kills, grounds and becomes a pickup; a missed
-// banana returns to its thrower.
+// §5.7, §9): a thrown banana kills and flies on through its victim (bananas
+// pierce, v0.27); a missed banana returns to its thrower.
 //
 // These exercise Throw (abilitySystem), flight (projectileSystem) and swept
 // collision together with the interaction rules.
@@ -30,7 +30,7 @@ size_t indexOf(const EventLog& log, EventKind kind) {
 
 }  // namespace
 
-TEST_CASE("a thrown banana eliminates, grounds and ends the round", "[scenario][hit]") {
+TEST_CASE("a thrown banana eliminates, flies on and ends the round", "[scenario][hit]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(21, 0b11);
   placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::zero()});
@@ -60,31 +60,22 @@ TEST_CASE("a thrown banana eliminates, grounds and ends the round", "[scenario][
   CHECK(eliminated->player == PlayerId{0});
   CHECK(eliminated->a == 1);
 
-  // Hit -> eliminated -> banana grounds -> pickup -> round over, in one tick.
+  // Hit -> eliminated -> round over, in one tick; the banana does not ground.
   const size_t iHit = indexOf(log, EventKind::PlayerHit);
   const size_t iElim = indexOf(log, EventKind::PlayerEliminated);
-  const size_t iGround = indexOf(log, EventKind::BoomerangGrounded);
-  const size_t iPickup = indexOf(log, EventKind::PickupSpawned);
   const size_t iEnd = indexOf(log, EventKind::RoundEnded);
   REQUIRE(iEnd < log.size());
   CHECK(iHit < iElim);
-  CHECK(iElim < iGround);
-  CHECK(iGround < iPickup);
-  CHECK(iPickup < iEnd);
+  CHECK(iElim < iEnd);
   CHECK(log[iHit].tick == log[iEnd].tick);
-  CHECK(log[iGround].entity == thrown->entity);
   CHECK(log[iEnd].player == PlayerId{1});
-  CHECK(countEvents(log, EventKind::BoomerangCaught) == 0);
+  CHECK(countEvents(log, EventKind::BoomerangGrounded) == 0);
+  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
 
   CHECK(s.playerBySlot(PlayerId{0}) == nullptr);
   CHECK(s.rules.phase == MatchPhase::RoundEnded);
   CHECK(s.rules.scores[1] == 1);
-  CHECK(s.boomerangs.empty());
-  REQUIRE(s.pickups.size() == 1);
-  // The pickup lies between the two players, on the victim's side.
-  const Vec2 at = s.pickups.items[log[iPickup].entity.index].pos;
-  CHECK(at.x < Fixed::fromInt(-3));
-  CHECK(at.x > Fixed::fromInt(-4));
+  CHECK(s.pickups.empty());
 }
 
 TEST_CASE("a missed banana returns and is auto-caught by its thrower", "[scenario][hit]") {

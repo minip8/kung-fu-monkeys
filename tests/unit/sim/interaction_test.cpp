@@ -155,7 +155,8 @@ TEST_CASE("a perfect catch at ammoMax declines and falls through", "[sim][intera
     CHECK(countEvents(sink, EventKind::PlayerHit) == 1);
     CHECK(playerAt(s, kP0).tags.has(Tag::Eliminated));
     REQUIRE(s.boomerangs.isAlive(banana));
-    CHECK(s.boomerangs.items[banana.index].phase == BoomerangPhase::Grounded);
+    // Bananas pierce by default (v0.27): it flies on through the dasher.
+    CHECK(s.boomerangs.items[banana.index].phase == BoomerangPhase::Outbound);
   }
   SECTION("own returning banana: auto-caught, not perfect") {
     const EntityId banana =
@@ -281,13 +282,15 @@ TEST_CASE("own returning banana is auto-caught, ammo capped", "[sim][interaction
   CHECK(countEvents(sink, EventKind::PlayerHit) == 0);
 }
 
-TEST_CASE("another player's banana damages, stuns and grounds at the contact point",
+TEST_CASE("a non-piercing banana damages, stuns and grounds at the contact point",
           "[sim][interaction]") {
+  // Content with [boomerang] pierce = false (the default is true, v0.27).
   WorldState s = makePlayingWorld(1, 0b11);
   const Vec2 point{Fixed::fromInt(2), Fixed::fromRatio(-1, 2)};
   const EntityId banana = spawnBanana(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()},
                                       Vec2{Fixed::one(), Fixed::zero()}, BoomerangPhase::Returning);
   s.boomerangs.items[banana.index].ticksInPhase = 9;
+  s.boomerangs.items[banana.index].pierce = 0;
   const EventSink sink =
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5), point)}));
 
@@ -343,12 +346,13 @@ TEST_CASE("damage saturates at zero hp", "[sim][interaction]") {
   CHECK(countEvents(sink, EventKind::PlayerEliminated) == 1);
 }
 
-TEST_CASE("piercing banana keeps flying after a hit", "[sim][interaction]") {
+TEST_CASE("a banana pierces by default: it keeps flying after a hit", "[sim][interaction]") {
   WorldState s = makePlayingWorld(1, 0b11);
   const Vec2 pos{Fixed::fromInt(1), Fixed::fromInt(1)};
   const Vec2 vel{Fixed::fromRatio(1, 4), Fixed::zero()};
   const EntityId banana = spawnBanana(s, kP1, pos, vel);
-  s.boomerangs.items[banana.index].pierce = 1;
+  REQUIRE(defaultContent().boomerang.pierce == 1);
+  REQUIRE(s.boomerangs.items[banana.index].pierce == 1);
   const EventSink sink = resolve(
       s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.5), Vec2::zero())}));
   CHECK(countEvents(sink, EventKind::PlayerHit) == 1);
@@ -376,8 +380,9 @@ TEST_CASE("HitStun blocks a second hit; contacts resolve by time of impact", "[s
   CHECK(firstEvent(sink, EventKind::PlayerHit).entity == early);
   CHECK(firstEvent(sink, EventKind::PlayerHit).a == kP2.value);
   CHECK(playerAt(s, kP0).hp == 2);
+  // Both pierce: the early one lands and flies on, the late one passes through.
   CHECK(s.boomerangs.items[late.index].phase == BoomerangPhase::Outbound);
-  CHECK(s.boomerangs.items[early.index].phase == BoomerangPhase::Grounded);
+  CHECK(s.boomerangs.items[early.index].phase == BoomerangPhase::Outbound);
 }
 
 TEST_CASE("Invulnerable players are not damaged", "[sim][interaction]") {

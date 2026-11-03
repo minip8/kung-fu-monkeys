@@ -30,12 +30,11 @@ const PlayerId kP2{2};
 // Indices of the shipped power-ups, in powerups.toml order.
 constexpr uint8_t kSpeed = 0;
 constexpr uint8_t kBig = 1;
-constexpr uint8_t kPierce = 2;
-constexpr uint8_t kTriple = 3;
-constexpr uint8_t kShield = 4;
-constexpr uint8_t kFastHands = 5;
+constexpr uint8_t kTriple = 2;
+constexpr uint8_t kShield = 3;
+constexpr uint8_t kFastHands = 4;
 
-// defaultContent() plus the throw_fast ability and the six power-ups.
+// defaultContent() plus the throw_fast ability and the five power-ups.
 ContentDB powerUpContent() {
   ContentDB c = defaultContent();
   AbilityDef fast = c.abilities[c.player.abilities[kAbilitySlotThrow]];
@@ -50,12 +49,9 @@ ContentDB powerUpContent() {
   ProjectileModifier big;
   big.radiusMul = Fixed::fromInt(2);
   big.speedMul = Fixed::fromRatio(85, 100);
-  ProjectileModifier pierce;
-  pierce.pierce = 1;
   addPowerUp(c, "speed_boost", 480,
              {statGrant(StatKind::MoveSpeed, Fixed::fromRatio(3, 2), Fixed::zero())});
   addPowerUp(c, "big_banana", 600, {projectileGrant(big)});
-  addPowerUp(c, "piercing_banana", 600, {projectileGrant(pierce)});
   addPowerUp(c, "triple_banana", 900,
              {statGrant(StatKind::AmmoMax, Fixed::one(), Fixed::fromInt(2))});
   addPowerUp(c, "shield", 900, {tagGrant(Tag::Shielded)});
@@ -159,9 +155,16 @@ TEST_CASE("big banana: wider and slower bananas that hit what a normal one misse
   }
 }
 
-TEST_CASE("piercing banana: one banana hits two players, even after the power-up expired",
+// Bananas pierce by default ([boomerang] pierce); the projectile grant's pierce
+// still ors onto a content set whose base banana stops on the first hit.
+TEST_CASE("pierce grant: one banana hits two players, even after the power-up expired",
           "[scenario][powerup]") {
-  const ContentDB content = powerUpContent();
+  ContentDB content = powerUpContent();
+  content.boomerang.pierce = 0;
+  ProjectileModifier pierce;
+  pierce.pierce = 1;
+  const uint8_t kPierce = content.powerUpCount;
+  addPowerUp(content, "piercing_banana", 600, {projectileGrant(pierce)});
   WorldState s = makePlayingWorld(43, 0b1111, content);
   placePlayer(s, kP0, at(-7, 0));
   placePlayer(s, kP1, at(-3, 0));

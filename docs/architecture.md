@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.26 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.27 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -193,6 +193,9 @@ and the contest. Dropped: ONNX Runtime, the nanobind `VecEnv`, every training de
 §2, §4, §10). Human-likeness is a host setting, not part of the bot: input delay matching the
 human lead in mixed matches, none bot versus bot, difficulty tiers only for the built-in bot
 (§8). M5 reframed as the agent platform with a new exit criterion; the ladder moves to M6 (§11).
+v0.27 changes: bananas pierce by default (`[boomerang] pierce = true`): a hit no longer grounds
+the banana, it flies on through the victim and comes home; the `piercing_banana` power-up is
+removed, shifting the later power-up indices (§5.6, §5.7, §5.8, §12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -701,8 +704,9 @@ HP semantics (v0.10):
   `PlayerEliminated` if `hp <= 0`. Tick convention (v0.13): `hitStunTicks = N` counts the hit
   tick. A hit on tick T protects against contacts on T..T+N−1 (the tag is set in step 7 and
   `ModifierSystem` counts down in step 8 of the same tick), freezes movement on T+1..T+N−1
-  (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. The banana grounds at the contact point and becomes a pickup
-  unless it has `pierce`, in which case it keeps flying.
+  (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. A banana with `pierce`
+  keeps flying (the default since v0.27, `[boomerang] pierce = true`); one without it grounds at
+  the contact point and becomes a pickup.
 - Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
   consumed (rule 20, and rule 24 for a dash attack); armour is `+maxHp`. A mode or power-up picks
   one or stacks both. As built (v0.20): rows 20 and 24 key on the tags of the rows they pre-empt
@@ -720,8 +724,8 @@ through its thrower with or without a dash; otherwise a dash (22 u/s) that outru
 it just threw (16 u/s) would catch it straight back.
 The catch also needs room for the banana (v0.16): `CatchBoomerang` declines when the catcher
 already holds `ammoMax`, checked before the time window. The scan then falls through as for a
-mistimed dash: a non-own banana in flight reaches row 30 and hits the full-ammo dasher (and
-grounds into a pickup), an own returning banana reaches row 40 and is auto-caught (absorbed even
+mistimed dash: a non-own banana in flight reaches row 30 and hits the full-ammo dasher (and,
+piercing by default since v0.27, flies on), an own returning banana reaches row 40 and is auto-caught (absorbed even
 at full ammo, as without a dash). A perfect catch therefore always gains a banana, and the dash
 is a defence only for a player who has thrown.
 
@@ -736,7 +740,7 @@ is a defence only for a player who has thrown.
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
   eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
-  contact point.
+  contact point; with it (the default since v0.27) it flies on unchanged.
 - A throw spawns the banana `spawnOffset` (1.0) ahead of the thrower along the aim, clear of
   the thrower's contact radius (0.5 + 0.35), so no throw starts with a contact against its owner.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
@@ -842,7 +846,6 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   |---|---|---|
   | `speed_boost` | 8 s | `move_speed` × 1.5 |
   | `big_banana` | 10 s | bananas radius × 2, speed × 0.85 |
-  | `piercing_banana` | 10 s | bananas pierce |
   | `triple_banana` | 15 s | `ammo_max` + 2 (tops up 2 bananas) |
   | `shield` | 15 s | `shielded`: absorbs one hit |
   | `fast_hands` | 10 s | throw slot runs `throw_fast` (cooldown 8 instead of 20, startup 1) |
@@ -2289,6 +2292,18 @@ baseline moved to C++23 (§9).
   almost every miss is a press stamped a fraction of a tick after impact, not a short window;
   short rounds (4p median 4.6 s) come from the scripted bot's 2 Hz near-perfect throwing, not
   from the content (a 4× slower thrower gives a 9.9 s median). Human playtests decide the rest.
+- Decided (v0.27): bananas pierce by default. `[boomerang] pierce = true` in the base kit and
+  `defaultContent()`, so a banana hit damages and the banana flies on, out and back to its
+  thrower as on a miss; a piercing banana that crosses several monkeys hits each once (`HitStun`
+  still stops a double hit on one victim). Shield blocks, slams, a gone owner and
+  `maxReturnTicks` still ground bananas, so pickups remain but are rarer. The supply floor still
+  holds: a banana that hits stays in flight and is counted as supply until it comes home or
+  grounds. The `piercing_banana` power-up had nothing left to grant and is removed; the
+  `ProjectileModifier::pierce` grant stays for content that turns the base switch off. Removing
+  it shifts the indices of `triple_banana`, `shield` and `fast_hands` (and their
+  `MatchConfig::powerUps` bits); that is safe because the content hash pins indices in replays
+  and on the wire, the corpus was regenerated and saved lobby settings name power-ups rather
+  than index them.
 - Decided (v0.26): bots are a public contract, a sandboxed and instruction-metered wasm module
   behind a four-export C ABI; the SDKs, example bots and contest live in a separate repository;
   no training stack in the engine (ONNX Runtime and the nanobind env dropped); human-likeness is
