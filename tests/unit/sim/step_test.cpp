@@ -21,7 +21,7 @@ InputFrame emptyFrame(const WorldState& s) {
 
 TEST_CASE("WorldState is trivially copyable and small", "[sim][step]") {
   STATIC_REQUIRE(std::is_trivially_copyable_v<WorldState>);
-  STATIC_REQUIRE(sizeof(WorldState) < 4096);
+  STATIC_REQUIRE(sizeof(WorldState) < size_t{64} * 1024);
   STATIC_REQUIRE(sizeof(PlayerInput) == 5);
 }
 
@@ -42,7 +42,7 @@ TEST_CASE("initialWorld is deterministic and starts in the lobby", "[sim][step]"
 TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
   WorldState s = initialWorld(MatchConfig{7, 0b1000000101});
   EventSink sink;
-  step(s, emptyFrame(s), sink);
+  step(s, emptyFrame(s), defaultContent(), sink);
   CHECK(s.tick == Tick{1});
   CHECK(s.rules.phase == MatchPhase::Playing);
   CHECK(s.players.size() == 3);
@@ -52,6 +52,15 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
   CHECK(s.playerBySlot(PlayerId{1}) == nullptr);
   CHECK(s.playerBySlot(PlayerId::invalid()) == nullptr);
   CHECK(s.playerBySlot(PlayerId{2})->id == PlayerId{2});
+  // Spawned at the arena spawn point of their slot, with content stats.
+  const ContentDB& content = defaultContent();
+  const Player& p9 = *s.playerBySlot(PlayerId{9});
+  CHECK(p9.transform.pos == content.arena.spawnPoints[9]);
+  CHECK(p9.hp == content.player.maxHp);
+  CHECK(p9.ammo == content.player.ammoStart);
+  CHECK(p9.stats.moveSpeed == content.player.moveSpeed);
+  CHECK(p9.abilities[kAbilitySlotDash].defIndex == static_cast<uint8_t>(AbilityKind::Dash));
+  CHECK(p9.abilities[kAbilitySlotThrow].defIndex == static_cast<uint8_t>(AbilityKind::Throw));
 
   int spawned = 0;
   int started = 0;
@@ -65,7 +74,7 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
 
   // Second step: no respawn, no new events.
   sink.clear();
-  step(s, emptyFrame(s), sink);
+  step(s, emptyFrame(s), defaultContent(), sink);
   CHECK(s.players.size() == 3);
   CHECK(sink.count == 0);
   CHECK(s.rules.ticksInPhase == 2);
@@ -78,8 +87,10 @@ TEST_CASE("stepping the same inputs from the same seed is bit-identical", "[sim]
   for (int i = 0; i < 120; ++i) {
     InputFrame f = emptyFrame(a);
     f.inputs[3].moveDir = static_cast<uint8_t>(i);
-    step(a, f, sink);
-    step(b, f, sink);
+    f.inputs[3].aimDir = static_cast<uint8_t>(i);
+    f.inputs[3].buttons = static_cast<uint8_t>(i % 4);
+    step(a, f, defaultContent(), sink);
+    step(b, f, defaultContent(), sink);
     REQUIRE(checksum(a) == checksum(b));
   }
   CHECK(a.playerBySlot(PlayerId{3})->transform.facing == Angle::fromInput8(119));
@@ -88,14 +99,14 @@ TEST_CASE("stepping the same inputs from the same seed is bit-identical", "[sim]
 TEST_CASE("rollback by memcpy restores an identical state", "[sim][step]") {
   WorldState s = initialWorld(MatchConfig{5, 0x3});
   EventSink sink;
-  step(s, emptyFrame(s), sink);
+  step(s, emptyFrame(s), defaultContent(), sink);
   WorldState saved{};
   std::memcpy(&saved, &s, sizeof(WorldState));
   const uint32_t savedSum = checksum(s);
   for (int i = 0; i < 10; ++i) {
     InputFrame f = emptyFrame(s);
     f.inputs[0].moveDir = 200;
-    step(s, f, sink);
+    step(s, f, defaultContent(), sink);
   }
   CHECK(checksum(s) != savedSum);
   std::memcpy(&s, &saved, sizeof(WorldState));

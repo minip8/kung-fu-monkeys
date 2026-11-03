@@ -166,7 +166,7 @@ void visit(V& v, ContentDB& c) {
   visit(v, c.mode);
 }
 
-// --- state -------------------------------------------------------------------
+// --- input and state ---------------------------------------------------------
 
 template <class V>
 void visit(V& v, PlayerInput& in) {
@@ -193,17 +193,100 @@ void visit(V& v, MatchRules& r) {
   visit(v, r.phase);
   v.u16(r.present);
   v.u32(r.ticksInPhase);
+  v.u8(r.round);
+  for (uint8_t& score : r.scores)
+    v.u8(score);
+  visit(v, r.lastRoundWinner);
 }
 template <class V>
 void visit(V& v, Transform& t) {
   visit(v, t.pos);
+  visit(v, t.prevPos);
   visit(v, t.vel);
   visit(v, t.facing);
+}
+template <class V>
+void visit(V& v, Stats& st) {
+  visit(v, st.moveSpeed);
+  v.u8(st.maxHp);
+  v.u8(st.ammoMax);
+}
+template <class V>
+void visit(V& v, StatModifier& m) {
+  visit(v, m.stat);
+  visit(v, m.mul);
+  visit(v, m.add);
+  v.u16(m.ticksLeft);
+}
+// Only the live prefix is visited; slots past count are canonicalised on
+// read so garbage there never reaches a checksum or the wire.
+template <class V>
+void visit(V& v, ModifierList& m) {
+  v.u8(m.count);
+  if constexpr (V::kIsReader) {
+    if (m.count > kMaxModifiers) {
+      v.markInvalid();
+      m = ModifierList{};
+      return;
+    }
+  }
+  for (uint8_t i = 0; i < kMaxModifiers; ++i) {
+    if (i < m.count) {
+      visit(v, m.items[i]);
+    } else if constexpr (V::kIsReader) {
+      m.items[i] = StatModifier{};
+    }
+  }
+}
+template <class V>
+void visit(V& v, Intent& in) {
+  visit(v, in.move);
+  visit(v, in.aim);
+  v.u8(in.pressed);
+  v.u8(in.held);
+  v.u8(in.subTick);
+}
+template <class V>
+void visit(V& v, AbilityState& a) {
+  v.u8(a.defIndex);
+  visit(v, a.phase);
+  v.u16(a.phaseTicks);
+  v.u16(a.cooldownTicks);
+  visit(v, a.activatedTick);
+  v.u8(a.activatedSubTick);
+  visit(v, a.dir);
 }
 template <class V>
 void visit(V& v, Player& p) {
   visit(v, p.id);
   visit(v, p.transform);
+  visit(v, p.intent);
+  v.u8(p.prevButtons);
+  visit(v, p.stats);
+  visit(v, p.modifiers);
+  v.u8(p.hp);
+  v.u8(p.ammo);
+  visit(v, p.tags);
+  v.u16(p.hitStunTicks);
+  for (AbilityState& a : p.abilities)
+    visit(v, a);
+}
+template <class V>
+void visit(V& v, Boomerang& b) {
+  visit(v, b.owner);
+  visit(v, b.phase);
+  visit(v, b.transform);
+  visit(v, b.spin);
+  v.u16(b.ticksAlive);
+  v.u16(b.ticksInPhase);
+  v.u8(b.damage);
+  v.u8(b.pierce);
+}
+template <class V>
+void visit(V& v, Pickup& p) {
+  visit(v, p.kind);
+  visit(v, p.pos);
+  v.u8(p.powerUpIndex);
 }
 template <class V>
 void visit(V& v, WorldState& s) {
@@ -211,6 +294,8 @@ void visit(V& v, WorldState& s) {
   visit(v, s.rng);
   visit(v, s.rules);
   visit(v, s.players);
+  visit(v, s.boomerangs);
+  visit(v, s.pickups);
 }
 
 // --- visitors ---------------------------------------------------------------

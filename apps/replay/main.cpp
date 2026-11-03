@@ -82,6 +82,16 @@ bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, F&& onTic
     std::fprintf(stderr, "error: not a KFMR replay (bad magic/version/header)\n");
     return false;
   }
+  const ContentDB& content = defaultContent();
+  const uint32_t buildContentHash = contentHash(content);
+  // 0 marks a legacy replay recorded before content was hashed (M0).
+  if (header.contentHash != 0 && header.contentHash != buildContentHash) {
+    std::fprintf(stderr,
+                 "error: content hash mismatch: replay 0x%08x, this build 0x%08x "
+                 "(recorded with different content)\n",
+                 header.contentHash, buildContentHash);
+    return false;
+  }
   WorldState world = initialWorld(header.matchConfig());
   EventSink sink;
   onTick(world.tick, checksum(world));
@@ -97,7 +107,7 @@ bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, F&& onTic
       return false;
     }
     sink.clear();
-    step(world, frame, sink);
+    step(world, frame, content, sink);
     onTick(world.tick, checksum(world));
   }
   return true;
@@ -115,7 +125,7 @@ int cmdRecordEmpty(const Args& a) {
   }
   ReplayHeader h;
   h.seed = a.seed;
-  h.contentHash = 0;  // no content yet (M4)
+  h.contentHash = contentHash(defaultContent());
   h.buildHash = 0;
   h.players = static_cast<PlayerMask>((1u << a.players) - 1u);
   h.tickCount = a.ticks;
@@ -156,9 +166,11 @@ int cmdInfo(const Args& a) {
   }
   std::printf(
       "replay %s\n  version      %u\n  seed         0x%llx\n  content hash 0x%08x\n"
-      "  build hash   0x%08x\n  players      0x%03x\n  ticks        %u\n  bytes        %zu\n",
+      "  build hash   0x%08x\n  players      0x%03x\n  ticks        %u\n  bytes        %zu\n"
+      "  this build's content hash 0x%08x\n",
       a.positional[0].c_str(), kReplayVersion, static_cast<unsigned long long>(h.seed),
-      h.contentHash, h.buildHash, h.players, h.tickCount, bytes.size());
+      h.contentHash, h.buildHash, h.players, h.tickCount, bytes.size(),
+      contentHash(defaultContent()));
   return 0;
 }
 

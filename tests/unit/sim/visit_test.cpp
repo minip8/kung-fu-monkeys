@@ -20,7 +20,7 @@ WorldState sampleWorld() {
     f.tick = s.tick;
     f.present = s.rules.present;
     f.inputs[0].moveDir = 64;
-    step(s, f, sink);
+    step(s, f, defaultContent(), sink);
   }
   return s;
 }
@@ -138,4 +138,126 @@ TEST_CASE("InputFrame equality ignores absent players", "[sim][visit]") {
   g = f;
   g.present = 0b11;
   CHECK(f != g);
+}
+
+namespace {
+// A world exercising every M1 entity type and field the visitor carries.
+WorldState richWorld() {
+  WorldState s = sampleWorld();
+  Player& p = s.players.items[0];
+  p.intent.pressed = 3;
+  p.tags.set(Tag::HitStun);
+  p.hitStunTicks = 4;
+  p.modifiers.count = 2;
+  p.modifiers.items[0] = StatModifier{StatKind::MoveSpeed, Fixed::fromRatio(3, 2), 0_fx, 30};
+  p.modifiers.items[1] = StatModifier{StatKind::MaxHp, Fixed::one(), 1_fx, 60};
+  p.abilities[1].phase = AbilityPhase::Recovery;
+  p.abilities[1].activatedTick = Tick{3};
+  p.abilities[1].activatedSubTick = 99;
+  p.abilities[1].dir = Vec2{1_fx, 0_fx};
+  s.rules.round = 2;
+  s.rules.scores[3] = 1;
+  s.rules.lastRoundWinner = PlayerId{3};
+  const EntityId b = s.boomerangs.spawn();
+  s.boomerangs.items[b.index] =
+      Boomerang{PlayerId{1},
+                BoomerangPhase::Returning,
+                Transform{Vec2{2_fx, 3_fx}, Vec2{1_fx, 3_fx}, Vec2{1_fx, 0_fx}, Angle::fromBam(5)},
+                Angle::fromBam(77),
+                40,
+                4,
+                1,
+                0};
+  const EntityId k = s.pickups.spawn();
+  s.pickups.items[k.index] = Pickup{PickupKind::Banana, Vec2{-4_fx, 5_fx}, 0};
+  return s;
+}
+}  // namespace
+
+TEST_CASE("write/read round-trips every M1 state type", "[sim][visit]") {
+  const WorldState a = richWorld();
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, a));
+  WorldState b{};
+  BitReader r(w.written());
+  REQUIRE(readFrom(r, b));
+  CHECK(r.atEnd());
+  CHECK(checksum(a) == checksum(b));
+  CHECK(b.rules.lastRoundWinner == PlayerId{3});
+  CHECK(b.rules.scores[3] == 1);
+  CHECK(b.boomerangs.size() == 1);
+  CHECK(b.boomerangs.items[0].phase == BoomerangPhase::Returning);
+  CHECK(b.boomerangs.items[0].transform.prevPos == Vec2{1_fx, 3_fx});
+  CHECK(b.pickups.items[0].pos == Vec2{-4_fx, 5_fx});
+  const Player& p = b.players.items[0];
+  CHECK(p.modifiers.count == 2);
+  CHECK(p.modifiers.items[1].stat == StatKind::MaxHp);
+  CHECK(p.tags.has(Tag::HitStun));
+  CHECK(p.abilities[1].phase == AbilityPhase::Recovery);
+  CHECK(p.abilities[1].activatedSubTick == 99);
+}
+
+TEST_CASE("every new state field reaches the checksum", "[sim][visit]") {
+  const WorldState a = richWorld();
+  const uint32_t base = checksum(a);
+  const auto changed = [&](auto mutate) {
+    WorldState b = a;
+    mutate(b);
+    return checksum(b) != base;
+  };
+  CHECK(changed([](WorldState& s) { s.players.items[0].transform.prevPos.x += 1_fx; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].intent.subTick += 1; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].prevButtons ^= 1; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].stats.ammoMax += 1; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].hp += 1; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].tags.set(Tag::Shielded); }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].modifiers.items[1].ticksLeft -= 1; }));
+  CHECK(changed([](WorldState& s) { s.players.items[0].abilities[0].cooldownTicks = 9; }));
+  CHECK(changed([](WorldState& s) { s.boomerangs.items[0].spin += Angle::fromBam(1); }));
+  CHECK(changed([](WorldState& s) { s.pickups.items[0].powerUpIndex = 1; }));
+  CHECK(changed([](WorldState& s) { s.rules.round += 1; }));
+}
+
+TEST_CASE("ModifierList past count is canonicalised", "[sim][visit]") {
+  const WorldState a = richWorld();
+  WorldState garbage = a;
+  garbage.players.items[0].modifiers.items[5] =
+      StatModifier{StatKind::AmmoMax, 7_fx, 7_fx, 777};  // past count = 2
+  CHECK(checksum(garbage) == checksum(a));
+
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, garbage));
+  WorldState b{};
+  b.players.items[0].modifiers.items[6].ticksLeft = 55;  // reader must clear this too
+  BitReader r(w.written());
+  REQUIRE(readFrom(r, b));
+  CHECK(b.players.items[0].modifiers.items[5].ticksLeft == 0);
+  CHECK(b.players.items[0].modifiers.items[6].ticksLeft == 0);
+  CHECK(checksum(b) == checksum(a));
+}
+
+TEST_CASE("reader rejects a ModifierList count above capacity", "[sim][visit]") {
+  WorldState a = richWorld();
+  a.players.items[0].modifiers.count = kMaxModifiers + 1;
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, a));
+  WorldState b{};
+  BitReader r(w.written());
+  CHECK_FALSE(readFrom(r, b));
+}
+
+TEST_CASE("ContentDB round-trips through the visitor", "[sim][visit]") {
+  const ContentDB& c = defaultContent();
+  std::array<std::byte, sizeof(ContentDB)> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, c));  // works on the constexpr (read-only) instance
+  ContentDB d{};
+  BitReader r(w.written());
+  REQUIRE(readFrom(r, d));
+  CHECK(r.atEnd());
+  CHECK(contentHash(d) == contentHash(c));
+  CHECK(checksumOf(d) == checksumOf(c));
 }

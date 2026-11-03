@@ -11,12 +11,27 @@
 
 namespace kfm::sim {
 
+// Payload conventions (fields not listed are default):
 enum class EventKind : uint8_t {
   None = 0,
-  MatchStarted,
-  PlayerSpawned,
-  // M1 adds: BoomerangThrown, BoomerangCaught, PlayerDashed, PlayerEliminated, ...
+  MatchStarted,       // -
+  PlayerSpawned,      // player, entity
+  RoundStarted,       // a = round
+  RoundEnded,         // player = winner (invalid on a draw), a = round
+  MatchEnded,         // player = winner
+  PlayerDashed,       // player, entity = player
+  BoomerangThrown,    // player = owner, entity = boomerang
+  BoomerangCaught,    // player = catcher, entity = boomerang, a = CatchHow
+  BoomerangGrounded,  // entity = boomerang
+  BoomerangBounced,   // entity = boomerang
+  PlayerHit,          // player = victim, entity = boomerang, a = attacker slot, b = hp after
+  PlayerEliminated,   // player = victim, a = killer slot or 0xFF
+  PickupSpawned,      // entity = pickup
+  PickupTaken,        // player, entity = pickup
 };
+
+// BoomerangCaught payload `a`.
+enum class CatchHow : uint8_t { Perfect = 0, Auto = 1 };
 
 struct SimEvent {
   EventKind kind{EventKind::None};
