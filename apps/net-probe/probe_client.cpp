@@ -67,7 +67,8 @@ void putU64(std::span<std::byte> out, uint64_t v) {
 
 [[nodiscard]] std::vector<std::byte> makeMessage(std::byte laneByte, net::Lane lane, uint32_t seq,
                                                  uint64_t nowNs, size_t size) {
-  std::vector<std::byte> m(size);
+  // Never smaller than the header (also tells GCC the buffer is non-null).
+  std::vector<std::byte> m(std::max(size, kHeaderBytes));
   m[0] = kClientTag;
   m[1] = laneByte;
   putU32(std::span(m).subspan(2, 4), seq);
