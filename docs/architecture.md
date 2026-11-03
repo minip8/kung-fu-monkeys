@@ -32,7 +32,7 @@ the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the 
 (§5.10); bananas spawn clear of the thrower (§5.7);
 the stick is idle iff `moveMag == 0` (§5.4);
 rule-table semantics and the `HitStun` tick convention pinned (§5.6); scripted-input
-scaffolding (§9); `PerfectDash` covers the sub-tick end of the window (§5.5).
+scaffolding (§9); `PerfectDash` covers the sub-tick end of the window (§5.5); wasm stack size (§12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -758,6 +758,10 @@ baseline moved to C++23 (§9).
 - **3D renderer cost.** A skinned-mesh renderer is weeks of work where a sprite batcher is
   days; it is the main schedule risk in M2. Mitigate by running M2 on capsules first, keeping
   the one light and blob shadows (no shadow maps), and keeping the sprite fallback (§7).
+- **Stack in WebAssembly.** One `step()` keeps about 40 KB of per-tick scratch on the stack
+  (contact list, broadphase grid, contact sort keys), which is how the "no heap after init" rule
+  is met. Emscripten's default stack is 64 KB and overflows silently in Release, so every wasm
+  executable links with `-sSTACK_SIZE=1MB` (v0.13); the browser client must too.
 - **WebGL2 limits.** Skinning uniform budgets and texture formats vary by browser; keep joint
   counts low and test the wasm build on every M2 change.
 - Decided: 60 Hz tick with sub-tick input timestamps (§5.11); WebRTC as the single production
