@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Kung Fu Monkeys</title>
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
+    /* The canvas is the only layer over the page: no compositing layers above it (§6.8). */
+    #canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; border: 0; outline: none; }
+    #status { position: fixed; left: 16px; bottom: 16px; color: #ccc; font: 14px system-ui, sans-serif; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+  <div id="status">Loading…</div>
+  <script>
+    // WebGL2 context attributes per architecture §6.8. Emscripten's
+    // Module.webglContextAttributes is not consulted by SDL3's own
+    // emscripten_webgl_create_context path, so the same attributes are also
+    // merged into every canvas getContext('webgl2') call below.
+    const kfmWebglAttributes = { desynchronized: true, powerPreference: 'high-performance', antialias: false };
+    const canvas = document.getElementById('canvas');
+    const originalGetContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (type, attributes) {
+      if (type === 'webgl2') attributes = Object.assign({}, attributes || {}, kfmWebglAttributes);
+      return originalGetContext.call(this, type, attributes);
+    };
+    // Keyboard goes to the canvas: focus it on load and on every click.
+    canvas.addEventListener('mousedown', () => canvas.focus());
+    window.addEventListener('load', () => canvas.focus());
+    const statusElement = document.getElementById('status');
+    var Module = {
+      canvas: canvas,
+      webglContextAttributes: kfmWebglAttributes,
+      print: (text) => console.log(text),
+      printErr: (text) => console.error(text),
+      setStatus: (text) => { statusElement.textContent = text; statusElement.hidden = !text; },
+      onRuntimeInitialized: () => { statusElement.hidden = true; canvas.focus(); },
+    };
+    window.onerror = () => { statusElement.hidden = false; statusElement.textContent = 'Error: see the browser console.'; };
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>
