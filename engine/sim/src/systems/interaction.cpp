@@ -5,7 +5,9 @@
 // for players holding PerfectDash, the earlier dash press (§5.11 tie-break);
 // then pool index order. For each contact the rows are scanned by priority
 // and the first matching row whose handler returns true wins. Contacts whose
-// entities an earlier contact despawned are skipped.
+// entities an earlier contact despawned are skipped. Outside
+// MatchPhase::Playing no contact resolves: the round is decided (or not yet
+// started) and nothing may hit, catch or pick up.
 #include "kfm/sim/rules/interaction.hpp"
 
 #include "kfm/sim/systems.hpp"
@@ -80,6 +82,7 @@ struct SortKey {
 
 void interactionSystem(WorldState& s, const ContentDB& content, const Contacts& contacts,
                        EventSink& sink) {
+  if (s.rules.phase != MatchPhase::Playing) return;
   std::array<SortKey, kMaxContacts> order{};
   const uint16_t n = contacts.count;
   for (uint16_t i = 0; i < n; ++i) {

@@ -442,3 +442,16 @@ TEST_CASE("interaction resolution is deterministic", "[sim][interaction]") {
   };
   CHECK(run() == run());
 }
+
+TEST_CASE("no contact resolves outside the Playing phase", "[sim][interaction]") {
+  for (const MatchPhase phase :
+       {MatchPhase::RoundStarting, MatchPhase::RoundEnded, MatchPhase::MatchEnded}) {
+    WorldState s = makePlayingWorld(1, 0b11);
+    const EntityId b = spawnBanana(s, kP1, Vec2::zero(), Vec2::zero());
+    s.rules.phase = phase;
+    const EventSink sink = resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, b, {})}));
+    CHECK(sink.count == 0);
+    CHECK(s.playerBySlot(kP0)->hp == defaultContent().player.maxHp);
+    CHECK(s.boomerangs.isAlive(b));
+  }
+}

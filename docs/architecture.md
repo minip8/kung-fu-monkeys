@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.12 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.13 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -27,6 +27,7 @@ v0.12 changes: M1 interfaces pinned (§5.3, §5.5, §5.6, Appendix A). `step()` 
 `ContentDB` explicitly; the ability and rule tables are `constexpr` (no startup registration);
 hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, keep scanning") and
 rules gain an ownership field and a boomerang-phase mask.
+v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -303,6 +304,10 @@ are rule-table decisions, not code changes.
   eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
   contact point.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
+- Bananas fly only while the match phase is `Playing`. During `RoundStarting`, `RoundEnded`
+  and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
+  `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
+  cannot kill the winner or return to its owner during the pause; `RoundEnded` then clears it.
 
 ### 5.8 Power-ups and modifiers
 

@@ -1,7 +1,10 @@
 // ProjectileSystem (architecture §5.3 step 5, §5.7): boomerang flight, return
 // steering, wall bounces, grounding. Grounded boomerangs stay put until
 // LifecycleSystem turns them into pickups; this system emits only
-// BoomerangBounced.
+// BoomerangBounced. Outside MatchPhase::Playing every boomerang is frozen
+// (prevPos = pos, no timers advance), like the players: a banana still in
+// flight when the round is decided cannot hit or return to anyone during the
+// RoundEnded pause.
 #include "angle_of.hpp"
 #include "kfm/sim/systems.hpp"
 
@@ -63,9 +66,11 @@ void projectileSystem(WorldState& s, const ContentDB& content, EventSink& sink) 
   const Vec2 limit = Vec2{max(content.arena.halfExtents.x - def.radius, Fixed::zero()),
                           max(content.arena.halfExtents.y - def.radius, Fixed::zero())};
 
+  const bool playing = s.rules.phase == MatchPhase::Playing;
   s.boomerangs.forEachAlive([&](EntityId id, Boomerang& b) {
     Transform& t = b.transform;
     t.prevPos = t.pos;
+    if (!playing) return;
     saturatingIncrement(b.ticksAlive);
     saturatingIncrement(b.ticksInPhase);
     if (b.phase == BoomerangPhase::Grounded) return;

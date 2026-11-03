@@ -370,3 +370,20 @@ TEST_CASE("projectile flight is deterministic", "[sim][projectile]") {
   const WorldState b = run();
   CHECK(checksum(a) == checksum(b));
 }
+
+TEST_CASE("boomerangs are frozen outside the Playing phase", "[sim][projectile]") {
+  for (const MatchPhase phase :
+       {MatchPhase::RoundStarting, MatchPhase::RoundEnded, MatchPhase::MatchEnded}) {
+    WorldState s = makePlayingWorld(1, 0b1);
+    const EntityId id = spawnBanana(s, kP0, v(15.5, 0), v(0.3, 0));
+    banana(s, id).transform.prevPos = v(15.2, 0);
+    s.rules.phase = phase;
+    const EventSink sink = tickProjectiles(s);
+    const Boomerang& b = banana(s, id);
+    CHECK(sink.count == 0);  // would have bounced off the +x wall in Playing
+    CHECK(b.transform.pos == v(15.5, 0));
+    CHECK(b.transform.prevPos == b.transform.pos);  // no swept motion for collision
+    CHECK(b.ticksAlive == 0);
+    CHECK(b.ticksInPhase == 0);
+  }
+}
