@@ -105,14 +105,16 @@ void drawFragBar(ImDrawList* dl, const HudView& session, const presentation::Ren
                  float viewW) {
   constexpr float kSize = 22.0f;
   constexpr float kGap = 26.0f;
-  const auto entryText = [&](uint8_t i, char (&out)[32]) {
+  // (char* + size rather than a char (&)[N] parameter: clang-format 19 and 23
+  // disagree about the spacing of an array reference in a lambda's list.)
+  const auto entryText = [&](uint8_t i, char* out, size_t cap) {
     char label[8];
     slotLabel(session, i, label);
     if (hud.respawnSeconds[i] > 0.0f) {
-      std::snprintf(out, sizeof out, "%s %u (%d)", label, static_cast<unsigned>(hud.scores[i]),
+      std::snprintf(out, cap, "%s %u (%d)", label, static_cast<unsigned>(hud.scores[i]),
                     static_cast<int>(std::ceil(hud.respawnSeconds[i])));
     } else {
-      std::snprintf(out, sizeof out, "%s %u", label, static_cast<unsigned>(hud.scores[i]));
+      std::snprintf(out, cap, "%s %u", label, static_cast<unsigned>(hud.scores[i]));
     }
   };
   float total = 0.0f;
@@ -120,7 +122,7 @@ void drawFragBar(ImDrawList* dl, const HudView& session, const presentation::Ren
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     if ((hud.presentMask & (1u << i)) == 0) continue;
     char text[32];
-    entryText(i, text);
+    entryText(i, text, sizeof text);
     total += textWidth(kSize, text);
     ++entries;
   }
@@ -134,7 +136,7 @@ void drawFragBar(ImDrawList* dl, const HudView& session, const presentation::Ren
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     if ((hud.presentMask & (1u << i)) == 0) continue;
     char text[32];
-    entryText(i, text);
+    entryText(i, text, sizeof text);
     const ImU32 col = slotColor(i, hud.respawnSeconds[i] > 0.0f ? 120 : 255);
     dl->AddText(font, kSize, ImVec2(x + 1.0f, y + 1.0f), kShadow, text);
     dl->AddText(font, kSize, ImVec2(x, y), col, text);
