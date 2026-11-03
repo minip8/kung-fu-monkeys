@@ -1,6 +1,7 @@
 // kfm_client command line (headless-testable).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--no-hot-reload]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 #pragma once
@@ -16,6 +17,7 @@ namespace kfm::client {
 
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
+    "                  [--content DIR] [--arena NAME] [--mode NAME] [--no-hot-reload]\n"
     "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
@@ -23,6 +25,12 @@ inline constexpr const char* kUsage =
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
     "  --players-seed S       seed of the bots' scripted-input Rng\n"
+    "  --content DIR          content directory (*.toml); default: content/ next to the\n"
+    "                         executable, else the copy built into it\n"
+    "  --arena NAME           arena of local matches (default: the first one)\n"
+    "  --mode NAME            mode of local matches (default: the first one)\n"
+    "  --no-hot-reload        do not watch the content directory (native local play\n"
+    "                         reloads it on change and restarts the match)\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
     "  --capsules             draw players as capsules, not the skinned model\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
@@ -45,6 +53,10 @@ struct ClientOptions {
   uint8_t bots{0};
   uint64_t seed{1};
   uint64_t playersSeed{kDefaultBotSeed};
+  std::string contentDir;  // --content; empty = next to the executable, else embedded
+  std::string arena;       // --arena / --mode names; empty = index 0
+  std::string mode;
+  bool hotReload{true};
   // Network mode (empty connect: local play).
   std::string connect;  // signaling URL, "ws://host:port"
   std::string token;

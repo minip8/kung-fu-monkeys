@@ -40,7 +40,7 @@ TEST_CASE("tuning: contentToCpp prints the tuned fields in content.cpp style", "
   CHECK(def.find("  c.boomerang.turnRateBam = 1200;\n") != std::string::npos);
   CHECK(def.find("  c.boomerang.restitution = Fixed::one();\n") != std::string::npos);
   CHECK(def.find("  c.player.moveSpeed = perSecond(7);\n") != std::string::npos);
-  CHECK(def.find("  c.mode.roundsToWin = 3;\n") != std::string::npos);
+  CHECK(def.find("  rounds.roundsToWin = 3;\n") != std::string::npos);
 
   c.abilities[static_cast<uint8_t>(sim::AbilityKind::Dash)].perfectWindowTicks = 6;
   c.player.moveSpeed = perSecondToPerTick(8.5f);

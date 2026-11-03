@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.17 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.18 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -71,6 +71,21 @@ mode (`NetSession`, `--connect`, the net overlay panel, per-tick input windows o
 rate-controlled clock) and when `onRollback` is called (§6.9, §7). Match restart and shutdown
 semantics (§6.6), `kfm_server` as the one-match-per-process host (§6.5), `kfm_netsim` and the
 soak and network ctests plus the `server-headless` CI job (§9), M3 landed (§11).
+v0.18 changes: content is data (§5.10). `engine/content` (`kfm::content`, a new module beside
+`net`/`presentation`, used by apps and tests only, §4) parses TOML (toml++ 3.4.0, no exceptions,
+§10) from `content/*.toml` into a validated `ContentDB`; fixed-point values are exact decimals
+truncated toward zero like `Fixed::fromRatio`, speeds are written per second; defs reference
+each other by name and are stored as indices; `defaultContent()` stays as the sim tests' fixture
+and a test asserts the TOML hashes identically. `ContentDB` holds up to 8 named arenas and 8
+named modes; `MatchConfig` gains `arena` and `mode` indices (not part of `WorldState`, so
+checksums are unchanged), and every system, ability hook and rule handler receives a
+`MatchContent` (the DB plus the selected arena and mode). The replay header (version 2), the
+corpus manifest, `kfm_replay`/`kfm_server`/`kfm_netsim`/`kfm_render_probe`/`kfm_client`
+(`--content`, `--arena`, `--mode`) and the join path (`Welcome`, `Snapshot`, `MatchConfig`
+messages, protocol version 2) carry the config (§6.6, §9). Apps load `--content DIR`, else
+`content/` next to the executable (copied by the build), else the copy compiled into the binary
+(the browser's and the replay gate's source); the native client hot-reloads the content
+directory in local play.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -152,8 +167,10 @@ kung-fu-monkeys/
   engine/
     core/                Fixed (Q16.16), Vec2, Angle, Pool<T,N>, RingBuffer, BitWriter/Reader,
                          Rng (xoshiro128**), hash (xxHash), log, assert, strong typedefs
-    sim/                 WorldState, step(), systems/, abilities/, rules/, content/, events,
+    sim/                 WorldState, step(), systems/, abilities/, rules/, content defs, events,
                          serialization (visitor), checksum
+    content/             TOML content files -> validated ContentDB (toml++), the embedded copy,
+                         app-side loading (--content/--arena/--mode) and hot-reload polling
     net/                 messages/ (bit-packed frames, redundancy), transport/ (webrtc, loopback+emulator, optional gns),
                          clock sync, NetClient, NetServer, snapshot codec
     ai/                  IAgent, Observation builder, scripted bots, OnnxAgent
@@ -161,7 +178,8 @@ kung-fu-monkeys/
                          interpolation+smoothing
     platform/            SDL3 window/input/audio/gamepads, filesystem, main loop, config,
                          services/ (IPlatformServices: steam, web, null)
-  content/               data files: abilities/ powerups/ arenas/ modes/ models/ audio/
+  content/               data files (*.toml: player, abilities, boomerang, arenas, modes; later
+                         power-ups) and source models/ audio/
   apps/
     client/              playable client (also hosts local multiplayer)
     server/              headless dedicated server
@@ -177,7 +195,10 @@ Dependency rules (enforced via CMake target link visibility):
 - `core` depends on nothing but the standard library.
 - `sim` depends only on `core`. It never includes `net`, `presentation` or `platform`.
 - `net`, `ai`, `presentation` depend on `sim` and `core`, never on each other.
-- Apps wire everything together. Only apps and `platform` touch the OS.
+- `content` (v0.18) depends on `sim` and `core` (and privately on toml++); only apps and tests
+  link it, so `net`, `ai` and `presentation` keep taking a `ContentDB` and never parse files.
+- Apps wire everything together. Only apps, `content` and `platform` touch the OS (`content`
+  reads files and nothing else).
 
 ---
 
@@ -504,18 +525,69 @@ is a defence only for a player who has thrown.
 
 - Arena: static collision shapes (AABBs / convex polygons on a grid), spawn points, pickup
   spawners, hazards. Loaded into an immutable `Arena` struct with a prebuilt spatial hash.
-- Content pipeline: TOML or JSON → validated → `ContentDB`; `content_hash` is the xxHash of
-  the canonical serialized form. Hot reload in dev builds (restarts the match).
-- Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) are `constexpr`
-  tables in `engine/sim`, assembled into the same immutable `ContentDB` and hashed through the
-  visitor, so `content_hash` exists from M1 on. M4 replaces the `constexpr` source with the
-  TOML/JSON loader without touching systems. Every number a system needs lives there, including
-  the ones that are easy to forget: the pickup contact radius is `PickupDef::radius` (0.5),
-  not the banana's flight radius (0.35), so a grounded banana is easier to walk over than to dodge.
+- Content pipeline (v0.18, as built): TOML → `engine/content` → validated `ContentDB`;
+  `content_hash` is the XXH32 of the canonical serialized form (the visitor), as before. Every
+  number a system needs lives there, including the ones that are easy to forget: the pickup
+  contact radius is `PickupDef::radius` (0.5), not the banana's flight radius (0.35), so a
+  grounded banana is easier to walk over than to dodge.
+- Files: `content/*.toml` (any depth), read in sorted relative-path order and merged. Top-level
+  keys: `[player]`, `[boomerang]`, `[pickup]`, `[dash_attack]` exactly once in the whole set;
+  `[[ability]]`, `[[arena]]`, `[[mode]]` appended in load order. Keys are the C++ field names in
+  snake_case; unknown keys and unknown top-level tables are errors (a typo never falls back to a
+  default); keys other than `name`, `kind` and a few required lengths are optional and keep the
+  struct default. Each file's header comment lists its keys and units.
+- Values: integers are range-checked against the field's type; booleans are 0/1 switches;
+  `Fixed` values are written as plain decimals (or integers) and converted exactly: the decimal
+  is the rational n / 10^k and the Q16.16 value is n·65536 / 10^k truncated toward zero, the
+  rounding of `Fixed::fromRatio` that built the M1 tables (so `0.35` is `fromRatio(35, 100)`),
+  never through a `double`; at most 9 decimal places, no exponents. Speeds are written in units
+  per second and divided by `kTickHz` in the same single truncation (`22` is
+  `fromRatio(22, 60)`). Tags are lists of names (`dashing`, `perfect_dash`, ...), ability kinds
+  are names (`dash`, `throw`); the loader's name tables static_assert they cover the enums.
+- Names: abilities, arenas and modes have a `ContentName` (`std::array<char, 16>`, NUL padded,
+  1–15 of `a-z 0-9 _ -`), hashed with the def. Defs reference each other by name in TOML (the
+  player's loadout `abilities = ["dash", "throw"]`) and the loader resolves them to indices;
+  ability index 0 is the built-in inert `none`. Arena and mode names are how command lines and
+  the lobby choose (`ContentDB::findArena` / `findMode`); the sim only sees indices.
+- Validation: duplicate names, unresolved references, counts against the capacities
+  (`kMaxAbilityDefs` 4, `kMaxArenas` 8, `kMaxModes` 8; at least one arena and one mode), and
+  the properties systems rely on instead of re-checking per tick (`validateContent`, also run
+  on `defaultContent()` by a test): the loadout's slot kinds, a dash with no startup and its
+  perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
+  keep a monkey inside, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
+  `file:line: error: message` lines; a failed load leaves the previous `ContentDB` untouched.
+- Selection: a `MatchConfig` carries `arena` and `mode` indices (index 0 is the default, the
+  first loaded). They are constant for a match like the content and are not part of
+  `WorldState`, so world checksums and snapshots are unchanged; every host keeps the config next
+  to the world. `step()`, every system, ability hook and rule handler takes a `MatchContent`
+  (`db`, `arena`, `mode` references; `matchContent(db, config)`), and arena- or mode-dependent
+  code reads `content.arena` / `content.mode`. A bare `ContentDB` converts to its default match,
+  which keeps headless tests short. Indices are part of replays and the wire, and the arena and
+  mode lists are part of the content hash: append new ones, never reorder.
+- Where content comes from: every app resolves `--content DIR`, else `content/` next to the
+  executable (CMake's `kfm_use_content()` mirrors the TOML there after each link), else the copy
+  compiled into the binary (`EmbedContent.cmake` turns `content/**/*.toml` into byte arrays at
+  build time). The browser client and every wasm test use the embedded copy (no file system
+  needed); `kfm_replay` and `kfm_netsim` default to it too, so the determinism gate never
+  depends on files beside the binary. Apps print the source directory and hash at startup;
+  `kfm_replay info` shows the replay's and the loaded content's hash and the arena and mode.
+- `defaultContent()` keeps the same data as `constexpr` tables in `engine/sim`: the fixture of
+  the sim unit and scenario tests (which must not depend on the loader) and the fallback of the
+  client's sessions. A content test asserts that `content/` and the embedded copy load to
+  exactly `defaultContent()` (same hash, same visited bytes), so a content change edits both.
+- Hot reload (native client, local play): with content from a directory and without
+  `--no-hot-reload`, the client polls the directory's `*.toml` modification times and sizes
+  about once a second; on a change it reloads, prints diagnostics and keeps the old content on
+  error, else replaces the loaded content (dropping debug-UI tuning edits), keeps the arena and
+  mode when they still exist and restarts the match with the same seed (or re-creates the lobby
+  world). Online the server's content and config rule, so it is off; the browser has no
+  directory to watch.
+- Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) were `constexpr`
+  tables only; M4 put the TOML loader in front without touching how systems read defs.
 - `DashAttackDef` (v0.16): `damage` (1), `minAmmo` (1: a banana in hand), `consumesAmmo`
-  (0: kept). Visited for the content hash like every other def; M4's loader exposes it, and
-  `minAmmo = 0` (every dash an attack) is a valid content choice there, while the default content
-  asserts `minAmmo >= 1`.
+  (0: kept). Visited for the content hash like every other def; the TOML key is
+  `[dash_attack]`. The loader's validation requires `minAmmo >= 1` like the M1 tables did;
+  allowing 0 (every dash an attack) is a one-line change there when a mode wants it.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -814,7 +886,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   prints one log line per join/leave/kick/resync/round/match and a periodic delta stats line,
   and on SIGINT/SIGTERM or an exit limit shuts down (300 ms linger for the reliable lane).
   `--rounds-to-win` is deliberately absent: it would change the content hash and reject every
-  client (content negotiation is M4's). The multi-match host below is the M6 shape.
+  client; a different rule set is a mode in the content, chosen with `--mode` (v0.18). The
+  multi-match host below is the M6 shape.
 - Server (target): `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
   matches on a thread pool (the sim is cheap). One socket I/O thread timestamps arrivals and
   pushes to a single-producer single-consumer queue per match.
@@ -838,6 +911,12 @@ C++ server library is mature. The seam makes that swap a contained change.
   the reliable lane is checked for protocol version, content hash, build id, token (a host
   callback; empty accepts all) and room, then answered with `Welcome` (slots, `MatchConfig`,
   server tick), a `Snapshot` of the current world and a `PlayerJoined` broadcast, or `Reject`.
+  Content negotiation (v0.18) is the content hash in `Hello`: equal hashes mean identical
+  arena and mode lists, so the `MatchConfig` in `Welcome`, `Snapshot` and `MatchConfig`
+  (seed, roster, arena index, mode index; protocol version 2) is all a client needs to simulate
+  the server's arena and mode. A client steps with the config of the snapshot it last loaded
+  (`NetClient::simConfig()`); an announced restart's config (`matchConfig()`) takes effect
+  with the new match's snapshot, so a restart into another arena costs no resync.
   Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
   a peer's slots later. Server-side bots are slots the host marks with `setBot()`; they get
   `scriptedInput` every tick (§8).
@@ -852,7 +931,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   the same token reclaims them and gets a fresh snapshot; a `Hello` whose token belongs to a
   still-connected peer takes its slots over (the client noticed the drop first). After the window,
   or on `Disconnect{Quit}`, the slots leave the roster (`PlayerLeft`).
-- Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` sends
+- Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` (keeps the arena
+  and mode; v0.18 adds `restartMatch(MatchConfig, startTick, botSeed)` to change them) sends
   `MatchConfig{config, startTick}` at once to every peer (and to anyone who joins before
   `startTick`, after their snapshot); the message means "the world from `startTick` is a new
   match whose snapshot follows". At `startTick` the server's world becomes `initialWorld` with
@@ -1206,7 +1286,21 @@ art is identical up to the export step, and nothing below the presentation layer
   manifest, `tools/replay-corpus/corpus.txt` (name, kind, seed, input seed, players, ticks), and
   `regen-replay-corpus` re-records every entry before regenerating its `.checksums` (v0.14). A
   content or gameplay change regenerates the corpus in the same commit; a `.kfmr` without a
-  manifest line fails the regeneration.
+  manifest line fails the regeneration. v0.18: replays (format version 2) store the arena and
+  mode indices, the manifest takes two optional trailing columns (arena and mode names, default
+  the first of each), and `kfm_replay` records and plays back with the embedded content unless
+  `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
+  the corpus is re-recorded; the checksums of existing entries must stay identical, because
+  content that is only added never changes the default match (a scenario test asserts this for
+  extra arenas and modes).
+- Content tests (v0.18, `kfm_content_tests`): the exact decimal conversion (truncation, digit
+  separators, range, per-second division), `content/` and the embedded copy loading to exactly
+  `defaultContent()`, validation of `defaultContent()`, one diagnostic per kind of mistake
+  (syntax with line, unknown key, missing section or key, bad name, duplicate, unresolved
+  reference, ranges, capacities, contradictory spawn keys) and the app-side resolution.
+  `match_config_scenario` checks that the selected arena places and bounds players and the
+  selected mode decides the countdown and the match end; a netcode test runs a server on a
+  second arena and mode and restarts it into the default one with no checksum mismatch.
 - Scripted inputs (v0.13): `kfm/sim/scripted_inputs.hpp` generates varied, deterministic
   matches (wander, aim at the nearest player, throw, dash at incoming bananas, fresh button
   edges) from an `Rng` separate from the world's. v0.16 adds a dash attack: while holding at
@@ -1273,6 +1367,13 @@ commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS back
 `libssl-dev` on the FetchContent path, the vcpkg port otherwise), and datachannel-wasm pinned to
 `f9200eb` (v0.4.0 plus a missing-include fix) for Emscripten, linked with its two
 `--js-library` files and `-fwasm-exceptions`. Both are exposed as one target, `kfm::datachannel`.
+Content parser (v0.18): toml++ 3.4.0, header only (vcpkg `tomlplusplus`, or FetchContent of the
+release tarball by hash), in the headless server build too. `kfm::tomlplusplus` pins
+`TOML_EXCEPTIONS=0` (parse errors come back as `toml::parse_result` and become diagnostics; the
+loader compiles without exceptions or RTTI like the engine) and `TOML_ENABLE_FORMATTERS=0`;
+only `engine/content/src/loader.cpp` includes it. TOML over JSON because tuning files need
+comments. toml++ parses floats as `double`; the loader never uses that value but re-reads the
+literal from the document text at the node's source position (§5.10).
 On Windows the vcpkg dependencies are linked statically (triplet `x64-windows-static-md`, set by
 the top-level `CMakeLists.txt` unless a triplet is given): the libdatachannel DLL's import library
 exports `std::vector<std::byte>`'s members, which collide with the byte vectors every other

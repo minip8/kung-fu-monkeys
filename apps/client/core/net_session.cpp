@@ -95,7 +95,7 @@ NetSession::NetSession(NetSessionConfig config, platform::InputSampler lobbySamp
                        net::ITransport* transport, uint64_t nowNs,
                        std::unique_ptr<net::ITransport> owned, std::string failure)
     : config_(std::move(config)),
-      content_(sim::defaultContent()),
+      content_(config_.content != nullptr ? *config_.content : sim::defaultContent()),
       ownedTransport_(std::move(owned)),
       failure_(std::move(failure)),
       nowNs_(nowNs),
@@ -250,7 +250,7 @@ void NetSession::build(float dtSeconds, presentation::RenderState& out) {
   lastNewest_ = rendersNewest();
   lastAlpha_ = renderAlpha();
   presentation::buildRenderState(presentation_, renderPrev(), curr(), lastAlpha_, frameEvents(),
-                                 content_, dtSeconds, out);
+                                 client_->matchContent(), dtSeconds, out);
 }
 
 void NetSession::disconnect() {

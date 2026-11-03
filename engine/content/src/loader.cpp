@@ -1,0 +1,889 @@
+// TOML content loader (architecture §5.10). Each section parser reads its
+// keys through a Section, which converts and range-checks values, records
+// diagnostics with file:line, and reports every key nobody asked for as
+// unknown. Adding a field to a def = one Section call here + the TOML key.
+#include "kfm/content/loader.hpp"
+
+#include "embedded.hpp"
+#include "kfm/content/decimal.hpp"
+#include "kfm/sim/constants.hpp"
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <toml++/toml.hpp>
+#include <utility>
+#include <vector>
+
+namespace kfm::content {
+
+using sim::AbilityDef;
+using sim::AbilityKind;
+using sim::ArenaDef;
+using sim::ContentDB;
+using sim::ContentName;
+using sim::ModeDef;
+using sim::Tag;
+using sim::Tags;
+
+// --- diagnostics ----------------------------------------------------------------
+
+void Diagnostics::add(Severity severity, std::string_view file, uint32_t line,
+                      std::string message) {
+  if (severity == Severity::Error) ++errors_;
+  if (items_.size() >= kMaxItems) {
+    ++dropped_;
+    return;
+  }
+  items_.push_back(ContentDiagnostic{severity, std::string(file), line, std::move(message)});
+}
+
+std::string Diagnostics::format() const {
+  std::string out;
+  for (const ContentDiagnostic& d : items_) {
+    out += d.file.empty() ? std::string("content") : d.file;
+    if (d.line != 0) out += ':' + std::to_string(d.line);
+    out += d.severity == Severity::Error ? ": error: " : ": warning: ";
+    out += d.message;
+    out += '\n';
+  }
+  if (dropped_ != 0) out += "... and " + std::to_string(dropped_) + " more\n";
+  return out;
+}
+
+namespace {
+
+// --- name tables -------------------------------------------------------------------
+// TOML spellings of the sim enums. A new AbilityKind or Tag needs its line
+// here; the static_asserts fail until it has one.
+
+struct AbilityKindName {
+  std::string_view name;
+  AbilityKind kind;
+};
+constexpr std::array<AbilityKindName, 2> kAbilityKinds = {{
+    {"dash", AbilityKind::Dash},
+    {"throw", AbilityKind::Throw},
+}};
+static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
+              "every AbilityKind but None needs a TOML name in kAbilityKinds");
+
+struct TagName {
+  std::string_view name;
+  Tag tag;
+};
+constexpr std::array<TagName, 6> kTagNames = {{
+    {"dashing", Tag::Dashing},
+    {"perfect_dash", Tag::PerfectDash},
+    {"hit_stun", Tag::HitStun},
+    {"shielded", Tag::Shielded},
+    {"invulnerable", Tag::Invulnerable},
+    {"eliminated", Tag::Eliminated},
+}};
+static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
+              "every Tag needs a TOML name in kTagNames");
+
+// Name of the built-in inert ability at index 0.
+constexpr std::string_view kNoneAbility = "none";
+
+// Arena coordinates the swept narrowphase supports (collision_internal.hpp).
+const Fixed kMaxArenaHalfExtent = Fixed::fromInt(1024);
+
+[[nodiscard]] bool validName(std::string_view s) {
+  if (s.empty() || s.size() > ContentName::kMaxChars) return false;
+  return std::ranges::all_of(s, [](char c) {
+    return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '-';
+  });
+}
+
+[[nodiscard]] std::string inQuotes(std::string_view s) {
+  return '"' + std::string(s) + '"';
+}
+
+[[nodiscard]] std::string fixedText(Fixed f) {
+  // Diagnostics only: a readable approximation is fine here.
+  const int64_t milli = (static_cast<int64_t>(f.raw) * 1000) / Fixed::kOneRaw;
+  const int64_t whole = milli / 1000;
+  int64_t frac = milli % 1000;
+  if (frac < 0) frac = -frac;
+  const std::string out = (f.raw < 0 && whole == 0) ? "-0" : std::to_string(whole);
+  const std::string fracText = std::to_string(frac);
+  return out + '.' + std::string(3 - fracText.size(), '0') + fracText;
+}
+
+// --- per-file context ------------------------------------------------------------
+
+struct File {
+  std::string_view name;
+  std::string_view text;
+};
+
+[[nodiscard]] uint32_t lineOf(const toml::node& n) {
+  return n.source().begin.line;
+}
+
+// The literal text of a value, from its source position (1-based line and
+// codepoint column, as toml++ counts them) to the next delimiter.
+[[nodiscard]] std::string_view tokenAt(std::string_view text, const toml::source_position& pos) {
+  size_t i = 0;
+  for (uint32_t line = 1; line < pos.line && i < text.size(); ++i) {
+    if (text[i] == '\n') ++line;
+  }
+  for (uint32_t col = 1; col < pos.column && i < text.size(); ++col) {
+    // Skip one UTF-8 codepoint: a lead byte and its continuation bytes.
+    ++i;
+    while (i < text.size() && (static_cast<unsigned char>(text[i]) & 0xC0u) == 0x80u)
+      ++i;
+  }
+  const size_t begin = i;
+  while (i < text.size()) {
+    const char c = text[i];
+    if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == ',' || c == ']' || c == '}' ||
+        c == '#') {
+      break;
+    }
+    ++i;
+  }
+  return text.substr(begin, i - begin);
+}
+
+// Reads the keys of one table. `where` names it in messages ("[player]",
+// "arena \"dojo\"").
+class Section {
+ public:
+  Section(const toml::table& table, const File& file, Diagnostics& diag, std::string where)
+      : table_(table), file_(file), diag_(diag), where_(std::move(where)) {}
+
+  [[nodiscard]] uint32_t line() const { return lineOf(table_); }
+  [[nodiscard]] const std::string& where() const { return where_; }
+  [[nodiscard]] const File& file() const { return file_; }
+  [[nodiscard]] Diagnostics& diag() const { return diag_; }
+  void setWhere(std::string where) { where_ = std::move(where); }
+
+  void error(const toml::node& at, const std::string& message) {
+    diag_.error(file_.name, lineOf(at), where_ + ": " + message);
+  }
+  void error(const std::string& message) {
+    diag_.error(file_.name, line(), where_ + ": " + message);
+  }
+
+  // The node for `key`, marking it used; nullptr when absent (an error when
+  // required).
+  const toml::node* take(std::string_view key, bool required = false) {
+    used_.emplace_back(key);
+    const toml::node* n = table_.get(key);
+    if (n == nullptr && required) error("missing required key '" + std::string(key) + "'");
+    return n;
+  }
+
+  // A Fixed from a decimal or integer literal, divided by `divisor` (60 for
+  // per-second speeds), in [min, max].
+  void fixed(std::string_view key, Fixed& out, Fixed min = Fixed::min(), Fixed max = Fixed::max(),
+             bool required = false, int32_t divisor = 1) {
+    const toml::node* n = take(key, required);
+    if (n == nullptr) return;
+    if (const std::optional<Fixed> v = toFixed(*n, key, divisor)) {
+      if (*v < min || *v > max) {
+        error(*n, "'" + std::string(key) + "' = " + fixedText(*v) + " is outside [" +
+                      fixedText(min) + ", " + fixedText(max) + "]");
+        return;
+      }
+      out = *v;
+    }
+  }
+  // Units per second in TOML, units per tick in the def.
+  void speed(std::string_view key, Fixed& out, bool required = false) {
+    fixed(key, out, Fixed::zero(), Fixed::max(), required, static_cast<int32_t>(sim::kTickHz));
+  }
+
+  template <class T>
+  void integer(std::string_view key, T& out, int64_t min, int64_t max, bool required = false) {
+    const toml::node* n = take(key, required);
+    if (n == nullptr) return;
+    if (const std::optional<int64_t> v = toInteger(*n, key, min, max)) out = static_cast<T>(*v);
+  }
+
+  // A TOML boolean stored as a 0/1 switch.
+  void flag(std::string_view key, uint8_t& out) {
+    const toml::node* n = take(key);
+    if (n == nullptr) return;
+    if (const toml::value<bool>* b = n->as_boolean()) {
+      out = b->get() ? 1 : 0;
+    } else {
+      error(*n, "'" + std::string(key) + "' must be true or false");
+    }
+  }
+
+  // A string naming something; nullopt (with an error) when not a string.
+  std::optional<std::string> string(std::string_view key, bool required = false) {
+    const toml::node* n = take(key, required);
+    if (n == nullptr) return std::nullopt;
+    if (const toml::value<std::string>* s = n->as_string()) return s->get();
+    error(*n, "'" + std::string(key) + "' must be a string");
+    return std::nullopt;
+  }
+
+  // The def's own name: required, lowercase identifier, fits ContentName.
+  std::optional<std::string> name(ContentName& out) {
+    const toml::node* n = take("name", true);
+    if (n == nullptr) return std::nullopt;
+    const toml::value<std::string>* s = n->as_string();
+    if (s == nullptr || !validName(s->get())) {
+      error(*n, "'name' must be 1 to " + std::to_string(ContentName::kMaxChars) +
+                    " characters of a-z 0-9 _ -");
+      return std::nullopt;
+    }
+    out = ContentName::of(s->get());
+    return s->get();
+  }
+
+  void tags(std::string_view key, Tags& out) {
+    const toml::node* n = take(key);
+    if (n == nullptr) return;
+    const toml::array* arr = n->as_array();
+    if (arr == nullptr) {
+      error(*n, "'" + std::string(key) + "' must be a list of tag names");
+      return;
+    }
+    Tags tags{};
+    for (const toml::node& el : *arr) {
+      const std::optional<Tag> tag = tagNamed(el);
+      if (!tag) {
+        error(el, "unknown tag in '" + std::string(key) + "' (known: " + tagList() + ")");
+        continue;
+      }
+      tags.set(*tag);
+    }
+    out = tags;
+  }
+
+  // [x, y] of Fixed values.
+  bool vec2(std::string_view key, Vec2& out, bool required = false) {
+    const toml::node* n = take(key, required);
+    if (n == nullptr) return false;
+    return vec2Of(*n, key, out);
+  }
+  bool vec2Of(const toml::node& n, std::string_view what, Vec2& out) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->size() != 2) {
+      error(n, "'" + std::string(what) + "' must be a pair [x, y]");
+      return false;
+    }
+    const std::optional<Fixed> x = toFixed(*arr->get(0), what, 1);
+    const std::optional<Fixed> y = toFixed(*arr->get(1), what, 1);
+    if (!x || !y) return false;
+    out = Vec2{*x, *y};
+    return true;
+  }
+
+  std::optional<Fixed> toFixed(const toml::node& n, std::string_view key, int32_t divisor) {
+    if (const toml::value<int64_t>* i = n.as_integer()) {
+      const int64_t v = i->get();
+      if (v > -32768 && v < 32768) {
+        return Fixed::fromRaw(static_cast<int32_t>(v * Fixed::kOneRaw / divisor));
+      }
+    } else if (n.is_floating_point()) {
+      const std::string_view token = tokenAt(file_.text, n.source().begin);
+      if (const std::optional<Fixed> v = parseFixedDecimal(token, divisor)) return v;
+      error(n, "'" + std::string(key) + "' = " + std::string(token) +
+                   ": write a plain decimal with at most " + std::to_string(kMaxDecimalPlaces) +
+                   " decimal places and magnitude below 32768");
+      return std::nullopt;
+    }
+    error(n, "'" + std::string(key) + "' must be a number with magnitude below 32768");
+    return std::nullopt;
+  }
+
+  std::optional<int64_t> toInteger(const toml::node& n, std::string_view key, int64_t min,
+                                   int64_t max) {
+    const toml::value<int64_t>* i = n.as_integer();
+    if (i == nullptr || i->get() < min || i->get() > max) {
+      error(n, "'" + std::string(key) + "' must be an integer in [" + std::to_string(min) + ", " +
+                   std::to_string(max) + "]");
+      return std::nullopt;
+    }
+    return i->get();
+  }
+
+  // Reports every key of the table no parser asked for.
+  void finish() {
+    for (auto&& [key, node] : table_) {
+      if (std::ranges::find(used_, key.str()) == used_.end()) {
+        diag_.error(file_.name, lineOf(node),
+                    where_ + ": unknown key '" + std::string(key.str()) + "'");
+      }
+    }
+  }
+
+ private:
+  static std::optional<Tag> tagNamed(const toml::node& n) {
+    const toml::value<std::string>* s = n.as_string();
+    if (s == nullptr) return std::nullopt;
+    for (const TagName& t : kTagNames) {
+      if (t.name == s->get()) return t.tag;
+    }
+    return std::nullopt;
+  }
+
+  static std::string tagList() {
+    std::string s;
+    for (const TagName& t : kTagNames) {
+      if (!s.empty()) s += ", ";
+      s += t.name;
+    }
+    return s;
+  }
+
+  const toml::table& table_;
+  const File& file_;
+  Diagnostics& diag_;
+  std::string where_;
+  std::vector<std::string_view> used_;
+};
+
+// --- the content set under construction -------------------------------------------
+
+struct Origin {
+  std::string file;
+  uint32_t line{0};
+};
+
+class Builder {
+ public:
+  explicit Builder(Diagnostics& diag) : diag_(diag) {
+    db_.abilities[0] = AbilityDef{};
+    db_.abilities[0].name = ContentName::of(kNoneAbility);
+    db_.abilityCount = 1;
+  }
+
+  void addDocument(const ContentSource& source) {
+    toml::parse_result result = toml::parse(source.text, source.name);
+    if (!result) {
+      const toml::parse_error& e = result.error();
+      diag_.error(source.name, e.source().begin.line,
+                  "TOML syntax: " + std::string(e.description()));
+      return;
+    }
+    const File file{source.name, source.text};
+    const toml::table& root = result.table();
+    for (auto&& [key, node] : root) {
+      const std::string_view k = key.str();
+      if (k == "player") {
+        single(file, node, "[player]", playerAt_, [&](Section& s) { parsePlayer(s); });
+      } else if (k == "boomerang") {
+        single(file, node, "[boomerang]", boomerangAt_, [&](Section& s) { parseBoomerang(s); });
+      } else if (k == "pickup") {
+        single(file, node, "[pickup]", pickupAt_, [&](Section& s) { parsePickup(s); });
+      } else if (k == "dash_attack") {
+        single(file, node, "[dash_attack]", dashAttackAt_, [&](Section& s) { parseDashAttack(s); });
+      } else if (k == "ability") {
+        list(file, node, "ability", [&](Section& s) { parseAbility(s); });
+      } else if (k == "arena") {
+        list(file, node, "arena", [&](Section& s) { parseArena(s); });
+      } else if (k == "mode") {
+        list(file, node, "mode", [&](Section& s) { parseMode(s); });
+      } else {
+        diag_.error(file.name, lineOf(node),
+                    "unknown top-level key '" + std::string(k) +
+                        "' (expected [player], [boomerang], [pickup], [dash_attack], "
+                        "[[ability]], [[arena]] or [[mode]])");
+      }
+    }
+  }
+
+  // Resolves cross-references, checks the set is complete and validates.
+  bool finish(ContentDB& out) {
+    requirePresent(playerAt_, "[player]");
+    requirePresent(boomerangAt_, "[boomerang]");
+    requirePresent(pickupAt_, "[pickup]");
+    requirePresent(dashAttackAt_, "[dash_attack]");
+    if (db_.arenaCount == 0) diag_.error("", 0, "no [[arena]] defined (need at least one)");
+    if (db_.modeCount == 0) diag_.error("", 0, "no [[mode]] defined (need at least one)");
+    resolveLoadout();
+    if (diag_.hasErrors()) return false;
+    if (!validateContent(db_, diag_)) return false;
+    out = db_;
+    return true;
+  }
+
+ private:
+  template <class F>
+  void single(const File& file, const toml::node& node, const char* what,
+              std::optional<Origin>& seen, F&& parse) {
+    const toml::table* t = node.as_table();
+    if (t == nullptr) {
+      diag_.error(file.name, lineOf(node), std::string(what) + " must be a table");
+      return;
+    }
+    if (seen) {
+      diag_.error(file.name, lineOf(node),
+                  std::string(what) + " is defined again (first in " + seen->file + ":" +
+                      std::to_string(seen->line) + ")");
+      return;
+    }
+    seen = Origin{std::string(file.name), lineOf(node)};
+    Section s(*t, file, diag_, what);
+    parse(s);
+    s.finish();
+  }
+
+  template <class F>
+  void list(const File& file, const toml::node& node, const char* what, F&& parse) {
+    const toml::array* arr = node.as_array();
+    if (arr == nullptr || !arr->is_array_of_tables()) {
+      diag_.error(file.name, lineOf(node),
+                  "'" + std::string(what) + "' must be an array of tables: write [[" +
+                      std::string(what) + "]]");
+      return;
+    }
+    for (const toml::node& el : *arr) {
+      Section s(*el.as_table(), file, diag_, std::string("[[") + what + "]]");
+      parse(s);
+      s.finish();
+    }
+  }
+
+  void requirePresent(const std::optional<Origin>& seen, const char* what) {
+    if (!seen) diag_.error("", 0, std::string("missing ") + what);
+  }
+
+  // A def name must be unique within its list.
+  template <class Def, size_t N>
+  bool uniqueName(Section& s, const std::string& name, const std::array<Def, N>& defs,
+                  uint8_t count, const char* what) {
+    for (uint8_t i = 0; i < count; ++i) {
+      if (defs[i].name.view() == name) {
+        s.error(std::string(what) + " " + inQuotes(name) + " is defined twice");
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void parsePlayer(Section& s) {
+    sim::PlayerDef& p = db_.player;
+    s.fixed("radius", p.radius, Fixed::epsilon(), Fixed::fromInt(16), true);
+    s.speed("move_speed", p.moveSpeed, true);
+    s.integer("max_hp", p.maxHp, 1, 255, true);
+    s.integer("ammo_max", p.ammoMax, 0, 255);
+    s.integer("ammo_start", p.ammoStart, 0, 255);
+    s.integer("hit_stun_ticks", p.hitStunTicks, 0, 65535);
+    if (const toml::node* n = s.take("abilities", true)) {
+      const toml::array* arr = n->as_array();
+      if (arr == nullptr || arr->size() != sim::kAbilitySlots) {
+        s.error(*n, "'abilities' must list " + std::to_string(sim::kAbilitySlots) +
+                        " ability names (one per slot: dash button, throw button)");
+      } else {
+        for (size_t i = 0; i < arr->size(); ++i) {
+          const toml::value<std::string>* name = arr->get(i)->as_string();
+          if (name == nullptr) {
+            s.error(*arr->get(i), "'abilities' entries must be ability names");
+            continue;
+          }
+          loadout_[i] =
+              PendingName{name->get(), s.where(), lineOf(*arr->get(i)), std::string(s.file().name)};
+        }
+      }
+    }
+  }
+
+  void parseBoomerang(Section& s) {
+    sim::BoomerangDef& b = db_.boomerang;
+    s.fixed("radius", b.radius, Fixed::epsilon(), Fixed::fromInt(16), true);
+    s.speed("speed", b.speed, true);
+    s.integer("outbound_ticks", b.outboundTicks, 0, 65535);
+    s.integer("max_return_ticks", b.maxReturnTicks, 0, 65535);
+    s.integer("turn_rate_bam", b.turnRateBam, 0, 32768);
+    s.fixed("restitution", b.restitution, Fixed::zero(), Fixed::fromInt(4));
+    s.fixed("spawn_offset", b.spawnOffset, Fixed::zero(), Fixed::fromInt(16));
+    s.integer("damage", b.damage, 0, 255);
+    s.flag("pierce", b.pierce);
+  }
+
+  void parsePickup(Section& s) {
+    s.fixed("radius", db_.pickup.radius, Fixed::epsilon(), Fixed::fromInt(16), true);
+  }
+
+  void parseDashAttack(Section& s) {
+    sim::DashAttackDef& d = db_.dashAttack;
+    s.integer("damage", d.damage, 0, 255);
+    s.integer("min_ammo", d.minAmmo, 0, 255);
+    s.flag("consumes_ammo", d.consumesAmmo);
+  }
+
+  void parseAbility(Section& s) {
+    AbilityDef d;
+    const std::optional<std::string> name = s.name(d.name);
+    if (name) s.setWhere("ability " + inQuotes(*name));
+    if (const std::optional<std::string> kind = s.string("kind", true)) {
+      const auto* entry = std::ranges::find_if(
+          kAbilityKinds, [&](const AbilityKindName& k) { return k.name == *kind; });
+      if (entry == kAbilityKinds.end()) {
+        s.error("unknown kind " + inQuotes(*kind));
+      } else {
+        d.kind = entry->kind;
+      }
+    }
+    s.integer("cooldown_ticks", d.cooldownTicks, 0, 65535);
+    s.integer("startup_ticks", d.startupTicks, 0, 65535);
+    s.integer("active_ticks", d.activeTicks, 0, 65535);
+    s.integer("recovery_ticks", d.recoveryTicks, 0, 65535);
+    s.integer("perfect_window_ticks", d.perfectWindowTicks, 0, 65535);
+    s.speed("speed", d.speed);
+    s.fixed("param0", d.param0);
+    s.fixed("param1", d.param1);
+    s.tags("tags_startup", d.tagsStartup);
+    s.tags("tags_active", d.tagsActive);
+    s.tags("tags_recovery", d.tagsRecovery);
+    if (!name) return;
+    if (*name == kNoneAbility) {
+      s.error(inQuotes(kNoneAbility) + " is the built-in inert ability; pick another name");
+      return;
+    }
+    if (!uniqueName(s, *name, db_.abilities, db_.abilityCount, "ability")) return;
+    if (db_.abilityCount >= sim::kMaxAbilityDefs) {
+      s.error("too many abilities (at most " + std::to_string(sim::kMaxAbilityDefs - 1) +
+              ", kMaxAbilityDefs)");
+      return;
+    }
+    db_.abilities[db_.abilityCount++] = d;
+  }
+
+  void parseArena(Section& s) {
+    ArenaDef a;
+    const std::optional<std::string> name = s.name(a.name);
+    if (name) s.setWhere("arena " + inQuotes(*name));
+    if (s.vec2("half_extents", a.halfExtents, true) &&
+        (a.halfExtents.x <= Fixed::zero() || a.halfExtents.y <= Fixed::zero() ||
+         a.halfExtents.x > kMaxArenaHalfExtent || a.halfExtents.y > kMaxArenaHalfExtent)) {
+      s.error("'half_extents' must be in (0, 1024] on both axes");
+    }
+    const toml::node* points = s.take("spawn_points");
+    const toml::node* ellipse = s.take("spawn_ellipse");
+    if ((points == nullptr) == (ellipse == nullptr)) {
+      s.error("give exactly one of 'spawn_points' or 'spawn_ellipse'");
+    } else if (points != nullptr) {
+      parseSpawnPoints(s, *points, a);
+    } else {
+      parseSpawnEllipse(s, *ellipse, a);
+    }
+    if (!name || !uniqueName(s, *name, db_.arenas, db_.arenaCount, "arena")) return;
+    if (db_.arenaCount >= sim::kMaxArenas) {
+      s.error("too many arenas (at most " + std::to_string(sim::kMaxArenas) + ", kMaxArenas)");
+      return;
+    }
+    db_.arenas[db_.arenaCount++] = a;
+  }
+
+  static void parseSpawnPoints(Section& s, const toml::node& n, ArenaDef& a) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->empty() || arr->size() > sim::kMaxPlayers) {
+      s.error(n, "'spawn_points' must list 1 to " + std::to_string(sim::kMaxPlayers) +
+                     " [x, y] points");
+      return;
+    }
+    for (size_t i = 0; i < arr->size(); ++i) {
+      if (!s.vec2Of(*arr->get(i), "spawn_points", a.spawnPoints[i])) return;
+    }
+    a.spawnPointCount = static_cast<uint8_t>(arr->size());
+  }
+
+  // Points on an ellipse: point i at angle order[i] * step_degrees, through
+  // the sim's fixed-point LUT trig (the same expression as the M1 tables).
+  static void parseSpawnEllipse(Section& outer, const toml::node& n, ArenaDef& a) {
+    const toml::table* t = n.as_table();
+    if (t == nullptr) {
+      outer.error(n, "'spawn_ellipse' must be a table { radii, step_degrees, order }");
+      return;
+    }
+    // Messages and unknown keys of the inline table go through its own Section.
+    Section s(*t, outer.file(), outer.diag(), outer.where() + " spawn_ellipse");
+    Vec2 radii{};
+    const bool haveRadii = s.vec2("radii", radii, true);
+    uint16_t step = 0;
+    s.integer("step_degrees", step, 1, 360, true);
+    const toml::node* orderNode = s.take("order", true);
+    s.finish();
+    if (!haveRadii || step == 0 || orderNode == nullptr) return;
+    const toml::array* order = orderNode->as_array();
+    if (order == nullptr || order->empty() || order->size() > sim::kMaxPlayers) {
+      s.error(*orderNode,
+              "'order' must list 1 to " + std::to_string(sim::kMaxPlayers) + " step indices");
+      return;
+    }
+    for (size_t i = 0; i < order->size(); ++i) {
+      const std::optional<int64_t> k = s.toInteger(*order->get(i), "order", 0, 359);
+      if (!k) return;
+      const Angle angle = Angle::fromDegrees(static_cast<int32_t>(*k) * step);
+      a.spawnPoints[i] = Vec2{cos(angle) * radii.x, sin(angle) * radii.y};
+    }
+    a.spawnPointCount = static_cast<uint8_t>(order->size());
+  }
+
+  void parseMode(Section& s) {
+    ModeDef m;
+    const std::optional<std::string> name = s.name(m.name);
+    if (name) s.setWhere("mode " + inQuotes(*name));
+    s.integer("rounds_to_win", m.roundsToWin, 1, 255);
+    s.integer("round_end_ticks", m.roundEndTicks, 0, 65535);
+    s.integer("round_start_ticks", m.roundStartTicks, 0, 65535);
+    if (!name || !uniqueName(s, *name, db_.modes, db_.modeCount, "mode")) return;
+    if (db_.modeCount >= sim::kMaxModes) {
+      s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
+      return;
+    }
+    db_.modes[db_.modeCount++] = m;
+  }
+
+  void resolveLoadout() {
+    for (size_t slot = 0; slot < loadout_.size(); ++slot) {
+      const std::optional<PendingName>& p = loadout_[slot];
+      if (!p) continue;
+      bool found = false;
+      for (uint8_t i = 1; i < db_.abilityCount; ++i) {
+        if (db_.abilities[i].name.view() == p->name) {
+          db_.player.abilities[slot] = i;
+          found = true;
+        }
+      }
+      if (!found) {
+        diag_.error(p->file, p->line,
+                    p->where + ": 'abilities' names unknown ability " + inQuotes(p->name));
+      }
+    }
+  }
+
+  struct PendingName {
+    std::string name;
+    std::string where;
+    uint32_t line{0};
+    std::string file;
+  };
+
+  Diagnostics& diag_;
+  ContentDB db_{};
+  std::optional<Origin> playerAt_;
+  std::optional<Origin> boomerangAt_;
+  std::optional<Origin> pickupAt_;
+  std::optional<Origin> dashAttackAt_;
+  std::array<std::optional<PendingName>, sim::kAbilitySlots> loadout_{};
+};
+
+}  // namespace
+
+// --- public API ---------------------------------------------------------------------
+
+bool parseContent(std::span<const ContentSource> sources, ContentDB& out, Diagnostics& diag) {
+  const size_t errorsBefore = diag.errorCount();
+  // A fresh Diagnostics for the set, appended to the caller's: finish()
+  // must see only this load's errors.
+  Diagnostics local;
+  Builder b(local);
+  for (const ContentSource& source : sources)
+    b.addDocument(source);
+  ContentDB db{};
+  const bool ok = b.finish(db);
+  for (const ContentDiagnostic& d : local.items())
+    diag.add(d.severity, d.file, d.line, d.message);
+  if (!ok || diag.errorCount() != errorsBefore) return false;
+  out = db;
+  return true;
+}
+
+bool parseContent(std::string_view tomlText, std::string_view sourceName, ContentDB& out,
+                  Diagnostics& diag) {
+  const ContentSource source{std::string(sourceName), std::string(tomlText)};
+  return parseContent(std::span<const ContentSource>(&source, 1), out, diag);
+}
+
+bool validateContent(const ContentDB& c, Diagnostics& diag) {
+  const size_t errorsBefore = diag.errorCount();
+  const auto fail = [&](const std::string& message) { diag.error("", 0, message); };
+
+  if (c.abilityCount < 1 || c.abilityCount > sim::kMaxAbilityDefs) {
+    fail("ability count " + std::to_string(c.abilityCount) + " outside [1, kMaxAbilityDefs]");
+    return false;
+  }
+  if (c.abilities[0].kind != AbilityKind::None) fail("ability 0 must be the inert none ability");
+  for (uint8_t i = 1; i < c.abilityCount; ++i) {
+    const AbilityDef& d = c.abilities[i];
+    const std::string where = "ability " + inQuotes(d.name.view());
+    if (d.kind == AbilityKind::None || d.kind >= AbilityKind::kCount) {
+      fail(where + ": kind must be a real ability kind");
+    }
+    // PerfectDash is granted from the press tick (§5.5) and the perfect
+    // window, plus its sub-tick tail, fits inside the active phase.
+    if (d.kind == AbilityKind::Dash && d.startupTicks != 0) {
+      fail(where + ": a dash must have startup_ticks = 0 (PerfectDash starts at the press)");
+    }
+    if (d.kind == AbilityKind::Dash && d.activeTicks <= d.perfectWindowTicks) {
+      fail(where + ": active_ticks must exceed perfect_window_ticks");
+    }
+    for (uint8_t j = 0; j < i; ++j) {
+      if (c.abilities[j].name == d.name) fail(where + ": name used twice");
+    }
+  }
+
+  // AbilitySystem maps the dash button to slot 0 and throw to slot 1.
+  const auto slotKind = [&](uint8_t slot) {
+    const uint8_t index = c.player.abilities[slot];
+    return index < c.abilityCount ? c.abilities[index].kind : AbilityKind::None;
+  };
+  if (slotKind(sim::kAbilitySlotDash) != AbilityKind::Dash ||
+      slotKind(sim::kAbilitySlotThrow) != AbilityKind::Throw) {
+    fail("[player] abilities: slot 0 must be a dash and slot 1 a throw (button mapping)");
+  }
+  if (c.player.radius <= Fixed::zero()) fail("[player] radius must be positive");
+  if (c.player.maxHp < 1) fail("[player] max_hp must be at least 1");
+  if (c.player.ammoStart > c.player.ammoMax) fail("[player] ammo_start exceeds ammo_max");
+  // A thrown banana spawns clear of its thrower (§5.7).
+  if (c.boomerang.spawnOffset <= c.player.radius + c.boomerang.radius) {
+    fail("[boomerang] spawn_offset must exceed player radius + boomerang radius (" +
+         fixedText(c.player.radius + c.boomerang.radius) + ")");
+  }
+  if (c.boomerang.pierce > 1) fail("[boomerang] pierce is a 0/1 switch");
+  // The default dash attack needs a banana in hand (§5.6); 0 would make
+  // every dash an attack.
+  if (c.dashAttack.minAmmo < 1) fail("[dash_attack] min_ammo must be at least 1");
+  if (c.dashAttack.consumesAmmo > 1) fail("[dash_attack] consumes_ammo is a 0/1 switch");
+
+  if (c.arenaCount < 1 || c.arenaCount > sim::kMaxArenas) {
+    fail("arena count " + std::to_string(c.arenaCount) + " outside [1, kMaxArenas]");
+  }
+  for (uint8_t i = 0; i < c.arenaCount && i < sim::kMaxArenas; ++i) {
+    const ArenaDef& a = c.arenas[i];
+    const std::string where = "arena " + inQuotes(a.name.view());
+    if (!validName(a.name.view())) fail(where + ": invalid name");
+    for (uint8_t j = 0; j < i; ++j) {
+      if (c.arenas[j].name == a.name) fail(where + ": name used twice");
+    }
+    if (a.halfExtents.x <= Fixed::zero() || a.halfExtents.y <= Fixed::zero() ||
+        a.halfExtents.x > kMaxArenaHalfExtent || a.halfExtents.y > kMaxArenaHalfExtent) {
+      fail(where + ": half_extents must be in (0, 1024]");
+    }
+    if (a.spawnPointCount < 1 || a.spawnPointCount > sim::kMaxPlayers) {
+      fail(where + ": needs 1 to " + std::to_string(sim::kMaxPlayers) + " spawn points");
+      continue;
+    }
+    const Fixed limitX = a.halfExtents.x - c.player.radius;
+    const Fixed limitY = a.halfExtents.y - c.player.radius;
+    for (uint8_t k = 0; k < a.spawnPointCount; ++k) {
+      const Vec2 p = a.spawnPoints[k];
+      if (abs(p.x) > limitX || abs(p.y) > limitY) {
+        fail(where + ": spawn point " + std::to_string(k) + " (" + fixedText(p.x) + ", " +
+             fixedText(p.y) + ") puts a monkey outside the arena");
+      }
+    }
+  }
+
+  if (c.modeCount < 1 || c.modeCount > sim::kMaxModes) {
+    fail("mode count " + std::to_string(c.modeCount) + " outside [1, kMaxModes]");
+  }
+  for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {
+    const ModeDef& m = c.modes[i];
+    const std::string where = "mode " + inQuotes(m.name.view());
+    if (!validName(m.name.view())) fail(where + ": invalid name");
+    for (uint8_t j = 0; j < i; ++j) {
+      if (c.modes[j].name == m.name) fail(where + ": name used twice");
+    }
+    if (m.roundsToWin < 1) fail(where + ": rounds_to_win must be at least 1");
+  }
+  return diag.errorCount() == errorsBefore;
+}
+
+namespace {
+
+[[nodiscard]] bool isTomlFile(const std::filesystem::directory_entry& e) {
+  std::error_code ec;
+  return e.is_regular_file(ec) && e.path().extension() == ".toml";
+}
+
+}  // namespace
+
+bool readContentDir(const std::filesystem::path& dir, std::vector<ContentSource>& out,
+                    Diagnostics& diag) {
+  const std::string dirName = dir.generic_string();
+  std::error_code ec;
+  if (!std::filesystem::is_directory(dir, ec)) {
+    diag.error(dirName, 0, "not a content directory");
+    return false;
+  }
+  std::vector<std::pair<std::string, std::filesystem::path>> files;
+  for (std::filesystem::recursive_directory_iterator it(dir, ec), end; !ec && it != end;
+       it.increment(ec)) {
+    if (!isTomlFile(*it)) continue;
+    files.emplace_back(std::filesystem::relative(it->path(), dir, ec).generic_string(), it->path());
+  }
+  if (ec) {
+    diag.error(dirName, 0, "cannot list: " + ec.message());
+    return false;
+  }
+  if (files.empty()) {
+    diag.error(dirName, 0, "no *.toml content files");
+    return false;
+  }
+  std::ranges::sort(files);  // canonical order: sorted relative paths
+  std::vector<ContentSource> sources;
+  sources.reserve(files.size());
+  for (const auto& [name, path] : files) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) {
+      diag.error(name, 0, "cannot read " + path.generic_string());
+      return false;
+    }
+    sources.push_back(ContentSource{
+        name, std::string(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>())});
+  }
+  out = std::move(sources);
+  return true;
+}
+
+bool loadContentDir(const std::filesystem::path& dir, ContentDB& out, Diagnostics& diag) {
+  std::vector<ContentSource> sources;
+  if (!readContentDir(dir, sources, diag)) return false;
+  return parseContent(sources, out, diag);
+}
+
+std::span<const ContentSource> embeddedContentSources() {
+  static const std::vector<ContentSource> kSources = [] {
+    std::vector<ContentSource> v;
+    for (const detail::EmbeddedFile& f : detail::embeddedFiles()) {
+      v.push_back(ContentSource{std::string(f.path), std::string(f.text())});
+    }
+    return v;
+  }();
+  return kSources;
+}
+
+bool loadEmbeddedContent(ContentDB& out, Diagnostics& diag) {
+  return parseContent(embeddedContentSources(), out, diag);
+}
+
+uint64_t contentDirStamp(const std::filesystem::path& dir) {
+  std::error_code ec;
+  uint64_t stamp = 0;
+  uint64_t count = 0;
+  for (std::filesystem::recursive_directory_iterator it(dir, ec), end; !ec && it != end;
+       it.increment(ec)) {
+    if (!isTomlFile(*it)) continue;
+    std::error_code fileEc;
+    const auto mtime = std::filesystem::last_write_time(it->path(), fileEc);
+    const auto size = std::filesystem::file_size(it->path(), fileEc);
+    if (fileEc) continue;
+    const auto ticks = static_cast<uint64_t>(mtime.time_since_epoch().count());
+    // Order-independent fold: the iteration order is unspecified.
+    stamp += (ticks ^ (static_cast<uint64_t>(size) * 0x9E37'79B9'7F4A'7C15ULL)) *
+             0xBF58'476D'1CE4'E5B9ULL;
+    ++count;
+  }
+  if (ec) return 0;
+  return stamp ^ (count * 0x94D0'49BB'1331'11EBULL);
+}
+
+}  // namespace kfm::content

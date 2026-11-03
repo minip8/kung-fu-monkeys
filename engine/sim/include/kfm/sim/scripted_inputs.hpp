@@ -49,12 +49,12 @@ struct ScriptedInputConfig {
 
 // The input for one player this tick. Returns an idle input for a player
 // that is not alive.
-[[nodiscard]] PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& content,
+[[nodiscard]] PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& content,
                                         PlayerId id, const ScriptedInputConfig& config = {});
 
 // A whole frame for s.tick: present = s.rules.present, inputs for every
 // present slot in slot order (so the Rng is consumed in a fixed order).
-[[nodiscard]] InputFrame scriptedFrame(Rng& rng, const WorldState& s, const ContentDB& content,
+[[nodiscard]] InputFrame scriptedFrame(Rng& rng, const WorldState& s, const MatchContent& content,
                                        const ScriptedInputConfig& config = {});
 
 }  // namespace kfm::sim

@@ -85,7 +85,7 @@ struct SortKey {
 
 }  // namespace
 
-void interactionResolveContact(WorldState& s, const ContentDB& content, const Contact& c,
+void interactionResolveContact(WorldState& s, const MatchContent& content, const Contact& c,
                                EventSink& sink) {
   for (const InteractionRule& rule : interactionRules()) {
     if (!isAlive(s, c.kindA, c.a) || !isAlive(s, c.kindB, c.b)) return;
@@ -94,7 +94,7 @@ void interactionResolveContact(WorldState& s, const ContentDB& content, const Co
   }
 }
 
-void interactionSystem(WorldState& s, const ContentDB& content, const Contacts& contacts,
+void interactionSystem(WorldState& s, const MatchContent& content, const Contacts& contacts,
                        EventSink& sink) {
   if (s.rules.phase != MatchPhase::Playing) return;
   // Each Player × Player contact appears twice (both orientations).

@@ -281,9 +281,10 @@ void tuningSection(MatchSession& s, std::string& printed) {
   c.player.ammoStart = std::min(c.player.ammoStart, c.player.ammoMax);
 
   ImGui::SeparatorText("Mode");
-  sliderU8("rounds to win", c.mode.roundsToWin, 1, 9);
-  sliderU16("round start ticks", c.mode.roundStartTicks, 0, 300);
-  sliderU16("round end ticks", c.mode.roundEndTicks, 0, 600);
+  sim::ModeDef& mode = c.modes[s.matchConfig().mode];
+  sliderU8("rounds to win", mode.roundsToWin, 1, 9);
+  sliderU16("round start ticks", mode.roundStartTicks, 0, 300);
+  sliderU16("round end ticks", mode.roundEndTicks, 0, 600);
 
   ImGui::Spacing();
   if (ImGui::Button("reset to defaults")) s.resetContent();

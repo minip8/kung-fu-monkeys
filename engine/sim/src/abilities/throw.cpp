@@ -10,11 +10,11 @@
 namespace kfm::sim {
 namespace {
 
-void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const ContentDB& content,
+void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const MatchContent& content,
                  EventSink& sink) {
   const EntityId id = s.boomerangs.spawn();
   if (!id.isValid()) return;  // pool full: the throw fizzles, ammo is kept
-  const BoomerangDef& def = content.boomerang;
+  const BoomerangDef& def = content.db.boomerang;
   Boomerang& b = s.boomerangs.items[id.index];
   b.owner = p.id;
   b.phase = BoomerangPhase::Outbound;
@@ -36,16 +36,16 @@ bool throwCanActivate(const WorldState& /*s*/, const Player& p, const AbilityDef
 
 // NOLINTNEXTLINE(misc-const-correctness): parameter types fixed by AbilityBehavior
 void throwOnActivate(WorldState& /*s*/, Player& p, AbilityState& st, const AbilityDef& /*def*/,
-                     const ContentDB& /*content*/, EventSink& /*sink*/) {
+                     const MatchContent& /*content*/, EventSink& /*sink*/) {
   st.dir = Vec2::fromAngle(p.intent.aim);
 }
 
 void throwOnTick(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const AbilityDef& /*def*/,
-                 const ContentDB& /*content*/, EventSink& /*sink*/) {}
+                 const MatchContent& /*content*/, EventSink& /*sink*/) {}
 
 // NOLINTNEXTLINE(misc-const-correctness): parameter types fixed by AbilityBehavior
 void throwOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const AbilityDef& /*def*/,
-                        AbilityPhase from, AbilityPhase to, const ContentDB& content,
+                        AbilityPhase from, AbilityPhase to, const MatchContent& content,
                         EventSink& sink) {
   if (from == AbilityPhase::Startup && to == AbilityPhase::Active) {
     spawnBanana(s, p, st, content, sink);
@@ -53,6 +53,6 @@ void throwOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const Abilit
 }
 
 void throwOnEnd(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const AbilityDef& /*def*/,
-                const ContentDB& /*content*/, EventSink& /*sink*/) {}
+                const MatchContent& /*content*/, EventSink& /*sink*/) {}
 
 }  // namespace kfm::sim

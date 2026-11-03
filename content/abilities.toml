@@ -1,0 +1,32 @@
+# Abilities (architecture §5.5). Each [[ability]] is one AbilityDef; the
+# player's loadout (player.toml) refers to them by name. Index 0 is the
+# built-in inert "none" ability, so the first entry here is index 1. Indices
+# are part of the content hash: append new abilities, never reorder.
+#
+# Units: durations in ticks (60 per second), speeds in arena units per
+# second (the loader divides by 60 and truncates toward zero, like
+# Fixed::fromRatio). Every key but name and kind is optional (0 / empty).
+#
+# Keys: name, kind (dash | throw), cooldown_ticks, startup_ticks,
+# active_ticks, recovery_ticks, perfect_window_ticks, speed, param0, param1,
+# tags_startup, tags_active, tags_recovery (lists of tag names: dashing,
+# perfect_dash, hit_stun, shielded, invulnerable, eliminated).
+
+[[ability]]
+name = "dash"
+kind = "dash"
+cooldown_ticks = 45         # 0.75 s from press to the next dash
+startup_ticks = 0           # must stay 0: PerfectDash is granted from the press tick
+active_ticks = 12           # 0.2 s of dash movement
+recovery_ticks = 6          # 0.1 s before the stick moves the monkey again
+perfect_window_ticks = 4    # first 4 active ticks catch a banana (plus the press sub-tick)
+speed = 22                  # units/s while active: 4.4 units per dash
+tags_active = ["dashing"]
+
+[[ability]]
+name = "throw"
+kind = "throw"
+cooldown_ticks = 20         # a third of a second between throws
+startup_ticks = 2           # wind-up before the banana leaves the hand
+active_ticks = 1            # the banana spawns on the Startup -> Active transition
+recovery_ticks = 6          # follow-through

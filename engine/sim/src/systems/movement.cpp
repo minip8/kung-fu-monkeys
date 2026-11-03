@@ -24,9 +24,10 @@ void clampAxis(Fixed& pos, Fixed& vel, Fixed limit) {
 
 }  // namespace
 
-void movementSystem(WorldState& s, const ContentDB& content) {
+void movementSystem(WorldState& s, const MatchContent& content) {
   const bool playing = s.rules.phase == MatchPhase::Playing;
-  const Vec2 limit = content.arena.halfExtents - Vec2{content.player.radius, content.player.radius};
+  const Vec2 limit =
+      content.arena.halfExtents - Vec2{content.db.player.radius, content.db.player.radius};
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     Transform& t = p.transform;
     t.prevPos = t.pos;

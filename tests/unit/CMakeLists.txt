@@ -28,6 +28,21 @@ kfm_add_test_exe(kfm_sim_tests
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
+kfm_add_test_exe(kfm_content_tests
+  content/decimal_test.cpp
+  content/loader_test.cpp
+)
+target_link_libraries(kfm_content_tests PRIVATE kfm::content)
+# The loader test reads the repo's content/ from disk: in place natively,
+# embedded at /content in the wasm module under node.
+if(EMSCRIPTEN)
+  target_link_options(kfm_content_tests PRIVATE
+    "SHELL:--embed-file \"${KFM_CONTENT_SOURCE_DIR}@/content\"")
+  target_compile_definitions(kfm_content_tests PRIVATE KFM_CONTENT_DIR="/content")
+else()
+  target_compile_definitions(kfm_content_tests PRIVATE KFM_CONTENT_DIR="${KFM_CONTENT_SOURCE_DIR}")
+endif()
+
 # The transport contract suite (net/transport_contract.hpp) is header-only;
 # a test executable for another transport links this target and expands
 # KFM_TRANSPORT_CONTRACT_TESTS with its own harness.

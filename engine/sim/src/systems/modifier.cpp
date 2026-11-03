@@ -2,7 +2,7 @@
 // clamp on maxHp change, modifier timers, HitStun expiry.
 //
 // Per player, in this order:
-//   1. Stats from content.player, then every live modifier in slot order:
+//   1. Stats from content.db.player, then every live modifier in slot order:
 //      moveSpeed = base × Π mul + Σ add (never negative); maxHp and ammoMax are
 //      integer stats, add-only (mul is ignored), clamped to [1, 255] and
 //      [0, 255].
@@ -76,10 +76,10 @@ void tickModifiers(ModifierList& mods) {
 
 }  // namespace
 
-void modifierSystem(WorldState& s, const ContentDB& content) {
+void modifierSystem(WorldState& s, const MatchContent& content) {
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     const uint8_t oldMaxHp = p.stats.maxHp;
-    p.stats = deriveStats(content.player, p.modifiers);
+    p.stats = deriveStats(content.db.player, p.modifiers);
     clampHp(p, oldMaxHp, p.stats.maxHp);
     p.ammo = std::min(p.ammo, p.stats.ammoMax);
     tickModifiers(p.modifiers);

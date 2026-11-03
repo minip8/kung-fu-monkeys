@@ -9,12 +9,15 @@
 
 namespace kfm::net::netsim {
 
+sim::ContentDB endless(const sim::ContentDB& content) {
+  sim::ContentDB x = content;
+  for (uint8_t i = 0; i < x.modeCount; ++i)
+    x.modes[i].roundsToWin = 255;
+  return x;
+}
+
 const sim::ContentDB& endlessContent() {
-  static const sim::ContentDB c = [] {
-    sim::ContentDB x = sim::defaultContent();
-    x.mode.roundsToWin = 255;
-    return x;
-  }();
+  static const sim::ContentDB c = endless(sim::defaultContent());
   return c;
 }
 
@@ -80,7 +83,7 @@ bool NetSim::allRunning() const {
   return std::ranges::all_of(rigs_, [](const ClientRig& r) { return r.client->running(); });
 }
 
-void NetSim::stepClient(ClientRig& r) {
+void NetSim::stepClient(ClientRig& r) const {
   NetClient& c = *r.client;
   c.beginFrame();
   c.pump(now_);
@@ -92,8 +95,9 @@ void NetSim::stepClient(ClientRig& r) {
     for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
       const PlayerId id{static_cast<PlayerId::rep>(s)};
       if (!sim::maskHas(c.localSlots(), id)) continue;
-      inputs[k++] = r.human == Human::Scripted ? sim::scriptedInput(r.rng, c.world(), *content_, id)
-                                               : sim::PlayerInput{};
+      inputs[k++] = r.human == Human::Scripted
+                        ? sim::scriptedInput(r.rng, c.world(), c.matchContent(), id)
+                        : sim::PlayerInput{};
     }
     c.tick(std::span<const sim::PlayerInput>(inputs.data(), k));
   }

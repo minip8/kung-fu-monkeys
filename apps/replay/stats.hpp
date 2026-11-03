@@ -155,7 +155,7 @@ class StatsCollector {
 };
 
 // step() with the collector looking at the contact list (see above).
-void statsStep(sim::WorldState& s, const sim::InputFrame& in, const sim::ContentDB& content,
+void statsStep(sim::WorldState& s, const sim::InputFrame& in, const sim::MatchContent& content,
                sim::EventSink& sink, StatsCollector& collector);
 
 // One line per match.

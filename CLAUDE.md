@@ -50,11 +50,17 @@ clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | 
 clang-tidy -p build/dev $(find engine apps tests -name '*.cpp')
 build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|verify ...  # replay tool
 build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
+#   record-*/bench/stats take --arena NAME --mode NAME; every command takes --content DIR (default: the
+#   content compiled into the binary); `info` prints the replay's arena/mode and both content hashes
 build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
 build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay]   # playable client
+build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
+#   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
+#   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
+ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, content/ == defaultContent()
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
 #   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window
@@ -65,6 +71,7 @@ source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/w
 #   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
 python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
 build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
+#   also --content DIR --arena NAME --mode NAME (kfm_netsim and kfm_render_probe take the same three)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
 cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
@@ -88,7 +95,7 @@ Read `docs/architecture.md` §2 (decisions table) first; the rest of this sectio
 are load-bearing when writing code.
 
 **Layering (§4).** `engine/core` → `engine/sim` → {`engine/net`, `engine/ai`,
-`engine/presentation`} → `apps/`. `sim` depends only on `core` and must never include anything
+`engine/presentation`, `engine/content`} → `apps/`. `sim` depends only on `core` and must never include anything
 from `net`, `presentation` or `platform`. `net`, `ai` and `presentation` never depend on each
 other. `presentation` reads sim state and never writes it. Enforce with CMake target visibility,
 not convention.
@@ -113,6 +120,17 @@ Debug/Release. Any sim change that alters checksums is either a bug or an intent
 change that regenerates the corpus; say which. The corpus is listed in
 `tools/replay-corpus/corpus.txt`; `regen-replay-corpus` re-records every entry (replays carry the
 content hash) and rewrites the `.checksums`. A new corpus replay needs a manifest line.
+
+**Content is data (§5.10).** `content/*.toml` (loaded by `engine/content`, toml++) is the source
+of truth; `defaultContent()` in `engine/sim/src/content.cpp` mirrors it as the sim tests' fixture
+and `kfm_content_tests` fails until both agree, so a content change edits both and then runs
+`regen-replay-corpus` (the content hash changes; existing checksums must not). New def kind:
+struct in `engine/sim/include/kfm/sim/content/`, a `ContentDB` field, its `visit()`, a parser
+in `engine/content/src/loader.cpp` (a `Section` call per key; unknown keys are errors) and a
+TOML file. Decimals become `Fixed` by exact truncation (never `double`); speeds are per second
+in TOML. Arenas and modes are selected per match by `MatchConfig::arena`/`::mode` indices; the
+sim reads them as `content.arena`/`content.mode` from the `MatchContent` every system takes.
+Append arenas/modes, never reorder (indices are in replays and on the wire).
 
 **Gameplay is added through tables, not special cases (§5.5–5.8).**
 - Abilities: `AbilityDef` (content) + POD `AbilityState` per slot + an `AbilityBehavior` function

@@ -1,0 +1,13 @@
+# Modes (ModeDef, architecture §5.10). A match picks one by index
+# (MatchConfig::mode); command lines and the lobby use the name. The first
+# mode loaded is index 0, the default. Indices go into replay headers and are
+# part of the content hash: append new modes, never reorder.
+#
+# Keys: name (lowercase, up to 15 of a-z 0-9 _ -), rounds_to_win,
+# round_end_ticks, round_start_ticks. Durations in ticks (60 per second).
+
+[[mode]]
+name = "rounds"             # free-for-all rounds: last monkey standing scores
+rounds_to_win = 3           # first to three round wins takes the match
+round_end_ticks = 120       # 2 s pause after a round before the next one
+round_start_ticks = 60      # 1 s countdown with everyone spawned and frozen

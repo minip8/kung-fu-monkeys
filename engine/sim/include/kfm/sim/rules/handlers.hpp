@@ -12,20 +12,20 @@ namespace kfm::sim {
 
 // Prio 10/11, rules/catch.cpp: perfect-dash catch judged against press sub-tick (§5.11);
 // declines at ammoMax (v0.16).
-bool catchBoomerang(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                     const Contact& contact, EventSink& sink);
 // Prio 25, rules/dash_attack.cpp: a dasher holding ammo damages the player it
-// touches (no pickup; ammo kept unless content.dashAttack.consumesAmmo).
-bool dashAttack(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+// touches (no pickup; ammo kept unless content.db.dashAttack.consumesAmmo).
+bool dashAttack(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                 const Contact& contact, EventSink& sink);
 // Prio 30, rules/damage.cpp: hp loss, HitStun, elimination, banana grounds unless pierce.
-bool damagePlayer(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+bool damagePlayer(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                   const Contact& contact, EventSink& sink);
 // Prio 40, rules/auto_catch.cpp: the owner touches its returning banana.
-bool autoCatch(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+bool autoCatch(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                const Contact& contact, EventSink& sink);
 // Prio 50, rules/pickup.cpp: a grounded banana restores ammo.
-bool takePickup(WorldState& s, const ContentDB& content, EntityId a, EntityId b,
+bool takePickup(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                 const Contact& contact, EventSink& sink);
 
 }  // namespace kfm::sim

@@ -4,7 +4,9 @@
 //
 // Layout (all little-endian, bit-packed):
 //   header : magic "KFMR" (4×u8), version u16, seed u64, contentHash u32,
-//            buildHash u32, players u16, tickCount u32
+//            buildHash u32, players u16, arena u8, mode u8, tickCount u32
+//   (version 2, M4: arena and mode joined the header; version 1 files are
+//   refused and re-recorded by regen-replay-corpus)
 //   frames : tickCount × InputFrame via visit() (present mask + inputs)
 #pragma once
 
@@ -18,17 +20,21 @@
 
 namespace kfm::sim {
 
-inline constexpr uint16_t kReplayVersion = 1;
-inline constexpr size_t kReplayHeaderBytes = 4 + 2 + 8 + 4 + 4 + 2 + 4;
+inline constexpr uint16_t kReplayVersion = 2;
+inline constexpr size_t kReplayHeaderBytes = 4 + 2 + 8 + 4 + 4 + 2 + 1 + 1 + 4;
 
 struct ReplayHeader {
   uint64_t seed{0};
   uint32_t contentHash{0};
   uint32_t buildHash{0};
   PlayerMask players{0};
+  uint8_t arena{0};  // MatchConfig::arena / ::mode: indices into the content
+  uint8_t mode{0};   // whose hash is contentHash
   uint32_t tickCount{0};
 
-  [[nodiscard]] constexpr MatchConfig matchConfig() const { return MatchConfig{seed, players}; }
+  [[nodiscard]] constexpr MatchConfig matchConfig() const {
+    return MatchConfig{seed, players, arena, mode};
+  }
 };
 
 // Upper bound on the encoded size of a replay with the given header.

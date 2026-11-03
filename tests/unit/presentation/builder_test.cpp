@@ -404,11 +404,12 @@ TEST_CASE("HUD derives phase, countdown, scores and winners", "[presentation][bu
   RenderState rs = build(ps, s, s, 1.0f);
   CHECK(rs.hud.phase == HudPhase::RoundStarting);
   CHECK(rs.hud.round == 1);
-  CHECK(rs.hud.roundsToWin == content.mode.roundsToWin);
+  CHECK(rs.hud.roundsToWin == content.modes[0].roundsToWin);
   CHECK(rs.hud.presentMask == 0b11);
   CHECK(rs.hud.ticksInPhase == s.rules.ticksInPhase);
-  CHECK(rs.hud.countdownSeconds ==
-        Approx(static_cast<float>(content.mode.roundStartTicks - s.rules.ticksInPhase) / 60.0f));
+  CHECK(
+      rs.hud.countdownSeconds ==
+      Approx(static_cast<float>(content.modes[0].roundStartTicks - s.rules.ticksInPhase) / 60.0f));
   CHECK(rs.hud.lastRoundWinner == kNoSlot);
   CHECK(rs.hud.matchWinner == kNoSlot);
   for (int i = 0; i < 30; ++i)
@@ -435,11 +436,11 @@ TEST_CASE("HUD derives phase, countdown, scores and winners", "[presentation][bu
 
   // MatchEnded names the winner.
   s.rules.phase = MatchPhase::MatchEnded;
-  s.rules.scores[0] = content.mode.roundsToWin;
+  s.rules.scores[0] = content.modes[0].roundsToWin;
   rs = build(ps, s, s, 1.0f);
   CHECK(rs.hud.phase == HudPhase::MatchEnded);
   CHECK(rs.hud.matchWinner == 0);
-  CHECK(rs.hud.scores[0] == content.mode.roundsToWin);
+  CHECK(rs.hud.scores[0] == content.modes[0].roundsToWin);
 }
 
 TEST_CASE("a scripted 10-player match renders consistently every frame",
@@ -453,8 +454,8 @@ TEST_CASE("a scripted 10-player match renders consistently every frame",
   Rng inputs = Rng::seeded(0x5C121D);
   EventSink sink;
   std::set<EffectKind> seen;
-  const float hx = content.arena.halfExtents.x.toFloat();
-  const float hy = content.arena.halfExtents.y.toFloat();
+  const float hx = content.arenas[0].halfExtents.x.toFloat();
+  const float hy = content.arenas[0].halfExtents.y.toFloat();
   for (int k = 0; k < 2400; ++k) {
     *prev = *curr;
     sink.clear();

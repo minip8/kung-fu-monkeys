@@ -96,9 +96,10 @@ std::string contentToCpp(const sim::ContentDB& c) {
   appendLine(out, "c.player.ammoMax", c.player.ammoMax);
   appendLine(out, "c.player.hitStunTicks", c.player.hitStunTicks);
 
-  appendLine(out, "c.mode.roundsToWin", c.mode.roundsToWin);
-  appendLine(out, "c.mode.roundEndTicks", c.mode.roundEndTicks);
-  appendLine(out, "c.mode.roundStartTicks", c.mode.roundStartTicks);
+  const sim::ModeDef& rounds = c.modes[0];
+  appendLine(out, "rounds.roundsToWin", rounds.roundsToWin);
+  appendLine(out, "rounds.roundEndTicks", rounds.roundEndTicks);
+  appendLine(out, "rounds.roundStartTicks", rounds.roundStartTicks);
   return out;
 }
 

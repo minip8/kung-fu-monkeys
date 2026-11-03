@@ -112,7 +112,7 @@ TEST_CASE("the default arena gets a 2-unit grid within the cell budget", "[sim][
   constexpr collision::GridLayout kM1Grid = collision::gridLayout(Vec2{16_fx, 9_fx});
   static_assert(kM1Grid.nx == 16 && kM1Grid.ny == 9 && kM1Grid.cellRaw == collision::kBaseCellRaw);
 
-  const collision::GridLayout g = collision::gridLayout(defaultContent().arena.halfExtents);
+  const collision::GridLayout g = collision::gridLayout(defaultContent().arenas[0].halfExtents);
   CHECK(g.cellRaw == collision::kBaseCellRaw);
   CHECK(g.nx == 16);
   CHECK(g.ny == 9);
@@ -369,14 +369,14 @@ TEST_CASE("collisionSystem with no players or no targets reports nothing", "[sim
 
 TEST_CASE("grid broadphase equals brute force on random worlds", "[sim][collision]") {
   ContentDB big = defaultContent();
-  big.arena.halfExtents = Vec2{200_fx, 40_fx};  // forces a scaled cell size
+  big.arenas[0].halfExtents = Vec2{200_fx, 40_fx};  // forces a scaled cell size
   Rng rng = Rng::seeded(0xB20AD);
   int totalPairs = 0;
   int playerPairs = 0;
   for (int world = 0; world < 300; ++world) {
     const ContentDB& c = (world % 5 == 4) ? big : defaultContent();
-    const Fixed hx = c.arena.halfExtents.x;
-    const Fixed hy = c.arena.halfExtents.y;
+    const Fixed hx = c.arenas[0].halfExtents.x;
+    const Fixed hy = c.arenas[0].halfExtents.y;
     // Mostly inside the box, sometimes exactly on a wall or a little outside.
     const auto coord = [&](Fixed half) {
       switch (rng.below(8)) {

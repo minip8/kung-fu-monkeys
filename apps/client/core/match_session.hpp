@@ -1,9 +1,10 @@
 // MatchSession: the playable local client's match loop (architecture §6.8,
 // §7 local multiplayer, §11 M2). SDL-free and unit-tested headlessly.
 //
-// It owns the two newest WorldStates (prev, curr), a mutable copy of the
-// ContentDB (the debug UI edits it live for feel tuning; it is passed to
-// step() every tick), the per-tick EventSink and a per-frame event
+// It owns the two newest WorldStates (prev, curr), the loaded ContentDB and
+// a mutable copy of it (the debug UI edits the copy live for feel tuning;
+// it is passed to step() every tick with the session's arena and mode), the
+// per-tick EventSink and a per-frame event
 // accumulator for the presentation builder, the PresentationState, the
 // InputSampler, the bot slots with their own Rng, and the fixed-step clock.
 //
@@ -73,7 +74,12 @@ inline constexpr double kNewestTickRateTolerance = 0.95;
 inline constexpr uint64_t kDefaultBotSeed = 0x5C121DULL;
 
 struct SessionConfig {
-  uint64_t seed{1};                   // world seed (MatchConfig::seed)
+  uint64_t seed{1};  // world seed (MatchConfig::seed)
+  uint8_t arena{0};  // MatchConfig::arena / ::mode: indices into
+  uint8_t mode{0};   //   the content (out of range = 0)
+  // The loaded content (content/*.toml); nullptr = sim::defaultContent().
+  // Copied: the session owns its content.
+  const sim::ContentDB* content{nullptr};
   uint64_t botSeed{kDefaultBotSeed};  // bots' Rng, separate from the world's
   uint8_t bots{0};                    // lobby bot count
   uint32_t maxTicksPerFrame{kDefaultMaxTicksPerFrame};
@@ -135,6 +141,19 @@ class MatchSession {
 
   [[nodiscard]] uint64_t seed() const { return seed_; }
   void setSeed(uint64_t seed);  // takes effect at the next start/restart
+  // Arena and mode by index into content(); out of range falls back to 0.
+  // Like setSeed(), they take effect at the next start/restart (at once in
+  // the lobby).
+  void setArena(uint8_t arena);
+  void setMode(uint8_t mode);
+  [[nodiscard]] uint8_t arena() const { return arena_; }
+  [[nodiscard]] uint8_t mode() const { return mode_; }
+  // The config the current world was created with, and the content step()
+  // runs it with (the live copy with this match's arena and mode).
+  [[nodiscard]] const sim::MatchConfig& matchConfig() const { return matchConfig_; }
+  [[nodiscard]] sim::MatchContent matchContent() const {
+    return sim::matchContent(content_, matchConfig_);
+  }
   [[nodiscard]] uint64_t botSeed() const { return botSeed_; }
 
   // --- state ------------------------------------------------------------------
@@ -159,12 +178,19 @@ class MatchSession {
 
   [[nodiscard]] presentation::PresentationState& presentation() { return presentation_; }
 
-  // The live content copy (edited by the debug UI) and its defaults.
+  // The live content copy (edited by the debug UI) and the loaded content
+  // it started from (its defaults).
   [[nodiscard]] sim::ContentDB& content() { return content_; }
   [[nodiscard]] const sim::ContentDB& content() const { return content_; }
+  [[nodiscard]] const sim::ContentDB& loadedContent() const { return loaded_; }
   void resetContent();
   [[nodiscard]] uint32_t contentHash() const;
   [[nodiscard]] bool contentIsDefault() const;
+  // Hot reload (§5.10): replaces the loaded content and the live copy (debug
+  // UI edits are dropped), keeps the arena and mode when the new content
+  // still has them (else index 0), and restarts a running match with the
+  // same seed, or re-creates the lobby world.
+  void replaceContent(const sim::ContentDB& content, uint64_t nowNs);
 
   [[nodiscard]] platform::InputSampler& sampler() { return sampler_; }
   [[nodiscard]] const platform::InputSampler& sampler() const { return sampler_; }
@@ -187,12 +213,16 @@ class MatchSession {
 
   SessionPhase phase_{SessionPhase::Lobby};
   uint64_t seed_{1};
+  uint8_t arena_{0};
+  uint8_t mode_{0};
+  sim::MatchConfig matchConfig_{};
   uint64_t botSeed_{kDefaultBotSeed};
   uint8_t bots_{0};
   bool startRequested_{false};
   bool hostHandlesStart_{false};
   bool hostStartPending_{false};
 
+  sim::ContentDB loaded_{};
   sim::ContentDB content_{};
   sim::WorldState prev_{};
   sim::WorldState curr_{};

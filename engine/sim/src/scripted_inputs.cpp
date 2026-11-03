@@ -35,7 +35,7 @@ namespace {
 
 // Wander direction: the current stick direction (decoded intent), a random
 // new one now and then, and back toward the interior near a wall.
-[[nodiscard]] uint8_t wanderDirection(Rng& rng, const Player& p, const ContentDB& content,
+[[nodiscard]] uint8_t wanderDirection(Rng& rng, const Player& p, const MatchContent& content,
                                       const ScriptedInputConfig& config) {
   const Vec2 move = p.intent.move;
   uint8_t dir =
@@ -59,7 +59,7 @@ namespace {
 
 }  // namespace
 
-PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& content, PlayerId id,
+PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& content, PlayerId id,
                           const ScriptedInputConfig& config) {
   const Player* self = s.playerBySlot(id);
   if (self == nullptr) return PlayerInput{};
@@ -132,7 +132,7 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& conten
       if (threat && rng.below(256) < config.dodgePer256) {
         in.buttons |= dashBit;
         if (threatPos != pos) in.moveDir = directionTo(pos, threatPos);
-      } else if (enemyClose && p.ammo >= content.dashAttack.minAmmo &&
+      } else if (enemyClose && p.ammo >= content.db.dashAttack.minAmmo &&
                  oneIn(rng, config.dashAttackOneIn)) {
         in.buttons |= dashBit;
         if (enemyAt != pos) in.moveDir = directionTo(pos, enemyAt);
@@ -145,7 +145,7 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const ContentDB& conten
   return in;
 }
 
-InputFrame scriptedFrame(Rng& rng, const WorldState& s, const ContentDB& content,
+InputFrame scriptedFrame(Rng& rng, const WorldState& s, const MatchContent& content,
                          const ScriptedInputConfig& config) {
   InputFrame f;
   f.tick = s.tick;

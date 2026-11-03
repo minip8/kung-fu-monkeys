@@ -15,6 +15,8 @@ void writeReplayHeader(BitWriter& w, const ReplayHeader& h) {
   w.writeU32(h.contentHash);
   w.writeU32(h.buildHash);
   w.writeU16(h.players);
+  w.writeU8(h.arena);
+  w.writeU8(h.mode);
   w.writeU32(h.tickCount);
 }
 
@@ -27,6 +29,8 @@ bool readReplayHeader(BitReader& r, ReplayHeader& h) {
   h.contentHash = r.readU32();
   h.buildHash = r.readU32();
   h.players = r.readU16();
+  h.arena = r.readU8();
+  h.mode = r.readU8();
   h.tickCount = r.readU32();
   return r.ok();
 }

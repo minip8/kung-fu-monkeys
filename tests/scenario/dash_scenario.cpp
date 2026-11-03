@@ -93,7 +93,7 @@ TEST_CASE("a dash follows the stick, then walking resumes at move speed", "[scen
 
 TEST_CASE("a dash into the wall stops at the arena edge", "[scenario][dash]") {
   const ContentDB& content = defaultContent();
-  const Fixed limX = content.arena.halfExtents.x - content.player.radius;
+  const Fixed limX = content.arenas[0].halfExtents.x - content.player.radius;
   WorldState s = makePlayingWorld(3, 0b1);
   placePlayer(s, kP0, Vec2{limX - Fixed::one(), Fixed::zero()});
   stepWith(s, PlayerInput{0, 0, 0, kDash, 0});

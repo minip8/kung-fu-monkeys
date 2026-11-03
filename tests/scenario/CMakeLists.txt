@@ -11,5 +11,6 @@ kfm_add_test_exe(kfm_scenario_tests
   pipeline_scenario.cpp
   banana_supply_scenario.cpp
   dash_attack_scenario.cpp
+  match_config_scenario.cpp
 )
 target_link_libraries(kfm_scenario_tests PRIVATE kfm::sim)

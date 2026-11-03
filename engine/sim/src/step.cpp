@@ -9,7 +9,7 @@
 
 namespace kfm::sim {
 
-void step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& sink) {
+void step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink) {
   KFM_ASSERT(in.tick == s.tick);
   rulesPreTick(s, content, sink);                 // 1
   inputSystem(s, in);                             // 2

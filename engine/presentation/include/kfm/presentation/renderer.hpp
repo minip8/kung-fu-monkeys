@@ -49,8 +49,10 @@ struct RendererStats {
 
 class Renderer {
  public:
-  // Builds meshes from content and the pipelines. Requires sg_setup() done.
-  [[nodiscard]] bool init(const sim::ContentDB& content);
+  // Builds meshes from content (the floor from the match's arena) and the
+  // pipelines. Requires sg_setup() done. Call again when the arena or the
+  // content changes.
+  [[nodiscard]] bool init(const sim::MatchContent& match);
   void shutdown();
 
   // Draws everything in `state` (players, bananas, pickups, shadows, effects,

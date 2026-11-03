@@ -1,0 +1,22 @@
+# Arenas (ArenaDef, architecture §5.10). A match picks one by index
+# (MatchConfig::arena); command lines and the lobby use the name. The first
+# arena loaded is index 0, the default. Indices go into replay headers and
+# are part of the content hash: append new arenas, never reorder.
+#
+# Keys: name (lowercase, up to 15 of a-z 0-9 _ -), half_extents = [x, y]
+# (box arena centred on the origin, each at most 1024), and the spawn points
+# as either an explicit list
+#   spawn_points = [[x, y], ...]          (1 to 10 points)
+# or points on an ellipse around the centre
+#   spawn_ellipse = { radii = [rx, ry], step_degrees = d, order = [k, ...] }
+# where point i sits at angle order[i] * step_degrees (fixed-point LUT trig).
+# Spawn slot i is where the i-th present player starts its first round.
+# Lengths are arena units.
+
+[[arena]]
+name = "dojo"
+half_extents = [16, 9]      # 32 x 18 units: a 16:9 box
+# Ten points on a 12 x 6 ellipse, 36 degrees apart, ordered so that the
+# first few spread across the arena (two players face each other across the
+# centre).
+spawn_ellipse = { radii = [12, 6], step_degrees = 36, order = [0, 5, 2, 7, 4, 9, 6, 1, 8, 3] }

@@ -11,15 +11,17 @@
 //               frame, else samePresent u1 [present u10]; then a coded input
 //               per present slot ascending, against that slot's input in the
 //               previous frame when it was present there, else idle
-//   Snapshot    seed u64, players u10, worldChecksum u32, WorldState (visitor)
+//   Snapshot    MatchConfig, worldChecksum u32, WorldState (visitor)
 //   Hello       version u16 (frozen), contentHash u32, buildId u32,
 //               tokenLength u8, token bytes, requestedSlots u8
-//   Welcome     assignedSlots u10, seed u64, players u10, serverTick u32
+//   Welcome     assignedSlots u10, MatchConfig, serverTick u32
 //   Reject      reason u8
 //   JoinMatch   requestedSlots u8
 //   PlayerJoined slot u8, tick u32, yours u1
 //   PlayerLeft  slot u8, tick u32
-//   MatchConfig seed u64, players u10, startTick u32
+//   MatchConfig MatchConfig, startTick u32
+//   (MatchConfig = seed u64, players u10, arena u8, mode u8; arena and mode
+//   below kMaxArenas / kMaxModes, since protocol version 2)
 //   Disconnect  reason u8
 //   Ping        sendNs u64, tick u32
 //   Pong        echoSendNs u64, tick u32, holdNs u32
@@ -101,6 +103,27 @@ void writeMask(BitWriter& w, sim::PlayerMask m) {
 }
 [[nodiscard]] sim::PlayerMask readMask(BitReader& r) {
   return static_cast<sim::PlayerMask>(r.readBits(kMaskBits));
+}
+
+// The match config every host shares (§6.6): arena and mode are indices
+// into the content both sides hashed in Hello, so only the capacity bound
+// can be checked here.
+[[nodiscard]] bool writeMatchConfig(BitWriter& w, const sim::MatchConfig& c) {
+  if (!validMask(c.players) || c.arena >= sim::kMaxArenas || c.mode >= sim::kMaxModes) {
+    return false;
+  }
+  w.writeU64(c.seed);
+  writeMask(w, c.players);
+  w.writeU8(c.arena);
+  w.writeU8(c.mode);
+  return true;
+}
+[[nodiscard]] bool readMatchConfig(BitReader& r, sim::MatchConfig& c) {
+  c.seed = r.readU64();
+  c.players = readMask(r);
+  c.arena = r.readU8();
+  c.mode = r.readU8();
+  return c.arena < sim::kMaxArenas && c.mode < sim::kMaxModes;
 }
 
 }  // namespace
@@ -360,9 +383,7 @@ DecodeResult decode(std::span<const std::byte> bytes, PongMsg& out) {
 
 size_t encode(const SnapshotMsg& m, std::span<std::byte> out) {
   return encodeWith(out, MessageType::Snapshot, [&](BitWriter& w) {
-    if (!validMask(m.config.players)) return false;
-    w.writeU64(m.config.seed);
-    writeMask(w, m.config.players);
+    if (!writeMatchConfig(w, m.config)) return false;
     w.writeU32(sim::checksum(m.world));
     return sim::writeTo(w, m.world);
   });
@@ -370,8 +391,7 @@ size_t encode(const SnapshotMsg& m, std::span<std::byte> out) {
 
 DecodeResult decode(std::span<const std::byte> bytes, SnapshotMsg& out) {
   return decodeWith(bytes, MessageType::Snapshot, [&](BitReader& r) -> DecodeResult {
-    out.config.seed = r.readU64();
-    out.config.players = readMask(r);
+    if (!readMatchConfig(r, out.config)) return unexpected(DecodeError::OutOfRange);
     const uint32_t sum = r.readU32();
     if (!sim::readFrom(r, out.world)) {
       return unexpected(r.ok() ? DecodeError::InvalidState : DecodeError::Truncated);
@@ -413,10 +433,9 @@ DecodeResult decode(std::span<const std::byte> bytes, HelloMsg& out) {
 
 size_t encode(const WelcomeMsg& m, std::span<std::byte> out) {
   return encodeWith(out, MessageType::Welcome, [&](BitWriter& w) {
-    if (!validMask(m.assignedSlots) || !validMask(m.config.players)) return false;
+    if (!validMask(m.assignedSlots)) return false;
     writeMask(w, m.assignedSlots);
-    w.writeU64(m.config.seed);
-    writeMask(w, m.config.players);
+    if (!writeMatchConfig(w, m.config)) return false;
     writeTick(w, m.serverTick);
     return true;
   });
@@ -425,8 +444,7 @@ size_t encode(const WelcomeMsg& m, std::span<std::byte> out) {
 DecodeResult decode(std::span<const std::byte> bytes, WelcomeMsg& out) {
   return decodeWith(bytes, MessageType::Welcome, [&](BitReader& r) -> DecodeResult {
     out.assignedSlots = readMask(r);
-    out.config.seed = r.readU64();
-    out.config.players = readMask(r);
+    if (!readMatchConfig(r, out.config)) return unexpected(DecodeError::OutOfRange);
     out.serverTick = readTick(r);
     return {};
   });
@@ -506,9 +524,7 @@ DecodeResult decode(std::span<const std::byte> bytes, PlayerLeftMsg& out) {
 
 size_t encode(const MatchConfigMsg& m, std::span<std::byte> out) {
   return encodeWith(out, MessageType::MatchConfig, [&](BitWriter& w) {
-    if (!validMask(m.config.players)) return false;
-    w.writeU64(m.config.seed);
-    writeMask(w, m.config.players);
+    if (!writeMatchConfig(w, m.config)) return false;
     writeTick(w, m.startTick);
     return true;
   });
@@ -516,8 +532,7 @@ size_t encode(const MatchConfigMsg& m, std::span<std::byte> out) {
 
 DecodeResult decode(std::span<const std::byte> bytes, MatchConfigMsg& out) {
   return decodeWith(bytes, MessageType::MatchConfig, [&](BitReader& r) -> DecodeResult {
-    out.config.seed = r.readU64();
-    out.config.players = readMask(r);
+    if (!readMatchConfig(r, out.config)) return unexpected(DecodeError::OutOfRange);
     out.startTick = readTick(r);
     return {};
   });

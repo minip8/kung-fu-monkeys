@@ -1,0 +1,16 @@
+# The banana boomerang (architecture §5.7): one BoomerangDef.
+#
+# Units: lengths in arena units, speeds in units per second (stored per tick,
+# divided by 60 and truncated toward zero), durations in ticks, turn rate in
+# binary angle units (65536 per turn) per tick.
+
+[boomerang]
+radius = 0.35               # contact radius
+speed = 16                  # units/s, constant magnitude in flight
+outbound_ticks = 36         # 0.6 s out (9.6 units), then it turns for home
+max_return_ticks = 240      # returning longer than 4 s grounds it (no endless orbit)
+turn_rate_bam = 1200        # ~6.6 degrees per tick of homing while returning
+restitution = 1             # wall bounce keeps all its speed
+spawn_offset = 1            # spawns 1 unit ahead of the thrower: clear of 0.5 + 0.35
+damage = 1                  # one hit eliminates a 1-hp monkey
+pierce = false              # stops (grounds) on the first hit

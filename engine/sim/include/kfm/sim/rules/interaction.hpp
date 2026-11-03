@@ -33,7 +33,7 @@ inline constexpr uint8_t kPhaseReturning = boomerangPhaseBit(BoomerangPhase::Ret
 enum class Ownership : uint8_t { Any = 0, Own, NotOwn };
 
 // a/b are the contact's entities in the rule's (kindA, kindB) order.
-using InteractionResolveFn = bool (*)(WorldState& s, const ContentDB& content, EntityId a,
+using InteractionResolveFn = bool (*)(WorldState& s, const MatchContent& content, EntityId a,
                                       EntityId b, const Contact& contact, EventSink& sink);
 
 struct InteractionRule {
