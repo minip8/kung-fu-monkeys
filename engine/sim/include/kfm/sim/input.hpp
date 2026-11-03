@@ -24,8 +24,8 @@ enum class Button : uint8_t {
 }
 
 struct PlayerInput {
-  uint8_t moveDir{0};  // 0 = idle, otherwise 1/256 turn (Angle::fromInput8)
-  uint8_t moveMag{0};  // analog magnitude, 255 for digital
+  uint8_t moveDir{0};  // 1/256 turn (Angle::fromInput8), 0 = +x; ignored when moveMag == 0
+  uint8_t moveMag{0};  // analog magnitude, 0 = idle, 255 for digital
   uint8_t aimDir{0};   // 1/256 turn
   uint8_t buttons{0};  // Button bits
   uint8_t subTick{0};  // fraction of the tick at which the latest button edge occurred

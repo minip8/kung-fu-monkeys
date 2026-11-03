@@ -50,7 +50,7 @@ TEST_CASE("speed scales with moveMag / 255 * moveSpeed", "[sim][movement]") {
 TEST_CASE("idle input stops the player", "[sim][movement]") {
   WorldState s = makePlayingWorld(2, 0b1);
   placePlayer(s, kP0, Vec2::zero()).transform.vel = Vec2{Fixed::one(), Fixed::one()};
-  moveWith(s, PlayerInput{0, 255, 0, 0, 0});
+  moveWith(s, PlayerInput{64, 0, 0, 0, 0});  // moveMag 0 = idle
   CHECK(s.playerBySlot(kP0)->transform.vel == Vec2::zero());
   CHECK(s.playerBySlot(kP0)->transform.pos == Vec2::zero());
 }

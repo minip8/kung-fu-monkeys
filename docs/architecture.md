@@ -29,7 +29,8 @@ hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, ke
 rules gain an ownership field and a boomerang-phase mask.
 v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7);
 the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the pickup radius
-(§5.10); bananas spawn clear of the thrower (§5.7).
+(§5.10); bananas spawn clear of the thrower (§5.7);
+the stick is idle iff `moveMag == 0` (§5.4).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -224,8 +225,8 @@ inputs and writes state and events. Nothing else mutates `WorldState`.
 
 ```cpp
 struct PlayerInput {            // 5 bytes on the wire, bit-packed smaller
-  uint8_t moveDir;              // 0 = idle, 1..255 = angle (or 9-way digital)
-  uint8_t moveMag;              // analog magnitude; 255 for digital input
+  uint8_t moveDir;              // 0..255 angle, 0 = +x (digital input uses 8 of them)
+  uint8_t moveMag;              // analog magnitude; 0 = idle, 255 for digital input
   uint8_t aimDir;               // 0..255 angle (twin-stick aim)
   uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1, bit3 Ability2, bit4 Taunt ...
   uint8_t subTick;              // fraction of the tick at which the latest button edge occurred (1/256 tick ≈ 65 µs)
@@ -237,7 +238,8 @@ struct InputFrame {
 };
 ```
 
-This struct is also the bot and reinforcement-learning action space. Button presses are
+The stick is idle iff `moveMag == 0` (v0.13); `moveDir` is always an angle, so every one of the
+256 directions, +x included, is reachable. This struct is also the bot and reinforcement-learning action space. Button presses are
 edge-detected in `InputSystem`, which makes "repeat last input" a safe prediction for remote
 players: a held button never re-fires. `subTick` is explained in §5.11; it only carries meaning
 on a tick where a button edge occurred, so repeated-input prediction is unaffected.

@@ -63,10 +63,15 @@ TEST_CASE("move, aim, facing and subTick are decoded", "[sim][input]") {
   inputSystem(s, f);
   CHECK(abs(p.intent.move.y - Fixed::fromRatio(128, 255)) <= Fixed::fromRaw(2));
 
-  // moveDir 0 is idle regardless of magnitude.
-  f.inputs[0] = PlayerInput{0, 255, 0, 0, 0};
+  // moveMag 0 is idle whatever the direction.
+  f.inputs[0] = PlayerInput{64, 0, 0, 0, 0};
   inputSystem(s, f);
   CHECK(p.intent.move == Vec2::zero());
+
+  // moveDir 0 is an angle like any other: exactly +x.
+  f.inputs[0] = PlayerInput{0, 255, 0, 0, 0};
+  inputSystem(s, f);
+  CHECK(p.intent.move == Vec2{Fixed::one(), Fixed::zero()});
 }
 
 TEST_CASE("absent players get a zero input", "[sim][input]") {
