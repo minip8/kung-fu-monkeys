@@ -37,6 +37,10 @@ struct Args {
   uint64_t inputSeed{0x5C121DULL};  // scripted-input Rng, separate from the world's
 };
 
+// Upper bound for --ticks: about 4.6 hours of play at 60 Hz and 56 MB of
+// replay buffer, far from overflowing replayMaxBytes or exhausting memory.
+constexpr uint32_t kMaxTicks = 1'000'000;
+
 constexpr const char* kUsage =
     "usage: kfm_replay <command> ...\n"
     "  record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]\n"
@@ -59,7 +63,13 @@ bool parseArgs(int argc, char** argv, Args& a) {
     const char* v = nullptr;
     if (arg == "--ticks") {
       if (!takeValue(v)) return false;
-      a.ticks = static_cast<uint32_t>(std::strtoul(v, nullptr, 0));
+      char* end = nullptr;
+      const unsigned long long ticks = std::strtoull(v, &end, 0);
+      if (end == v || *end != '\0' || ticks > kMaxTicks) {
+        std::fprintf(stderr, "error: --ticks must be a number in 0..%u, got '%s'\n", kMaxTicks, v);
+        return false;
+      }
+      a.ticks = static_cast<uint32_t>(ticks);
     } else if (arg == "--seed") {
       if (!takeValue(v)) return false;
       a.seed = std::strtoull(v, nullptr, 0);
