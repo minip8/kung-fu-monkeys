@@ -68,7 +68,9 @@ protocol errors in 10 s; the `ResyncRequest` message (§6.3). `NetClient` (§6.1
 the lead controller law and constants, an anchor state that makes rollbacks deeper than the ring
 possible, the event journal, spectator delay and the host call sequence. The client's network
 mode (`NetSession`, `--connect`, the net overlay panel, per-tick input windows on the
-rate-controlled clock) and when `onRollback` is called (§6.9, §7).
+rate-controlled clock) and when `onRollback` is called (§6.9, §7). Match restart and shutdown
+semantics (§6.6), `kfm_server` as the one-match-per-process host (§6.5), `kfm_netsim` and the
+soak and network ctests plus the `server-headless` CI job (§9), M3 landed (§11).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -804,7 +806,16 @@ C++ server library is mature. The seam makes that swap a contained change.
 
 ### 6.5 Threads
 
-- Server: `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
+- Server (M3 as built, v0.17): `kfm_server` (`apps/server`) hosts one match per process:
+  `ServerHost` drives `NetServer` over a `WebRtcTransport` server from a drift-free 60 Hz clock
+  (tick k is due at base + k·10⁹/60 ns; a frame runs at most 8 ticks and a larger backlog is
+  dropped, counted and rebased), pumping every millisecond; it fills `--bots N` slots, announces
+  the next match 3 s after `MatchEnded` with a splitmix64-derived seed and the same roster,
+  prints one log line per join/leave/kick/resync/round/match and a periodic delta stats line,
+  and on SIGINT/SIGTERM or an exit limit shuts down (300 ms linger for the reliable lane).
+  `--rounds-to-win` is deliberately absent: it would change the content hash and reject every
+  client (content negotiation is M4's). The multi-match host below is the M6 shape.
+- Server (target): `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
   matches on a thread pool (the sim is cheap). One socket I/O thread timestamps arrivals and
   pushes to a single-producer single-consumer queue per match.
 - Native client: main thread (input → sim → render submit); libdatachannel's own service threads
@@ -841,6 +852,20 @@ C++ server library is mature. The seam makes that swap a contained change.
   the same token reclaims them and gets a fresh snapshot; a `Hello` whose token belongs to a
   still-connected peer takes its slots over (the client noticed the drop first). After the window,
   or on `Disconnect{Quit}`, the slots leave the roster (`PlayerLeft`).
+- Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` sends
+  `MatchConfig{config, startTick}` at once to every peer (and to anyone who joins before
+  `startTick`, after their snapshot); the message means "the world from `startTick` is a new
+  match whose snapshot follows". At `startTick` the server's world becomes `initialWorld` with
+  its tick set to `startTick` (ticks never go backwards, so client clocks, frame histories and the
+  assembler carry over; this is the one place outside a sim system that writes a `WorldState`
+  field, and it is safe because the sim only uses tick differences), every peer gets a
+  `Snapshot`, the bots are re-seeded and a `MatchRestarted` host event fires. The client drops
+  server checksums for ticks at or after the announced start until that snapshot loads, then
+  hard-loads it like a resync (`FrameReport::matchRestarted`), so an announced restart costs no
+  resync; an immediate restart under reliable-lane loss can cost one, which is why the host
+  announces 3 s ahead. `shutdown()` sends `Disconnect{ServerShuttingDown}` to every peer and
+  rejects later `Hello`s; `closeAll()` then drops them. `ServerConfig::maxPlayers` caps the slots
+  open to peers and bots.
 
 ### 6.7 Authority and abuse resistance
 
@@ -1140,6 +1165,24 @@ art is identical up to the export step, and nothing below the presentation layer
   keyboard input, screenshots). It is a developer tool, not a CI step: a browser download per
   run and timed waits would make the gate slow and flaky, and `client_smoke` already covers
   rendering on CI.
+- `kfm_netsim` (v0.17, `apps/netsim`, over the shared `kfm::netsim` harness in
+  `engine/net/netsim` that `kfm_netcode_tests` also uses): N clients and a server in one process
+  over the loopback emulator, `--clients --rtt --jitter --loss --dup --reorder --seconds --seed
+  --input-delay --spectators --join-at --cut C:D[:AT] --csv`, a per-client-per-second CSV and the
+  soak summary line, exiting non-zero on any mismatch, resync, rollback overflow or a client not
+  running at the end. Two ctests (label `soak`, 30 s of match each, identical numbers in Debug
+  and Release because the runs are deterministic): `netsim_10c_100ms_2pct` (depth max 11 / p99 9
+  / p50 8, 50 mispredicted ticks/s, lead 4.65 against 5.24, 0.035 substitutions/s, 1.1 KB/s up
+  and 4.1 KB/s down per client; 0.3 s Release, 2 s Debug) and `netsim_10c_300ms_10pct` (depth
+  24 / 22 / 20, lead 10.7 against 11.2, 0.47 substitutions/s, 1.4 / 7.2 KB/s; 0.7 s Release,
+  3.9 s Debug), both with zero mismatches, resyncs, overflows and hard jumps. `kfm_server_tests`
+  plays a full bot match to the end over the loopback and through the restart;
+  `kfm_server_network_tests` (label `network`) runs `ServerHost` over a real `WebRtcTransport`
+  with two in-process clients on the real clock (running after about 115 ms, 0 mismatches,
+  shutdown seen by both). The transport contract suite runs over `WebRtcTransport` in
+  `kfm_net_webrtc_tests` (11 cases, about 2.6 s, 20/20 consecutive runs clean). CI gains a
+  `server-headless` job (Ubuntu 26.04, Release, FetchContent) that builds `kfm_server` and runs
+  its ctest; the native matrix runs the `soak` and `network` labels through `ctest`.
 - Browser network check (v0.17): `apps/net-probe` (`kfm_net_probe --serve PORT` natively,
   `--connect ws://host:port` natively, `kfm_net_probe.html?connect=...` in the browser) runs a
   `WebRtcTransport` echo exchange: idle pings for RTT, then N messages per lane of varied sizes
@@ -1246,18 +1289,36 @@ commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS back
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
-Progress: M3 in progress (v0.17). `NetServer` and `NetClient` run end to end over the loopback
-emulator in `kfm_netcode_tests` (`tests/netcode/netsim.hpp`: one deterministic loop, 1 ms steps,
-the server ticking every 1/60 s, clients on their own rate-controlled clocks, `scriptedInput` fake
-humans). 10 clients, 100 ms RTT, ±10 ms jitter, 2 % loss, 60 s: no checksum mismatch or resync,
-rollback depth max 11 / p99 9 ticks, about 53 mispredicted ticks/s per client (the scripted aim
-jitters every tick), lead 4.7 ticks against a 5.3 target, 0.03 server substitutions/s per client,
-about 1.1 KB/s up and 4.0 KB/s down per client before transport overhead. 300 ms RTT and 10 %
-loss: still no desync, depth max 25 / p99 22, lead 10.7 (target 11.3). Both soaks take 1.7 s in
-Release and 12 s in Debug. Also covered: zero-latency tick-for-tick checksums, mid-match join,
-spectating, reconnect within and after the grace window, checksum resync after a corrupted
-client, input delay. Left for M3: `WebRtcTransport`, the `netsim` app and wiring the client and a
-dedicated server app to these classes.
+Progress: M3 landed in v0.17. `engine/net` holds the `ITransport` seam, the loopback
+transport with its deterministic emulator and the transport contract suite, the bit-packed
+message layer, `NetServer`, `NetClient` (prediction, a 32-state rollback ring plus an anchor,
+clock sync and lead control, the event journal, checksum resync, mid-match join, spectating,
+reconnect) and `WebRtcTransport` (libdatachannel natively, datachannel-wasm in the browser,
+server-hosted `ws://` signaling). `apps/server` is the headless dedicated server, `apps/netsim`
+the in-process soak tool, `apps/net-probe` the transport echo check, and `kfm_client --connect`
+(natively and as `kfm_client.html?connect=`) the network mode of the M2 client. Exit criterion:
+`kfm_netcode_tests` and the `netsim_10c_100ms_2pct` gate run 10 clients at 100 ms RTT, ±10 ms
+jitter and 2 % loss with no checksum mismatch or resync and a rollback depth bounded at 11 ticks
+(p99 9) against a 32-tick ring, and still no desync at 300 ms and 10 % loss (depth 24); a native
+`kfm_client` and the browser page each joined a real `kfm_server` with three bots over WebRTC on
+one machine (native: 16 s online across three rounds, 802 rollbacks of depth ≤ 3, 0 mismatches;
+browser: online with RTT about 3 ms, 60 fps, 0 console errors, 0 mismatches) and the WebRTC
+transport passed its browser echo check (200/200 on each lane, 0 lost). Numbers: the
+`kfm_netcode_tests` 60 s soaks give depth max 11 / p99 9 at 100 ms and 25 / 22 at 300 ms, about
+53 mispredicted ticks/s per client (the scripted aim jitters every tick), lead 4.7 against 5.3
+and 10.7 against 11.3, 0.03 and 0.5 server substitutions/s per client, about 1.1 KB/s up and
+4.0 KB/s down per client before transport overhead; a steady 10-player `AuthInputs` is about
+85 B and a full snapshot at most 4.7 KB. Verified locally on GCC 15 Debug, Release, ASan+UBSan
+(with the vptr check off: the no-RTTI engine has no typeinfo), the server-headless preset,
+Clang 21 and Emscripten 6; MSVC and Apple Clang are left to CI (`std::format` and
+`std::string::contains` are used for the first time, in `apps/server` and its tests). Sim
+change: the `InputFrame` present mask is the roster (§5.4); replay checksums unchanged, bench
+unchanged. Follow-ups: `wss://` signaling and tokens from a lobby service (M6), the warm-up
+round a joiner lands in (a solo player wins it; the server's own first round is drawn because the
+roster reaches the world one tick after start), bots that yield a slot to a human, a shared build
+id constant, retracted events undone on screen, reconnect-with-token from the UI, a server-chosen
+match config, multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
+a human playtest over a real link.
 
 Progress: M2 landed in v0.15 (pending human playtest of the exit criterion). The client opens
 an SDL3 window with a GL 4.3 core context (4.1 on macOS) through the vendored glad loader,

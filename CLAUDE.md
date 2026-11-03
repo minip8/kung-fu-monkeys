@@ -9,14 +9,18 @@ bananas that fly like boomerangs; dash is the base ability; a perfectly timed da
 banana). C++23 engine, deterministic simulation, rollback netcode, browser as the primary shipping
 client, with scripted bots and ML-trained agents planned.
 
-Milestones M0 (skeleton) and M1 (headless sim) have landed: build system, `engine/core`, the
+Milestones M0 (skeleton), M1 (headless sim), M2 (playable local client) and M3 (netcode) have
+landed: build system, `engine/core`, the
 full `engine/sim` tick pipeline (FFA rounds, Dash, Throw, banana flight and return, swept
 collision, the interaction rules table, modifiers, lifecycle) over `constexpr` content, a
 scripted input generator, `kfm_replay` (record, verify, bench) and the determinism gate over a
-corpus of empty and scripted replays. M2 (playable local client) is in progress on
-`feat/m2-playable-local`: `engine/platform` (SDL3 window + GL context, sokol_gfx, Dear ImGui,
-the SDL-free input sampler), `engine/presentation` (float math, fixed arena camera, RenderState
-builder, procedural meshes, the sokol renderer) and `apps/client`. `docs/architecture.md` is the
+corpus of empty and scripted replays; `engine/platform` (SDL3 window + GL context, sokol_gfx,
+Dear ImGui, the SDL-free input sampler), `engine/presentation` (float math, fixed arena camera,
+RenderState builder, procedural meshes, skinning, the sokol renderer) and `apps/client` (local
+play, bots, HUD, F1 overlay, the browser page); `engine/net` (`ITransport`, loopback + emulator,
+message layer, `NetServer`, `NetClient` with rollback and clock sync, `WebRtcTransport`),
+`apps/server`, `apps/netsim`, `apps/net-probe` and the client's `--connect` mode. Next is M4
+(content). `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -60,6 +64,10 @@ build/dev/apps/replay/kfm_replay stats --players 4 --matches 20   # feel-tuning 
 source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py [--page kfm_render_probe.html]
 #   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
 python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
+build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
+build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
+ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
+cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
 build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL]   # join a server
 #   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves; pause/step/time scale/tuning are off online
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
