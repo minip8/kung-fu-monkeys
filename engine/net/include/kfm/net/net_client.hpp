@@ -34,6 +34,13 @@
 // ticks against the saved state of that tick (skipped when it is older than
 // the ring); a mismatch sends ResyncRequest.
 //
+// Match restart: a MatchConfig{config, startTick} from the server announces
+// a new match whose world starts at startTick. The client keeps predicting
+// its current timeline, drops server checksums of ticks at or after
+// startTick (they describe the new world) and hard-loads the Snapshot the
+// server sends at startTick, then predicts forward as after a resync
+// (FrameReport::matchRestarted, snapshotLoaded and rolledBack are set).
+//
 // Events (§5.9) pass through an EventJournal: re-emitted events of a
 // re-simulation are deduplicated, abandoned undelivered ones dropped, events
 // of verified ticks are final.
@@ -105,6 +112,7 @@ struct FrameReport {
   uint32_t rollbacks{0};
   uint32_t maxDepth{0};  // ticks re-simulated by the deepest rollback
   bool snapshotLoaded{false};
+  bool matchRestarted{false};  // the snapshot was the start of an announced new match
 };
 
 struct ClientNetStats {
@@ -140,6 +148,7 @@ struct ClientNetStats {
   uint64_t checksumMismatches{0};
   uint64_t resyncRequests{0};
   uint64_t snapshotsLoaded{0};
+  uint64_t matchRestarts{0};  // snapshots of an announced new match loaded
   // Traffic.
   uint64_t bytesSent{0};
   uint64_t bytesReceived{0};
@@ -197,6 +206,8 @@ class NetClient {
   [[nodiscard]] bool spectator() const { return localSlots_ == 0; }
   [[nodiscard]] sim::PlayerMask localSlots() const { return localSlots_; }
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return matchConfig_; }
+  // Start tick of an announced match restart whose snapshot has not loaded yet.
+  [[nodiscard]] std::optional<Tick> pendingRestart() const { return restartTick_; }
 
   // L: the tick world() will step next.
   [[nodiscard]] Tick localTick() const { return world_.tick; }
@@ -285,6 +296,7 @@ class NetClient {
   sim::PlayerMask basePresent_{0};
   Tick marginFrom_{};  // margins of inputs before this tick are ignored
   bool awaitingResync_{false};
+  std::optional<Tick> restartTick_;  // announced, snapshot not loaded yet
   uint64_t resyncSentNs_{0};
   uint64_t lastRecvNs_{0};
   uint64_t nextPingNs_{0};

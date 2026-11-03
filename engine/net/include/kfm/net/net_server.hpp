@@ -32,6 +32,20 @@
 // its slots stay reserved (present, idle) for reconnectGraceTicks; a Hello
 // with the same token reclaims them and gets a fresh snapshot. A Hello whose
 // token belongs to a still-connected peer takes the slots over from it.
+//
+// Match restart (§6.6): restartMatch() announces MatchConfig{config,
+// startTick} to every active peer at once (and to anyone who joins before
+// startTick); at startTick the world becomes initialWorld(config) at that
+// tick, every active peer gets a Snapshot of it, and the bot Rng is
+// reseeded. Ticks never go back and the roster carries over. A client drops
+// the server checksums of ticks at or after startTick until it has loaded a
+// snapshot of the new match (they describe a world it cannot have
+// predicted), so a restart announced a few ticks ahead costs no resync.
+//
+// Shutdown: shutdown() sends Disconnect{ServerShuttingDown} to every peer
+// and rejects later Hellos with RejectReason::ServerShuttingDown; the host
+// keeps pumping briefly so the messages leave, then closeAll() (or
+// destroying the transport) closes the connections.
 #pragma once
 
 #include "kfm/core/rng.hpp"
@@ -79,6 +93,8 @@ struct ServerConfig {
   // Seed of the Rng that drives the bot slots.
   uint64_t botSeed{0xB07B07};
   sim::ScriptedInputConfig botConfig{};
+  // Player slots open to peers and bots: the lowest maxPlayers (1..kMaxPlayers).
+  uint8_t maxPlayers{sim::kMaxPlayers};
 };
 
 enum class ServerEventKind : uint8_t {
@@ -89,6 +105,7 @@ enum class ServerEventKind : uint8_t {
   PeerKicked,       // reason = DisconnectReason
   SlotsReleased,    // slots left the roster (quit, grace expired, kick)
   ResyncServed,     // a ResyncRequest was answered with a snapshot
+  MatchRestarted,   // restartMatch() took effect at this tick; snapshots sent
 };
 
 struct ServerEvent {
@@ -114,6 +131,7 @@ struct ServerStats {
   uint64_t joins{0};
   uint64_t reconnects{0};
   uint64_t rejects{0};
+  uint64_t matchRestarts{0};
   uint64_t bytesSent{0};
   uint64_t bytesReceived{0};
 };
@@ -159,6 +177,23 @@ class NetServer {
 
   // Disconnects a peer (Disconnect{Kicked}); its slots are released.
   void kick(PeerId peer, DisconnectReason reason = DisconnectReason::Kicked);
+
+  // Schedules a new match with `seed` and the then-current roster at
+  // startTick (raised to nextTick() when earlier); see the header comment.
+  // MatchConfig goes out now; a later call before startTick replaces it.
+  void restartMatch(uint64_t seed, Tick startTick, uint64_t botSeed);
+  [[nodiscard]] std::optional<Tick> pendingRestart() const;
+  // 0 for the first match, +1 per restart that took effect.
+  [[nodiscard]] uint32_t matchIndex() const { return matchIndex_; }
+  [[nodiscard]] const sim::MatchConfig& matchConfig() const { return config_.match; }
+
+  // Disconnect{ServerShuttingDown} to every peer; later Hellos are rejected.
+  // Idempotent. The peers stay until closeAll() or the transport closes them.
+  void shutdown();
+  [[nodiscard]] bool shuttingDown() const { return shuttingDown_; }
+  // Closes every peer on the transport and forgets it (slots released, no
+  // reservations).
+  void closeAll();
 
   [[nodiscard]] const sim::WorldState& world() const { return world_; }
   // The tick that tick() assembles next (== world().tick).
@@ -246,6 +281,15 @@ class NetServer {
   std::vector<std::byte> buf_;  // encode scratch, kMaxReliableBytes
   SnapshotMsg snapshot_{};      // encode scratch
   ConnectionEvents connEvents_{};
+  struct PendingRestart {
+    uint64_t seed{0};
+    uint64_t botSeed{0};
+    Tick startTick{};
+  };
+  std::optional<PendingRestart> restart_;
+  void applyRestart(Tick t, const PendingRestart& r);
+  uint32_t matchIndex_{0};
+  bool shuttingDown_{false};
 };
 
 }  // namespace kfm::net

@@ -52,6 +52,7 @@ void NetClient::resetSession() {
   basePresent_ = 0;
   marginFrom_ = Tick{};
   awaitingResync_ = false;
+  restartTick_.reset();
   resyncSentNs_ = 0;
   nextPingNs_ = 0;
   firstAuthTick_.reset();
@@ -234,6 +235,9 @@ void NetClient::onPacket(const Packet& packet) {
       MatchConfigMsg m;
       if (!decode(packet.data, m)) break;
       matchConfig_ = m.config;
+      // The world from startTick on is the new match: until its snapshot is
+      // loaded, server checksums of those ticks cannot match our timeline.
+      restartTick_ = m.startTick;
       return;
     }
     case MessageType::Disconnect: {
@@ -300,15 +304,23 @@ void NetClient::onSnapshot(const Packet& packet) {
     ++stats_.decodeErrors;
     return;
   }
+  const Tick snapTick = snapshot_.world.tick;
+  const bool restart = restartTick_ && snapTick >= *restartTick_;
   if (state_ == ClientState::Syncing) {
     haveSnapshot_ = true;
     matchConfig_ = snapshot_.config;
+    if (restart) restartTick_.reset();
     tryStart(nowNs_);
     return;
   }
   if (state_ != ClientState::Running) return;
-  // Resync: hard load, then predict forward to where we were.
-  const Tick snapTick = snapshot_.world.tick;
+  if (restart) {
+    restartTick_.reset();
+    matchConfig_ = snapshot_.config;
+    ++stats_.matchRestarts;
+    report_.matchRestarted = true;
+  }
+  // Resync or restart: hard load, then predict forward to where we were.
   const Tick runTo = spectator() ? snapTick : std::max(world_.tick, snapTick);
   loadSnapshot(runTo);
   awaitingResync_ = false;
@@ -547,6 +559,11 @@ void NetClient::checkChecksums() {
     if (!c.valid) continue;
     if (c.tick < base_) {
       c.valid = false;
+      continue;
+    }
+    if (restartTick_ && c.tick >= *restartTick_) {
+      c.valid = false;  // a checksum of the announced new match
+      ++stats_.checksumsSkipped;
       continue;
     }
     // The state at c.tick follows from the frames before it, which must all
