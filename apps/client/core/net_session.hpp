@@ -133,6 +133,9 @@ class NetSession {
   [[nodiscard]] uint8_t requestedSlots() const { return requested_; }
   // Whether the session ever reached Running (a disconnect then means "lost").
   [[nodiscard]] bool everRan() const { return everRan_; }
+  // Whether the server's Welcome arrived, so client().matchConfig() is the
+  // server's (arena, mode, power-up set, roster): the online lobby shows it.
+  [[nodiscard]] bool configKnown() const { return configKnown_; }
 
   // --- slots ------------------------------------------------------------------
   [[nodiscard]] sim::PlayerMask localSlots() const { return client_->localSlots(); }
@@ -200,6 +203,7 @@ class NetSession {
   std::unique_ptr<net::NetClient> client_;
   std::string failure_;
   bool everRan_{false};
+  bool configKnown_{false};
   bool slotsBound_{false};
   uint64_t nowNs_{0};
 

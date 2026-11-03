@@ -177,21 +177,24 @@ struct WorldState {
 static_assert(std::is_trivially_copyable_v<WorldState>);
 
 // Match configuration that seeds a fresh world. arena and mode are indices
-// into ContentDB::arenas / ::modes (0 = the default); they are not part of
-// WorldState but constant for the match like the content itself, so every
-// host carries the config next to the world (replay header, join path).
+// into ContentDB::arenas / ::modes (0 = the default); powerUps is the set of
+// power-ups the arena's spawners may draw (bit i = ContentDB::powerUps[i],
+// kAllPowerUps = the arena as defined). None of them is part of WorldState:
+// they are constant for the match like the content itself, so every host
+// carries the config next to the world (replay header, join path).
 struct MatchConfig {
   uint64_t seed{0};
   PlayerMask players{0};
   uint8_t arena{0};
   uint8_t mode{0};
+  uint16_t powerUps{kAllPowerUps};
   constexpr bool operator==(const MatchConfig&) const = default;
 };
 
 // The content a match with this config simulates with.
 [[nodiscard]] constexpr MatchContent matchContent(const ContentDB& content,
                                                   const MatchConfig& config) {
-  return MatchContent{content, config.arena, config.mode};
+  return MatchContent{content, config.arena, config.mode, config.powerUps};
 }
 
 // Builds the initial state for a match: tick 0, seeded RNG, lobby phase.

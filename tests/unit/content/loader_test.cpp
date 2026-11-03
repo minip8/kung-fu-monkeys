@@ -247,6 +247,45 @@ rounds_to_win = 1
   CHECK(&m.mode == &db.modes[1]);
 }
 
+TEST_CASE("--powerups lists resolve to a MatchConfig::powerUps set and back",
+          "[content][app][powerup]") {
+  sim::ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadEmbeddedContent(db, diag));
+  REQUIRE(db.powerUpCount >= 3);
+  const std::string first(db.powerUps[0].name.view());
+  const std::string third(db.powerUps[2].name.view());
+  const std::string thirdFirst = third + ',' + first;
+  const std::string firstThird = first + ',' + third;
+  const std::string firstLava = first + ",lava";
+  const std::string firstEmpty = first + ',';
+  uint16_t set = 0x1234;
+  std::string error;
+  REQUIRE(resolvePowerUpList(db, "", set, error));
+  CHECK(set == sim::kAllPowerUps);
+  REQUIRE(resolvePowerUpList(db, "none", set, error));
+  CHECK(set == 0);
+  REQUIRE(resolvePowerUpList(db, "all", set, error));
+  CHECK(set == sim::kAllPowerUps);
+  REQUIRE(resolvePowerUpList(db, thirdFirst, set, error));
+  CHECK(set == 0b101);
+  CHECK(powerUpListText(db, set) == firstThird);
+  CHECK(powerUpListText(db, sim::kAllPowerUps) == "all");
+  CHECK(powerUpListText(db, 0) == "none");
+  // Every power-up named one by one is "all" too (bits past the content
+  // do not matter).
+  const auto every = static_cast<uint16_t>((1u << db.powerUpCount) - 1u);
+  CHECK(powerUpListText(db, every) == "all");
+
+  set = 7;
+  CHECK_FALSE(resolvePowerUpList(db, firstLava, set, error));
+  CHECK(contains(error, "unknown power-up 'lava'"));
+  CHECK(contains(error, first));
+  CHECK(set == 7);  // unchanged on failure
+  CHECK_FALSE(resolvePowerUpList(db, firstEmpty, set, error));
+  CHECK(contains(error, "unknown power-up ''"));
+}
+
 TEST_CASE("syntax errors report file and line", "[content][loader]") {
   const std::string errors = loadErrors("[player]\nradius = = 1\n");
   CHECK(contains(errors, "test.toml:2: error: TOML syntax"));

@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cstdlib>
 #include <cstring>
 
 using namespace kfm;
@@ -141,6 +142,15 @@ TEST_CASE("InputFrame equality ignores absent players", "[sim][visit]") {
 }
 
 namespace {
+// The item of a freshly spawned entity. Aborts on a full pool (never the
+// case here), which also tells GCC's Release flow analysis that the index is
+// in range (-Wstringop-overflow otherwise).
+template <class PoolT>
+auto& spawned(PoolT& pool, EntityId id) {
+  if (!id.isValid() || id.index >= pool.items.size()) std::abort();
+  return pool.items[id.index];
+}
+
 // A world exercising every M1 entity type and field the visitor carries.
 WorldState richWorld() {
   WorldState s = sampleWorld();
@@ -158,10 +168,8 @@ WorldState richWorld() {
   s.rules.round = 2;
   s.rules.scores[3] = 1;
   s.rules.lastRoundWinner = PlayerId{3};
-  // The index checks bound the pool writes for GCC 15's -Wstringop-overflow in Release.
   const EntityId b = s.boomerangs.spawn();
-  REQUIRE(b.index < kMaxBoomerangs);
-  s.boomerangs.items[b.index] =
+  spawned(s.boomerangs, b) =
       Boomerang{PlayerId{1},
                 BoomerangPhase::Returning,
                 Transform{Vec2{2_fx, 3_fx}, Vec2{1_fx, 3_fx}, Vec2{1_fx, 0_fx}, Angle::fromBam(5)},
@@ -171,15 +179,12 @@ WorldState richWorld() {
                 1,
                 0};
   const EntityId k = s.pickups.spawn();
-  REQUIRE(k.index < kMaxPickups);
-  s.pickups.items[k.index] = Pickup{PickupKind::Banana, Vec2{-4_fx, 5_fx}, 0, 0};
+  spawned(s.pickups, k) = Pickup{PickupKind::Banana, Vec2{-4_fx, 5_fx}, 0, 0};
   // v0.20: a power-up pickup and a banana carrying projectile modifiers.
   const EntityId k2 = s.pickups.spawn();
-  REQUIRE(k2.index < kMaxPickups);
-  s.pickups.items[k2.index] = Pickup{PickupKind::PowerUp, Vec2{6_fx, -2_fx}, 4, 2};
+  spawned(s.pickups, k2) = Pickup{PickupKind::PowerUp, Vec2{6_fx, -2_fx}, 4, 2};
   const EntityId b2 = s.boomerangs.spawn();
-  REQUIRE(b2.index < kMaxBoomerangs);
-  Boomerang& big = s.boomerangs.items[b2.index];
+  Boomerang& big = spawned(s.boomerangs, b2);
   big.owner = PlayerId{0};
   big.pierce = 1;
   big.radiusMul = 2_fx;

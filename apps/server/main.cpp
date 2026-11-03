@@ -5,7 +5,8 @@
 //   kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bots N]
 //              [--bots-seed S] [--max-players N] [--token T]... [--restart-delay S]
 //              [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]
-//              [--content DIR] [--arena NAME] [--mode NAME] [--verbose]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
+//              [--verbose]
 //
 // --port P             signaling port (default 9000; 0 = ephemeral, printed)
 // --bind ADDR          signaling bind address (default all interfaces)
@@ -23,6 +24,9 @@
 //                      executable, else the copy built into it)
 // --arena NAME, --mode NAME   the matches' arena and mode (default: the first
 //                      of each); clients receive them in Welcome/MatchConfig
+// --powerups LIST      the power-ups the arena's spawners may draw: all
+//                      (default), none or comma-separated names
+//                      (shield,speed_boost); sent with the arena and mode
 // --verbose            match/round starts, per-peer stats, libdatachannel at Info
 //
 // Prints the content it loaded (directory, hash) and then "KFM_SERVER
@@ -72,6 +76,7 @@ struct Options {
   std::string contentDir;  // empty: next to the executable, else embedded
   std::string arena;       // names; empty = the first one
   std::string mode;
+  std::string powerUps;  // --powerups list; empty = all
   bool verbose{false};
 };
 
@@ -79,7 +84,9 @@ constexpr const char* kUsage =
     "usage: kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bots N]\n"
     "                  [--bots-seed S] [--max-players N] [--token T]... [--restart-delay S]\n"
     "                  [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]\n"
-    "                  [--content DIR] [--arena NAME] [--mode NAME] [--verbose]\n";
+    "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
+    "                  [--verbose]\n"
+    "  --powerups LIST  all (default), none or comma-separated power-up names\n";
 
 // How long peers get to receive Disconnect{ServerShuttingDown} before the
 // connections are closed.
@@ -155,6 +162,8 @@ template <typename T>
       o.arena = v;
     } else if (arg == "--mode") {
       o.mode = v;
+    } else if (arg == "--powerups") {
+      o.powerUps = v;
     } else {
       std::fprintf(stderr, "error: unknown argument '%s'\n%s", argv[i - 1], kUsage);
       return false;
@@ -213,11 +222,14 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
         content::loadAppContent(o.contentDir, content::executableDir(argv[0]), loaded, diag);
     if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
     std::string error;
-    if (!ok || !content::resolveMatchNames(loaded.db, o.arena, o.mode, match, error)) {
+    if (!ok || !content::resolveMatchNames(loaded.db, o.arena, o.mode, match, error) ||
+        !content::resolvePowerUpList(loaded.db, o.powerUps, match.powerUps, error)) {
       std::fprintf(stderr, "error: %s\n", ok ? error.c_str() : "the content failed to load");
       return EXIT_FAILURE;
     }
     std::printf("KFM_SERVER %s\n", loaded.describe().c_str());
+    std::printf("KFM_SERVER power-ups: %s\n",
+                content::powerUpListText(loaded.db, match.powerUps).c_str());
   }
   net::WebRtcTransport::initLogging(o.verbose ? net::WebRtcLogLevel::Info
                                               : net::WebRtcLogLevel::Error);

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.23 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.24 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -142,6 +142,20 @@ checksum changed and the corpus was regenerated; the rounds mode itself plays ex
 ships `rounds`, `deathmatch` and `survival`. Presentation (§7): RespawnBurst, ScorePop and
 TimerBanner effects, Respawn, Score and TimerWarning sounds, a per-mode HUD scoreboard and clock.
 Team modes stay open (§12).
+v0.24 changes: the lobby UI (§5.8, §6.6, §7, §9). `MatchConfig` gains `powerUps`, a per-match
+power-up set (bit i = `ContentDB::powerUps[i]`, default `kAllPowerUps`): spawners draw from
+their own set intersected with it, and an empty intersection neither spawns nor draws the RNG, so
+the default config plays exactly as before. It rides in `MatchContent`, the replay header
+(format version 3, a ninth optional manifest column) and the join messages (protocol version 3);
+`--powerups all|none|a,b` on `kfm_server`, `kfm_client` and `kfm_replay`. The local lobby gains
+a settings panel (`LobbyMenu`, headless in `kfm_client_core`): arena with a preview drawn from the
+def, mode with its key numbers, one toggle per power-up, bots, volume and mute, driven by the
+mouse, arrows/WASD or a joined pad's d-pad and stick (never by game buttons, so joins and any
+future ability button stay free), saved between runs (SDL's preference directory natively,
+`localStorage` in the browser; flags and URL parameters win; `--no-settings`). Online, the status
+window shows the server's `MatchConfig` read-only with the roster, and the match-over banner the
+announced next match. The HUD scoreboard becomes one card per slot (palette colour, label, score,
+power-up timers), the same card the lobby draws per slot (§7).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -701,7 +715,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   of its own; round start clears pickups. The loader keeps the arena's `maxAlive` sum at or below
   half the pickup pool so grounded bananas always find room. An arena without spawners never
   touches the RNG here (the default `dojo` has none, so the default match plays exactly as
-  before).
+  before). Per match (v0.24) `MatchConfig::powerUps` (bit i = power-up i, `kAllPowerUps` by
+  default, carried to the systems in `MatchContent::powerUps`) narrows every spawner's set: the
+  def is drawn from the intersection, and a spawner whose intersection is empty skips its beat
+  without touching the RNG. The lobby's power-up toggles and `--powerups` set it.
 - Shield: rows 20 and 24, §5.6.
 - The shipped set (`content/powerups.toml`), picked up in `dojo_powerups` (the dojo plus four
   spawners near the corners, first at 1 s and 4 s into a round, then every 8 s, one alive each):
@@ -1227,8 +1244,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   server tick), a `Snapshot` of the current world and a `PlayerJoined` broadcast, or `Reject`.
   Content negotiation (v0.18) is the content hash in `Hello`: equal hashes mean identical
   arena and mode lists, so the `MatchConfig` in `Welcome`, `Snapshot` and `MatchConfig`
-  (seed, roster, arena index, mode index; protocol version 2) is all a client needs to simulate
-  the server's arena and mode. A client steps with the config of the snapshot it last loaded
+  (seed, roster, arena index, mode index; protocol version 2; the power-up set as a u16 since
+  protocol version 3, v0.24) is all a client needs to simulate the server's arena, mode and
+  power-ups. A client steps with the config of the snapshot it last loaded
   (`NetClient::simConfig()`); an announced restart's config (`matchConfig()`) takes effect
   with the new match's snapshot, so a restart into another arena costs no resync.
   Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
@@ -1339,6 +1357,12 @@ into a standing lag of roughly 1/(1 − e^(−dt/τ)) frames, about 120 ms for r
 clock jump inside the tick batch gets a second call with the new states. Presentation draws only
 the events the journal delivers (§5.9), never the raw per-tick sink; retracted events are counted
 and not yet undone on screen.
+What is shown online (v0.24): until the match runs, the status window replaces the lobby; once the
+server's `Welcome` arrived (`NetSession::configKnown()`) it adds the server's `MatchConfig`
+read-only: the slot cards (you, online, free), the arena with the same preview as the local lobby,
+the mode with its key numbers and the power-up set. After `MatchEnded` the banner adds the
+announced next match (arena, mode, power-ups) from `NetClient::matchConfig()`. The browser page
+with `?connect=` runs the same code and shows the same. Nothing of it is editable on a client.
 
 ---
 
@@ -1417,6 +1441,44 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   while it waits to respawn), "first to K" and the match clock. The clock is `m:ss`, pops on
   `TimerWarning` and turns red in the last 10 s; a drawn match shows "Draw!". The browser page turns its query string into the same flags
   (`?autostart&bots=3&seed=7&overlay`).
+- M4 lobby (v0.24, `apps/client/core/lobby_menu.{hpp,cpp}`, `lobby_settings.{hpp,cpp}`, drawn
+  by `hud.cpp`). The lobby window shows a row of ten slot cards (the slot's palette colour as a
+  stripe, `P<n>`/`BOT<n>`, the device: keys left/right, pad #id, bot, or free and dimmed) and,
+  locally, the settings panel beside an arena preview. `LobbyMenu` is a headless state machine
+  over rows built from the content: Arena, Mode, one toggle per `PowerUpDef`, Bots (0–9, then
+  clamped to the free slots), Volume (steps of 10 %), Sound (mute). Up/Down move the focus
+  (wrapping), Left/Right change the focused value (arena and mode cycle with wrap-around, a
+  power-up toggles, numbers clamp); the mouse focuses a row and has the same arrows; Enter/Start
+  still starts. `MenuInput` turns raw `InputEvent`s into those four actions: arrows and WASD on
+  the keyboard, a pad's d-pad and left stick (fires once past 0.6, re-arms under 0.35, per pad),
+  and only for pads already bound to a slot, because an unbound pad's press is its join. It never
+  reads game bindings, so the join keys (Throw/Dash) and a future third ability button stay
+  free. A change applies at once to the lobby's `MatchSession` (`setArena`, `setMode`,
+  `setPowerUps`, `setBotCount`) and to `ClientAudio`; the -/= keys, joins taking bot slots and
+  the F1 audio panel flow back into the panel. The preview draws the arena def top-down (floor,
+  walls, pits with their rim, slow patches, spawn points in slot colours, power-up spawners
+  filled when the selected set leaves them something to spawn, hollow when it switches them
+  off) next to the mode's key numbers (`modeSummary`: "first to 10 eliminations, 3:00, respawn
+  2.0 s (1.5 s protected)") and the power-up set. Persistence: the lobby writes the settings
+  back into `ClientOptions` as names (`--arena`, `--mode`, `--powerups`, `--bots`, `--volume`,
+  `--mute`) and saves them as `key=value` lines (`settings.txt` in `SDL_GetPrefPath("kfm",
+  "kung-fu-monkeys")` natively, `localStorage['kfm.settings']` in the browser). Startup applies
+  defaults, then the saved text (a name the content no longer has, a bad number or an unknown
+  key is skipped with a warning, never fatal), then the command line again, so a flag or URL
+  parameter (`?arena=pillars&mode=deathmatch&powerups=shield,big_banana`) wins for the run;
+  `--no-settings` neither reads nor writes (the smoke tests use it). In network mode the local
+  lobby hides the panel: the server owns the match. First browser run (headless Chromium, the
+  wasm build): `?arena=pillars&powerups=shield,big_banana` showed in the panel, arrow and WASD
+  presses changed the mode and a power-up, `localStorage['kfm.settings']` held the new set, a
+  reload without parameters restored it, `?no-settings` ignored it; no console errors.
+- HUD layout (v0.24): the scoreboard is one card per present slot along the top, the lobby's
+  card style, sharing one width so the row never jitters and shrinking to fit narrow windows:
+  the label and the score on the first line (round-win pips in rounds and survival,
+  eliminations with the respawn countdown in deathmatch), the slot's live power-up timers on the
+  second (a pie per power-up in its colour with whole seconds, only when someone has one); a
+  card dims while its slot waits to respawn or is out of the round. The mode line and clock sit
+  under the cards. Over each monkey the same pies, smaller and without numbers, follow the ammo
+  pips.
 
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
@@ -1605,9 +1667,9 @@ is in `platform`.
   `apps/client/client_audio.{hpp,cpp}` (`ClientAudio`: `init`, `frame`, `onUserGesture`,
   `click`, `setMuted`, `setVolumePercent`), which the lobby UI uses for its own controls and
   clicks.
-- Not yet: music, distance attenuation, per-player local-vs-remote mixing and saving the settings
-  between runs (they live in `ClientOptions` for the run); no event exists yet for power-ups (M4
-  power-ups add theirs to the table).
+- Not yet: music, distance attenuation, per-player local-vs-remote mixing; no event exists yet
+  for power-ups (M4 power-ups add theirs to the table). Volume and mute are saved with the lobby
+  settings since v0.24 (the lobby panel edits them too).
 
 Character drawing sits behind one interface in `presentation` so that nothing else knows
 whether a character is a skinned mesh or a quad. The earlier plan, pre-rendered 8-direction
@@ -1738,6 +1800,10 @@ art is identical up to the export step, and nothing below the presentation layer
   wall slides, bounces, pit falls and slow patches are under the cross-platform gate. The
   embedded content depends on the globbed file list as well as the files (a list file rewritten
   only when it changes), so adding, moving or deleting a TOML file re-embeds before a regen.
+  v0.24: replays (format version 3) store the per-match power-up set; a ninth optional column
+  names it (`all`, `none` or comma-separated names, default all), and
+  `scripted_4p_powerset_1800t` (dojo_powerups with only shield and big_banana) keeps the
+  intersection under the gate.
   v0.23 adds `scripted_4p_deathmatch_3600t` and
   `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
   survival flow are under the cross-platform gate. v0.20 adds `scripted_4p_powerups_1800t`

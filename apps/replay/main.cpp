@@ -8,7 +8,8 @@
 //   kfm_replay record-scripted <out.kfmr> [--ticks N] [--seed S] [--players P] [--input-seed I]
 //                                         [--stats]
 //     record-*, bench and stats also take --arena NAME --mode NAME (default:
-//     the first of each); the replay header stores their indices
+//     the first of each) and --powerups LIST (all, none or comma-separated
+//     names; default all); the replay header stores their indices and the set
 //   kfm_replay info <in.kfmr>
 //   kfm_replay checksums <in.kfmr>              prints "<tick> <hex>" per tick
 //   kfm_replay verify <in.kfmr> <expected.txt>  exit 0 when identical
@@ -60,10 +61,12 @@ struct Args {
   std::string contentDir;     // empty: the embedded content
   std::string arena;          // names; empty = index 0
   std::string mode;
+  std::string powerUps;  // --powerups list; empty = all
 };
 
 // The content every command runs with, loaded once in main() (--content or
-// the embedded copy), and the arena/mode indices of --arena/--mode.
+// the embedded copy), and the arena/mode indices of --arena/--mode with the
+// power-up set of --powerups.
 content::LoadedContent gContent;
 MatchConfig gMatch{};
 
@@ -78,8 +81,9 @@ constexpr uint32_t kMaxTicks = 1'000'000;
 constexpr const char* kUsage =
     "usage: kfm_replay <command> ...\n"
     "  record-empty <out.kfmr> [--ticks N] [--seed S] [--players P] [--arena A] [--mode M]\n"
+    "               [--powerups LIST]\n"
     "  record-scripted <out.kfmr> [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
-    "                  [--arena A] [--mode M]\n"
+    "                  [--arena A] [--mode M] [--powerups LIST]\n"
     "  info <in.kfmr>\n"
     "  checksums <in.kfmr>\n"
     "  verify <in.kfmr> <expected.checksums>\n"
@@ -88,7 +92,8 @@ constexpr const char* kUsage =
     "  stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
     "        [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N]\n"
     "        [--dash-attack-one-in N] [--quiet]\n"
-    "  every command: --content DIR   content/*.toml to use (default: built in)\n";
+    "  every command: --content DIR   content/*.toml to use (default: built in)\n"
+    "  record-*, bench, stats: --arena A --mode M --powerups all|none|name,name...\n";
 
 bool parseArgs(int argc, char** argv, Args& a) {
   if (argc < 2) return false;
@@ -145,11 +150,12 @@ bool parseArgs(int argc, char** argv, Args& a) {
       if (arg == "--dash-one-in") a.bot.dashOneIn = static_cast<uint16_t>(n);
       if (arg == "--dodge-per-256") a.bot.dodgePer256 = static_cast<uint8_t>(n);
       if (arg == "--dash-attack-one-in") a.bot.dashAttackOneIn = static_cast<uint16_t>(n);
-    } else if (arg == "--content" || arg == "--arena" || arg == "--mode") {
+    } else if (arg == "--content" || arg == "--arena" || arg == "--mode" || arg == "--powerups") {
       if (!takeValue(v)) return false;
       if (arg == "--content") a.contentDir = v;
       if (arg == "--arena") a.arena = v;
       if (arg == "--mode") a.mode = v;
+      if (arg == "--powerups") a.powerUps = v;
     } else if (arg == "--stats") {
       a.stats = true;
     } else if (arg == "--quiet") {
@@ -237,6 +243,7 @@ ReplayHeader headerFor(const Args& a) {
   h.players = static_cast<PlayerMask>((1u << a.players) - 1u);
   h.arena = gMatch.arena;
   h.mode = gMatch.mode;
+  h.powerUps = gMatch.powerUps;
   h.tickCount = a.ticks;
   return h;
 }
@@ -258,10 +265,11 @@ int writeReplay(const Args& a, const ReplayHeader& h, MakeFrame&& makeFrame) {
     std::fprintf(stderr, "error: cannot write %s\n", a.positional[0].c_str());
     return 1;
   }
-  std::printf("wrote %s: %u ticks, %u players, seed 0x%llx, arena %s, mode %s, %zu bytes\n",
-              a.positional[0].c_str(), h.tickCount, a.players,
-              static_cast<unsigned long long>(h.seed), gContent.db.arenaAt(h.arena).name.cStr(),
-              gContent.db.modeAt(h.mode).name.cStr(), w.bytesWritten());
+  std::printf(
+      "wrote %s: %u ticks, %u players, seed 0x%llx, arena %s, mode %s, power-ups %s, %zu bytes\n",
+      a.positional[0].c_str(), h.tickCount, a.players, static_cast<unsigned long long>(h.seed),
+      gContent.db.arenaAt(h.arena).name.cStr(), gContent.db.modeAt(h.mode).name.cStr(),
+      content::powerUpListText(gContent.db, h.powerUps).c_str(), w.bytesWritten());
   return 0;
 }
 
@@ -451,14 +459,16 @@ int cmdInfo(const Args& a) {
       nameOr(same && h.arena < gContent.db.arenaCount, gContent.db.arenaAt(h.arena).name);
   const std::string mode =
       nameOr(same && h.mode < gContent.db.modeCount, gContent.db.modeAt(h.mode).name);
+  const std::string powerUps = same ? content::powerUpListText(gContent.db, h.powerUps) : "?";
   std::printf(
       "replay %s\n  version      %u\n  seed         0x%llx\n  content hash 0x%08x%s\n"
       "  build hash   0x%08x\n  players      0x%03x\n  arena        %u (%s)\n"
-      "  mode         %u (%s)\n  ticks        %u\n  bytes        %zu\n  loaded %s\n",
+      "  mode         %u (%s)\n  power-ups    0x%04x (%s)\n  ticks        %u\n"
+      "  bytes        %zu\n  loaded %s\n",
       a.positional[0].c_str(), kReplayVersion, static_cast<unsigned long long>(h.seed),
       h.contentHash, same ? " (matches the loaded content)" : " (differs from the loaded content)",
-      h.buildHash, h.players, h.arena, arena.c_str(), h.mode, mode.c_str(), h.tickCount,
-      bytes.size(), gContent.describe().c_str());
+      h.buildHash, h.players, h.arena, arena.c_str(), h.mode, mode.c_str(), h.powerUps,
+      powerUps.c_str(), h.tickCount, bytes.size(), gContent.describe().c_str());
   return 0;
 }
 
@@ -541,7 +551,8 @@ int main(int argc, char** argv) {
     return 1;
   }
   std::string error;
-  if (!content::resolveMatchNames(gContent.db, a.arena, a.mode, gMatch, error)) {
+  if (!content::resolveMatchNames(gContent.db, a.arena, a.mode, gMatch, error) ||
+      !content::resolvePowerUpList(gContent.db, a.powerUps, gMatch.powerUps, error)) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
     return 2;
   }

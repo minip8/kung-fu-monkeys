@@ -95,7 +95,7 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       if (!value(i, out.seed)) return false;
     } else if (arg == "--players-seed") {
       if (!value(i, out.playersSeed)) return false;
-    } else if (arg == "--content" || arg == "--arena" || arg == "--mode") {
+    } else if (arg == "--content" || arg == "--arena" || arg == "--mode" || arg == "--powerups") {
       if (i + 1 >= args.size()) {
         error = std::string(arg) + " needs a value";
         return false;
@@ -105,11 +105,15 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         out.contentDir = v;
       } else if (arg == "--arena") {
         out.arena = v;
-      } else {
+      } else if (arg == "--mode") {
         out.mode = v;
+      } else {
+        out.powerUps = v;
       }
     } else if (arg == "--no-hot-reload") {
       out.hotReload = false;
+    } else if (arg == "--no-settings") {
+      out.settings = false;
     } else if (arg == "--connect" || arg == "--token" || arg == "--stun") {
       if (i + 1 >= args.size()) {
         error = std::string(arg) + " needs a value";

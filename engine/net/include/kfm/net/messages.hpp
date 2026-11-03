@@ -44,8 +44,8 @@ namespace kfm::net {
 
 // Bumped on any change to a message layout. Exchanged in Hello.
 // v2 (M4): MatchConfig in Welcome, Snapshot and MatchConfig carries arena
-// and mode.
-inline constexpr uint16_t kProtocolVersion = 2;
+// and mode. v3 (M4 lobby): and the per-match power-up set.
+inline constexpr uint16_t kProtocolVersion = 3;
 
 // Inputs per Input / AuthInputs message: the newest tick and up to 15 before
 // it (§6.3: the last 8–16 are resent every packet).

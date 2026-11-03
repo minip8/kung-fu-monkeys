@@ -2,7 +2,9 @@
 
 #include "kfm/content/loader.hpp"
 
+#include <algorithm>
 #include <cstdio>
+#include <optional>
 #include <system_error>
 #include <utility>
 
@@ -105,6 +107,50 @@ bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena, st
   }
   config = c;
   return true;
+}
+
+bool resolvePowerUpList(const sim::ContentDB& content, std::string_view list, uint16_t& powerUps,
+                        std::string& error) {
+  if (list.empty() || list == "all") {
+    powerUps = sim::kAllPowerUps;
+    return true;
+  }
+  if (list == "none") {
+    powerUps = 0;
+    return true;
+  }
+  uint16_t set = 0;
+  while (true) {
+    const size_t comma = list.find(',');
+    const std::string_view name = list.substr(0, comma);
+    const std::optional<uint8_t> i = content.findPowerUp(name);
+    if (!i) {
+      error = "unknown power-up '" + std::string(name) +
+              "' (content has: " + nameList(content.powerUps, content.powerUpCount) +
+              "; or all, none)";
+      return false;
+    }
+    set = static_cast<uint16_t>(set | (1u << *i));
+    if (comma == std::string_view::npos) break;
+    list.remove_prefix(comma + 1);
+  }
+  powerUps = set;
+  return true;
+}
+
+std::string powerUpListText(const sim::ContentDB& content, uint16_t powerUps) {
+  const uint8_t count = std::min<uint8_t>(content.powerUpCount, sim::kMaxPowerUps);
+  const uint32_t all = (uint32_t{1} << count) - 1u;
+  const uint32_t set = powerUps & all;
+  if (set == all) return "all";
+  if (set == 0) return "none";
+  std::string s;
+  for (uint8_t i = 0; i < count; ++i) {
+    if ((set & (1u << i)) == 0) continue;
+    if (!s.empty()) s += ',';
+    s += content.powerUps[i].name.view();
+  }
+  return s;
 }
 
 ContentWatcher::ContentWatcher(std::filesystem::path dir, double intervalSeconds)
