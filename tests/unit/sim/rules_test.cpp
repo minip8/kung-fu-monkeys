@@ -284,3 +284,48 @@ TEST_CASE("spawn uses ranks among present slots, not raw slots", "[sim][rules]")
   CHECK(playerAt(s, PlayerId{9}).transform.pos ==
         content.arena.spawnPoints[(first + 1) % content.arena.spawnPointCount]);
 }
+
+TEST_CASE("the frame's present mask is the roster: joiners spawn at the next round",
+          "[sim][rules]") {
+  const ContentDB& content = defaultContent();
+  WorldState s = makePlayingWorld(5, 0b011);
+  InputFrame f = frameFor(s);
+  f.present = 0b111;  // slot 2 joins mid-round
+  EventLog log;
+  runTicks(s, f, 1, content, log);
+  CHECK(s.rules.present == 0b111);
+  CHECK(s.playerBySlot(PlayerId{2}) == nullptr);  // waits for the next round
+  CHECK(s.rules.phase == MatchPhase::Playing);
+
+  // Slot 1 leaves; the round ends when only slot 0 is left standing.
+  f.present = 0b101;
+  removePlayers(s, {1});
+  runTicks(s, f, 1, content, log);
+  CHECK(s.rules.present == 0b101);
+  REQUIRE(s.rules.phase == MatchPhase::RoundEnded);
+  runTicks(s, f, content.mode.roundEndTicks + 1, content, log);
+  CHECK(s.rules.phase == MatchPhase::RoundStarting);
+  CHECK(s.playerBySlot(PlayerId{0}) != nullptr);
+  CHECK(s.playerBySlot(PlayerId{1}) == nullptr);
+  CHECK(s.playerBySlot(PlayerId{2}) != nullptr);
+}
+
+TEST_CASE("a player who left the roster is despawned at the next round start", "[sim][rules]") {
+  const ContentDB& content = defaultContent();
+  WorldState s = makePlayingWorld(6, 0b111);
+  InputFrame f = frameFor(s);
+  f.present = 0b011;  // slot 2 drops out but its monkey is still standing
+  EventLog log;
+  runTicks(s, f, 1, content, log);
+  REQUIRE(s.playerBySlot(PlayerId{2}) != nullptr);
+  removePlayers(s, {1});  // slot 0 and the absent slot 2 remain: no round end yet
+  runTicks(s, f, 1, content, log);
+  CHECK(s.rules.phase == MatchPhase::Playing);
+  removePlayers(s, {2});
+  runTicks(s, f, 1, content, log);
+  REQUIRE(s.rules.phase == MatchPhase::RoundEnded);
+  // Slot 2 is still absent at the next round start, so it is not respawned.
+  runTicks(s, f, content.mode.roundEndTicks + 1, content, log);
+  CHECK(s.playerBySlot(PlayerId{2}) == nullptr);
+  CHECK(s.players.size() == 2);
+}

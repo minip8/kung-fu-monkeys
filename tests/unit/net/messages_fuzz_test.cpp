@@ -185,6 +185,9 @@ TEST_CASE("Control decoders survive arbitrary bytes", "[net][messages][fuzz]") {
   CHECK(fuzz(MessageType::Disconnect, std::vector<DisconnectMsg>{{DisconnectReason::Timeout}},
              5'000, 12)
             .accepted > 0);
+  CHECK(fuzz(MessageType::ResyncRequest, std::vector<ResyncRequestMsg>{{Tick{1234}, 0xC0FFEEu}},
+             5'000, 14)
+            .accepted > 0);
 }
 
 TEST_CASE("Snapshot decoder survives arbitrary bytes", "[net][messages][fuzz]") {
@@ -211,6 +214,7 @@ TEST_CASE("Every decoder rejects every other message type", "[net][messages][fuz
   PlayerLeftMsg i;
   MatchConfigMsg j;
   DisconnectMsg k;
+  ResyncRequestMsg l;
   auto snap = std::make_unique<SnapshotMsg>();
   CHECK(decode(ping, a).error() == DecodeError::WrongType);
   CHECK(decode(ping, b).error() == DecodeError::WrongType);
@@ -223,5 +227,6 @@ TEST_CASE("Every decoder rejects every other message type", "[net][messages][fuz
   CHECK(decode(ping, i).error() == DecodeError::WrongType);
   CHECK(decode(ping, j).error() == DecodeError::WrongType);
   CHECK(decode(ping, k).error() == DecodeError::WrongType);
+  CHECK(decode(ping, l).error() == DecodeError::WrongType);
   CHECK(decode(ping, *snap).error() == DecodeError::WrongType);
 }

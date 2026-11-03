@@ -189,6 +189,8 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
   roundTrip(MatchConfigMsg{sim::MatchConfig{0xFFFF'FFFF'FFFF'FFFFull, 0x2AA}, Tick{60}});
   for (uint8_t r = 0; r < kDisconnectReasonCount; ++r)
     roundTrip(DisconnectMsg{static_cast<DisconnectReason>(r)});
+  roundTrip(ResyncRequestMsg{Tick{0}, 0});
+  roundTrip(ResyncRequestMsg{Tick{0xFFFF'FFFFu}, 0xDEAD'BEEFu});
 }
 
 TEST_CASE("Encoders refuse invalid messages", "[net][messages]") {
@@ -339,6 +341,8 @@ TEST_CASE("Snapshot round-trips and stays far below the reliable limit", "[net][
   sim::WorldState& w = full->world;
   while (!w.players.full()) {
     const EntityId id = w.players.spawnAt(w.players.size());
+    // Bounds the index for GCC 15's -Wstringop-overflow in Release.
+    if (id.index >= sim::kMaxPlayers) FAIL("spawnAt failed");
     w.players.items[id.index].id = PlayerId{static_cast<PlayerId::rep>(id.index)};
     w.players.items[id.index].modifiers.count = sim::kMaxModifiers;
   }
