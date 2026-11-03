@@ -84,7 +84,7 @@ inline Player& placePlayer(WorldState& s, PlayerId id, Vec2 pos) {
 }
 
 // Spawns a banana owned by `owner` at pos moving with vel (units/tick).
-// damage and pierce come from content.
+// damage comes from content.
 inline EntityId spawnBanana(WorldState& s, PlayerId owner, Vec2 pos, Vec2 vel,
                             BoomerangPhase phase = BoomerangPhase::Outbound,
                             const ContentDB& content = defaultContent()) {
@@ -97,7 +97,6 @@ inline EntityId spawnBanana(WorldState& s, PlayerId owner, Vec2 pos, Vec2 vel,
   b.transform.prevPos = pos;
   b.transform.vel = vel;
   b.damage = content.boomerang.damage;
-  b.pierce = content.boomerang.pierce;
   return id;
 }
 

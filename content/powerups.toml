@@ -14,9 +14,8 @@
 #   { kind = "ability", slot = "dash" | "throw" | "ability", ability = "<ability name>" }
 #       the slot runs that ability (any kind: buttons belong to slots) while live;
 #       it switches when the slot is idle, its cooldown capped at the new def's.
-#   { kind = "projectile", speed_mul, radius_mul, damage_add, pierce }
-#       applied to each banana thrown while live and kept by that banana
-#       (pierce ors with [boomerang] pierce, which is already on by default).
+#   { kind = "projectile", speed_mul, radius_mul, damage_add }
+#       applied to each banana thrown while live and kept by that banana.
 #   { kind = "tag", tag = "shielded" | "invulnerable" }
 #       shielded absorbs one banana hit or dash attack, then the power-up ends.
 # The same power-up picked up again restarts its timer.

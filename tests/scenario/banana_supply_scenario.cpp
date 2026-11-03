@@ -3,7 +3,7 @@
 //
 // - A perfect catch needs room below ammoMax (v0.16): a full-ammo perfect
 //   dash into a non-own banana declines the catch and takes the hit, and the
-//   banana flies on through it like any other hit (bananas pierce, v0.27).
+//   banana flies on through it like any other hit (v0.27).
 // - Supply = ammo held + bananas in flight + pickups. It never reaches 0
 //   while two or more players are alive (a banana that hits flies on and
 //   comes home or grounds; a dash attack leaves the attacker holding its

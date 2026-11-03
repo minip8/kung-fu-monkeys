@@ -206,7 +206,6 @@ void visit(V& v, BoomerangDef& d) {
   visit(v, d.restitution);
   visit(v, d.spawnOffset);
   v.u8(d.damage);
-  v.u8(d.pierce);
 }
 template <class V>
 void visit(V& v, PickupDef& d) {
@@ -242,7 +241,6 @@ void visit(V& v, ProjectileModifier& m) {
   visit(v, m.speedMul);
   visit(v, m.radiusMul);
   v.u8(m.damageAdd);
-  v.u8(m.pierce);
 }
 template <class V>
 void visit(V& v, PowerUpGrant& g) {
@@ -462,13 +460,6 @@ void visit(V& v, Boomerang& b) {
   v.u16(b.ticksAlive);
   v.u16(b.ticksInPhase);
   v.u8(b.damage);
-  v.u8(b.pierce);
-  if constexpr (V::kIsReader) {
-    if (b.pierce > 1) {
-      v.markInvalid();
-      b.pierce = 1;
-    }
-  }
   visit(v, b.speedMul);  // projectile modifiers (§5.8)
   visit(v, b.radiusMul);
 }

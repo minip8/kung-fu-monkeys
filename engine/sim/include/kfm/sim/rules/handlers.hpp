@@ -40,7 +40,7 @@ bool dashAttack(WorldState& s, const MatchContent& content, EntityId a, EntityId
 // away (Player::knockback); PlayerSlammed.
 bool slamPushesPlayer(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                       const Contact& contact, EventSink& sink);
-// Prio 30, rules/damage.cpp: hp loss, HitStun, elimination, banana grounds unless pierce.
+// Prio 30, rules/damage.cpp: hp loss, HitStun, elimination, the banana flies on.
 bool damagePlayer(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                   const Contact& contact, EventSink& sink);
 // Prio 40, rules/auto_catch.cpp: the owner touches its returning banana.

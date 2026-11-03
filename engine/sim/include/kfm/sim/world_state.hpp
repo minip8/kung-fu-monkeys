@@ -104,7 +104,6 @@ struct Boomerang {
   uint16_t ticksAlive{0};
   uint16_t ticksInPhase{0};
   uint8_t damage{1};
-  uint8_t pierce{0};  // 0/1
   // Projectile modifiers of the thrower's power-ups, snapshotted at the throw
   // (§5.8): speed and contact radius are the BoomerangDef's times these.
   Fixed speedMul{Fixed::one()};

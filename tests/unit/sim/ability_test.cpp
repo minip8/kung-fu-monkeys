@@ -288,7 +288,6 @@ TEST_CASE("throw timeline: banana spawns on the Startup -> Active tick", "[sim][
   CHECK(b->owner == kP0);
   CHECK(b->phase == BoomerangPhase::Outbound);
   CHECK(b->damage == content.boomerang.damage);
-  CHECK(b->pierce == content.boomerang.pierce);
   CHECK(b->ticksAlive == 0);
   CHECK(near(b->transform.pos.x, origin.x));
   CHECK(near(b->transform.pos.y, origin.y + content.boomerang.spawnOffset));

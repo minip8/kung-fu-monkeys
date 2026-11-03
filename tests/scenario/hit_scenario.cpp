@@ -1,6 +1,6 @@
 // End-to-end hits through step() with scripted inputs (architecture §5.6,
-// §5.7, §9): a thrown banana kills and flies on through its victim (bananas
-// pierce, v0.27); a missed banana returns to its thrower.
+// §5.7, §9): a thrown banana kills and flies on through its victim (v0.27); a
+// missed banana returns to its thrower.
 //
 // These exercise Throw (abilitySystem), flight (projectileSystem) and swept
 // collision together with the interaction rules.

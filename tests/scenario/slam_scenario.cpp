@@ -102,7 +102,7 @@ TEST_CASE("slam: before the impact a banana hits; the cooldown holds", "[scenari
     EventLog log;
     pressOnce(s, kP0, kAbility, c, log);
     idle(s, slamDef().startupTicks, c, log);
-    // The banana hits the slammer, then pierces on into player 1 at (2, 0).
+    // The banana hits the slammer, then flies on into player 1 at (2, 0).
     const SimEvent* hit = findEvent(log, EventKind::PlayerHit);
     REQUIRE(hit != nullptr);
     CHECK(hit->player == kP0);

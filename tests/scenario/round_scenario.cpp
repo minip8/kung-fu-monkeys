@@ -17,9 +17,6 @@ namespace {
 void eliminate(WorldState& s, PlayerId victim, PlayerId attacker, EventLog& log) {
   const Player& p = playerAt(s, victim);
   const EntityId banana = spawnBanana(s, attacker, p.transform.pos, Vec2::zero());
-  // Non-piercing, so it grounds into a pickup and the round reset has one to
-  // clear (bananas pierce by default, v0.27).
-  s.boomerangs.items[banana.index].pierce = 0;
   Contact c;
   c.kindA = EntityKind::Player;
   c.a = s.players.idAt(victim.value);
@@ -56,9 +53,9 @@ TEST_CASE("a three-player round: last one standing wins, then everyone respawns"
   CHECK(s.playerBySlot(PlayerId{2}) == nullptr);
   CHECK(s.rules.phase == MatchPhase::Playing);
   CHECK(countEvents(log, EventKind::PlayerEliminated) == 1);
-  CHECK(countEvents(log, EventKind::BoomerangGrounded) == 1);
-  CHECK(countEvents(log, EventKind::PickupSpawned) == 1);
-  CHECK(s.pickups.size() == 1);
+  // The banana flies on (v0.27); the round reset below clears it.
+  CHECK(countEvents(log, EventKind::BoomerangGrounded) == 0);
+  CHECK(s.boomerangs.size() == 1);
   log.clear();
 
   // Player 1 falls: player 0 wins the round.

@@ -155,40 +155,6 @@ TEST_CASE("big banana: wider and slower bananas that hit what a normal one misse
   }
 }
 
-// Bananas pierce by default ([boomerang] pierce); the projectile grant's pierce
-// still ors onto a content set whose base banana stops on the first hit.
-TEST_CASE("pierce grant: one banana hits two players, even after the power-up expired",
-          "[scenario][powerup]") {
-  ContentDB content = powerUpContent();
-  content.boomerang.pierce = 0;
-  ProjectileModifier pierce;
-  pierce.pierce = 1;
-  const uint8_t kPierce = content.powerUpCount;
-  addPowerUp(content, "piercing_banana", 600, {projectileGrant(pierce)});
-  WorldState s = makePlayingWorld(43, 0b1111, content);
-  placePlayer(s, kP0, at(-7, 0));
-  placePlayer(s, kP1, at(-3, 0));
-  placePlayer(s, kP2, at(0, 0));
-  placePlayer(s, PlayerId{3}, at(0, 8));
-  // Live for 3 ticks: the throw (startup 2) still sees it, the hits do not.
-  givePowerUp(playerAt(s, kP0), kPierce, 3);
-  EventLog log;
-  const EntityId id = throwRight(s, content, log);
-  const Boomerang* thrown = s.boomerangs.get(id);
-  REQUIRE(thrown != nullptr);
-  REQUIRE(thrown->pierce == 1);
-  log = idle(s, content, 2);
-  REQUIRE(playerAt(s, kP0).modifiers.count == 0);  // expired before any hit
-  log = idle(s, content, 40);
-  int hitsByIt = 0;
-  for (const SimEvent& e : log) {
-    if (e.kind == EventKind::PlayerHit && e.entity == id) ++hitsByIt;
-  }
-  CHECK(hitsByIt == 2);
-  CHECK(s.playerBySlot(kP1) == nullptr);
-  CHECK(s.playerBySlot(kP2) == nullptr);
-}
-
 TEST_CASE("triple banana: ammoMax +2 with a top-up, clamped back on expiry",
           "[scenario][powerup]") {
   const ContentDB content = powerUpContent();
