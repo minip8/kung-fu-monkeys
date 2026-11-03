@@ -32,8 +32,8 @@ ArenaDef blockArena() {
   return a;
 }
 
-const statics::MoveParams kSlide{.radius = Fixed::half(), .response = statics::Response::Slide};
-const statics::MoveParams kBounce{
+constexpr statics::MoveParams kSlide{.radius = Fixed::half(), .response = statics::Response::Slide};
+constexpr statics::MoveParams kBounce{
     .radius = Fixed::half(), .response = statics::Response::Bounce, .restitution = Fixed::one()};
 
 bool near(Fixed a, Fixed b, int32_t rawTol = 8) {

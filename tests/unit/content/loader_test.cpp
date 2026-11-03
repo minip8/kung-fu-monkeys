@@ -334,11 +334,11 @@ TEST_CASE("content/ arenas: dojo stays first, the walled arenas load", "[content
   for (const std::string_view name : {"pillars", "corridors", "island"}) {
     INFO(name);
     REQUIRE(db.findArena(name).has_value());
-    const sim::ArenaDef& a = db.arenas[*db.findArena(name)];
+    const sim::ArenaDef& a = db.arenas[db.findArena(name).value_or(0)];
     CHECK(a.wallCount > 0);
     CHECK(a.spawnPointCount == sim::kMaxPlayers);
   }
-  const sim::ArenaDef& island = db.arenas[*db.findArena("island")];
+  const sim::ArenaDef& island = db.arenas[db.findArena("island").value_or(0)];
   CHECK(island.hazardCount == 6);
   CHECK(island.hazards[0].kind == sim::HazardKind::Pit);
 }

@@ -87,7 +87,7 @@ TEST_CASE("a dash stops at a wall and its phases run on", "[scenario][arena]") {
   placePlayer(lab.s, kP0, at(-2, 0));
   // Press Dash with the stick +x, then let go: 4.4 units of dash toward a
   // face 1.5 units away.
-  EventLog log = lab.step(PlayerInput{kRight, 255, kRight, kDash, 0});
+  const EventLog log = lab.step(PlayerInput{kRight, 255, kRight, kDash, 0});
   REQUIRE(findEvent(log, EventKind::PlayerDashed) != nullptr);
   int dashingTicks = 0;
   int perfectTicks = 0;

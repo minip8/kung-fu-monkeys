@@ -682,13 +682,14 @@ class Builder {
       Section s(*t, outer.file(), outer.diag(), outer.where() + " hazard " + std::to_string(count));
       sim::Hazard& h = a.hazards[count++];
       if (const std::optional<std::string> kind = s.string("kind", true)) {
-        const auto entry = std::ranges::find_if(
-            kHazardKinds, [&](const HazardKindName& k) { return k.name == *kind; });
-        if (entry == kHazardKinds.end()) {
-          s.error("unknown hazard kind " + inQuotes(*kind) + " (known: pit, slow)");
-        } else {
-          h.kind = entry->kind;
+        bool known = false;
+        for (const HazardKindName& k : kHazardKinds) {
+          if (k.name == *kind) {
+            h.kind = k.kind;
+            known = true;
+          }
         }
+        if (!known) s.error("unknown hazard kind " + inQuotes(*kind) + " (known: pit, slow)");
       }
       s.vec2("min", h.min, true);
       s.vec2("max", h.max, true);
@@ -809,10 +810,13 @@ void validateStatics(const ContentDB& c, const ArenaDef& a, const std::string& w
     const sim::Hazard& hz = a.hazards[h];
     const std::string what = "hazard " + std::to_string(h);
     checkBox(what, hz.min, hz.max);
-    if (hz.kind >= sim::HazardKind::kCount) fail(where + ": " + what + " has an unknown kind");
+    std::string prefix = where;
+    prefix += ": ";
+    prefix += what;
+    if (hz.kind >= sim::HazardKind::kCount) fail(prefix + " has an unknown kind");
     if (hz.kind == sim::HazardKind::Slow &&
         (hz.speedMul <= Fixed::zero() || hz.speedMul > Fixed::fromInt(4))) {
-      fail(where + ": " + what + " speed_mul must be in (0, 4]");
+      fail(prefix + " speed_mul must be in (0, 4]");
     }
   }
   for (uint8_t k = 0; k < a.spawnPointCount && k < sim::kMaxPlayers; ++k) {

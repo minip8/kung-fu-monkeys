@@ -536,7 +536,7 @@ void floorStretches(std::span<const Box2f> pits, size_t self, int axis, float at
 void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out) {
   uint16_t n = 0;
   const auto add = [&](ArenaPieceKind kind, Vec2f lo, Vec2f hi, float height) {
-    if (n >= out.arenaPieces.size() || !(lo.x < hi.x && lo.y < hi.y)) return;
+    if (n >= out.arenaPieces.size() || lo.x >= hi.x || lo.y >= hi.y) return;
     // Sim y maps to world -z, so the box's z extent is its sim y extent.
     out.arenaPieces[n++] =
         RenderArenaPiece{.kind = kind,
