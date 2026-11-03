@@ -64,7 +64,7 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content) 
   p.hp = content.db.player.maxHp;
   p.ammo = content.db.player.ammoStart;
   for (uint8_t slot = 0; slot < kAbilitySlots; ++slot) {
-    p.abilities[slot].defIndex = content.db.player.abilities[slot];
+    p.abilities[slot].defIndex = content.loadout(slot);
   }
 }
 

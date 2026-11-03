@@ -11,7 +11,7 @@ max_hp = 1                  # one hit and you are out of the round
 ammo_max = 1                # bananas a monkey can hold
 ammo_start = 1              # bananas in hand at round start
 hit_stun_ticks = 6          # 0.1 s stagger after a non-lethal hit
-abilities = ["dash", "throw"]   # base loadout by ability name: [dash button, throw button]
+abilities = ["dash", "throw"]   # base loadout: [dash button, throw button(, ability button)]; a missing third is "none"
 
 [pickup]
 radius = 0.5                # a grounded banana's contact radius against a monkey

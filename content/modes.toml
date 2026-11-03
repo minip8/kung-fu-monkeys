@@ -14,6 +14,9 @@
 #   score_to_win         deathmatch: eliminations that win (at least 1)
 #   respawn_ticks        deathmatch: from an elimination to the respawn (>= 1)
 #   respawn_invuln_ticks deathmatch: spawn protection after a respawn
+#   abilities            all kinds (optional): the mode's own loadout, 2 or 3
+#                        ability names [dash button, throw button, ability
+#                        button] replacing [player] abilities
 
 [[mode]]
 name = "rounds"             # free-for-all rounds: last monkey standing scores

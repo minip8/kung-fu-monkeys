@@ -16,7 +16,8 @@
 //      same amount; a fall gives hp = max(1, min(hp, maxHp)), so losing a
 //      modifier never eliminates. A player already at hp 0 is left alone.
 //      ammo is clamped to ammoMax.
-//   4. Ability overrides: each slot's def is the loadout's, unless a live
+//   4. Ability overrides: each slot's def is the loadout's (the mode's when it
+//      has one, v0.21), unless a live
 //      AbilityOverride names another (the last one in slot order wins). A
 //      slot switches only while Idle (a running dash or throw finishes on
 //      the def it started with); on the switch its remaining cooldown is
@@ -109,8 +110,11 @@ void clampHp(Player& p, uint8_t oldMaxHp, uint8_t newMaxHp) {
   }
 }
 
-void applyAbilityOverrides(Player& p, const ContentDB& db) {
-  std::array<uint8_t, kAbilitySlots> want = db.player.abilities;
+void applyAbilityOverrides(Player& p, const MatchContent& content) {
+  const ContentDB& db = content.db;
+  std::array<uint8_t, kAbilitySlots> want{};
+  for (uint8_t slot = 0; slot < kAbilitySlots; ++slot)
+    want[slot] = content.loadout(slot);
   forEachGrant(db, p.modifiers, [&](const PowerUpGrant& g) {
     if (g.kind == GrantKind::AbilityOverride && g.slot < kAbilitySlots) want[g.slot] = g.ability;
   });
@@ -152,7 +156,7 @@ void modifierSystem(WorldState& s, const MatchContent& content) {
     p.stats = deriveStats(db, p.modifiers, statics::speedMulAt(content.arena, p.transform.pos));
     clampHp(p, oldMaxHp, p.stats.maxHp);
     p.ammo = std::min(p.ammo, p.stats.ammoMax);
-    applyAbilityOverrides(p, db);
+    applyAbilityOverrides(p, content);
     applyTags(p, s, content);
     if (p.hitStunTicks > 0) --p.hitStunTicks;
     if (p.hitStunTicks == 0) p.tags.clear(Tag::HitStun);

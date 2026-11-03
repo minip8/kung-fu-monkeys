@@ -297,6 +297,9 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.scoreToWin);
   v.u16(d.respawnTicks);
   v.u16(d.respawnInvulnTicks);
+  v.u8(d.hasAbilities);
+  for (uint8_t& a : d.abilities)
+    v.u8(a);
 }
 template <class V>
 void visit(V& v, DashAttackDef& d) {

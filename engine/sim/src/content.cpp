@@ -61,7 +61,7 @@ constexpr ContentDB makeDefaultContent() {
   thr.activeTicks = 1;
   thr.recoveryTicks = 6;
 
-  c.abilityCount = static_cast<uint8_t>(AbilityKind::kCount);
+  c.abilityCount = 3;  // none, dash, throw
 
   c.boomerang.radius = Fixed::fromRatio(35, 100);
   c.boomerang.speed = perSecond(16);

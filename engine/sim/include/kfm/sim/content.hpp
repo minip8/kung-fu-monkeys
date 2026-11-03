@@ -27,9 +27,10 @@
 
 namespace kfm::sim {
 
-inline constexpr uint8_t kAbilitySlots = 2;
 inline constexpr uint8_t kAbilitySlotDash = 0;
 inline constexpr uint8_t kAbilitySlotThrow = 1;
+inline constexpr uint8_t kAbilitySlotExtra = 2;  // v0.21: Button::Ability1, None in the base kit
+static_assert(kAbilitySlots == 3);
 
 // The button whose press edge fires an ability slot (v0.21: buttons belong to
 // slots, whatever kind the slot runs).
@@ -39,12 +40,14 @@ inline constexpr uint8_t kAbilitySlotThrow = 1;
       return buttonBit(Button::Dash);
     case kAbilitySlotThrow:
       return buttonBit(Button::Throw);
+    case kAbilitySlotExtra:
+      return buttonBit(Button::Ability1);
     default:
       break;
   }
   return 0;
 }
-inline constexpr uint8_t kMaxAbilityDefs = 4;
+inline constexpr uint8_t kMaxAbilityDefs = 16;
 inline constexpr uint8_t kMaxArenas = 8;
 inline constexpr uint8_t kMaxModes = 8;
 
@@ -96,8 +99,9 @@ struct PlayerDef {
   uint8_t ammoMax{1};
   uint8_t ammoStart{1};
   uint16_t hitStunTicks{0};
-  // Base loadout: slot kAbilitySlotDash, slot kAbilitySlotThrow (indices into
-  // ContentDB::abilities).
+  // Base loadout: slot kAbilitySlotDash, kAbilitySlotThrow, kAbilitySlotExtra
+  // (indices into ContentDB::abilities; 0 = None). A mode may replace it
+  // (ModeDef::abilities, v0.21).
   std::array<uint8_t, kAbilitySlots> abilities{};
 };
 
@@ -191,6 +195,13 @@ struct MatchContent {
       : db(content), arena(content.arenaAt(arenaIndex)), mode(content.modeAt(modeIndex)) {}
   // NOLINTNEXTLINE(misc-explicit-constructor): implicit on purpose, see above
   constexpr MatchContent(const ContentDB& content) : MatchContent(content, 0, 0) {}
+
+  // The loadout's def index for a slot: the mode's loadout when it has one
+  // (v0.21), else the player's.
+  [[nodiscard]] constexpr uint8_t loadout(uint8_t slot) const {
+    if (slot >= kAbilitySlots) return 0;
+    return mode.hasAbilities != 0 ? mode.abilities[slot] : db.player.abilities[slot];
+  }
 };
 
 // The M1 constexpr tables (default tuning numbers from the M1 contract).

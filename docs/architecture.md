@@ -117,7 +117,13 @@ power-up counts (§9). Pickups render per def and the HUD shows power-up timers 
 v0.21 changes: more abilities (§5.4, §5.5, §5.6, §5.9). Buttons belong to ability slots, not
 kinds (slot 0 Dash button, slot 1 Throw, slot 2 the new Ability button); a kind's own tags
 (PerfectDash) come from an `AbilityBehavior::kindTags` hook, and the catch rule and the tie-break
-read the slot that grants the tag.
+read the slot that grants the tag. A third ability slot (`kAbilitySlots` 3) on
+`Button::Ability1`, empty (`none`) in the base kit so the default match plays as before (the
+extra `AbilityState` per player changed every world checksum; the corpus was regenerated and
+checked equal with slot 3 left out of the visitor). Loadouts list 2 or 3 names; a mode may carry
+its own (`ModeDef::abilities`, read through `MatchContent::loadout()`); any kind may sit in any
+slot or be granted by an `AbilityOverride` (the same-kind rule is gone) as long as the dash and
+throw buttons fire something; `kMaxAbilityDefs` 16 (§5.8, §5.10).
 v0.22 changes: arenas with interior statics (§5.10 "Arena statics"). `ArenaDef` (now in
 `kfm/sim/content/arena.hpp`) gains up to 32 axis-aligned `Wall{min, max}` and 16
 `Hazard{min, max, kind, speedMul}` (`Pit`, `Slow`), visited and hashed; convex polygons stay out
@@ -411,7 +417,7 @@ struct PlayerInput {            // 5 bytes on the wire, bit-packed smaller
   uint8_t moveDir;              // 0..255 angle, 0 = +x (digital input uses 8 of them)
   uint8_t moveMag;              // analog magnitude; 0 = idle, 255 for digital input
   uint8_t aimDir;               // 0..255 angle (twin-stick aim)
-  uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1, bit3 Ability2, bit4 Taunt ...
+  uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1 (slot 3, v0.21), bit3 Ability2, bit4 Taunt ...
   uint8_t subTick;              // stamp of the latest press edge within the tick (1/256 tick ≈ 65 µs)
 };
 struct InputFrame {
@@ -668,9 +674,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   never reads either. A `PowerUpGrant` has a `GrantKind` and the fields of its kind:
   - `Stat`: `StatModifier{stat, mul, add}` over `MoveSpeed` (mul and add), `MaxHp` and `AmmoMax`
     (whole `add` only; the loader rejects a `mul`).
-  - `AbilityOverride{slot, ability}`: the slot runs that ability def (same kind as the loadout's,
-    so the button mapping holds; validated) while the power-up is live; the last override in
-    slot order wins.
+  - `AbilityOverride{slot, ability}`: the slot (`dash`, `throw` or, v0.21, `ability`) runs that
+    ability def while the power-up is live; the last override in slot order wins. Buttons
+    belong to slots (v0.21), so the def may be of any kind, and an override of the empty third
+    slot adds an ability for the power-up's duration.
   - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd, pierce}`, each mul in
     (0, 4].
   - `Tag`: `shielded` or `invulnerable` (the others belong to abilities and the damage rules).
@@ -838,10 +845,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   ability index 0 is the built-in inert `none`. Arena and mode names are how command lines and
   the lobby choose (`ContentDB::findArena` / `findMode`); the sim only sees indices.
 - Validation: duplicate names, unresolved references, counts against the capacities
-  (`kMaxAbilityDefs` 4, `kMaxArenas` 8, `kMaxModes` 8, `kMaxPowerUps` 16; at least one arena
+  (`kMaxAbilityDefs` 16 since v0.21, `kMaxArenas` 8, `kMaxModes` 8, `kMaxPowerUps` 16; at least one arena
   and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
-  on `defaultContent()` by a test): the loadout's slot kinds, a dash with no startup and its
+  on `defaultContent()` by a test): every loadout (the player's and each mode's) fills the dash
+  and throw slots (v0.21; only the third may be `none`), a dash with no startup and its
   perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
   keep a monkey inside (and, v0.22, clear of walls and out of pits), walls and hazards that are
   non-empty boxes inside the arena, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
@@ -892,7 +900,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   read (they keep their struct defaults and are hashed like every field). Validation: a known
   kind, `rounds_to_win >= 1`, and in deathmatch `score_to_win >= 1` and `respawn_ticks >= 1`.
   The file ships `rounds` (index 0, the M1 numbers), `deathmatch` (first to 10, 3 min, 2 s
-  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). The modes stay
+  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). Any kind may
+  carry `abilities = [...]` (v0.21): its own loadout of 2 or 3 ability names replacing
+  `[player] abilities` for the match (`ModeDef::hasAbilities`/`abilities`, applied at spawn and
+  by `ModifierSystem` through `MatchContent::loadout()`). The modes stay
   in one file so their order, and so their indices, is explicit.
 - `DashAttackDef` (v0.16): `damage` (1), `minAmmo` (1: a banana in hand), `consumesAmmo`
   (0: kept). Visited for the content hash like every other def; the TOML key is

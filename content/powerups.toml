@@ -11,8 +11,8 @@
 #       stat = base x product of mul + sum of add over the live power-ups;
 #       max_hp and ammo_max are integer stats: whole 'add' only, no 'mul'.
 #       ammo_max also tops the ammo up by 'add' on every pickup.
-#   { kind = "ability", slot = "dash" | "throw", ability = "<ability name>" }
-#       the slot runs that ability (same kind as the loadout's) while live;
+#   { kind = "ability", slot = "dash" | "throw" | "ability", ability = "<ability name>" }
+#       the slot runs that ability (any kind: buttons belong to slots) while live;
 #       it switches when the slot is idle, its cooldown capped at the new def's.
 #   { kind = "projectile", speed_mul, radius_mul, damage_add, pierce }
 #       applied to each banana thrown while live and kept by that banana.

@@ -111,6 +111,15 @@ std::string loadErrors(std::string_view text) {
   return diag.format();
 }
 
+// Loads `text` expecting success.
+bool loads(std::string_view text) {
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(text, "test.toml", db, diag);
+  INFO(diag.format());
+  return ok;
+}
+
 bool contains(const std::string& haystack, std::string_view needle) {
   return haystack.contains(needle);
 }
@@ -195,6 +204,34 @@ TEST_CASE("a minimal content set loads, names resolve to indices", "[content][lo
   CHECK(db.findArena("box") == std::optional<uint8_t>{0});
   CHECK_FALSE(db.findArena("dojo").has_value());
   CHECK(db.modes[0].roundsToWin == sim::ModeDef{}.roundsToWin);  // optional keys keep defaults
+}
+
+TEST_CASE("loadouts: a third slot, mode loadouts and MatchContent::loadout", "[content][loader]") {
+  ContentDB db{};
+  Diagnostics diag;
+  const std::string text = std::string(kMinimal) +
+                           "\n[[mode]]\nname = \"swap\"\nabilities = [\"throw\", \"dash\", "
+                           "\"dash\"]\n";
+  const bool ok = parseContent(text, "min.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  // The base kit leaves the ability button's slot on none.
+  CHECK(db.player.abilities[sim::kAbilitySlotExtra] == 0);
+  CHECK(db.modes[0].hasAbilities == 0);
+  REQUIRE(db.modeCount == 2);
+  CHECK(db.modes[1].hasAbilities == 1);
+  CHECK(db.modes[1].abilities == std::array<uint8_t, sim::kAbilitySlots>{2, 1, 1});
+  const sim::MatchContent rounds(db, 0, 0);
+  const sim::MatchContent swap(db, 0, 1);
+  CHECK(rounds.loadout(sim::kAbilitySlotDash) == 1);
+  CHECK(rounds.loadout(sim::kAbilitySlotExtra) == 0);
+  CHECK(swap.loadout(sim::kAbilitySlotDash) == 2);
+  CHECK(swap.loadout(sim::kAbilitySlotExtra) == 1);
+  CHECK(
+      contains(loadErrors(text + "\n[[mode]]\nname = \"bad\"\nabilities = [\"dash\", \"none\"]\n"),
+               "mode \"bad\" abilities: the throw slot must hold an ability"));
+  CHECK(contains(loadErrors(text + "\n[[mode]]\nname = \"bad\"\nabilities = [\"dash\", \"zap\"]\n"),
+                 "names unknown ability \"zap\""));
 }
 
 TEST_CASE("documents merge in order; lists append", "[content][loader]") {
@@ -356,8 +393,17 @@ TEST_CASE("names: format, duplicates and references", "[content][loader]") {
                  "built-in inert ability"));
   CHECK(contains(loadErrors(replaced(kMinimal, "kind = \"throw\"", "kind = \"yeet\"")),
                  "unknown kind \"yeet\""));
-  CHECK(contains(loadErrors(replaced(kMinimal, "[\"dash\", \"throw\"]", "[\"throw\", \"dash\"]")),
-                 "slot 0 must be a dash and slot 1 a throw"));
+  // Buttons belong to slots (v0.21): any kind in any slot, but the dash and
+  // throw buttons must fire something and a loadout lists 2 or 3 names.
+  CHECK(loads(replaced(kMinimal, "[\"dash\", \"throw\"]", "[\"throw\", \"dash\"]")));
+  CHECK(loads(replaced(kMinimal, "[\"dash\", \"throw\"]", "[\"dash\", \"throw\", \"none\"]")));
+  CHECK(contains(loadErrors(replaced(kMinimal, "[\"dash\", \"throw\"]", "[\"none\", \"throw\"]")),
+                 "the dash slot must hold an ability"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "[\"dash\", \"throw\"]", "[\"dash\"]")),
+                 "'abilities' must list 2 or 3 ability names"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "[\"dash\", \"throw\"]",
+                                     "[\"dash\", \"throw\", \"dash\", \"dash\"]")),
+                 "'abilities' must list 2 or 3 ability names"));
   // Within one document TOML itself forbids it; across documents the loader does.
   CHECK(contains(loadErrors(std::string(kMinimal) + "\n[player]\nradius = 1\n"), "TOML syntax"));
   const std::array<ContentSource, 2> twice = {
@@ -485,8 +531,9 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
   // Slots and kinds.
   CHECK(contains(loadErrors(replaced(withPowerUp(), "slot = \"throw\"", "slot = \"jump\"")),
                  "'slot' must be one of: dash, throw"));
-  CHECK(contains(loadErrors(replaced(withPowerUp(), "slot = \"throw\"", "slot = \"dash\"")),
-                 "is not the same kind as the dash slot's"));
+  // Any kind may override any slot (v0.21: buttons belong to slots).
+  CHECK(loads(replaced(withPowerUp(), "slot = \"throw\"", "slot = \"dash\"")));
+  CHECK(loads(replaced(withPowerUp(), "slot = \"throw\"", "slot = \"ability\"")));
   CHECK(contains(loadErrors(replaced(withPowerUp(), "kind = \"stat\"", "kind = \"buff\"")),
                  "unknown grant kind \"buff\""));
   // Integer stats are add-only and whole.
