@@ -34,6 +34,8 @@ target_link_libraries(kfm_client PRIVATE
   kfm::client_core kfm::client_sdl kfm::renderer kfm::platform kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client)
 set_target_properties(kfm_client PROPERTIES FOLDER apps)
+# The rigged test model next to the executable (embedded under Emscripten).
+kfm_use_test_rig(kfm_client)
 
 if(EMSCRIPTEN)
   # Browser build: kfm_client.html + .js + .wasm from a custom shell (canvas

@@ -16,16 +16,29 @@
 // indicators, held/flying bananas, pickups), then alpha-blended ground decals
 // with depth test on and depth write off (blob shadows, dash trails, catch
 // window rings, effect rings), then additive billboards (flashes, bursts).
-// The per-frame path allocates nothing; every mesh is uploaded once in init().
+// The per-frame path allocates nothing; every mesh is uploaded once in init()
+// or loadCharacterModel().
+//
+// Characters: players are drawn as the capsule placeholder until
+// loadCharacterModel() succeeds; from then on as the GPU-skinned model
+// (program `skinned`), scaled so its bind-pose height equals the capsule's
+// (RenderState::playerHeight) and animated by the animation layer
+// (animation.hpp) with one AnimState per player slot kept here, advanced by
+// RenderState::time each draw. setForceCapsules(true) switches back to the
+// capsule at any time. Shadows, rings, the aim bar and the banana in hand do
+// not depend on which body is drawn.
 #pragma once
 
+#include "kfm/presentation/animation.hpp"
 #include "kfm/presentation/camera.hpp"
 #include "kfm/presentation/render_state.hpp"
+#include "kfm/presentation/skinned_model.hpp"
 #include "kfm/sim/content.hpp"
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 namespace kfm::presentation {
 
@@ -47,6 +60,17 @@ class Renderer {
 
   [[nodiscard]] const RendererStats& stats() const { return stats_; }
 
+  // Loads a skinned glTF character (gltf_loader.hpp) and uploads it; requires
+  // init(). On failure returns false, keeps drawing capsules (and any model
+  // loaded before) and leaves the reason in characterModelError(). Allocates;
+  // call it at startup, not per frame.
+  [[nodiscard]] bool loadCharacterModel(const char* path);
+  [[nodiscard]] bool characterModelLoaded() const { return skinnedLoaded_; }
+  [[nodiscard]] const std::string& characterModelError() const { return modelError_; }
+  // Draw players as capsules even when a model is loaded.
+  void setForceCapsules(bool force) { forceCapsules_ = force; }
+  [[nodiscard]] bool forceCapsules() const { return forceCapsules_; }
+
  private:
   // sokol handles are stored as their raw ids so this header does not need
   // <sokol_gfx.h> (kfm::sokol is a private dependency of kfm_renderer).
@@ -55,17 +79,29 @@ class Renderer {
     uint32_t indexBuffer{0};
     uint32_t indexCount{0};
   };
-  static constexpr std::size_t kMeshCount = 5;      // capsule, banana, disc, floor, cube
-  static constexpr std::size_t kShaderCount = 2;    // lit, decal
-  static constexpr std::size_t kPipelineCount = 3;  // lit, decal alpha, decal additive
+  // capsule, banana, disc, floor, cube, skinned character (empty until loaded)
+  static constexpr std::size_t kMeshCount = 6;
+  static constexpr std::size_t kShaderCount = 3;    // lit, decal, skinned
+  static constexpr std::size_t kPipelineCount = 4;  // lit, decal alpha, decal additive, skinned
 
   void destroyResources();
+  void destroyCharacterModel();
 
   RendererStats stats_{};
   bool initialised_{false};
   std::array<GpuMesh, kMeshCount> meshes_{};
   std::array<uint32_t, kShaderCount> shaders_{};
   std::array<uint32_t, kPipelineCount> pipelines_{};
+
+  // The skinned character: CPU copy (joints and clips drive the animation),
+  // clip binding and per-slot animation state.
+  SkinnedModel model_;
+  ClipBinding clips_{};
+  CharacterAnimStates anim_{};
+  float lastAnimTime_{-1.0f};  // RenderState::time of the previous draw; < 0: none yet
+  bool skinnedLoaded_{false};
+  bool forceCapsules_{false};
+  std::string modelError_;
 };
 
 }  // namespace kfm::presentation

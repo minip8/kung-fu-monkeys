@@ -1,7 +1,7 @@
 // kfm_client command line (headless-testable).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
-//              [--overlay] [--exit-after-frames N] [--screenshot out.ppm]
+//              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
 #pragma once
 
 #include "match_session.hpp"
@@ -14,12 +14,13 @@ namespace kfm::client {
 
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
-    "                  [--overlay] [--exit-after-frames N] [--screenshot out.ppm]\n"
+    "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
     "  --players-seed S       seed of the bots' scripted-input Rng\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
+    "  --capsules             draw players as capsules, not the skinned model\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n";
 
@@ -28,6 +29,7 @@ struct ClientOptions {
   std::string screenshotPath;   // empty: none
   bool autostart{false};
   bool overlay{false};
+  bool capsules{false};  // capsule placeholders instead of the skinned character model
   uint8_t bots{0};
   uint64_t seed{1};
   uint64_t playersSeed{kDefaultBotSeed};

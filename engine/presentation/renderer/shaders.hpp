@@ -11,6 +11,8 @@
 // vec3 padding to get wrong. Matrices travel as four column vec4s.
 #pragma once
 
+#include "kfm/presentation/skinned_model.hpp"
+
 namespace kfm::presentation::shaders {
 
 #ifdef SOKOL_GLES3
@@ -27,6 +29,13 @@ inline constexpr int kLitVsVec4s = 8;    // mvp, model
 inline constexpr int kLitFsVec4s = 4;    // color, light, params, floor
 inline constexpr int kDecalVsVec4s = 4;  // mvp
 inline constexpr int kDecalFsVec4s = 2;  // color, shape
+// mvp, model, then 4 column vec4s per joint. With kMaxSkinJoints = 16 that is
+// 72 vec4s: WebGL2 guarantees at least 256 vertex-shader vec4 uniforms
+// (GL_MAX_VERTEX_UNIFORM_VECTORS), so the budget leaves room for 2.5× the
+// joints before anything else is needed (dual quaternions, a texture).
+inline constexpr int kSkinnedVsVec4s = 72;
+static_assert(kSkinnedVsVec4s == 8 + (4 * static_cast<int>(kMaxSkinJoints)));
+static_assert(kSkinnedVsVec4s <= 256);
 
 // --- lit: opaque meshes with a three-band toon ramp ------------------------------
 // fs_params[0] = base colour (rgb)
@@ -85,6 +94,40 @@ void main() {
   c = c * band + base * emissive;
   c = mix(c, vec3(1.0), clamp(flash, 0.0, 1.0));
   frag_color = vec4(c, 1.0);
+}
+)";
+
+// --- skinned: GPU-skinned characters with the lit program's toon ramp ----------
+// Vertex: position, normal, four joint indices (floats) and weights (sum 1).
+// The skin matrix is the weighted sum of the joint matrices (linear blend
+// skinning); normals go through its upper 3×3 (joint transforms are rigid),
+// then through the model's normal matrix (the model matrix carries the
+// per-player scale, squash and stretch). The fragment stage is kLitFs with
+// mode 0, so colour, flash and emissive work exactly as for the capsule.
+// vs_params[0..3] = mvp, [4..7] = model, [8 + 4j .. 11 + 4j] = joint j's skin
+// matrix (global × inverse bind).
+inline constexpr const char* kSkinnedVs = KFM_GLSL_HEADER R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_joints;
+layout(location = 3) in vec4 a_weights;
+uniform vec4 vs_params[72];
+out vec3 v_normal;
+out vec2 v_uv;
+mat4 jointMatrix(float joint) {
+  int i = 8 + 4 * int(joint + 0.5);
+  return mat4(vs_params[i], vs_params[i + 1], vs_params[i + 2], vs_params[i + 3]);
+}
+void main() {
+  mat4 mvp = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]);
+  mat4 model = mat4(vs_params[4], vs_params[5], vs_params[6], vs_params[7]);
+  mat4 skin = a_weights.x * jointMatrix(a_joints.x) + a_weights.y * jointMatrix(a_joints.y) +
+              a_weights.z * jointMatrix(a_joints.z) + a_weights.w * jointMatrix(a_joints.w);
+  vec4 skinned = skin * vec4(a_position, 1.0);
+  vec3 n = mat3(skin) * a_normal;
+  v_normal = transpose(inverse(mat3(model))) * n;
+  v_uv = vec2(0.0);
+  gl_Position = mvp * skinned;
 }
 )";
 
