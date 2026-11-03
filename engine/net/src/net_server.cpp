@@ -77,6 +77,7 @@ NetServer::NetServer(ITransport& transport, const sim::ContentDB& content, Serve
 
 bool NetServer::setBot(PlayerId slot, bool bot) {
   if (!slot.isValid() || slot.value >= sim::kMaxPlayers) return false;
+  if (bot && slot.value >= config_.maxPlayers) return false;
   const sim::PlayerMask b = bit(slot.value);
   if (bot) {
     if ((bots_ & b) != 0) return true;
@@ -93,7 +94,8 @@ bool NetServer::setBot(PlayerId slot, bool bot) {
 }
 
 sim::PlayerMask NetServer::freeSlots() const {
-  return static_cast<sim::PlayerMask>(kAllPlayersMask & ~present_);
+  const uint32_t open = (1u << std::min<uint32_t>(config_.maxPlayers, sim::kMaxPlayers)) - 1u;
+  return static_cast<sim::PlayerMask>(open & kAllPlayersMask & ~uint32_t{present_});
 }
 
 sim::PlayerMask NetServer::reservedSlots() const {
@@ -218,6 +220,52 @@ void NetServer::kick(PeerId peer, DisconnectReason reason) {
   removePeer(*p, false);
 }
 
+void NetServer::restartMatch(uint64_t seed, Tick startTick, uint64_t botSeed) {
+  const Tick start = std::max(startTick, nextTick());
+  restart_ = PendingRestart{seed, botSeed, start};
+  const MatchConfigMsg m{sim::MatchConfig{seed, present_}, start};
+  for (Peer& q : peers_) {
+    if (q.used && q.info.state == PeerState::Active) sendReliableMsg(q, m);
+  }
+}
+
+std::optional<Tick> NetServer::pendingRestart() const {
+  if (!restart_) return std::nullopt;
+  return restart_->startTick;
+}
+
+void NetServer::applyRestart(Tick t, const PendingRestart& r) {
+  config_.match = sim::MatchConfig{r.seed, present_};
+  world_ = sim::initialWorld(config_.match);
+  world_.tick = t;  // ticks are monotonic across matches; the sim only uses differences
+  botRng_ = Rng::seeded(r.botSeed);
+  restart_.reset();
+  ++matchIndex_;
+  ++stats_.matchRestarts;
+  for (Peer& q : peers_) {
+    if (q.used && q.info.state == PeerState::Active) sendSnapshot(q);
+  }
+  emit(ServerEventKind::MatchRestarted, PeerId::invalid(), present_);
+}
+
+void NetServer::shutdown() {
+  if (shuttingDown_) return;
+  shuttingDown_ = true;
+  for (Peer& q : peers_) {
+    if (q.used) sendReliableMsg(q, DisconnectMsg{DisconnectReason::ServerShuttingDown});
+  }
+}
+
+void NetServer::closeAll() {
+  for (Peer& q : peers_) {
+    if (!q.used) continue;
+    transport_->disconnect(q.info.peer);
+    emit(ServerEventKind::PeerLeft, q.info.peer, q.info.slots,
+         static_cast<uint8_t>(DisconnectReason::ServerShuttingDown));
+    removePeer(q, false);
+  }
+}
+
 void NetServer::reject(Peer& p, RejectReason reason) {
   sendReliableMsg(p, RejectMsg{reason});
   transport_->disconnect(p.info.peer);
@@ -275,6 +323,10 @@ void NetServer::welcome(Peer& p) {
   sendReliableMsg(
       p, WelcomeMsg{p.info.slots, sim::MatchConfig{config_.match.seed, present_}, nextTick()});
   sendSnapshot(p);
+  if (restart_) {
+    sendReliableMsg(
+        p, MatchConfigMsg{sim::MatchConfig{restart_->seed, present_}, restart_->startTick});
+  }
 }
 
 // --- receiving --------------------------------------------------------------------
@@ -394,6 +446,10 @@ void NetServer::onHello(Peer& p, const Packet& packet) {
   }
   if (h.buildId != config_.buildId) {
     reject(p, RejectReason::BuildMismatch);
+    return;
+  }
+  if (shuttingDown_) {
+    reject(p, RejectReason::ServerShuttingDown);
     return;
   }
   if (config_.acceptToken && !config_.acceptToken(h.tokenBytes())) {
@@ -569,6 +625,7 @@ void NetServer::tick(uint64_t nowNs) {
   nowNs_ = nowNs;
   expireReservations();
   const Tick t = nextTick();
+  if (const std::optional<PendingRestart> r = restart_; r && t >= r->startTick) applyRestart(t, *r);
   for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
     const PlayerId id{static_cast<PlayerId::rep>(s)};
     if (has(bots_, s)) {

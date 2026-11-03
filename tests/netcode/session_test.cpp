@@ -1,7 +1,8 @@
 // End-to-end session flows over the loopback emulator (architecture §6.6):
 // mid-match join, spectating, reconnect within the grace window, checksum
 // resync, input delay.
-#include "netsim.hpp"
+#include "kfm/net/netsim.hpp"
+#include "kfm/sim/step.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,16 +18,8 @@ using namespace kfm::net::netsim;
 
 namespace {
 
-[[nodiscard]] bool allRunning(NetSim& s) {
-  return std::all_of(s.rigs().begin(), s.rigs().end(),
-                     [](const ClientRig& r) { return r.client->running(); });
-}
-
-ClientConfig tokenConfig(const std::string& token, uint8_t slots = 1) {
-  ClientConfig c;
-  c.requestedSlots = slots;
-  c.setToken(std::as_bytes(std::span(token.data(), token.size())));
-  return c;
+[[nodiscard]] bool allRunning(const NetSim& s) {
+  return s.allRunning();
 }
 
 }  // namespace
@@ -186,4 +179,68 @@ TEST_CASE("input delay trades local latency for shallower rollbacks", "[netcode]
   const double two = run(2);
   INFO("mean rollback depth without delay " << none << ", with 2 ticks " << two);
   CHECK(two < none - 1.0);
+}
+
+TEST_CASE("a match restart reloads every client and spectator without a resync",
+          "[netcode][restart]") {
+  ServerConfig sc;
+  sc.match.seed = 0x5E1;
+  NetSim s(sc, 23);
+  const LinkConditions l = link(50 * kMs, 10 * kMs, 20'000);
+  s.addClient(l, l, tokenConfig("a"));
+  s.addClient(l, l, tokenConfig("b"));
+  s.addClient(l, l, tokenConfig("c"));
+  s.addClient(l, l, tokenConfig("watcher", 0));
+  REQUIRE(s.server().setBot(PlayerId{7}, true));
+  REQUIRE(s.runUntil([&] { return allRunning(s); }, 3 * kSec));
+  s.runFor(5 * kSec);
+
+  // Announced 1.5 s ahead, as the dedicated server does after a match ends.
+  const Tick start = s.server().nextTick().plus(90);
+  s.server().restartMatch(0x5E2, start, 0xB2);
+  std::vector<uint64_t> comparedAtRestart;
+  REQUIRE(s.runUntil([&] { return s.server().matchIndex() == 1; }, 3 * kSec));
+  for (const ClientRig& r : s.rigs()) {
+    CHECK(r.client->pendingRestart() == start);
+    comparedAtRestart.push_back(r.client->netStats().checksumsCompared);
+  }
+  const auto allRestarted = [&] {
+    return std::ranges::all_of(
+        s.rigs(), [](const ClientRig& r) { return r.client->netStats().matchRestarts == 1; });
+  };
+  REQUIRE(s.runUntil(allRestarted, 3 * kSec));
+  s.runFor(5 * kSec);
+
+  size_t i = 0;
+  for (const ClientRig& r : s.rigs()) {
+    const ClientNetStats& st = r.client->netStats();
+    INFO("client " << i);
+    CHECK(r.client->running());
+    CHECK(!r.client->pendingRestart());
+    CHECK(r.client->matchConfig().seed == 0x5E2);
+    CHECK(st.checksumMismatches == 0);
+    CHECK(st.resyncRequests == 0);
+    CHECK(st.checksumsCompared > comparedAtRestart[i] + 20);  // the new match is verified
+    ++i;
+  }
+}
+
+TEST_CASE("an immediate restart on a lossless link needs no resync either", "[netcode][restart]") {
+  ServerConfig sc;
+  sc.match.seed = 0x5E3;
+  sc.checksumEveryTicks = 1;
+  NetSim s(sc, 29);
+  const LinkConditions l = link(20 * kMs, 0, 0);
+  s.addClient(l, l, tokenConfig("a"));
+  s.addClient(l, l, tokenConfig("b"));
+  REQUIRE(s.runUntil([&] { return allRunning(s); }, 3 * kSec));
+  s.runFor(3 * kSec);
+  s.server().restartMatch(0x5E4, s.server().nextTick(), 1);
+  s.runFor(4 * kSec);
+  for (const ClientRig& r : s.rigs()) {
+    const ClientNetStats& st = r.client->netStats();
+    CHECK(st.matchRestarts == 1);
+    CHECK(st.checksumMismatches == 0);
+    CHECK(st.resyncRequests == 0);
+  }
 }

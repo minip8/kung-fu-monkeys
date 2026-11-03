@@ -100,6 +100,29 @@ jobs:
       - name: Test (unit + determinism gate, client smoke on Linux)
         run: ctest --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
 
+  server-headless:
+    # The dedicated server's build (architecture §13.5): KFM_HEADLESS=ON, so no
+    # SDL, GL or ImGui; kfm_server, kfm_netsim and every headless test,
+    # including the soak gates (label soak) and the real-socket WebRTC tests
+    # (label network, 127.0.0.1 only). Dependencies come from FetchContent at
+    # their pinned versions, with the system OpenSSL, as on a lean build host.
+    name: linux-gcc server-headless Release
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - name: Install WebRTC build dependencies
+        run: sudo apt-get update && sudo apt-get install -y $KFM_NET_APT_PACKAGES
+      - name: Configure
+        run: cmake --preset server-headless -DKFM_USE_VCPKG=OFF
+      - name: Build (kfm_server, kfm_netsim, tests)
+        run: cmake --build --preset server-headless
+      - name: Check the dedicated server was produced
+        run: build/server-headless/apps/server/kfm_server --help
+      - name: Test (unit, netcode soaks, network, determinism gate)
+        run: ctest --preset server-headless
+
   wasm:
     name: wasm (Emscripten)
     runs-on: ubuntu-latest

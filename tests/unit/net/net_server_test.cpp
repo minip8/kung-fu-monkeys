@@ -423,3 +423,97 @@ TEST_CASE("a silent peer times out and its slots are reserved", "[net][server]")
   CHECK(rig.server->present() == 0b1);
   CHECK(!rig.server->ownerOf(PlayerId{0}).isValid());
 }
+
+TEST_CASE("restartMatch announces MatchConfig now and snapshots the new world at its tick",
+          "[net][server][restart]") {
+  ServerConfig cfg;
+  cfg.match.seed = 0x1111;
+  Rig rig(cfg);
+  REQUIRE(rig.server->setBot(PlayerId{3}, true));
+  Raw& a = rig.join(1);
+  for (int i = 0; i < 30; ++i)
+    rig.tick();
+  const Tick start = rig.server->nextTick().plus(5);
+  rig.server->restartMatch(0x2222, start, 99);
+  rig.pump();
+  REQUIRE(a.count(MessageType::MatchConfig) == 1);
+  const auto mc = a.last<MatchConfigMsg>(MessageType::MatchConfig);
+  CHECK(mc.config.seed == 0x2222);
+  CHECK(mc.config.players == 0b1001);
+  CHECK(mc.startTick == start);
+  CHECK(rig.server->pendingRestart() == start);
+
+  // A joiner before the restart hears about it after its snapshot.
+  Raw& b = rig.join(1);
+  REQUIRE(b.count(MessageType::MatchConfig) == 1);
+  CHECK(b.inbox.back().type != MessageType::Welcome);
+  CHECK(b.last<MatchConfigMsg>(MessageType::MatchConfig).startTick == start);
+
+  const size_t snapsA = a.count(MessageType::Snapshot);
+  while (rig.server->nextTick() < start)
+    rig.tick();
+  CHECK(a.count(MessageType::Snapshot) == snapsA);
+  CHECK(rig.server->matchIndex() == 0);
+  rig.tick();  // assembles `start`: the restart takes effect first
+  CHECK(rig.server->matchIndex() == 1);
+  CHECK(!rig.server->pendingRestart());
+  CHECK(rig.server->stats().matchRestarts == 1);
+  CHECK(rig.server->matchConfig().seed == 0x2222);
+  REQUIRE(a.count(MessageType::Snapshot) == snapsA + 1);
+  SnapshotMsg snap;
+  for (const Received& r : std::views::reverse(a.inbox)) {
+    if (r.type != MessageType::Snapshot) continue;
+    REQUIRE(decode(r.bytes, snap));
+    break;
+  }
+  CHECK(snap.world.tick == start);
+  CHECK(snap.config.seed == 0x2222);
+  CHECK(snap.config.players == 0b1011);  // the roster at the restart, b included
+  // The snapshot is the fresh match: initialWorld at `start`, before stepping it.
+  sim::WorldState expect = sim::initialWorld(snap.config);
+  expect.tick = start;
+  CHECK(sim::checksum(snap.world) == sim::checksum(expect));
+  CHECK(rig.server->world().tick == start.plus(1));
+  CHECK(rig.server->world().rules.round == 1);
+  bool restarted = false;
+  for (const ServerEvent& e : rig.server->events())
+    restarted = restarted || e.kind == ServerEventKind::MatchRestarted;
+  CHECK(restarted);
+}
+
+TEST_CASE("shutdown disconnects every peer and refuses new ones", "[net][server][shutdown]") {
+  Rig rig;
+  const Raw& a = rig.join(1);
+  rig.server->shutdown();
+  CHECK(rig.server->shuttingDown());
+  rig.pump();
+  REQUIRE(a.count(MessageType::Disconnect) == 1);
+  CHECK(a.last<DisconnectMsg>(MessageType::Disconnect).reason ==
+        DisconnectReason::ServerShuttingDown);
+  Raw& late = rig.client();
+  late.reliable(Rig::hello(1));
+  rig.pump();
+  rig.pump();
+  CHECK(late.last<RejectMsg>(MessageType::Reject).reason == RejectReason::ServerShuttingDown);
+  rig.server->closeAll();
+  rig.pump();
+  rig.pump();
+  CHECK(a.closed);
+  CHECK(rig.server->peers().empty());
+  CHECK(rig.server->present() == 0);
+}
+
+TEST_CASE("maxPlayers caps the slots open to peers and bots", "[net][server]") {
+  ServerConfig cfg;
+  cfg.maxPlayers = 3;
+  Rig rig(cfg);
+  CHECK(!rig.server->setBot(PlayerId{3}, true));
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  const Raw& a = rig.join(2);
+  CHECK(a.last<WelcomeMsg>(MessageType::Welcome).assignedSlots == 0b110);
+  Raw& b = rig.client();
+  b.reliable(Rig::hello(1));
+  rig.pump();
+  rig.pump();
+  CHECK(b.last<RejectMsg>(MessageType::Reject).reason == RejectReason::MatchFull);
+}

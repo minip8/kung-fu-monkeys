@@ -111,9 +111,10 @@ if(KFM_WEBRTC AND NOT EMSCRIPTEN)
     net/webrtc_signaling_test.cpp
     net/webrtc_api_test.cpp
     net/webrtc_transport_test.cpp
+    net/webrtc_contract_test.cpp
   )
   target_include_directories(kfm_net_webrtc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc)
+  target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc kfm::transport_contract)
   set_tests_properties(kfm_net_webrtc_tests PROPERTIES LABELS network TIMEOUT 300)
 endif()
 
@@ -125,4 +126,23 @@ if(KFM_WEBRTC AND EMSCRIPTEN)
     net/webrtc_api_test.cpp
   )
   target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc)
+endif()
+
+if(TARGET kfm::server_host)
+  # apps/server's ServerHost over the loopback emulator: match restart,
+  # stats lines, shutdown (every target, wasm included).
+  kfm_add_test_exe(kfm_server_tests
+    server/server_host_test.cpp
+  )
+  target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim)
+
+  if(TARGET kfm_server)
+    # The same over real sockets: WebRtcTransport on 127.0.0.1, two NetClients
+    # in-process on the steady clock (label `network`, like the transport tests).
+    kfm_add_test_exe(kfm_server_network_tests
+      server/server_webrtc_test.cpp
+    )
+    target_link_libraries(kfm_server_network_tests PRIVATE kfm::server_host kfm::net_webrtc)
+    set_tests_properties(kfm_server_network_tests PROPERTIES LABELS network TIMEOUT 120)
+  endif()
 endif()

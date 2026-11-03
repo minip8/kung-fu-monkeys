@@ -1,6 +1,6 @@
 // End-to-end netcode over the loopback emulator (architecture §6, §9, §11 M3
 // exit criterion): a NetServer and NetClients in one deterministic loop.
-#include "netsim.hpp"
+#include "kfm/net/netsim.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -17,98 +17,11 @@ using namespace kfm::net::netsim;
 
 namespace {
 
-[[nodiscard]] bool allRunning(NetSim& s) {
-  return std::all_of(s.rigs().begin(), s.rigs().end(),
-                     [](const ClientRig& r) { return r.client->running(); });
+[[nodiscard]] bool allRunning(const NetSim& s) {
+  return s.allRunning();
 }
 
-ClientConfig tokenConfig(const std::string& token, uint8_t slots = 1) {
-  ClientConfig c;
-  c.requestedSlots = slots;
-  c.setToken(std::as_bytes(std::span(token.data(), token.size())));
-  return c;
-}
-
-// Aggregated numbers of a soak, printed into the test log.
-struct SoakReport {
-  uint32_t maxDepth{0};
-  uint32_t p99Depth{0};
-  uint32_t p50Depth{0};
-  double mispredictionsPerSec{0};  // per client
-  double rollbacksPerSec{0};       // per client
-  double upBytesPerSec{0};         // per client
-  double downBytesPerSec{0};       // per client
-  uint64_t mismatches{0};
-  uint64_t resyncs{0};
-  uint64_t compared{0};
-  uint64_t overflows{0};
-  uint64_t hardJumps{0};
-  uint64_t anchorRollbacks{0};
-  double meanLead{0};
-  double meanTarget{0};
-  double serverSubstPerSec{0};  // per client after convergence
-};
-
-struct LeadSampler {
-  double leadSum{0};
-  double targetSum{0};
-  uint64_t samples{0};
-};
-
-SoakReport summarise(NetSim& s, double seconds, const LeadSampler& lead, uint64_t substAfter,
-                     double substSeconds) {
-  SoakReport r;
-  std::array<uint64_t, kRollbackDepthBuckets> hist{};
-  uint64_t mispredicted = 0;
-  uint64_t rollbacks = 0;
-  uint64_t up = 0;
-  uint64_t down = 0;
-  for (const ClientRig& rig : s.rigs()) {
-    const ClientNetStats& st = rig.client->netStats();
-    for (size_t d = 0; d < hist.size(); ++d)
-      hist[d] += st.rollbackDepth[d];
-    r.maxDepth = std::max(r.maxDepth, st.maxRollbackDepth);
-    mispredicted += st.mispredictedTicks;
-    rollbacks += st.rollbacks;
-    up += st.bytesSent;
-    down += st.bytesReceived;
-    r.mismatches += st.checksumMismatches;
-    r.resyncs += st.resyncRequests;
-    r.compared += st.checksumsCompared;
-    r.overflows += st.rollbackOverflows;
-    r.hardJumps += st.hardJumps;
-    r.anchorRollbacks += st.anchorRollbacks;
-  }
-  const auto n = static_cast<double>(s.rigs().size());
-  r.p99Depth = percentile(hist, 99);
-  r.p50Depth = percentile(hist, 50);
-  r.mispredictionsPerSec = static_cast<double>(mispredicted) / seconds / n;
-  r.rollbacksPerSec = static_cast<double>(rollbacks) / seconds / n;
-  r.upBytesPerSec = static_cast<double>(up) / seconds / n;
-  r.downBytesPerSec = static_cast<double>(down) / seconds / n;
-  if (lead.samples > 0) {
-    r.meanLead = lead.leadSum / static_cast<double>(lead.samples);
-    r.meanTarget = lead.targetSum / static_cast<double>(lead.samples);
-  }
-  r.serverSubstPerSec =
-      static_cast<double>(s.server().stats().substitutedInputs - substAfter) / substSeconds / n;
-  return r;
-}
-
-void print(const char* name, const SoakReport& r, double wallSeconds) {
-  std::printf(
-      "[netcode] %s: rollback depth max %u p99 %u p50 %u; mispredictions/s %.1f, rollbacks/s %.1f "
-      "per client; up %.0f B/s, down %.0f B/s per client; checksums compared %llu, mismatches "
-      "%llu, resyncs %llu, overflows %llu, hard jumps %llu, rollbacks past the ring %llu; lead "
-      "%.2f ticks (target %.2f); server "
-      "substitutions/s per client %.3f; wall %.2f s\n",
-      name, r.maxDepth, r.p99Depth, r.p50Depth, r.mispredictionsPerSec, r.rollbacksPerSec,
-      r.upBytesPerSec, r.downBytesPerSec, static_cast<unsigned long long>(r.compared),
-      static_cast<unsigned long long>(r.mismatches), static_cast<unsigned long long>(r.resyncs),
-      static_cast<unsigned long long>(r.overflows), static_cast<unsigned long long>(r.hardJumps),
-      static_cast<unsigned long long>(r.anchorRollbacks), r.meanLead, r.meanTarget,
-      r.serverSubstPerSec, wallSeconds);
-}
+using SoakReport = Report;
 
 // Runs a soak of `clients` clients over symmetric links for `seconds`, then
 // checks the §11 M3 exit criterion.
@@ -127,11 +40,7 @@ SoakReport soak(const char* name, uint32_t clients, uint64_t oneWayNs, uint64_t 
   constexpr uint64_t kWarmup = 10 * kSec;
   LeadSampler lead;
   s.afterClientFrame = [&](ClientRig& r) {
-    if (s.now() < kWarmup) return;
-    const ClientNetStats& st = r.client->netStats();
-    lead.leadSum += r.client->localTick().minus(s.server().nextTick());
-    lead.targetSum += st.targetLeadTicks;
-    ++lead.samples;
+    if (s.now() >= kWarmup) lead.sample(s, r, s.server().nextTick());
   };
   s.runFor(kWarmup - s.now());
   const uint64_t substAfter = s.server().stats().substitutedInputs;
@@ -143,7 +52,7 @@ SoakReport soak(const char* name, uint32_t clients, uint64_t oneWayNs, uint64_t 
       std::chrono::duration<double>(std::chrono::steady_clock::now() - wallStart).count();
   const SoakReport r = summarise(s, static_cast<double>(s.now()) / 1e9, lead, substAfter,
                                  static_cast<double>(measured) / 1e9);
-  print(name, r, wall);
+  std::printf("%s\n", format(name, r, wall).c_str());
   CHECK(allRunning(s));
   CHECK(r.mismatches == 0);
   CHECK(r.resyncs == 0);
