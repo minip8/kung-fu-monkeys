@@ -170,7 +170,9 @@ TEST_CASE("piercing banana: one banana hits two players, even after the power-up
   givePowerUp(playerAt(s, kP0), kPierce, 3);
   EventLog log;
   const EntityId id = throwRight(s, content, log);
-  REQUIRE(s.boomerangs.get(id)->pierce == 1);
+  const Boomerang* thrown = s.boomerangs.get(id);
+  REQUIRE(thrown != nullptr);
+  REQUIRE(thrown->pierce == 1);
   log = idle(s, content, 2);
   REQUIRE(playerAt(s, kP0).modifiers.count == 0);  // expired before any hit
   log = idle(s, content, 40);

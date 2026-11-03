@@ -160,6 +160,18 @@ constexpr std::array<HazardKindName, 2> kHazardKinds = {{
 static_assert(kHazardKinds.size() == static_cast<size_t>(sim::HazardKind::kCount),
               "every HazardKind needs a TOML name in kHazardKinds");
 
+// The entry of a name table whose `name` matches, or nullptr. A pointer rather
+// than an iterator: std::array's iterator is a class on MSVC, so the
+// clang-tidy-preferred `const auto*` would not compile there.
+template <class Table>
+[[nodiscard]] const typename Table::value_type* findNamed(const Table& table,
+                                                          std::string_view name) {
+  for (const auto& entry : table) {
+    if (entry.name == name) return &entry;
+  }
+  return nullptr;
+}
+
 // Name of the built-in inert ability at index 0.
 constexpr std::string_view kNoneAbility = "none";
 
@@ -629,9 +641,8 @@ class Builder {
     const std::optional<std::string> name = s.name(d.name);
     if (name) s.setWhere("ability " + inQuotes(*name));
     if (const std::optional<std::string> kind = s.string("kind", true)) {
-      const auto entry = std::ranges::find_if(
-          kAbilityKinds, [&](const AbilityKindName& k) { return k.name == *kind; });
-      if (entry == kAbilityKinds.end()) {
+      const auto* const entry = findNamed(kAbilityKinds, *kind);
+      if (entry == nullptr) {
         s.error("unknown kind " + inQuotes(*kind));
       } else {
         d.kind = entry->kind;
@@ -940,9 +951,8 @@ class Builder {
     const std::optional<std::string> name = s.name(m.name);
     if (name) s.setWhere("mode " + inQuotes(*name));
     if (const std::optional<std::string> kind = s.string("kind")) {
-      const auto entry =
-          std::ranges::find_if(kModeKinds, [&](const ModeKindName& k) { return k.name == *kind; });
-      if (entry == kModeKinds.end()) {
+      const auto* const entry = findNamed(kModeKinds, *kind);
+      if (entry == nullptr) {
         s.error("unknown kind " + inQuotes(*kind) + " (rounds, deathmatch or survival)");
       } else {
         m.kind = entry->kind;
