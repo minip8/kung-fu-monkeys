@@ -72,7 +72,10 @@ jobs:
           - { name: linux-gcc,        os: ubuntu-26.04,   cc: gcc,   cxx: g++ }
           - { name: linux-clang,      os: ubuntu-26.04,   cc: clang, cxx: clang++ }
           - { name: windows-msvc,     os: windows-latest }
-          - { name: macos-appleclang, os: macos-latest }
+          # macOS names its compilers explicitly: the job exports CC/CXX from these
+          # keys, and an empty CC reaches OpenSSL's Configure (built by vcpkg for
+          # libdatachannel), which takes it literally and runs "" -fPIC ... .
+          - { name: macos-appleclang, os: macos-latest,  cc: clang, cxx: clang++ }
     env:
       CC: ${{ matrix.cc }}
       CXX: ${{ matrix.cxx }}
