@@ -28,6 +28,11 @@ kfm_add_test_exe(kfm_sim_tests
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
+kfm_add_test_exe(kfm_net_tests
+  net/transport_test.cpp
+)
+target_link_libraries(kfm_net_tests PRIVATE kfm::net)
+
 kfm_add_test_exe(kfm_presentation_tests
   presentation/math_test.cpp
   presentation/camera_test.cpp
