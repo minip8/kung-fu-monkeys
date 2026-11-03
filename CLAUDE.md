@@ -135,10 +135,18 @@ work, as soon as it is complete and (once a build exists) configures, builds and
 logical unit is a system, a rule, a transport, a content def with its test, a doc decision. Do not
 mix a refactor with a behaviour change. Do not leave finished work uncommitted at the end of a
 turn; if something is deliberately left uncommitted (broken, half-done, exploratory), say so.
-Never push without being asked. `main` stays green. Work on a branch (`feat/<topic>`,
-`fix/<topic>`, `docs/<topic>`), never directly on `main`; create the branch before the first
-commit of a task. A design decision and the `docs/architecture.md` update that records it go in
-the same commit.
+`main` stays green. Work on a branch (`feat/<topic>`, `fix/<topic>`, `docs/<topic>`), never
+directly on `main`; create the branch before the first commit of a task. A design decision and
+the `docs/architecture.md` update that records it go in the same commit.
+
+**Pushing and pull requests.** Push the working branch to `origin` whenever it is green locally
+(configures, builds, passes `ctest`, lint clean), and open a pull request against `main` with
+`gh pr create` once the task is complete; do not wait to be asked. The PR body summarises what
+landed, the decisions made (with the architecture version they were recorded in), how it was
+verified (toolchains, corpus, bench numbers) and any follow-ups, and ends with the attribution
+line. Never push to `main` directly and never force-push a branch that has an open PR; if history
+must be rewritten before the PR exists, say so in the turn. Merging the PR is the user's call:
+CI must be green on every leg (the native matrix, ASan+UBSan and wasm) first.
 
 **Message format.** Conventional Commits with the module as scope:
 
