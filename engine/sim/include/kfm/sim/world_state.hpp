@@ -121,13 +121,30 @@ enum class MatchPhase : uint8_t {
   MatchEnded,
 };
 
+// The match flow shared by every mode (architecture §5.3) plus the per-player
+// mode state. ticksInPhase is also the match clock: a mode's time limit runs
+// over the Playing phase (deathmatch: the whole match; survival: one round).
 struct MatchRules {
   MatchPhase phase{MatchPhase::Lobby};
   PlayerMask present{0};
   uint32_t ticksInPhase{0};
   uint8_t round{0};
+  // Round wins (rounds, survival) or eliminations scored (deathmatch).
   std::array<uint8_t, kMaxPlayers> scores{};
   PlayerId lastRoundWinner{PlayerId::invalid()};
+  // v0.23 mode block: only deathmatch and survival write it, so it stays all
+  // zero in the rounds mode and the visitor leaves it out of the stream there
+  // (visit.hpp), which keeps rounds checksums and snapshots as before.
+  std::array<uint8_t, kMaxPlayers> deaths{};         // eliminations suffered this match
+  std::array<uint16_t, kMaxPlayers> respawnTicks{};  // dead: ticks until respawn; 0 = none due
+  std::array<uint16_t, kMaxPlayers> invulnTicks{};   // alive: spawn protection left (Invulnerable)
+
+  [[nodiscard]] constexpr bool hasModeBlock() const {
+    for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+      if (deaths[i] != 0 || respawnTicks[i] != 0 || invulnTicks[i] != 0) return true;
+    }
+    return false;
+  }
 };
 
 struct WorldState {

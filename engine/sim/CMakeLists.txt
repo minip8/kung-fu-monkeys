@@ -9,6 +9,11 @@ add_library(kfm_sim STATIC
   src/abilities/registry.cpp
   src/abilities/dash.cpp
   src/abilities/throw.cpp
+  src/modes/mode_flow.cpp
+  src/modes/registry.cpp
+  src/modes/rounds.cpp
+  src/modes/deathmatch.cpp
+  src/modes/survival.cpp
   src/rules/table.cpp
   src/rules/catch.cpp
   src/rules/damage.cpp

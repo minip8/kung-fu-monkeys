@@ -408,3 +408,74 @@ TEST_CASE("app content: <exe dir>/content is found, and the watcher sees edits",
   CHECK_FALSE(ContentWatcher().active());
   fs::remove_all(exeDir, ec);
 }
+
+TEST_CASE("modes: kinds, per-kind numbers and their validation", "[content][loader][modes]") {
+  const std::string modes = R"(
+[[mode]]
+name = "dm"
+kind = "deathmatch"
+score_to_win = 7
+time_limit_ticks = 7200
+respawn_ticks = 90
+respawn_invuln_ticks = 30
+
+[[mode]]
+name = "last"
+kind = "survival"
+rounds_to_win = 2
+time_limit_ticks = 1800
+
+[[mode]]
+name = "r0"
+score_to_win = 0
+)";
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(std::string(kMinimal) + modes, "modes.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  REQUIRE(db.modeCount == 4);
+  CHECK(db.modes[0].kind == sim::ModeKind::Rounds);  // kind defaults to rounds
+  const sim::ModeDef& dm = db.modes[1];
+  CHECK(dm.kind == sim::ModeKind::Deathmatch);
+  CHECK(dm.scoreToWin == 7);
+  CHECK(dm.timeLimitTicks == 7200);
+  CHECK(dm.respawnTicks == 90);
+  CHECK(dm.respawnInvulnTicks == 30);
+  const sim::ModeDef& last = db.modes[2];
+  CHECK(last.kind == sim::ModeKind::Survival);
+  CHECK(last.roundsToWin == 2);
+  CHECK(last.timeLimitTicks == 1800);
+  // score_to_win = 0 means nothing outside deathmatch.
+  CHECK(db.modes[3].kind == sim::ModeKind::Rounds);
+
+  const std::string base(kMinimal);
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"ctf\"\nkind = \"ctf\"\n"),
+                 "mode \"ctf\": unknown kind \"ctf\""));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"dm\"\nkind = \"deathmatch\"\n"
+                                   "score_to_win = 0\n"),
+                 "mode \"dm\": score_to_win must be at least 1 in deathmatch"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"dm\"\nkind = \"deathmatch\"\n"
+                                   "respawn_ticks = 0\n"),
+                 "mode \"dm\": respawn_ticks must be at least 1 in deathmatch"));
+  CHECK(
+      contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_to_win = 256\n"), "score_to_win"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_limit = 3\n"),
+                 "unknown key 'score_limit'"));
+}
+
+TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][modes]") {
+  ContentDB loaded{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
+  const std::optional<uint8_t> deathmatch = loaded.findMode("deathmatch");
+  const std::optional<uint8_t> survival = loaded.findMode("survival");
+  REQUIRE(loaded.findMode("rounds") == std::optional<uint8_t>{0});  // the default stays first
+  REQUIRE(deathmatch.has_value());
+  REQUIRE(survival.has_value());
+  CHECK(loaded.modes[0].kind == sim::ModeKind::Rounds);
+  CHECK(loaded.modes[*deathmatch].kind == sim::ModeKind::Deathmatch);
+  CHECK(loaded.modes[*deathmatch].timeLimitTicks > 0);
+  CHECK(loaded.modes[*survival].kind == sim::ModeKind::Survival);
+  CHECK(loaded.modes[*survival].timeLimitTicks > 0);
+}

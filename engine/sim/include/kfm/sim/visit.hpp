@@ -78,6 +78,8 @@ template <>
 inline constexpr uint8_t kEnumCount<PickupKind> = 1;
 template <>
 inline constexpr uint8_t kEnumCount<MatchPhase> = 5;
+template <>
+inline constexpr uint8_t kEnumCount<ModeKind> = static_cast<uint8_t>(ModeKind::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
 static_assert(static_cast<uint8_t>(StatKind::AmmoMax) + 1 == kEnumCount<StatKind>);
 static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
@@ -225,6 +227,11 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.roundsToWin);
   v.u16(d.roundEndTicks);
   v.u16(d.roundStartTicks);
+  visit(v, d.kind);
+  v.u32(d.timeLimitTicks);
+  v.u8(d.scoreToWin);
+  v.u16(d.respawnTicks);
+  v.u16(d.respawnInvulnTicks);
 }
 template <class V>
 void visit(V& v, DashAttackDef& d) {
@@ -271,9 +278,29 @@ void visit(V& v, InputFrame& f) {
     }
   }
 }
+// The phase byte carries a flag in bit 7 (v0.23): set iff the mode block
+// (deaths, respawn and spawn-protection timers) is not all zero, and the
+// block follows the M1 fields only then. The encoding stays a pure function
+// of the state, and a rounds match, which never writes the block, serialises
+// and checksums exactly as before.
+inline constexpr uint8_t kModeBlockFlag = 0x80;
+
 template <class V>
 void visit(V& v, MatchRules& r) {
-  visit(v, r.phase);
+  uint8_t phase = static_cast<uint8_t>(r.phase);
+  if constexpr (!V::kIsReader) {
+    if (r.hasModeBlock()) phase = static_cast<uint8_t>(phase | kModeBlockFlag);
+  }
+  v.u8(phase);
+  const bool modeBlock = (phase & kModeBlockFlag) != 0;
+  if constexpr (V::kIsReader) {
+    auto raw = static_cast<uint8_t>(phase & ~kModeBlockFlag);
+    if (raw >= kEnumCount<MatchPhase>) {
+      v.markInvalid();
+      raw = 0;
+    }
+    r.phase = static_cast<MatchPhase>(raw);
+  }
   v.u16(r.present);
   v.u32(r.ticksInPhase);
   v.u8(r.round);
@@ -281,6 +308,18 @@ void visit(V& v, MatchRules& r) {
     v.u8(score);
   visit(v, r.lastRoundWinner);
   validatePlayerRef(v, r.lastRoundWinner);
+  if (modeBlock) {
+    for (uint8_t& d : r.deaths)
+      v.u8(d);
+    for (uint16_t& t : r.respawnTicks)
+      v.u16(t);
+    for (uint16_t& t : r.invulnTicks)
+      v.u16(t);
+  } else if constexpr (V::kIsReader) {
+    r.deaths = {};
+    r.respawnTicks = {};
+    r.invulnTicks = {};
+  }
 }
 template <class V>
 void visit(V& v, Transform& t) {

@@ -1,41 +1,21 @@
-// RulesSystem (architecture §5.3 steps 1 and 10): the FFA round flow.
+// RulesSystem (architecture §5.3 steps 1 and 10): the phase machine every
+// mode shares, with the mode-specific decisions in the ModeBehavior table
+// (modes/registry.hpp) selected by content.mode.kind.
 //
 // Lobby -> (first tick) MatchStarted, round 1 -> RoundStarting (players spawned,
-// countdown of roundStartTicks) -> Playing -> (at most one player left)
-// RoundEnded (roundEndTicks) -> next round ... -> MatchEnded once a player
-// reaches roundsToWin. A phase lasts exactly its tick count: rulesPreTick
-// transitions when ticksInPhase reaches it, and a zero-length countdown goes
-// straight to Playing in the same tick.
+// countdown of roundStartTicks) -> Playing -> (the mode ends the round)
+// RoundEnded (roundEndTicks) -> next round ... -> MatchEnded (the mode ends
+// the match). A phase lasts exactly its tick count: rulesPreTick transitions
+// when ticksInPhase reaches it, and a zero-length countdown goes straight to
+// Playing in the same tick.
+#include "kfm/sim/modes/registry.hpp"
 #include "kfm/sim/systems.hpp"
+#include "modes/mode_flow.hpp"
 
-#include <bit>
 #include <cstdint>
 
 namespace kfm::sim {
 namespace {
-
-// Deterministic facing at spawn: toward the arena centre along x.
-[[nodiscard]] Angle facingTowardCentre(Vec2 pos) {
-  return pos.x > Fixed::zero() ? Angle::fromBam(Angle::kHalf) : Angle{};
-}
-
-void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content) {
-  // Keep the previous buttons so a button held across the round boundary does
-  // not register as a fresh press.
-  const uint8_t prevButtons = p.prevButtons;
-  p = Player{};
-  p.id = id;
-  p.prevButtons = prevButtons;
-  p.transform.pos = pos;
-  p.transform.prevPos = pos;
-  p.transform.facing = facingTowardCentre(pos);
-  p.stats = Stats{content.db.player.moveSpeed, content.db.player.maxHp, content.db.player.ammoMax};
-  p.hp = content.db.player.maxHp;
-  p.ammo = content.db.player.ammoStart;
-  for (uint8_t slot = 0; slot < kAbilitySlots; ++slot) {
-    p.abilities[slot].defIndex = content.db.player.abilities[slot];
-  }
-}
 
 void startRound(WorldState& s, const MatchContent& content, EventSink& sink) {
   s.boomerangs.clear();
@@ -47,6 +27,9 @@ void startRound(WorldState& s, const MatchContent& content, EventSink& sink) {
       s.players.despawn(s.players.idAt(i));
     }
   }
+  // Everyone starts the round fresh: no respawn pending, no spawn protection.
+  s.rules.respawnTicks = {};
+  s.rules.invulnTicks = {};
 
   const ArenaDef& arena = content.arena;
   const uint32_t points = arena.spawnPointCount;
@@ -65,13 +48,6 @@ void startRound(WorldState& s, const MatchContent& content, EventSink& sink) {
       SimEvent{EventKind::RoundStarted, s.tick, PlayerId::invalid(), EntityId{}, s.rules.round, 0});
   s.rules.phase = MatchPhase::RoundStarting;
   s.rules.ticksInPhase = 0;
-}
-
-[[nodiscard]] PlayerId soleSurvivor(const WorldState& s) {
-  PlayerId winner = PlayerId::invalid();
-  if (s.players.size() != 1) return winner;
-  s.players.forEachAlive([&](EntityId /*id*/, const Player& p) { winner = p.id; });
-  return winner;
 }
 
 }  // namespace
@@ -94,23 +70,9 @@ void rulesPreTick(WorldState& s, const MatchContent& content, EventSink& sink) {
 }
 
 void rulesPostTick(WorldState& s, const MatchContent& content, EventSink& sink) {
-  MatchRules& r = s.rules;
-  ++r.ticksInPhase;
-  if (r.phase != MatchPhase::Playing) return;
-  if (std::popcount(static_cast<uint32_t>(r.present)) < 2 || s.players.size() > 1) return;
-
-  const PlayerId winner = soleSurvivor(s);
-  r.lastRoundWinner = winner;
-  r.ticksInPhase = 0;
-  r.phase = MatchPhase::RoundEnded;
-  sink.push(SimEvent{EventKind::RoundEnded, s.tick, winner, EntityId{}, r.round, 0});
-  if (!winner.isValid()) return;  // draw: nobody scores
-  uint8_t& score = r.scores[winner.value];
-  ++score;
-  if (score >= content.mode.roundsToWin) {
-    r.phase = MatchPhase::MatchEnded;
-    sink.push(SimEvent{EventKind::MatchEnded, s.tick, winner, EntityId{}, 0, 0});
-  }
+  ++s.rules.ticksInPhase;
+  if (s.rules.phase != MatchPhase::Playing) return;
+  modeBehaviorFor(content.mode.kind).onPlaying(s, content, sink);
 }
 
 }  // namespace kfm::sim
