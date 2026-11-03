@@ -24,6 +24,10 @@ enum class SoundId : uint8_t {
   RoundEnd,
   MatchEnd,
   UiClick,  // played by the app (lobby, menus), never by an event
+  // v0.23 (modes):
+  Respawn,       // a deathmatch respawn: a rising shimmer
+  Score,         // an elimination scored in deathmatch: a bright coin blip
+  TimerWarning,  // the mode clock: 10, 3, 2, 1 seconds left
   Count,
 };
 
@@ -59,6 +63,12 @@ inline constexpr uint8_t kSoundCount = static_cast<uint8_t>(SoundId::Count);
       return "match-end";
     case SoundId::UiClick:
       return "ui-click";
+    case SoundId::Respawn:
+      return "respawn";
+    case SoundId::Score:
+      return "score";
+    case SoundId::TimerWarning:
+      return "timer-warning";
     case SoundId::Count:
       break;
   }

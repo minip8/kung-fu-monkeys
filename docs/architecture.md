@@ -106,7 +106,9 @@ with `Tag::Invulnerable` as spawn protection, which the damage and dash-attack r
 forbid. The visitor writes the mode block only when it is non-zero (a flag in the phase byte),
 so rounds matches serialise, checksum and snapshot exactly as before: existing corpus checksums
 are unchanged. New events `ScoreChanged`, `PlayerRespawned`, `TimerWarning`; `content/modes.toml`
-ships `rounds`, `deathmatch` and `survival`. Team modes stay open (§12).
+ships `rounds`, `deathmatch` and `survival`. Presentation (§7): RespawnBurst, ScorePop and
+TimerBanner effects, Respawn, Score and TimerWarning sounds, a per-mode HUD scoreboard and clock.
+Team modes stay open (§12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -1156,7 +1158,11 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   tuned result is pasted back into the `constexpr` tables and the corpus regenerated. The HUD
   (scores, round, countdown, banners, `P<n>`/`BOT<n>` tags with ammo pips placed with
   `worldToScreen`) is drawn on ImGui's background draw list, over the scene and under ImGui
-  windows. The browser page turns its query string into the same flags
+  windows. Per mode (v0.23, from `RenderHud`, which the builder fills from `MatchRules` and the
+  `ModeDef`): rounds shows round-win pips and "Round N (first to K)"; survival the same plus the
+  alive count and the round clock; deathmatch each slot's eliminations (dimmed with a countdown
+  while it waits to respawn), "first to K" and the match clock. The clock is `m:ss`, pops on
+  `TimerWarning` and turns red in the last 10 s; a drawn match shows "Draw!". The browser page turns its query string into the same flags
   (`?autostart&bots=3&seed=7&overlay`).
 
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
@@ -1277,6 +1283,9 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `BoomerangGrounded` | GroundDust 0.35 s where it landed | BananaGround |
 | `BoomerangBounced` | BounceSpark 0.15 s | WallBounce |
 | `RoundStarted`, `RoundEnded`, `MatchEnded` | banners 1 / 1.5 / 3 s; the HUD text pops in at 1.35× and settles over the first quarter (`bannerScale`) | — , RoundEnd, MatchEnd |
+| `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
+| `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer) | Score (coin blip) |
+| `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
 
 Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
 (0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
@@ -1295,7 +1304,8 @@ State-sampled trails follow whatever timeline is drawn.
 Audio (v0.19, M4). Everything SDL-free is in `presentation` and headless-tested; only the device
 is in `platform`.
 - `SoundBank` (`sound_bank.hpp`): 14 clips (`SoundId`: throw, dash, perfect and auto catch, hit,
-  elimination, pickup, banana landing, wall bounce, count-in, go, round end, match end, UI click)
+  elimination, pickup, banana landing, wall bounce, count-in, go, round end, match end, UI click;
+  v0.23 adds respawn, score and timer warning, 17 in all)
   synthesised once at startup from sines, inharmonic bell partials, state-variable-filtered
   xorshift noise and envelopes, mono float at 48 kHz, each normalised to a 0.8 peak with 1 ms /
   4 ms end fades, deterministic (fixed noise seeds), about 4.6 s of audio in total. No audio

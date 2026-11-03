@@ -453,6 +453,82 @@ TEST_CASE("HUD derives phase, countdown, scores and winners", "[presentation][bu
   CHECK(rs.hud.phase == HudPhase::MatchEnded);
   CHECK(rs.hud.matchWinner == 0);
   CHECK(rs.hud.scores[0] == content.modes[0].roundsToWin);
+  CHECK(rs.hud.mode == ModeKind::Rounds);
+  CHECK_FALSE(rs.hud.hasClock);
+}
+
+TEST_CASE("HUD carries the mode's scoreboard: clock, alive count, respawns",
+          "[presentation][builder][modes]") {
+  ContentDB content = defaultContent();
+  ModeDef& dm = content.modes[1];
+  dm.name = ContentName::of("deathmatch");
+  dm.kind = ModeKind::Deathmatch;
+  dm.scoreToWin = 7;
+  dm.timeLimitTicks = 600;
+  dm.respawnTicks = 90;
+  content.modeCount = 2;
+  const MatchContent m{content, 0, 1};
+
+  WorldState s = initialWorld(MatchConfig{.seed = 31, .players = 0b111, .mode = 1});
+  EventSink sink;
+  InputFrame f;
+  f.present = s.rules.present;
+  const auto stepOnce = [&] {
+    f.tick = s.tick;
+    sink.clear();
+    step(s, f, m, sink);
+  };
+  stepOnce();
+  REQUIRE(s.rules.phase == MatchPhase::RoundStarting);
+  PresentationState ps;
+  RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, m, 1.0f / 60.0f);
+  CHECK(rs.hud.mode == ModeKind::Deathmatch);
+  CHECK(rs.hud.scoreToWin == 7);
+  CHECK(rs.hud.hasClock);
+  CHECK(rs.hud.clockSeconds == Approx(10.0f));  // the full limit during the countdown
+  CHECK(rs.hud.aliveCount == 3);
+
+  while (s.rules.phase != MatchPhase::Playing)
+    stepOnce();
+  for (int i = 0; i < 60; ++i)
+    stepOnce();
+  playerAt(s, PlayerId{2}).tags.set(Tag::Eliminated);  // as the damage step would
+  s.rules.respawnTicks[2] = 90;
+  s.rules.deaths[2] = 1;
+  rs = buildRenderState(ps, s, s, 1.0f, {}, m, 1.0f / 60.0f);
+  CHECK(rs.hud.clockSeconds == Approx(static_cast<float>(600 - s.rules.ticksInPhase) / 60.0f));
+  CHECK(rs.hud.aliveCount == 2);
+  CHECK(rs.hud.deaths[2] == 1);
+  CHECK(rs.hud.respawnSeconds[2] == Approx(1.5f));
+  CHECK(rs.hud.respawnSeconds[0] == 0.0f);
+}
+
+TEST_CASE("mode events start their effects and sounds", "[presentation][builder][modes]") {
+  WorldState s = makePlayingWorld(37, 0b11);
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::fromInt(2)});
+  PresentationState ps;
+  build(ps, s, s, 1.0f);
+  const std::vector<SimEvent> events = {
+      SimEvent{EventKind::PlayerRespawned, s.tick, kP1, s.players.idAt(1), 0, 0},
+      SimEvent{EventKind::ScoreChanged, s.tick, kP0, EntityId{}, 1, 0},
+      SimEvent{EventKind::TimerWarning, s.tick, PlayerId::invalid(), EntityId{}, 10, 0},
+  };
+  const RenderState rs = build(ps, s, s, 1.0f, events);
+  REQUIRE(countEffects(rs, EffectKind::RespawnBurst) == 1);
+  CHECK(countEffects(rs, EffectKind::ScorePop) == 1);
+  CHECK(countEffects(rs, EffectKind::TimerBanner) == 1);
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& e = rs.effects[i];
+    if (e.kind != EffectKind::RespawnBurst) continue;
+    CHECK(e.slot == 1);
+    CHECK(worldToSim(e.position).x == Approx(3.0f));
+    CHECK(worldToSim(e.position).y == Approx(2.0f));
+  }
+  CHECK(bannerScale(rs, EffectKind::TimerBanner) > 1.0f);
+  std::set<SoundId> sounds;
+  for (uint16_t i = 0; i < rs.soundCount; ++i)
+    sounds.insert(rs.sounds[i].id);
+  CHECK(sounds == std::set<SoundId>{SoundId::Respawn, SoundId::Score, SoundId::TimerWarning});
 }
 
 TEST_CASE("a scripted 10-player match renders consistently every frame",
@@ -640,6 +716,9 @@ TEST_CASE("sound cues: table, pan and same-frame merging", "[presentation][build
   CHECK(id(BoomerangBounced) == SoundId::WallBounce);
   CHECK(id(RoundEnded) == SoundId::RoundEnd);
   CHECK(id(MatchEnded) == SoundId::MatchEnd);
+  CHECK(id(PlayerRespawned) == SoundId::Respawn);
+  CHECK(id(ScoreChanged) == SoundId::Score);
+  CHECK(id(TimerWarning) == SoundId::TimerWarning);
   CHECK(id(PlayerSpawned) == SoundId::Count);
   CHECK(id(PickupSpawned) == SoundId::Count);
 

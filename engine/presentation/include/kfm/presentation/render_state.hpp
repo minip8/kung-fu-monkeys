@@ -15,6 +15,7 @@
 #include "kfm/presentation/math.hpp"
 #include "kfm/presentation/sound.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content/mode.hpp"
 
 #include <array>
 #include <cstdint>
@@ -120,6 +121,10 @@ enum class EffectKind : uint8_t {
   PickupSparkle,      // twinkles where a pickup was taken
   GroundDust,         // dust where a banana landed
   BounceSpark,        // a banana bounced off a wall
+  // v0.23 (modes):
+  RespawnBurst,  // a column of light where a monkey respawns (slot colour)
+  ScorePop,      // gold ring at a monkey that scored an elimination (deathmatch)
+  TimerBanner,   // HUD: the mode clock pops at 10, 3, 2, 1 seconds left
 };
 
 struct RenderEffect {
@@ -148,6 +153,15 @@ struct RenderHud {
   std::array<uint8_t, sim::kMaxPlayers> scores{};
   int8_t lastRoundWinner{kNoSlot};  // kNoSlot before the first round end or after a draw
   int8_t matchWinner{kNoSlot};      // set in MatchEnded
+  // v0.23 (modes): what the scoreboard shows. scores are round wins in
+  // rounds/survival and eliminations in deathmatch.
+  sim::ModeKind mode{sim::ModeKind::Rounds};
+  uint8_t scoreToWin{0};     // deathmatch
+  bool hasClock{false};      // the mode has a time limit
+  float clockSeconds{0.0f};  // time left on it (full during the countdown, 0 after)
+  uint8_t aliveCount{0};     // monkeys still in play
+  std::array<uint8_t, sim::kMaxPlayers> deaths{};
+  std::array<float, sim::kMaxPlayers> respawnSeconds{};  // > 0: dead, back in this long
 };
 
 struct RenderState {
