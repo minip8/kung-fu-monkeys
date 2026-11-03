@@ -118,8 +118,8 @@ class Pump {
   void track(ITransport& t) { endpoints_.push_back(Endpoint{&t, {}}); }
 
   [[nodiscard]] Inbox& inbox(const ITransport& t) {
-    const auto it = std::find_if(endpoints_.begin(), endpoints_.end(),
-                                 [&t](const Endpoint& e) { return e.transport == &t; });
+    const auto it =
+        std::ranges::find_if(endpoints_, [&t](const Endpoint& e) { return e.transport == &t; });
     if (it == endpoints_.end()) FAIL("endpoint not tracked");
     return it->inbox;
   }
