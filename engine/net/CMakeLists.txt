@@ -69,17 +69,18 @@ if(KFM_WEBRTC)
 endif()
 
 # ---------------------------------------------------------------------------
-# kfm_netsim: the in-process netsim (§6.4, §9): a NetServer and N NetClients
+# kfm_net_netsim (kfm::netsim): the in-process netsim (§6.4, §9): a
+# NetServer and N NetClients
 # over the loopback emulator under a deterministic 1 ms scheduler, with the
 # soak summary. Shared by tests/netcode and apps/netsim; not linked by any
 # shipping binary.
 # ---------------------------------------------------------------------------
-add_library(kfm_netsim STATIC netsim/src/netsim.cpp)
-add_library(kfm::netsim ALIAS kfm_netsim)
-target_include_directories(kfm_netsim
+add_library(kfm_net_netsim STATIC netsim/src/netsim.cpp)
+add_library(kfm::netsim ALIAS kfm_net_netsim)
+target_include_directories(kfm_net_netsim
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/netsim/include>)
-target_link_libraries(kfm_netsim
+target_link_libraries(kfm_net_netsim
   PUBLIC kfm::net
   PRIVATE kfm::warnings)
-kfm_no_exceptions_rtti(kfm_netsim)
-set_target_properties(kfm_netsim PROPERTIES FOLDER engine)
+kfm_no_exceptions_rtti(kfm_net_netsim)
+set_target_properties(kfm_net_netsim PROPERTIES FOLDER engine)
