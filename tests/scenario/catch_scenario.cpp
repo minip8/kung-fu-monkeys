@@ -4,8 +4,7 @@
 //
 // These exercise Dash and Throw (abilitySystem, which grants PerfectDash),
 // flight (projectileSystem) and swept collision together with the catch
-// rule, so they only pass once the whole M1 pipeline is integrated. Remove
-// the SKIP lines at integration.
+// rule.
 #include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -55,7 +54,6 @@ EventLog throwAndDash(Fixed dashGap) {
 }  // namespace
 
 TEST_CASE("a well-timed dash catches the incoming banana", "[scenario][catch]") {
-  SKIP("needs integrated systems: dash, throw, projectile and collision");
   // Contact distance is 0.85 (player 0.5 + banana 0.35) and dash plus banana
   // close at ~0.63 u/tick, so pressing at a gap of 2 meets the banana within
   // the 4-tick perfect window.
@@ -75,7 +73,6 @@ TEST_CASE("a well-timed dash catches the incoming banana", "[scenario][catch]") 
 }
 
 TEST_CASE("a dash pressed too early is still dashing but gets hit", "[scenario][catch]") {
-  SKIP("needs integrated systems: dash, throw, projectile and collision");
   // At a gap of 6 the banana arrives ~8 ticks into the dash: past the perfect
   // window, so the catch declines and the hit applies.
   const EventLog log = throwAndDash(Fixed::fromInt(6));

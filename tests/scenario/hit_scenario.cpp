@@ -3,8 +3,7 @@
 // banana returns to its thrower.
 //
 // These exercise Throw (abilitySystem), flight (projectileSystem) and swept
-// collision together with the interaction rules, so they only pass once the
-// whole M1 pipeline is integrated. Remove the SKIP lines at integration.
+// collision together with the interaction rules.
 #include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -31,7 +30,6 @@ size_t indexOf(const EventLog& log, EventKind kind) {
 }  // namespace
 
 TEST_CASE("a thrown banana eliminates, grounds and ends the round", "[scenario][hit]") {
-  SKIP("needs integrated systems: throw, projectile and collision");
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(21, 0b11);
   placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::zero()});
@@ -89,7 +87,6 @@ TEST_CASE("a thrown banana eliminates, grounds and ends the round", "[scenario][
 }
 
 TEST_CASE("a missed banana returns and is auto-caught by its thrower", "[scenario][hit]") {
-  SKIP("needs integrated systems: throw, projectile and collision");
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(22, 0b11);
   // Player 0 stands well clear of the throw line and of the return loop.
