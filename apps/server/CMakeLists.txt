@@ -1,0 +1,28 @@
+# Dedicated server (architecture §3, §6, §13.5).
+#
+# kfm_server_host  ServerHost: the 60 Hz loop around one NetServer, its match
+#                  restart policy, logging and stats. Transport-agnostic and
+#                  headless, so it is unit-tested over the loopback
+#                  (tests/unit/server) on every target, wasm included.
+# kfm_server       the CLI over WebRtcTransport. Native only (the browser
+#                  cannot host the signaling socket) and only with
+#                  KFM_WEBRTC; it builds in the server-headless preset.
+#
+# Both are built without exceptions or RTTI like the other apps: the
+# transport catches at its own boundary.
+add_library(kfm_server_host STATIC server_host.cpp)
+add_library(kfm::server_host ALIAS kfm_server_host)
+target_include_directories(kfm_server_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(kfm_server_host PUBLIC kfm::net PRIVATE kfm::warnings)
+kfm_no_exceptions_rtti(kfm_server_host)
+set_target_properties(kfm_server_host PROPERTIES FOLDER apps)
+
+if(NOT KFM_WEBRTC OR EMSCRIPTEN)
+  return()
+endif()
+
+add_executable(kfm_server main.cpp)
+target_link_libraries(kfm_server PRIVATE kfm::server_host kfm::net_webrtc kfm::net kfm::sim
+  kfm::warnings)
+kfm_no_exceptions_rtti(kfm_server)
+set_target_properties(kfm_server PROPERTIES FOLDER apps)
