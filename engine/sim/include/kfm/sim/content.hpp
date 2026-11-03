@@ -56,6 +56,11 @@ struct BoomerangDef {
   uint8_t pierce{0};  // 0/1: keeps flying after a hit
 };
 
+// Pickups lying in the arena (M1: grounded bananas; M4 adds power-ups).
+struct PickupDef {
+  Fixed radius{};  // contact radius against a player
+};
+
 struct PlayerDef {
   Fixed radius{};
   Fixed moveSpeed{};  // units/tick
@@ -84,6 +89,7 @@ struct ContentDB {
   std::array<AbilityDef, kMaxAbilityDefs> abilities{};  // index 0 = None, then Dash, Throw
   uint8_t abilityCount{0};
   BoomerangDef boomerang{};
+  PickupDef pickup{};
   PlayerDef player{};
   ArenaDef arena{};
   ModeDef mode{};

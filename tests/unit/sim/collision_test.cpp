@@ -270,7 +270,7 @@ TEST_CASE("collisionSystem: a player walking onto a static pickup", "[sim][colli
   CHECK(out.items[0].point == v(2, 0));
   CHECK(out.items[0].normal == Vec2{Fixed::one(), Fixed::zero()});
   // The player covers 2.5 units and first touches the pickup at x = 2 - r.
-  const double r = (c.player.radius + c.boomerang.radius).toDouble();
+  const double r = (c.player.radius + c.pickup.radius).toDouble();
   CHECK(std::abs(out.items[0].tHit.toDouble() - ((3.0 - r) / 2.5)) <= 1e-4);
 }
 

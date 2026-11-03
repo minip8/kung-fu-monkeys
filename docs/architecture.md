@@ -28,7 +28,8 @@ v0.12 changes: M1 interfaces pinned (§5.3, §5.5, §5.6, Appendix A). `step()` 
 hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, keep scanning") and
 rules gain an ownership field and a boomerang-phase mask.
 v0.13 changes: M1 landed (§11). Outside `Playing` nothing moves and no contact resolves (§5.7);
-the perfect catch ignores an own outbound banana (§5.6).
+the perfect catch ignores an own outbound banana (§5.6); `PickupDef` holds the pickup radius
+(§5.10).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -344,7 +345,9 @@ it just threw (16 u/s) would catch it straight back.
 - Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) are `constexpr`
   tables in `engine/sim`, assembled into the same immutable `ContentDB` and hashed through the
   visitor, so `content_hash` exists from M1 on. M4 replaces the `constexpr` source with the
-  TOML/JSON loader without touching systems.
+  TOML/JSON loader without touching systems. Every number a system needs lives there, including
+  the ones that are easy to forget: the pickup contact radius is `PickupDef::radius` (0.5),
+  not the banana's flight radius (0.35), so a grounded banana is easier to walk over than to dodge.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 

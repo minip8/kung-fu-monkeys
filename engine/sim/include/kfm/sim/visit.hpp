@@ -132,6 +132,10 @@ void visit(V& v, BoomerangDef& d) {
   v.u8(d.pierce);
 }
 template <class V>
+void visit(V& v, PickupDef& d) {
+  visit(v, d.radius);
+}
+template <class V>
 void visit(V& v, PlayerDef& d) {
   visit(v, d.radius);
   visit(v, d.moveSpeed);
@@ -161,6 +165,7 @@ void visit(V& v, ContentDB& c) {
     visit(v, d);
   v.u8(c.abilityCount);
   visit(v, c.boomerang);
+  visit(v, c.pickup);
   visit(v, c.player);
   visit(v, c.arena);
   visit(v, c.mode);

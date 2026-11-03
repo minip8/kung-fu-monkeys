@@ -17,10 +17,8 @@ using collision::GridLayout;
 
 static_assert(kMaxPlayers <= 16, "player sets below are uint16_t bit masks");
 
-// M1 has no pickup radius in ContentDB; a pickup is a grounded banana, so it
-// uses the banana's radius.
 [[nodiscard]] Fixed pickupRadius(const ContentDB& content) {
-  return content.boomerang.radius;
+  return content.pickup.radius;
 }
 
 [[nodiscard]] Aabb playerBox(const Player& p, const ContentDB& content) {

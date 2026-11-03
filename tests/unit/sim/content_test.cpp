@@ -28,6 +28,10 @@ TEST_CASE("contentHash is stable and sensitive to every def", "[sim][content]") 
   CHECK(contentHash(copy) != h);
 
   copy = c;
+  copy.pickup.radius += Fixed::epsilon();
+  CHECK(contentHash(copy) != h);
+
+  copy = c;
   copy.mode.roundsToWin = 5;
   CHECK(contentHash(copy) != h);
 
@@ -60,6 +64,7 @@ TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][con
   CHECK(c.player.ammoStart <= c.player.ammoMax);
   CHECK(c.boomerang.damage >= c.player.maxHp);  // base game: one hit kills
   CHECK(c.mode.roundsToWin == 3);
+  CHECK(c.pickup.radius == Fixed::half());
 }
 
 TEST_CASE("arena spawn points are distinct and inside the arena", "[sim][content]") {

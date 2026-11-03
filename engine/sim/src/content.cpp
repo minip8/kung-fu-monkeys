@@ -67,6 +67,8 @@ constexpr ContentDB makeDefaultContent() {
   c.boomerang.damage = 1;
   c.boomerang.pierce = 0;
 
+  c.pickup.radius = Fixed::half();
+
   c.player.radius = Fixed::half();
   c.player.moveSpeed = perSecond(7);
   c.player.maxHp = 1;
