@@ -1,17 +1,26 @@
 // kfm_replay: headless replay tool, the determinism gate and the M1 bench
 // (architecture §9). Records empty or scripted replays, prints per-tick
 // checksums, verifies a replay against an expected checksum file, and times
-// a scripted match. The viewer arrives with M2.
+// a scripted match, and measures scripted matches for feel tuning (stats.hpp).
+// The viewer arrives with M2.
 //
 //   kfm_replay record-empty <out.kfmr> [--ticks N] [--seed S] [--players P]
 //   kfm_replay record-scripted <out.kfmr> [--ticks N] [--seed S] [--players P] [--input-seed I]
+//                                         [--stats]
 //   kfm_replay info <in.kfmr>
 //   kfm_replay checksums <in.kfmr>              prints "<tick> <hex>" per tick
 //   kfm_replay verify <in.kfmr> <expected.txt>  exit 0 when identical
 //   kfm_replay bench [--ticks N] [--seed S] [--players P] [--input-seed I]
+//   kfm_replay stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]
+//                    [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N] [--quiet]
+//     match k uses seed S + k and input seed I + k; --ticks caps each match
+//     (default 36000, 10 minutes); the three bot knobs override
+//     ScriptedInputConfig (sensitivity checks: is a number the content's or
+//     the scripted bot's?); --quiet drops the per-match lines
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/sim.hpp"
+#include "stats.hpp"
 
 #include <chrono>
 #include <cstdio>
@@ -19,6 +28,7 @@
 #include <cstring>
 #include <fstream>
 #include <iterator>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -35,7 +45,16 @@ struct Args {
   uint64_t seed{0x4B464D00ULL};
   uint32_t players{10};
   uint64_t inputSeed{0x5C121DULL};  // scripted-input Rng, separate from the world's
+  bool ticksSet{false};
+  uint32_t matches{20};
+  bool stats{false};
+  bool quiet{false};
+  ScriptedInputConfig bot{};  // stats only; replays always use the defaults
 };
+
+// Default per-match tick cap of `stats`: 10 minutes.
+constexpr uint32_t kStatsDefaultTicks = 36'000;
+constexpr uint32_t kMaxMatches = 100'000;
 
 // Upper bound for --ticks: about 4.6 hours of play at 60 Hz and 56 MB of
 // replay buffer, far from overflowing replayMaxBytes or exhausting memory.
@@ -48,7 +67,10 @@ constexpr const char* kUsage =
     "  info <in.kfmr>\n"
     "  checksums <in.kfmr>\n"
     "  verify <in.kfmr> <expected.checksums>\n"
-    "  bench [--ticks N] [--seed S] [--players P] [--input-seed I]\n";
+    "  bench [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
+    "  record-scripted ... --stats   also print feel-tuning statistics of the match\n"
+    "  stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
+    "        [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N] [--quiet]\n";
 
 bool parseArgs(int argc, char** argv, Args& a) {
   if (argc < 2) return false;
@@ -70,6 +92,7 @@ bool parseArgs(int argc, char** argv, Args& a) {
         return false;
       }
       a.ticks = static_cast<uint32_t>(ticks);
+      a.ticksSet = true;
     } else if (arg == "--seed") {
       if (!takeValue(v)) return false;
       a.seed = std::strtoull(v, nullptr, 0);
@@ -79,6 +102,33 @@ bool parseArgs(int argc, char** argv, Args& a) {
     } else if (arg == "--input-seed") {
       if (!takeValue(v)) return false;
       a.inputSeed = std::strtoull(v, nullptr, 0);
+    } else if (arg == "--matches") {
+      if (!takeValue(v)) return false;
+      char* end = nullptr;
+      const unsigned long long matches = std::strtoull(v, &end, 0);
+      if (end == v || *end != '\0' || matches == 0 || matches > kMaxMatches) {
+        std::fprintf(stderr, "error: --matches must be a number in 1..%u, got '%s'\n", kMaxMatches,
+                     v);
+        return false;
+      }
+      a.matches = static_cast<uint32_t>(matches);
+    } else if (arg == "--throw-one-in" || arg == "--dash-one-in" || arg == "--dodge-per-256") {
+      if (!takeValue(v)) return false;
+      char* end = nullptr;
+      const unsigned long long n = std::strtoull(v, &end, 0);
+      const unsigned long long max = arg == "--dodge-per-256" ? 255 : 65535;
+      if (end == v || *end != '\0' || n > max) {
+        std::fprintf(stderr, "error: %s must be a number in 0..%llu, got '%s'\n", argv[i - 1], max,
+                     v);
+        return false;
+      }
+      if (arg == "--throw-one-in") a.bot.throwOneIn = static_cast<uint16_t>(n);
+      if (arg == "--dash-one-in") a.bot.dashOneIn = static_cast<uint16_t>(n);
+      if (arg == "--dodge-per-256") a.bot.dodgePer256 = static_cast<uint8_t>(n);
+    } else if (arg == "--stats") {
+      a.stats = true;
+    } else if (arg == "--quiet") {
+      a.quiet = true;
     } else {
       a.positional.emplace_back(arg);
     }
@@ -197,6 +247,38 @@ int cmdRecordEmpty(const Args& a) {
   });
 }
 
+// statsStep() plus a shadow world advanced by step(): the statistics are
+// only reported while both checksums agree (stats.hpp). Heap-allocated by
+// callers: it holds a whole WorldState.
+struct StatsRun {
+  explicit StatsRun(const WorldState& start) : shadow(start) {}
+
+  void step(WorldState& world, const InputFrame& f, EventSink& sink) {
+    const ContentDB& content = defaultContent();
+    replay::statsStep(world, f, content, sink, collector);
+    shadowSink.clear();
+    sim::step(shadow, f, content, shadowSink);
+    if (mismatchTick < 0 && checksum(shadow) != checksum(world)) {
+      mismatchTick = static_cast<int64_t>(f.tick.value);
+    }
+    collector.afterStep(world, sink);
+  }
+
+  [[nodiscard]] bool ok() const {
+    if (mismatchTick < 0) return true;
+    std::fprintf(stderr,
+                 "error: statsStep diverged from step() at tick %lld; make statsStep() in "
+                 "apps/replay/stats.cpp match engine/sim/src/step.cpp\n",
+                 static_cast<long long>(mismatchTick));
+    return false;
+  }
+
+  WorldState shadow;
+  EventSink shadowSink;
+  replay::StatsCollector collector;
+  int64_t mismatchTick{-1};
+};
+
 // Scripted inputs read the state, so the match is simulated while recording;
 // playback then reproduces it from the inputs alone.
 int cmdRecordScripted(const Args& a) {
@@ -212,17 +294,28 @@ int cmdRecordScripted(const Args& a) {
   WorldState world = initialWorld(h.matchConfig());
   Rng inputs = Rng::seeded(a.inputSeed);
   EventSink sink;
+  std::unique_ptr<StatsRun> stats;
+  if (a.stats) stats = std::make_unique<StatsRun>(world);
   const int rc = writeReplay(a, h, [&](Tick t) {
     const InputFrame f = scriptedFrame(inputs, world, content);
     KFM_CHECK(f.tick == t);
     sink.clear();
-    step(world, f, content, sink);
+    if (stats) {
+      stats->step(world, f, sink);
+    } else {
+      step(world, f, content, sink);
+    }
     return f;
   });
   if (rc == 0) {
     std::printf("  input seed 0x%llx, final tick %u, round %u, phase %u\n",
                 static_cast<unsigned long long>(a.inputSeed), world.tick.value, world.rules.round,
                 static_cast<unsigned>(world.rules.phase));
+  }
+  if (rc == 0 && stats) {
+    if (!stats->ok()) return 1;
+    stats->collector.finish(world);
+    replay::printSummary(stats->collector.stats(), a.players);
   }
   return rc;
 }
@@ -264,6 +357,38 @@ int cmdBench(const Args& a) {
       "  step only:              %.0f ticks/s, %.2f us/tick\n",
       a.players, a.ticks, matches, static_cast<unsigned long long>(events), checksum(world),
       ticks / (totalUs * 1e-6), totalUs / ticks, ticks / (stepUs * 1e-6), stepUs / ticks);
+  return 0;
+}
+
+// Scripted matches for feel tuning: match k uses seed + k and input seed + k
+// and runs until MatchEnded or the tick cap.
+int cmdStats(const Args& a) {
+  if (!checkPlayers(a) || !a.positional.empty()) {
+    if (!a.positional.empty()) std::fputs(kUsage, stderr);
+    return 2;
+  }
+  const ContentDB& content = defaultContent();
+  const ReplayHeader h = headerFor(a);
+  const uint32_t cap = a.ticksSet ? a.ticks : kStatsDefaultTicks;
+  replay::Stats total;
+  for (uint32_t m = 0; m < a.matches; ++m) {
+    const uint64_t seed = a.seed + m;
+    const uint64_t inputSeed = a.inputSeed + m;
+    WorldState world = initialWorld(MatchConfig{seed, h.players});
+    Rng inputs = Rng::seeded(inputSeed);
+    EventSink sink;
+    const auto run = std::make_unique<StatsRun>(world);
+    for (uint32_t t = 0; t < cap && world.rules.phase != MatchPhase::MatchEnded; ++t) {
+      const InputFrame f = scriptedFrame(inputs, world, content, a.bot);
+      sink.clear();
+      run->step(world, f, sink);
+    }
+    if (!run->ok()) return 1;
+    run->collector.finish(world);
+    if (!a.quiet) replay::printMatchLine(m, seed, inputSeed, run->collector.stats());
+    total.merge(run->collector.stats());
+  }
+  replay::printSummary(total, a.players);
   return 0;
 }
 
@@ -361,6 +486,7 @@ int main(int argc, char** argv) {
   if (a.command == "record-empty") return cmdRecordEmpty(a);
   if (a.command == "record-scripted") return cmdRecordScripted(a);
   if (a.command == "bench") return cmdBench(a);
+  if (a.command == "stats") return cmdStats(a);
   if (a.command == "info") return cmdInfo(a);
   if (a.command == "checksums") return cmdChecksums(a);
   if (a.command == "verify") return cmdVerify(a);
