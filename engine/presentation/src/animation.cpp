@@ -103,10 +103,15 @@ void blendPoses(const Pose& a, const Pose& b, float weightB, Pose& out) {
   out.count = n;
 }
 
+// Joints that both the model and the pose provide, capped at the skin budget.
+[[nodiscard]] static std::size_t jointCount(const SkinnedModel& model, const Pose& pose) {
+  return std::ranges::min({model.joints.size(), static_cast<std::size_t>(pose.count),
+                           static_cast<std::size_t>(kMaxSkinJoints)});
+}
+
 void globalTransforms(const SkinnedModel& model, const Pose& pose, SkinMatrices& out) {
   out.fill(Mat4::identity());
-  const std::size_t n = std::min<std::size_t>(
-      {model.joints.size(), static_cast<std::size_t>(pose.count), kMaxSkinJoints});
+  const std::size_t n = jointCount(model, pose);
   for (std::size_t j = 0; j < n; ++j) {
     const JointPose& p = pose.joints[j];
     const Mat4 local = composeTrs(p.translation, p.rotation, p.scale);
@@ -119,8 +124,7 @@ void globalTransforms(const SkinnedModel& model, const Pose& pose, SkinMatrices&
 
 void skinMatrices(const SkinnedModel& model, const Pose& pose, SkinMatrices& out) {
   globalTransforms(model, pose, out);
-  const std::size_t n = std::min<std::size_t>(
-      {model.joints.size(), static_cast<std::size_t>(pose.count), kMaxSkinJoints});
+  const std::size_t n = jointCount(model, pose);
   for (std::size_t j = 0; j < n; ++j)
     out[j] = out[j] * model.joints[j].inverseBind;
 }
