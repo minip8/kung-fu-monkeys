@@ -10,6 +10,17 @@ option(KFM_USE_VCPKG "Resolve dependencies through the vcpkg manifest" ON)
 if(KFM_USE_VCPKG AND DEFINED ENV{VCPKG_ROOT} AND NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
       CACHE FILEPATH "vcpkg toolchain")
+  # Windows links its vcpkg dependencies statically (architecture §10). The
+  # libdatachannel DLL's import library carries std::vector<std::byte>'s
+  # members (MSVC exports the base-class specialisations of an exported
+  # class), and every object file that uses a byte vector of its own then
+  # collides with them at link time (LNK2005). The static library has no
+  # dllimport side, and the port defines RTC_STATIC in its headers. `-md`
+  # keeps the dynamic CRT, which is what CMake selects by default.
+  if(CMAKE_HOST_WIN32 AND NOT DEFINED VCPKG_TARGET_TRIPLET
+     AND NOT DEFINED ENV{VCPKG_DEFAULT_TRIPLET})
+    set(VCPKG_TARGET_TRIPLET "x64-windows-static-md" CACHE STRING "vcpkg triplet")
+  endif()
 endif()
 
 project(KungFuMonkeys

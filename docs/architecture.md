@@ -1273,6 +1273,10 @@ commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS back
 `libssl-dev` on the FetchContent path, the vcpkg port otherwise), and datachannel-wasm pinned to
 `f9200eb` (v0.4.0 plus a missing-include fix) for Emscripten, linked with its two
 `--js-library` files and `-fwasm-exceptions`. Both are exposed as one target, `kfm::datachannel`.
+On Windows the vcpkg dependencies are linked statically (triplet `x64-windows-static-md`, set by
+the top-level `CMakeLists.txt` unless a triplet is given): the libdatachannel DLL's import library
+exports `std::vector<std::byte>`'s members, which collide with the byte vectors every other
+object file instantiates for itself (LNK2005); the static library has no dllimport side.
 
 ---
 
