@@ -815,6 +815,20 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
                               .alpha = 0.5f,
                               .mode = DecalMode::Burst});
         break;
+      case EffectKind::RespawnBurst: {
+        // A ring collapsing onto the spawn point and a glow rising out of it.
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.35f) : kWhite;
+        const float rr = r * lerp(3.0f, 1.0f, easeOut(t));
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.9f * fade, DecalMode::Ring, 0.8f);
+        d.billboard(e.position + Vec3{0.0f, lerp(0.2f, 1.6f, t), 0.0f}, r * lerp(1.6f, 0.6f, t), c,
+                    0.6f * fade, DecalMode::Burst, 0.35f);
+        break;
+      }
+      case EffectKind::ScorePop:
+        d.groundDisc(e.position, kDecalLift, 0.0f, r * lerp(1.2f, 3.2f, easeOut(t)),
+                     r * lerp(1.2f, 3.2f, easeOut(t)), kGold, 0.9f * fade, DecalMode::Ring, 0.85f);
+        break;
       default:
         break;
     }

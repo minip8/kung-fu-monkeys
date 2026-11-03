@@ -1,7 +1,17 @@
-// LifecycleSystem (architecture §5.3 step 9, §5.7, §5.8): despawns players
-// tagged Eliminated (already reported by InteractionSystem), turns grounded
-// boomerangs into banana pickups at their position, and runs the arena's
-// power-up spawners.
+// LifecycleSystem (architecture §5.3 step 9, §5.7, §5.8): spawn protection and
+// respawns (v0.23), despawns players tagged Eliminated (already reported by
+// InteractionSystem), turns grounded boomerangs into banana pickups at their
+// position, and runs the arena's power-up spawners (v0.20).
+//
+// Respawns are driven by MatchRules' timers, which only modes that respawn
+// (deathmatch) set, so the code is the same for every mode: during Playing a
+// dead present slot with a pending respawnTicks counts down and respawns at
+// 0 (modes/mode_flow.hpp: farthest spawn point from the other monkeys,
+// Tag::Invulnerable for respawnInvulnTicks); an alive player's invulnTicks
+// counts down and clears the tag at 0. The countdown runs before this tick's
+// despawns, so a player eliminated on tick T respawns on tick
+// T + respawnTicks and is protected for the interactions of the next
+// respawnInvulnTicks ticks.
 //
 // Spawners (§5.8) fire only while the match phase is Playing, on the ticks
 // where ticksInPhase (0 on the first Playing tick) equals firstTicks +
@@ -12,12 +22,31 @@
 // spawners never touches the RNG here. The spawner's timeline is a function
 // of ticksInPhase, not state of its own; a pickup remembers its spawner.
 #include "kfm/sim/systems.hpp"
+#include "modes/mode_flow.hpp"
 
 #include <bit>
 #include <cstdint>
 
 namespace kfm::sim {
 namespace {
+
+void respawnTimers(WorldState& s, const MatchContent& content, EventSink& sink) {
+  MatchRules& r = s.rules;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    const PlayerId id{i};
+    if (Player* p = s.playerBySlot(id)) {
+      if (r.invulnTicks[i] == 0) continue;
+      if (--r.invulnTicks[i] == 0) p->tags.clear(Tag::Invulnerable);
+      continue;
+    }
+    if (r.respawnTicks[i] == 0) continue;
+    if (!maskHas(r.present, id)) {
+      r.respawnTicks[i] = 0;  // left while dead: no respawn
+      continue;
+    }
+    if (--r.respawnTicks[i] == 0) respawnPlayer(s, content, id, sink);
+  }
+}
 
 [[nodiscard]] bool spawnerBeat(const PickupSpawner& sp, uint32_t t) {
   if (t < sp.firstTicks) return false;
@@ -71,8 +100,12 @@ void runSpawners(WorldState& s, const MatchContent& content, EventSink& sink) {
 }  // namespace
 
 void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
+  if (s.rules.phase == MatchPhase::Playing) respawnTimers(s, content, sink);
+
   s.players.forEachAlive([&](EntityId id, const Player& p) {
-    if (p.tags.has(Tag::Eliminated)) s.players.despawn(id);
+    if (!p.tags.has(Tag::Eliminated)) return;
+    s.rules.invulnTicks[id.index] = 0;
+    s.players.despawn(id);
   });
 
   // Iterates boomerangs and spawns pickups: a different pool, so the

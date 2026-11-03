@@ -12,6 +12,7 @@
 #include "kfm/core/fixed.hpp"
 #include "kfm/core/vec2.hpp"
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content/mode.hpp"
 #include "kfm/sim/content/name.hpp"
 #include "kfm/sim/content/powerup.hpp"
 #include "kfm/sim/tags.hpp"
@@ -102,13 +103,6 @@ struct ArenaDef {
   // Power-up pickup spawners (§5.8); none in the default arena.
   std::array<PickupSpawner, kMaxPickupSpawners> pickupSpawners{};
   uint8_t pickupSpawnerCount{0};
-};
-
-struct ModeDef {  // FFA rules
-  ContentName name{};
-  uint8_t roundsToWin{3};
-  uint16_t roundEndTicks{120};   // pause after a round ends before the next starts
-  uint16_t roundStartTicks{60};  // countdown at round start (players spawned, inputs ignored)
 };
 
 struct ContentDB {

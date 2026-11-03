@@ -22,7 +22,7 @@ bool dashAttack(WorldState& s, const MatchContent& content, EntityId a, EntityId
   if (attacker->ammo < def.minAmmo) return false;
 
   if (def.consumesAmmo != 0 && attacker->ammo > 0) --attacker->ammo;
-  applyDamage(s.tick, content, *victim, b, def.damage,
+  applyDamage(s, content, *victim, b, def.damage,
               HitSource{EventKind::PlayerDashHit, a, attacker->id.value}, sink);
   return true;
 }

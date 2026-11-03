@@ -107,6 +107,12 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
       return cue(SoundId::RoundEnd);
     case EventKind::MatchEnded:
       return cue(SoundId::MatchEnd);
+    case EventKind::PlayerRespawned:
+      return cue(SoundId::Respawn);
+    case EventKind::ScoreChanged:
+      return cue(SoundId::Score);
+    case EventKind::TimerWarning:
+      return cue(SoundId::TimerWarning);
     default:
       break;
   }
@@ -268,6 +274,21 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       break;
     case EventKind::MatchEnded:
       addEffect(ps, makeEffect(EffectKind::MatchEndBanner, slot, Vec3{}, kMatchEndBannerSeconds));
+      break;
+    case EventKind::PlayerRespawned: {
+      // At the respawned monkey (curr), which is where the sim put it.
+      Vec2f at = player;
+      if (const Player* p = curr.playerBySlot(e.player)) at = toFloat(p->transform.pos);
+      addEffect(ps, makeEffect(EffectKind::RespawnBurst, slot, groundAt(at), kRespawnBurstSeconds));
+      soundAt = at;
+      break;
+    }
+    case EventKind::ScoreChanged:
+      addEffect(ps, makeEffect(EffectKind::ScorePop, slot, groundAt(player), kScorePopSeconds));
+      soundAt = player;
+      break;
+    case EventKind::TimerWarning:
+      addEffect(ps, makeEffect(EffectKind::TimerBanner, kNoSlot, Vec3{}, kTimerBannerSeconds));
       break;
     default:
       break;

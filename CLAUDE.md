@@ -58,6 +58,7 @@ build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay]
 build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
 #   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
 #   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
+#   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock)
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
 #   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)

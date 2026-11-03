@@ -11,8 +11,11 @@ namespace kfm::net::netsim {
 
 sim::ContentDB endless(const sim::ContentDB& content) {
   sim::ContentDB x = content;
-  for (uint8_t i = 0; i < x.modeCount; ++i)
+  for (uint8_t i = 0; i < x.modeCount; ++i) {
     x.modes[i].roundsToWin = 255;
+    x.modes[i].scoreToWin = 255;
+    x.modes[i].timeLimitTicks = 0;
+  }
   return x;
 }
 

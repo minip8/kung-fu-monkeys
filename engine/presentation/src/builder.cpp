@@ -411,6 +411,27 @@ void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHu
       r.phase == sim::MatchPhase::RoundStarting ? secondsLeft(content.mode.roundStartTicks) : 0.0f;
   hud.roundEndSeconds =
       r.phase == sim::MatchPhase::RoundEnded ? secondsLeft(content.mode.roundEndTicks) : 0.0f;
+
+  const sim::ModeDef& mode = content.mode;
+  hud.mode = mode.kind;
+  hud.scoreToWin = mode.scoreToWin;
+  hud.hasClock = mode.kind != sim::ModeKind::Rounds && mode.timeLimitTicks > 0;
+  hud.clockSeconds = 0.0f;
+  if (hud.hasClock) {
+    if (r.phase == sim::MatchPhase::Playing) {
+      hud.clockSeconds = secondsLeft(mode.timeLimitTicks);
+    } else if (r.phase == sim::MatchPhase::RoundStarting || r.phase == sim::MatchPhase::Lobby) {
+      hud.clockSeconds = static_cast<float>(mode.timeLimitTicks) * kTickSeconds;
+    }
+  }
+  hud.aliveCount = 0;
+  curr.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+    if (!p.tags.has(sim::Tag::Eliminated)) ++hud.aliveCount;
+  });
+  hud.deaths = r.deaths;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    hud.respawnSeconds[i] = static_cast<float>(r.respawnTicks[i]) * kTickSeconds;
+  }
 }
 
 }  // namespace

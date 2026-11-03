@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.20 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.23 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -107,10 +107,27 @@ up to 8 `PickupSpawner`s run at the end of `LifecycleSystem` from `ticksInPhase`
 stops the dash, ends its power-up) and 50/51 (pickups split by kind through a new
 `pickupMaskB`) (§5.6). `ShieldBroken` event; `PickupSpawned`/`PickupTaken` carry the pickup kind
 and power-up (§5.9). Six power-ups, the `throw_fast` ability and the `dojo_powerups` arena; the
-default `dojo` has no spawners, so the default match and the existing corpus checksums are
-unchanged; unmodified bananas and banana pickups serialise exactly as before (§5.2). A
+default `dojo` has no spawners, so the default match plays exactly as before; the new state
+fields (`Boomerang::speedMul`/`radiusMul`, `Pickup::spawner`, `Player::grantedTags`) are
+serialised unconditionally, which changed every world checksum, and the corpus was regenerated
+(§5.2). `ModifierSystem` owns the tag bits it granted (`Player::grantedTags`), so ability-phase
+and power-up tags compose (§5.8). A
 scripted-bot behaviour, the `scripted_4p_powerups_1800t` corpus entry and `kfm_replay stats`
 power-up counts (§9). Pickups render per def and the HUD shows power-up timers (§7).
+v0.23 changes: game modes are content (§5.3, §5.9, §5.10, §6.6). `ModeDef` gains a `kind`
+(`rounds`, `deathmatch`, `survival`) and per-kind numbers (`timeLimitTicks`, `scoreToWin`,
+`respawnTicks`, `respawnInvulnTicks`); `RulesSystem` keeps the shared phase machine and
+dispatches the per-mode decisions through a `ModeBehavior` table indexed by kind (`onPlaying`,
+`onEliminated`), like the ability registry. `MatchRules` gains per-player `deaths`,
+`respawnTicks` and `invulnTicks`; `ticksInPhase` is the mode clock. Deathmatch respawns go
+through `LifecycleSystem` at the spawn point farthest from the other monkeys (world RNG on ties)
+with `Tag::Invulnerable` as spawn protection, which the damage and dash-attack rows already
+forbid. The visitor serialises the new counters like every other field, so every world
+checksum changed and the corpus was regenerated; the rounds mode itself plays exactly as before
+(it never sets a counter). New events `ScoreChanged`, `PlayerRespawned`, `TimerWarning`; `content/modes.toml`
+ships `rounds`, `deathmatch` and `survival`. Presentation (§7): RespawnBurst, ScorePop and
+TimerBanner effects, Respawn, Score and TimerWarning sounds, a per-mode HUD scoreboard and clock.
+Team modes stay open (§12).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -287,11 +304,14 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
   system would index or shift by. v0.20 adds a power-up index past `kMaxPowerUps`, a pickup
   spawner past `kMaxPickupSpawners` and a banana `pierce` above 1.
-- Optional payloads (v0.20) are visited only when present, so state without them serialises
-  byte for byte as before and old replay checksums stay valid: a banana's projectile modifiers
-  (`speedMul`, `radiusMul`) follow its `pierce` byte only when that byte's top bit says they
-  differ from 1, and a pickup's `spawner` only when its kind is `PowerUp`. A `ModifierList`
-  visits only its live prefix, as before.
+- Power-up fields (v0.20): a banana's `speedMul` and `radiusMul` (after `pierce`, a plain 0/1
+  byte), a pickup's `spawner` and a player's `grantedTags` are visited unconditionally like
+  every other field; adding them changed every world checksum and the corpus was regenerated.
+  A `ModifierList` visits only its live prefix, as before.
+- Mode counters (v0.23): `MatchRules`' per-player `deaths`, `respawnTicks` and `invulnTicks`
+  are visited unconditionally after the M1 fields, like every other field. Adding them changed
+  every world checksum (the corpus was regenerated); a new state field for a real feature is
+  the legitimate case for that, not a reason for a second encoding.
 
 ### 5.3 Tick pipeline
 
@@ -332,6 +352,34 @@ advanced. The order of the ten systems is unchanged.
 Systems are stateless free functions; the order is fixed and documented; each reads state and
 inputs and writes state and events. Nothing else mutates `WorldState`.
 
+Rules dispatch (v0.23). `RulesSystem` owns the phase machine every mode shares: Lobby →
+(`MatchStarted`, round 1) RoundStarting (the present slots spawned at the arena's spawn points,
+`roundStartTicks` of countdown) → Playing → RoundEnded (`roundEndTicks`) → next round, or
+MatchEnded (terminal). What ends a round or the match and what an elimination means are the
+mode's: a `ModeBehavior` table indexed by `ModeDef::kind` (`kfm/sim/modes/registry.hpp`, one
+file per mode under `src/modes/`, shared steps in `src/modes/mode_flow.*`), constexpr like the
+ability registry. `onPlaying(s, content, sink)` runs in post-tick on every Playing tick after
+`ticksInPhase` advanced; `onEliminated(s, content, victim, killer, sink)` runs in the damage step
+right after `PlayerEliminated`. `ticksInPhase` is the mode clock: a time limit counts Playing
+ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour file +
+`ModeKind` + its TOML name + one registry row + a scenario test.
+
+| Kind | Round / match end | Elimination | Notes |
+|---|---|---|---|
+| `rounds` | at most one monkey left (two or more present): the survivor wins the round (none: draw); first to `roundsToWin` round wins takes the match | nothing | the M1 rules; never sets a mode counter |
+| `deathmatch` | one round; the first to `scoreToWin` eliminations, or the leader once `timeLimitTicks` of play pass (a tied lead: draw) ends the match (`RoundEnded` + `MatchEnded`) | +1 score for the attacker (`ScoreChanged`), +1 death, respawn due in `respawnTicks` | a present slot without a monkey or a pending respawn (a late joiner) is scheduled like a respawn; a slot that left keeps its monkey until eliminated, then forfeits its score |
+| `survival` | as rounds, plus a per-round `timeLimitTicks`: on timeout the survivor with the most hp wins the round, then the one with the fewest deaths this match, else a draw | +1 death | no respawn within a round |
+
+Respawn (`LifecycleSystem`, v0.23) is driven only by the timers: during Playing a dead present slot
+with a pending `respawnTicks` counts down before this tick's despawns and respawns at 0, so a
+player eliminated on tick T is back on tick T + `respawnTicks`. It takes the spawn point whose
+nearest other monkey is farthest away (squared distance in raw fixed point), the world RNG
+choosing among equal points (one draw per respawn), and gets `Tag::Invulnerable` with
+`invulnTicks = respawnInvulnTicks`, which counts down on the same pass and clears the tag at 0:
+protected for the interactions of the next `respawnInvulnTicks` ticks. The damage (30) and
+dash-attack (25) rows already forbid `Invulnerable` on the victim; a protected monkey can still
+attack and catch. A round start clears every timer.
+
 ### 5.4 Input model
 
 ```cpp
@@ -361,7 +409,9 @@ Roster (v0.17): `InputFrame::present` is the authoritative roster. `InputSystem`
 `MatchRules::present` each tick; `RulesSystem` spawns the present slots and despawns any alive
 player whose slot is no longer present when a round starts. A slot that joins mid-round therefore
 waits for the next round (its bit counts toward the two-player minimum at once), and a slot that
-leaves mid-round keeps its idle monkey until it is eliminated or the round ends. The server
+leaves mid-round keeps its idle monkey until it is eliminated or the round ends. In deathmatch
+(v0.23), whose match is one round, a joiner spawns `respawnTicks` after it appears and a leaver's
+eliminated monkey does not respawn (§5.3). The server
 changes the mask only through its frames, so prediction, rollback and replays need nothing else.
 
 Input sampler (v0.15, `engine/platform`, SDL-free and unit-tested headlessly): the client
@@ -577,8 +627,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
 - `ModifierSystem` per player: (1) drop entries at `ticksLeft == 0`, compacting in slot order;
   (2) `Stats` from `PlayerDef` and every `Stat` grant in slot order (`moveSpeed` never negative,
   `maxHp` in [1, 255], `ammoMax` in [0, 255]); (3) the `hp` clamp of §5.6 and `ammo` capped at
-  `ammoMax`; (4) ability overrides; (5) tags: every tag some def in the DB can grant is cleared,
-  then the live grants are set; (6) `HitStun` countdown; (7) `ticksLeft--`. A power-up picked
+  `ammoMax`; (4) ability overrides; (5) tags: it clears exactly the bits it granted last tick
+  (`Player::grantedTags`), sets this tick's grants and records them there, so a tag an ability
+  phase or a mode also grants survives the power-up's expiry and vice versa; (6) `HitStun` countdown; (7) `ticksLeft--`. A power-up picked
   on tick T therefore shapes the state after ticks T..T+D−1 and is gone after T+D, and the list,
   the stats and the tags always agree between ticks.
 - Ability overrides switch a slot only while it is `Idle` (a running dash or throw finishes on
@@ -625,6 +676,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `PlayerDashHit{victim, attacker, hpAfter}` (v0.16: a dash attack; `entity` is the attacking
   player where `PlayerHit` carries the banana, and presentation shows both the same way),
   `PlayerEliminated{victim, killer}`,
+  `RoundEnded{winner}`, `MatchEnded{winner}` (an invalid winner is a draw),
+  ... v0.23 (modes): `ScoreChanged{player, score}` (a deathmatch elimination scored; round wins
+  are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
+  respawn or late join; `PlayerSpawned` stays the round-start spawn), `TimerWarning{seconds}`
+  (10, 3, 2, 1 s left on the mode clock).
   `RoundEnded`, ...
 - v0.20: `PickupSpawned` and `PickupTaken` carry the pickup's `PickupKind` in `a` and, for a
   power-up, its def index in `b` (a banana pickup's payload stays 0/0), which is all a
@@ -716,6 +772,16 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   directory to watch.
 - Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) were `constexpr`
   tables only; M4 put the TOML loader in front without touching how systems read defs.
+- Modes (v0.23, `content/modes.toml`, `ModeDef` in `kfm/sim/content/mode.hpp`): `kind` =
+  `rounds` (the default when the key is absent), `deathmatch` or `survival`; shared
+  `round_start_ticks`, `round_end_ticks`; `rounds_to_win` (rounds, survival);
+  `time_limit_ticks` (deathmatch: the match, survival: each round; 0 = no clock); `score_to_win`,
+  `respawn_ticks`, `respawn_invuln_ticks` (deathmatch). A kind ignores the numbers it does not
+  read (they keep their struct defaults and are hashed like every field). Validation: a known
+  kind, `rounds_to_win >= 1`, and in deathmatch `score_to_win >= 1` and `respawn_ticks >= 1`.
+  The file ships `rounds` (index 0, the M1 numbers), `deathmatch` (first to 10, 3 min, 2 s
+  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). The modes stay
+  in one file so their order, and so their indices, is explicit.
 - `DashAttackDef` (v0.16): `damage` (1), `minAmmo` (1: a banana in hand), `consumesAmmo`
   (0: kept). Visited for the content hash like every other def; the TOML key is
   `[dash_attack]`. The loader's validation requires `minAmmo >= 1` like the M1 tables did;
@@ -1091,6 +1157,14 @@ C++ server library is mature. The seam makes that swap a contained change.
   announces 3 s ahead. `shutdown()` sends `Disconnect{ServerShuttingDown}` to every peer and
   rejects later `Hello`s; `closeAll()` then drops them. `ServerConfig::maxPlayers` caps the slots
   open to peers and bots.
+- Restart per mode (v0.23): every mode ends in `MatchEnded`, so `kfm_server` and the local
+  `MatchSession` restart the same way whatever the mode: a deathmatch ends on `scoreToWin` or
+  its clock (one round, so `round` stays 1), survival and rounds on `roundsToWin`; a draw
+  (deathmatch's tied lead) is a `MatchEnded` with an invalid winner, logged as "drawn". The
+  restart keeps the mode, and `initialWorld` starts the next match with zeroed mode counters,
+  so nothing (scores, deaths, respawn timers) carries over. A deathmatch joiner does not wait for
+  a next round that never comes: its slot spawns `respawnTicks` after it appears in the frames
+  (§5.3), at the farthest spawn point.
 
 ### 6.7 Authority and abuse resistance
 
@@ -1221,7 +1295,11 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   tuned result is pasted back into the `constexpr` tables and the corpus regenerated. The HUD
   (scores, round, countdown, banners, `P<n>`/`BOT<n>` tags with ammo pips placed with
   `worldToScreen`) is drawn on ImGui's background draw list, over the scene and under ImGui
-  windows. The browser page turns its query string into the same flags
+  windows. Per mode (v0.23, from `RenderHud`, which the builder fills from `MatchRules` and the
+  `ModeDef`): rounds shows round-win pips and "Round N (first to K)"; survival the same plus the
+  alive count and the round clock; deathmatch each slot's eliminations (dimmed with a countdown
+  while it waits to respawn), "first to K" and the match clock. The clock is `m:ss`, pops on
+  `TimerWarning` and turns red in the last 10 s; a drawn match shows "Draw!". The browser page turns its query string into the same flags
   (`?autostart&bots=3&seed=7&overlay`).
 
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
@@ -1343,6 +1421,9 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `BoomerangGrounded` | GroundDust 0.35 s where it landed | BananaGround |
 | `BoomerangBounced` | BounceSpark 0.15 s | WallBounce |
 | `RoundStarted`, `RoundEnded`, `MatchEnded` | banners 1 / 1.5 / 3 s; the HUD text pops in at 1.35× and settles over the first quarter (`bannerScale`) | — , RoundEnd, MatchEnd |
+| `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
+| `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer) | Score (coin blip) |
+| `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
 
 Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
 (0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
@@ -1372,7 +1453,7 @@ Audio (v0.19, M4). Everything SDL-free is in `presentation` and headless-tested;
 is in `platform`.
 - `SoundBank` (`sound_bank.hpp`): 14 clips (`SoundId`: throw, dash, perfect and auto catch, hit,
   elimination, pickup, banana landing, wall bounce, count-in, go, round end, match end, UI click;
-  v0.20 adds power-up and shield-break, 16)
+  v0.20 adds power-up and shield-break, v0.23 respawn, score and timer warning, 19 in all)
   synthesised once at startup from sines, inharmonic bell partials, state-variable-filtered
   xorshift noise and envelopes, mono float at 48 kHz, each normalised to a 0.8 peak with 1 ms /
   4 ms end fades, deterministic (fixed noise seeds), about 4.6 s of audio in total. No audio
@@ -1536,7 +1617,19 @@ art is identical up to the export step, and nothing below the presentation layer
   `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
   the corpus is re-recorded; the checksums of existing entries must stay identical, because
   content that is only added never changes the default match (a scenario test asserts this for
-  extra arenas and modes).
+  extra arenas and modes). v0.23 adds `scripted_4p_deathmatch_3600t` and
+  `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
+  survival flow are under the cross-platform gate. New `WorldState` fields (v0.23: the mode
+  counters) change every checksum and regenerate the corpus; added content alone must not.
+- Mode tests (v0.23): `mode_scenario.cpp` (deathmatch scoring, respawn exactly `respawnTicks`
+  after the elimination at the farthest spawn point, spawn protection blocking a hit for
+  `respawnInvulnTicks`, `scoreToWin`, the clock with the leader winning or a draw on a tied
+  lead and the 10/3/2/1 warnings, late joiners and leavers; survival's last-standing and
+  timeout tie-breaks; rounds never setting a mode counter; a mid-respawn round trip through the
+  visitor; determinism), the counters' visitor round trip, loader validation (unknown kind,
+  `score_to_win = 0`, `respawn_ticks = 0` in deathmatch), the HUD fields and mode effects and
+  sounds, a server restarting a deathmatch and a survival match, a local deathmatch ending on
+  its clock, and a 4-client deathmatch over the emulator at 100 ms / 2% staying in sync.
 - Content tests (v0.18, `kfm_content_tests`): the exact decimal conversion (truncation, digit
   separators, range, per-second division), `content/` and the embedded copy agreeing with
   `defaultContent()` on the base kit, arena 0 and mode 0 (and being identical to each other), validation of `defaultContent()`, one diagnostic per kind of mistake
@@ -1611,8 +1704,10 @@ commits the tag pins, built static with media off), OpenSSL as its TLS/DTLS back
 `libssl-dev` on the FetchContent path, the vcpkg port otherwise), and datachannel-wasm pinned to
 `f9200eb` (v0.4.0 plus a missing-include fix) for Emscripten, linked with its two
 `--js-library` files and `-fwasm-exceptions`. Both are exposed as one target, `kfm::datachannel`.
-Content parser (v0.18): toml++ 3.4.0, header only (vcpkg `tomlplusplus`, or FetchContent of the
-release tarball by hash), in the headless server build too. `kfm::tomlplusplus` pins
+Content parser (v0.18): toml++ 3.4.0, header only (the include directory of the vcpkg
+`tomlplusplus` port, whose compiled-library target is not linked because it fixes
+`TOML_HEADER_ONLY=0` and was built with exceptions on; or FetchContent of the release tarball by
+hash), in the headless server build too. `kfm::tomlplusplus` pins
 `TOML_EXCEPTIONS=0` (parse errors come back as `toml::parse_result` and become diagnostics; the
 loader compiles without exceptions or RTTI like the engine) and `TOML_ENABLE_FORMATTERS=0`;
 only `engine/content/src/loader.cpp` includes it. TOML over JSON because tuning files need
@@ -1788,8 +1883,10 @@ baseline moved to C++23 (§9).
   almost every miss is a press stamped a fraction of a tick after impact, not a short window;
   short rounds (4p median 4.6 s) come from the scripted bot's 2 Hz near-perfect throwing, not
   from the content (a 4× slower thrower gives a 9.9 s median). Human playtests decide the rest.
-- Open: team modes; WebTransport as a later replacement for WebRTC; mobile
-  browsers and touch controls.
+- Open: team modes (v0.23 leaves them out: they need a team per slot in `MatchConfig`, team
+  scoring in a `ModeBehavior` and a friendly-fire decision in the rules table; the mode table
+  and the per-player mode counters are the seams); WebTransport as a later replacement for WebRTC;
+  mobile browsers and touch controls.
 
 ---
 

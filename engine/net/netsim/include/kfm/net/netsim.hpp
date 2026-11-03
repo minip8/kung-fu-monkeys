@@ -33,7 +33,8 @@ inline constexpr uint64_t kSec = 1'000 * kMs;
 // Default content with a match that never ends, so a long soak keeps
 // playing rounds (both sides use it, so the content hashes agree).
 [[nodiscard]] const sim::ContentDB& endlessContent();
-// The same change to any content: every mode's roundsToWin = 255.
+// The same change to any content: every mode's roundsToWin and scoreToWin =
+// 255 and no time limit.
 [[nodiscard]] sim::ContentDB endless(const sim::ContentDB& content);
 
 // One direction of a link: latency ± jitter (so latency − jitter .. latency +

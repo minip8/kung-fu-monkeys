@@ -36,6 +36,9 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.70f, 0.75f},   // RoundEnd
     {1.50f, 0.85f},   // MatchEnd
     {0.035f, 0.50f},  // UiClick
+    {0.45f, 0.55f},   // Respawn
+    {0.22f, 0.60f},   // Score
+    {0.12f, 0.65f},   // TimerWarning
     {0.36f, 0.60f},   // PowerUp
     {0.30f, 0.70f},   // ShieldBreak
 }};
@@ -216,6 +219,29 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         v = (env(t, 0.0005f, 0.006f) * osc.next(1500.0f, sr)) +
             (0.3f * env(t, 0.0f, 0.002f) * svf2.band());
         break;
+      case SoundId::Respawn: {
+        // A rising shimmer: a sine gliding up an octave with a soft tremolo,
+        // swelling in and fading out.
+        const float hz = 440.0f * std::pow(2.0f, u);
+        osc.next(hz, sr);
+        const float tremolo = 0.75f + (0.25f * std::sin(kTwoPi * 18.0f * t));
+        v = std::sin(kPi * u) * tremolo * harmonics(osc.phase(), 0.25f, 0.1f);
+        break;
+      }
+      case SoundId::Score:
+        // A coin blip: B5 jumping to E6.
+        osc.next(t < 0.06f ? 987.8f : 1318.5f, sr);
+        v = (t < 0.06f ? env(t, 0.002f, 0.04f) : env(t - 0.06f, 0.002f, 0.09f)) *
+            harmonics(osc.phase(), 0.0f, 0.3f);
+        break;
+      case SoundId::TimerWarning: {
+        // A short square-ish beep (A5) held, then released.
+        osc.next(880.0f, sr);
+        const float release = clamp01(1.0f - ((t - 0.06f) / std::max(len - 0.06f, 1e-3f)));
+        v = std::min(clamp01(t / 0.003f), t < 0.06f ? 1.0f : release) *
+            harmonics(osc.phase(), 0.0f, 0.33f);
+        break;
+      }
       case SoundId::PowerUp: {
         // A rising major arpeggio (C6, E6, G6, C7), 80 ms per note.
         constexpr std::array<float, 4> kNotes = {1046.5f, 1318.5f, 1568.0f, 2093.0f};

@@ -61,9 +61,96 @@ void centredText(ImDrawList* dl, float size, ImVec2 anchor, ImU32 color, const c
   return ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
 }
 
-void drawScoreBar(ImDrawList* dl, const HudView& session, const presentation::RenderHud& hud,
-                  float viewW) {
+// "m:ss" of a clock, rounded up so it reads 0:00 only at the end.
+void clockText(float seconds, char (&out)[16]) {
+  const int total = std::max(0, static_cast<int>(std::ceil(seconds)));
+  std::snprintf(out, sizeof out, "%d:%02d", total / 60, total % 60);
+}
+
+// The mode line under the score bar: round and target, the clock, how many
+// are still in (survival). The clock pops on a TimerWarning and turns red in
+// the last ten seconds.
+void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float viewW, float y) {
+  const presentation::RenderHud& hud = state.hud;
+  char line[96];
+  switch (hud.mode) {
+    case sim::ModeKind::Deathmatch:
+      std::snprintf(line, sizeof line, "Deathmatch  (first to %u)",
+                    static_cast<unsigned>(hud.scoreToWin));
+      break;
+    case sim::ModeKind::Survival:
+      std::snprintf(line, sizeof line, "Round %u  (first to %u)  %u alive",
+                    static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin),
+                    static_cast<unsigned>(hud.aliveCount));
+      break;
+    case sim::ModeKind::Rounds:
+    case sim::ModeKind::kCount:
+      std::snprintf(line, sizeof line, "Round %u  (first to %u)", static_cast<unsigned>(hud.round),
+                    static_cast<unsigned>(hud.roundsToWin));
+      break;
+  }
+  centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y), kWhite, line);
+  if (!hud.hasClock) return;
+  char clock[16];
+  clockText(hud.clockSeconds, clock);
+  const bool urgent = hud.phase == HudPhase::Playing && hud.clockSeconds <= 10.0f;
+  const float pop = presentation::bannerScale(state, EffectKind::TimerBanner);
+  centredText(dl, 26.0f * pop, ImVec2(viewW * 0.5f, y + 24.0f),
+              urgent ? IM_COL32(255, 90, 70, 255) : kWhite, clock);
+}
+
+// Deathmatch: each present slot with its eliminations; a slot waiting to
+// respawn is dimmed with its countdown.
+void drawFragBar(ImDrawList* dl, const HudView& session, const presentation::RenderHud& hud,
+                 float viewW) {
   constexpr float kSize = 22.0f;
+  constexpr float kGap = 26.0f;
+  const auto entryText = [&](uint8_t i, char (&out)[32]) {
+    char label[8];
+    slotLabel(session, i, label);
+    if (hud.respawnSeconds[i] > 0.0f) {
+      std::snprintf(out, sizeof out, "%s %u (%d)", label, static_cast<unsigned>(hud.scores[i]),
+                    static_cast<int>(std::ceil(hud.respawnSeconds[i])));
+    } else {
+      std::snprintf(out, sizeof out, "%s %u", label, static_cast<unsigned>(hud.scores[i]));
+    }
+  };
+  float total = 0.0f;
+  int entries = 0;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if ((hud.presentMask & (1u << i)) == 0) continue;
+    char text[32];
+    entryText(i, text);
+    total += textWidth(kSize, text);
+    ++entries;
+  }
+  if (entries == 0) return;
+  total += kGap * static_cast<float>(entries - 1);
+  float x = (viewW - total) * 0.5f;
+  const float y = 14.0f;
+  dl->AddRectFilled(ImVec2(x - 12.0f, y - 6.0f), ImVec2(x + total + 12.0f, y + kSize + 6.0f),
+                    IM_COL32(0, 0, 0, 110), 8.0f);
+  ImFont* font = ImGui::GetFont();
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if ((hud.presentMask & (1u << i)) == 0) continue;
+    char text[32];
+    entryText(i, text);
+    const ImU32 col = slotColor(i, hud.respawnSeconds[i] > 0.0f ? 120 : 255);
+    dl->AddText(font, kSize, ImVec2(x + 1.0f, y + 1.0f), kShadow, text);
+    dl->AddText(font, kSize, ImVec2(x, y), col, text);
+    x += textWidth(kSize, text) + kGap;
+  }
+}
+
+void drawScoreBar(ImDrawList* dl, const HudView& session, const presentation::RenderState& state,
+                  float viewW) {
+  const presentation::RenderHud& hud = state.hud;
+  constexpr float kSize = 22.0f;
+  if (hud.mode == sim::ModeKind::Deathmatch) {
+    drawFragBar(dl, session, hud, viewW);
+    drawModeLine(dl, state, viewW, 14.0f + kSize + 18.0f);
+    return;
+  }
   constexpr float kPipR = 5.0f;
   constexpr float kGap = 26.0f;
   const uint32_t pips = hud.roundsToWin;
@@ -106,11 +193,7 @@ void drawScoreBar(ImDrawList* dl, const HudView& session, const presentation::Re
     }
     x += kGap - kPipR;
   }
-
-  char round[32];
-  std::snprintf(round, sizeof round, "Round %u  (first to %u)", static_cast<unsigned>(hud.round),
-                static_cast<unsigned>(hud.roundsToWin));
-  centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y + kSize + 18.0f), kWhite, round);
+  drawModeLine(dl, state, viewW, y + kSize + 18.0f);
 }
 
 // Live power-ups (§5.8) under the ammo pips: one pie per power-up in its
@@ -180,7 +263,11 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
   switch (hud.phase) {
     case HudPhase::RoundStarting: {
       const float pop = presentation::bannerScale(state, EffectKind::RoundStartBanner);
-      std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
+      if (hud.mode == sim::ModeKind::Deathmatch) {
+        std::snprintf(text, sizeof text, "Deathmatch");
+      } else {
+        std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
+      }
       centredText(dl, 40.0f * pop, ImVec2(centre.x, centre.y - 50.0f), kWhite, text);
       const int n = std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)));
       std::snprintf(text, sizeof text, "%d", n);
@@ -208,6 +295,10 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         std::snprintf(text, sizeof text, "%s wins the match!", label);
         centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
                     centre, slotColor(w), text);
+      } else {
+        // A tied lead when a mode's clock ran out (deathmatch).
+        centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
+                    centre, kWhite, "Draw!");
       }
       centredText(dl, 20.0f, ImVec2(centre.x, centre.y + 60.0f), kWhite,
                   session.network ? "Esc: leave the server" : "Enter / Start: back to the lobby");
@@ -291,9 +382,8 @@ void drawMatchHud(const HudView& view, const HudInput& in) {
   // ImGui windows, so the debug overlay stays readable.
   ImDrawList* dl = ImGui::GetBackgroundDrawList();
   const ImVec2 display = ImGui::GetIO().DisplaySize;
-  const presentation::RenderHud& hud = in.state->hud;
   drawPlayerTags(dl, view, in);
-  drawScoreBar(dl, view, hud, display.x);
+  drawScoreBar(dl, view, *in.state, display.x);
   drawBanners(dl, view, *in.state, display);
   drawNotices(dl, view, display);
 }

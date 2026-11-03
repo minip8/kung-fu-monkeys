@@ -1,6 +1,6 @@
-// ContentName: how content files, command lines and the lobby name a def
-// (architecture §5.10). Its own header so the def headers under content/ can
-// use it without including content.hpp.
+// ContentName: a def's name as TOML spells it (architecture §5.10). Its own
+// header so the per-def headers under content/ can use it without including
+// content.hpp.
 #pragma once
 
 #include <array>
@@ -9,10 +9,10 @@
 
 namespace kfm::sim {
 
-// A def's name as TOML spells it (`name = "dojo"`): up to kMaxChars
-// characters, NUL padded, so it is fixed-size, trivially copyable and hashed
-// byte for byte. Names are how content files, command lines and the lobby
-// refer to arenas and modes; the sim only ever sees indices.
+// Up to kMaxChars characters, NUL padded, so it is fixed-size, trivially
+// copyable and hashed byte for byte. Names are how content files, command
+// lines and the lobby refer to arenas and modes; the sim only ever sees
+// indices.
 struct ContentName {
   static constexpr size_t kBytes = 16;
   static constexpr size_t kMaxChars = kBytes - 1;  // always NUL terminated

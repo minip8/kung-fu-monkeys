@@ -518,6 +518,40 @@ TEST_CASE("session: after the match ends, Enter returns to the lobby", "[client]
   CHECK(d.s->botCount() == 3);
 }
 
+TEST_CASE("session: a deathmatch ends on its clock, restarts, and Enter returns to the lobby",
+          "[client][session][modes]") {
+  Driver d(SessionConfig{.seed = 8, .bots = 3});
+  sim::ModeDef& dm = d.s->content().modes[1];
+  dm.name = sim::ContentName::of("deathmatch");
+  dm.kind = sim::ModeKind::Deathmatch;
+  dm.timeLimitTicks = 20 * sim::kTickHz;
+  dm.scoreToWin = 50;  // the clock decides
+  d.s->content().modeCount = 2;
+  d.s->setMode(1);
+  REQUIRE(d.s->mode() == 1);
+  d.start();
+
+  const auto playToEnd = [&] {
+    int guard = 0;
+    while (d.s->curr().rules.phase != sim::MatchPhase::MatchEnded && guard++ < 3000)
+      d.frame(1);
+    REQUIRE(d.s->curr().rules.phase == sim::MatchPhase::MatchEnded);
+    CHECK(d.s->curr().rules.round == 1);  // one long round
+  };
+  playToEnd();
+  // A restart is a fresh deathmatch with the same mode.
+  d.s->restart(d.now(), true);
+  d.rebase();
+  CHECK(d.s->mode() == 1);
+  CHECK(d.s->curr().rules.phase != sim::MatchPhase::MatchEnded);
+  CHECK_FALSE(d.s->curr().rules.hasModeCounters());
+  playToEnd();
+  d.push(key(Key::Enter, true));
+  d.frame(1);
+  CHECK(d.s->phase() == SessionPhase::Lobby);
+  CHECK(d.s->mode() == 1);
+}
+
 TEST_CASE("session: interpolation policy", "[client][session]") {
   Driver d(SessionConfig{.seed = 2, .bots = 1});
   d.start();

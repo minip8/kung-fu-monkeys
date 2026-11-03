@@ -289,9 +289,15 @@ void tuningSection(MatchSession& s, std::string& printed) {
 
   ImGui::SeparatorText("Mode");
   sim::ModeDef& mode = c.modes[s.matchConfig().mode];
-  sliderU8("rounds to win", mode.roundsToWin, 1, 9);
+  ImGui::Text("%s", mode.name.cStr());
+  if (mode.kind != sim::ModeKind::Deathmatch) sliderU8("rounds to win", mode.roundsToWin, 1, 9);
   sliderU16("round start ticks", mode.roundStartTicks, 0, 300);
   sliderU16("round end ticks", mode.roundEndTicks, 0, 600);
+  if (mode.kind == sim::ModeKind::Deathmatch) {
+    sliderU8("score to win", mode.scoreToWin, 1, 50);
+    sliderU16("respawn ticks", mode.respawnTicks, 1, 600);
+    sliderU16("spawn protection ticks", mode.respawnInvulnTicks, 0, 600);
+  }
 
   ImGui::Spacing();
   if (ImGui::Button("reset to defaults")) s.resetContent();

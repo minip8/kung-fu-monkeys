@@ -239,6 +239,27 @@ TEST_CASE("every new state field reaches the checksum", "[sim][visit]") {
   CHECK(changed([](WorldState& s) { s.boomerangs.items[1].speedMul = 1_fx; }));
   CHECK(changed([](WorldState& s) { s.boomerangs.items[0].speedMul = 2_fx; }));
   CHECK(changed([](WorldState& s) { s.rules.round += 1; }));
+  CHECK(changed([](WorldState& s) { s.rules.deaths[9] = 1; }));
+  CHECK(changed([](WorldState& s) { s.rules.respawnTicks[0] = 1; }));
+  CHECK(changed([](WorldState& s) { s.rules.invulnTicks[4] = 1; }));
+}
+
+TEST_CASE("write/read round-trips the per-player mode counters", "[sim][visit]") {
+  WorldState a = richWorld();
+  a.rules.deaths[2] = 3;
+  a.rules.respawnTicks[2] = 40;
+  a.rules.invulnTicks[7] = 9;
+  std::array<std::byte, 16384> buf{};
+  BitWriter w(buf);
+  REQUIRE(writeTo(w, a));
+  WorldState b{};
+  BitReader r(w.written());
+  REQUIRE(readFrom(r, b));
+  CHECK(r.atEnd());
+  CHECK(checksum(b) == checksum(a));
+  CHECK(b.rules.deaths[2] == 3);
+  CHECK(b.rules.respawnTicks[2] == 40);
+  CHECK(b.rules.invulnTicks[7] == 9);
 }
 
 TEST_CASE("ModifierList past count is canonicalised", "[sim][visit]") {

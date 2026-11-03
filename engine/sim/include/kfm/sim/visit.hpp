@@ -79,6 +79,8 @@ inline constexpr uint8_t kEnumCount<PickupKind> = 2;
 template <>
 inline constexpr uint8_t kEnumCount<MatchPhase> = 5;
 template <>
+inline constexpr uint8_t kEnumCount<ModeKind> = static_cast<uint8_t>(ModeKind::kCount);
+template <>
 inline constexpr uint8_t kEnumCount<GrantKind> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
@@ -276,6 +278,11 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.roundsToWin);
   v.u16(d.roundEndTicks);
   v.u16(d.roundStartTicks);
+  visit(v, d.kind);
+  v.u32(d.timeLimitTicks);
+  v.u8(d.scoreToWin);
+  v.u16(d.respawnTicks);
+  v.u16(d.respawnInvulnTicks);
 }
 template <class V>
 void visit(V& v, DashAttackDef& d) {
@@ -335,6 +342,12 @@ void visit(V& v, MatchRules& r) {
     v.u8(score);
   visit(v, r.lastRoundWinner);
   validatePlayerRef(v, r.lastRoundWinner);
+  for (uint8_t& d : r.deaths)
+    v.u8(d);
+  for (uint16_t& t : r.respawnTicks)
+    v.u16(t);
+  for (uint16_t& t : r.invulnTicks)
+    v.u16(t);
 }
 template <class V>
 void visit(V& v, Transform& t) {
