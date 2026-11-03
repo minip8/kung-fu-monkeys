@@ -42,3 +42,13 @@ if(NOT KFM_HEADLESS)
   )
   target_link_libraries(kfm_platform_tests PRIVATE kfm::platform_input)
 endif()
+
+if(NOT KFM_HEADLESS)
+  # apps/client: the headless match loop (kfm_client_core); no window is opened.
+  kfm_add_test_exe(kfm_client_tests
+    client/fixed_step_clock_test.cpp
+    client/match_session_test.cpp
+    client/content_tuning_test.cpp
+  )
+  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core)
+endif()
