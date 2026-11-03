@@ -1,0 +1,206 @@
+// MatchSession: the playable local client's match loop (architecture §6.8,
+// §7 local multiplayer, §11 M2). SDL-free and unit-tested headlessly.
+//
+// It owns the two newest WorldStates (prev, curr), a mutable copy of the
+// ContentDB (the debug UI edits it live for feel tuning; it is passed to
+// step() every tick), the per-tick EventSink and a per-frame event
+// accumulator for the presentation builder, the PresentationState, the
+// InputSampler, the bot slots with their own Rng, and the fixed-step clock.
+//
+// Two phases:
+//   Lobby  (client-side, no world stepping). Slot 0 starts bound to keyboard
+//          profile 0. Any unbound device whose Throw/Dash (any button on a
+//          pad) is pressed joins the lowest free slot. botCount() further
+//          slots are filled with bots. Enter / keypad Enter / pad Start (or
+//          startMatch()) creates the world from that present mask and the
+//          seed. curr() is initialWorld({seed, lobbyPresentMask()}) so the
+//          arena can still be drawn.
+//   Match  ticks are stepped by advance(). Local slots are sampled from the
+//          InputSampler; bot slots get sim::scriptedInput() from the bot Rng
+//          (slot order, so the Rng is consumed deterministically); a local
+//          slot whose pad was removed is driven by "repeat last input" until
+//          any unbound device presses a button (it is rebound to the lowest
+//          such slot) or the match restarts (it becomes a bot). After
+//          MatchEnded, Enter/Start returns to the lobby with the bindings kept.
+//
+// Per frame: push() every InputEvent, then advance(nowNs), then build the
+// RenderState from renderPrev(), curr(), renderAlpha(), frameEvents().
+#pragma once
+
+#include "fixed_step_clock.hpp"
+#include "kfm/core/rng.hpp"
+#include "kfm/core/types.hpp"
+#include "kfm/platform/input_event.hpp"
+#include "kfm/platform/input_sampler.hpp"
+#include "kfm/presentation/builder.hpp"
+#include "kfm/sim/constants.hpp"
+#include "kfm/sim/content.hpp"
+#include "kfm/sim/events.hpp"
+#include "kfm/sim/input.hpp"
+#include "kfm/sim/world_state.hpp"
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <span>
+
+namespace kfm::client {
+
+enum class SessionPhase : uint8_t { Lobby = 0, Match };
+
+// Who drives a slot during a match.
+enum class SlotOwner : uint8_t {
+  None = 0,  // not present
+  Local,     // a bound local device
+  Dropped,   // local, but its pad was removed: repeats its last input
+  Bot,       // sim::scriptedInput
+};
+
+// How the frame is drawn (architecture §6.8).
+enum class InterpolationPolicy : uint8_t {
+  Auto = 0,     // newest tick when the display rate keeps up with the tick rate, else interpolate
+  Interpolate,  // always lerp prev -> curr by the accumulator fraction
+  Newest,       // always draw curr (alpha = 1, prev = curr)
+};
+
+// Auto renders the newest tick when displayHz >= kTickHz × timeScale × this
+// (a tolerance so a 59.94 Hz display or a jittery measurement still counts).
+inline constexpr double kNewestTickRateTolerance = 0.95;
+
+// Seed of the bots' scripted-input Rng unless configured (the same default as
+// kfm_replay's --input-seed).
+inline constexpr uint64_t kDefaultBotSeed = 0x5C121DULL;
+
+struct SessionConfig {
+  uint64_t seed{1};                   // world seed (MatchConfig::seed)
+  uint64_t botSeed{kDefaultBotSeed};  // bots' Rng, separate from the world's
+  uint8_t bots{0};                    // lobby bot count
+  uint32_t maxTicksPerFrame{kDefaultMaxTicksPerFrame};
+  bool bindKeyboardToSlot0{true};  // slot 0 starts bound to keyboard profile 0
+};
+
+class MatchSession {
+ public:
+  // Per-frame event accumulator capacity (enough for kDefaultMaxTicksPerFrame
+  // ticks of a full EventSink); further events are counted and dropped.
+  static constexpr std::size_t kMaxFrameEvents =
+      static_cast<std::size_t>(sim::kMaxEventsPerTick) * kDefaultMaxTicksPerFrame;
+
+  explicit MatchSession(const SessionConfig& config = {});
+
+  // --- per frame --------------------------------------------------------------
+  // Feeds one platform input event (arrival order). Also watches for the
+  // start key (Enter, keypad Enter, pad Start).
+  void push(const platform::InputEvent& event);
+  // Lobby: joins and the start request. Match: runs 0..maxTicksPerFrame ticks
+  // (inputs sampled right before each step()), and handles rebinding and the
+  // return to the lobby after MatchEnded. Clears frameEvents() first.
+  void advance(uint64_t nowNs);
+
+  // --- lobby ------------------------------------------------------------------
+  [[nodiscard]] SessionPhase phase() const { return phase_; }
+  // Clamped so bots never exceed the free slots at start.
+  void setBotCount(uint8_t bots);
+  [[nodiscard]] uint8_t botCount() const { return bots_; }
+  // Bound slots plus the lowest botCount() unbound slots.
+  [[nodiscard]] sim::PlayerMask lobbyPresentMask() const;
+  // Creates the world from lobbyPresentMask() and seed() and starts the
+  // clock at nowNs. Returns false (and stays in the lobby) when the mask is empty.
+  bool startMatch(uint64_t nowNs);
+  // Back to the lobby; bindings are kept. Clears the pause (and any pending
+  // single step) and the presentation state.
+  void returnToLobby();
+
+  // --- match control ----------------------------------------------------------
+  // Re-creates the world with the same present mask and either the same seed
+  // or a new one derived from it, re-seeds the bots and restarts the clock.
+  // Dropped slots become bots. Like startMatch(), it clears the pause and any
+  // pending single step.
+  void restart(uint64_t nowNs, bool newSeed);
+  [[nodiscard]] FixedStepClock& clock() { return clock_; }
+  [[nodiscard]] const FixedStepClock& clock() const { return clock_; }
+  void setPaused(bool paused) { clock_.setPaused(paused); }
+  [[nodiscard]] bool paused() const { return clock_.paused(); }
+  void requestSingleStep() { clock_.requestStep(); }
+  void setTimeScale(double scale) { clock_.setTimeScale(scale); }
+
+  [[nodiscard]] uint64_t seed() const { return seed_; }
+  void setSeed(uint64_t seed);  // takes effect at the next start/restart
+  [[nodiscard]] uint64_t botSeed() const { return botSeed_; }
+
+  // --- state ------------------------------------------------------------------
+  [[nodiscard]] const sim::WorldState& prev() const { return prev_; }
+  [[nodiscard]] const sim::WorldState& curr() const { return curr_; }
+  [[nodiscard]] uint32_t checksum() const;
+  [[nodiscard]] const sim::InputFrame& lastFrame() const { return lastFrame_; }
+
+  // What the builder draws this frame, per the interpolation policy.
+  [[nodiscard]] const sim::WorldState& renderPrev() const;
+  [[nodiscard]] float renderAlpha() const;
+  [[nodiscard]] bool rendersNewest() const;
+  void setInterpolationPolicy(InterpolationPolicy p) { policy_ = p; }
+  [[nodiscard]] InterpolationPolicy interpolationPolicy() const { return policy_; }
+
+  // Events of every tick stepped by the last advance(), each exactly once.
+  [[nodiscard]] std::span<const sim::SimEvent> frameEvents() const {
+    return {frameEvents_.data(), frameEventCount_};
+  }
+  [[nodiscard]] uint64_t droppedEvents() const { return droppedEvents_; }
+  [[nodiscard]] uint32_t ticksThisFrame() const { return ticksThisFrame_; }
+
+  [[nodiscard]] presentation::PresentationState& presentation() { return presentation_; }
+
+  // The live content copy (edited by the debug UI) and its defaults.
+  [[nodiscard]] sim::ContentDB& content() { return content_; }
+  [[nodiscard]] const sim::ContentDB& content() const { return content_; }
+  void resetContent();
+  [[nodiscard]] uint32_t contentHash() const;
+  [[nodiscard]] bool contentIsDefault() const;
+
+  [[nodiscard]] platform::InputSampler& sampler() { return sampler_; }
+  [[nodiscard]] const platform::InputSampler& sampler() const { return sampler_; }
+
+  // Match: who drives each slot. Lobby: Local for bound slots, Bot for the
+  // slots bots would fill, else None.
+  [[nodiscard]] SlotOwner owner(PlayerId slot) const;
+  [[nodiscard]] sim::PlayerMask localMask() const { return localMask_; }
+  [[nodiscard]] sim::PlayerMask botMask() const { return botMask_; }
+  // Slots whose pad was removed and that are not rebound yet (for a notice).
+  [[nodiscard]] sim::PlayerMask droppedMask() const { return sampler_.droppedSlots(); }
+
+ private:
+  void createWorld(sim::PlayerMask present);
+  void beginMatch(sim::PlayerMask present, sim::PlayerMask local, uint64_t nowNs);
+  void handleLobbyJoins();
+  void handleRebinds();
+  void stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t tickEndNs);
+  void appendEvents(const sim::EventSink& sink);
+
+  SessionPhase phase_{SessionPhase::Lobby};
+  uint64_t seed_{1};
+  uint64_t botSeed_{kDefaultBotSeed};
+  uint8_t bots_{0};
+  bool startRequested_{false};
+
+  sim::ContentDB content_{};
+  sim::WorldState prev_{};
+  sim::WorldState curr_{};
+  sim::EventSink sink_{};
+  sim::InputFrame lastFrame_{};
+  std::array<sim::PlayerInput, sim::kMaxPlayers> lastInputs_{};
+  Rng botRng_{};
+  sim::PlayerMask localMask_{0};
+  sim::PlayerMask botMask_{0};
+
+  std::array<sim::SimEvent, kMaxFrameEvents> frameEvents_{};
+  std::size_t frameEventCount_{0};
+  uint64_t droppedEvents_{0};
+  uint32_t ticksThisFrame_{0};
+
+  presentation::PresentationState presentation_{};
+  platform::InputSampler sampler_{};
+  FixedStepClock clock_{};
+  InterpolationPolicy policy_{InterpolationPolicy::Auto};
+};
+
+}  // namespace kfm::client

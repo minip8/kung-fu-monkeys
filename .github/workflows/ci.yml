@@ -13,6 +13,17 @@ env:
   # CMake presets use VCPKG_ROOT; run-vcpkg checks vcpkg out at the manifest's
   # builtin-baseline so every job resolves the same dependency versions.
   VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+  # Headers SDL3 3.4.18 needs on Linux for the features we build (vcpkg sdl3
+  # with x11 + wayland, and the identical FetchContent configuration in
+  # cmake/KfmDependencies.cmake): X11 + Xext (+ Xft, which the port asks
+  # for), Wayland client + xkbcommon + EGL, and pkg-config to find them.
+  # Everything else SDL can use (ibus, dbus, alsa, pulse, pipewire, udev,
+  # kmsdrm, libdecor, the X extensions) is switched off on both paths, so it
+  # is not installed. GL needs no headers:
+  # the GL loader is vendored (third_party/glad).
+  KFM_SDL_APT_PACKAGES: >-
+    pkg-config libx11-dev libxext-dev libxft-dev
+    libwayland-dev libxkbcommon-dev libegl-dev wayland-protocols
 
 jobs:
   lint:
@@ -23,7 +34,10 @@ jobs:
       - uses: lukka/get-cmake@latest
       - name: Install clang-format and clang-tidy
         run: pipx install clang-format==19.1.7 && pipx install clang-tidy==19.1.0.1
+      - name: Install SDL3 build dependencies
+        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES
       - name: clang-format
+        # third_party/ (generated glad loader, sokol impl TU) is outside this set.
         run: |
           files=$(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | grep -v sin_table)
           clang-format --dry-run --Werror $files
@@ -60,15 +74,23 @@ jobs:
       - uses: lukka/get-cmake@latest
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
+      - name: Install SDL3 build dependencies and the client smoke-test display
+        if: runner.os == 'Linux'
+        # xvfb + Mesa (llvmpipe) let ctest run `client_smoke`: kfm_client renders
+        # 60 frames of a bot match on a virtual X server (registered only when
+        # xvfb-run exists).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $KFM_SDL_APT_PACKAGES xvfb xauth libgl1 libglx-mesa0 libgl1-mesa-dri libegl-mesa0
       - uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgJsonGlob: vcpkg.json
       - name: Configure
         run: cmake --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
-      - name: Build
+      - name: Build (engine, kfm_replay, kfm_client, tests)
         run: cmake --build --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
-      - name: Test (unit + determinism gate)
+      - name: Test (unit + determinism gate, client smoke on Linux)
         run: ctest --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
 
   wasm:
@@ -82,8 +104,10 @@ jobs:
           version: latest
       - name: Configure
         run: cmake --preset wasm
-      - name: Build
+      - name: Build (includes kfm_client.html + .js + .wasm)
         run: cmake --build --preset wasm
+      - name: Check the browser client was produced
+        run: ls -l build/wasm/apps/client/kfm_client.html build/wasm/apps/client/kfm_client.js build/wasm/apps/client/kfm_client.wasm
       - name: Test (unit + determinism gate under node)
         run: ctest --preset wasm
 
@@ -93,6 +117,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
+      - name: Install SDL3 build dependencies
+        run: sudo apt-get update && sudo apt-get install -y $KFM_SDL_APT_PACKAGES
       - uses: lukka/run-vcpkg@v11
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg

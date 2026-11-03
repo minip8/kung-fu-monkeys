@@ -56,9 +56,17 @@ endif()
 # ---------------------------------------------------------------------------
 add_subdirectory(engine/core)
 add_subdirectory(engine/sim)
+add_subdirectory(engine/presentation)   # headless-testable; the renderer target is skipped when KFM_HEADLESS
+if(NOT KFM_HEADLESS)
+  add_subdirectory(engine/platform)
+endif()
 
 if(KFM_BUILD_APPS)
   add_subdirectory(apps/replay)
+  if(NOT KFM_HEADLESS)
+    add_subdirectory(apps/client)
+    add_subdirectory(apps/render-probe)
+  endif()
 endif()
 
 if(KFM_BUILD_TESTS)

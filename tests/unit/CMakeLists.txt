@@ -27,3 +27,46 @@ kfm_add_test_exe(kfm_sim_tests
   sim/rules_test.cpp
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
+
+kfm_add_test_exe(kfm_presentation_tests
+  presentation/math_test.cpp
+  presentation/camera_test.cpp
+  presentation/builder_test.cpp
+  presentation/meshes_test.cpp
+  presentation/animation_test.cpp
+)
+target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation)
+if(NOT KFM_HEADLESS)
+  # The glTF loader runs on the rig generated at build time (kfm_use_test_rig,
+  # engine/presentation): the build-tree file natively, the copy embedded at
+  # /content/models/test_rig.glb in the wasm module under node.
+  target_sources(kfm_presentation_tests PRIVATE presentation/gltf_loader_test.cpp)
+  target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation_gltf)
+  kfm_use_test_rig(kfm_presentation_tests)
+  if(EMSCRIPTEN)
+    set(kfm_test_rig_path "/content/models/test_rig.glb")
+  else()
+    get_property(kfm_test_rig_path GLOBAL PROPERTY KFM_TEST_RIG_GLB)
+  endif()
+  target_compile_definitions(kfm_presentation_tests PRIVATE
+    KFM_TEST_RIG_PATH="${kfm_test_rig_path}")
+endif()
+
+if(NOT KFM_HEADLESS)
+  kfm_add_test_exe(kfm_platform_tests
+    platform/input_sampler_test.cpp
+  )
+  target_link_libraries(kfm_platform_tests PRIVATE kfm::platform_input)
+endif()
+
+if(NOT KFM_HEADLESS)
+  # apps/client: the headless match loop (kfm_client_core) and the SDL event
+  # translation (kfm_client_sdl); no window is opened.
+  kfm_add_test_exe(kfm_client_tests
+    client/fixed_step_clock_test.cpp
+    client/match_session_test.cpp
+    client/content_tuning_test.cpp
+    client/sdl_input_test.cpp
+  )
+  target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl)
+endif()
