@@ -26,6 +26,18 @@ TEST_CASE("WebRtcTransport: the server role is native only", "[net][webrtc]") {
   CHECK(server.error().find("native only") != std::string::npos);
 }
 #else
+TEST_CASE("WebRtcTransport: an unbindable signaling address is an error, not a throw",
+          "[net][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  WebRtcServerConfig config;
+  config.signalingBindAddress = "192.0.2.1";  // TEST-NET-1 (RFC 5737): never a local interface
+  const auto server = WebRtcTransport::createServer(config);
+  CHECK_FALSE(server.has_value());
+}
+
+#ifndef _WIN32
+// libdatachannel listens with SO_REUSEADDR, which on Windows lets a second
+// socket bind the same port, so the taken-port case only exists elsewhere.
 TEST_CASE("WebRtcTransport: a taken signaling port is an error, not a throw", "[net][webrtc]") {
   WebRtcTransport::initLogging(WebRtcLogLevel::Error);
   WebRtcServerConfig config;
@@ -36,4 +48,5 @@ TEST_CASE("WebRtcTransport: a taken signaling port is an error, not a throw", "[
   const auto second = WebRtcTransport::createServer(config);
   CHECK_FALSE(second.has_value());
 }
+#endif
 #endif
