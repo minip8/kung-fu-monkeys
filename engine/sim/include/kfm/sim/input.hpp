@@ -28,7 +28,10 @@ struct PlayerInput {
   uint8_t moveMag{0};  // analog magnitude, 0 = idle, 255 for digital
   uint8_t aimDir{0};   // 1/256 turn
   uint8_t buttons{0};  // Button bits
-  uint8_t subTick{0};  // fraction of the tick at which the latest button edge occurred
+  // Sub-tick stamp (1/256 tick) of the latest PRESS (0 -> 1) edge of any
+  // button within this tick; releases never update it, and it is meaningless
+  // on a tick without a press edge (§5.4, §5.11).
+  uint8_t subTick{0};
 
   [[nodiscard]] constexpr bool has(Button b) const { return (buttons & buttonBit(b)) != 0; }
 

@@ -237,7 +237,7 @@ struct PlayerInput {            // 5 bytes on the wire, bit-packed smaller
   uint8_t moveMag;              // analog magnitude; 0 = idle, 255 for digital input
   uint8_t aimDir;               // 0..255 angle (twin-stick aim)
   uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1, bit3 Ability2, bit4 Taunt ...
-  uint8_t subTick;              // fraction of the tick at which the latest button edge occurred (1/256 tick ≈ 65 µs)
+  uint8_t subTick;              // stamp of the latest press edge within the tick (1/256 tick ≈ 65 µs)
 };
 struct InputFrame {
   Tick tick;
@@ -249,8 +249,10 @@ struct InputFrame {
 The stick is idle iff `moveMag == 0` (v0.13); `moveDir` is always an angle, so every one of the
 256 directions, +x included, is reachable. This struct is also the bot and reinforcement-learning action space. Button presses are
 edge-detected in `InputSystem`, which makes "repeat last input" a safe prediction for remote
-players: a held button never re-fires. `subTick` is explained in §5.11; it only carries meaning
-on a tick where a button edge occurred, so repeated-input prediction is unaffected.
+players: a held button never re-fires. `subTick` is explained in §5.11. Precisely (v0.14): it is
+the sub-tick stamp of the latest press (0 → 1) edge of any button within this tick; releases
+never update it, so it only carries meaning on a tick where a press edge occurred and
+repeated-input prediction is unaffected. The input sampler that fills it arrives in M2.
 
 ### 5.5 Abilities (the modularity core)
 
@@ -398,7 +400,7 @@ The dash-catch lives or dies on timing consistency, so the tick quantum matters.
 | 60 Hz + sub-tick timestamps | ~65 µs for *when a press happened*; 16.7 ms for *when state changes* | one byte per input; a few rules become time-aware |
 
 We take the third. Each `PlayerInput` carries `subTick`: the fraction of the current tick at which
-the most recent button edge occurred, derived from the OS event timestamp (SDL3 timestamps events
+the most recent press edge occurred (§5.4), derived from the OS event timestamp (SDL3 timestamps events
 in nanoseconds) relative to the tick start. It travels in the input stream, so it is deterministic,
 replayable, and rolls back like everything else.
 
