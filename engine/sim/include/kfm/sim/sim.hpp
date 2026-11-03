@@ -2,9 +2,12 @@
 #pragma once
 
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/content.hpp"
 #include "kfm/sim/events.hpp"
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/replay.hpp"
+#include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/step.hpp"
+#include "kfm/sim/tags.hpp"
 #include "kfm/sim/visit.hpp"
 #include "kfm/sim/world_state.hpp"

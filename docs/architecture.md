@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.11 (2026-11-02). Working title taken from the repo name.
+Status: proposal v0.14 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -23,6 +23,24 @@ change, `HitStun` tag, banana grounds on a non-lethal hit unless piercing, `Play
 v0.11 changes: presentation flipped from pre-rendered 2.5D sprites to real-time low-poly 3D on
 the same strictly 2D sim (§2, §7, §10, §11, §12). Height stays cosmetic and the shadow still
 marks the hitbox.
+v0.12 changes: M1 interfaces pinned (§5.3, §5.5, §5.6, Appendix A). `step()` takes the
+`ContentDB` explicitly; the ability and rule tables are `constexpr` (no startup registration);
+hooks receive the `ContentDB`; a rule handler returns `bool` ("did not apply, keep scanning") and
+rules gain an ownership field and a boomerang-phase mask.
+v0.13 changes: M1 landed (§11). Integration decisions: nothing moves and no contact resolves
+outside `Playing` (§5.7); the perfect catch ignores an own outbound banana (§5.6); `PickupDef`
+holds the pickup radius and bananas spawn clear of the thrower (§5.7, §5.10); the stick is idle
+iff `moveMag == 0` (§5.4); rule-table semantics and the `HitStun` tick convention pinned (§5.6);
+`PerfectDash` covers the sub-tick end of the window (§5.5); the wall bounce stays in
+`ProjectileSystem` (§5.6, §5.7); scripted-input scaffolding and `kfm_replay bench` in place of
+Google Benchmark for now (§9); wasm stack size (§12).
+v0.14 changes: M1 review fixes. §5.11 tie-break rewritten to match §5.6 and the code (`tHit`,
+then press time, then pool index); §5.5 `AbilityState` lists its real fields instead of a scratch
+union; `subTick` is the stamp of the latest press edge, releases never move it (§5.4, §5.11);
+the snapshot reader rejects out-of-range enums, ids and indices (§5.2); the replay corpus is
+defined by a checked-in manifest and re-recorded on regeneration, with no content-hash exemption
+(§9); the sim float check also rejects float literals, `fromDouble`/`toFloat`/`toDouble` and
+`<cmath>` (§5.1).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -151,6 +169,8 @@ Dependency rules (enforced via CMake target link visibility):
   match `build_id`. Both are exchanged at connect.
 - Enforcement: a replay corpus is run in CI on Linux, Windows and macOS, Debug and Release;
   per-tick checksums must be identical. This is a merge gate, not a nice-to-have.
+  `tools/ci/check_sim_no_float.sh` (lint job) rejects float types, float literals, the `Fixed`
+  float conversions and `<cmath>` anywhere in `engine/sim` (v0.14).
 
 Why fixed-point instead of floats: floats can be made deterministic on one toolchain, but the
 server (Linux, GCC/Clang) and clients (MSVC/Clang, Windows/macOS) differ in compilers, libm and
@@ -185,11 +205,16 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
 - Serialization uses a visitor (`template <class V> void visit(V&, Player&)`) that yields
   read, write, checksum and debug dump from one function. Network snapshots, replays and
   checksums always go through the visitor, never raw memory (padding bytes are not deterministic).
+  The reading visitor validates what it decodes (v0.14): an enum at or above its value count, an
+  alive player whose id is not its slot, a player reference (banana owner, round winner) that is
+  neither invalid nor a slot, an ability `defIndex` past the def table, or a tag bit above
+  `Tag::kCount` fails the read, so a network snapshot cannot put a value into the state that a
+  system would index or shift by.
 
 ### 5.3 Tick pipeline
 
 ```
-step(WorldState& s, const InputFrame& in, EventSink& events):
+step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& events):
    1. RulesSystem::preTick      round start/end, spawn waves, pickup spawners
    2. InputSystem               decode PlayerInput → Intent; press-edge detection
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
@@ -217,11 +242,11 @@ inputs and writes state and events. Nothing else mutates `WorldState`.
 
 ```cpp
 struct PlayerInput {            // 5 bytes on the wire, bit-packed smaller
-  uint8_t moveDir;              // 0 = idle, 1..255 = angle (or 9-way digital)
-  uint8_t moveMag;              // analog magnitude; 255 for digital input
+  uint8_t moveDir;              // 0..255 angle, 0 = +x (digital input uses 8 of them)
+  uint8_t moveMag;              // analog magnitude; 0 = idle, 255 for digital input
   uint8_t aimDir;               // 0..255 angle (twin-stick aim)
   uint8_t buttons;              // bit0 Throw, bit1 Dash, bit2 Ability1, bit3 Ability2, bit4 Taunt ...
-  uint8_t subTick;              // fraction of the tick at which the latest button edge occurred (1/256 tick ≈ 65 µs)
+  uint8_t subTick;              // stamp of the latest press edge within the tick (1/256 tick ≈ 65 µs)
 };
 struct InputFrame {
   Tick tick;
@@ -230,31 +255,45 @@ struct InputFrame {
 };
 ```
 
-This struct is also the bot and reinforcement-learning action space. Button presses are
+The stick is idle iff `moveMag == 0` (v0.13); `moveDir` is always an angle, so every one of the
+256 directions, +x included, is reachable. This struct is also the bot and reinforcement-learning action space. Button presses are
 edge-detected in `InputSystem`, which makes "repeat last input" a safe prediction for remote
-players: a held button never re-fires. `subTick` is explained in §5.11; it only carries meaning
-on a tick where a button edge occurred, so repeated-input prediction is unaffected.
+players: a held button never re-fires. `subTick` is explained in §5.11. Precisely (v0.14): it is
+the sub-tick stamp of the latest press (0 → 1) edge of any button within this tick; releases
+never update it, so it only carries meaning on a tick where a press edge occurred and
+repeated-input prediction is unaffected. The input sampler that fills it arrives in M2.
 
 ### 5.5 Abilities (the modularity core)
 
 - `AbilityDef` (content): `kind`, cooldown, phase durations (startup / active / recovery),
   numeric params, and the `Tags` granted during each phase.
-- `AbilityState` (per slot, POD): `defIndex`, `phase`, `phaseTicks`, `cooldownTicks`, a small
-  `scratch` union for kind-specific data.
+- `AbilityState` (per slot, POD): `defIndex`, `phase`, `phaseTicks`, `cooldownTicks`, and the
+  activation record `activatedTick`, `activatedSubTick` (press time, read by the catch rule and
+  the tie-break) and `dir` (dash or throw direction captured at activation). There is no
+  kind-specific scratch union; a kind that needs more state adds a named field (v0.14).
 - `AbilityBehavior` registry: a table indexed by `AbilityKind` holding function pointers
-  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. Behaviours are registered at
-  startup. Adding an ability touches a new behaviour file, a content def, one registry line and
+  `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd`. The table is a `constexpr`
+  array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
   a scenario test.
 - Players have N ability slots. Base kit is {Dash, Throw}. Power-ups may override a slot
   (for example a teleport dash) or add a temporary slot.
 - Phase tags: Dash's active phase grants `Tag::Dashing`; its first `perfectWindowTicks` also
-  grant `Tag::PerfectDash`. Tags are a bitset read by the interaction rules.
+  grant `Tag::PerfectDash`, plus the tick after them when the press had a non-zero `subTick`,
+  because the window `[press, press + perfectWindowTicks)` measured from the press instant
+  closes inside that tick (§5.11). The tag says "the window may be open this tick"; the catch
+  rule judges the exact instant. Tags are a bitset read by the interaction rules.
 
 ### 5.6 Interaction rules (where the twists live)
 
 `CollisionSystem` emits contacts `(a, b, info)`. `InteractionSystem` resolves each by scanning
 a prioritised rules table keyed on `(kindA, requiredTagsA, kindB, requiredTagsB)`; the first
-match wins.
+match whose handler returns `true` wins. A handler returning `false` means "did not apply, keep
+scanning": that is how a perfect catch judged outside its time window falls through to
+`DamagePlayer` without the catch rule knowing about damage. Contacts are resolved in `tHit`
+order (then earlier dash press, then pool index), and a contact whose entity an earlier contact
+despawned is skipped. Every row forbids `Tag::Eliminated` on the player: a player eliminated
+earlier in the same tick stays in the pool until `LifecycleSystem` and must not be hit, catch
+or pick up again.
 
 ```
 prio  A                          B                              handler
@@ -265,6 +304,13 @@ prio  A                          B                              handler
  50   Player[]                   Pickup[]                       GrantPowerUp
  60   Boomerang[]                Wall                           Bounce
 ```
+
+M1 ships rows 10/11 (the catch, see below), 30, 40 and 50 (`takePickup`: a grounded banana
+restores one ammo and stays put at `ammoMax`). Rows 20 and 60 do not exist yet. The wall bounce
+lives in `ProjectileSystem` (§5.7), not in the table: in M1 the arena is a box, the bounce is a
+per-axis reflection done while integrating, and `CollisionSystem` emits only Player × Boomerang
+and Player × Pickup contacts. A Wall row arrives when arenas gain interior shapes and some
+banana kinds should not bounce, at which point walls become contact sources.
 
 A new twist is a new rule and possibly a new tag. Rules are tested in isolation by scripted
 scenarios ("spawn banana at x moving v, dash at tick t, expect `BoomerangCaught`").
@@ -282,12 +328,19 @@ HP semantics (v0.10):
   `ModifierSystem` applies this when it recomputes `Stats`.
 - `DamagePlayer` emits `PlayerHit`, grants `Tag::HitStun` for `hitStunTicks` (content, a few
   ticks) so a piercing banana overlapping the victim across ticks lands once, and emits
-  `PlayerEliminated` if `hp <= 0`. The banana grounds at the contact point and becomes a pickup
+  `PlayerEliminated` if `hp <= 0`. Tick convention (v0.13): `hitStunTicks = N` counts the hit
+  tick. A hit on tick T protects against contacts on T..T+N−1 (the tag is set in step 7 and
+  `ModifierSystem` counts down in step 8 of the same tick), freezes movement on T+1..T+N−1
+  (movement on T already ran), and the next hit can land on T+N. A scenario test pins this. The banana grounds at the contact point and becomes a pickup
   unless it has `pierce`, in which case it keeps flying.
 - Shield and armour stay distinct: `Shielded` is a tag that negates one hit entirely and is
   consumed (rule 20); armour is `+maxHp`. A mode or power-up picks one or stacks both.
 Whether a perfect dash catches your own banana, or a non-perfect dash grants invulnerability,
-are rule-table decisions, not code changes.
+are rule-table decisions, not code changes. M1 decides the first: the catch is two rows,
+`Player[PerfectDash] × Boomerang[InFlight, !own]` (prio 10) and
+`Player[PerfectDash] × Boomerang[Returning, own]` (prio 11). An own outbound banana passes
+through its thrower with or without a dash; otherwise a dash (22 u/s) that outruns the banana
+it just threw (16 u/s) would catch it straight back.
 
 ### 5.7 Boomerang model
 
@@ -298,7 +351,20 @@ are rule-table decisions, not code changes.
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
   eliminated → Grounded → becomes a pickup. Hits a player without `pierce` → Grounded at the
   contact point.
+- A throw spawns the banana `spawnOffset` (1.0) ahead of the thrower along the aim, clear of
+  the thrower's contact radius (0.5 + 0.35), so no throw starts with a contact against its owner.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
+- M1 flight (`ProjectileSystem`): constant speed; Outbound for `outboundTicks`, then Returning,
+  steering toward the owner's current position by at most `turnRateBam` per tick. A returning
+  banana whose owner is gone, or that has been returning for more than `maxReturnTicks` (no
+  infinite orbit), grounds where it is; the owner check runs only while Returning, so an
+  outbound banana keeps flying after its thrower is eliminated and grounds once it turns back.
+  Walls reflect per axis with `restitution` and emit one `BoomerangBounced` per bounce tick,
+  also when a corner reflects both axes in the same tick.
+- Bananas fly only while the match phase is `Playing`. During `RoundStarting`, `RoundEnded`
+  and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
+  `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
+  cannot kill the winner or return to its owner during the pause; `RoundEnded` then clears it.
 
 ### 5.8 Power-ups and modifiers
 
@@ -330,7 +396,9 @@ are rule-table decisions, not code changes.
 - Staging: in M1 the defs (Dash, Throw, banana, one box arena, FFA rules) are `constexpr`
   tables in `engine/sim`, assembled into the same immutable `ContentDB` and hashed through the
   visitor, so `content_hash` exists from M1 on. M4 replaces the `constexpr` source with the
-  TOML/JSON loader without touching systems.
+  TOML/JSON loader without touching systems. Every number a system needs lives there, including
+  the ones that are easy to forget: the pickup contact radius is `PickupDef::radius` (0.5),
+  not the banana's flight radius (0.35), so a grounded banana is easier to walk over than to dodge.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -343,7 +411,7 @@ The dash-catch lives or dies on timing consistency, so the tick quantum matters.
 | 60 Hz + sub-tick timestamps | ~65 µs for *when a press happened*; 16.7 ms for *when state changes* | one byte per input; a few rules become time-aware |
 
 We take the third. Each `PlayerInput` carries `subTick`: the fraction of the current tick at which
-the most recent button edge occurred, derived from the OS event timestamp (SDL3 timestamps events
+the most recent press edge occurred (§5.4), derived from the OS event timestamp (SDL3 timestamps events
 in nanoseconds) relative to the tick start. It travels in the input stream, so it is deterministic,
 replayable, and rolls back like everything else.
 
@@ -357,8 +425,12 @@ What uses it:
   fighting games treat a frame as the finest meaningful window. The stamp removes the ±1 tick
   jitter at the window edges, which is what makes timing feel inconsistent. The dash itself still
   starts at the tick boundary; only the judgment uses the stamp.
-- **Deterministic tie-breaking.** Two monkeys dashing for the same banana in the same tick: the
-  earlier `subTick` wins, then the lower player index.
+- **Deterministic tie-breaking.** Two monkeys dashing for the same banana in the same tick:
+  `InteractionSystem` resolves contacts in `tHit` order, so the monkey the banana reaches first
+  wins; on equal `tHit` the earlier dash press wins, compared as (`activatedTick`,
+  `activatedSubTick`) of a player holding `PerfectDash`, and a player without it sorts after
+  every dashing one; then the lower pool index (`kindA, indexA, kindB, indexB`), which for
+  players is the slot (§5.6, v0.14).
 - **Telemetry.** The sim knows the true press time, so input-to-effect latency can be measured
   in real matches.
 
@@ -631,9 +703,23 @@ art is identical up to the export step, and nothing below the presentation layer
 - Tests: Catch2 unit tests per system; scenario tests (scripted inputs → expected events and
   state); property tests (random inputs, invariants such as no entity leaks and bounded
   values); netcode tests over `LoopbackTransport` with 0–300 ms latency and 0–10% loss; libFuzzer
-  on packet decoders; Google Benchmark for ticks/s and rollback cost.
+  on packet decoders; Google Benchmark for ticks/s and rollback cost. Until there is more than
+  one number to track, `kfm_replay bench` stands in for Google Benchmark (v0.13): it times
+  `step()` over scripted matches (with and without input generation), restarting a match that
+  ends so every timed tick is live gameplay.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
-  macOS, Debug and Release.
+  macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
+  hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
+  manifest, `tools/replay-corpus/corpus.txt` (name, kind, seed, input seed, players, ticks), and
+  `regen-replay-corpus` re-records every entry before regenerating its `.checksums` (v0.14). A
+  content or gameplay change regenerates the corpus in the same commit; a `.kfmr` without a
+  manifest line fails the regeneration.
+- Scripted inputs (v0.13): `kfm/sim/scripted_inputs.hpp` generates varied, deterministic
+  matches (wander, aim at the nearest player, throw, dash at incoming bananas, fresh button
+  edges) from an `Rng` separate from the world's. It is test and tooling scaffolding shared by
+  the scenario tests, `kfm_replay record-scripted`, the bench and later the netsim, not an
+  `IAgent` (§8); it lives in `engine/sim` only because it is float-free, allocation-free and
+  never writes `WorldState`.
 - Replays: `seed + match config + content_hash + input stream`. The `replay` app scrubs via
   periodic keyframes. Replays attach to bug reports.
 - Observability: Tracy zones; structured logging; net stats (RTT, jitter, loss, rollback depth,
@@ -687,6 +773,21 @@ so every build uses the same release of each dependency.
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
+Progress: M1 landed in v0.13. `engine/sim` runs the full §5.3 pipeline as ten system files:
+FFA round flow (countdown, round end, respawn, scoring, match end), input decoding with press
+edges, Dash and Throw through the `AbilityBehavior` table, movement with the arena clamp,
+banana flight, return steering and wall bounces, a uniform-grid broadphase checked against
+brute force with an exact swept-circle narrowphase, the rules table (perfect catch judged
+against the press sub-tick, damage with `HitStun`, auto-catch, pickups), modifiers and
+lifecycle. Content is the `constexpr` `ContentDB` with its hash. `kfm/sim/scripted_inputs.hpp`
+drives `kfm_replay record-scripted`, `kfm_replay bench` and the scenario tests; the corpus holds
+`scripted_10p_3600t` and `scripted_4p_1200t` beside the empty replays and passes with identical
+checksums on GCC 15 Debug, Release and ASan+UBSan, Clang 21 Debug and Emscripten on Linux
+(MSVC and Apple Clang are left to CI). Bench, 10 players, scripted match, one core of the
+development machine (Linux under WSL2): about 900k ticks/s (1.1 µs/tick) for `step()` alone in
+Release, about 480k ticks/s including input generation; Debug about 200k ticks/s. That is
+roughly 15 000× real time, so rollback depth and server match density are not sim-bound.
+
 Progress: M0 landed in v0.6 (build skeleton, `core`, a minimal `sim` with the visitor serializer,
 replay codec, `kfm_replay` and the determinism gate over `tools/replay-corpus`, CI workflow).
 Verified with identical per-tick checksums on Linux GCC/Clang, Windows MSVC and macOS Apple Clang
@@ -717,6 +818,10 @@ baseline moved to C++23 (§9).
 - **3D renderer cost.** A skinned-mesh renderer is weeks of work where a sprite batcher is
   days; it is the main schedule risk in M2. Mitigate by running M2 on capsules first, keeping
   the one light and blob shadows (no shadow maps), and keeping the sprite fallback (§7).
+- **Stack in WebAssembly.** One `step()` keeps about 40 KB of per-tick scratch on the stack
+  (contact list, broadphase grid, contact sort keys), which is how the "no heap after init" rule
+  is met. Emscripten's default stack is 64 KB and overflows silently in Release, so every wasm
+  executable links with `-sSTACK_SIZE=1MB` (v0.13); the browser client must too.
 - **WebGL2 limits.** Skinning uniform budgets and texture formats vary by browser; keep joint
   counts low and test the wasm build on every M2 change.
 - Decided: 60 Hz tick with sub-tick input timestamps (§5.11); WebRTC as the single production
@@ -727,6 +832,13 @@ baseline moved to C++23 (§9).
 - Decided (v0.10): HP semantics, `HitStun`, banana grounds on hit, `PlayerHit` event (§5.6).
 - Decided (v0.11): real-time low-poly 3D presentation over the 2D sim, replacing pre-rendered
   2.5D sprites (§7).
+- Decided (v0.13, M1 integration): nothing moves or resolves outside `Playing` (§5.7); the
+  perfect catch ignores an own outbound banana (§5.6); `HitStun` counts the hit tick (§5.6);
+  idle stick iff `moveMag == 0` (§5.4); `PerfectDash` covers the sub-tick end of the window
+  (§5.5); the wall bounce stays in `ProjectileSystem` until arenas have interior walls (§5.6).
+- Open (M2 feel tuning): a perfect catch at full ammo destroys the banana, so with `ammoMax = 1`
+  the thrower stays empty-handed until it finds a pickup. Alternatives: catch only below
+  `ammoMax`, or drop the caught banana as a pickup.
 - Open: team modes; WebTransport as a later replacement for WebRTC; mobile
   browsers and touch controls.
 
@@ -850,25 +962,33 @@ struct Pool {
 };
 
 // sim/step.hpp
-void step(WorldState&, const InputFrame&, EventSink&);
+void step(WorldState&, const InputFrame&, const ContentDB&, EventSink&);
 uint32_t checksum(const WorldState&);         // via visitor, not raw bytes
 
 // sim/abilities/registry.hpp
 struct AbilityBehavior {
   bool (*canActivate)(const WorldState&, const Player&, const AbilityDef&);
-  void (*onActivate)(WorldState&, Player&, AbilityState&, const AbilityDef&, EventSink&);
-  void (*onTick)(WorldState&, Player&, AbilityState&, const AbilityDef&, EventSink&);
-  void (*onPhaseChange)(WorldState&, Player&, AbilityState&, Phase from, Phase to, EventSink&);
-  void (*onEnd)(WorldState&, Player&, AbilityState&, const AbilityDef&, EventSink&);
+  void (*onActivate)(WorldState&, Player&, AbilityState&, const AbilityDef&, const ContentDB&,
+                     EventSink&);
+  void (*onTick)(WorldState&, Player&, AbilityState&, const AbilityDef&, const ContentDB&,
+                 EventSink&);
+  void (*onPhaseChange)(WorldState&, Player&, AbilityState&, const AbilityDef&,
+                        AbilityPhase from, AbilityPhase to, const ContentDB&, EventSink&);
+  void (*onEnd)(WorldState&, Player&, AbilityState&, const AbilityDef&, const ContentDB&,
+                EventSink&);
 };
-const AbilityBehavior& behaviorFor(AbilityKind);   // table built once at startup
+const AbilityBehavior& behaviorFor(AbilityKind);   // constexpr table indexed by kind
 
 // sim/rules/interaction.hpp
 struct InteractionRule {
   uint8_t  priority;
-  Kind     kindA; Tags requireA; Tags forbidA;
-  Kind     kindB; Tags requireB; Tags forbidB;
-  void   (*resolve)(WorldState&, EntityId a, EntityId b, const Contact&, EventSink&);
+  EntityKind kindA; Tags requireA; Tags forbidA;
+  EntityKind kindB; Tags requireB; Tags forbidB;
+  uint8_t    phaseMaskB;                   // BoomerangPhase bits when B is a boomerang (0 = any)
+  Ownership  ownership;                    // Any, Own, NotOwn: A vs. the owner of B
+  // false = did not apply, keep scanning (a mistimed catch falls through to damage)
+  bool     (*resolve)(WorldState&, const ContentDB&, EntityId a, EntityId b, const Contact&,
+                      EventSink&);
 };
 std::span<const InteractionRule> interactionRules();  // sorted by priority
 ```
