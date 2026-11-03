@@ -228,8 +228,8 @@ void NetServer::restartMatch(uint64_t seed, Tick startTick, uint64_t botSeed) {
 
 void NetServer::restartMatch(const sim::MatchConfig& config, Tick startTick, uint64_t botSeed) {
   const Tick start = std::max(startTick, nextTick());
-  restart_ = PendingRestart{config.seed, botSeed, start, config.arena, config.mode};
-  const MatchConfigMsg m{announced(config.seed, config.arena, config.mode), start};
+  restart_ = PendingRestart{config, botSeed, start};
+  const MatchConfigMsg m{announced(config), start};
   for (Peer& q : peers_) {
     if (q.used && q.info.state == PeerState::Active) sendReliableMsg(q, m);
   }
@@ -241,7 +241,7 @@ std::optional<Tick> NetServer::pendingRestart() const {
 }
 
 void NetServer::applyRestart(Tick t, const PendingRestart& r) {
-  config_.match = announced(r.seed, r.arena, r.mode);
+  config_.match = announced(r.config);
   world_ = sim::initialWorld(config_.match);
   world_.tick = t;  // ticks are monotonic across matches; the sim only uses differences
   botRng_ = Rng::seeded(r.botSeed);
@@ -317,7 +317,7 @@ void NetServer::sendReliableMsg(Peer& p, const M& m) {
 }
 
 void NetServer::sendSnapshot(Peer& p) {
-  snapshot_.config = announced(config_.match.seed, config_.match.arena, config_.match.mode);
+  snapshot_.config = announced(config_.match);
   snapshot_.world = world_;
   const size_t n = encode(snapshot_, buf_);
   if (n == 0) return;
@@ -326,14 +326,10 @@ void NetServer::sendSnapshot(Peer& p) {
 }
 
 void NetServer::welcome(Peer& p) {
-  sendReliableMsg(p,
-                  WelcomeMsg{p.info.slots,
-                             announced(config_.match.seed, config_.match.arena, config_.match.mode),
-                             nextTick()});
+  sendReliableMsg(p, WelcomeMsg{p.info.slots, announced(config_.match), nextTick()});
   sendSnapshot(p);
   if (restart_) {
-    sendReliableMsg(p, MatchConfigMsg{announced(restart_->seed, restart_->arena, restart_->mode),
-                                      restart_->startTick});
+    sendReliableMsg(p, MatchConfigMsg{announced(restart_->config), restart_->startTick});
   }
 }
 

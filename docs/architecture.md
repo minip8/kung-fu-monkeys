@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.23 (2026-11-03). Working title taken from the repo name.
+Status: proposal v0.24 (2026-11-03). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -142,6 +142,12 @@ checksum changed and the corpus was regenerated; the rounds mode itself plays ex
 ships `rounds`, `deathmatch` and `survival`. Presentation (§7): RespawnBurst, ScorePop and
 TimerBanner effects, Respawn, Score and TimerWarning sounds, a per-mode HUD scoreboard and clock.
 Team modes stay open (§12).
+v0.24 changes: the lobby UI (§5.8, §6.6, §7, §9). `MatchConfig` gains `powerUps`, a per-match
+power-up set (bit i = `ContentDB::powerUps[i]`, default `kAllPowerUps`): spawners draw from
+their own set intersected with it, and an empty intersection neither spawns nor draws the RNG, so
+the default config plays exactly as before. It rides in `MatchContent`, the replay header
+(format version 3, a ninth optional manifest column) and the join messages (protocol version 3);
+`--powerups all|none|a,b` on `kfm_server`, `kfm_client` and `kfm_replay`.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -701,7 +707,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   of its own; round start clears pickups. The loader keeps the arena's `maxAlive` sum at or below
   half the pickup pool so grounded bananas always find room. An arena without spawners never
   touches the RNG here (the default `dojo` has none, so the default match plays exactly as
-  before).
+  before). Per match (v0.24) `MatchConfig::powerUps` (bit i = power-up i, `kAllPowerUps` by
+  default, carried to the systems in `MatchContent::powerUps`) narrows every spawner's set: the
+  def is drawn from the intersection, and a spawner whose intersection is empty skips its beat
+  without touching the RNG. The lobby's power-up toggles and `--powerups` set it.
 - Shield: rows 20 and 24, §5.6.
 - The shipped set (`content/powerups.toml`), picked up in `dojo_powerups` (the dojo plus four
   spawners near the corners, first at 1 s and 4 s into a round, then every 8 s, one alive each):
@@ -1227,8 +1236,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   server tick), a `Snapshot` of the current world and a `PlayerJoined` broadcast, or `Reject`.
   Content negotiation (v0.18) is the content hash in `Hello`: equal hashes mean identical
   arena and mode lists, so the `MatchConfig` in `Welcome`, `Snapshot` and `MatchConfig`
-  (seed, roster, arena index, mode index; protocol version 2) is all a client needs to simulate
-  the server's arena and mode. A client steps with the config of the snapshot it last loaded
+  (seed, roster, arena index, mode index; protocol version 2; the power-up set as a u16 since
+  protocol version 3, v0.24) is all a client needs to simulate the server's arena, mode and
+  power-ups. A client steps with the config of the snapshot it last loaded
   (`NetClient::simConfig()`); an announced restart's config (`matchConfig()`) takes effect
   with the new match's snapshot, so a restart into another arena costs no resync.
   Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
@@ -1738,6 +1748,10 @@ art is identical up to the export step, and nothing below the presentation layer
   wall slides, bounces, pit falls and slow patches are under the cross-platform gate. The
   embedded content depends on the globbed file list as well as the files (a list file rewritten
   only when it changes), so adding, moving or deleting a TOML file re-embeds before a regen.
+  v0.24: replays (format version 3) store the per-match power-up set; a ninth optional column
+  names it (`all`, `none` or comma-separated names, default all), and
+  `scripted_4p_powerset_1800t` (dojo_powerups with only shield and big_banana) keeps the
+  intersection under the gate.
   v0.23 adds `scripted_4p_deathmatch_3600t` and
   `scripted_4p_survival_1800t` (dojo, the shipped modes), so respawns, the mode counters and the
   survival flow are under the cross-platform gate. v0.20 adds `scripted_4p_powerups_1800t`

@@ -8,6 +8,7 @@
 #include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <array>
 #include <cstdint>
@@ -374,6 +375,59 @@ TEST_CASE("spawners: first beat, interval, maxAlive, the def drawn from the set"
   }
   CHECK(seen[0]);
   CHECK(seen[1]);
+}
+
+TEST_CASE("the match's power-up set narrows every spawner's set",
+          "[scenario][powerup][spawner][match_config]") {
+  ContentDB content = powerUpContent();
+  PickupSpawner sp;
+  sp.pos = at(5, 3);
+  sp.firstTicks = 10;
+  sp.intervalTicks = 20;
+  sp.maxAlive = 1;
+  sp.powerUpSet = static_cast<uint16_t>((1u << kShield) | (1u << kSpeed));
+  content.arenas[0].pickupSpawners[0] = sp;
+  content.arenas[0].pickupSpawnerCount = 1;
+
+  SECTION("intersected with the spawner's own set: only the common power-up spawns") {
+    const auto set = static_cast<uint16_t>((1u << kShield) | (1u << kBig));
+    const MatchContent match{content, 0, 0, set};
+    WorldState s = makePlayingWorld(49, 0b11, content);
+    EventLog log;
+    for (int beat = 0; beat < 12; ++beat) {
+      s.pickups.clear();
+      log.clear();
+      runTicks(s, frameFor(s), 20, match, log);
+      REQUIRE(countEvents(log, EventKind::PickupSpawned) == 1);
+      CHECK(firstEvent(log, EventKind::PickupSpawned).b == kShield);
+    }
+  }
+  SECTION("disjoint from it, or empty: the spawner stays silent and draws no RNG") {
+    const uint16_t set = GENERATE(uint16_t{0}, static_cast<uint16_t>(1u << kBig));
+    WorldState s = makePlayingWorld(49, 0b11, content);
+    WorldState none = s;
+    EventLog log;
+    runTicks(s, frameFor(s), 200, MatchContent{content, 0, 0, set}, log);
+    CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
+    CHECK(s.pickups.size() == 0);
+    // The same run on an arena without spawners: identical worlds.
+    ContentDB bare = content;
+    bare.arenas[0].pickupSpawnerCount = 0;
+    EventLog bareLog;
+    runTicks(none, frameFor(none), 200, bare, bareLog);
+    CHECK(checksum(s) == checksum(none));
+  }
+  SECTION("kAllPowerUps (the default config) is the arena as defined") {
+    CHECK(matchContent(content, MatchConfig{}).powerUps == kAllPowerUps);
+    WorldState a = makePlayingWorld(49, 0b11, content);
+    WorldState b = a;
+    EventLog la;
+    EventLog lb;
+    runTicks(a, frameFor(a), 200, content, la);
+    runTicks(b, frameFor(b), 200, MatchContent{content, 0, 0, kAllPowerUps}, lb);
+    CHECK(countEvents(la, EventKind::PickupSpawned) > 0);
+    CHECK(checksum(a) == checksum(b));
+  }
 }
 
 TEST_CASE("power-up tags and ability-phase tags survive each other's expiry",

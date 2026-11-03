@@ -65,10 +65,13 @@ void respawnTimers(WorldState& s, const MatchContent& content, EventSink& sink) 
   return n;
 }
 
-// The power-ups a spawner may draw: its set (0 = all) within the DB.
-[[nodiscard]] uint32_t candidates(const PickupSpawner& sp, const ContentDB& db) {
+// The power-ups a spawner may draw: its set (0 = all) within the DB and the
+// match's power-up set (MatchConfig::powerUps).
+[[nodiscard]] uint32_t candidates(const PickupSpawner& sp, const MatchContent& content) {
+  const ContentDB& db = content.db;
   const uint32_t all = db.powerUpCount >= 32 ? UINT32_MAX : (uint32_t{1} << db.powerUpCount) - 1u;
-  return sp.powerUpSet == 0 ? all : (uint32_t{sp.powerUpSet} & all);
+  const uint32_t own = sp.powerUpSet == 0 ? all : (uint32_t{sp.powerUpSet} & all);
+  return own & content.powerUps;
 }
 
 // Index of the n-th set bit of `bits` (n < popcount(bits)).
@@ -85,7 +88,7 @@ void runSpawners(WorldState& s, const MatchContent& content, EventSink& sink) {
   for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {
     const PickupSpawner& sp = arena.pickupSpawners[i];
     if (!spawnerBeat(sp, t) || aliveFrom(s, i) >= sp.maxAlive) continue;
-    const uint32_t set = candidates(sp, content.db);
+    const uint32_t set = candidates(sp, content);
     if (set == 0) continue;
     const EntityId id = s.pickups.spawn();
     if (!id.isValid()) return;  // pickup pool full: no spawner fires this tick

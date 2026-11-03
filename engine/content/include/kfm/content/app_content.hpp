@@ -45,6 +45,18 @@ struct LoadedContent {
                                      std::string_view mode, sim::MatchConfig& config,
                                      std::string& error);
 
+// Resolves a --powerups list into a MatchConfig::powerUps set: "all" or an
+// empty list = sim::kAllPowerUps, "none" = 0, else comma-separated power-up
+// names ("shield,speed_boost"). On an unknown name returns false with a
+// message that lists the names the content defines.
+[[nodiscard]] bool resolvePowerUpList(const sim::ContentDB& content, std::string_view list,
+                                      uint16_t& powerUps, std::string& error);
+
+// The inverse, for logs, the lobby and the client settings: "all" when every
+// power-up of the content is in the set, "none" when none is, else the
+// comma-separated names in content order.
+[[nodiscard]] std::string powerUpListText(const sim::ContentDB& content, uint16_t powerUps);
+
 // Hot reload polling (dev builds, local play only): call poll() every
 // frame; it stats the directory at most every intervalSeconds and reports a
 // change of contentDirStamp() since the previous check.

@@ -20,8 +20,9 @@
 //   PlayerJoined slot u8, tick u32, yours u1
 //   PlayerLeft  slot u8, tick u32
 //   MatchConfig MatchConfig, startTick u32
-//   (MatchConfig = seed u64, players u10, arena u8, mode u8; arena and mode
-//   below kMaxArenas / kMaxModes, since protocol version 2)
+//   (MatchConfig = seed u64, players u10, arena u8, mode u8, powerUps u16;
+//   arena and mode below kMaxArenas / kMaxModes, since protocol version 2;
+//   powerUps since version 3)
 //   Disconnect  reason u8
 //   Ping        sendNs u64, tick u32
 //   Pong        echoSendNs u64, tick u32, holdNs u32
@@ -116,6 +117,7 @@ void writeMask(BitWriter& w, sim::PlayerMask m) {
   writeMask(w, c.players);
   w.writeU8(c.arena);
   w.writeU8(c.mode);
+  w.writeU16(c.powerUps);
   return true;
 }
 [[nodiscard]] bool readMatchConfig(BitReader& r, sim::MatchConfig& c) {
@@ -123,6 +125,7 @@ void writeMask(BitWriter& w, sim::PlayerMask m) {
   c.players = readMask(r);
   c.arena = r.readU8();
   c.mode = r.readU8();
+  c.powerUps = r.readU16();
   return c.arena < sim::kMaxArenas && c.mode < sim::kMaxModes;
 }
 
