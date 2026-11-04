@@ -215,8 +215,13 @@ class MatchSession {
   [[nodiscard]] presentation::PresentationState& presentation() { return presentation_; }
 
   // The live content copy (edited by the debug UI) and the loaded content
-  // it started from (its defaults).
-  [[nodiscard]] sim::ContentDB& content() { return content_; }
+  // it started from (its defaults). The mutable accessor marks the agents'
+  // cached content hash stale (AgentHost caches it per ContentDB object and
+  // this one is edited in place).
+  [[nodiscard]] sim::ContentDB& content() {
+    agents_.invalidateContentHash();
+    return content_;
+  }
   [[nodiscard]] const sim::ContentDB& content() const { return content_; }
   [[nodiscard]] const sim::ContentDB& loadedContent() const { return loaded_; }
   void resetContent();

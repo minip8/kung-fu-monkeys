@@ -465,8 +465,19 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     }
     if (haveFetch) u -= distanceBetween(end, fetch) * fetchWeight;
     if (havePowerUp) u -= distanceBetween(end, powerUp) / 2;
-    const Fixed ex = abs(end.x) - (half.x - kWallMargin);
-    const Fixed ey = abs(end.y) - (half.y - kWallMargin);
+    // The wall band is penalised at 3 per unit, more than the fetch pull, so
+    // it must never forbid the fetch point itself: a banana lying inside the
+    // band would otherwise leave an unarmed bot parked at the band's edge
+    // forever (two such bots stalled a round). The band ends where the
+    // fetch lies, on each axis.
+    Fixed limitX = half.x - kWallMargin;
+    Fixed limitY = half.y - kWallMargin;
+    if (haveFetch) {
+      limitX = max(limitX, abs(fetch.x));
+      limitY = max(limitY, abs(fetch.y));
+    }
+    const Fixed ex = abs(end.x) - limitX;
+    const Fixed ey = abs(end.y) - limitY;
     if (ex > Fixed{}) u -= ex * 3;
     if (ey > Fixed{}) u -= ey * 3;
     u -= strikeDanger(p.pos[kStrikeTick], kStrikeTick);

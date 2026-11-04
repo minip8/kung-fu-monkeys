@@ -347,6 +347,7 @@ float MatchSession::renderAlpha() const {
 
 void MatchSession::resetContent() {
   content_ = loaded_;
+  agents_.invalidateContentHash();
 }
 
 uint32_t MatchSession::contentHash() const {
