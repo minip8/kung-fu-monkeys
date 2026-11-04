@@ -16,7 +16,8 @@
 // shows what the mode gives (ModeDef::teams), Left/Right leave it alone; the
 // arena row skips arenas that do not suit the mode
 // (ContentDB::compatible), and a mode the arena does not suit moves the
-// arena to the first one that does.
+// arena to the first one that does; v0.34: a mode that names its own arena
+// (ModeDef::arena) brings it, and a mode's baseline power-up gets no row.
 #pragma once
 
 #include "kfm/platform/input_event.hpp"

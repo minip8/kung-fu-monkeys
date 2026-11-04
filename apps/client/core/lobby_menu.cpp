@@ -11,6 +11,16 @@ namespace kfm::client {
 
 namespace {
 
+// Whether a power-up is some mode's baseline (v0.32, ModeDef::baseline):
+// the lobby lists no toggle for it, since a baseline is part of its mode's
+// rules and no shipped spawner draws it.
+[[nodiscard]] bool isBaseline(const sim::ContentDB& content, uint8_t powerUp) {
+  for (uint8_t m = 0; m < content.modeCount && m < sim::kMaxModes; ++m) {
+    if (content.modes[m].baseline == powerUp) return true;
+  }
+  return false;
+}
+
 using platform::InputEventKind;
 using platform::Key;
 using platform::PadAxis;
@@ -143,8 +153,10 @@ void LobbyMenu::setContent(const sim::ContentDB& content) {
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Teams};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Loadout};
   const uint8_t powerUps = std::min<uint8_t>(content.powerUpCount, sim::kMaxPowerUps);
-  for (uint8_t i = 0; i < powerUps; ++i)
+  for (uint8_t i = 0; i < powerUps; ++i) {
+    if (isBaseline(content, i)) continue;  // v0.34: a mode's rules, never spawned
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::PowerUp, i};
+  }
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Bots};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::BotDifficulty};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
@@ -204,7 +216,9 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       break;
     case LobbyRowKind::Mode:
       settings_.mode = cycle(settings_.mode, db.modeCount);
-      if (!db.compatible(settings_.arena, settings_.mode)) {
+      // v0.34: a mode that names its arena (ModeDef::arena) brings it.
+      if (db.modeAt(settings_.mode).hasArena() ||
+          !db.compatible(settings_.arena, settings_.mode)) {
         settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(settings_.arena);
       }
       break;

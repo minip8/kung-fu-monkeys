@@ -99,7 +99,19 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   LobbyMenu m;
   m.setContent(db);
   const auto rows = m.rows();
-  REQUIRE(rows.size() == 8u + db.powerUpCount);
+  // v0.34: a mode's baseline gets no toggle (the grid modes name two).
+  uint8_t baselines = 0;
+  for (uint8_t i = 0; i < db.powerUpCount; ++i) {
+    for (uint8_t k = 0; k < db.modeCount; ++k) {
+      if (db.modes[k].baseline == i) {
+        ++baselines;
+        break;
+      }
+    }
+  }
+  CHECK(baselines == 2);
+  const uint8_t toggles = static_cast<uint8_t>(db.powerUpCount - baselines);
+  REQUIRE(rows.size() == 8u + toggles);
   CHECK(rows[0].kind == LobbyRowKind::Arena);
   CHECK(rows[1].kind == LobbyRowKind::Mode);
   CHECK(rows[2].kind == LobbyRowKind::Teams);  // v0.32
@@ -108,7 +120,7 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   CHECK(rows[3].kind == LobbyRowKind::Loadout);
   CHECK(m.rowLabel(rows[3]) == "Loadout");
   CHECK(m.rowValue(rows[3]) == "base");
-  for (uint8_t i = 0; i < db.powerUpCount; ++i) {
+  for (uint8_t i = 0; i < toggles; ++i) {  // the baselines come last in powerups.toml
     CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
     CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[i].name.view());
   }
@@ -160,6 +172,36 @@ TEST_CASE("lobby menu: a team mode shows its teams and keeps a suitable arena (v
   CHECK(ls.arena == standoff);
   o.arena = "lava";
   CHECK_FALSE(lobbySettingsFrom(o, db, ls, error));
+}
+
+TEST_CASE("lobby menu: a grid mode opens on its own arena and keeps arenas with cells (v0.34)",
+          "[client][lobby][grid]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t grid = db.findMode("grid_rounds").value_or(0);
+  const uint8_t courtyard = db.findArena("courtyard").value_or(0);
+  REQUIRE(grid != 0);
+  REQUIRE(courtyard != 0);
+  LobbyMenu m;
+  m.setContent(db);
+  const std::size_t modeRow = rowOf(m, LobbyRowKind::Mode);
+  while (m.settings().mode != grid)
+    (void)m.change(modeRow, +1);
+  CHECK(m.settings().arena == courtyard);  // ModeDef::arena, not the first tilemap
+  CHECK(m.rowValue(m.rows()[rowOf(m, LobbyRowKind::Teams)]) == "2 (by mode)");
+  for (int i = 0; i < 2 * db.arenaCount; ++i) {
+    (void)m.change(rowOf(m, LobbyRowKind::Arena), +1);
+    CHECK(db.compatible(m.settings().arena, m.settings().mode));
+    CHECK(db.arenas[m.settings().arena].cellSize > Fixed::zero());
+  }
+  ClientOptions o;
+  o.mode = "grid_rounds";
+  LobbySettings ls;
+  std::string error;
+  REQUIRE(lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.arena == courtyard);
+  o.arena = "dojo";  // a saved or named arena without cells gives way
+  REQUIRE(lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.arena == courtyard);
 }
 
 TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][lobby]") {
