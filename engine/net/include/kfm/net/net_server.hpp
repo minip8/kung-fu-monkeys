@@ -16,12 +16,38 @@
 // frames from the next tick; the sim spawns them at the next round start
 // (§5.4 roster). requestedSlots == 0 makes a spectator.
 //
-// Per tick T: bot slots get sim::scriptedInput, reserved slots of a
-// disconnected peer get an idle input, the assembler builds InputFrame(T)
+// Per tick T: bot slots get their inputs from the bot source (below),
+// reserved slots of a disconnected peer get an idle input, the assembler builds InputFrame(T)
 // (repeat-last for missing inputs, the server never waits), the world steps,
 // and every active peer gets AuthInputs with the frames it has not
 // acknowledged (at most authRedundancy), its arrival margin and, every
 // checksumEveryTicks, the checksum of the stepped world.
+//
+// Bot source (§8: server-side bots write straight into the authoritative
+// frame). ServerConfig::botInputs, when set, is called once per tick before
+// assembly with the world about to be stepped (tick T, after a restart that
+// takes effect at T has replaced it) and a frame with tick == T, present ==
+// bots() and idle inputs; it writes frame.inputs[s] for the bot slots it
+// drives (an untouched slot stays idle) and nothing else is read back. The
+// source sees no network and no wall clock; on the first tick of a restarted
+// match matchIndex() has already advanced and botSeed() is the seed that
+// restartMatch() was given, which is how the host learns to re-seed its
+// agents before they act on the new world. Unset, the bot slots run the
+// scripted input generator (sim::scriptedInput over an Rng seeded with
+// botSeed, test scaffolding, §9) exactly as before: kfm_netsim, the
+// netcode tests and the soak gates. engine/net never sees engine/ai (§4);
+// the app (kfm_server's ServerHost) wires an ai::AgentHost in here.
+//
+// Human lead (§8 human-likeness): from each Input message the server
+// estimates how far ahead of it the sending client runs, lead ≈ arrival
+// margin + one-way latency, with the one-way latency taken as half the round
+// trip that the message's acknowledgement reveals: the client held
+// authoritative frame A (sent when the server's next tick was A + 1) and the
+// message arrived when it is S, so rtt ≈ S − A − 1 ticks and lead ≈
+// (N − S) + (S − A − 1) / 2 for its newest input tick N, smoothed (EMA, gain
+// 1/8, Q8). humanLeadTicks() is the median over the active peers holding
+// slots, rounded and clamped to kMaxHumanLeadTicks, 0 when there are none:
+// the delay the host gives its bots in a mixed match.
 //
 // Abuse resistance (§6.7): inputs are accepted only for slots the sending
 // peer owns, buttons are range-checked, ticks must lie in the assembler's
@@ -68,6 +94,14 @@
 
 namespace kfm::net {
 
+// Writes the bot slots' inputs for frame.tick (see the header comment).
+using BotInputSource = std::function<void(
+    const sim::WorldState& world, const sim::MatchContent& content, sim::InputFrame& frame)>;
+
+// humanLeadTicks() never reports more (one second: far beyond any lead the
+// client controller runs at, §6.2).
+inline constexpr uint8_t kMaxHumanLeadTicks = sim::kTickHz;
+
 struct ServerConfig {
   // Seed and initial roster of the match (bots are added with setBot()).
   sim::MatchConfig match{};
@@ -90,9 +124,12 @@ struct ServerConfig {
   uint64_t minResyncIntervalNs{250'000'000ull};
   // Token check; empty accepts every token (including none).
   std::function<bool(std::span<const std::byte> token)> acceptToken;
-  // Seed of the Rng that drives the bot slots.
+  // Seed of the first match's bots: the scripted generator's Rng when
+  // botInputs is unset, the host's to use otherwise (botSeed()).
   uint64_t botSeed{0xB07B07};
-  sim::ScriptedInputConfig botConfig{};
+  sim::ScriptedInputConfig botConfig{};  // the scripted generator only
+  // The bot slots' inputs; unset = the scripted generator.
+  BotInputSource botInputs;
   // Player slots open to peers and bots: the lowest maxPlayers (1..kMaxPlayers).
   uint8_t maxPlayers{sim::kMaxPlayers};
 };
@@ -146,6 +183,8 @@ struct ServerPeerInfo {
   std::optional<Tick> lastAuthAck;    // newest authoritative tick it holds
   int8_t lastMargin{0};               // inputTick − serverTick of its newest input
   int32_t marginEmaQ8{0};             // smoothed, Q8 ticks
+  int32_t leadEmaQ8{0};               // estimated lead (margin + rtt/2), smoothed, Q8 ticks
+  uint32_t leadSamples{0};            // Input messages that fed leadEmaQ8
   uint64_t inputMsgs{0};
   uint64_t substitutions{0};  // its slot-ticks the assembler had to repeat
   uint64_t rejectedInputs{0};
@@ -190,6 +229,12 @@ class NetServer {
   // 0 for the first match, +1 per restart that took effect.
   [[nodiscard]] uint32_t matchIndex() const { return matchIndex_; }
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return config_.match; }
+  // The bot seed of the current match: ServerConfig::botSeed, then the one
+  // passed to the restartMatch() that took effect.
+  [[nodiscard]] uint64_t botSeed() const { return botSeed_; }
+  // The median estimated lead of the active peers that hold slots (see the
+  // header comment), 0 when no such peer has sent an input yet.
+  [[nodiscard]] uint8_t humanLeadTicks() const;
 
   // Disconnect{ServerShuttingDown} to every peer; later Hellos are rejected.
   // Idempotent. The peers stay until closeAll() or the transport closes them.
@@ -277,6 +322,7 @@ class NetServer {
   sim::PlayerMask present_{0};
   sim::PlayerMask bots_{0};
   Rng botRng_{};
+  uint64_t botSeed_{0};
   uint64_t nowNs_{0};
   std::vector<Peer> peers_;  // capacity kMaxPeers, reserved at construction
   std::array<Reservation, sim::kMaxPlayers> reservations_{};
