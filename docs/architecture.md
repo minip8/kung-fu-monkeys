@@ -3282,8 +3282,9 @@ Verified locally on GCC 15: the headless Debug build, the dev preset (all 45 cte
 incl. the 21-entry corpus, the new `arena_smoke_team`, both soak gates and the real-socket
 tests), the Release build and its 39 tests, clang-format 23.1.3 and clang-tidy 23.1.4 over the
 whole tree with zero findings, the no-float check (fog included), `build_example.sh` with the
-emsdk clang (byte-identical modules); MSVC, Apple Clang, Clang, ASan+UBSan and Emscripten are
-left to CI. Follow-ups: the call alphabet mask and a per-mode call range check against the
+emsdk clang (byte-identical modules), and Emscripten 6 (the `wasm` preset: build and its 39
+tests under node); MSVC, Apple Clang, Clang and ASan+UBSan are left to CI. Follow-ups: the call
+alphabet mask and a per-mode call range check against the
 vision; zones and the other monkeys' cells in a later Observation version; a reference bot
 that plans for its team, reads calls beyond the last sighting and takes the objective; the
 human playtest of `hill` and a 15-tick grid round; the §12 grid numbers.
