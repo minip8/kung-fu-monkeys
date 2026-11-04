@@ -238,6 +238,29 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Glossary for terms used in code and docs (tick, lead, rollback, authoritative frame, confirmed
   tick, misprediction, sub-tick timestamp, lane): `docs/architecture.md` Appendix B.
 
+## Lessons from CI (keep a local pass a CI pass)
+
+- Fast iteration: `cmake -S . -B build/headless -G Ninja -DCMAKE_BUILD_TYPE=Debug -DKFM_HEADLESS=ON
+  -DKFM_WEBRTC=OFF -DKFM_USE_VCPKG=OFF` builds everything but the client and the WebRTC
+  transport in minutes (no SDL3/ImGui/sokol/libdatachannel); `ctest --test-dir build/headless
+  -LE 'soak|network'`. Use the full `dev` preset before pushing anything that touches
+  `apps/client`, and the `server-headless` preset for the soak and real-socket gates.
+- CI's lint job pins clang-format 23.1.3 and clang-tidy 23.1.4 (PyPI wheels: `pip install
+  clang-format==23.1.3 clang-tidy==23.1.4`); run those exact versions locally, over the whole
+  tree the way `.github/workflows/ci.yml` does, and count both `error` and `warning` lines.
+  The versions are recorded in architecture v0.30 (§9); bump both together.
+- MSVC `/W4 /WX` differs from GCC: a `return` after Catch2's `FAIL(...)` is unreachable code
+  (C4702), so write `if (!opt) FAIL(...); return opt.value_or(...)` rather than `{ FAIL(); return
+  {}; }`; `size_t` passed to a `uint32_t` parameter warns (C4267) even when the value is a
+  constant GCC can prove fits. clang-tidy's `bugprone-unchecked-optional-access` does not treat
+  `REQUIRE(opt)` as a guard; use `if (!opt) { FAIL(); return; }` in a `void` test or `value_or`.
+- Third-party sources fetched into `build/<preset>/_deps` may ship their own `.clang-tidy`;
+  clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
+  so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
+- Next milestone: M5b, sequenced in architecture §11 (five PRs, one architecture version each,
+  every one green on the determinism gate before the next); step 2's spawn groups are the fix
+  for the spawn-order slot bias recorded in §12.
+
 ## Git workflow
 
 **When to commit.** Commit as you go, without being asked: at the end of each logical unit of
