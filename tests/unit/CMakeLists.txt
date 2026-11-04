@@ -65,6 +65,11 @@ kfm_add_test_exe(kfm_net_tests
 )
 target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
 
+kfm_add_test_exe(kfm_ai_tests
+  ai/agent_test.cpp
+)
+target_link_libraries(kfm_ai_tests PRIVATE kfm::ai)
+
 kfm_add_test_exe(kfm_presentation_tests
   presentation/math_test.cpp
   presentation/camera_test.cpp
