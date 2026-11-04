@@ -96,14 +96,23 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
     const std::string_view value = trim(line.substr(eq + 1));
     if (key == "arena" || key == "mode" || key == "loadout") {
       if (value.empty()) continue;  // the default
-      const bool known = key == "arena"  ? content.findArena(value).has_value()
-                         : key == "mode" ? content.findMode(value).has_value()
-                                         : content.findLoadout(value).has_value();
+      bool known = false;
+      std::string* target = nullptr;
+      if (key == "arena") {
+        known = content.findArena(value).has_value();
+        target = &options.arena;
+      } else if (key == "mode") {
+        known = content.findMode(value).has_value();
+        target = &options.mode;
+      } else {
+        known = content.findLoadout(value).has_value();
+        target = &options.loadout;
+      }
       if (!known) {
         warn("this content has no " + std::string(key) + " '" + std::string(value) + "'");
         continue;
       }
-      (key == "arena" ? options.arena : key == "mode" ? options.mode : options.loadout) = value;
+      *target = value;
     } else if (key == "powerups") {
       uint16_t set = 0;
       std::string error;

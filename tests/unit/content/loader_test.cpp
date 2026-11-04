@@ -265,7 +265,7 @@ TEST_CASE("loadouts: [[loadout]] defs, loadout 0 and MatchContent::loadout (v0.3
 
   // At most kMaxLoadouts in all: base plus 15 [[loadout]] tables.
   std::string many(kMinimal);
-  for (int i = 1; i < sim::kMaxLoadouts; ++i) {
+  for (uint32_t i = 1; i < sim::kMaxLoadouts; ++i) {
     many +=
         "\n[[loadout]]\nname = \"l" + std::to_string(i) + "\"\nabilities = [\"dash\", \"throw\"]\n";
   }
@@ -839,7 +839,7 @@ score_to_win = 0
 
   // kMaxModes is 32 since v0.31 (8 before): kMinimal's rounds plus 31 more.
   std::string many = base;
-  for (int i = 1; i < sim::kMaxModes; ++i)
+  for (uint32_t i = 1; i < sim::kMaxModes; ++i)
     many += "[[mode]]\nname = \"m" + std::to_string(i) + "\"\n";
   ContentDB full{};
   Diagnostics fullDiag;

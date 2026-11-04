@@ -26,37 +26,37 @@ constexpr PlayerId kP1{1};
 
 // modeData words the probe writes.
 enum ProbeWord : uint8_t {
-  kRoundStarts = 0,  // onRoundStart calls
-  kStartRound,       // MatchRules::round seen by the last onRoundStart
-  kStartSpawned,     // monkeys alive when it ran
-  kStartCountdown,   // 1 when it ran in RoundStarting at ticksInPhase 0
-  kPickups,          // onPickupTaken calls
-  kPickupKind,       // the last pickup's kind + 1
-  kPickupPlayer,     // the last taker's slot + 1
-  kPickupGone,       // 1 when the pickup was already despawned
+  RoundStarts = 0,    // onRoundStart calls
+  StartRound,         // MatchRules::round seen by the last onRoundStart
+  StartSpawned,       // monkeys alive when it ran
+  StartCountdown,     // 1 when it ran in RoundStarting at ticksInPhase 0
+  Pickups,            // onPickupTaken calls
+  PickupKindPlus1,    // the last pickup's kind + 1
+  PickupPlayerPlus1,  // the last taker's slot + 1
+  PickupGone,         // 1 when the pickup was already despawned
 };
-static_assert(kPickupGone < kModeDataWords);
+static_assert(PickupGone < kModeDataWords);
 
 void probeRoundStart(WorldState& s, const MatchContent& /*content*/, EventSink& /*sink*/) {
   std::array<uint32_t, kModeDataWords>& d = s.rules.modeData;
-  ++d[kRoundStarts];
-  d[kStartRound] = s.rules.round;
-  d[kStartSpawned] = static_cast<uint32_t>(s.players.size());
-  d[kStartCountdown] =
+  ++d[RoundStarts];
+  d[StartRound] = s.rules.round;
+  d[StartSpawned] = static_cast<uint32_t>(s.players.size());
+  d[StartCountdown] =
       s.rules.phase == MatchPhase::RoundStarting && s.rules.ticksInPhase == 0 ? 1 : 0;
 }
 
 void probePickupTaken(WorldState& s, const MatchContent& /*content*/, PlayerId player,
                       const Pickup& pickup, EventSink& /*sink*/) {
   std::array<uint32_t, kModeDataWords>& d = s.rules.modeData;
-  ++d[kPickups];
-  d[kPickupKind] = static_cast<uint32_t>(pickup.kind) + 1;
-  d[kPickupPlayer] = uint32_t{player.value} + 1;
+  ++d[Pickups];
+  d[PickupKindPlus1] = static_cast<uint32_t>(pickup.kind) + 1;
+  d[PickupPlayerPlus1] = uint32_t{player.value} + 1;
   bool gone = true;
   s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& p) {
     if (p.pos == pickup.pos) gone = false;
   });
-  d[kPickupGone] = gone ? 1 : 0;
+  d[PickupGone] = gone ? 1 : 0;
 }
 
 constexpr ModeBehavior kProbe{&probeRoundStart, &roundsOnPlaying, &roundsOnEliminated,
@@ -91,27 +91,27 @@ TEST_CASE("modes: onRoundStart runs after the shared spawn, before the countdown
   EventLog log;
   runTicks(s, frameFor(s), 1, content, log);  // Lobby -> MatchStarted, round 1
   const std::array<uint32_t, kModeDataWords>& d = s.rules.modeData;
-  CHECK(d[kRoundStarts] == 1);
-  CHECK(d[kStartRound] == 1);
-  CHECK(d[kStartSpawned] == 2);  // both present slots already spawned
-  CHECK(d[kStartCountdown] == 1);
+  CHECK(d[RoundStarts] == 1);
+  CHECK(d[StartRound] == 1);
+  CHECK(d[StartSpawned] == 2);  // both present slots already spawned
+  CHECK(d[StartCountdown] == 1);
   CHECK(countEvents(log, EventKind::RoundStarted) == 1);
 
   // Through the countdown and play: no further call until the next round.
   for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::Playing; ++i)
     runTicks(s, frameFor(s), 1, content, log);
   REQUIRE(s.rules.phase == MatchPhase::Playing);
-  CHECK(d[kRoundStarts] == 1);
+  CHECK(d[RoundStarts] == 1);
   eliminate(s, content, kP1, kP0);
   runTicks(s, frameFor(s), 1, content, log);  // the round ends
   REQUIRE(s.rules.phase == MatchPhase::RoundEnded);
   for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::RoundStarting; ++i)
     runTicks(s, frameFor(s), 1, content, log);
   REQUIRE(s.rules.phase == MatchPhase::RoundStarting);
-  CHECK(d[kRoundStarts] == 2);
-  CHECK(d[kStartRound] == 2);
-  CHECK(d[kStartSpawned] == 2);
-  CHECK(d[kStartCountdown] == 1);
+  CHECK(d[RoundStarts] == 2);
+  CHECK(d[StartRound] == 2);
+  CHECK(d[StartSpawned] == 2);
+  CHECK(d[StartCountdown] == 1);
   CHECK(s.rules.ticksInPhase == 1);  // the post-tick already advanced the clock
 }
 
@@ -131,20 +131,20 @@ TEST_CASE("modes: onPickupTaken runs right after a pickup row applied",
     spawnPickup(s, p.transform.pos);
     runTicks(s, frameFor(s), 1, content, log);
     REQUIRE(countEvents(log, EventKind::PickupTaken) == 1);
-    CHECK(s.rules.modeData[kPickups] == 1);
-    CHECK(s.rules.modeData[kPickupKind] == static_cast<uint32_t>(PickupKind::Banana) + 1);
-    CHECK(s.rules.modeData[kPickupPlayer] == 2);
-    CHECK(s.rules.modeData[kPickupGone] == 1);
+    CHECK(s.rules.modeData[Pickups] == 1);
+    CHECK(s.rules.modeData[PickupKindPlus1] == static_cast<uint32_t>(PickupKind::Banana) + 1);
+    CHECK(s.rules.modeData[PickupPlayerPlus1] == 2);
+    CHECK(s.rules.modeData[PickupGone] == 1);
   }
   SECTION("a power-up pickup (row 51)") {
     const Player& p = placePlayer(s, kP0, Vec2{-Fixed::fromInt(4), Fixed::fromInt(2)});
     spawnPowerUpPickup(s, p.transform.pos, boost);
     runTicks(s, frameFor(s), 1, content, log);
     REQUIRE(countEvents(log, EventKind::PickupTaken) == 1);
-    CHECK(s.rules.modeData[kPickups] == 1);
-    CHECK(s.rules.modeData[kPickupKind] == static_cast<uint32_t>(PickupKind::PowerUp) + 1);
-    CHECK(s.rules.modeData[kPickupPlayer] == 1);
-    CHECK(s.rules.modeData[kPickupGone] == 1);
+    CHECK(s.rules.modeData[Pickups] == 1);
+    CHECK(s.rules.modeData[PickupKindPlus1] == static_cast<uint32_t>(PickupKind::PowerUp) + 1);
+    CHECK(s.rules.modeData[PickupPlayerPlus1] == 1);
+    CHECK(s.rules.modeData[PickupGone] == 1);
   }
   SECTION("a pickup the row declines (full ammo) calls nothing") {
     const Player& p = placePlayer(s, kP1, Vec2{Fixed::fromInt(4), Fixed::fromInt(2)});
@@ -152,7 +152,7 @@ TEST_CASE("modes: onPickupTaken runs right after a pickup row applied",
     spawnPickup(s, p.transform.pos);
     runTicks(s, frameFor(s), 1, content, log);
     CHECK(countEvents(log, EventKind::PickupTaken) == 0);
-    CHECK(s.rules.modeData[kPickups] == 0);
+    CHECK(s.rules.modeData[Pickups] == 0);
   }
 }
 
