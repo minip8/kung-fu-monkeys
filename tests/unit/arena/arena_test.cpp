@@ -55,13 +55,12 @@ MatchSetup setupOf(const std::vector<std::string>& bots, uint64_t seed, uint32_t
   return setup;
 }
 
+// value_or rather than a dereference after the check: clang-tidy cannot see
+// that FAIL throws, and MSVC can, so a return after it is unreachable (C4702).
 MatchResult play(const MatchSetup& setup, BotFactory& factory, uint32_t index = 0) {
   auto result = runMatch(setup, gameContent().db, factory, index);
-  if (!result) {
-    FAIL(result.error().message);
-    return {};
-  }
-  return std::move(*result);
+  if (!result) FAIL(result.error().message);
+  return std::move(result).value_or(MatchResult{});
 }
 
 SlotResult slotWith(uint8_t slot, uint32_t score, uint32_t deaths) {

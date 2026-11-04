@@ -8,15 +8,13 @@ using namespace kfm::ai;
 
 namespace {
 
-// Fails the test case when the text does not parse (the tidy-friendly form
-// of REQUIRE-then-dereference).
+// Fails the test case when the text does not parse. value_or rather than a
+// dereference after the check: clang-tidy cannot see that FAIL throws, and
+// MSVC can, so a return after it is unreachable code (C4702).
 BotSpec parsed(std::string_view text) {
   const std::optional<BotSpec> spec = parseBotSpec(text);
-  if (!spec) {
-    FAIL("did not parse: " << text);
-    return {};
-  }
-  return *spec;
+  if (!spec) FAIL("did not parse: " << text);
+  return spec.value_or(BotSpec{});
 }
 
 }  // namespace
