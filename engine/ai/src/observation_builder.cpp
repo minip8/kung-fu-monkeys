@@ -5,8 +5,10 @@
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/content.hpp"
 #include "kfm/sim/content/arena.hpp"
+#include "kfm/sim/content/mode.hpp"
 #include "kfm/sim/content/powerup.hpp"
 #include "kfm/sim/input.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/tags.hpp"
 
 #include <cstdint>
@@ -31,17 +33,28 @@ static_assert(static_cast<uint8_t>(sim::MatchPhase::Playing) ==
                   static_cast<uint8_t>(ObsMatchPhase::Playing) &&
               static_cast<uint8_t>(sim::MatchPhase::MatchEnded) ==
                   static_cast<uint8_t>(ObsMatchPhase::MatchEnded));
-static_assert(static_cast<uint8_t>(sim::ModeKind::Survival) ==
-              static_cast<uint8_t>(ObsModeKind::Survival));
+static_assert(
+    static_cast<uint8_t>(sim::ModeKind::Survival) == static_cast<uint8_t>(ObsModeKind::Survival) &&
+    static_cast<uint8_t>(sim::ModeKind::TeamRounds) ==
+        static_cast<uint8_t>(ObsModeKind::TeamRounds) &&
+    static_cast<uint8_t>(sim::ModeKind::TeamDeathmatch) ==
+        static_cast<uint8_t>(ObsModeKind::TeamDeathmatch) &&
+    static_cast<uint8_t>(sim::ModeKind::Hill) == static_cast<uint8_t>(ObsModeKind::Hill) &&
+    static_cast<uint8_t>(sim::ModeKind::Capture) == static_cast<uint8_t>(ObsModeKind::Capture) &&
+    static_cast<uint8_t>(sim::ModeKind::kCount) == 7);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
-              static_cast<uint8_t>(sim::AbilityKind::kCount) == 6);
+              static_cast<uint8_t>(sim::AbilityKind::Call) ==
+                  static_cast<uint8_t>(ObsAbilityKind::Call) &&
+              static_cast<uint8_t>(sim::AbilityKind::kCount) == 7);
 static_assert(static_cast<uint8_t>(sim::AbilityPhase::Recovery) ==
               static_cast<uint8_t>(ObsAbilityPhase::Recovery));
 static_assert(static_cast<uint8_t>(sim::BoomerangPhase::Grounded) ==
               static_cast<uint8_t>(ObsBananaPhase::Grounded));
 static_assert(static_cast<uint8_t>(sim::PickupKind::PowerUp) ==
-              static_cast<uint8_t>(ObsPickupKind::PowerUp));
+                  static_cast<uint8_t>(ObsPickupKind::PowerUp) &&
+              static_cast<uint8_t>(sim::PickupKind::Flag) ==
+                  static_cast<uint8_t>(ObsPickupKind::Flag));
 static_assert(static_cast<uint8_t>(sim::HazardKind::Slow) ==
               static_cast<uint8_t>(ObsHazardKind::Slow));
 
@@ -69,10 +82,19 @@ template <class E>
   return Fixed::fromRaw(r > static_cast<uint32_t>(INT32_MAX) ? INT32_MAX : static_cast<int32_t>(r));
 }
 
-[[nodiscard]] uint8_t relationTo(PlayerId self, PlayerId other) {
+// bot-abi.md §3, filled since architecture v0.32: Ally through the match's
+// teams (MatchContent::relation; a free-for-all has none).
+[[nodiscard]] uint8_t relationTo(const sim::MatchContent& content, PlayerId self, PlayerId other) {
   if (!other.isValid() || other.value >= sim::kMaxPlayers) return byteOf(ObsRelation::None);
-  // Free-for-all until teams land (v0.29): everyone else is an enemy.
-  return other == self ? byteOf(ObsRelation::Self) : byteOf(ObsRelation::Enemy);
+  switch (content.relation(self, other)) {
+    case sim::Relation::Self:
+      return byteOf(ObsRelation::Self);
+    case sim::Relation::Ally:
+      return byteOf(ObsRelation::Ally);
+    case sim::Relation::Enemy:
+      break;
+  }
+  return byteOf(ObsRelation::Enemy);
 }
 
 // The index of `def` in `defs[0, count)`, else 0 (MatchContent always
@@ -120,6 +142,19 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   }
   m.aliveCount = alive;
   m.aliveMask = aliveMask;
+  // bot-abi.md §3, filled since architecture v0.31: the mode's own state.
+  // MatchRules has kModeDataWords of it; the rest of the reserve stays 0.
+  static_assert(sim::kModeDataWords <= kObsModeDataWords);
+  for (uint8_t i = 0; i < sim::kModeDataWords; ++i)
+    m.reservedModeData[i] = r.modeData[i];
+  // bot-abi.md §3, filled since architecture v0.32: every team's score by
+  // team index (the slot's own score in a free-for-all, team i = slot i).
+  for (uint8_t t = 0; t < sim::kMaxPlayers; ++t)
+    m.reservedTeamScores[t] = content.teamScore(r.scores, t);
+  // bot-abi.md §3, filled since architecture v0.35: a grid mode's turn clock.
+  const TurnClock clock = turnClock(world, content);
+  m.reservedTurnTicks = clock.turnTicks;
+  m.reservedTicksToLatch = clock.ticksToLatch;
 }
 
 void fillRules(const sim::ContentDB& db, ObsRules& r) {
@@ -169,8 +204,13 @@ void fillAbility(const sim::AbilityState& st, const sim::ContentDB& db, uint8_t 
 void fillSelf(const sim::WorldState& world, const sim::MatchContent& content, PlayerId self,
               ObsSelf& o) {
   o.slot = self.value;
+  // bot-abi.md §3, filled since architecture v0.31: the loadout index the
+  // slot plays (v0.32: its role's in a team mode with roles).
+  const uint8_t role = content.loadoutIndexFor(self);
+  o.reservedRole = role < content.db.loadoutCount ? role : 0;
   if (self.isValid() && self.value < sim::kMaxPlayers) {
     o.respawnTicks = world.rules.respawnTicks[self.value];
+    o.reservedTeam = content.teams[self.value];  // filled since v0.32
   }
   const sim::Player* p = world.playerBySlot(self);
   if (p == nullptr) return;
@@ -188,7 +228,7 @@ void fillSelf(const sim::WorldState& world, const sim::MatchContent& content, Pl
   o.velX = t.vel.x.raw;
   o.velY = t.vel.y.raw;
   o.moveSpeed = p->stats.moveSpeed.raw;
-  o.radius = content.db.player.radius.raw;
+  o.radius = p->stats.radius.raw;  // v0.34: the radius stat
   o.knockbackX = p->knockback.x.raw;
   o.knockbackY = p->knockback.y.raw;
   o.tags = p->tags.bits;
@@ -196,6 +236,14 @@ void fillSelf(const sim::WorldState& world, const sim::MatchContent& content, Pl
   o.knockbackTicks = p->knockbackTicks;
   o.invulnTicks = world.rules.invulnTicks[self.value];
   o.facing = angle8(t.facing);
+  // bot-abi.md §3, filled since architecture v0.35: the cell and the facing
+  // octant in a grid mode (the cone's direction, §8).
+  if (content.mode.space == sim::Space::Grid && sim::grid::hasCells(content.arena)) {
+    const Cell cell = sim::grid::cellOf(content.arena, t.pos);
+    o.reservedCellX = static_cast<int16_t>(cell.col);
+    o.reservedCellY = static_cast<int16_t>(cell.row);
+    o.reservedFacingOctant = facingOctant(t.facing);
+  }
   for (uint8_t s = 0; s < sim::kAbilitySlots; ++s) {
     fillAbility(p->abilities[s], content.db, s, o.abilities[s]);
   }
@@ -217,7 +265,8 @@ void fillPlayers(const sim::WorldState& world, const sim::MatchContent& content,
     const sim::Player* p = world.playerBySlot(id);
     if (!present && p == nullptr) continue;  // an empty slot stays all zero
     o.present = present ? 1 : 0;
-    o.relation = relationTo(self, id);
+    o.relation = relationTo(content, self, id);
+    o.reservedTeam = content.teams[i];  // filled since v0.32
     o.respawnTicks = world.rules.respawnTicks[i];
     if (p == nullptr) continue;
     const sim::Transform& t = p->transform;
@@ -255,7 +304,7 @@ void fillBananas(const sim::WorldState& world, const sim::MatchContent& content,
     o.valid = 1;
     o.phase = byteOf(b.phase);
     o.owner = b.owner.value;
-    o.ownerRelation = relationTo(self, b.owner);
+    o.ownerRelation = relationTo(content, self, b.owner);
     o.damage = b.damage;
     o.headingBam = t.facing.bam;
     o.ticksAlive = b.ticksAlive;
@@ -323,7 +372,67 @@ void fillArena(const sim::ArenaDef& a, ObsArena& o) {
   }
 }
 
+// Fog (v0.35): unseen entries are zeroed, seen ones flagged. An unseen
+// monkey keeps what the roster and the scoreboard say anyway.
+void applyFog(const sim::WorldState& world, const ObsVisibility& seen, PlayerId self,
+              Observation& out) {
+  out.header.schemaFlags |= kObsFlagFog;
+  for (uint8_t i = 0; i < kObsMaxPlayers; ++i) {
+    ObsPlayer& o = out.players[i];
+    if (o.alive == 0) continue;
+    if (i == self.value || (seen.players & (1u << i)) != 0) {
+      o.reservedVisible = 1;
+      continue;
+    }
+    const ObsPlayer kept = o;
+    o = ObsPlayer{};
+    o.present = kept.present;
+    o.relation = kept.relation;
+    o.reservedTeam = kept.reservedTeam;
+    o.respawnTicks = kept.respawnTicks;
+  }
+  if (self.isValid() && self.value < kObsMaxPlayers) out.players[self.value].reservedVisible = 1;
+  world.boomerangs.forEachAlive([&](EntityId id, const sim::Boomerang& /*b*/) {
+    ObsBanana& o = out.bananas[id.index];
+    if (seen.bananas[id.index] == id) {
+      o.reservedVisible = 1;
+    } else {
+      o = ObsBanana{};
+    }
+  });
+  world.pickups.forEachAlive([&](EntityId id, const sim::Pickup& /*k*/) {
+    if (seen.pickups[id.index] != id) out.pickups[id.index] = ObsPickup{};
+  });
+}
+
+void fillCalls(const ObservationContext& context, bool fog, const Observation& obs,
+               ObsHeardCall (&calls)[kObsMaxHeardCalls]) {
+  const uint32_t n = context.calls == nullptr ? 0u : context.callCount;
+  for (uint32_t i = 0; i < n && i < kObsMaxHeardCalls; ++i) {
+    const HeardCall& h = context.calls[i];
+    ObsHeardCall& o = calls[i];
+    o.valid = 1;
+    o.slot = h.slot;
+    o.symbol = h.symbol;
+    o.tick = h.tick;
+    const bool seen = !fog || (h.slot < kObsMaxPlayers && obs.players[h.slot].reservedVisible != 0);
+    const bool cell = h.hasCell && seen;
+    o.cellX = cell ? static_cast<int16_t>(h.cell.col) : kObsNoCell;
+    o.cellY = cell ? static_cast<int16_t>(h.cell.row) : kObsNoCell;
+  }
+}
+
 }  // namespace
+
+void ObsVisibility::add(const Sight& sight, const sim::WorldState& world) {
+  players = static_cast<uint16_t>(players | sight.players);
+  world.boomerangs.forEachAlive([&](EntityId id, const sim::Boomerang& /*b*/) {
+    if ((sight.bananas >> id.index & 1u) != 0) bananas[id.index] = id;
+  });
+  world.pickups.forEachAlive([&](EntityId id, const sim::Pickup& /*k*/) {
+    if ((sight.pickups >> id.index & 1u) != 0) pickups[id.index] = id;
+  });
+}
 
 ClosestApproach closestApproach(Vec2 rel, Vec2 vel, uint16_t horizon) {
   const int64_t rx = rel.x.raw;
@@ -352,6 +461,12 @@ ClosestApproach closestApproach(Vec2 rel, Vec2 vel, uint16_t horizon) {
 void buildObservation(const sim::WorldState& world, const sim::MatchContent& content,
                       uint32_t contentHash, PlayerId self, uint8_t inputDelayTicks,
                       Observation& out) {
+  buildObservation(world, content, contentHash, self, inputDelayTicks, ObservationContext{}, out);
+}
+
+void buildObservation(const sim::WorldState& world, const sim::MatchContent& content,
+                      uint32_t contentHash, PlayerId self, uint8_t inputDelayTicks,
+                      const ObservationContext& context, Observation& out) {
   out = Observation{};
   out.header.version = kObservationVersion;
   out.header.size = sizeof(Observation);
@@ -362,6 +477,17 @@ void buildObservation(const sim::WorldState& world, const sim::MatchContent& con
   fillBananas(world, content, self, out.bananas);
   fillPickups(world, content, out.pickups);
   fillArena(content.arena, out.arena);
+  const bool fog = content.mode.vision.fog();
+  if (fog) {
+    if (context.visibility != nullptr) {
+      applyFog(world, *context.visibility, self, out);
+    } else {
+      ObsVisibility now;
+      now.add(visionOf(world, content, self), world);
+      applyFog(world, now, self, out);
+    }
+  }
+  fillCalls(context, fog, out, out.reservedHeardCalls);
 }
 
 void buildObservation(const sim::WorldState& world, const sim::MatchContent& content, PlayerId self,

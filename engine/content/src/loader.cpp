@@ -25,6 +25,7 @@ namespace kfm::content {
 
 using sim::AbilityDef;
 using sim::AbilityKind;
+using sim::AbilityPhase;
 using sim::ArenaDef;
 using sim::ContentDB;
 using sim::ContentName;
@@ -73,12 +74,13 @@ struct AbilityKindName {
   std::string_view name;
   AbilityKind kind;
 };
-constexpr std::array<AbilityKindName, 5> kAbilityKinds = {{
+constexpr std::array<AbilityKindName, 6> kAbilityKinds = {{
     {"dash", AbilityKind::Dash},
     {"throw", AbilityKind::Throw},
     {"blink", AbilityKind::Blink},
     {"slam", AbilityKind::Slam},
     {"parry", AbilityKind::Parry},
+    {"call", AbilityKind::Call},  // v0.35
 }};
 static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
               "every AbilityKind but None needs a TOML name in kAbilityKinds");
@@ -87,10 +89,14 @@ struct ModeKindName {
   std::string_view name;
   sim::ModeKind kind;
 };
-constexpr std::array<ModeKindName, 3> kModeKinds = {{
+constexpr std::array<ModeKindName, 7> kModeKinds = {{
     {"rounds", sim::ModeKind::Rounds},
     {"deathmatch", sim::ModeKind::Deathmatch},
     {"survival", sim::ModeKind::Survival},
+    {"team_rounds", sim::ModeKind::TeamRounds},          // v0.32
+    {"team_deathmatch", sim::ModeKind::TeamDeathmatch},  // v0.32
+    {"hill", sim::ModeKind::Hill},                       // v0.33
+    {"capture", sim::ModeKind::Capture},                 // v0.33
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -99,7 +105,7 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 8> kTagNames = {{
+constexpr std::array<TagName, 10> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
@@ -108,6 +114,8 @@ constexpr std::array<TagName, 8> kTagNames = {{
     {"eliminated", Tag::Eliminated},
     {"slamming", Tag::Slamming},
     {"parrying", Tag::Parrying},
+    {"friendly_fire", Tag::FriendlyFire},
+    {"carrying", Tag::Carrying},  // v0.33: the capture mode's, never granted
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -118,12 +126,13 @@ struct StatName {
   StatKind stat;
   bool integer;  // add-only
 };
-constexpr std::array<StatName, 3> kStatNames = {{
+constexpr std::array<StatName, 4> kStatNames = {{
     {"move_speed", StatKind::MoveSpeed, false},
     {"max_hp", StatKind::MaxHp, true},
     {"ammo_max", StatKind::AmmoMax, true},
+    {"radius", StatKind::Radius, false},  // v0.34: the contact radius
 }};
-static_assert(kStatNames.size() == static_cast<size_t>(StatKind::AmmoMax) + 1,
+static_assert(kStatNames.size() == static_cast<size_t>(StatKind::Radius) + 1,
               "every StatKind needs a TOML name in kStatNames");
 
 struct ShapeName {
@@ -145,12 +154,18 @@ constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash",
 
 // Tags a power-up may grant: the rest are owned by AbilitySystem (dashing,
 // perfect_dash) or by the damage rules (hit_stun, eliminated).
+// v0.32: friendly_fire too, the tag a team mode's baseline grants (§5.6).
 [[nodiscard]] constexpr bool grantableTag(Tag t) {
-  return t == Tag::Shielded || t == Tag::Invulnerable;
+  return t == Tag::Shielded || t == Tag::Invulnerable || t == Tag::FriendlyFire;
 }
 
-// Projectile multipliers stay in (0, kMaxProjectileMul].
+// Projectile multipliers (and v0.34 the radius stat's) stay in (0, kMaxProjectileMul].
 const Fixed kMaxProjectileMul = Fixed::fromInt(4);
+
+// Whether a stat is an integer stat (add-only, whole).
+[[nodiscard]] constexpr bool integerStat(StatKind k) {
+  return k == StatKind::MaxHp || k == StatKind::AmmoMax;
+}
 
 [[nodiscard]] constexpr bool isWhole(Fixed f) {
   return f.raw % Fixed::kOneRaw == 0;
@@ -182,6 +197,10 @@ constexpr std::string_view kNoneAbility = "none";
 
 // Arena coordinates the swept narrowphase supports (collision_internal.hpp).
 const Fixed kMaxArenaHalfExtent = Fixed::fromInt(1024);
+// Tilemap arenas (v0.33): the cell size and the cells a side.
+const Fixed kMinMapCell = Fixed::fromRaw(Fixed::kOneRaw / 4);
+const Fixed kMaxMapCell = Fixed::fromInt(16);
+constexpr size_t kMaxMapSide = 256;
 
 [[nodiscard]] bool validName(std::string_view s) {
   if (s.empty() || s.size() > ContentName::kMaxChars) return false;
@@ -260,6 +279,9 @@ class Section {
   void error(const std::string& message) {
     diag_.error(file_.name, line(), where_ + ": " + message);
   }
+
+  // Whether the table holds `key` (without marking it used).
+  [[nodiscard]] bool has(std::string_view key) const { return table_.contains(key); }
 
   // The node for `key`, marking it used; nullptr when absent (an error when
   // required).
@@ -478,6 +500,9 @@ class Builder {
     db_.abilities[0] = AbilityDef{};
     db_.abilities[0].name = ContentName::of(kNoneAbility);
     db_.abilityCount = 1;
+    // Loadout 0 is the [player] abilities (v0.31), resolved in finish().
+    db_.loadouts[0].name = ContentName::of(sim::kBaseLoadoutName);
+    db_.loadoutCount = 1;
   }
 
   void addDocument(const ContentSource& source) {
@@ -508,11 +533,13 @@ class Builder {
         list(file, node, "mode", [&](Section& s) { parseMode(s); });
       } else if (k == "powerup") {
         list(file, node, "powerup", [&](Section& s) { parsePowerUp(s); });
+      } else if (k == "loadout") {
+        list(file, node, "loadout", [&](Section& s) { parseLoadoutDef(s); });
       } else {
         diag_.error(file.name, lineOf(node),
                     "unknown top-level key '" + std::string(k) +
                         "' (expected [player], [boomerang], [pickup], [dash_attack], "
-                        "[[ability]], [[arena]], [[mode]] or [[powerup]])");
+                        "[[ability]], [[arena]], [[mode]], [[powerup]] or [[loadout]])");
       }
     }
   }
@@ -527,6 +554,7 @@ class Builder {
     if (db_.modeCount == 0) diag_.error("", 0, "no [[mode]] defined (need at least one)");
     resolveLoadouts();
     resolvePowerUpNames();
+    resolveModeNames();
     if (diag_.hasErrors()) return false;
     if (!validateContent(db_, diag_)) return false;
     out = db_;
@@ -546,8 +574,8 @@ class Builder {
     PendingName name;
   };
   using Loadout = std::array<std::optional<PendingName>, sim::kAbilitySlots>;
-  struct ModeLoadout {
-    uint8_t mode{0};
+  struct LoadoutNames {
+    uint8_t loadout{0};  // index into db_.loadouts
     Loadout names;
   };
 
@@ -659,6 +687,32 @@ class Builder {
     s.flag("consumes_ammo", d.consumesAmmo);
   }
 
+  // v0.34: root_phases = ["startup", "active", "recovery"], a subset.
+  static void rootPhases(Section& s, uint8_t& out) {
+    const toml::node* n = s.take("root_phases");
+    if (n == nullptr) return;
+    const toml::array* arr = n->as_array();
+    if (arr == nullptr) {
+      s.error(*n, "'root_phases' must be a list of phase names (startup, active, recovery)");
+      return;
+    }
+    uint8_t mask = 0;
+    for (const toml::node& el : *arr) {
+      const toml::value<std::string>* str = el.as_string();
+      const std::string_view name = str != nullptr ? std::string_view(str->get()) : "";
+      if (name == "startup") {
+        mask |= sim::phaseBit(AbilityPhase::Startup);
+      } else if (name == "active") {
+        mask |= sim::phaseBit(AbilityPhase::Active);
+      } else if (name == "recovery") {
+        mask |= sim::phaseBit(AbilityPhase::Recovery);
+      } else {
+        s.error(el, "'root_phases' entries must be startup, active or recovery");
+      }
+    }
+    out = mask;
+  }
+
   void parseAbility(Section& s) {
     AbilityDef d;
     const std::optional<std::string> name = s.name(d.name);
@@ -679,9 +733,20 @@ class Builder {
     s.speed("speed", d.speed);
     s.fixed("param0", d.param0);
     s.fixed("param1", d.param1);
+    // v0.35: a call's range, in units, is its param0 under a readable name.
+    if (const toml::node* range = s.take("range")) {
+      if (d.kind != AbilityKind::Call) {
+        s.error(*range, "'range' belongs to a call (kind = \"call\")");
+      } else if (s.has("param0")) {
+        s.error(*range, "give a call's range as 'range' or 'param0', not both");
+      } else {
+        s.fixed("range", d.param0);
+      }
+    }
     s.tags("tags_startup", d.tagsStartup);
     s.tags("tags_active", d.tagsActive);
     s.tags("tags_recovery", d.tagsRecovery);
+    rootPhases(s, d.rootPhases);  // v0.34
     if (!name) return;
     if (*name == kNoneAbility) {
       s.error(inQuotes(kNoneAbility) + " is the built-in inert ability; pick another name");
@@ -700,23 +765,47 @@ class Builder {
     ArenaDef a;
     const std::optional<std::string> name = s.name(a.name);
     if (name) s.setWhere("arena " + inQuotes(*name));
-    if (s.vec2("half_extents", a.halfExtents, true) &&
-        (a.halfExtents.x <= Fixed::zero() || a.halfExtents.y <= Fixed::zero() ||
-         a.halfExtents.x > kMaxArenaHalfExtent || a.halfExtents.y > kMaxArenaHalfExtent)) {
-      s.error("'half_extents' must be in (0, 1024] on both axes");
-    }
-    const toml::node* points = s.take("spawn_points");
-    const toml::node* ellipse = s.take("spawn_ellipse");
-    if ((points == nullptr) == (ellipse == nullptr)) {
-      s.error("give exactly one of 'spawn_points' or 'spawn_ellipse'");
-    } else if (points != nullptr) {
-      parseSpawnPoints(s, *points, a);
+    if (const toml::node* map = s.take("map")) {
+      // v0.33: a tilemap gives the box, the statics, the spawn points and
+      // the zones; none of them may also be given by hand.
+      for (const std::string_view key :
+           {"half_extents", "walls", "hazards", "spawn_points", "spawn_ellipse", "zones"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) +
+                          "' cannot be given with 'map': a tilemap arena takes it from the map");
+        }
+      }
+      Fixed cell{};
+      s.fixed("cell", cell, kMinMapCell, kMaxMapCell, true);
+      Fixed mud = Fixed::half();
+      s.fixed("mud_speed_mul", mud, Fixed::epsilon(), Fixed::fromInt(4));
+      if (cell > Fixed::zero()) parseTilemap(s, *map, cell, mud, a);
     } else {
-      parseSpawnEllipse(s, *ellipse, a);
+      for (const std::string_view key : {"cell", "mud_speed_mul"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) + "' belongs to a tilemap arena (give 'map')");
+        }
+      }
+      if (s.vec2("half_extents", a.halfExtents, true) &&
+          (a.halfExtents.x <= Fixed::zero() || a.halfExtents.y <= Fixed::zero() ||
+           a.halfExtents.x > kMaxArenaHalfExtent || a.halfExtents.y > kMaxArenaHalfExtent)) {
+        s.error("'half_extents' must be in (0, 1024] on both axes");
+      }
+      const toml::node* points = s.take("spawn_points");
+      const toml::node* ellipse = s.take("spawn_ellipse");
+      if ((points == nullptr) == (ellipse == nullptr)) {
+        s.error("give exactly one of 'spawn_points' or 'spawn_ellipse'");
+      } else if (points != nullptr) {
+        parseSpawnPoints(s, *points, a);
+      } else {
+        parseSpawnEllipse(s, *ellipse, a);
+      }
+      if (const toml::node* walls = s.take("walls")) parseWalls(s, *walls, a);
+      if (const toml::node* hazards = s.take("hazards")) parseHazards(s, *hazards, a);
+      if (const toml::node* zones = s.take("zones")) parseZones(s, *zones, a);  // v0.33
     }
     const toml::node* spawners = s.take("spawners");
-    if (const toml::node* walls = s.take("walls")) parseWalls(s, *walls, a);
-    if (const toml::node* hazards = s.take("hazards")) parseHazards(s, *hazards, a);
+    s.integer("spawn_groups", a.spawnGroups, 1, sim::kMaxPlayers);  // v0.32
     if (!name || !uniqueName(s, *name, db_.arenas, db_.arenaCount, "arena")) return;
     if (db_.arenaCount >= sim::kMaxArenas) {
       s.error("too many arenas (at most " + std::to_string(sim::kMaxArenas) + ", kMaxArenas)");
@@ -724,6 +813,240 @@ class Builder {
     }
     if (spawners != nullptr) parseSpawners(s, *spawners, a, db_.arenaCount);
     db_.arenas[db_.arenaCount++] = a;
+  }
+
+  // `zones = [{ min = [x, y], max = [x, y] }, ...]` (v0.33): objective
+  // boxes (validated with the statics: non-empty, inside the arena).
+  static void parseZones(Section& outer, const toml::node& n, ArenaDef& a) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->size() > sim::kMaxArenaZones) {
+      outer.error(n, "'zones' must list at most " + std::to_string(sim::kMaxArenaZones) +
+                         " { min = [x, y], max = [x, y] } boxes (kMaxArenaZones)");
+      return;
+    }
+    uint8_t count = 0;
+    for (const toml::node& el : *arr) {
+      const toml::table* t = el.as_table();
+      if (t == nullptr) {
+        outer.error(el, "'zones' entries must be tables { min = [x, y], max = [x, y] }");
+        return;
+      }
+      Section s(*t, outer.file(), outer.diag(), outer.where() + " zone " + std::to_string(count));
+      sim::Zone& z = a.zones[count++];
+      s.vec2("min", z.min, true);
+      s.vec2("max", z.max, true);
+      s.finish();
+    }
+    a.zoneCount = count;
+  }
+
+  // A tilemap (v0.33, §5.10): `map` rows of equal length, the top row at
+  // +y, one glyph per `cell`-sized square, the origin at the map's centre.
+  // Walls, pits and mud become boxes by merging runs (mergeCells), spawn
+  // points sit at their cell's centre in digit order, zone letters give one
+  // rectangle each. Caps are never raised: too many boxes is an error.
+  static void parseTilemap(Section& s, const toml::node& n, Fixed cell, Fixed mud, ArenaDef& a) {
+    const toml::array* rowsNode = n.as_array();
+    if (rowsNode == nullptr || rowsNode->empty() || rowsNode->size() > kMaxMapSide) {
+      s.error(n, "'map' must list 1 to " + std::to_string(kMaxMapSide) + " rows (strings)");
+      return;
+    }
+    std::vector<std::string> grid;
+    for (const toml::node& el : *rowsNode) {
+      const toml::value<std::string>* row = el.as_string();
+      if (row == nullptr) {
+        s.error(el, "'map' rows must be strings");
+        return;
+      }
+      const std::string& text = row->get();
+      if (text.empty() || text.size() > kMaxMapSide) {
+        s.error(el, "'map' rows must hold 1 to " + std::to_string(kMaxMapSide) + " cells");
+        return;
+      }
+      if (!grid.empty() && text.size() != grid.front().size()) {
+        s.error(el, "'map' row " + std::to_string(grid.size()) + " has " +
+                        std::to_string(text.size()) + " cells, row 0 has " +
+                        std::to_string(grid.front().size()) + " (rows must be of equal length)");
+        return;
+      }
+      for (size_t c = 0; c < text.size(); ++c) {
+        if (!mapGlyph(text[c])) {
+          s.error(el, "'map' row " + std::to_string(grid.size()) + " column " + std::to_string(c) +
+                          ": unknown glyph '" + std::string(1, text[c]) +
+                          "' (# wall, . floor, ~ pit, : mud, 0-9 spawn, a-h zone)");
+          return;
+        }
+      }
+      grid.push_back(text);
+    }
+    const auto rows = static_cast<int64_t>(grid.size());
+    const auto cols = static_cast<int64_t>(grid.front().size());
+    const int64_t width = cols * cell.raw;
+    const int64_t height = rows * cell.raw;
+    if (width % 2 != 0 || height % 2 != 0 || width / 2 > kMaxArenaHalfExtent.raw ||
+        height / 2 > kMaxArenaHalfExtent.raw) {
+      s.error("the map (" + std::to_string(cols) + " x " + std::to_string(rows) + " cells of " +
+              fixedText(cell) + ") must be at most 2048 units a side, with exact half extents");
+      return;
+    }
+    a.cellSize = cell;
+    a.halfExtents = Vec2{Fixed::fromRaw(static_cast<int32_t>(width / 2)),
+                         Fixed::fromRaw(static_cast<int32_t>(height / 2))};
+    const auto xAt = [&](int64_t c) {
+      return Fixed::fromRaw(static_cast<int32_t>((c * cell.raw) - (width / 2)));
+    };
+    const auto yAt = [&](int64_t r) {
+      return Fixed::fromRaw(static_cast<int32_t>((height / 2) - (r * cell.raw)));
+    };
+    const auto boxMin = [&](const CellBox& b) { return Vec2{xAt(b.c0), yAt(b.r1)}; };
+    const auto boxMax = [&](const CellBox& b) { return Vec2{xAt(b.c1), yAt(b.r0)}; };
+
+    const std::vector<CellBox> walls = mergeCells(grid, '#');
+    if (walls.size() > sim::kMaxArenaWalls) {
+      s.error(n, "the map merges into " + std::to_string(walls.size()) +
+                     " wall boxes, more than kMaxArenaWalls (" +
+                     std::to_string(sim::kMaxArenaWalls) + "): simplify the walls");
+      return;
+    }
+    for (const CellBox& b : walls) {
+      a.walls[a.wallCount++] = sim::Wall{boxMin(b), boxMax(b)};
+    }
+    // Hazards: the pits first, then the mud, each in merge order.
+    const std::vector<CellBox> pits = mergeCells(grid, '~');
+    const std::vector<CellBox> muds = mergeCells(grid, ':');
+    if (pits.size() + muds.size() > sim::kMaxArenaHazards) {
+      s.error(n, "the map merges into " + std::to_string(pits.size() + muds.size()) +
+                     " pit and mud boxes, more than kMaxArenaHazards (" +
+                     std::to_string(sim::kMaxArenaHazards) + "): simplify the hazards");
+      return;
+    }
+    for (const CellBox& b : pits) {
+      a.hazards[a.hazardCount++] =
+          sim::Hazard{boxMin(b), boxMax(b), sim::HazardKind::Pit, Fixed::one()};
+    }
+    for (const CellBox& b : muds) {
+      a.hazards[a.hazardCount++] = sim::Hazard{boxMin(b), boxMax(b), sim::HazardKind::Slow, mud};
+    }
+
+    // Spawn points: digits 0..n-1, each once; zones: letters a..a+k-1, each
+    // one filled rectangle.
+    std::array<int64_t, sim::kMaxPlayers> spawnCell{};
+    spawnCell.fill(-1);
+    std::array<CellBox, sim::kMaxArenaZones> zone{};
+    std::array<int64_t, sim::kMaxArenaZones> zoneCells{};
+    for (int64_t r = 0; r < rows; ++r) {
+      for (int64_t c = 0; c < cols; ++c) {
+        const char g = grid[static_cast<size_t>(r)][static_cast<size_t>(c)];
+        if (g >= '0' && g <= '9') {
+          const auto d = static_cast<size_t>(g - '0');
+          if (spawnCell[d] >= 0) {
+            s.error(n, "spawn glyph '" + std::string(1, g) + "' appears more than once in the map");
+            return;
+          }
+          spawnCell[d] = (r * cols) + c;
+        } else if (g >= 'a' && g <= 'h') {
+          const auto k = static_cast<size_t>(g - 'a');
+          CellBox& z = zone[k];
+          if (zoneCells[k] == 0) {
+            z = CellBox{r, r + 1, c, c + 1};
+          } else {
+            z.r0 = std::min(z.r0, r);
+            z.r1 = std::max(z.r1, r + 1);
+            z.c0 = std::min(z.c0, c);
+            z.c1 = std::max(z.c1, c + 1);
+          }
+          ++zoneCells[k];
+        }
+      }
+    }
+    uint8_t points = 0;
+    while (points < sim::kMaxPlayers && spawnCell[points] >= 0)
+      ++points;
+    for (size_t d = points; d < sim::kMaxPlayers; ++d) {
+      if (spawnCell[d] >= 0) {
+        s.error(n, "spawn glyph '" + std::to_string(d) + "' needs every digit below it (0-" +
+                       std::to_string(d) + ") in the map");
+        return;
+      }
+    }
+    for (uint8_t k = 0; k < points; ++k) {
+      const int64_t r = spawnCell[k] / cols;
+      const int64_t c = spawnCell[k] % cols;
+      a.spawnPoints[k] = Vec2{Fixed::fromRaw(static_cast<int32_t>(xAt(c).raw + (cell.raw / 2))),
+                              Fixed::fromRaw(static_cast<int32_t>(yAt(r).raw - (cell.raw / 2)))};
+    }
+    a.spawnPointCount = points;
+    uint8_t zones = 0;
+    while (zones < sim::kMaxArenaZones && zoneCells[zones] > 0)
+      ++zones;
+    for (size_t k = 0; k < sim::kMaxArenaZones; ++k) {
+      const char letter = static_cast<char>('a' + k);
+      if (zoneCells[k] == 0) continue;
+      if (k >= zones) {
+        s.error(n, "zone glyph '" + std::string(1, letter) +
+                       "' needs every zone letter before it in the map (a-" +
+                       std::string(1, letter) + ")");
+        return;
+      }
+      const CellBox& z = zone[k];
+      if (zoneCells[k] != (z.r1 - z.r0) * (z.c1 - z.c0)) {
+        s.error(n, "zone glyph '" + std::string(1, letter) +
+                       "' must fill one rectangle of cells (its cells span rows " +
+                       std::to_string(z.r0) + "-" + std::to_string(z.r1 - 1) + ", columns " +
+                       std::to_string(z.c0) + "-" + std::to_string(z.c1 - 1) + ")");
+        return;
+      }
+      a.zones[k] = sim::Zone{boxMin(z), boxMax(z)};
+    }
+    a.zoneCount = zones;
+  }
+
+  // A rectangle of map cells: rows [r0, r1), columns [c0, c1), row 0 on top.
+  struct CellBox {
+    int64_t r0{0};
+    int64_t r1{0};
+    int64_t c0{0};
+    int64_t c1{0};
+  };
+
+  [[nodiscard]] static constexpr bool mapGlyph(char g) {
+    return g == '#' || g == '.' || g == '~' || g == ':' || (g >= '0' && g <= '9') ||
+           (g >= 'a' && g <= 'h');
+  }
+
+  // The cells holding `glyph` as boxes: maximal runs along each row, then a
+  // run with the same columns as a box ending on the row above extends it
+  // downward. In order of the top row, then the left column.
+  static std::vector<CellBox> mergeCells(const std::vector<std::string>& grid, char glyph) {
+    std::vector<CellBox> boxes;
+    std::vector<size_t> open;  // boxes ending on the previous row
+    for (size_t r = 0; r < grid.size(); ++r) {
+      const std::string& row = grid[r];
+      std::vector<size_t> next;
+      for (size_t c = 0; c < row.size();) {
+        if (row[c] != glyph) {
+          ++c;
+          continue;
+        }
+        size_t end = c;
+        while (end < row.size() && row[end] == glyph)
+          ++end;
+        const auto c0 = static_cast<int64_t>(c);
+        const auto c1 = static_cast<int64_t>(end);
+        const auto above = std::ranges::find_if(
+            open, [&](size_t i) { return boxes[i].c0 == c0 && boxes[i].c1 == c1; });
+        if (above != open.end()) {
+          boxes[*above].r1 = static_cast<int64_t>(r) + 1;
+          next.push_back(*above);
+        } else {
+          next.push_back(boxes.size());
+          boxes.push_back(CellBox{static_cast<int64_t>(r), static_cast<int64_t>(r) + 1, c0, c1});
+        }
+        c = end;
+      }
+      open = std::move(next);
+    }
+    return boxes;
   }
 
   // spawners = [{ pos = [x, y], power_ups = ["name", ...], first_ticks,
@@ -775,7 +1098,8 @@ class Builder {
     PowerUpDef d;
     const std::optional<std::string> name = s.name(d.name);
     if (name) s.setWhere("powerup " + inQuotes(*name));
-    s.integer("duration_ticks", d.durationTicks, 1, 65535, true);
+    // At most 65534: 65535 is a baseline's permanent entry (v0.32).
+    s.integer("duration_ticks", d.durationTicks, 1, sim::kPermanentModifierTicks - 1, true);
     s.integer("color", d.visual.color, 0, sim::kMaxPlayers - 1);
     if (const ShapeName* shape =
             s.named("shape", kShapeNames, [](const ShapeName& e) { return e.name; })) {
@@ -831,6 +1155,10 @@ class Builder {
           g.error("'" + std::string(stat->name) + "' is an integer stat: 'add' must be whole");
         }
       }
+      if (stat != nullptr && stat->stat == StatKind::Radius &&
+          (out.stat.mul <= Fixed::zero() || out.stat.mul > kMaxProjectileMul)) {
+        g.error("'radius' takes a 'mul' in (0, 4]");
+      }
     } else if (*kind == "ability") {
       out.kind = GrantKind::AbilityOverride;
       const std::string_view* slot =
@@ -852,7 +1180,7 @@ class Builder {
         if (grantableTag(*t)) {
           out.tag = *t;
         } else {
-          g.error("a power-up can grant only 'shielded' or 'invulnerable'");
+          g.error("a power-up can grant only 'shielded', 'invulnerable' or 'friendly_fire'");
         }
       }
     } else {
@@ -975,7 +1303,8 @@ class Builder {
     if (const std::optional<std::string> kind = s.string("kind")) {
       const auto* const entry = findNamed(kModeKinds, *kind);
       if (entry == nullptr) {
-        s.error("unknown kind " + inQuotes(*kind) + " (rounds, deathmatch or survival)");
+        s.error("unknown kind " + inQuotes(*kind) +
+                " (rounds, deathmatch, survival, team_rounds, team_deathmatch, hill or capture)");
       } else {
         m.kind = entry->kind;
       }
@@ -987,18 +1316,174 @@ class Builder {
     s.integer("score_to_win", m.scoreToWin, 0, 255);
     s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
     s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
-    Loadout loadout{};
+    // v0.32: teams, the baseline power-up and the roles. Names resolve once
+    // every file is read (powerups.toml sorts after modes.toml).
+    s.integer("teams", m.teams, 0, sim::kMaxPlayers);
+    s.integer("hill_ticks", m.hillTicks, 1, 65535);  // v0.33
+    s.integer("flag_return_ticks", m.flagReturnTicks, 1, 65535);
+    // v0.34: the space, and the grid's turn and dash.
+    if (const std::optional<std::string> space = s.string("space")) {
+      if (*space == "continuous") {
+        m.space = sim::Space::Continuous;
+      } else if (*space == "grid") {
+        m.space = sim::Space::Grid;
+      } else {
+        s.error("unknown space " + inQuotes(*space) + " (continuous or grid)");
+      }
+    }
+    if (m.space == sim::Space::Grid) {
+      s.integer("turn_ticks", m.turnTicks, 1, 60);
+      s.integer("dash_cells", m.dashCells, 1, 8);
+    } else {
+      for (const std::string_view key : {"turn_ticks", "dash_cells"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) + "' belongs to a grid mode (give space = \"grid\")");
+        }
+      }
+    }
+    // v0.35: the bots' vision (§8), an inline table.
+    if (const toml::node* n = s.take("vision")) {
+      if (const toml::table* t = n->as_table()) {
+        Section v(*t, s.file(), s.diag(), s.where() + " vision");
+        parseVision(v, m.vision, m.teams);
+        v.finish();
+      } else {
+        s.error(*n, R"('vision' must be a table { kind = "all" | "team" | "own", ... })");
+      }
+    }
+    std::optional<PendingName> baseline;
+    if (const toml::node* n = s.take("baseline")) {
+      if (const toml::value<std::string>* str = n->as_string()) {
+        baseline = PendingName{str->get(), s.where(), lineOf(*n), std::string(s.file().name)};
+      } else {
+        s.error(*n, "'baseline' must be a power-up name");
+      }
+    }
+    // v0.34: the arena a host picks for the mode when none is named.
+    std::optional<PendingName> arena;
+    if (const toml::node* n = s.take("arena")) {
+      if (const toml::value<std::string>* str = n->as_string()) {
+        arena = PendingName{str->get(), s.where(), lineOf(*n), std::string(s.file().name)};
+      } else {
+        s.error(*n, "'arena' must be an arena name");
+      }
+    }
+    std::vector<PendingName> roles;
+    if (const toml::node* n = s.take("roles")) {
+      const toml::array* arr = n->as_array();
+      if (arr == nullptr || arr->empty() || arr->size() > sim::kMaxPlayers) {
+        s.error(*n,
+                "'roles' must list 1 to " + std::to_string(sim::kMaxPlayers) + " loadout names");
+      } else {
+        for (const toml::node& el : *arr) {
+          if (const toml::value<std::string>* str = el.as_string()) {
+            roles.push_back(
+                PendingName{str->get(), s.where(), lineOf(el), std::string(s.file().name)});
+          } else {
+            s.error(el, "'roles' entries must be loadout names");
+          }
+        }
+        if (m.teams == 0) s.error(*n, "'roles' needs a team mode ('teams' of 2 or more)");
+      }
+    }
+    // v0.31: loadouts are their own axis. Say where the key went rather than
+    // only calling it unknown.
     if (const toml::node* n = s.take("abilities")) {
-      parseLoadout(s, *n, loadout);
-      m.hasAbilities = 1;
+      s.error(*n,
+              "a mode no longer carries a loadout: define a [[loadout]] (content/loadouts.toml) "
+              "and pick it per match (--loadout NAME)");
     }
     if (!name || !uniqueName(s, *name, db_.modes, db_.modeCount, "mode")) return;
     if (db_.modeCount >= sim::kMaxModes) {
       s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
       return;
     }
-    if (m.hasAbilities != 0) modeLoadouts_.push_back(ModeLoadout{db_.modeCount, loadout});
+    modeNames_.push_back(
+        ModeNames{db_.modeCount, std::move(baseline), std::move(roles), std::move(arena)});
     db_.modes[db_.modeCount++] = m;
+  }
+
+  // vision = { kind, peripheral, cone, focus, hearing, banana_sight } (v0.35).
+  // The radii are cells and belong to a fog kind; `team` needs a team mode.
+  static void parseVision(Section& v, sim::VisionDef& out, uint8_t teams) {
+    if (const std::optional<std::string> kind = v.string("kind", true)) {
+      if (*kind == "all") {
+        out.kind = sim::VisionKind::All;
+      } else if (*kind == "team") {
+        out.kind = sim::VisionKind::Team;
+        if (teams < 2) v.error("vision kind \"team\" needs a team mode ('teams' of 2 or more)");
+      } else if (*kind == "own") {
+        out.kind = sim::VisionKind::Own;
+      } else {
+        v.error("unknown vision kind " + inQuotes(*kind) + " (all, team or own)");
+      }
+    }
+    v.integer("peripheral", out.peripheral, 0, sim::kMaxVisionRadius);
+    v.integer("cone", out.cone, 0, sim::kMaxVisionCone);
+    v.integer("focus", out.focus, 0, sim::kMaxVisionRadius);
+    v.integer("hearing", out.hearing, 0, sim::kMaxVisionHearing);
+    v.integer("banana_sight", out.bananaSight, 0, sim::kMaxVisionRadius);
+    if (!out.fog() &&
+        (out.peripheral | out.cone | out.focus | out.hearing | out.bananaSight) != 0) {
+      v.error(R"(vision kind "all" sees everything: the radii belong to "team" or "own")");
+    }
+  }
+
+  // v0.32: a mode's baseline power-up and role loadouts by name.
+  void resolveModeNames() {
+    for (const ModeNames& n : modeNames_) {
+      ModeDef& m = db_.modes[n.mode];
+      if (n.baseline) {
+        if (const std::optional<uint8_t> i = db_.findPowerUp(n.baseline->name)) {
+          m.baseline = *i;
+        } else {
+          diag_.error(n.baseline->file, n.baseline->line,
+                      n.baseline->where + ": 'baseline' names unknown power-up " +
+                          inQuotes(n.baseline->name));
+        }
+      }
+      if (n.arena) {
+        if (const std::optional<uint8_t> i = db_.findArena(n.arena->name)) {
+          m.arena = *i;
+        } else {
+          diag_.error(n.arena->file, n.arena->line,
+                      n.arena->where + ": 'arena' names unknown arena " + inQuotes(n.arena->name));
+        }
+      }
+      m.roleCount = 0;
+      for (const PendingName& r : n.roles) {
+        if (const std::optional<uint8_t> i = db_.findLoadout(r.name)) {
+          m.roles[m.roleCount++] = *i;
+        } else {
+          diag_.error(r.file, r.line,
+                      r.where + ": 'roles' names unknown loadout " + inQuotes(r.name));
+        }
+      }
+    }
+  }
+
+  // [[loadout]] (v0.31): a name and 2 or 3 ability names, appended after
+  // loadout 0 (the [player] abilities, named "base").
+  void parseLoadoutDef(Section& s) {
+    sim::LoadoutDef d;
+    const std::optional<std::string> name = s.name(d.name);
+    if (name) s.setWhere("loadout " + inQuotes(*name));
+    Loadout names{};
+    if (const toml::node* n = s.take("abilities", true)) parseLoadout(s, *n, names);
+    if (!name) return;
+    if (*name == sim::kBaseLoadoutName) {
+      s.error(inQuotes(sim::kBaseLoadoutName) +
+              " is the built-in loadout of [player] abilities; pick another name");
+      return;
+    }
+    if (!uniqueName(s, *name, db_.loadouts, db_.loadoutCount, "loadout")) return;
+    if (db_.loadoutCount >= sim::kMaxLoadouts) {
+      s.error("too many loadouts (at most " + std::to_string(sim::kMaxLoadouts - 1) +
+              " besides base, kMaxLoadouts)");
+      return;
+    }
+    loadoutNames_.push_back(LoadoutNames{db_.loadoutCount, names});
+    db_.loadouts[db_.loadoutCount++] = d;
   }
 
   // An ability name in a loadout: "none" is index 0.
@@ -1022,10 +1507,11 @@ class Builder {
 
   void resolveLoadouts() {
     resolveLoadout(loadout_, db_.player.abilities);
-    for (const ModeLoadout& m : modeLoadouts_) {
-      sim::ModeDef& mode = db_.modes[m.mode];
-      mode.abilities = {};
-      resolveLoadout(m.names, mode.abilities);
+    db_.loadouts[0].abilities = db_.player.abilities;
+    for (const LoadoutNames& l : loadoutNames_) {
+      sim::LoadoutDef& def = db_.loadouts[l.loadout];
+      def.abilities = {};
+      resolveLoadout(l.names, def.abilities);
     }
   }
 
@@ -1061,6 +1547,12 @@ class Builder {
     uint8_t grant{0};
     PendingName name;
   };
+  struct ModeNames {
+    uint8_t mode{0};
+    std::optional<PendingName> baseline;
+    std::vector<PendingName> roles;
+    std::optional<PendingName> arena;  // v0.34
+  };
 
   Diagnostics& diag_;
   ContentDB db_{};
@@ -1069,9 +1561,10 @@ class Builder {
   std::optional<Origin> pickupAt_;
   std::optional<Origin> dashAttackAt_;
   Loadout loadout_{};
-  std::vector<ModeLoadout> modeLoadouts_;
+  std::vector<LoadoutNames> loadoutNames_;
   std::vector<SpawnerName> spawnerNames_;
   std::vector<OverrideName> overrideNames_;
+  std::vector<ModeNames> modeNames_;
 };
 
 }  // namespace
@@ -1118,7 +1611,9 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
     for (uint8_t j = 0; j < i; ++j) {
       if (c.powerUps[j].name == d.name) fail(where + ": name used twice");
     }
-    if (d.durationTicks < 1) fail(where + ": duration_ticks must be at least 1");
+    if (d.durationTicks < 1 || d.durationTicks >= sim::kPermanentModifierTicks) {
+      fail(where + ": duration_ticks must be in [1, 65534]");
+    }
     if (d.visual.color >= sim::kMaxPlayers) fail(where + ": color must be a palette index 0-9");
     if (d.grantCount < 1 || d.grantCount > sim::kMaxPowerUpGrants) {
       fail(where + ": needs 1 to " + std::to_string(sim::kMaxPowerUpGrants) + " grants");
@@ -1129,13 +1624,17 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
       const std::string at = where + " grant " + std::to_string(g);
       switch (grant.kind) {
         case GrantKind::Stat:
-          if (grant.stat.stat != StatKind::MoveSpeed && grant.stat.mul != Fixed::one()) {
+          if (integerStat(grant.stat.stat) && grant.stat.mul != Fixed::one()) {
             fail(at + ": an integer stat takes 'add' only, never 'mul'");
           }
-          if (grant.stat.stat != StatKind::MoveSpeed && !isWhole(grant.stat.add)) {
+          if (integerStat(grant.stat.stat) && !isWhole(grant.stat.add)) {
             fail(at + ": an integer stat's 'add' must be whole");
           }
           if (grant.stat.mul < Fixed::zero()) fail(at + ": 'mul' must not be negative");
+          if (grant.stat.stat == StatKind::Radius &&
+              (grant.stat.mul <= Fixed::zero() || grant.stat.mul > kMaxProjectileMul)) {
+            fail(at + ": a radius 'mul' must be in (0, 4]");
+          }
           break;
         case GrantKind::AbilityOverride: {
           if (grant.slot >= sim::kAbilitySlots) {
@@ -1158,7 +1657,7 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
           }
           break;
         case GrantKind::Tag:
-          if (!grantableTag(grant.tag)) fail(at + ": only shielded or invulnerable");
+          if (!grantableTag(grant.tag)) fail(at + ": only shielded, invulnerable or friendly_fire");
           break;
         case GrantKind::None:
           fail(at + ": grant has no kind");
@@ -1256,6 +1755,15 @@ void validateStatics(const ContentDB& c, const ArenaDef& a, const std::string& w
       fail(prefix + " speed_mul must be in (0, 4]");
     }
   }
+  // v0.33: zones are boxes like the hazards; a tilemap's cell is positive.
+  if (a.zoneCount > sim::kMaxArenaZones) {
+    fail(where + ": more zones than kMaxArenaZones");
+  } else {
+    for (uint8_t z = 0; z < a.zoneCount; ++z) {
+      checkBox("zone " + std::to_string(z), a.zones[z].min, a.zones[z].max);
+    }
+  }
+  if (a.cellSize < Fixed::zero()) fail(where + ": cell size must not be negative");
   for (uint8_t k = 0; k < a.spawnPointCount && k < sim::kMaxPlayers; ++k) {
     const Vec2 p = a.spawnPoints[k];
     for (uint8_t w = 0; w < a.wallCount; ++w) {
@@ -1296,8 +1804,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (d.kind == AbilityKind::Dash && d.startupTicks != 0) {
       fail(where + ": a dash must have startup_ticks = 0 (PerfectDash starts at the press)");
     }
-    if (d.kind == AbilityKind::Dash && d.activeTicks <= d.perfectWindowTicks) {
-      fail(where + ": active_ticks must exceed perfect_window_ticks");
+    // v0.34: a window of 0 never grants PerfectDash (the grid's base dash),
+    // and a window as long as the active phase spans it (the catcher's).
+    if (d.kind == AbilityKind::Dash &&
+        (d.activeTicks < 1 || d.activeTicks < d.perfectWindowTicks)) {
+      fail(where + ": a dash needs active_ticks >= 1 and perfect_window_ticks <= active_ticks");
     }
     // A blink jumps speed × active_ticks (v0.21).
     if (d.kind == AbilityKind::Blink && (d.activeTicks < 1 || d.speed <= Fixed::zero())) {
@@ -1316,6 +1827,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     // sub-tick tail (v0.21).
     if (d.kind == AbilityKind::Parry && (d.activeTicks < 1 || d.recoveryTicks < 1)) {
       fail(where + ": a parry needs active_ticks >= 1 and recovery_ticks >= 1");
+    }
+    // A call is heard within its range (v0.35): positive, at most 128 units.
+    if (d.kind == AbilityKind::Call &&
+        (d.param0 <= Fixed::zero() || d.param0 > Fixed::fromInt(128))) {
+      fail(where + ": a call needs a range in (0, 128] units");
     }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");
@@ -1337,12 +1853,23 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     }
   };
   checkLoadout(c.player.abilities, "[player]");
-  for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {
-    if (c.modes[i].hasAbilities > 1)
-      fail("mode " + inQuotes(c.modes[i].name.view()) + ": bad flag");
-    if (c.modes[i].hasAbilities == 1) {
-      checkLoadout(c.modes[i].abilities, "mode " + inQuotes(c.modes[i].name.view()));
+  // Loadouts (v0.31): loadout 0 is the base kit, named "base", with the
+  // [player] abilities (the sim reads player.abilities for it); every other
+  // one is a [[loadout]] with a unique name.
+  if (c.loadoutCount < 1 || c.loadoutCount > sim::kMaxLoadouts) {
+    fail("loadout count " + std::to_string(c.loadoutCount) + " outside [1, kMaxLoadouts]");
+  } else if (c.loadouts[0].name.view() != sim::kBaseLoadoutName ||
+             c.loadouts[0].abilities != c.player.abilities) {
+    fail("loadout 0 must be " + inQuotes(sim::kBaseLoadoutName) + " with the [player] abilities");
+  }
+  for (uint8_t i = 0; i < c.loadoutCount && i < sim::kMaxLoadouts; ++i) {
+    const sim::LoadoutDef& l = c.loadouts[i];
+    const std::string where = "loadout " + inQuotes(l.name.view());
+    if (!validName(l.name.view())) fail(where + ": invalid name");
+    for (uint8_t j = 0; j < i; ++j) {
+      if (c.loadouts[j].name == l.name) fail(where + ": name used twice");
     }
+    checkLoadout(l.abilities, where);
   }
   if (c.player.radius <= Fixed::zero()) fail("[player] radius must be positive");
   if (c.player.maxHp < 1) fail("[player] max_hp must be at least 1");
@@ -1385,6 +1912,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
       }
     }
     validateStatics(c, a, where, fail);
+    // v0.32: every spawn group holds at least one point.
+    if (a.spawnGroups < 1 || a.spawnGroups > a.spawnPointCount) {
+      fail(where + ": spawn_groups must be in [1, " + std::to_string(a.spawnPointCount) +
+           "] (every group needs a spawn point)");
+    }
   }
 
   if (c.modeCount < 1 || c.modeCount > sim::kMaxModes) {
@@ -1399,9 +1931,65 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     }
     if (m.kind >= sim::ModeKind::kCount) fail(where + ": kind must be a real mode kind");
     if (m.roundsToWin < 1) fail(where + ": rounds_to_win must be at least 1");
-    if (m.kind == sim::ModeKind::Deathmatch) {
-      if (m.scoreToWin < 1) fail(where + ": score_to_win must be at least 1 in deathmatch");
-      if (m.respawnTicks < 1) fail(where + ": respawn_ticks must be at least 1 in deathmatch");
+    // v0.33: the objective kinds respawn and score like deathmatch.
+    const bool respawning = m.kind == sim::ModeKind::Deathmatch ||
+                            m.kind == sim::ModeKind::TeamDeathmatch ||
+                            m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture;
+    if (respawning) {
+      const auto atLeastOne = [&](std::string_view key) {
+        std::string message = where;
+        message += ": ";
+        message += key;
+        message += " must be at least 1 in ";
+        for (const ModeKindName& e : kModeKinds) {
+          if (e.kind == m.kind) message += e.name;
+        }
+        fail(message);
+      };
+      if (m.scoreToWin < 1) atLeastOne("score_to_win");
+      if (m.respawnTicks < 1) atLeastOne("respawn_ticks");
+    }
+    if (m.kind == sim::ModeKind::Hill && m.hillTicks < 1) {
+      fail(where + ": hill_ticks must be at least 1");
+    }
+    if (m.kind == sim::ModeKind::Capture && m.flagReturnTicks < 1) {
+      fail(where + ": flag_return_ticks must be at least 1");
+    }
+    // v0.34: the space and the grid's numbers.
+    if (m.space >= sim::Space::kCount) fail(where + ": space must be continuous or grid");
+    if (m.turnTicks < 1 || m.turnTicks > 60) fail(where + ": turn_ticks must be in [1, 60]");
+    if (m.dashCells < 1 || m.dashCells > 8) fail(where + ": dash_cells must be in [1, 8]");
+    // v0.35: the vision's radii (§8), as parseVision bounds them.
+    const sim::VisionDef& v = m.vision;
+    if (v.kind >= sim::VisionKind::kCount || v.cone > sim::kMaxVisionCone ||
+        v.peripheral > sim::kMaxVisionRadius || v.focus > sim::kMaxVisionRadius ||
+        v.bananaSight > sim::kMaxVisionRadius || v.hearing > sim::kMaxVisionHearing) {
+      fail(where + ": vision out of range");
+    }
+    if (v.kind == sim::VisionKind::Team && m.teams < 2) {
+      fail(where + ": vision kind \"team\" needs a team mode");
+    }
+    if (m.hasArena() && m.arena >= c.arenaCount) fail(where + ": arena names an undefined arena");
+    if (m.hasArena() && m.arena < c.arenaCount && !c.compatible(m.arena, i)) {
+      fail(where + ": its arena " + inQuotes(c.arenas[m.arena].name.view()) +
+           " does not suit it (ContentDB::compatible)");
+    }
+    // v0.32: teams, baseline, roles.
+    if (m.teams == 1 || m.teams > sim::kMaxPlayers) {
+      fail(where + ": teams must be 0 (free-for-all) or 2 to " + std::to_string(sim::kMaxPlayers));
+    }
+    const bool teamKind = m.kind == sim::ModeKind::TeamRounds ||
+                          m.kind == sim::ModeKind::TeamDeathmatch ||
+                          m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture;
+    if (teamKind && m.teams == 0) fail(where + ": a team kind needs teams of 2 or more");
+    if (m.hasBaseline() && m.baseline >= c.powerUpCount) {
+      fail(where + ": baseline names an undefined power-up");
+    }
+    if (m.roleCount > sim::kMaxPlayers) fail(where + ": too many roles");
+    if (m.roleCount > 0 && m.teams == 0) fail(where + ": roles need a team mode (teams >= 2)");
+    for (uint8_t r = 0; r < m.roleCount && r < sim::kMaxPlayers; ++r) {
+      if (m.roles[r] >= c.loadoutCount)
+        fail(where + ": role " + std::to_string(r) + " names an undefined loadout");
     }
   }
   validatePowerUps(c, fail);

@@ -26,9 +26,26 @@ and the client's `--connect` mode; `engine/ai` (`IAgent`, `Observation` v1 and i
 builder, `AgentHost`, the reference bot, `BotSpec`, `WasmAgent` over WAMR with instruction
 metering), `apps/arena` (`kfm_arena`, the headless match runner), bots on the server and in the
 client lobby, and the C SDK seed with an example bot under `tools/bots/` (M5, architecture
-v0.30; the SDKs themselves live in a separate bots repository). Next is M5b (teams and relations,
-the five mode seams, the loadout axis, zones and tilemap arenas, the `grid` space and the squad
-contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12, §8). `docs/architecture.md` is the
+v0.30; the SDKs themselves live in a separate bots repository). M5b landed in v0.35 (teams and
+relations, the five mode seams, the loadout axis, zones and tilemap arenas, the `grid` space and
+the squad contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12,
+§8; the human playtest of `hill` and a 15-tick grid round is pending): step 1, mode foundations (32 mode slots, the `[[loadout]]` axis picked by
+`MatchConfig::loadout`, the `onRoundStart`/`onPickupTaken` hooks and `MatchRules::modeData`), landed
+in v0.31; step 2, teams (`MatchConfig::teams` → `MatchContent::relation`, the rules table's
+Ally rows behind `Tag::FriendlyFire`, the mode baseline power-up and roles, arena spawn groups
+and `ContentDB::compatible`, `team_rounds`/`team_deathmatch` on the `standoff` arena), landed in
+v0.32; step 3, objectives (arena zones and `zoneOccupants()`, tilemap arenas, `hill` and
+`capture` with the flag pickup and `Tag::Carrying`, the `hilltop` and `outposts` arenas), landed
+in v0.33; step 4, the `grid` space (the `SpaceBehavior` table behind `InputSystem`'s latch and
+`MovementSystem`'s move, cell commitments per turn of `turnTicks` with contested cells, the
+dash as a commitment of `dashCells`, `AbilityDef::rootPhases`, the radius stat, the catcher
+role, `grid_rounds`/`grid_rounds_1t` on the `courtyard` arena), landed in v0.34; step 5, the
+squad contest (the `call` ability and `MonkeyCalled`, `ModeDef::vision` and fog as a projection
+in `buildObservation` (`kfm/ai/vision.hpp`), the turn window, heard calls and per-instance
+lifecycle in `AgentHost`, the filled Observation v1 fields, `kfm_arena --team` and
+`--memory-on-respawn`, a grid- and fog-aware reference bot), landed in v0.35. Next is M6 (ship
+on the web: hosting, the lobby service, regional servers, the bot ladder).
+`docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -58,20 +75,37 @@ clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | 
 clang-tidy -p build/dev $(find engine apps tests -name '*.cpp')
 build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|verify ...  # replay tool
 build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
-#   record-*/bench/stats take --arena NAME --mode NAME; every command takes --content DIR (default: the
-#   content compiled into the binary); `info` prints the replay's arena/mode and both content hashes
+#   record-*/bench/stats take --arena NAME --mode NAME --loadout NAME; every command takes --content DIR (default:
+#   the content compiled into the binary); `info` prints the replay's arena/mode/loadout and both content hashes
 build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
 build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay] [--mute] [--volume 0..100]   # playable client
 build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
 #   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
 #   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
-#   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock)
+#   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock),
+#   team_rounds and team_deathmatch (2 teams, balanced over the joined slots; v0.32). A team mode needs an arena with a
+#   spawn group per team (spawn_groups, ContentDB::compatible): without --arena every host picks the first that suits
+#   (standoff), a named arena that does not suit is a configuration error (non-zero exit); no friendly fire unless the mode's
+#   `baseline` power-up grants tag friendly_fire. v0.33: hill (hold zone 0 alone, a point per hill_ticks; on hilltop)
+#   and capture (carry the enemy flag into your zone while yours is home; a zone per team: outposts), both 2 teams
+#   with deathmatch's clock and respawns; compatible() also needs their zones. v0.34: grid_rounds (team rounds in the
+#   grid space: one of eight neighbouring cells per 15-tick turn, a dash 2 cells, a throw costs the next turn, one
+#   catcher per team by role, the grid_base baseline: radius 0.35, bananas 0.15, HP 2) and grid_rounds_1t (the same
+#   at 1-tick turns, for kfm_arena); a grid mode needs an arena with cells (a tilemap) and opens on its own
+#   (modes.toml `arena`: courtyard)
+#   arenas: content/arenas.toml (dojo) and content/arenas/*.toml, appended by file name; a tilemap arena gives
+#   cell = 1.0 and map = ["..."] (# wall . floor ~ pit : mud 0-9 spawns a-h zones) in place of half_extents/walls/
+#   hazards/spawn_points/zones (format: content/arenas/06-hilltop.toml, architecture §5.10)
+#   loadouts (content/loadouts.toml, --loadout NAME): base (default, [player] abilities), blink, slam, parry;
+#   v0.34 grid, catcher, grid_1t, catcher_1t (the grid modes hand them out by role)
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
 #   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
-#   arena (with preview), mode, power-up toggles, bots, volume, mute; saved between runs (SDL pref dir / browser
-#   localStorage), flags win: --arena NAME --mode NAME --powerups all|none|a,b ; --no-settings ignores the saved file
-#   browser: kfm_client.html?arena=pillars&mode=deathmatch&powerups=shield,big_banana
+#   arena (with preview; only arenas that suit the mode), mode, teams (read-only, from the mode), loadout, power-up
+#   toggles, bots, volume, mute; saved between runs (SDL pref dir /
+#   browser localStorage), flags win: --arena NAME --mode NAME --loadout NAME --powerups all|none|a,b ;
+#   --no-settings ignores the saved file
+#   browser: kfm_client.html?arena=pillars&mode=deathmatch&loadout=slam&powerups=shield,big_banana (?mode=team_rounds)
 #   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
 ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
@@ -89,15 +123,24 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
 #   bots: --bot SPEC (repeatable, slot order; SPEC = ref | ref:easy|medium|hard | path.wasm), --bots N pads with
 #   ref:hard, --bot-delay auto|N (auto = the humans' lead, 0 bot vs bot), --fuel N (instructions per tick, default 100000)
-#   also --content DIR --arena NAME --mode NAME (kfm_netsim and kfm_render_probe take the same three)
+#   also --content DIR --arena NAME --mode NAME --loadout NAME (kfm_netsim and kfm_render_probe take the same four)
 #   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
+build/dev/apps/netsim/kfm_netsim --clients 6 --mode team_deathmatch --rtt 100 --jitter 10 --loss 2 --seconds 20   # a team mode (teams ride in MatchConfig, protocol 5)
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
 build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]   # headless bot matches
 #   --rotate moves every bot through every slot across the tournament (the sim's spawn order favours some slots)
-#   [--arena NAME --mode NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
+#   [--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
 #   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
 #   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
+build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5   # v0.34: the grid at 1-tick turns (courtyard)
+build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
+#   v0.35: one --team LIST per team of a team mode (no --bot/--bots): the specs fill that team's slots in order, the
+#   last repeating; --rotate moves entrants across sides; team segments, winner_team and per-entrant totals in the
+#   result; --memory-on-respawn keep|wipe (kfm_server too): an eliminated bot is paused, wipe re-inits it on respawn
+#   fog and calls: content/modes.toml `vision = { kind = "own", ... }` (bots only; humans see everything),
+#   abilities.toml `kind = "call"` + `range`; what a bot sees and hears: docs/bot-abi.md §3.1-3.2
+build/dev/apps/client/kfm_client --mode grid_rounds --bots 3   # the grid at 15-tick turns: the stick picks a neighbour cell per turn
 ctest --preset dev -R 'kfm_ai|arena'           # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena
 build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]   # lobby bots (saved: bot_difficulty)
 #   browser: kfm_client.html?autostart&bots=3&bot=easy (modules are native only: the browser has no runtime yet)
@@ -257,9 +300,31 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Third-party sources fetched into `build/<preset>/_deps` may ship their own `.clang-tidy`;
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
-- Next milestone: M5b, sequenced in architecture §11 (five PRs, one architecture version each,
-  every one green on the determinism gate before the next); step 2's spawn groups are the fix
-  for the spawn-order slot bias recorded in §12.
+- Next milestone: M6 (ship on the web, architecture §11). M5b landed in v0.35 (five PRs, one
+  architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)
+  is pending. Spawn groups fixed the side bias between teams only: the free-for-all
+  spawn-order slot bias of §12 is still open (tournaments rotate).
+- Fog lives in `engine/ai`, never in the sim: a `vision` change is content hash only, and the
+  `all` vision must stay the pre-fog observation byte for byte (a test pins it). Hosts call
+  `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls.
+- Teams never enter `WorldState`: a free-for-all config (slot i = team i) must keep every
+  checksum. New rows that hurt or push get an Enemy row and an Ally twin needing
+  `Tag::FriendlyFire` on the receiving monkey (a test pins the twins); hosts fill
+  `MatchConfig::teams` with `sim::teamsFor(mode, present)` (or through `resolveMatchNames`).
+- Objective kinds keep their state in `MatchRules::modeData` (layouts in `src/modes/hill.cpp`,
+  `capture.cpp` and `docs/bot-abi.md` §3), never in a new world-state field; a capture flag is a
+  `PickupKind::Flag` pickup whose `spawner` byte is its team. The scripted generator's objective
+  steering must stay Rng-free and keyed on the mode kind, or every other corpus entry moves.
+- Spaces (v0.34): how monkeys move is `spaceBehaviorFor(mode.space)` (`src/spaces/`), nothing else;
+  the continuous row must stay the sim as built bit for bit. Cells come only from
+  `kfm/sim/spaces/grid_cells.hpp` (column 0 west, row 0 north, a cell centre = a tilemap spawn
+  point). The grid latch reads the frame and the world state only (rollback-exact); contested
+  cells are not rule rows. Grid content counts in turns: a grid throw's recovery equals
+  `turn_ticks` and roots, a grid dash's active ticks are the slide; a mode's numbers that must
+  scale with the turn need their own defs (the `_1t` twins). The contact radius is
+  `Stats::radius`, never `PlayerDef::radius`, in sim code.
+- A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
+  `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
 
 ## Git workflow
 

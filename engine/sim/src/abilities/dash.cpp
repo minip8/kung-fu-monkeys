@@ -37,8 +37,10 @@ void dashOnEnd(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const Abi
 // perfectWindowTicks) is open: Active and phaseTicks < perfectWindowTicks,
 // plus tick press + window itself when the press had a non-zero sub-tick (the
 // window closes inside that tick; the catch rule judges the exact instant,
-// §5.11). Dash has no startup, so Active starts on the press tick.
+// §5.11). Dash has no startup, so Active starts on the press tick. A window
+// of 0 ticks (v0.34, the grid's base dash) never opens, sub-tick or not.
 Tags dashKindTags(const AbilityState& st, const AbilityDef& def) {
+  if (def.perfectWindowTicks == 0) return Tags{};
   const bool windowOpen = st.phaseTicks < def.perfectWindowTicks ||
                           (st.phaseTicks == def.perfectWindowTicks && st.activatedSubTick != 0);
   return st.phase == AbilityPhase::Active && windowOpen ? Tags::of(Tag::PerfectDash) : Tags{};

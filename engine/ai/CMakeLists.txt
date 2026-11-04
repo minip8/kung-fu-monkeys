@@ -10,6 +10,7 @@ add_library(kfm_ai STATIC
   src/agent_host.cpp
   src/observation_builder.cpp
   src/reference_bot.cpp
+  src/vision.cpp
 )
 add_library(kfm::ai ALIAS kfm_ai)
 

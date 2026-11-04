@@ -80,6 +80,9 @@ struct PresentationState {
   HudPhase lastHudPhase{HudPhase::Lobby};
   int lastCountdownWhole{0};
   bool hudSeen{false};
+  // v0.35: the slots whose calls ping (the app's local humans: a human on
+  // the ability button hears the call it made; bots' calls are silent).
+  sim::PlayerMask pingSlots{0};
 };
 
 void buildRenderState(PresentationState& ps, const sim::WorldState& prev,
@@ -94,6 +97,11 @@ void buildRenderState(PresentationState& ps, const sim::WorldState& prev,
 // boxes read as one pit. buildRenderState() calls it every frame; it depends
 // on the arena only.
 void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out);
+
+// The arena's zones (v0.33) as floor rectangles: zone k belongs to team k in
+// a capture match (the mode's team count, as far as there are zones), to
+// nobody otherwise. buildRenderState() calls it every frame.
+void buildZones(const sim::MatchContent& match, RenderState& out);
 
 [[nodiscard]] inline RenderState buildRenderState(
     PresentationState& ps, const sim::WorldState& prev, const sim::WorldState& curr, float alpha,

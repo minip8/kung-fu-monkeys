@@ -1,0 +1,46 @@
+# The hill arena (architecture §5.3, §5.10, v0.33), and the first tilemap:
+# the dojo's 32 x 18 box drawn one cell per unit, the hill (zone 0, glyph a)
+# a 4 x 4 square in the middle with a low wall on either side, two spawn
+# groups of five facing each other across it. The map is symmetric under a
+# half turn, so neither team's side is better. The hill mode needs it (or
+# any arena with a zone).
+#
+# A tilemap arena gives `cell` (the side of a cell in arena units) and `map`
+# in place of half_extents, walls, hazards, spawn_points and zones:
+#   rows of equal length, the top row is +y (screen up), the origin at the
+#   map's centre, so half_extents = (columns, rows) x cell / 2.
+#   #  wall              .  floor
+#   ~  pit               :  mud (move speed x mud_speed_mul, default 0.5)
+#   0-9 spawn points, in digit order (each once, no gaps; a spawn cell is floor)
+#   a-h zone cells (zone index = letter - a; each letter one filled rectangle,
+#       letters without gaps; a zone cell is floor)
+# The loader merges each glyph's cells into boxes: the runs along a row, then
+# runs with the same columns on consecutive rows into one. Walls, then pits
+# and mud, keep the hand-placed caps (32 walls, 16 hazards): a map that
+# merges into more is an error. spawn_groups, spawners and the other arena
+# keys work as in a hand-placed arena.
+[[arena]]
+name = "hilltop"
+cell = 1.0
+mud_speed_mul = 0.5
+spawn_groups = 2
+map = [
+  "................................",
+  "................................",
+  "..............####..............",
+  "......3.##....####....##.9......",
+  "........##..::....::..##........",
+  "....1...##..::....::..##...7....",
+  "................................",
+  "...........#..aaaa..#...........",
+  "......0....#..aaaa..#...........",
+  "...........#..aaaa..#....5......",
+  "...........#..aaaa..#...........",
+  "................................",
+  "....2...##..::....::..##...6....",
+  "........##..::....::..##........",
+  "......4.##....####....##.8......",
+  "..............####..............",
+  "................................",
+  "................................",
+]

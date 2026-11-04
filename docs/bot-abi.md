@@ -1,6 +1,7 @@
 # Kung Fu Monkeys — Bot ABI
 
-Status: normative, ABI and `Observation` version 1 (2026-11-04). The design and its rationale are
+Status: normative, ABI and `Observation` version 1 (2026-11-04; every reserved field filled
+since architecture v0.35). The design and its rationale are
 in `docs/architecture.md` §8; this document is what an SDK author implements against. The C++
 source of truth is `engine/ai/include/kfm/ai/observation.hpp`; a unit test
 (`tests/unit/ai/observation_test.cpp`) checks offsets from the tables below against it, and the
@@ -21,13 +22,18 @@ the seed, the match configuration, the content hash and the modules.
 |---|---|---|
 | `kfm_abi_version` | `() -> i32` | The `Observation` schema version the module was built against, as a u32. Must return `1`. The host refuses to load a module that returns anything else. |
 | `kfm_obs_buffer` | `() -> i32` | Address in the module's linear memory of a buffer of at least `sizeof(Observation)` = 5748 bytes, 4-byte aligned. The host writes the observation there before every `kfm_act`. The address must stay the same for the life of the instance. |
-| `kfm_init` | `(seed: i64, slot: i32) -> ()` | Called once before the first `kfm_act` (and again when the host wipes the bot's memory on respawn, a v0.29 host knob). `seed` is a u64 the host derives from the match seed; `slot` is the monkey's player slot, 0..9. |
+| `kfm_init` | `(seed: i64, slot: i32) -> ()` | Called once before the first `kfm_act` (and again, on a fresh instance with the same seed, when the host wipes the bot's memory on respawn: `memory_on_respawn = wipe`, `kfm_arena`/`kfm_server --memory-on-respawn`, architecture v0.35). `seed` is a u64 the host derives from the match seed; `slot` is the monkey's player slot, 0..9. |
 | `kfm_act` | `(tick: i32) -> i64` | The input for sim tick `tick` (a u32, equal to `match.tick` of the observation just written), packed as below. |
 
 Call order per instance: instantiate, `kfm_abi_version`, `kfm_obs_buffer`, `kfm_init`, then once
 per tick the host writes the observation into the buffer and calls `kfm_act`. A module must not
 assume it is called on every tick of the match: a host may skip ticks (a slot that is not in the
 roster, a paused eliminated monkey), and `match.tick` says which tick an observation is for.
+Since architecture v0.35 the reference host pauses an instance whose monkey was eliminated:
+from the first tick the monkey is gone until the tick it is back (a respawn, the next round)
+`kfm_act` is not called and the slot's input is idle; a monkey that never stood in the arena
+yet (a slot that joined mid-round) is not paused. The instance resumes with its memory, or
+re-initialised under `wipe`.
 
 ### 1.2 The action: `kfm_act`'s return value
 
@@ -113,8 +119,10 @@ for a given slot.
   byte (players: `present` and `alive`). An empty or absent entry is all zero. Array order is the
   sim's slot order (players by slot, bananas and pickups by pool slot), stable while the entity
   lives; a freed pool slot can be reused by a new entity.
-- Every `pad*` and `reserved*` field is zero in v1. A `reserved*` field is defined in §3 and filled
-  by a later mode without changing the layout.
+- Every `pad*` field is zero. A `reserved*` field is defined in §3; since architecture v0.35 all
+  of them are filled with that meaning (some only in a grid or fog mode, zero otherwise),
+  without any change to the layout; the names keep their prefix in the C++ header, the C SDK
+  drops it (`self.cellX`, `players[i].visible`, `heardCalls`, ...).
 - The observation describes the world before tick `match.tick` is simulated; the input answering
   it is applied on that tick (plus the delay, §1.5).
 
@@ -127,22 +135,23 @@ Units:
 | bam | u16 1/65536 turn, same orientation (a banana's heading, which the sim steers at that precision). |
 | ticks | 60 per second. Tick numbers are the sim's tick counter. |
 | slot | player slot 0..9; `0xFF` = none. |
-| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying. |
+| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it), 9 Carrying (architecture v0.33: holds a capture flag; no stat change). |
 
 The world: the arena is the box [−halfExtents, +halfExtents] centred on the origin, +x right,
-+y up. Everything is full information in v1 (no fog).
++y up. Everything is full information unless the mode's vision is a fog (architecture v0.35,
+§3.1): then `header.schemaFlags` bit 0 is set and what the monkey does not see is zeroed.
 
 Enumerations (byte values):
 
 | Enum | Values |
 |---|---|
-| relation | 0 None (empty slot), 1 Self, 2 Ally (reserved: no teams in v1), 3 Enemy |
+| relation | 0 None (empty slot), 1 Self, 2 Ally (a teammate in a team mode, since architecture v0.32; a free-for-all has none), 3 Enemy |
 | match phase | 0 Lobby, 1 RoundStarting (spawned, frozen), 2 Playing, 3 RoundEnded, 4 MatchEnded |
-| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival |
-| ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry |
+| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33) |
+| ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded |
-| pickup kind | 0 Banana, 1 PowerUp |
+| pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
 | hazard kind | 0 Pit (a centre inside is eliminated), 1 Slow (move speed × `speedMul` inside) |
 
 ### 2.2 Top level
@@ -157,7 +166,7 @@ Enumerations (byte values):
 | 1112 | 2816 | `bananas[64]` | every banana pool slot, 44 bytes each |
 | 3928 | 512 | `pickups[32]` | every pickup pool slot, 16 bytes each |
 | 4440 | 1116 | `arena` | the arena's statics |
-| 5556 | 192 | `reservedHeardCalls[16]` | v0.29 calls, 12 bytes each, zero in v1 |
+| 5556 | 192 | `reservedHeardCalls[16]` | the calls heard this turn (§3.2), 12 bytes each |
 | 5748 | | | end |
 
 In the tables below "Offset" is relative to the block; the absolute offset is the block's plus
@@ -170,7 +179,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 |---:|---|---|---|
 | 0 | u32 | `version` | 1 |
 | 4 | u32 | `size` | 5748 |
-| 8 | u32 | `schemaFlags` | bit 0: fog (visibility fields meaningful), reserved; 0 in v1 |
+| 8 | u32 | `schemaFlags` | bit 0: fog (architecture v0.35): the mode's vision is not "all", the visible flags are meaningful and unseen entries are zeroed (§3.1) |
 | 12 | u32 | `reserved0` | 0 |
 
 ### 2.4 `match` (offset 16, 168 bytes)
@@ -199,8 +208,8 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 34 | u16 | `roundEndTicks` | pause after a round end |
 | 36 | u16 | `respawnDelayTicks` | deathmatch: ticks from an elimination to the respawn |
 | 38 | u16 | `respawnInvulnTicks` | deathmatch: spawn protection after a respawn |
-| 40 | u16 | `reservedTurnTicks` | §3: ticks per turn in a grid mode |
-| 42 | u16 | `reservedTicksToLatch` | §3: ticks to the next turn latch |
+| 40 | u16 | `reservedTurnTicks` | §3: ticks per turn in a grid mode, 0 in a continuous one |
+| 42 | u16 | `reservedTicksToLatch` | §3: in a grid mode, ticks from this observation's tick to the next latch (0: this tick's input is latched) |
 | 44 | u8[10] | `scores` | per slot: round wins (rounds, survival) or eliminations (deathmatch) |
 | 54 | u8[10] | `deaths` | per slot: eliminations suffered this match |
 | 64 | u16[10] | `respawnTicks` | per slot: ticks until a dead slot respawns, 0 = none due |
@@ -211,7 +220,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 
 | Offset | Type | Field | Meaning |
 |---:|---|---|---|
-| 0 | i32 | `playerRadius` | Q16.16: every monkey's contact radius |
+| 0 | i32 | `playerRadius` | Q16.16: the base contact radius (`PlayerDef`; v0.34: a derived stat, `self.radius` is this monkey's, and a mode's baseline changes every monkey's alike) |
 | 4 | i32 | `playerMoveSpeed` | Q16.16 per tick: base walking speed (`self.moveSpeed` is the derived one) |
 | 8 | i32 | `bananaRadius` | Q16.16: base banana contact radius (`bananas[i].radius` is the derived one) |
 | 12 | i32 | `bananaSpeed` | Q16.16 per tick: base flight speed |
@@ -260,7 +269,7 @@ All zero except `slot`, `respawnTicks` and the reserved fields while `alive` is 
 | 24 | i32 | `velX` | Q16.16 per tick: last tick's velocity |
 | 28 | i32 | `velY` | Q16.16 per tick |
 | 32 | i32 | `moveSpeed` | Q16.16 per tick: derived walking speed (power-ups, slow hazards) |
-| 36 | i32 | `radius` | Q16.16: contact radius |
+| 36 | i32 | `radius` | Q16.16: contact radius (v0.34: the derived radius stat, `PlayerDef` × power-ups and the mode's baseline) |
 | 40 | i32 | `knockbackX` | Q16.16 per tick: a slam's push, added to the velocity for `knockbackTicks` more ticks |
 | 44 | i32 | `knockbackY` | Q16.16 per tick |
 | 48 | u32 | `tags` | tags |
@@ -269,11 +278,11 @@ All zero except `slot`, `respawnTicks` and the reserved fields while `alive` is 
 | 56 | u16 | `invulnTicks` | ticks of spawn protection left |
 | 58 | u16 | `respawnTicks` | while dead: ticks until the respawn, 0 = none due |
 | 60 | u8 | `facing` | angle8: the aim the sim applied last tick |
-| 61 | u8 | `reservedFacingOctant` | §3 |
+| 61 | u8 | `reservedFacingOctant` | §3: grid mode, alive: the facing as 0..7 (0 east, counter-clockwise), the cone's direction |
 | 62 | u8 | `reservedRole` | §3 |
 | 63 | u8 | `reservedTeam` | §3 |
-| 64 | i16 | `reservedCellX` | §3 |
-| 66 | i16 | `reservedCellY` | §3 |
+| 64 | i16 | `reservedCellX` | §3: grid mode, alive: the own cell's column (0 at the west edge) |
+| 66 | i16 | `reservedCellY` | §3: the row (0 at the north, +y, edge) |
 | 68 | ability[3] | `abilities` | 48 bytes each: slot 0 (Dash button), 1 (Throw), 2 (Ability1) |
 | 212 | modifier[8] | `modifiers` | 4 bytes each, `[0, modifierCount)` live in pickup order |
 
@@ -316,7 +325,7 @@ its banana along the aim on the Startup → Active transition.
 |---:|---|---|---|
 | 0 | u8 | `powerUp` | index of the power-up def in the content |
 | 1 | u8 | `pad0` | |
-| 2 | u16 | `ticksLeft` | ticks it stays live |
+| 2 | u16 | `ticksLeft` | ticks it stays live; `0xFFFF` = for good (the mode's baseline power-up, architecture v0.32) |
 
 ### 2.7 `players[i]` (offset 472 + 64 i, 64 bytes)
 
@@ -324,7 +333,7 @@ its banana along the aim on the Startup → Active transition.
 |---:|---|---|---|
 | 0 | u8 | `present` | 1: the slot is in the roster |
 | 1 | u8 | `alive` | 1: a monkey in the arena (a slot that left keeps it until it dies) |
-| 2 | u8 | `reservedVisible` | §3 |
+| 2 | u8 | `reservedVisible` | §3: under fog, 1 when seen this turn (self always); 0 without fog |
 | 3 | u8 | `relation` | relation to self; None for an empty slot |
 | 4 | u8 | `reservedTeam` | §3 |
 | 5 | u8 | `hp` | |
@@ -357,7 +366,7 @@ its banana along the aim on the Startup → Active transition.
 | Offset | Type | Field | Meaning |
 |---:|---|---|---|
 | 0 | u8 | `valid` | 1: a banana in this pool slot |
-| 1 | u8 | `reservedVisible` | §3 |
+| 1 | u8 | `reservedVisible` | §3: under fog, 1 when seen or heard this turn; 0 without fog |
 | 2 | u8 | `phase` | banana phase |
 | 3 | u8 | `owner` | slot of the thrower (of the parrier after a parry) |
 | 4 | u8 | `ownerRelation` | relation of the owner to self |
@@ -393,7 +402,7 @@ banana is caught on contact.
 | 0 | u8 | `valid` | 1: a pickup in this pool slot |
 | 1 | u8 | `kind` | pickup kind |
 | 2 | u8 | `powerUp` | PowerUp: index of the power-up def in the content |
-| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners` |
+| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners`; Flag (architecture v0.33): the flag's team |
 | 4 | i32 | `posX` | Q16.16 |
 | 8 | i32 | `posY` | Q16.16 |
 | 12 | i32 | `radius` | Q16.16: contact radius |
@@ -425,39 +434,102 @@ power-up j may spawn, 0 = any); 10 u16 `firstTicks` (Playing tick of the first s
 
 ### 2.11 `reservedHeardCalls[i]` (offset 5556 + 12 i, 12 bytes)
 
-All zero in v1 (§3).
+The calls heard in the current turn window, oldest first (§3.2); the unused entries are zero.
 
 | Offset | Type | Field | Meaning |
 |---:|---|---|---|
-| 0 | u8 | `valid` | 1: a call heard last turn |
+| 0 | u8 | `valid` | 1: a call heard this turn |
 | 1 | u8 | `slot` | the caller |
-| 2 | u8 | `symbol` | the caller's aim byte |
+| 2 | u8 | `symbol` | the caller's aim byte on the press tick |
 | 3 | u8 | `pad0` | |
-| 4 | u32 | `tick` | when it was heard |
-| 8 | i16 | `cellX` | the caller's cell when visible |
-| 10 | i16 | `cellY` | |
+| 4 | u32 | `tick` | the tick of the call |
+| 8 | i16 | `cellX` | the caller's cell at the call (column) when it is seen in this observation (always without fog) and the arena has cells, else −1 |
+| 10 | i16 | `cellY` | the row, or −1 |
 
 ## 3. Reserved fields
 
 Architecture v0.29 (§5.3, §5.12, §8 "Teams, fog and calls") designs squads, fog and calls. v1
-reserves their fields so the first such mode fills them without a version bump. All are zero in
-v1, and `header.schemaFlags` bit 0 stays clear until fog exists.
+reserves their fields so the first such mode fills them without a version bump. Every one is
+filled now, with the meaning below: architecture v0.31 fills `self.reservedRole` with the
+loadout index the match plays and `match.reservedModeData` with the mode's state; v0.32 the
+team fields (`players[i].reservedTeam`, `self.reservedTeam`, `match.reservedTeamScores` and the
+Ally relation of `players[i].relation` and `bananas[i].ownerRelation`); v0.35 the fog, call and
+grid fields and `header.schemaFlags` bit 0 (§3.1, §3.2). A field a mode does not use stays 0
+(the grid fields in a continuous mode, the visible flags without fog).
 
 | Field | Meaning once used |
 |---|---|
-| `players[i].reservedTeam`, `self.reservedTeam` | the slot's team index (`MatchConfig::teams`); `relation` then also reports Ally |
-| `players[i].reservedVisible`, `bananas[i].reservedVisible` | 1 when the entity is seen this turn under the mode's vision; unseen entries are zeroed (counts stay at capacity) |
-| `reservedHeardCalls[16]` | the calls heard last turn: caller slot, symbol (its aim byte), tick, the caller's cell when visible |
-| `self.reservedCellX`, `self.reservedCellY` | the own cell in a grid mode |
-| `self.reservedFacingOctant` | the facing quantised to eight directions in a grid mode |
-| `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks to the next latch |
-| `self.reservedRole` | the loadout index the slot plays |
-| `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index |
-| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state) |
+| `players[i].reservedTeam`, `self.reservedTeam` | the slot's team index (`MatchConfig::teams`); `relation` and `bananas[i].ownerRelation` then also report Ally. Filled since architecture v0.32: in a free-for-all slot i is team i (every other slot an Enemy); in a team mode the teammates share an index below the mode's team count. An empty `players[i]` entry stays all zero |
+| `header.schemaFlags` bit 0 | filled since architecture v0.35: set when the mode's vision is a fog (`team` or `own`, §3.1), clear otherwise |
+| `players[i].reservedVisible`, `bananas[i].reservedVisible` | 1 when the entity is seen this turn under the mode's vision; unseen entries are zeroed (counts stay at capacity). Filled since architecture v0.35 (§3.1); 0 without fog |
+| `reservedHeardCalls[16]` | the calls heard this turn: caller slot, symbol (its aim byte), tick, the caller's cell when visible. Filled since architecture v0.35 (§3.2) |
+| `self.reservedCellX`, `self.reservedCellY` | the own cell in a grid mode (column from the west edge, row from the north edge, the tilemap's reading order; architecture §5.12's mapping: `col = floor((x + halfExtents.x) / cell)`, `row = floor((halfExtents.y − y) / cell)`). Filled since architecture v0.35 while alive; 0 in a continuous mode. Other monkeys have no cell field in v1: apply the same mapping to their position |
+| `self.reservedFacingOctant` | the facing quantised to eight directions in a grid mode: `((facing + 16) >> 5) & 7`, 0 east, counter-clockwise (2 north, 4 west, 6 south), the cone's direction. Filled since architecture v0.35 while alive |
+| `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks from this observation's tick to the next latch: 0 when the input answering this observation is latched; while Playing `(turn − ticksInPhase mod turn) mod turn`, in the countdown `roundStartTicks − ticksInPhase`, between rounds `roundEndTicks − ticksInPhase + roundStartTicks`, before the first round `roundStartTicks`, 0 once the match ended (a round that ends early moves it). Filled since architecture v0.35; both 0 in a continuous mode |
+| `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; since v0.32 the role's in a team mode with `roles`: the slot's position within its team, round-robin) |
+| `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index; filled since architecture v0.32 (in a free-for-all team i is slot i, so entry i equals `scores[i]`) |
+| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`, words 8–15 stay 0. The shipped kinds (rounds, deathmatch, survival) leave all of it 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). The arena's zones are not in v1 (a later version adds them); a capture bot finds the flags in `pickups` |
 | `header.reserved0` | nothing yet |
 
-A module must not depend on a reserved field being zero beyond v1, and must ignore it while
-`version` is 1.
+A field a mode does not use is 0; a module reads every filled field with the meaning above.
+
+### 3.1 Fog (architecture v0.35)
+
+A mode's `vision` (content, `modes.toml`) decides what a bot sees; humans always see
+everything. `kind = "all"` (every continuous mode and the default) is the full-information
+observation, byte for byte what it was before v0.35, with `schemaFlags` bit 0 clear and every
+visible flag 0. Under `kind = "own"` a monkey sees with its own eyes, under `kind = "team"`
+with the union of its team's (every teammate is then always seen); both set `schemaFlags`
+bit 0 and need an arena with cells. The numbers are cells, Chebyshev distances (the larger of
+the column and row differences):
+
+- A monkey at cell `h` facing octant `o` (the facing quantised as `self.reservedFacingOctant`)
+  sees cell `k` when `k` is within `peripheral` of `h` (its own cell always), or `k` lies in its
+  cone and the line of sight to `k` is clear, or `k` is within `banana_sight` of the cell of one
+  of its own bananas in flight.
+- The cone of octant `o` out to `R` (`cone`, plus `focus` while the monkey is at rest and did not
+  move on the previous tick, so a monkey that stepped during the turn has none at the next
+  latch): with `dc`, `dr` the column and row offsets of `k` from `h` (rows grow southward) and
+  `(oc, or)` the octant's step (east (1, 0), north-east (1, −1), north (0, −1), ... south-east
+  (1, 1)), `k ≠ h` and `max(|dc|, |dr|) ≤ R` and, for a cardinal octant, `dc·oc + dr·or ≥ |side|`
+  where `side` is `dr` for an east or west octant and `dc` for a north or south one; for a
+  diagonal octant `dc·oc ≥ 0` and `dr·or ≥ 0` (the closed quadrant). Either cone holds exactly
+  R² + 2R cells.
+- Line of sight: the integer Bresenham line from `h` to `k`, both ends included (`dx = |Δcol|`,
+  `dy = −|Δrow|`, `err = dx + dy`; each step `e2 = 2·err`, `if e2 ≥ dy: err += dy, col += sx`,
+  `if e2 ≤ dx: err += dx, row += sy`), is clear when every cell after `h` lies in the arena's
+  columns and rows and is not a wall cell (one whose centre lies in a wall box, closed), and no
+  step that changes both the column and the row passes between two wall cells that touch at
+  that corner. Pits and slow ground never block. Peripheral sight, banana sight and hearing
+  need no line.
+- What is seen: a monkey or a pickup whose centre's cell is seen; a banana whose centre's cell is
+  seen, or that is in flight (Outbound, Returning) within `hearing` of `h` whatever the facing
+  and the walls, or that is the monkey's own and in flight.
+- Over a turn: a host ORs what was seen on every tick since the previous latch observation
+  (the window closes after the observation of a latch tick, and after every tick outside
+  Playing, of a continuous mode or of a one-tick turn), so a latch observation carries
+  everything seen during the turn, each entity as it is now. An entity is matched by its pool
+  slot and generation: a pool slot reused within the turn by an unseen banana stays unseen.
+- In the observation: self and every seen monkey have `players[i].reservedVisible` 1; an
+  unseen monkey keeps only `present`, `relation`, `reservedTeam` and `respawnTicks`, with
+  `alive` and everything else 0 (the match block's `aliveMask` and `aliveCount` still count
+  it); a seen banana has `reservedVisible` 1, an unseen banana or pickup is all zero.
+
+### 3.2 Calls (architecture v0.35)
+
+A `call` ability (ability kind 6; its range in units is the def's `defParam0`) shouts the aim
+byte of the press tick, one of 256 symbols, with no change to the input format: press the
+ability's button with `aimDir` = the symbol. Pressed on a latch tick (§3, `reservedTicksToLatch`
+0) it also turns the facing, and so the cone, to the symbol for that turn (in a continuous
+mode the facing follows the aim every tick anyway). Every other monkey
+whose centre lies within the range of the caller's, Chebyshev in units, after the call's tick,
+ally or enemy, hears it; the caller does not. A heard call is listed in `reservedHeardCalls`
+from the observation of the next tick until the observation of the next latch, then dropped
+(at most 16 per window, later ones lost): `slot`, `symbol`, `tick` (of the call) and the
+caller's cell at the call when this monkey sees the caller in that observation (always without
+fog) and the arena has cells, else −1, −1. A dead monkey hears nothing. What a symbol means is
+the bot author's business.
+
 
 ## 4. Versioning
 

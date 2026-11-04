@@ -34,6 +34,8 @@
 #include "kfm/sim/abilities/registry.hpp"
 #include "kfm/sim/systems.hpp"
 
+#include <algorithm>
+
 namespace kfm::sim {
 namespace {
 
@@ -155,6 +157,13 @@ Tags abilityPhaseTags(const Player& p, const MatchContent& content) {
     granted = granted | slotPhaseTags(st, content);
   }
   return granted;
+}
+
+bool rooted(const Player& p, const MatchContent& content) {
+  return std::ranges::any_of(p.abilities, [&](const AbilityState& st) {
+    return st.phase != AbilityPhase::Idle &&
+           (defFor(content, st).rootPhases & phaseBit(st.phase)) != 0;
+  });
 }
 
 const AbilityState* slotGranting(const Player& p, const MatchContent& content, Tag tag) {

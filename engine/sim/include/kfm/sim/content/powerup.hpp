@@ -17,13 +17,17 @@ namespace kfm::sim {
 inline constexpr uint8_t kMaxPowerUps = 16;
 inline constexpr uint8_t kMaxPowerUpGrants = 4;
 inline constexpr uint8_t kMaxPickupSpawners = 8;
+// ActiveModifier::ticksLeft of a mode's baseline power-up (v0.32): never
+// counted down, never dropped. Power-up durations stay below it.
+inline constexpr uint16_t kPermanentModifierTicks = 0xFFFF;
 
 // Derived player stats a StatModifier can change (Stats in world_state.hpp).
-enum class StatKind : uint8_t { MoveSpeed = 0, MaxHp, AmmoMax };
+// v0.34: Radius, the contact radius (base PlayerDef::radius).
+enum class StatKind : uint8_t { MoveSpeed = 0, MaxHp, AmmoMax, Radius };
 
 // stat = base × Π mul + Σ add over the live modifiers in slot order. Integer
 // stats (MaxHp, AmmoMax) accept `add` only: the loader rejects a mul on them,
-// and ModifierSystem ignores it.
+// and ModifierSystem ignores it. Fixed stats (MoveSpeed, Radius) take both.
 struct StatModifier {
   StatKind stat{StatKind::MoveSpeed};
   Fixed mul{Fixed::one()};

@@ -1,0 +1,34 @@
+# The grid arena (architecture §5.12, v0.34): a 24 x 14 tilemap (keys in
+# arenas/06-hilltop.toml) at one cell per unit, small enough that a
+# one-cell-per-turn walk crosses it in 24 turns (6 s at 15-tick turns). Two
+# spawn groups of five face each other from the west and east edges; two
+# 2 x 2 blocks and a 1 x 4 pillar per side give cover, a 2 x 2 block sits in
+# the middle, and two pits break the centre line at the top and bottom
+# edges. Symmetric under a half turn. Two spawners drop Quick Hands (the
+# only way to step and throw in one turn) beside the middle block. The grid
+# modes pick it by default (modes.toml `arena`); it plays the continuous
+# space too.
+[[arena]]
+name = "courtyard"
+cell = 1.0
+spawn_groups = 2
+map = [
+  "...........~~...........",
+  "........................",
+  ".0...##..........##...8.",
+  ".....##..........##.....",
+  "........................",
+  ".1.......#....#.......7.",
+  ".........#.##.#.....9...",
+  "...4.....#.##.#.........",
+  ".2.......#....#.......6.",
+  "........................",
+  ".....##..........##.....",
+  ".3...##..........##...5.",
+  "........................",
+  "...........~~...........",
+]
+spawners = [
+  { pos = [-0.5, 3.5], power_ups = ["quick_hands"], first_ticks = 600, interval_ticks = 900, max_alive = 1 },
+  { pos = [0.5, -3.5], power_ups = ["quick_hands"], first_ticks = 600, interval_ticks = 900, max_alive = 1 },
+]

@@ -92,6 +92,7 @@ struct SessionConfig {
   uint8_t arena{0};                      // MatchConfig::arena / ::mode: indices into
   uint8_t mode{0};                       //   the content (out of range = 0)
   uint16_t powerUps{sim::kAllPowerUps};  // MatchConfig::powerUps
+  uint8_t loadout{0};                    // MatchConfig::loadout (out of range = 0)
   // The loaded content (content/*.toml); nullptr = sim::defaultContent().
   // Copied: the session owns its content.
   const sim::ContentDB* content{nullptr};
@@ -134,6 +135,10 @@ class MatchSession {
   [[nodiscard]] uint8_t botCount() const { return bots_; }
   // Bound slots plus the lowest botCount() unbound slots.
   [[nodiscard]] sim::PlayerMask lobbyPresentMask() const;
+  // The team of every slot (v0.32): in a match its MatchConfig::teams, in
+  // the lobby what the mode would give the slots joined so far (balanced,
+  // later slots to the smallest team; slot i is team i without teams).
+  [[nodiscard]] sim::TeamSet teams() const;
   // Creates the world from lobbyPresentMask() and seed() and starts the
   // clock at nowNs. Returns false (and stays in the lobby) when the mask is empty.
   bool startMatch(uint64_t nowNs);
@@ -165,11 +170,14 @@ class MatchSession {
   // the lobby).
   void setArena(uint8_t arena);
   void setMode(uint8_t mode);
-  // The per-match power-up set (MatchConfig::powerUps), same timing.
+  // The per-match power-up set (MatchConfig::powerUps) and the loadout
+  // (MatchConfig::loadout, out of range = 0), same timing.
   void setPowerUps(uint16_t powerUps);
+  void setLoadout(uint8_t loadout);
   [[nodiscard]] uint8_t arena() const { return arena_; }
   [[nodiscard]] uint8_t mode() const { return mode_; }
   [[nodiscard]] uint16_t powerUps() const { return powerUps_; }
+  [[nodiscard]] uint8_t loadout() const { return loadout_; }
   // The config the current world was created with, and the content step()
   // runs it with (the live copy with this match's arena and mode).
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return matchConfig_; }
@@ -212,6 +220,18 @@ class MatchSession {
   [[nodiscard]] uint64_t droppedEvents() const { return droppedEvents_; }
   [[nodiscard]] uint32_t ticksThisFrame() const { return ticksThisFrame_; }
 
+  // v0.35: the last kRecentCalls calls (MonkeyCalled) of the match, oldest
+  // first, for the F1 overlay.
+  static constexpr std::size_t kRecentCalls = 8;
+  struct RecentCall {
+    uint8_t slot{0};
+    uint8_t symbol{0};
+    uint32_t tick{0};
+  };
+  [[nodiscard]] std::span<const RecentCall> recentCalls() const {
+    return {recentCalls_.data(), recentCallCount_};
+  }
+
   [[nodiscard]] presentation::PresentationState& presentation() { return presentation_; }
 
   // The live content copy (edited by the debug UI) and the loaded content
@@ -228,7 +248,7 @@ class MatchSession {
   [[nodiscard]] uint32_t contentHash() const;
   [[nodiscard]] bool contentIsDefault() const;
   // Hot reload (§5.10): replaces the loaded content and the live copy (debug
-  // UI edits are dropped), keeps the arena and mode when the new content
+  // UI edits are dropped), keeps the arena, mode and loadout when the new content
   // still has them (else index 0), and restarts a running match with the
   // same seed, or re-creates the lobby world.
   void replaceContent(const sim::ContentDB& content, uint64_t nowNs);
@@ -258,6 +278,7 @@ class MatchSession {
   uint8_t arena_{0};
   uint8_t mode_{0};
   uint16_t powerUps_{sim::kAllPowerUps};
+  uint8_t loadout_{0};
   sim::MatchConfig matchConfig_{};
   uint64_t botSeed_{kDefaultBotSeed};
   uint8_t bots_{0};
@@ -281,6 +302,8 @@ class MatchSession {
 
   std::array<sim::SimEvent, kMaxFrameEvents> frameEvents_{};
   std::size_t frameEventCount_{0};
+  std::array<RecentCall, kRecentCalls> recentCalls_{};
+  std::size_t recentCallCount_{0};
   uint64_t droppedEvents_{0};
   uint32_t ticksThisFrame_{0};
 

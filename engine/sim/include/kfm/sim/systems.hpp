@@ -14,8 +14,9 @@ namespace kfm::sim {
 
 // 1. Round start/end, spawns, phase timers (systems/rules.cpp).
 void rulesPreTick(WorldState& s, const MatchContent& content, EventSink& sink);
-// 2. PlayerInput -> Intent, press-edge detection, facing (systems/input.cpp).
-void inputSystem(WorldState& s, const InputFrame& in);
+// 2. PlayerInput -> Intent, press-edge detection, then the space's latch:
+//    facing and the grid's commitments (systems/input.cpp, spaces/).
+void inputSystem(WorldState& s, const MatchContent& content, const InputFrame& in);
 // 3. Activation, phase state machines, cooldowns, phase tags (systems/ability.cpp,
 //    behaviours in abilities/).
 void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink);
@@ -30,7 +31,13 @@ void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink);
 // the dash whose press time the catch rule and the tie-break read (§5.11).
 [[nodiscard]] const AbilityState* slotGranting(const Player& p, const MatchContent& content,
                                                Tag tag);
-// 4. Intent x stats -> velocity, integrate, arena clamp (systems/movement.cpp).
+// Whether any of the player's ability slots runs a phase its def roots
+// (AbilityDef::rootPhases, v0.34): movement intent is ignored (continuous)
+// and no commitment is taken at a latch (grid).
+[[nodiscard]] bool rooted(const Player& p, const MatchContent& content);
+// 4. The space's move: intent x stats -> velocity, integrate, arena clamp
+//    (continuous), or the slide to the committed cell (grid)
+//    (systems/movement.cpp, spaces/).
 void movementSystem(WorldState& s, const MatchContent& content);
 // 5. Boomerang flight, return steering, wall bounce, grounding (systems/projectile.cpp).
 void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sink);

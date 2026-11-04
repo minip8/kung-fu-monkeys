@@ -503,6 +503,32 @@ TEST_CASE("HUD carries the mode's scoreboard: clock, alive count, respawns",
   CHECK(rs.hud.respawnSeconds[0] == 0.0f);
 }
 
+TEST_CASE("HUD carries the teams and their scores (v0.32)", "[presentation][builder][teams]") {
+  ContentDB content = defaultContent();
+  ModeDef& tr = content.modes[1];
+  tr.name = ContentName::of("team_rounds");
+  tr.kind = ModeKind::TeamRounds;
+  tr.teams = 2;
+  content.modeCount = 2;
+  const MatchConfig config{
+      .seed = 5, .players = 0b1111, .mode = 1, .teams = balancedTeams(2, 0b1111)};
+  const MatchContent m = matchContent(content, config);
+  WorldState s = initialWorld(config);
+  s.rules.scores = {1, 0, 2, 1};
+  PresentationState ps;
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, m, 1.0f / 60.0f);
+  CHECK(rs.hud.teamCount == 2);
+  CHECK(rs.hud.teams[2] == 0);
+  CHECK(rs.hud.teams[3] == 1);
+  CHECK(rs.hud.teamScores[0] == 3);
+  CHECK(rs.hud.teamScores[1] == 1);
+  CHECK_FALSE(rs.hud.hasClock);
+  // A free-for-all: no team count, team i is slot i.
+  const RenderState ffa = buildRenderState(ps, s, s, 1.0f, {}, MatchContent(content), 1.0f / 60.0f);
+  CHECK(ffa.hud.teamCount == 0);
+  CHECK(ffa.hud.teamScores[2] == 2);
+}
+
 TEST_CASE("mode events start their effects and sounds", "[presentation][builder][modes]") {
   WorldState s = makePlayingWorld(37, 0b11);
   placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::fromInt(2)});
@@ -923,6 +949,39 @@ TEST_CASE("arena walls and hazards become world-space pieces", "[presentation][b
   CHECK(rimLength == Approx(4.0f + 4.0f + 4.0f + 18.0f + 22.0f + 2.0f));
 }
 
+TEST_CASE("a call shouts over the caller and pings only a local human (v0.35)",
+          "[presentation][builder][audio]") {
+  using enum EventKind;
+  CHECK_FALSE(soundForEvent(SimEvent{MonkeyCalled, Tick{0}, kP0, EntityId{}, 9, 0}).has_value());
+  WorldState s = makePlayingWorld(28, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  const auto pings = [](const RenderState& rs) {
+    int n = 0;
+    for (uint16_t i = 0; i < rs.soundCount; ++i) {
+      if (rs.sounds[i].id == SoundId::CallPing) ++n;
+    }
+    return n;
+  };
+  PresentationState ps;
+  ps.pingSlots = 0b01;  // P0 is the local human
+  const std::vector<SimEvent> events = {
+      SimEvent{MonkeyCalled, s.tick, kP0, EntityId{}, 255, 0},
+      SimEvent{MonkeyCalled, s.tick, kP1, EntityId{}, 0, 0},
+  };
+  build(ps, s, s, 1.0f);
+  const RenderState rs = build(ps, s, s, 1.0f, events);
+  REQUIRE(countEffects(rs, EffectKind::CallShout) == 2);
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& e = rs.effects[i];
+    if (e.kind != EffectKind::CallShout) continue;
+    CHECK(e.position.y == Approx(kCallShoutHeight));  // over the head
+    if (e.slot == 0) CHECK(e.size == Approx(1.0f));
+    if (e.slot == 1) CHECK(e.size == Approx(0.0f));
+  }
+  CHECK(pings(rs) == 1);  // the bot's call is silent
+}
+
 TEST_CASE("ability events (v0.21): blink, slam and parry effects and sounds",
           "[presentation][builder][audio]") {
   using enum EventKind;
@@ -987,4 +1046,56 @@ TEST_CASE("ability events (v0.21): blink, slam and parry effects and sounds",
   CHECK(blink == 1);
   CHECK(slam == 1);
   CHECK(parry == 1);
+}
+
+TEST_CASE("zones and capture flags render (v0.33)", "[presentation][builder][capture]") {
+  ContentDB content = defaultContent();
+  const auto at = [](int32_t x, int32_t y) { return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)}; };
+  ArenaDef& a = content.arenas[0];
+  a.zones[0] = Zone{at(-14, -2), at(-10, 2)};
+  a.zones[1] = Zone{at(10, -1), at(14, 3)};
+  a.zoneCount = 2;
+  content.modes[1] = content.modes[0];
+  content.modes[1].name = ContentName::of("capture");
+  content.modes[1].kind = ModeKind::Capture;
+  content.modes[1].teams = 2;
+  content.modeCount = 2;
+  WorldState s = makePlayingWorld(24, 0b11, content);
+  const EntityId flag = s.pickups.spawn();
+  REQUIRE(flag.isValid());
+  s.pickups.items[flag.index] = Pickup{PickupKind::Flag, at(12, 1), 0, 1};
+  playerAt(s, kP0).tags.set(Tag::Carrying);
+
+  // In a free-for-all mode the zones are nobody's.
+  {
+    auto rs = std::make_unique<RenderState>();
+    buildZones(MatchContent(content), *rs);
+    REQUIRE(rs->zoneCount == 2);
+    CHECK(rs->zones[0].team == kNoSlot);
+    CHECK(rs->zones[1].team == kNoSlot);
+  }
+  const MatchContent capture(content, 0, 1);
+  PresentationState ps;
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, capture, kDt);
+  REQUIRE(rs.zoneCount == 2);
+  CHECK(rs.zones[0].team == 0);
+  CHECK(rs.zones[1].team == 1);
+  CHECK(worldToSim(rs.zones[1].center).x == Approx(12.0f));
+  CHECK(worldToSim(rs.zones[1].center).y == Approx(1.0f));
+  CHECK(rs.zones[1].size.x == Approx(4.0f));
+  CHECK(rs.zones[1].size.z == Approx(4.0f));
+  REQUIRE(rs.pickupCount == 1);
+  CHECK(rs.pickups[0].kind == PickupKindView::Flag);
+  CHECK(rs.pickups[0].colorIndex == 1);  // team 1's colour
+  CHECK(rs.pickups[0].shape == kFlagShape);
+  const RenderPlayer* p0 = nullptr;
+  for (uint16_t i = 0; i < rs.playerCount; ++i) {
+    if (rs.players[i].slot == 0) p0 = &rs.players[i];
+  }
+  REQUIRE(p0 != nullptr);
+  CHECK(p0->has(PlayerFlag::Carrying));
+  // Taking a flag sounds like a power-up.
+  const SimEvent taken{
+      EventKind::PickupTaken, s.tick, kP1, flag, static_cast<uint32_t>(PickupKind::Flag), 1};
+  CHECK(soundForEvent(taken).value_or(SoundCue{SoundId::Count, 0.0f, 0.0f}).id == SoundId::PowerUp);
 }

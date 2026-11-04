@@ -16,6 +16,8 @@ TEST_CASE("Replay header round-trip and validation", "[sim][replay]") {
   h.arena = 3;
   h.mode = 5;
   h.powerUps = 0x0A5;
+  h.loadout = 2;
+  h.teams = balancedTeams(2, h.players);
   h.tickCount = 600;
 
   std::vector<std::byte> buf(replayMaxBytes(h));
@@ -34,8 +36,30 @@ TEST_CASE("Replay header round-trip and validation", "[sim][replay]") {
   CHECK(g.arena == 3);
   CHECK(g.mode == 5);
   CHECK(g.powerUps == 0x0A5);
-  CHECK(g.matchConfig() == MatchConfig{h.seed, h.players, 3, 5, 0x0A5});
+  CHECK(g.loadout == 2);
+  CHECK(g.teams == h.teams);
+  CHECK(g.matchConfig() ==
+        MatchConfig{h.seed, h.players, 3, 5, 0x0A5, 2, balancedTeams(2, h.players)});
   CHECK(ReplayHeader{}.powerUps == kAllPowerUps);
+  CHECK(ReplayHeader{}.loadout == 0);
+  CHECK(ReplayHeader{}.teams == kFreeForAllTeams);
+  ReplayHeader set;
+  set.setMatchConfig(g.matchConfig());
+  CHECK(set.matchConfig() == g.matchConfig());
+
+  // A version 4 header (before the teams, v0.32) is refused, not misread.
+  buf[4] = std::byte{4};  // the low byte of the version
+  BitReader v4(w.written());
+  CHECK_FALSE(readReplayHeader(v4, g));
+  buf[4] = std::byte{kReplayVersion & 0xFF};
+
+  // A team index out of range is refused (the teams follow the loadout byte).
+  const size_t teamsAt = kReplayHeaderBytes - 4 - kMaxPlayers;
+  const std::byte saved = buf[teamsAt];
+  buf[teamsAt] = std::byte{kMaxPlayers};
+  BitReader badTeam(w.written());
+  CHECK_FALSE(readReplayHeader(badTeam, g));
+  buf[teamsAt] = saved;
 
   buf[0] = std::byte{'X'};
   BitReader bad(w.written());

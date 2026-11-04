@@ -86,7 +86,8 @@ namespace {
 
 void tagsText(sim::Tags tags, char (&out)[96]) {
   constexpr std::array<const char*, static_cast<std::size_t>(sim::Tag::kCount)> kNames = {
-      "Dashing", "PerfectDash", "HitStun", "Shielded", "Invulnerable", "Eliminated"};
+      "Dashing",    "PerfectDash", "HitStun",  "Shielded",    "Invulnerable",
+      "Eliminated", "Slamming",    "Parrying", "FriendlyFire"};
   out[0] = '\0';
   std::size_t used = 0;
   for (std::size_t t = 0; t < kNames.size(); ++t) {
@@ -184,8 +185,8 @@ void botsSection(const MatchSession& s) {
     const PlayerId slot{i};
     if (!s.agents().has(slot)) continue;
     const BotSlotStats st = s.botStats(slot);
-    ImGui::Text("P%u  acts %u  substituted %u", static_cast<unsigned>(i) + 1, st.acts,
-                st.substitutions);
+    ImGui::Text("P%u  acts %u  substituted %u  paused %u%s", static_cast<unsigned>(i) + 1, st.acts,
+                st.substitutions, st.paused, s.agents().paused(slot) ? "  (eliminated)" : "");
     if (st.module) {
       ImGui::SameLine();
       ImGui::Text(" traps %llu  over budget %llu  bad returns %llu  fuel %u (max %u)%s",
@@ -194,6 +195,19 @@ void botsSection(const MatchSession& s) {
                   static_cast<unsigned long long>(st.badReturns), st.fuelLast, st.fuelMax,
                   st.alive ? "" : "  DEAD");
     }
+  }
+}
+
+// v0.35: the calls of the match, newest last (slot, symbol, tick).
+void callsSection(const MatchSession& s) {
+  const std::span<const MatchSession::RecentCall> calls = s.recentCalls();
+  if (calls.empty()) {
+    ImGui::TextDisabled("no calls yet (a call ability shouts its aim byte)");
+    return;
+  }
+  for (const MatchSession::RecentCall& c : calls) {
+    ImGui::Text("tick %u  P%u called %3u (0x%02X)", c.tick, static_cast<unsigned>(c.slot) + 1,
+                static_cast<unsigned>(c.symbol), static_cast<unsigned>(c.symbol));
   }
 }
 
@@ -321,13 +335,18 @@ void tuningSection(MatchSession& s, std::string& printed) {
   ImGui::SeparatorText("Mode");
   sim::ModeDef& mode = c.modes[s.matchConfig().mode];
   ImGui::Text("%s", mode.name.cStr());
-  if (mode.kind != sim::ModeKind::Deathmatch) sliderU8("rounds to win", mode.roundsToWin, 1, 9);
+  const bool frags = sim::scoresPoints(mode.kind);
+  if (!frags) sliderU8("rounds to win", mode.roundsToWin, 1, 9);
   sliderU16("round start ticks", mode.roundStartTicks, 0, 300);
   sliderU16("round end ticks", mode.roundEndTicks, 0, 600);
-  if (mode.kind == sim::ModeKind::Deathmatch) {
+  if (frags) {
     sliderU8("score to win", mode.scoreToWin, 1, 50);
     sliderU16("respawn ticks", mode.respawnTicks, 1, 600);
     sliderU16("spawn protection ticks", mode.respawnInvulnTicks, 0, 600);
+  }
+  if (mode.kind == sim::ModeKind::Hill) sliderU16("hill ticks", mode.hillTicks, 1, 1200);
+  if (mode.kind == sim::ModeKind::Capture) {
+    sliderU16("flag return ticks", mode.flagReturnTicks, 1, 3600);
   }
 
   ImGui::Spacing();
@@ -504,6 +523,7 @@ void DebugOverlay::draw(MatchSession& session, const presentation::RendererStats
       controlsSection(session, nowNs);
     }
     if (ImGui::CollapsingHeader("Bots")) botsSection(session);
+    if (ImGui::CollapsingHeader("Calls")) callsSection(session);
     if (ImGui::CollapsingHeader("Interpolation")) interpolationSection(session);
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
     if (ImGui::CollapsingHeader("Feel tuning")) tuningSection(session, printedCpp_);

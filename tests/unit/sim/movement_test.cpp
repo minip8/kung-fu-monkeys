@@ -24,7 +24,7 @@ bool near(Fixed a, Fixed b, int32_t rawTol = 4) {
 void moveWith(WorldState& s, PlayerInput in, const ContentDB& content = defaultContent()) {
   InputFrame f = frameFor(s);
   f.inputs[0] = in;
-  inputSystem(s, f);
+  inputSystem(s, content, f);
   movementSystem(s, content);
 }
 
@@ -164,7 +164,7 @@ TEST_CASE("movement applies to every alive player in one pass", "[sim][movement]
   InputFrame f = frameFor(s);
   f.inputs[0] = PlayerInput{64, 255, 0, 0, 0};
   f.inputs[2] = PlayerInput{192, 255, 0, 0, 0};
-  inputSystem(s, f);
+  inputSystem(s, defaultContent(), f);
   movementSystem(s, defaultContent());
   CHECK(playerAt(s, PlayerId{0}).transform.pos.y > Fixed::zero());
   CHECK(playerAt(s, PlayerId{2}).transform.pos.y < Fixed::zero());

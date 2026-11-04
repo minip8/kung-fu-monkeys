@@ -19,6 +19,29 @@
 // empties the delay line (idle until the first answer is due), keeping the
 // delay and the counters, which are per attach.
 //
+// Per-instance lifecycle (v0.35, §8): a present slot whose monkey was in the
+// world since attach() or reinit() and is gone (eliminated, waiting for a
+// respawn or for the next round) is paused: act() is not called, the slot's
+// input is idle and only its `paused` counter moves. A slot that never had a
+// monkey yet (the lobby tick, a joiner waiting for the next round) acts as
+// before, so a host's first frames do not change. When its
+// monkey is back (a respawn, a new round) the slot resumes with an empty
+// delay line, as after reinit(), and with RespawnMemory::Wipe its agent is
+// init()ed again on the slot's seed first (a module gets a fresh instance:
+// memory_on_respawn = wipe); Keep (the default) resumes the same memory.
+//
+// Fog and calls (v0.35, §8, docs/bot-abi.md §3): under a fog vision the host
+// computes every monkey's sight once per tick (sightOf) and ORs each slot's
+// (visionOf: its own, or its team's) into the slot's turn window, which the
+// observation carries; the window closes after the observation of a tick
+// that ends a turn (turnWindowEnds: a latch, or any tick outside a grid
+// turn), so a latch observation shows everything seen since the previous
+// one. observe() takes each step's events: a MonkeyCalled is heard by every
+// other slot whose monkey stands within the call's range (Chebyshev between
+// the centres, in units, after the step) and enters that slot's window, so
+// the observation of the next tick and of every tick up to the next latch
+// lists it.
+//
 // The content hash in the observation (Observation::match.contentHash) is
 // sim::contentHash(content.db), which serialises the whole ContentDB: far too
 // slow for every tick. The host caches it: computed at the first fill() after
@@ -36,9 +59,12 @@
 
 #include "kfm/ai/agent.hpp"
 #include "kfm/ai/observation.hpp"
+#include "kfm/ai/observation_builder.hpp"
+#include "kfm/ai/vision.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/content.hpp"
+#include "kfm/sim/events.hpp"
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/world_state.hpp"
 
@@ -53,9 +79,13 @@ namespace kfm::ai {
 // beyond any lead the client runs at (§6.2).
 inline constexpr uint8_t kMaxAgentDelayTicks = 120;
 
+// What an agent remembers across its monkey's elimination (memory_on_respawn).
+enum class RespawnMemory : uint8_t { Keep = 0, Wipe = 1 };
+
 struct AgentSlotStats {
-  uint32_t acts{0};           // act() calls (one per present tick)
+  uint32_t acts{0};           // act() calls (one per present tick with a monkey, v0.35)
   uint32_t substitutions{0};  // of them, the ones that returned nullopt (repeat last input)
+  uint32_t paused{0};         // v0.35: present ticks sat out without a monkey (the lifecycle)
 };
 
 class AgentHost {
@@ -77,6 +107,9 @@ class AgentHost {
   // Changes the slot's input delay (clamped to kMaxAgentDelayTicks) from the
   // next fill() on; see the header comment. No-op without an agent.
   void setDelay(PlayerId slot, uint8_t delayTicks);
+  // memory_on_respawn for every slot (see the header comment).
+  void setRespawnMemory(RespawnMemory memory) { memory_ = memory; }
+  [[nodiscard]] RespawnMemory respawnMemory() const { return memory_; }
 
   // The content hash cache (see the header comment): the next fill()
   // recomputes sim::contentHash(content.db). Call it after editing, in place,
@@ -99,6 +132,16 @@ class AgentHost {
   // A slot not present this tick is skipped entirely (no act, its delay line
   // does not advance). Precondition: frame.tick == world.tick.
   void fill(sim::InputFrame& frame, const sim::WorldState& world, const sim::MatchContent& content);
+  // The events of the step that just ran and the world it left (v0.35): the
+  // calls each slot hears (see the header comment). Hosts call it after every
+  // step(); one that does not simply delivers no calls.
+  void observe(const sim::EventSink& events, const sim::WorldState& after,
+               const sim::MatchContent& content);
+
+  // Whether the slot is paused (its monkey eliminated, see the header).
+  [[nodiscard]] bool paused(PlayerId slot) const;
+  // Re-inits on a resume under RespawnMemory::Wipe, since attach.
+  [[nodiscard]] uint32_t wipes(PlayerId slot) const;
 
   // The observation fill() built last (for tools and tests).
   [[nodiscard]] const Observation& lastObservation() const { return obs_; }
@@ -111,6 +154,14 @@ class AgentHost {
     uint32_t next{0};   // the index of the first answer not applied (or skipped) yet
     sim::PlayerInput last{};
     AgentSlotStats stats{};
+    uint64_t seed{0};  // the last init() seed: a wipe re-inits with it
+    bool paused{false};
+    bool hadMonkey{false};  // its monkey was in the world since attach/reinit
+    uint32_t wipes{0};
+    // v0.35: the turn window (see the header comment).
+    ObsVisibility seen{};
+    std::array<HeardCall, kObsMaxHeardCalls> heard{};
+    uint8_t heardCount{0};
     // ring[n % ring.size()] holds the answer of the n-th act(): the last
     // kMaxAgentDelayTicks + 1 answers, whatever the delay, so a delay change
     // never loses one that is still due.
@@ -118,9 +169,13 @@ class AgentHost {
   };
   [[nodiscard]] const Slot* slotAt(PlayerId slot) const;
   [[nodiscard]] Slot* slotAt(PlayerId slot);
+  // Empties the delay line, the last input and the turn window.
+  static void restartLine(Slot& s);
 
   std::array<Slot, sim::kMaxPlayers> slots_{};
   Observation obs_{};
+  RespawnMemory memory_{RespawnMemory::Keep};
+  std::array<Sight, sim::kMaxPlayers> sights_{};  // fill()'s per-tick scratch
   // The content hash cache: hash_ is contentHash(*hashFor_) while hashFor_ is set.
   const sim::ContentDB* hashFor_{nullptr};
   uint32_t hash_{0};

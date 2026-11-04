@@ -22,7 +22,7 @@ void applyDamage(WorldState& s, const MatchContent& content, Player& victim, Ent
     const PlayerId killer = source.attackerSlot < kMaxPlayers
                                 ? PlayerId{static_cast<uint8_t>(source.attackerSlot)}
                                 : PlayerId::invalid();
-    modeBehaviorFor(content.mode.kind).onEliminated(s, content, victim.id, killer, sink);
+    modeBehaviorOf(content).onEliminated(s, content, victim.id, killer, sink);
   }
 }
 

@@ -229,6 +229,7 @@ class NetServer {
   // 0 for the first match, +1 per restart that took effect.
   [[nodiscard]] uint32_t matchIndex() const { return matchIndex_; }
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return config_.match; }
+  [[nodiscard]] const sim::ContentDB& content() const { return *content_; }
   // The bot seed of the current match: ServerConfig::botSeed, then the one
   // passed to the restartMatch() that took effect.
   [[nodiscard]] uint64_t botSeed() const { return botSeed_; }

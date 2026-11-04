@@ -99,12 +99,30 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   LobbyMenu m;
   m.setContent(db);
   const auto rows = m.rows();
-  REQUIRE(rows.size() == 6u + db.powerUpCount);
+  // v0.34: a mode's baseline gets no toggle (the grid modes name two).
+  uint8_t baselines = 0;
+  for (uint8_t i = 0; i < db.powerUpCount; ++i) {
+    for (uint8_t k = 0; k < db.modeCount; ++k) {
+      if (db.modes[k].baseline == i) {
+        ++baselines;
+        break;
+      }
+    }
+  }
+  CHECK(baselines == 2);
+  const uint8_t toggles = static_cast<uint8_t>(db.powerUpCount - baselines);
+  REQUIRE(rows.size() == 8u + toggles);
   CHECK(rows[0].kind == LobbyRowKind::Arena);
   CHECK(rows[1].kind == LobbyRowKind::Mode);
-  for (uint8_t i = 0; i < db.powerUpCount; ++i) {
-    CHECK(rows[2 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
-    CHECK(m.rowLabel(rows[2 + i]) == db.powerUps[i].name.view());
+  CHECK(rows[2].kind == LobbyRowKind::Teams);  // v0.32
+  CHECK(m.rowLabel(rows[2]) == "Teams");
+  CHECK(m.rowValue(rows[2]) == "free-for-all");
+  CHECK(rows[3].kind == LobbyRowKind::Loadout);
+  CHECK(m.rowLabel(rows[3]) == "Loadout");
+  CHECK(m.rowValue(rows[3]) == "base");
+  for (uint8_t i = 0; i < toggles; ++i) {  // the baselines come last in powerups.toml
+    CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
+    CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[i].name.view());
   }
   CHECK(rows[rows.size() - 4].kind == LobbyRowKind::Bots);
   CHECK(rows[rows.size() - 3].kind == LobbyRowKind::BotDifficulty);
@@ -115,7 +133,75 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
 
   // A menu that never saw content still has the default fixture's rows.
   const LobbyMenu bare;
-  CHECK(bare.rows().size() == 6u + sim::defaultContent().powerUpCount);
+  CHECK(bare.rows().size() == 8u + sim::defaultContent().powerUpCount);
+}
+
+TEST_CASE("lobby menu: a team mode shows its teams and keeps a suitable arena (v0.32)",
+          "[client][lobby][teams]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t teamRounds = db.findMode("team_rounds").value_or(0);
+  const uint8_t standoff = db.findArena("standoff").value_or(0);
+  REQUIRE(teamRounds != 0);
+  REQUIRE(standoff != 0);
+  LobbyMenu m;
+  m.setContent(db);
+  // Cycling the mode into team_rounds moves the arena off the dojo.
+  const std::size_t modeRow = rowOf(m, LobbyRowKind::Mode);
+  while (m.settings().mode != teamRounds)
+    (void)m.change(modeRow, +1);
+  CHECK(m.settings().arena == standoff);
+  CHECK(m.rowValue(m.rows()[rowOf(m, LobbyRowKind::Teams)]) == "2 (by mode)");
+  CHECK_FALSE(m.change(rowOf(m, LobbyRowKind::Teams), +1));  // derived, not set
+  // The arena row only offers arenas that suit the mode.
+  for (int i = 0; i < 2 * db.arenaCount; ++i) {
+    (void)m.change(rowOf(m, LobbyRowKind::Arena), +1);
+    CHECK(db.compatible(m.settings().arena, m.settings().mode));
+  }
+  // Content that loads with an unsuitable pair is clamped too.
+  LobbyMenu fresh;
+  fresh.settings().mode = teamRounds;
+  fresh.setContent(db);
+  CHECK(fresh.settings().arena == standoff);
+  // A saved arena gives way to the mode named by a flag.
+  ClientOptions o;
+  o.arena = "dojo";
+  o.mode = "team_rounds";
+  LobbySettings ls;
+  std::string error;
+  REQUIRE(lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.arena == standoff);
+  o.arena = "lava";
+  CHECK_FALSE(lobbySettingsFrom(o, db, ls, error));
+}
+
+TEST_CASE("lobby menu: a grid mode opens on its own arena and keeps arenas with cells (v0.34)",
+          "[client][lobby][grid]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t grid = db.findMode("grid_rounds").value_or(0);
+  const uint8_t courtyard = db.findArena("courtyard").value_or(0);
+  REQUIRE(grid != 0);
+  REQUIRE(courtyard != 0);
+  LobbyMenu m;
+  m.setContent(db);
+  const std::size_t modeRow = rowOf(m, LobbyRowKind::Mode);
+  while (m.settings().mode != grid)
+    (void)m.change(modeRow, +1);
+  CHECK(m.settings().arena == courtyard);  // ModeDef::arena, not the first tilemap
+  CHECK(m.rowValue(m.rows()[rowOf(m, LobbyRowKind::Teams)]) == "2 (by mode)");
+  for (int i = 0; i < 2 * db.arenaCount; ++i) {
+    (void)m.change(rowOf(m, LobbyRowKind::Arena), +1);
+    CHECK(db.compatible(m.settings().arena, m.settings().mode));
+    CHECK(db.arenas[m.settings().arena].cellSize > Fixed::zero());
+  }
+  ClientOptions o;
+  o.mode = "grid_rounds";
+  LobbySettings ls;
+  std::string error;
+  REQUIRE(lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.arena == courtyard);
+  o.arena = "dojo";  // a saved or named arena without cells gives way
+  REQUIRE(lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.arena == courtyard);
 }
 
 TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][lobby]") {
@@ -149,6 +235,17 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
       CHECK(m.apply(MenuAction::Right));
       CHECK(m.settings().mode == i % db.modeCount);
     }
+  }
+  SECTION("loadout cycles through base and content/loadouts.toml (v0.31)") {
+    REQUIRE(db.loadoutCount >= 2);
+    m.setFocus(rowOf(m, LobbyRowKind::Loadout));
+    for (uint8_t i = 1; i <= db.loadoutCount; ++i) {
+      CHECK(m.apply(MenuAction::Right));
+      CHECK(m.settings().loadout == i % db.loadoutCount);
+      CHECK(m.rowValue(m.focusedRow()) == db.loadoutAt(m.settings().loadout).name.view());
+    }
+    CHECK(m.apply(MenuAction::Left));
+    CHECK(m.settings().loadout == db.loadoutCount - 1);
   }
   SECTION("a power-up toggles with either direction") {
     const std::size_t row = rowOf(m, LobbyRowKind::PowerUp, 1);
@@ -215,10 +312,12 @@ TEST_CASE("lobby menu: new content clamps the settings and keeps the focus", "[c
   m.setContent(db);
   m.settings().arena = static_cast<uint8_t>(db.arenaCount - 1);
   m.settings().mode = static_cast<uint8_t>(db.modeCount - 1);
+  m.settings().loadout = static_cast<uint8_t>(db.loadoutCount - 1);
   m.setFocus(rowOf(m, LobbyRowKind::Volume));
-  m.setContent(sim::defaultContent());  // one arena, one mode
+  m.setContent(sim::defaultContent());  // one arena, one mode, one loadout
   CHECK(m.settings().arena == 0);
   CHECK(m.settings().mode == 0);
+  CHECK(m.settings().loadout == 0);
   CHECK(m.focusedRow().kind == LobbyRowKind::Volume);
   m.setFocus(rowOf(m, LobbyRowKind::Arena));
   CHECK_FALSE(m.apply(MenuAction::Right));  // a single arena cycles onto itself
@@ -286,6 +385,7 @@ TEST_CASE("lobby settings: options names <-> indices", "[client][lobby][settings
   ClientOptions o;
   o.arena = "pillars";
   o.mode = "deathmatch";
+  o.loadout = "slam";
   o.powerUps = "shield,speed_boost";
   o.bots = 3;
   o.botDifficulty = ai::ReferenceTier::Easy;
@@ -296,6 +396,7 @@ TEST_CASE("lobby settings: options names <-> indices", "[client][lobby][settings
   REQUIRE(client::lobbySettingsFrom(o, db, s, error));
   CHECK(s.arena == arenaIndex("pillars"));
   CHECK(s.mode == db.findMode("deathmatch").value_or(0xFF));
+  CHECK(s.loadout == db.findLoadout("slam").value_or(0xFF));
   CHECK(s.powerUps == ((1u << db.findPowerUp("shield").value_or(0)) |
                        (1u << db.findPowerUp("speed_boost").value_or(0))));
   CHECK(s.bots == 3);
@@ -307,15 +408,20 @@ TEST_CASE("lobby settings: options names <-> indices", "[client][lobby][settings
   client::storeLobbySettings(s, db, back);
   CHECK(back.arena == "pillars");
   CHECK(back.mode == "deathmatch");
+  CHECK(back.loadout == "slam");
   CHECK(back.powerUps == "speed_boost,shield");  // content order
   CHECK(back.botDifficulty == ai::ReferenceTier::Easy);
   LobbySettings again;
   REQUIRE(client::lobbySettingsFrom(back, db, again, error));
   CHECK(again == s);
 
-  // Defaults: the first arena and mode, every power-up.
+  // Defaults: the first arena, mode and loadout, every power-up.
   REQUIRE(client::lobbySettingsFrom(ClientOptions{}, db, again, error));
   CHECK(again == LobbySettings{});
+  o.loadout = "zap";
+  CHECK_FALSE(client::lobbySettingsFrom(o, db, again, error));
+  CHECK(error.find("unknown loadout 'zap'") != std::string::npos);
+  o.loadout = "slam";
   o.powerUps = "lava";
   CHECK_FALSE(client::lobbySettingsFrom(o, db, again, error));
   CHECK(error.find("unknown power-up 'lava'") != std::string::npos);
@@ -327,6 +433,7 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   ClientOptions saved;
   saved.arena = "island";
   saved.mode = "survival";
+  saved.loadout = "parry";
   saved.powerUps = "none";
   saved.bots = 4;
   saved.botDifficulty = ai::ReferenceTier::Hard;
@@ -334,8 +441,8 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   saved.mute = true;
   const std::string text = client::settingsText(saved);
   CHECK(text ==
-        "arena=island\nmode=survival\npowerups=none\nbots=4\nbot_difficulty=hard\nvolume=30\n"
-        "mute=1\n");
+        "arena=island\nmode=survival\nloadout=parry\npowerups=none\nbots=4\nbot_difficulty=hard\n"
+        "volume=30\nmute=1\n");
 
   ClientOptions loaded;
   std::vector<std::string> warnings;
@@ -349,9 +456,11 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
     warnings.clear();
     client::applySettingsText(
         "# kfm\n\narena=volcano\nmode = deathmatch \r\npowerups=shield,lava\nbots=12\n"
-        "volume=loud\nmute=2\ncolour=red\njunk\nbot_difficulty=insane\n",
+        "volume=loud\nmute=2\ncolour=red\njunk\nbot_difficulty=insane\nloadout=rounds_slam\n"
+        "loadout=slam\n",
         db, o, warnings);
-    CHECK(warnings.size() == 8);
+    CHECK(warnings.size() == 9);
+    CHECK(o.loadout == "slam");  // the stale v0.24 mode name warned, the loadout applied
     CHECK(o.botDifficulty == ai::ReferenceTier::Medium);
     CHECK(o.arena.empty());
     CHECK(o.mode == "deathmatch");
@@ -373,6 +482,7 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
     CHECK(o.botDifficulty == ai::ReferenceTier::Easy);  // flag over the saved hard
     CHECK(o.arena == "corridors");                      // flag
     CHECK(o.mode == "survival");                        // saved
+    CHECK(o.loadout == "parry");                        // saved
     CHECK(o.powerUps == "shield");                      // flag
     CHECK(o.bots == 4);                                 // saved
     CHECK(o.volume == 90);                              // flag
@@ -385,17 +495,20 @@ TEST_CASE("client flags: --powerups, --no-settings, URL-style lists", "[client][
   std::string error;
   CHECK(o.settings);
   CHECK(o.powerUps.empty());
-  // The browser page turns ?arena=pillars&mode=deathmatch&powerups=a,b into these.
-  REQUIRE(parse({"--arena", "pillars", "--mode", "deathmatch", "--powerups", "shield,big_banana",
-                 "--no-settings"},
+  // The browser page turns ?arena=pillars&mode=deathmatch&loadout=slam&powerups=a,b into these.
+  REQUIRE(parse({"--arena", "pillars", "--mode", "deathmatch", "--loadout", "slam", "--powerups",
+                 "shield,big_banana", "--no-settings"},
                 o, error));
   CHECK(o.arena == "pillars");
   CHECK(o.mode == "deathmatch");
+  CHECK(o.loadout == "slam");
   CHECK(o.powerUps == "shield,big_banana");
   CHECK_FALSE(o.settings);
   ClientOptions bad;
   CHECK_FALSE(parse({"--powerups"}, bad, error));
   CHECK(error == "--powerups needs a value");
+  CHECK_FALSE(parse({"--loadout"}, bad, error));
+  CHECK(error == "--loadout needs a value");
 }
 
 TEST_CASE("the session's power-up set reaches the lobby world and the match",
@@ -414,6 +527,47 @@ TEST_CASE("the session's power-up set reaches the lobby world and the match",
   CHECK(s.matchConfig().powerUps == 0b10010);  // the running match keeps its set
   s.restart(2'000'000'000ULL, false);
   CHECK(s.matchConfig().powerUps == 0);
+}
+
+TEST_CASE("the session's loadout reaches the lobby world and the match (v0.31)",
+          "[client][lobby][session]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t slam = db.findLoadout("slam").value_or(0);
+  REQUIRE(slam != 0);
+  client::MatchSession s(
+      client::SessionConfig{.seed = 3, .loadout = slam, .content = &db, .bots = 1});
+  CHECK(s.loadout() == slam);
+  CHECK(s.matchConfig().loadout == slam);
+  CHECK(s.matchContent().loadout() == db.loadouts[slam].abilities);
+  REQUIRE(s.startMatch(1'000'000'000ULL));
+  s.setLoadout(0);
+  CHECK(s.matchConfig().loadout == slam);  // the running match keeps its loadout
+  s.restart(2'000'000'000ULL, false);
+  CHECK(s.matchConfig().loadout == 0);
+  s.setLoadout(200);  // out of range falls back to the base kit
+  CHECK(s.loadout() == 0);
+  CHECK(client::loadoutSummary(db, slam) == "dash, throw, slam");
+  CHECK(client::loadoutSummary(db, 0) == "dash, throw");
+}
+
+TEST_CASE("the session splits a team mode's slots into balanced teams (v0.32)",
+          "[client][lobby][session][teams]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t teamRounds = db.findMode("team_rounds").value_or(0);
+  const uint8_t standoff = arenaIndex("standoff");
+  REQUIRE(teamRounds != 0);
+  client::MatchSession s(client::SessionConfig{
+      .seed = 3, .arena = standoff, .mode = teamRounds, .content = &db, .bots = 3});
+  // Keyboard 0 on slot 0 plus three bots: 0 and 2 against 1 and 3.
+  CHECK(s.teams() == sim::balancedTeams(2, 0b1111));
+  REQUIRE(s.startMatch(1'000'000'000ULL));
+  CHECK(s.matchConfig().teams == sim::balancedTeams(2, 0b1111));
+  CHECK(s.matchContent().relation(PlayerId{0}, PlayerId{2}) == sim::Relation::Ally);
+  CHECK(s.matchContent().relation(PlayerId{0}, PlayerId{1}) == sim::Relation::Enemy);
+  // A free-for-all mode keeps slot i on team i.
+  s.setMode(0);
+  s.restart(2'000'000'000ULL, false);
+  CHECK(s.matchConfig().teams == sim::kFreeForAllTeams);
 }
 
 TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {

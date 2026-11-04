@@ -7,7 +7,7 @@
 //   kfm_render_probe [--players N] [--seed S] [--input-seed I] [--ticks-per-frame K]
 //                    [--width W] [--height H] [--exit-after-frames N]
 //                    [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]
-//                    [--content DIR] [--arena NAME] [--mode NAME]
+//                    [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
 //
 // --exit-after-frames N renders N frames and exits 0 (rendering smoke test).
 // --screenshot path     writes the last rendered frame as binary PPM (native only;
@@ -20,8 +20,8 @@
 // --capsules            draw players as capsules instead of the skinned model
 //                       (also the fallback when content/models/test_rig.glb is missing).
 // --content DIR         content directory (default: content/ next to the
-//                       executable, else the embedded copy); --arena / --mode
-//                       pick the match's arena and mode by name.
+//                       executable, else the embedded copy); --arena / --mode /
+//                       --loadout pick the match's arena, mode and loadout by name.
 // A match that ends is replaced by a fresh one (next seed) after a short pause.
 #include "kfm/content/app_content.hpp"
 #include "kfm/core/rng.hpp"
@@ -76,6 +76,7 @@ struct Options {
   std::string_view contentDir;  // empty: next to the executable, else embedded
   std::string_view arena;       // names; empty = the first one
   std::string_view mode;
+  std::string_view loadout;
 };
 
 constexpr int kExitOnWindow = 100;
@@ -123,7 +124,7 @@ constexpr const char* kUsage =
     "usage: kfm_render_probe [--players N] [--seed S] [--input-seed I] [--ticks-per-frame K]\n"
     "                        [--width W] [--height H] [--exit-after-frames N]\n"
     "                        [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]\n"
-    "                        [--content DIR] [--arena NAME] [--mode NAME]\n";
+    "                        [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n";
 
 template <typename T>
 bool parseNumber(std::string_view v, T& out) {
@@ -155,6 +156,8 @@ bool parseArgs(int argc, const char* const* argv, Options& o) {
       o.arena = argv[++i];
     } else if (arg == "--mode" && hasValue) {
       o.mode = argv[++i];
+    } else if (arg == "--loadout" && hasValue) {
+      o.loadout = argv[++i];
     } else if (arg == "--screenshot" && hasValue) {
       o.screenshotPath = argv[++i];
     } else if (arg == "--players" && hasValue) {
@@ -194,7 +197,7 @@ bool parseArgs(int argc, const char* const* argv, Options& o) {
 #endif
 }
 
-// Match `match` (1-based): the next seed, the same arena and mode.
+// Match `match` (1-based): the next seed, the same arena, mode and loadout.
 [[nodiscard]] sim::MatchConfig matchConfig(const App& app, uint32_t match) {
   sim::MatchConfig c = app.config;
   c.seed = app.options.seed + match - 1;
@@ -354,14 +357,18 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
         base != nullptr ? std::filesystem::path(base) : std::filesystem::path{}, app.content, diag);
     if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
     std::string error;
-    if (!loaded || !content::resolveMatchNames(app.content.db, app.options.arena, app.options.mode,
-                                               app.config, error)) {
+    if (!loaded ||
+        !content::resolveMatchNames(app.content.db, app.options.arena, app.options.mode, app.config,
+                                    error) ||
+        !content::resolveLoadoutName(app.content.db, app.options.loadout, app.config, error)) {
       std::fprintf(stderr, "error: %s\n", loaded ? error.c_str() : "the content failed to load");
       return EXIT_FAILURE;
     }
-    std::printf("kfm_render_probe: %s, arena %s, mode %s\n", app.content.describe().c_str(),
+    std::printf("kfm_render_probe: %s, arena %s, mode %s, loadout %s\n",
+                app.content.describe().c_str(),
                 app.content.db.arenaAt(app.config.arena).name.cStr(),
-                app.content.db.modeAt(app.config.mode).name.cStr());
+                app.content.db.modeAt(app.config.mode).name.cStr(),
+                app.content.db.loadoutAt(app.config.loadout).name.cStr());
   }
   if (!app.window.init({.title = "Kung Fu Monkeys: render probe",
                         .width = app.options.width,

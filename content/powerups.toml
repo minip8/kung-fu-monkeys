@@ -7,10 +7,11 @@
 # per second), color (palette index 0-9: 0 red, 1 blue, 2 yellow, 3 green,
 # 4 orange, 5 purple, 6 cyan, 7 pink, 8 white, 9 charcoal), shape (orb |
 # cube | diamond | coin), grants = a list of 1 to 4 tables, each one of
-#   { kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max", mul, add }
+#   { kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max" | "radius", mul, add }
 #       stat = base x product of mul + sum of add over the live power-ups;
 #       max_hp and ammo_max are integer stats: whole 'add' only, no 'mul'.
 #       ammo_max also tops the ammo up by 'add' on every pickup.
+#       radius (v0.34) is the contact radius: a mul in (0, 4], an add, or both.
 #   { kind = "ability", slot = "dash" | "throw" | "ability", ability = "<ability name>" }
 #       the slot runs that ability (any kind: buttons belong to slots) while live;
 #       it switches when the slot is idle, its cooldown capped at the new def's.
@@ -54,3 +55,48 @@ duration_ticks = 600
 color = 3                   # green
 shape = "cube"
 grants = [{ kind = "ability", slot = "throw", ability = "throw_fast" }]
+
+# v0.34, the grid space (architecture §5.12). Quick Hands: the throw slot
+# runs quick_throw (abilities.toml), which does not root, so the monkey can
+# step and throw in one turn while it lasts. Spawned by the courtyard's
+# spawners only (arenas/08-courtyard.toml).
+[[powerup]]
+name = "quick_hands"
+duration_ticks = 600        # 40 turns of 15 ticks
+color = 7                   # pink
+shape = "cube"
+grants = [{ kind = "ability", slot = "throw", ability = "quick_throw" }]
+
+# The grid modes' baselines (modes.toml `baseline`: held from the spawn with
+# no expiry; duration_ticks is required but never counted). They fit the hit
+# disc inside a one-unit cell: a monkey of 0.35 (0.5 x 0.7) and a banana of
+# 0.15 (0.35 x 0.4286, 9830 raw = 0.15 truncated) touch at 0.5, half a cell.
+# HP 2, so one caught or missed banana does not swing the fight. No spawner
+# lists them; a spawner without a power_ups list would draw them, so every
+# spawner in the shipped arenas names its set.
+[[powerup]]
+name = "grid_base"
+duration_ticks = 1
+color = 8                   # white
+shape = "orb"
+grants = [
+  { kind = "stat", stat = "radius", mul = 0.7 },
+  { kind = "stat", stat = "max_hp", add = 1 },
+  # 2 cells per 15-tick turn: 16 u/s x 0.5 = 8 u/s. The flight keeps
+  # outbound_ticks (36): 4.8 cells out before it turns for home.
+  { kind = "projectile", radius_mul = 0.4286, speed_mul = 0.5 },
+]
+
+# The same at 1-tick turns. 2 cells per turn would be 120 u/s, beyond the
+# projectile multiplier's limit of 4 (64 u/s, about 1.07 cells per turn):
+# the fast variant's bananas are the fastest content allows (§12).
+[[powerup]]
+name = "grid_base_1t"
+duration_ticks = 1
+color = 8
+shape = "orb"
+grants = [
+  { kind = "stat", stat = "radius", mul = 0.7 },
+  { kind = "stat", stat = "max_hp", add = 1 },
+  { kind = "projectile", radius_mul = 0.4286, speed_mul = 4 },
+]

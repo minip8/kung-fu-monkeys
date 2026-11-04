@@ -2,6 +2,7 @@
 
 #include "kfm/content/app_content.hpp"
 #include "kfm/sim/content.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/visit.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -33,8 +34,9 @@ std::vector<std::byte> bytesOf(const T& def) {
 }
 
 // defaultContent() is the minimal fixture and content/ a superset (§5.10):
-// the singletons, every ability the fixture defines, arena 0 and mode 0
-// must agree; further abilities, arenas and modes are TOML-only.
+// the singletons, every ability the fixture defines, arena 0, mode 0 and
+// loadout 0 must agree; further abilities, arenas, modes and loadouts are
+// TOML-only.
 void requireAgreesWithFixture(const ContentDB& loaded) {
   const ContentDB& fixture = sim::defaultContent();
   CHECK(bytesOf(loaded.player) == bytesOf(fixture.player));
@@ -50,6 +52,8 @@ void requireAgreesWithFixture(const ContentDB& loaded) {
   REQUIRE(loaded.modeCount >= 1);
   CHECK(bytesOf(loaded.arenas[0]) == bytesOf(fixture.arenas[0]));
   CHECK(bytesOf(loaded.modes[0]) == bytesOf(fixture.modes[0]));
+  REQUIRE(loaded.loadoutCount >= 1);
+  CHECK(bytesOf(loaded.loadouts[0]) == bytesOf(fixture.loadouts[0]));
 }
 
 // A minimal complete content set; tests break one piece at a time.
@@ -206,32 +210,97 @@ TEST_CASE("a minimal content set loads, names resolve to indices", "[content][lo
   CHECK(db.modes[0].roundsToWin == sim::ModeDef{}.roundsToWin);  // optional keys keep defaults
 }
 
-TEST_CASE("loadouts: a third slot, mode loadouts and MatchContent::loadout", "[content][loader]") {
+TEST_CASE("loadouts: [[loadout]] defs, loadout 0 and MatchContent::loadout (v0.31)",
+          "[content][loader][loadout]") {
   ContentDB db{};
   Diagnostics diag;
   const std::string text = std::string(kMinimal) +
-                           "\n[[mode]]\nname = \"swap\"\nabilities = [\"throw\", \"dash\", "
+                           "\n[[loadout]]\nname = \"swap\"\nabilities = [\"throw\", \"dash\", "
                            "\"dash\"]\n";
   const bool ok = parseContent(text, "min.toml", db, diag);
   INFO(diag.format());
   REQUIRE(ok);
-  // The base kit leaves the ability button's slot on none.
+  // The base kit leaves the ability button's slot on none and is loadout 0.
   CHECK(db.player.abilities[sim::kAbilitySlotExtra] == 0);
-  CHECK(db.modes[0].hasAbilities == 0);
-  REQUIRE(db.modeCount == 2);
-  CHECK(db.modes[1].hasAbilities == 1);
-  CHECK(db.modes[1].abilities == std::array<uint8_t, sim::kAbilitySlots>{2, 1, 1});
-  const sim::MatchContent rounds(db, 0, 0);
-  const sim::MatchContent swap(db, 0, 1);
-  CHECK(rounds.loadout(sim::kAbilitySlotDash) == 1);
-  CHECK(rounds.loadout(sim::kAbilitySlotExtra) == 0);
-  CHECK(swap.loadout(sim::kAbilitySlotDash) == 2);
-  CHECK(swap.loadout(sim::kAbilitySlotExtra) == 1);
-  CHECK(
-      contains(loadErrors(text + "\n[[mode]]\nname = \"bad\"\nabilities = [\"dash\", \"none\"]\n"),
-               "mode \"bad\" abilities: the throw slot must hold an ability"));
-  CHECK(contains(loadErrors(text + "\n[[mode]]\nname = \"bad\"\nabilities = [\"dash\", \"zap\"]\n"),
-                 "names unknown ability \"zap\""));
+  REQUIRE(db.loadoutCount == 2);
+  CHECK(db.loadouts[0].name.view() == sim::kBaseLoadoutName);
+  CHECK(db.loadouts[0].abilities == db.player.abilities);
+  CHECK(db.loadouts[1].name.view() == "swap");
+  CHECK(db.loadouts[1].abilities == std::array<uint8_t, sim::kAbilitySlots>{2, 1, 1});
+  CHECK(db.findLoadout("base") == std::optional<uint8_t>{0});
+  CHECK(db.findLoadout("swap") == std::optional<uint8_t>{1});
+  CHECK_FALSE(db.findLoadout("zap").has_value());
+  const sim::MatchContent base(db, 0, 0);
+  const sim::MatchContent swap = sim::matchContent(db, sim::MatchConfig{.loadout = 1});
+  CHECK(base.loadout() == db.player.abilities);
+  CHECK(swap.loadout() == db.loadouts[1].abilities);
+  // An index past the content falls back to the base kit.
+  CHECK(sim::matchContent(db, sim::MatchConfig{.loadout = 9}).loadout() == db.player.abilities);
+
+  CHECK(contains(
+      loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"dash\", \"none\"]\n"),
+      "loadout \"bad\" abilities: the throw slot must hold an ability"));
+  CHECK(contains(
+      loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"none\", \"throw\"]\n"),
+      "loadout \"bad\" abilities: the dash slot must hold an ability"));
+  CHECK(contains(
+      loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"dash\", \"zap\"]\n"),
+      "names unknown ability \"zap\""));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"dash\"]\n"),
+                 "'abilities' must list 2 or 3 ability names"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"bad\"\n"),
+                 "missing required key 'abilities'"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"swap\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\n"),
+                 "loadout \"swap\" is defined twice"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"base\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\n"),
+                 "\"base\" is the built-in loadout of [player] abilities"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"x\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\ncolor = 3\n"),
+                 "unknown key 'color'"));
+  // v0.31: a mode no longer carries a loadout.
+  CHECK(contains(loadErrors(std::string(kMinimal) +
+                            "\n[[mode]]\nname = \"m\"\nabilities = [\"dash\", \"throw\"]\n"),
+                 "a mode no longer carries a loadout"));
+
+  // At most kMaxLoadouts in all: base plus 15 [[loadout]] tables.
+  std::string many(kMinimal);
+  for (uint32_t i = 1; i < sim::kMaxLoadouts; ++i) {
+    many +=
+        "\n[[loadout]]\nname = \"l" + std::to_string(i) + "\"\nabilities = [\"dash\", \"throw\"]\n";
+  }
+  ContentDB full{};
+  REQUIRE(parseContent(many, "many.toml", full, diag));
+  CHECK(full.loadoutCount == sim::kMaxLoadouts);
+  CHECK(contains(loadErrors(many + "\n[[loadout]]\nname = \"one_more\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\n"),
+                 "too many loadouts (at most 15 besides base, kMaxLoadouts)"));
+
+  // validateContent() holds loadout 0 to the [player] abilities.
+  ContentDB broken = db;
+  broken.loadouts[0].abilities[sim::kAbilitySlotExtra] = 2;
+  Diagnostics bad;
+  CHECK_FALSE(validateContent(broken, bad));
+  CHECK(contains(bad.format(), "loadout 0 must be \"base\" with the [player] abilities"));
+}
+
+TEST_CASE("--loadout names resolve to MatchConfig::loadout", "[content][app][loadout]") {
+  sim::ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadEmbeddedContent(db, diag));
+  sim::MatchConfig config{.seed = 3, .arena = 1, .loadout = 7};
+  std::string error;
+  REQUIRE(resolveLoadoutName(db, "", config, error));
+  CHECK(config.loadout == 0);
+  CHECK(config.arena == 1);  // the rest of the config is left alone
+  REQUIRE(resolveLoadoutName(db, "slam", config, error));
+  CHECK(config.loadout == db.findLoadout("slam").value_or(0xFF));
+  REQUIRE(resolveLoadoutName(db, "base", config, error));
+  CHECK(config.loadout == 0);
+  CHECK_FALSE(resolveLoadoutName(db, "zap", config, error));
+  CHECK(contains(error, "unknown loadout 'zap'"));
+  CHECK(contains(error, "base, blink, slam, parry"));
 }
 
 TEST_CASE("documents merge in order; lists append", "[content][loader]") {
@@ -473,14 +542,68 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
   CHECK(contains(loadErrors(replaced(kMinimal, "min_ammo = 1", "min_ammo = 0")),
                  "min_ammo must be at least 1"));
   CHECK(contains(
-      loadErrors(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 12")),
-      "active_ticks must exceed perfect_window_ticks"));
+      loadErrors(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 13")),
+      "a dash needs active_ticks >= 1 and perfect_window_ticks <= active_ticks"));
+  // v0.34: a window of 0 (never perfect) and one spanning the active phase load.
+  CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 0")));
+  CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 12")));
+  // v0.34: the space, and the grid's keys only in a grid mode.
+  CHECK(contains(
+      loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\nspace = \"hex\"")),
+      "unknown space \"hex\" (continuous or grid)"));
+  CHECK(contains(
+      loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\nturn_ticks = 15")),
+      "'turn_ticks' belongs to a grid mode (give space = \"grid\")"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nspace = \"grid\"\nturn_ticks = 61")),
+                 "'turn_ticks' must be an integer in [1, 60]"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nspace = \"grid\"\ndash_cells = 0")),
+                 "'dash_cells' must be an integer in [1, 8]"));
+  {
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(parseContent(replaced(kMinimal, "name = \"rounds\"",
+                                  "name = \"rounds\"\nspace = \"grid\"\nturn_ticks = 4\n"
+                                  "dash_cells = 3"),
+                         "test.toml", db, diag));
+    CHECK(db.modes[0].space == sim::Space::Grid);
+    CHECK(db.modes[0].turnTicks == 4);
+    CHECK(db.modes[0].dashCells == 3);
+    CHECK_FALSE(db.compatible(0, 0));  // a hand-placed arena has no cells
+  }
+  // v0.34: a mode's own arena must exist and suit it.
+  CHECK(loads(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\narena = \"box\"")));
+  CHECK(contains(
+      loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\narena = \"nope\"")),
+      "'arena' names unknown arena \"nope\""));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nspace = \"grid\"\narena = \"box\"")),
+                 "its arena \"box\" does not suit it"));
   CHECK(contains(
       loadErrors(replaced(kMinimal, "active_ticks = 12", "active_ticks = 12\nstartup_ticks = 1")),
       "startup_ticks = 0"));
   CHECK(contains(loadErrors(replaced(kMinimal, "kind = \"dash\"",
                                      "kind = \"dash\"\ntags_active = [\"flying\"]")),
                  "unknown tag in 'tags_active'"));
+  // v0.34: root_phases is a list of phase names.
+  CHECK(contains(loadErrors(replaced(kMinimal, "kind = \"throw\"",
+                                     "kind = \"throw\"\nroot_phases = [\"flying\"]")),
+                 "'root_phases' entries must be startup, active or recovery"));
+  {
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(parseContent(replaced(kMinimal, "kind = \"throw\"",
+                                  "kind = \"throw\"\nroot_phases = [\"recovery\", \"startup\"]"),
+                         "test.toml", db, diag));
+    uint8_t thr = 0;
+    for (uint8_t i = 0; i < db.abilityCount; ++i) {
+      if (db.abilities[i].name.view() == "throw") thr = i;
+    }
+    REQUIRE(thr != 0);
+    CHECK(db.abilities[thr].rootPhases ==
+          (sim::phaseBit(sim::AbilityPhase::Recovery) | sim::phaseBit(sim::AbilityPhase::Startup)));
+  }
   CHECK(contains(
       loadErrors(replaced(kMinimal, "spawn_points = [[-2, 0], [2, 0]]",
                           "spawn_points = [[-2, 0], [2, 0]]\nspawn_ellipse = { radii = [1, 1], "
@@ -492,7 +615,7 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
     manyArenas += "[[arena]]\nname = \"a" + std::to_string(i) +
                   "\"\nhalf_extents = [10, 5]\nspawn_points = [[0, 0]]\n";
   }
-  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 8, kMaxArenas)"));
+  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 16, kMaxArenas)"));
 }
 
 // --- power-ups (§5.8, v0.20) ------------------------------------------------
@@ -583,15 +706,24 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                                      "stat = \"ammo_max\", add = 1.5")),
                  "'ammo_max' is an integer stat: 'add' must be whole"));
   CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\"", "stat = \"luck\"")),
-                 "'stat' must be one of: move_speed, max_hp, ammo_max"));
+                 "'stat' must be one of: move_speed, max_hp, ammo_max, radius"));
+  // v0.34: the radius stat takes a mul in (0, 4] and an add.
+  CHECK(loads(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
+                       "stat = \"radius\", mul = 0.7, add = -0.05")));
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
+                                     "stat = \"radius\", mul = 5")),
+                 "'radius' takes a 'mul' in (0, 4]"));
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
+                                     "stat = \"radius\", mul = 0")),
+                 "'radius' takes a 'mul' in (0, 4]"));
   // Tags a power-up may not grant.
   CHECK(contains(
       loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
                           "{ kind = \"tag\", tag = \"hit_stun\" }")),
-      "can grant only 'shielded' or 'invulnerable'"));
+      "can grant only 'shielded', 'invulnerable' or 'friendly_fire'"));
   // Values and shapes.
   CHECK(contains(loadErrors(replaced(withPowerUp(), "duration_ticks = 300", "duration_ticks = 0")),
-                 "'duration_ticks' must be an integer in [1, 65535]"));
+                 "'duration_ticks' must be an integer in [1, 65534]"));
   CHECK(contains(loadErrors(replaced(withPowerUp(), "shape = \"diamond\"", "shape = \"blob\"")),
                  "'shape' must be one of: orb, cube, diamond, coin"));
   CHECK(contains(loadErrors(replaced(withPowerUp(), "color = 6", "color = 10")),
@@ -622,13 +754,15 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                  "spawner 0: pos (3.000, 1.000) is in pit hazard 0"));
 }
 
-TEST_CASE("content/ ships the five power-ups and an arena that spawns them",
+TEST_CASE("content/ ships the power-ups and an arena that spawns them",
           "[content][loader][powerup]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
-  const std::array<std::string_view, 5> names = {"speed_boost", "big_banana", "triple_banana",
-                                                 "shield", "fast_hands"};
+  // v0.34 appended quick_hands and the grid modes' two baselines.
+  const std::array<std::string_view, 8> names = {"speed_boost", "big_banana",  "triple_banana",
+                                                 "shield",      "fast_hands",  "quick_hands",
+                                                 "grid_base",   "grid_base_1t"};
   REQUIRE(db.powerUpCount == names.size());
   for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);
@@ -642,6 +776,118 @@ TEST_CASE("content/ ships the five power-ups and an arena that spawns them",
   const sim::PowerUpGrant& hands = db.powerUps[db.findPowerUp("fast_hands").value_or(0)].grants[0];
   CHECK(hands.kind == sim::GrantKind::AbilityOverride);
   CHECK(db.abilities[hands.ability].name.view() == "throw_fast");
+  // v0.34: its spawners name the five they always drew from, so the grid's
+  // power-ups never join their draws.
+  for (uint8_t k = 0; k < db.arenas[arena.value_or(0)].pickupSpawnerCount; ++k) {
+    CHECK(db.arenas[arena.value_or(0)].pickupSpawners[k].powerUpSet == 0x1F);
+  }
+}
+
+// v0.34 (architecture §5.12): the grid content and the numbers §5.12 starts
+// with, as content/ ships them.
+TEST_CASE("content/ ships the grid modes, their kits and the courtyard",
+          "[content][loader][grid]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> courtyard = db.findArena("courtyard");
+  REQUIRE(courtyard);
+  const sim::ArenaDef& a = db.arenas[courtyard.value_or(0)];
+  CHECK(a.cellSize == Fixed::one());
+  CHECK(a.spawnGroups == 2);
+  CHECK(a.spawnPointCount == 10);
+  // Every tilemap's spawn points sit on cell centres (grid_cells.hpp's
+  // mapping is the loader's), so a grid monkey spawns at rest on a cell.
+  for (uint8_t i = 0; i < db.arenaCount; ++i) {
+    const sim::ArenaDef& t = db.arenas[i];
+    if (!sim::grid::hasCells(t)) continue;
+    INFO(t.name.view());
+    for (uint8_t k = 0; k < t.spawnPointCount; ++k) {
+      const sim::grid::Cell cell = sim::grid::cellOf(t, t.spawnPoints[k]);
+      CHECK(sim::grid::inside(t, cell));
+      CHECK(sim::grid::cellCentre(t, cell) == t.spawnPoints[k]);
+    }
+  }
+  for (const std::string_view name : {"grid_rounds", "grid_rounds_1t"}) {
+    INFO(name);
+    const std::optional<uint8_t> mi = db.findMode(name);
+    REQUIRE(mi);
+    const sim::ModeDef& m = db.modes[mi.value_or(0)];
+    CHECK(m.space == sim::Space::Grid);
+    CHECK(m.kind == sim::ModeKind::TeamRounds);
+    CHECK(m.teams == 2);
+    CHECK(m.dashCells == 2);
+    CHECK(m.arena == courtyard);
+    CHECK(db.firstCompatibleArena(mi.value_or(0)) == courtyard);
+    CHECK(db.compatible(courtyard.value_or(0), mi.value_or(0)));
+    CHECK_FALSE(db.compatible(0, mi.value_or(0)));  // the dojo has no cells
+    REQUIRE(m.roleCount == 5);
+    REQUIRE(m.hasBaseline());
+    const bool fast = name == "grid_rounds_1t";
+    CHECK(m.turnTicks == (fast ? 1 : 15));
+    // One catcher per team, then the base grid kit.
+    const sim::LoadoutDef& catcher = db.loadouts[m.roles[0]];
+    const sim::LoadoutDef& base = db.loadouts[m.roles[1]];
+    CHECK(catcher.name.view() == (fast ? "catcher_1t" : "catcher"));
+    CHECK(base.name.view() == (fast ? "grid_1t" : "grid"));
+    for (uint8_t r = 1; r < m.roleCount; ++r)
+      CHECK(m.roles[r] == m.roles[1]);
+    const sim::AbilityDef& dash = db.abilities[base.abilities[sim::kAbilitySlotDash]];
+    const sim::AbilityDef& catchDash = db.abilities[catcher.abilities[sim::kAbilitySlotDash]];
+    const sim::AbilityDef& thr = db.abilities[base.abilities[sim::kAbilitySlotThrow]];
+    CHECK(dash.perfectWindowTicks == 0);
+    CHECK(dash.activeTicks == m.turnTicks);  // two cells in one turn
+    CHECK(catchDash.perfectWindowTicks == catchDash.activeTicks);
+    CHECK(catchDash.cooldownTicks == 4 * m.turnTicks);  // four turns
+    CHECK(thr.recoveryTicks == m.turnTicks);
+    CHECK(thr.rootPhases == sim::phaseBit(sim::AbilityPhase::Recovery));
+    // v0.35: every grid kit calls once a turn, as far as the cone reaches,
+    // and the bots see under `own` fog.
+    for (const sim::LoadoutDef* kit : {&catcher, &base}) {
+      const sim::AbilityDef& call = db.abilities[kit->abilities[sim::kAbilitySlotExtra]];
+      CHECK(call.kind == sim::AbilityKind::Call);
+      CHECK(call.cooldownTicks == m.turnTicks);
+      CHECK(call.param0 == Fixed::fromInt(m.vision.cone) * a.cellSize);
+    }
+    CHECK(m.vision.kind == sim::VisionKind::Own);
+    CHECK(m.vision.peripheral == 1);
+    CHECK(m.vision.cone == 4);
+    CHECK(m.vision.focus == 1);
+    CHECK(m.vision.hearing == 3);
+    CHECK(m.vision.bananaSight == 1);
+    // The baseline: monkeys of 0.35, bananas of 0.15, HP 2.
+    const sim::PowerUpDef& baseline = db.powerUps[m.baseline];
+    Fixed radiusMul = Fixed::one();
+    int32_t hp = 0;
+    Fixed bananaMul = Fixed::one();
+    Fixed speedMul = Fixed::one();
+    for (uint8_t g = 0; g < baseline.grantCount; ++g) {
+      const sim::PowerUpGrant& grant = baseline.grants[g];
+      if (grant.kind == sim::GrantKind::Stat && grant.stat.stat == sim::StatKind::Radius)
+        radiusMul = grant.stat.mul;
+      if (grant.kind == sim::GrantKind::Stat && grant.stat.stat == sim::StatKind::MaxHp)
+        hp = grant.stat.add.floorToInt();
+      if (grant.kind == sim::GrantKind::Projectile) {
+        bananaMul = grant.projectile.radiusMul;
+        speedMul = grant.projectile.speedMul;
+      }
+    }
+    CHECK(db.player.radius * radiusMul == Fixed::fromRatio(35, 100));
+    CHECK(db.boomerang.radius * bananaMul == Fixed::fromRatio(15, 100));
+    CHECK(db.player.maxHp + hp == 2);
+    if (!fast) {
+      // 2 cells per 15-tick turn, within the per-tick truncation.
+      const Fixed perTurn = db.boomerang.speed * speedMul * Fixed::fromInt(15);
+      CHECK(abs(perTurn - Fixed::fromInt(2)) < Fixed::fromRatio(1, 1000));
+    }
+  }
+  // Quick Hands overrides the throw with an unrooted def.
+  const std::optional<uint8_t> quick = db.findPowerUp("quick_hands");
+  REQUIRE(quick);
+  const sim::PowerUpGrant& g = db.powerUps[quick.value_or(0)].grants[0];
+  CHECK(g.kind == sim::GrantKind::AbilityOverride);
+  CHECK(g.slot == sim::kAbilitySlotThrow);
+  CHECK(db.abilities[g.ability].rootPhases == 0);
 }
 
 TEST_CASE("a bad content directory is reported", "[content][loader]") {
@@ -768,6 +1014,18 @@ score_to_win = 0
       contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_to_win = 256\n"), "score_to_win"));
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_limit = 3\n"),
                  "unknown key 'score_limit'"));
+
+  // kMaxModes is 32 since v0.31 (8 before): kMinimal's rounds plus 31 more.
+  std::string many = base;
+  for (uint32_t i = 1; i < sim::kMaxModes; ++i)
+    many += "[[mode]]\nname = \"m" + std::to_string(i) + "\"\n";
+  ContentDB full{};
+  Diagnostics fullDiag;
+  REQUIRE(parseContent(many, "modes.toml", full, fullDiag));
+  CHECK(full.modeCount == 32);
+  CHECK(full.findMode("m31") == std::optional<uint8_t>{31});
+  CHECK(contains(loadErrors(many + "[[mode]]\nname = \"m32\"\n"),
+                 "too many modes (at most 32, kMaxModes)"));
 }
 
 TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][modes]") {
@@ -786,13 +1044,14 @@ TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][m
   CHECK(loaded.modes[survival].timeLimitTicks > 0);
 }
 
-TEST_CASE("content/ ships blink, slam and parry with a mode each (v0.21)",
-          "[content][loader][abilities]") {
+TEST_CASE("content/ ships blink, slam and parry as loadouts (v0.21, v0.31)",
+          "[content][loader][abilities][loadout]") {
   ContentDB loaded{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
   // The base kit keeps the ability button empty.
   CHECK(loaded.player.abilities[sim::kAbilitySlotExtra] == 0);
+  CHECK(loaded.loadouts[0].name.view() == sim::kBaseLoadoutName);
   const std::array<std::pair<std::string_view, sim::AbilityKind>, 3> kinds = {{
       {"blink", sim::AbilityKind::Blink},
       {"slam", sim::AbilityKind::Slam},
@@ -800,17 +1059,16 @@ TEST_CASE("content/ ships blink, slam and parry with a mode each (v0.21)",
   }};
   for (const auto& [name, kind] : kinds) {
     INFO(name);
-    const std::string modeName = "rounds_" + std::string(name);
-    const uint8_t mode = loaded.findMode(modeName).value_or(0);
-    REQUIRE(mode != 0);
-    const sim::ModeDef& m = loaded.modes[mode];
-    CHECK(m.kind == sim::ModeKind::Rounds);
-    REQUIRE(m.hasAbilities == 1);
-    CHECK(m.abilities[sim::kAbilitySlotDash] == loaded.player.abilities[sim::kAbilitySlotDash]);
-    CHECK(m.abilities[sim::kAbilitySlotThrow] == loaded.player.abilities[sim::kAbilitySlotThrow]);
-    const sim::AbilityDef& def = loaded.abilityAt(m.abilities[sim::kAbilitySlotExtra]);
+    const uint8_t index = loaded.findLoadout(name).value_or(0);
+    REQUIRE(index != 0);
+    const sim::LoadoutDef& l = loaded.loadouts[index];
+    CHECK(l.abilities[sim::kAbilitySlotDash] == loaded.player.abilities[sim::kAbilitySlotDash]);
+    CHECK(l.abilities[sim::kAbilitySlotThrow] == loaded.player.abilities[sim::kAbilitySlotThrow]);
+    const sim::AbilityDef& def = loaded.abilityAt(l.abilities[sim::kAbilitySlotExtra]);
     CHECK(def.name.view() == name);
     CHECK(def.kind == kind);
+    // The v0.21 ability modes are gone: the kit is its own axis.
+    CHECK_FALSE(loaded.findMode("rounds_" + std::string(name)).has_value());
   }
 }
 
@@ -834,6 +1092,26 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
                  "a slam needs"));
   CHECK(contains(loadErrors(withAbility("kind = \"parry\"\nactive_ticks = 8\n")),
                  "a parry needs active_ticks >= 1 and recovery_ticks >= 1"));
+  // v0.35: a call's range is its param0, in units.
+  {
+    ContentDB db{};
+    Diagnostics d;
+    const bool ok = parseContent(withAbility("kind = \"call\"\ncooldown_ticks = 15\nrange = 4.5\n"),
+                                 "test.toml", db, d);
+    INFO(d.format());
+    REQUIRE(ok);
+    const sim::AbilityDef& call = db.abilities[db.abilityCount - 1];
+    CHECK(call.name.view() == "extra");
+    CHECK(call.kind == sim::AbilityKind::Call);
+    CHECK(call.param0 == Fixed::fromRatio(9, 2));
+  }
+  CHECK(loads(withAbility("kind = \"call\"\nparam0 = 4\n")));
+  CHECK(contains(loadErrors(withAbility("kind = \"call\"\n")), "a call needs a range in (0, 128]"));
+  CHECK(
+      contains(loadErrors(withAbility("kind = \"call\"\nrange = 129\n")), "a call needs a range"));
+  CHECK(contains(loadErrors(withAbility("kind = \"call\"\nrange = 4\nparam0 = 4\n")), "not both"));
+  CHECK(contains(loadErrors(withAbility("kind = \"slam\"\nactive_ticks = 12\nrange = 3\n")),
+                 "'range' belongs to a call"));
   // A third slot through the loadout.
   CHECK(loads(replaced(withAbility("kind = \"blink\"\nactive_ticks = 10\nspeed = 30\n"),
                        "[\"dash\", \"throw\"]", "[\"dash\", \"throw\", \"extra\"]")));
@@ -841,5 +1119,173 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
   CHECK(contains(
       loadErrors(std::string(kMinimal) + "\n[[powerup]]\nname = \"p\"\nduration_ticks = 60\n"
                                          "grants = [{ kind = \"tag\", tag = \"parrying\" }]\n"),
-      "a power-up can grant only 'shielded' or 'invulnerable'"));
+      "a power-up can grant only 'shielded', 'invulnerable' or 'friendly_fire'"));
+}
+
+TEST_CASE("modes: the vision block (v0.35)", "[content][loader][modes][vision]") {
+  const std::string base = std::string(kMinimal) + R"(
+[[arena]]
+name = "cells"
+cell = 1.0
+spawn_groups = 2
+map = ["0....", ".....", "....1"]
+
+[[mode]]
+name = "fog"
+kind = "team_rounds"
+teams = 2
+)";
+  const auto with = [&](std::string_view vision) {
+    return base + "vision = " + std::string(vision) + "\n";
+  };
+  {
+    ContentDB db{};
+    Diagnostics d;
+    const bool ok = parseContent(with("{ kind = \"own\", peripheral = 1, cone = 4, focus = 1, "
+                                      "hearing = 3, banana_sight = 1 }"),
+                                 "test.toml", db, d);
+    INFO(d.format());
+    REQUIRE(ok);
+    const std::optional<uint8_t> mi = db.findMode("fog");
+    REQUIRE(mi);
+    const sim::VisionDef& v = db.modes[mi.value_or(0)].vision;
+    CHECK(v.kind == sim::VisionKind::Own);
+    CHECK(v.fog());
+    CHECK(v.peripheral == 1);
+    CHECK(v.cone == 4);
+    CHECK(v.focus == 1);
+    CHECK(v.hearing == 3);
+    CHECK(v.bananaSight == 1);
+    // A fog vision needs cells: the box arena has none, "cells" has.
+    const std::optional<uint8_t> cells = db.findArena("cells");
+    const std::optional<uint8_t> box = db.findArena("box");
+    REQUIRE(cells);
+    REQUIRE(box);
+    CHECK(db.compatible(cells.value_or(0), mi.value_or(0)));
+    CHECK_FALSE(db.compatible(box.value_or(0), mi.value_or(0)));
+    // The default is everything, and rounds keeps it.
+    CHECK(db.modes[0].vision == sim::VisionDef{});
+    CHECK_FALSE(db.modes[0].vision.fog());
+    // The hash sees the block.
+    ContentDB other = db;
+    other.modes[mi.value_or(0)].vision.cone = 5;
+    CHECK(sim::contentHash(other) != sim::contentHash(db));
+  }
+  CHECK(loads(with("{ kind = \"team\", cone = 3 }")));
+  CHECK(loads(with("{ kind = \"all\" }")));
+  CHECK(contains(loadErrors(with("{ kind = \"all\", cone = 3 }")), "the radii belong to"));
+  CHECK(contains(loadErrors(with("{ kind = \"fog\" }")), "unknown vision kind \"fog\""));
+  CHECK(contains(loadErrors(with("{ cone = 3 }")), "missing required key 'kind'"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", cone = 33 }")), "'cone' must be an integer"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", hearing = 33 }")), "'hearing'"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", peripheral = 17 }")), "'peripheral'"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", sight = 1 }")), "unknown key 'sight'"));
+  CHECK(contains(loadErrors(with("\"own\"")), "'vision' must be a table"));
+  CHECK(contains(loadErrors(replaced(with("{ kind = \"team\" }"), "teams = 2\n", "")),
+                 "vision kind \"team\" needs a team mode"));
+}
+
+TEST_CASE("team modes: teams, baseline, roles and spawn groups (v0.32)",
+          "[content][loader][modes][teams]") {
+  const std::string base = std::string(kMinimal) + R"(
+[[arena]]
+name = "versus"
+half_extents = [10, 5]
+spawn_groups = 2
+spawn_points = [[-6, 0], [-6, 2], [6, 0], [6, 2]]
+
+[[loadout]]
+name = "twice"
+abilities = ["dash", "throw", "throw"]
+
+[[powerup]]
+name = "ff"
+duration_ticks = 1
+grants = [{ kind = "tag", tag = "friendly_fire" }]
+)";
+  const std::string teamMode = R"(
+[[mode]]
+name = "tr"
+kind = "team_rounds"
+teams = 2
+baseline = "ff"
+roles = ["base", "twice"]
+)";
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(base + teamMode, "teams.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  REQUIRE(db.modeCount == 2);
+  const sim::ModeDef& tr = db.modes[1];
+  CHECK(tr.kind == sim::ModeKind::TeamRounds);
+  CHECK(tr.teams == 2);
+  CHECK(tr.baseline == db.findPowerUp("ff"));
+  CHECK(tr.roleCount == 2);
+  CHECK(tr.roles[0] == 0);
+  CHECK(tr.roles[1] == db.findLoadout("twice"));
+  CHECK(db.modes[0].teams == 0);
+  CHECK_FALSE(db.modes[0].hasBaseline());
+  CHECK(db.arenas[0].spawnGroups == 1);
+  CHECK(db.arenas[1].spawnGroups == 2);
+  CHECK(db.powerUps[0].grants[0].tag == sim::Tag::FriendlyFire);
+  CHECK_FALSE(db.compatible(0, 1));
+  CHECK(db.compatible(1, 1));
+  CHECK(db.compatible(0, 0));
+
+  // --mode tr without --arena takes the first arena that suits it; naming
+  // one that does not is an error. The teams follow the mode.
+  sim::MatchConfig config{.players = 0b1111};
+  std::string error;
+  REQUIRE(resolveMatchNames(db, "", "tr", config, error));
+  CHECK(config.arena == 1);
+  CHECK(config.teams == sim::balancedTeams(2, 0b1111));
+  CHECK_FALSE(resolveMatchNames(db, "box", "tr", config, error));
+  CHECK(contains(error, "arena 'box' does not suit mode 'tr'"));
+  CHECK(contains(error, "arenas that do: versus"));
+  REQUIRE(resolveMatchNames(db, "versus", "rounds", config, error));
+  CHECK(config.teams == sim::kFreeForAllTeams);
+
+  const auto withMode = [&](std::string_view m) { return base + std::string(m); };
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nteams = 1\n")),
+                 "teams must be 0 (free-for-all) or 2 to 10"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nteams = 11\n")), "'teams'"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nkind = \"team_deathmatch\"\n")),
+                 "a team kind needs teams of 2 or more"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nroles = [\"base\"]\n")),
+                 "'roles' needs a team mode"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nbaseline = \"zap\"\n")),
+                 "'baseline' names unknown power-up \"zap\""));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nteams = 2\nroles = [\"zap\"]\n")),
+                 "'roles' names unknown loadout \"zap\""));
+  CHECK(contains(loadErrors(replaced(base, "spawn_groups = 2", "spawn_groups = 5")),
+                 "spawn_groups must be in [1, 4] (every group needs a spawn point)"));
+  CHECK(contains(loadErrors(replaced(base, "spawn_groups = 2", "spawn_groups = 0")),
+                 "'spawn_groups'"));
+}
+
+TEST_CASE("content/ ships team_rounds and team_deathmatch on standoff (v0.32)",
+          "[content][loader][modes][teams]") {
+  ContentDB loaded{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
+  const uint8_t tr = loaded.findMode("team_rounds").value_or(0);
+  const uint8_t td = loaded.findMode("team_deathmatch").value_or(0);
+  const uint8_t standoff = loaded.findArena("standoff").value_or(0);
+  REQUIRE(tr != 0);
+  REQUIRE(td != 0);
+  REQUIRE(standoff != 0);
+  CHECK(loaded.modeAt(tr).kind == sim::ModeKind::TeamRounds);
+  CHECK(loaded.modeAt(td).kind == sim::ModeKind::TeamDeathmatch);
+  CHECK(loaded.modeAt(tr).teams == 2);
+  CHECK(loaded.modeAt(td).teams == 2);
+  CHECK_FALSE(loaded.modeAt(tr).hasBaseline());  // no friendly fire by default
+  CHECK(loaded.arenaAt(standoff).spawnGroups == 2);
+  CHECK(loaded.firstCompatibleArena(tr) == std::optional<uint8_t>{standoff});
+  // The free-for-all arenas keep one group: their checksums never moved.
+  // Arenas made for team modes (standoff, v0.33's objective arenas) have two.
+  for (const std::string_view name : {"dojo", "pillars", "corridors", "island", "dojo_powerups"}) {
+    INFO(name);
+    CHECK(loaded.arenaAt(loaded.findArena(name).value_or(0)).spawnGroups == 1);
+  }
 }

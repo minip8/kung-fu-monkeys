@@ -73,15 +73,19 @@ inline constexpr uint8_t kEnumCount<HazardKind> = static_cast<uint8_t>(HazardKin
 template <>
 inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
-inline constexpr uint8_t kEnumCount<StatKind> = 3;
+inline constexpr uint8_t kEnumCount<StatKind> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<BoomerangPhase> = 3;
 template <>
-inline constexpr uint8_t kEnumCount<PickupKind> = 2;
+inline constexpr uint8_t kEnumCount<PickupKind> = 3;
 template <>
 inline constexpr uint8_t kEnumCount<MatchPhase> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<ModeKind> = static_cast<uint8_t>(ModeKind::kCount);
+template <>
+inline constexpr uint8_t kEnumCount<Space> = static_cast<uint8_t>(Space::kCount);
+template <>
+inline constexpr uint8_t kEnumCount<VisionKind> = static_cast<uint8_t>(VisionKind::kCount);
 template <>
 inline constexpr uint8_t kEnumCount<GrantKind> = 5;
 template <>
@@ -89,9 +93,9 @@ inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
-static_assert(static_cast<uint8_t>(StatKind::AmmoMax) + 1 == kEnumCount<StatKind>);
+static_assert(static_cast<uint8_t>(StatKind::Radius) + 1 == kEnumCount<StatKind>);
 static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
-static_assert(static_cast<uint8_t>(PickupKind::PowerUp) + 1 == kEnumCount<PickupKind>);
+static_assert(static_cast<uint8_t>(PickupKind::Flag) + 1 == kEnumCount<PickupKind>);
 static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);
 static_assert(static_cast<uint8_t>(PowerUpShape::Coin) + 1 == kEnumCount<PowerUpShape>);
 static_assert(static_cast<uint8_t>(MatchPhase::MatchEnded) + 1 == kEnumCount<MatchPhase>);
@@ -195,6 +199,7 @@ void visit(V& v, AbilityDef& d) {
   visit(v, d.tagsStartup);
   visit(v, d.tagsActive);
   visit(v, d.tagsRecovery);
+  v.u8(d.rootPhases);  // v0.34
 }
 template <class V>
 void visit(V& v, BoomerangDef& d) {
@@ -283,6 +288,13 @@ void visit(V& v, ArenaDef& d) {
   for (PickupSpawner& sp : d.pickupSpawners)
     visit(v, sp);
   v.u8(d.pickupSpawnerCount);
+  v.u8(d.spawnGroups);       // v0.32
+  for (Zone& z : d.zones) {  // v0.33
+    visit(v, z.min);
+    visit(v, z.max);
+  }
+  v.u8(d.zoneCount);
+  visit(v, d.cellSize);
 }
 template <class V>
 void visit(V& v, ModeDef& d) {
@@ -295,7 +307,28 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.scoreToWin);
   v.u16(d.respawnTicks);
   v.u16(d.respawnInvulnTicks);
-  v.u8(d.hasAbilities);
+  // v0.32: teams, baseline, roles.
+  v.u8(d.teams);
+  v.u8(d.baseline);
+  for (uint8_t& r : d.roles)
+    v.u8(r);
+  v.u8(d.roleCount);
+  v.u16(d.hillTicks);  // v0.33
+  v.u16(d.flagReturnTicks);
+  visit(v, d.space);  // v0.34
+  v.u8(d.turnTicks);
+  v.u8(d.dashCells);
+  v.u8(d.arena);
+  visit(v, d.vision.kind);  // v0.35
+  v.u8(d.vision.peripheral);
+  v.u8(d.vision.cone);
+  v.u8(d.vision.focus);
+  v.u8(d.vision.hearing);
+  v.u8(d.vision.bananaSight);
+}
+template <class V>
+void visit(V& v, LoadoutDef& d) {
+  visit(v, d.name);
   for (uint8_t& a : d.abilities)
     v.u8(a);
 }
@@ -323,6 +356,9 @@ void visit(V& v, ContentDB& c) {
   for (PowerUpDef& d : c.powerUps)
     visit(v, d);
   v.u8(c.powerUpCount);
+  for (LoadoutDef& d : c.loadouts)
+    visit(v, d);
+  v.u8(c.loadoutCount);
 }
 
 // --- input and state ---------------------------------------------------------
@@ -363,6 +399,8 @@ void visit(V& v, MatchRules& r) {
     v.u16(t);
   for (uint16_t& t : r.invulnTicks)
     v.u16(t);
+  for (uint32_t& d : r.modeData)
+    v.u32(d);
 }
 template <class V>
 void visit(V& v, Transform& t) {
@@ -376,6 +414,7 @@ void visit(V& v, Stats& st) {
   visit(v, st.moveSpeed);
   v.u8(st.maxHp);
   v.u8(st.ammoMax);
+  visit(v, st.radius);  // v0.34
 }
 template <class V>
 void visit(V& v, ActiveModifier& m) {
@@ -449,6 +488,8 @@ void visit(V& v, Player& p) {
     visit(v, a);
   visit(v, p.knockback);
   v.u16(p.knockbackTicks);
+  visit(v, p.moveTarget);  // v0.34: the grid's commitment
+  v.u16(p.moveTicks);
 }
 template <class V>
 void visit(V& v, Boomerang& b) {

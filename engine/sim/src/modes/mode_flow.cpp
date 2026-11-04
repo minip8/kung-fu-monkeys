@@ -2,6 +2,7 @@
 #include "modes/mode_flow.hpp"
 
 #include "kfm/sim/constants.hpp"
+#include "systems/modifier_internal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -27,27 +28,28 @@ namespace {
   return best;
 }
 
-// Index of the spawn point farthest from the nearest monkey; ties (all of
-// them in an empty arena) are broken by the world RNG, which is drawn once
-// per respawn whatever the tie count.
-[[nodiscard]] uint8_t farthestSpawnPoint(WorldState& s, const ArenaDef& arena) {
+// Index of the spawn point in [range.begin, range.end) farthest from the
+// nearest monkey; ties (all of them in an empty arena) are broken by the
+// world RNG, which is drawn once per respawn whatever the tie count. With
+// one spawn group the range is the whole list (v0.32).
+[[nodiscard]] uint8_t farthestSpawnPoint(WorldState& s, const ArenaDef& arena, SpawnRange range) {
   std::array<uint64_t, kMaxPlayers> dist{};
   uint64_t best = 0;
-  for (uint8_t k = 0; k < arena.spawnPointCount; ++k) {
+  for (uint8_t k = range.begin; k < range.end; ++k) {
     dist[k] = nearestEnemySq(s, arena.spawnPoints[k]);
     best = std::max(best, dist[k]);
   }
   uint32_t ties = 0;
-  for (uint8_t k = 0; k < arena.spawnPointCount; ++k) {
+  for (uint8_t k = range.begin; k < range.end; ++k) {
     if (dist[k] == best) ++ties;
   }
   uint32_t pick = s.rng.below(ties > 0 ? ties : 1);
-  for (uint8_t k = 0; k < arena.spawnPointCount; ++k) {
+  for (uint8_t k = range.begin; k < range.end; ++k) {
     if (dist[k] != best) continue;
     if (pick == 0) return k;
     --pick;
   }
-  return 0;
+  return range.begin;
 }
 
 }  // namespace
@@ -60,18 +62,28 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content) 
   p.transform.pos = pos;
   p.transform.prevPos = pos;
   p.transform.facing = facingTowardCentre(pos);
-  p.stats = Stats{content.db.player.moveSpeed, content.db.player.maxHp, content.db.player.ammoMax};
+  p.stats = Stats{content.db.player.moveSpeed, content.db.player.maxHp, content.db.player.ammoMax,
+                  content.db.player.radius};
   p.hp = content.db.player.maxHp;
   p.ammo = content.db.player.ammoStart;
+  const std::array<uint8_t, kAbilitySlots>& loadout = content.loadout(id);
   for (uint8_t slot = 0; slot < kAbilitySlots; ++slot) {
-    p.abilities[slot].defIndex = content.loadout(slot);
+    p.abilities[slot].defIndex = loadout[slot];
   }
+  grantBaseline(p, content);  // v0.32: a no-op without ModeDef::baseline
+}
+
+SpawnRange spawnRangeOf(const MatchContent& content, PlayerId id) {
+  const ArenaDef& arena = content.arena;
+  if (arena.spawnGroups <= 1) return SpawnRange{0, arena.spawnPointCount};
+  return spawnGroupRange(arena, content.teamOf(id));
 }
 
 bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, EventSink& sink) {
   if (!id.isValid() || id.value >= kMaxPlayers || s.players.isAliveIndex(id.value)) return false;
   const ArenaDef& arena = content.arena;
-  const uint8_t point = arena.spawnPointCount > 0 ? farthestSpawnPoint(s, arena) : 0;
+  const SpawnRange range = spawnRangeOf(content, id);
+  const uint8_t point = range.end > range.begin ? farthestSpawnPoint(s, arena, range) : 0;
   const Vec2 pos = arena.spawnPointCount > 0 ? arena.spawnPoints[point] : Vec2::zero();
   const EntityId e = s.players.spawnAt(id.value);
   if (!e.isValid()) return false;
@@ -100,7 +112,7 @@ void endRound(WorldState& s, const MatchContent& content, PlayerId winner, Event
   if (!winner.isValid()) return;  // draw: nobody scores
   uint8_t& score = r.scores[winner.value];
   ++score;
-  if (score >= content.mode.roundsToWin) {
+  if (content.teamScore(r.scores, content.teamOf(winner)) >= content.mode.roundsToWin) {
     r.phase = MatchPhase::MatchEnded;
     sink.push(SimEvent{EventKind::MatchEnded, s.tick, winner, EntityId{}, 0, 0});
   }
@@ -130,6 +142,92 @@ PlayerId scoreLeader(const MatchRules& r, uint8_t& best) {
     }
   }
   return tied ? PlayerId::invalid() : leader;
+}
+
+uint16_t teamsPresent(const WorldState& s, const MatchContent& content) {
+  uint16_t mask = 0;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    const PlayerId id{i};
+    if (maskHas(s.rules.present, id))
+      mask = static_cast<uint16_t>(mask | (1u << content.teamOf(id)));
+  }
+  return mask;
+}
+
+uint16_t teamsAlive(const WorldState& s, const MatchContent& content) {
+  uint16_t mask = 0;
+  s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+    if (p.tags.has(Tag::Eliminated) || p.id.value >= kMaxPlayers) return;
+    mask = static_cast<uint16_t>(mask | (1u << content.teamOf(p.id)));
+  });
+  return mask;
+}
+
+PlayerId lowestAliveOf(const WorldState& s, const MatchContent& content, uint8_t team) {
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    const Player* p = s.playerBySlot(PlayerId{i});
+    if (p != nullptr && !p->tags.has(Tag::Eliminated) && content.teamOf(p->id) == team) {
+      return p->id;
+    }
+  }
+  return PlayerId::invalid();
+}
+
+PlayerId teamScoreLeader(const WorldState& s, const MatchContent& content, uint16_t& best) {
+  const MatchRules& r = s.rules;
+  best = 0;
+  bool any = false;
+  bool tied = false;
+  uint8_t leaderTeam = 0;
+  const uint16_t teams = teamsPresent(s, content);
+  for (uint8_t t = 0; t < kMaxPlayers; ++t) {
+    if ((teams & (1u << t)) == 0) continue;
+    const uint16_t score = content.teamScore(r.scores, t);
+    if (!any || score > best) {
+      best = score;
+      leaderTeam = t;
+      any = true;
+      tied = false;
+    } else if (score == best) {
+      tied = true;
+    }
+  }
+  if (!any || tied) return PlayerId::invalid();
+  PlayerId leader = PlayerId::invalid();
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    const PlayerId id{i};
+    if (!maskHas(r.present, id) || content.teamOf(id) != leaderTeam) continue;
+    if (!leader.isValid() || r.scores[i] > r.scores[leader.value]) leader = id;
+  }
+  return leader;
+}
+
+void countDeath(WorldState& s, const MatchContent& content, PlayerId victim) {
+  if (!victim.isValid() || victim.value >= kMaxPlayers) return;
+  MatchRules& r = s.rules;
+  if (r.deaths[victim.value] < UINT8_MAX) ++r.deaths[victim.value];
+  r.respawnTicks[victim.value] = respawnDelay(content.mode);
+}
+
+uint16_t respawnDelay(const ModeDef& mode) {
+  return std::max<uint16_t>(mode.respawnTicks, 1);
+}
+
+void deathmatchRoster(WorldState& s, const MatchContent& content, bool forfeitScore) {
+  MatchRules& r = s.rules;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (s.players.isAliveIndex(i)) continue;
+    if (maskHas(r.present, PlayerId{i})) {
+      if (r.respawnTicks[i] == 0) r.respawnTicks[i] = respawnDelay(content.mode);
+    } else {
+      if (forfeitScore) {
+        r.scores[i] = 0;
+        r.deaths[i] = 0;
+      }
+      r.respawnTicks[i] = 0;
+      r.invulnTicks[i] = 0;
+    }
+  }
 }
 
 void clockWarnings(const WorldState& s, uint32_t limitTicks, EventSink& sink) {

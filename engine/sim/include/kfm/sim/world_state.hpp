@@ -21,6 +21,8 @@
 namespace kfm::sim {
 
 inline constexpr uint8_t kMaxModifiers = 8;
+// MatchRules::modeData words (v0.31).
+inline constexpr uint8_t kModeDataWords = 8;
 
 // --- components ---------------------------------------------------------------
 
@@ -36,6 +38,9 @@ struct Stats {
   Fixed moveSpeed{};
   uint8_t maxHp{0};
   uint8_t ammoMax{0};
+  // v0.34: the contact radius (base PlayerDef::radius), read by collision,
+  // movement and the grid's cell checks instead of the def.
+  Fixed radius{};
 };
 
 // One live power-up on a player (§5.8): its def and the ticks it has left.
@@ -92,6 +97,11 @@ struct Player {
   // the next knockbackTicks ticks (units per tick).
   Vec2 knockback{};
   uint16_t knockbackTicks{0};
+  // v0.34, the grid space's commitment (§5.12): the cell centre the monkey
+  // slides to and the ticks the slide has left (0 = at rest). The
+  // continuous space leaves both zero.
+  Vec2 moveTarget{};
+  uint16_t moveTicks{0};
 };
 
 enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded };
@@ -110,13 +120,17 @@ struct Boomerang {
   Fixed radiusMul{Fixed::one()};
 };
 
-enum class PickupKind : uint8_t { Banana = 0, PowerUp };
+// v0.33: Flag, a capture team's flag (modes/capture.cpp); no spawner, no
+// supply, taken by rule row 52 only.
+enum class PickupKind : uint8_t { Banana = 0, PowerUp, Flag };
 
 struct Pickup {
   PickupKind kind{PickupKind::Banana};
   Vec2 pos{};
   uint8_t powerUpIndex{0};  // PowerUp: index into ContentDB::powerUps
-  uint8_t spawner{0};       // PowerUp: index into the arena's pickupSpawners
+  // PowerUp: index into the arena's pickupSpawners. Flag (v0.33): the team
+  // whose flag it is, which is also the index of its home zone.
+  uint8_t spawner{0};
 };
 
 // --- match --------------------------------------------------------------------
@@ -145,6 +159,10 @@ struct MatchRules {
   std::array<uint8_t, kMaxPlayers> deaths{};         // eliminations suffered this match
   std::array<uint16_t, kMaxPlayers> respawnTicks{};  // dead: ticks until respawn; 0 = none due
   std::array<uint16_t, kMaxPlayers> invulnTicks{};   // alive: spawn protection left (Invulnerable)
+  // v0.31: scratch the mode owns (a hill's clock, a flag's state), read and
+  // written only by its ModeBehavior hooks. Cleared at match start, visited
+  // unconditionally; the rounds, deathmatch and survival kinds never touch it.
+  std::array<uint32_t, kModeDataWords> modeData{};
 
   // Any of the mode counters is non-zero.
   [[nodiscard]] constexpr bool hasModeCounters() const {
@@ -179,25 +197,63 @@ struct WorldState {
 };
 static_assert(std::is_trivially_copyable_v<WorldState>);
 
-// Match configuration that seeds a fresh world. arena and mode are indices
-// into ContentDB::arenas / ::modes (0 = the default); powerUps is the set of
-// power-ups the arena's spawners may draw (bit i = ContentDB::powerUps[i],
-// kAllPowerUps = the arena as defined). None of them is part of WorldState:
-// they are constant for the match like the content itself, so every host
-// carries the config next to the world (replay header, join path).
+// Match configuration that seeds a fresh world. arena, mode and loadout are
+// indices into ContentDB::arenas / ::modes / ::loadouts (0 = the default);
+// powerUps is the set of power-ups the arena's spawners may draw (bit i =
+// ContentDB::powerUps[i], kAllPowerUps = the arena as defined). None of them
+// is part of WorldState: they are constant for the match like the content
+// itself, so every host carries the config next to the world (replay header,
+// join path). teams (v0.32) is a team index per slot, below kMaxPlayers;
+// the default is the free-for-all (slot i is team i), and a team mode's
+// hosts fill it with teamsFor().
 struct MatchConfig {
   uint64_t seed{0};
   PlayerMask players{0};
   uint8_t arena{0};
   uint8_t mode{0};
   uint16_t powerUps{kAllPowerUps};
+  uint8_t loadout{0};  // v0.31: the kit every monkey plays (0 = [player] abilities)
+  TeamSet teams{kFreeForAllTeams};
   constexpr bool operator==(const MatchConfig&) const = default;
 };
+
+// Splits the slots into teamCount teams (v0.32): the present slots in slot
+// order go round-robin over the teams, then every other slot in slot order
+// joins the team with the fewest slots so far (the lowest on a tie), so a
+// later joiner lands on the smallest team. teamCount 0 or 1 (or above
+// kMaxPlayers) is the free-for-all.
+[[nodiscard]] constexpr TeamSet balancedTeams(uint8_t teamCount, PlayerMask present) {
+  if (teamCount < 2 || teamCount > kMaxPlayers) return kFreeForAllTeams;
+  TeamSet t{};
+  std::array<uint8_t, kMaxPlayers> size{};
+  uint8_t rank = 0;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (!maskHas(present, PlayerId{i})) continue;
+    t[i] = static_cast<uint8_t>(rank++ % teamCount);
+    ++size[t[i]];
+  }
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (maskHas(present, PlayerId{i})) continue;
+    uint8_t best = 0;
+    for (uint8_t k = 1; k < teamCount; ++k) {
+      if (size[k] < size[best]) best = k;
+    }
+    t[i] = best;
+    ++size[best];
+  }
+  return t;
+}
+// The teams a mode plays with the given slots present: balancedTeams over
+// ModeDef::teams (the free-for-all for a mode without teams).
+[[nodiscard]] constexpr TeamSet teamsFor(const ModeDef& mode, PlayerMask present) {
+  return balancedTeams(mode.teams, present);
+}
 
 // The content a match with this config simulates with.
 [[nodiscard]] constexpr MatchContent matchContent(const ContentDB& content,
                                                   const MatchConfig& config) {
-  return MatchContent{content, config.arena, config.mode, config.powerUps};
+  return MatchContent{content,         config.arena,   config.mode,
+                      config.powerUps, config.loadout, config.teams};
 }
 
 // Builds the initial state for a match: tick 0, seeded RNG, lobby phase.

@@ -21,6 +21,7 @@ namespace kfm::sim {
 
 inline constexpr uint8_t kMaxArenaWalls = 32;
 inline constexpr uint8_t kMaxArenaHazards = 16;
+inline constexpr uint8_t kMaxArenaZones = 8;  // v0.33
 
 // A solid axis-aligned block. Players slide along it (a dash stops at it);
 // bananas bounce off it with BoomerangDef::restitution (§5.6, §5.7).
@@ -44,6 +45,21 @@ struct Hazard {
   Fixed speedMul{Fixed::one()};  // Slow: move speed multiplier; Pit: unused
 };
 
+// An objective region (v0.33, architecture §5.3, §5.10): a closed box that
+// blocks nothing and emits no contact. Modes read who stands in it through
+// zoneOccupants() (kfm/sim/zones.hpp): hill holds zone 0, capture gives team
+// t zone t.
+struct Zone {
+  Vec2 min{};
+  Vec2 max{};
+
+  [[nodiscard]] constexpr Vec2 centre() const {
+    return Vec2{
+        Fixed::fromRaw(static_cast<int32_t>((static_cast<int64_t>(min.x.raw) + max.x.raw) / 2)),
+        Fixed::fromRaw(static_cast<int32_t>((static_cast<int64_t>(min.y.raw) + max.y.raw) / 2))};
+  }
+};
+
 struct ArenaDef {
   ContentName name{};
   Vec2 halfExtents{};  // the outer box, centred at the origin
@@ -57,7 +73,31 @@ struct ArenaDef {
   // Power-up pickup spawners (§5.8); none in the default arena.
   std::array<PickupSpawner, kMaxPickupSpawners> pickupSpawners{};
   uint8_t pickupSpawnerCount{0};
+  // v0.32: the spawn points split into this many consecutive groups (at
+  // least one point each); team t spawns and respawns in group t mod
+  // spawnGroups (spawnGroupRange). 1 = one shared list, the M1 behaviour.
+  uint8_t spawnGroups{1};
+  // v0.33: objective zones, in content order (TOML `zones`, or the a-h
+  // cells of a tilemap), and the cell size of a tilemap arena (0 for a
+  // hand-placed one; a grid mode needs one, §5.12).
+  std::array<Zone, kMaxArenaZones> zones{};
+  uint8_t zoneCount{0};
+  Fixed cellSize{};
 };
+
+// Spawn points [begin, end) of group g (taken mod the group count) of an
+// arena: group g holds points [g·n/G, (g+1)·n/G) of the n points.
+struct SpawnRange {
+  uint8_t begin{0};
+  uint8_t end{0};
+};
+[[nodiscard]] constexpr SpawnRange spawnGroupRange(const ArenaDef& arena, uint8_t group) {
+  const uint32_t groups = arena.spawnGroups > 0 ? arena.spawnGroups : 1u;
+  const uint32_t n = arena.spawnPointCount;
+  const uint32_t g = group % groups;
+  return SpawnRange{static_cast<uint8_t>((g * n) / groups),
+                    static_cast<uint8_t>(((g + 1) * n) / groups)};
+}
 
 // Whether p lies in the closed box [min, max] (hazards test the centre).
 [[nodiscard]] constexpr bool boxContains(Vec2 min, Vec2 max, Vec2 p) {

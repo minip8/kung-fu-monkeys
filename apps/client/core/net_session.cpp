@@ -250,6 +250,7 @@ void NetSession::handleRebinds() {
 void NetSession::build(float dtSeconds, presentation::RenderState& out) {
   lastNewest_ = rendersNewest();
   lastAlpha_ = renderAlpha();
+  presentation_.pingSlots = localSlots();  // v0.35: a local human's call pings
   presentation::buildRenderState(presentation_, renderPrev(), curr(), lastAlpha_, frameEvents(),
                                  client_->matchContent(), dtSeconds, out);
 }

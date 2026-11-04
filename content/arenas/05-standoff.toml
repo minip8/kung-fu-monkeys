@@ -1,0 +1,23 @@
+# A team arena (architecture §5.10, v0.32): the dojo's 32 x 18 box with two
+# spawn groups facing each other across the centre, five points a side, and
+# two blocks in the middle that leave an open lane between them. Team t
+# spawns (and respawns) on side t mod 2; in a free-for-all slot i does, so
+# neighbouring slots start on opposite sides. The team modes need it (or
+# any arena with spawn_groups >= their teams).
+#
+# Keys as in content/arenas.toml and arenas/01-pillars.toml, plus
+#   spawn_groups = n   (1 to the spawn point count, default 1): the spawn
+#                      points split into n consecutive groups, each at least
+#                      one point; team t uses group t mod n.
+[[arena]]
+name = "standoff"
+half_extents = [16, 9]
+spawn_groups = 2
+spawn_points = [
+  [-12, 0], [-11, 4.5], [-11, -4.5], [-13.5, 2.25], [-13.5, -2.25],   # group 0: west
+  [12, 0], [11, -4.5], [11, 4.5], [13.5, -2.25], [13.5, 2.25],         # group 1: east
+]
+walls = [
+  { min = [-1, 2], max = [1, 5] },
+  { min = [-1, -5], max = [1, -2] },
+]

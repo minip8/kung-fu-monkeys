@@ -74,6 +74,10 @@ void decayOffset(EntityTrack& t, float dt) {
 }
 
 [[nodiscard]] Vec3 playerScale(const Player& p, const ContentDB& content) {
+  // v0.34: the contact radius is a stat; the model (built at the def's
+  // radius) grows and shrinks with it so the body still marks the hitbox.
+  const float def = content.player.radius.toFloat();
+  const float size = def > 0.0f && p.stats.radius.raw > 0 ? p.stats.radius.toFloat() / def : 1.0f;
   Vec3 s{1.0f, 1.0f, 1.0f};
   if (dashActive(p, content)) {
     s.x += kDashStretch;
@@ -86,7 +90,7 @@ void decayOffset(EntityTrack& t, float dt) {
     s.x *= 1.0f + (kHitSquash * 0.5f * stun);
     s.z *= 1.0f + (kHitSquash * 0.5f * stun);
   }
-  return s;
+  return Vec3{s.x * size, s.y * size, s.z * size};
 }
 
 [[nodiscard]] uint16_t playerFlags(const Player& p, const ContentDB& content) {
@@ -104,6 +108,7 @@ void decayOffset(EntityTrack& t, float dt) {
   set(content.abilityAt(thr.defIndex).kind == AbilityKind::Throw && thr.phase != AbilityPhase::Idle,
       PlayerFlag::Throwing);
   set(p.ammo > 0, PlayerFlag::HasAmmo);
+  set(p.tags.has(Tag::Carrying), PlayerFlag::Carrying);
   return f;
 }
 
@@ -211,7 +216,6 @@ void phaseSounds(PresentationState& ps, const RenderHud& hud, RenderState& out) 
 
 void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldState& curr,
                   float alpha, const ContentDB& content, float dt, RenderState& out) {
-  const float radius = content.player.radius.toFloat();
   for (uint16_t i = 0; i < sim::kMaxPlayers; ++i) {
     if (!curr.players.isAliveIndex(i)) continue;
     const uint16_t gen = curr.players.generation[i];
@@ -268,6 +272,8 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.maxHp = cp.stats.maxHp;
     for (uint8_t m = 0; m < cp.modifiers.count && m < sim::kMaxModifiers; ++m) {
       const sim::ActiveModifier& am = cp.modifiers.items[m];
+      // A mode's baseline (v0.32) is the rules, not a power-up to time.
+      if (am.ticksLeft == sim::kPermanentModifierTicks) continue;
       const sim::PowerUpDef& def = content.powerUpAt(am.powerUp);
       RenderPowerUp& pu = rp.powerUps[rp.powerUpCount++];
       pu.powerUp = am.powerUp;
@@ -283,7 +289,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     const uint16_t cd = content.abilityAt(dash.defIndex).cooldownTicks;
     rp.dashCooldown =
         cd > 0 ? clamp01(static_cast<float>(dash.cooldownTicks) / static_cast<float>(cd)) : 0.0f;
-    pushShadow(out, rp.ground, radius, height, ShadowOwner::Player);
+    pushShadow(out, rp.ground, cp.stats.radius.toFloat(), height, ShadowOwner::Player);
 
     // Dash trail: afterimages while the Dash is active.
     if (dashActive(cp, content) && !cp.tags.has(Tag::Eliminated)) {
@@ -349,7 +355,9 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     rb.spin = spin;
     rb.phase = bananaPhase(cb.phase);
     rb.ownerSlot = slotOrNone(cb.owner);
-    pushShadow(out, rb.ground, radius, height, ShadowOwner::Banana);
+    // v0.34: the shadow marks the banana's contact radius (big banana, the
+    // grid's baseline).
+    pushShadow(out, rb.ground, radius * cb.radiusMul.toFloat(), height, ShadowOwner::Banana);
 
     // A short trail behind a flying banana.
     if (cb.phase != BoomerangPhase::Grounded &&
@@ -392,6 +400,10 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
       rp.colorIndex = def.visual.color;
       rp.shape = static_cast<PowerUpShapeView>(def.visual.shape);
       rp.powerUp = cp.powerUpIndex;
+    } else if (cp.kind == sim::PickupKind::Flag) {
+      rp.kind = PickupKindView::Flag;
+      rp.colorIndex = cp.spawner;  // the team's colour
+      rp.shape = kFlagShape;
     }
     pushShadow(out, rp.ground, radius, height, ShadowOwner::Pickup);
   }
@@ -419,7 +431,8 @@ void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHu
   const sim::ModeDef& mode = content.mode;
   hud.mode = mode.kind;
   hud.scoreToWin = mode.scoreToWin;
-  hud.hasClock = mode.kind != sim::ModeKind::Rounds && mode.timeLimitTicks > 0;
+  hud.hasClock = mode.kind != sim::ModeKind::Rounds && mode.kind != sim::ModeKind::TeamRounds &&
+                 mode.timeLimitTicks > 0;
   hud.clockSeconds = 0.0f;
   if (hud.hasClock) {
     if (r.phase == sim::MatchPhase::Playing) {
@@ -436,6 +449,10 @@ void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHu
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     hud.respawnSeconds[i] = static_cast<float>(r.respawnTicks[i]) * kTickSeconds;
   }
+  hud.teamCount = mode.teams;
+  hud.teams = content.teams;
+  for (uint8_t t = 0; t < sim::kMaxPlayers; ++t)
+    hud.teamScores[t] = content.teamScore(r.scores, t);
 }
 
 }  // namespace
@@ -523,6 +540,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
       Vec3{ps.shake * std::sin(w), ps.shake * 0.6f * std::sin((1.37f * w) + 1.1f), 0.0f};
   out.arenaHalfExtents = toFloat(match.arena.halfExtents);
   buildArenaPieces(match.arena, out);
+  buildZones(match, out);
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
   out.bananaRadius = content.boomerang.radius.toFloat();
@@ -621,6 +639,20 @@ void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out) {
                    [&](float a, float c) { addRim({b.hi.x - wx, a}, {b.hi.x, c}); });
   }
   out.arenaPieceCount = n;
+}
+
+void buildZones(const sim::MatchContent& match, RenderState& out) {
+  const sim::ArenaDef& arena = match.arena;
+  const uint8_t teamZones = match.mode.kind == sim::ModeKind::Capture ? match.mode.teams : 0;
+  out.zoneCount = 0;
+  for (uint8_t k = 0; k < arena.zoneCount && k < sim::kMaxArenaZones; ++k) {
+    const Vec2f lo = toFloat(arena.zones[k].min);
+    const Vec2f hi = toFloat(arena.zones[k].max);
+    out.zones[out.zoneCount++] =
+        RenderZone{.center = simToWorld(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}),
+                   .size = Vec3{hi.x - lo.x, 0.0f, hi.y - lo.y},
+                   .team = k < teamZones ? static_cast<int8_t>(k) : kNoSlot};
+  }
 }
 
 void onRollback(PresentationState& ps, const WorldState& newPrev, const WorldState& newCurr,

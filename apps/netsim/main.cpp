@@ -7,7 +7,7 @@
 //              [--reorder PCT] [--reorder-delay MS] [--seconds S] [--warmup S]
 //              [--seed S] [--input-delay T] [--spectators N] [--join-at S]
 //              [--cut C:D[:AT]] [--csv PATH] [--content DIR] [--arena NAME]
-//              [--mode NAME] [--quiet]
+//              [--mode NAME] [--loadout NAME] [--quiet]
 //
 // --clients N        playing clients, 1..10, one slot each (default 10)
 // --rtt MS           round-trip time; each direction gets RTT/2 (default 100)
@@ -33,7 +33,8 @@
 //                    substitutions and bytes are deltas over that second
 // --content DIR      content directory (default: the copy built into the
 //                    binary); every mode is made endless (roundsToWin 255)
-// --arena NAME, --mode NAME   the match's arena and mode (default: the first)
+// --arena NAME, --mode NAME, --loadout NAME
+//                    the match's arena, mode and loadout (default: the first)
 // --quiet            only the summary
 //
 // Prints the soak summary of architecture §11 (rollback depth max/p99/p50,
@@ -93,6 +94,7 @@ struct Options {
   std::string contentDir;
   std::string arena;
   std::string mode;
+  std::string loadout;
   bool quiet{false};
 };
 
@@ -101,7 +103,7 @@ constexpr const char* kUsage =
     "                  [--reorder PCT] [--reorder-delay MS] [--seconds S] [--warmup S]\n"
     "                  [--seed S] [--input-delay T] [--spectators N] [--join-at S]\n"
     "                  [--cut C:D[:AT]] [--csv PATH] [--content DIR] [--arena NAME]\n"
-    "                  [--mode NAME] [--quiet]\n";
+    "                  [--mode NAME] [--loadout NAME] [--quiet]\n";
 
 constexpr const char* kCsvHeader =
     "second,server_tick,client,running,local_tick,lead,target_lead,margin_q8,rate_ppm,"
@@ -194,6 +196,8 @@ template <typename T>
       o.arena = v;
     } else if (arg == "--mode") {
       o.mode = v;
+    } else if (arg == "--loadout") {
+      o.loadout = v;
     } else if (arg == "--csv") {
       o.csv = v;
     } else {
@@ -291,7 +295,8 @@ class CsvWriter {
   const sim::ContentDB content = endless(loaded.db);
   ServerConfig sc;
   std::string error;
-  if (!content::resolveMatchNames(content, o.arena, o.mode, sc.match, error)) {
+  if (!content::resolveMatchNames(content, o.arena, o.mode, sc.match, error) ||
+      !content::resolveLoadoutName(content, o.loadout, sc.match, error)) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
     return EXIT_FAILURE;
   }
@@ -319,10 +324,11 @@ class CsvWriter {
     std::printf(
         "kfm_netsim: %u clients + %u spectators, rtt %.0f ms ±%.0f ms, loss %.2f%%, dup %.2f%%, "
         "reorder %.2f%%, %.0f s, seed %llu, input delay %u\n"
-        "  %s, arena %s, mode %s (endless)\n",
+        "  %s, arena %s, mode %s (endless), loadout %s\n",
         o.clients, o.spectators, o.rttMs, o.jitterMs, o.lossPct, o.dupPct, o.reorderPct, o.seconds,
         static_cast<unsigned long long>(o.seed), o.inputDelay, loaded.describe().c_str(),
-        content.arenaAt(sc.match.arena).name.cStr(), content.modeAt(sc.match.mode).name.cStr());
+        content.arenaAt(sc.match.arena).name.cStr(), content.modeAt(sc.match.mode).name.cStr(),
+        content.loadoutAt(sc.match.loadout).name.cStr());
   }
 
   CsvWriter csv(o.csv);

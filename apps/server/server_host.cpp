@@ -211,6 +211,7 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
   server_ = std::make_unique<net::NetServer>(transport, content, std::move(sc));
   Bots& b = *bots_;
   b.delay = config_.botDelayTicks.value_or(0);
+  b.agents.setRespawnMemory(config_.botMemory);
   uint8_t placed = 0;
   std::string specs;
   uint8_t s = 0;
@@ -227,11 +228,12 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
   }
   lastStatsNs_ = nowNs;
   nextStatsNs_ = config_.statsEveryNs > 0 ? nowNs + config_.statsEveryNs : 0;
-  log("start seed=0x{:x} arena={} mode={} power_ups=0x{:04x} bots={} slots={} max_players={} "
-      "tokens={} bot_specs={} bot_delay={} bot_seed=0x{:x}",
+  log("start seed=0x{:x} arena={} mode={} loadout={} power_ups=0x{:04x} bots={} slots={} "
+      "max_players={} tokens={} bot_specs={} bot_delay={} bot_seed=0x{:x}",
       config_.server.match.seed, content.arenaAt(config_.server.match.arena).name.view(),
-      content.modeAt(config_.server.match.mode).name.view(), config_.server.match.powerUps, placed,
-      slotList(server_->bots()), config_.server.maxPlayers,
+      content.modeAt(config_.server.match.mode).name.view(),
+      content.loadoutAt(config_.server.match.loadout).name.view(), config_.server.match.powerUps,
+      placed, slotList(server_->bots()), config_.server.maxPlayers,
       config_.server.acceptToken ? "checked" : "any", specs.empty() ? std::string("-") : specs,
       config_.botDelayTicks ? std::to_string(*config_.botDelayTicks) : std::string("auto"),
       config_.server.botSeed);
@@ -296,6 +298,8 @@ std::string ServerHost::botStats() {
     const ai::AgentSlotStats& was = b.lastStats[s];
     out += std::format(" | bot {} {} acts=+{} subst=+{}", s, specName(*spec), now.acts - was.acts,
                        now.substitutions - was.substitutions);
+    // v0.35: ticks sat out eliminated (the lifecycle), when there were any.
+    if (now.paused != was.paused) out += std::format(" paused=+{}", now.paused - was.paused);
     b.lastStats[s] = now;
 #ifdef KFM_SERVER_WASM_BOTS
     if (const ai::WasmAgent* a = b.wasm[s]) {
@@ -359,6 +363,15 @@ void ServerHost::frame(uint64_t nowNs) {
 
 void ServerHost::onTick() {
   const sim::WorldState& w = server_->world();
+  // v0.35: the calls each bot hears, from the step that just ran.
+  bots_->agents.observe(server_->tickEvents(), w,
+                        sim::matchContent(server_->content(), server_->matchConfig()));
+  // " (team t)" in a team mode (v0.32), else nothing.
+  const auto teamText = [&](PlayerId p) -> std::string {
+    const sim::MatchConfig& c = server_->matchConfig();
+    if (server_->content().modeAt(c.mode).teams == 0 || p.value >= sim::kMaxPlayers) return {};
+    return std::format(" (team {})", c.teams[p.value]);
+  };
   for (const sim::SimEvent& e : server_->tickEvents()) {
     switch (e.kind) {
       case sim::EventKind::MatchStarted:
@@ -373,7 +386,8 @@ void ServerHost::onTick() {
       case sim::EventKind::RoundEnded:
         ++stats_.roundsCompleted;
         if (e.player.isValid()) {
-          log("round {} won by slot {}; scores {}", e.a, e.player.value, scoreList(w));
+          log("round {} won by slot {}{}; scores {}", e.a, e.player.value, teamText(e.player),
+              scoreList(w));
         } else {
           log("round {} drawn; scores {}", e.a, scoreList(w));
         }
@@ -382,8 +396,9 @@ void ServerHost::onTick() {
         ++stats_.matchesCompleted;
         const uint64_t seed = server_->matchConfig().seed;
         if (e.player.isValid()) {
-          log("match {} won by slot {} after {} rounds; seed=0x{:x} scores {}",
-              server_->matchIndex() + 1, e.player.value, w.rules.round, seed, scoreList(w));
+          log("match {} won by slot {}{} after {} rounds; seed=0x{:x} scores {}",
+              server_->matchIndex() + 1, e.player.value, teamText(e.player), w.rules.round, seed,
+              scoreList(w));
         } else {
           // A tied lead when a mode's clock ran out (deathmatch).
           log("match {} drawn after {} rounds; seed=0x{:x} scores {}", server_->matchIndex() + 1,
@@ -398,7 +413,13 @@ void ServerHost::onTick() {
         botSeed_ = nextMatchSeed(botSeed_);
         const Tick start =
             server_->nextTick().plus(static_cast<int32_t>(config_.restartDelayTicks));
-        server_->restartMatch(next, start, botSeed_);
+        // v0.32: the next match rebalances a team mode's teams over the
+        // slots present now (later joiners still land on the smallest team).
+        sim::MatchConfig nextConfig = server_->matchConfig();
+        nextConfig.seed = next;
+        nextConfig.teams =
+            sim::teamsFor(server_->content().modeAt(nextConfig.mode), w.rules.present);
+        server_->restartMatch(nextConfig, start, botSeed_);
         log("next match seed=0x{:x} at tick {}", next, start.value);
         break;
       }

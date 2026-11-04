@@ -85,6 +85,7 @@ void putPlayer(WorldState& s, uint16_t slot, Vec2 prev, Vec2 pos) {
   p.id = PlayerId{static_cast<uint8_t>(slot)};
   p.transform.prevPos = prev;
   p.transform.pos = pos;
+  p.stats.radius = defaultContent().player.radius;  // v0.34: the contact radius is a stat
 }
 
 bool samePairs(const CandidatePairs& a, const CandidatePairs& b) {

@@ -332,7 +332,7 @@ TEST_CASE("reader rejects out-of-range enums, ids and indices", "[sim][visit]") 
     raw(a.boomerangs.items[0].phase, 40);
   }
   SECTION("PickupKind") {
-    raw(a.pickups.items[0].kind, 2);
+    raw(a.pickups.items[0].kind, 3);
   }
   SECTION("ActiveModifier.powerUp past the def table") {
     a.players.items[0].modifiers.items[0].powerUp = kMaxPowerUps;

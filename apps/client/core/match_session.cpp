@@ -44,6 +44,7 @@ MatchSession::MatchSession(const SessionConfig& config)
       content_(loaded_) {
   arena_ = config.arena < loaded_.arenaCount ? config.arena : 0;
   mode_ = config.mode < loaded_.modeCount ? config.mode : 0;
+  loadout_ = config.loadout < loaded_.loadoutCount ? config.loadout : 0;
   clock_.setMaxTicksPerFrame(std::min(config.maxTicksPerFrame, kDefaultMaxTicksPerFrame));
   if (config.bindKeyboardToSlot0) {
     (void)sampler_.bind(PlayerId{0}, platform::DeviceBinding::keyboard(0));
@@ -126,6 +127,7 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
   prev_ = curr_;
   sink_.clear();
   sim::step(curr_, frame, matchContent(), sink_);
+  agents_.observe(sink_, curr_, matchContent());  // v0.35: the calls the bots hear
   appendEvents(sink_);
   ++ticksThisFrame_;
 }
@@ -133,6 +135,15 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
 void MatchSession::appendEvents(const sim::EventSink& sink) {
   droppedEvents_ += sink.dropped;
   for (const sim::SimEvent& e : sink) {
+    if (e.kind == sim::EventKind::MonkeyCalled) {
+      if (recentCallCount_ == recentCalls_.size()) {
+        for (std::size_t i = 1; i < recentCalls_.size(); ++i)
+          recentCalls_[i - 1] = recentCalls_[i];
+        --recentCallCount_;
+      }
+      recentCalls_[recentCallCount_++] =
+          RecentCall{e.player.value, static_cast<uint8_t>(e.a), e.tick.value};
+    }
     if (frameEventCount_ < frameEvents_.size()) {
       frameEvents_[frameEventCount_++] = e;
     } else {
@@ -159,6 +170,11 @@ sim::PlayerMask MatchSession::lobbyPresentMask() const {
     --remaining;
   }
   return present;
+}
+
+sim::TeamSet MatchSession::teams() const {
+  if (phase_ != SessionPhase::Lobby) return matchConfig_.teams;
+  return sim::teamsFor(content_.modeAt(mode_), lobbyPresentMask());
 }
 
 void MatchSession::handleLobbyJoins() {
@@ -261,6 +277,7 @@ BotSlotStats MatchSession::botStats(PlayerId slot) const {
   const ai::AgentSlotStats host = agents_.stats(slot);
   out.acts = host.acts;
   out.substitutions = host.substitutions;
+  out.paused = host.paused;
   if (has(moduleMask_, slot.value)) BotRoster::moduleStats(*agent, out);
   return out;
 }
@@ -276,17 +293,31 @@ void MatchSession::setPowerUps(uint16_t powerUps) {
   if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
 }
 
+void MatchSession::setLoadout(uint8_t loadout) {
+  loadout_ = loadout < content_.loadoutCount ? loadout : 0;
+  if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
+}
+
 void MatchSession::replaceContent(const sim::ContentDB& content, uint64_t nowNs) {
   loaded_ = content;
   content_ = content;
   if (arena_ >= content_.arenaCount) arena_ = 0;
   if (mode_ >= content_.modeCount) mode_ = 0;
+  if (loadout_ >= content_.loadoutCount) loadout_ = 0;
+  // v0.32: an edited mode or arena may no longer suit each other.
+  if (!content_.compatible(arena_, mode_))
+    arena_ = content_.firstCompatibleArena(mode_).value_or(0);
   restart(nowNs, false);
 }
 
 void MatchSession::createWorld(sim::PlayerMask present) {
-  matchConfig_ = sim::MatchConfig{
-      .seed = seed_, .players = present, .arena = arena_, .mode = mode_, .powerUps = powerUps_};
+  matchConfig_ = sim::MatchConfig{.seed = seed_,
+                                  .players = present,
+                                  .arena = arena_,
+                                  .mode = mode_,
+                                  .powerUps = powerUps_,
+                                  .loadout = loadout_,
+                                  .teams = sim::teamsFor(content_.modeAt(mode_), present)};
   curr_ = sim::initialWorld(matchConfig_);
   prev_ = curr_;
 }
@@ -309,6 +340,7 @@ void MatchSession::beginMatch(sim::PlayerMask present, sim::PlayerMask local, ui
   lastInputs_ = {};
   lastFrame_ = {};
   frameEventCount_ = 0;
+  recentCallCount_ = 0;
   presentation_ = presentation::PresentationState{};
   sampler_.clearDropped();
   sampler_.endTick();

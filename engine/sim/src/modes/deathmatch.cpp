@@ -11,36 +11,13 @@
 #include "kfm/sim/modes/modes.hpp"
 #include "modes/mode_flow.hpp"
 
-#include <algorithm>
 #include <cstdint>
 
 namespace kfm::sim {
-namespace {
-
-[[nodiscard]] uint16_t respawnDelay(const ModeDef& mode) {
-  return std::max<uint16_t>(mode.respawnTicks, 1);  // validation keeps it >= 1
-}
-
-void updateRoster(WorldState& s, const MatchContent& content) {
-  MatchRules& r = s.rules;
-  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
-    if (s.players.isAliveIndex(i)) continue;
-    if (maskHas(r.present, PlayerId{i})) {
-      if (r.respawnTicks[i] == 0) r.respawnTicks[i] = respawnDelay(content.mode);
-    } else {
-      r.scores[i] = 0;
-      r.deaths[i] = 0;
-      r.respawnTicks[i] = 0;
-      r.invulnTicks[i] = 0;
-    }
-  }
-}
-
-}  // namespace
 
 void deathmatchOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink) {
   const ModeDef& mode = content.mode;
-  updateRoster(s, content);
+  deathmatchRoster(s, content, /*forfeitScore=*/true);
   clockWarnings(s, mode.timeLimitTicks, sink);
   uint8_t best = 0;
   const PlayerId leader = scoreLeader(s.rules, best);

@@ -21,8 +21,7 @@ bool fallIntoPit(WorldState& s, const MatchContent& content, EntityId a, EntityI
   victim->tags.set(Tag::Eliminated);
   sink.push(
       SimEvent{EventKind::PlayerEliminated, s.tick, victim->id, a, PlayerId::invalid().value, 0});
-  modeBehaviorFor(content.mode.kind)
-      .onEliminated(s, content, victim->id, PlayerId::invalid(), sink);
+  modeBehaviorOf(content).onEliminated(s, content, victim->id, PlayerId::invalid(), sink);
   return true;
 }
 

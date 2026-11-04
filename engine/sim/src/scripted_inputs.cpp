@@ -76,6 +76,41 @@ namespace {
   return found;
 }
 
+// The objective kinds (v0.33): a target to walk to instead of wandering,
+// read from the state alone (no Rng draw, so every other mode is unchanged).
+// Hill: zone 0 while outside it. Capture: a carrier its own team's zone,
+// anyone else the nearest flag of another team.
+[[nodiscard]] bool objectiveTarget(const WorldState& s, const MatchContent& content,
+                                   const Player& p, Vec2& target) {
+  const ArenaDef& arena = content.arena;
+  const Vec2 pos = p.transform.pos;
+  if (content.mode.kind == ModeKind::Hill && arena.zoneCount > 0) {
+    const Zone& hill = arena.zones[0];
+    if (boxContains(hill.min, hill.max, pos)) return false;
+    target = hill.centre();
+    return true;
+  }
+  if (content.mode.kind != ModeKind::Capture) return false;
+  const uint8_t team = content.teamOf(p.id);
+  if (p.tags.has(Tag::Carrying)) {
+    if (team >= arena.zoneCount || team >= kMaxArenaZones) return false;
+    target = arena.zones[team].centre();
+    return true;
+  }
+  uint64_t best = std::numeric_limits<uint64_t>::max();
+  bool found = false;
+  s.pickups.forEachAlive([&](EntityId /*kid*/, const Pickup& k) {
+    if (k.kind != PickupKind::Flag || k.spawner == team) return;
+    const uint64_t d = lengthSqRaw(k.pos - pos);
+    if (d < best) {
+      best = d;
+      target = k.pos;
+      found = true;
+    }
+  });
+  return found;
+}
+
 // The third slot (v0.21): only when the loadout or a power-up put an ability
 // there, so a base-kit match draws nothing extra from the Rng.
 void useExtraAbility(Rng& rng, const WorldState& s, const MatchContent& content, const Player& p,
@@ -114,6 +149,7 @@ void useExtraAbility(Rng& rng, const WorldState& s, const MatchContent& content,
       break;
     case AbilityKind::Dash:
     case AbilityKind::Throw:
+    case AbilityKind::Call:  // v0.35: now and then, the symbol being the aim
       if (oneIn(rng, config.abilityOneIn)) in.buttons |= bit;
       break;
     case AbilityKind::None:
@@ -152,7 +188,11 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
       found = true;
     }
   });
-  if (found && target != pos) in.moveDir = directionTo(pos, target);
+  // Else the objective (v0.33), with the same hands-full condition.
+  const bool chase = found && target != pos;
+  if (chase || (!wantBanana && objectiveTarget(s, content, p, target) && target != pos)) {
+    in.moveDir = directionTo(pos, target);
+  }
 
   // Aim at the nearest other alive player, with a little jitter.
   uint64_t nearest = std::numeric_limits<uint64_t>::max();  // stays max with nobody else alive

@@ -82,7 +82,7 @@ class Renderer {
     uint32_t indexCount{0};
   };
   // capsule, banana, disc, floor, cube, skinned character (empty until loaded)
-  static constexpr std::size_t kMeshCount = 6;
+  static constexpr std::size_t kMeshCount = 7;
   static constexpr std::size_t kShaderCount = 3;    // lit, decal, skinned
   static constexpr std::size_t kPipelineCount = 4;  // lit, decal alpha, decal additive, skinned
 

@@ -1,0 +1,31 @@
+# The capture arena (architecture §5.3, §5.10, v0.33): a 32 x 18 tilemap
+# (keys in arenas/06-hilltop.toml) with a base at either end, zone 0 (glyph
+# a) the west team's and zone 1 (b) the east team's, each with its spawn
+# group of five beside it. Walls screen the middle, two pits sit on the
+# centre line at the top and bottom edges and mud slows the corners.
+# Symmetric under a half turn. The capture mode needs it (or any arena with
+# a zone per team).
+[[arena]]
+name = "outposts"
+cell = 1.0
+spawn_groups = 2
+map = [
+  ".....::........~~........::.....",
+  ".....::........~~........::.....",
+  "..............####..............",
+  "......3.##....####....##.9......",
+  "........##............##........",
+  "...1....##............##....7...",
+  "................................",
+  ".aaaa.......##....##.......bbbb.",
+  ".aaaa.0.....##....##.......bbbb.",
+  ".aaaa.......##....##.....5.bbbb.",
+  ".aaaa.......##....##.......bbbb.",
+  "................................",
+  "...2....##............##....6...",
+  "........##............##........",
+  "......4.##....####....##.8......",
+  "..............####..............",
+  ".....::........~~........::.....",
+  ".....::........~~........::.....",
+]

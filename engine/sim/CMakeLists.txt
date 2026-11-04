@@ -6,17 +6,26 @@ add_library(kfm_sim STATIC
   src/step.cpp
   src/replay.cpp
   src/scripted_inputs.cpp
+  src/zones.cpp
   src/abilities/registry.cpp
   src/abilities/dash.cpp
   src/abilities/throw.cpp
   src/abilities/blink.cpp
   src/abilities/slam.cpp
   src/abilities/parry.cpp
+  src/abilities/call.cpp
   src/modes/mode_flow.cpp
   src/modes/registry.cpp
   src/modes/rounds.cpp
   src/modes/deathmatch.cpp
   src/modes/survival.cpp
+  src/modes/team_rounds.cpp
+  src/modes/team_deathmatch.cpp
+  src/modes/hill.cpp
+  src/modes/capture.cpp
+  src/spaces/registry.cpp
+  src/spaces/continuous.cpp
+  src/spaces/grid.cpp
   src/rules/table.cpp
   src/rules/catch.cpp
   src/rules/damage.cpp
@@ -24,6 +33,7 @@ add_library(kfm_sim STATIC
   src/rules/auto_catch.cpp
   src/rules/pickup.cpp
   src/rules/powerup.cpp
+  src/rules/flag.cpp
   src/rules/shield.cpp
   src/rules/hazard.cpp
   src/rules/slam.cpp

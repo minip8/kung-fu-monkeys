@@ -2,13 +2,15 @@
 // between runs (architecture §7, v0.24). SDL-free and headless-tested.
 //
 // LobbySettings holds indices into the loaded content; ClientOptions holds
-// the same settings as names (the --arena / --mode / --powerups flags and
-// the browser's ?arena=&mode=&powerups=), so they survive a content change
+// the same settings as names (the --arena / --mode / --loadout / --powerups
+// flags and the browser's ?arena=&mode=&loadout=&powerups=), so they survive
+// a content change
 // that reorders or removes an entry. The settings text is the persisted
 // form: one "key=value" per line,
 //
 //   arena=pillars
 //   mode=deathmatch
+//   loadout=slam                    (v0.31; base = the player's kit)
 //   powerups=shield,big_banana      (all, none or comma-separated names)
 //   bots=3
 //   bot_difficulty=medium           (easy, medium or hard: the reference bot's tier)
@@ -33,9 +35,10 @@
 namespace kfm::client {
 
 struct LobbySettings {
-  uint8_t arena{0};  // MatchConfig::arena / ::mode / ::powerUps
+  uint8_t arena{0};  // MatchConfig::arena / ::mode / ::powerUps / ::loadout
   uint8_t mode{0};
   uint16_t powerUps{sim::kAllPowerUps};
+  uint8_t loadout{0};
   uint8_t bots{0};
   ai::ReferenceTier botTier{kDefaultBotTier};
   uint8_t volume{80};  // percent
@@ -43,9 +46,10 @@ struct LobbySettings {
   constexpr bool operator==(const LobbySettings&) const = default;
 };
 
-// Resolves the options' names against the content. An unknown arena, mode
-// or power-up is an error (it came from a flag: applySettingsText() never
-// stores one).
+// Resolves the options' names against the content. An unknown arena, mode,
+// loadout or power-up is an error (it came from a flag: applySettingsText() never
+// stores one). An arena that does not suit the mode (v0.32,
+// ContentDB::compatible) is replaced by the first one that does.
 [[nodiscard]] bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& content,
                                      LobbySettings& out, std::string& error);
 

@@ -1,6 +1,7 @@
 // How the apps find, load and watch content (architecture §5.10), shared by
-// kfm_client, kfm_server, kfm_replay, kfm_netsim and kfm_render_probe so
-// they all resolve `--content`, `--arena` and `--mode` the same way.
+// kfm_client, kfm_server, kfm_replay, kfm_netsim, kfm_render_probe and
+// kfm_arena so they all resolve `--content`, `--arena`, `--mode`,
+// `--loadout` and `--powerups` the same way.
 #pragma once
 
 #include "kfm/content/diagnostics.hpp"
@@ -40,10 +41,20 @@ struct LoadedContent {
 
 // Resolves --arena / --mode names into config.arena / config.mode. An empty
 // name keeps index 0 (the default). On an unknown name returns false with a
-// message that lists the names the content defines.
+// message that lists the names the content defines. v0.32: the pair must be
+// compatible (ContentDB::compatible): with no arena named, a mode the
+// default arena does not suit takes the first arena that does, and a named
+// arena that does not suit it is an error; config.teams becomes the mode's
+// (sim::teamsFor over config.players: the free-for-all without teams).
 [[nodiscard]] bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena,
                                      std::string_view mode, sim::MatchConfig& config,
                                      std::string& error);
+
+// Resolves a --loadout name into config.loadout (v0.31). An empty name is
+// index 0, the base kit ([player] abilities, also named "base"). On an
+// unknown name returns false with a message that lists the loadouts.
+[[nodiscard]] bool resolveLoadoutName(const sim::ContentDB& content, std::string_view loadout,
+                                      sim::MatchConfig& config, std::string& error);
 
 // Resolves a --powerups list into a MatchConfig::powerUps set: "all" or an
 // empty list = sim::kAllPowerUps, "none" = 0, else comma-separated power-up

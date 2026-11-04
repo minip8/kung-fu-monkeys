@@ -1,0 +1,44 @@
+# Loadouts (LoadoutDef, architecture §5.10, v0.31): a match picks one by
+# index (MatchConfig::loadout); command lines (--loadout NAME), the lobby and
+# the browser page (?loadout=) use the name. Loadout 0 is "base", the
+# [player] abilities (player.toml); these follow in load order. Indices go
+# into replay headers and are part of the content hash: append new loadouts,
+# never reorder.
+#
+# Keys: name (lowercase, up to 15 of a-z 0-9 _ -, not "base") and abilities,
+# 2 or 3 ability names [dash button, throw button, ability button]; the dash
+# and throw slots must hold an ability, a missing third is "none".
+
+# v0.21's ability modes (rounds_blink, rounds_slam, rounds_parry) as
+# loadouts: the base kit plus a third ability on the ability button.
+[[loadout]]
+name = "blink"
+abilities = ["dash", "throw", "blink"]
+
+[[loadout]]
+name = "slam"
+abilities = ["dash", "throw", "slam"]
+
+[[loadout]]
+name = "parry"
+abilities = ["dash", "throw", "parry"]
+
+# v0.34, the grid space (architecture §5.12): the kits grid_rounds hands out
+# by role (modes.toml), one catcher per team and the base grid kit for the
+# rest; the _1t pair is the same at 1-tick turns (grid_rounds_1t). v0.35:
+# every grid kit calls on the ability button (abilities.toml grid_call).
+[[loadout]]
+name = "grid"
+abilities = ["grid_dash", "grid_throw", "grid_call"]
+
+[[loadout]]
+name = "catcher"
+abilities = ["catcher_dash", "grid_throw", "grid_call"]
+
+[[loadout]]
+name = "grid_1t"
+abilities = ["grid_dash_1t", "grid_throw_1t", "grid_call_1t"]
+
+[[loadout]]
+name = "catcher_1t"
+abilities = ["catcher_dash_1t", "grid_throw_1t", "grid_call_1t"]

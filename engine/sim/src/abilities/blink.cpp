@@ -40,9 +40,9 @@ void blinkOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const Abilit
   const Vec2 origin = t.pos;
   const Vec2 delta = st.dir * (def.speed * Fixed::fromInt(def.activeTicks));
   Vec2 vel = delta;  // moveCircle's velocity out-parameter; the blink keeps t.vel
-  t.pos = statics::moveCircle(content.arena, origin, delta, vel,
-                              statics::MoveParams{.radius = content.db.player.radius,
-                                                  .response = statics::Response::Slide})
+  t.pos = statics::moveCircle(
+              content.arena, origin, delta, vel,
+              statics::MoveParams{.radius = p.stats.radius, .response = statics::Response::Slide})
               .pos;
   t.prevPos = t.pos;
   const EntityId self = s.players.idAt(static_cast<uint16_t>(p.id.value));

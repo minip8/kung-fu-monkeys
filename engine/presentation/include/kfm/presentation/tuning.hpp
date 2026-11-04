@@ -48,6 +48,18 @@ inline constexpr float kHazardSlabHeight = 0.008f;
 // A pit is drawn as a rim and a darker inset bottom, which reads as depth
 // under the fixed camera; the inset is this far in from the hazard box.
 inline constexpr float kPitRimWidth = 0.18f;
+// Objective zones (v0.33): a translucent floor rectangle, opaque at its rim
+// band (the inner fraction of the half-size where the band starts) so the
+// edge a centre must cross reads clearly; neutral zones (hill) are white,
+// a team's zone (capture) its team colour.
+inline constexpr float kZoneOpacity = 0.22f;
+inline constexpr float kZoneRimOpacity = 0.75f;
+inline constexpr float kZoneRimStart = 0.9f;
+// A capture flag (v0.33) is a power-up pickup in its team's colour
+// (render_state.hpp kFlagShape); its carrier wears a small copy above the head.
+inline constexpr float kFlagCarrySize = 0.32f;  // units
+inline constexpr float kFlagCarryLift = 0.35f;  // above the head, units
+inline constexpr float kFlagCarrySpinRadPerSec = 2.0f;
 
 // --- facing (§7) ---------------------------------------------------------------------
 // Body yaw follows the move direction at most this fast (720°/s: a half turn
@@ -114,6 +126,9 @@ inline constexpr float kBlinkFlashSeconds = 0.3f;
 inline constexpr float kSlamShockwaveSeconds = 0.45f;
 inline constexpr float kShakeOnSlam = 0.25f;
 inline constexpr float kParryGuardSeconds = 0.2f;
+// v0.35: a call's shout over the caller's head, and its height above the body.
+inline constexpr float kCallShoutSeconds = 0.45f;
+inline constexpr float kCallShoutHeight = 1.9f;
 inline constexpr float kParrySparkSeconds = 0.35f;
 inline constexpr int kParrySparks = 8;
 // Banners in the HUD pop in: scale 1 + this at the start, settling to 1 over

@@ -155,6 +155,30 @@ TEST_CASE("big banana: wider and slower bananas that hit what a normal one misse
   }
 }
 
+// v0.34: the contact radius is a stat. A monkey shrunk to 0.25 is missed
+// by a banana that passes 0.7 off its centre (inside 0.5 + 0.35, outside
+// 0.25 + 0.35); without the modifier the same throw hits.
+TEST_CASE("radius stat: the contact disc follows the modifier", "[scenario][powerup]") {
+  ContentDB content = powerUpContent();
+  const uint8_t small = addPowerUp(content, "small", 600,
+                                   {statGrant(StatKind::Radius, Fixed::half(), Fixed::zero())});
+  for (const bool shrunk : {false, true}) {
+    INFO("shrunk " << shrunk);
+    WorldState s = makePlayingWorld(43, 0b111, content);
+    placePlayer(s, kP0, at(-6, 0));
+    placePlayer(s, kP1, Vec2{Fixed::zero(), Fixed::fromRatio(7, 10)});
+    placePlayer(s, kP2, at(0, 8));
+    if (shrunk) givePowerUp(playerAt(s, kP1), small, 600);
+    (void)idle(s, content, 1);  // ModifierSystem derives the stat
+    CHECK(playerAt(s, kP1).stats.radius ==
+          (shrunk ? content.player.radius * Fixed::half() : content.player.radius));
+    EventLog log;
+    (void)throwRight(s, content, log);
+    log = idle(s, content, 50);
+    CHECK(countEvents(log, EventKind::PlayerHit) == (shrunk ? 0 : 1));
+  }
+}
+
 TEST_CASE("triple banana: ammoMax +2 with a top-up, clamped back on expiry",
           "[scenario][powerup]") {
   const ContentDB content = powerUpContent();

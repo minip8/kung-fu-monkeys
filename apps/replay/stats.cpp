@@ -234,6 +234,7 @@ void Stats::merge(const Stats& o) {
   slams += o.slams;
   slammed += o.slammed;
   parryPresses += o.parryPresses;
+  calls += o.calls;
   parries += o.parries;
 }
 
@@ -436,6 +437,9 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
       case EventKind::PlayerSlammed:
         ++stats_.slammed;
         break;
+      case EventKind::MonkeyCalled:
+        ++stats_.calls;
+        break;
       case EventKind::PlayerParryStarted:
         ++stats_.parryPresses;
         break;
@@ -497,7 +501,10 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
       ++alive;
     });
     s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& /*b*/) { ++supply; });
-    supply += s.pickups.size();
+    // Banana pickups only: power-ups and capture flags (v0.33) are no ammo.
+    s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+      if (k.kind == PickupKind::Banana) ++supply;
+    });
     if (roundPlayers_ == 0) {  // first Playing tick of the round
       roundPlayers_ = alive;
       roundMinSupply_ = supply;
@@ -527,7 +534,7 @@ void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content,
   // The order of step() (step.cpp, architecture §5.3); callers compare the
   // checksum with a step() shadow every tick.
   rulesPreTick(s, content, sink);
-  inputSystem(s, in);
+  inputSystem(s, content, in);
   abilitySystem(s, content, sink);
   movementSystem(s, content);
   projectileSystem(s, content, sink);
@@ -661,8 +668,8 @@ void printSummary(const Stats& st, uint32_t players) {
               u(st.powerUpsSpawned), u(st.powerUpsTaken), u(st.shieldsBroken));
   std::printf(
       "abilities (v0.21): blinks %llu, slams %llu (monkeys pushed %llu), parries %llu of %llu "
-      "presses\n",
-      u(st.blinks), u(st.slams), u(st.slammed), u(st.parries), u(st.parryPresses));
+      "presses, calls %llu\n",
+      u(st.blinks), u(st.slams), u(st.slammed), u(st.parries), u(st.parryPresses), u(st.calls));
 }
 
 }  // namespace kfm::replay

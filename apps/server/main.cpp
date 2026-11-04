@@ -4,10 +4,10 @@
 //
 //   kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bot SPEC]...
 //              [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]
-//              [--max-players N] [--token T]... [--restart-delay S]
+//              [--memory-on-respawn keep|wipe] [--max-players N] [--token T]... [--restart-delay S]
 //              [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]
-//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
-//              [--verbose]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
+//              [--powerups LIST] [--verbose]
 //
 // --port P             signaling port (default 9000; 0 = ephemeral, printed)
 // --bind ADDR          signaling bind address (default all interfaces)
@@ -27,6 +27,9 @@
 //                      N fixes it (0..120)
 // --fuel N             a bot module's instruction budget per tick (default
 //                      100000); over it the tick repeats the last input
+// --memory-on-respawn keep|wipe   v0.35: a bot whose monkey was eliminated is
+//                      paused until it is back; wipe init()s it again then
+//                      (a module gets a fresh instance), keep (default) not
 // --max-players N      slots open to clients and bots, 1..10 (default 10)
 // --token T            accept only these connection tokens (repeatable;
 //                      none = accept every client)
@@ -37,8 +40,9 @@
 //                      over-budget ticks, mean fuel per act)
 // --content DIR        content directory (default: content/ next to the
 //                      executable, else the copy built into it)
-// --arena NAME, --mode NAME   the matches' arena and mode (default: the first
-//                      of each); clients receive them in Welcome/MatchConfig
+// --arena NAME, --mode NAME, --loadout NAME   the matches' arena, mode and
+//                      loadout (default: the first of each); clients receive
+//                      them in Welcome/MatchConfig
 // --powerups LIST      the power-ups the arena's spawners may draw: all
 //                      (default), none or comma-separated names
 //                      (shield,speed_boost); sent with the arena and mode
@@ -88,6 +92,7 @@ struct Options {
   uint64_t botsSeed{0xB07B07};
   std::optional<uint8_t> botDelay;  // nullopt = auto
   uint32_t fuel{0};                 // 0 = the runtime default
+  ai::RespawnMemory memory{ai::RespawnMemory::Keep};
   uint32_t maxPlayers{sim::kMaxPlayers};
   std::vector<std::string> tokens;
   uint32_t restartDelaySeconds{3};
@@ -97,6 +102,7 @@ struct Options {
   std::string contentDir;  // empty: next to the executable, else embedded
   std::string arena;       // names; empty = the first one
   std::string mode;
+  std::string loadout;
   std::string powerUps;  // --powerups list; empty = all
   bool verbose{false};
 };
@@ -104,10 +110,11 @@ struct Options {
 constexpr const char* kUsage =
     "usage: kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bot SPEC]...\n"
     "                  [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]\n"
-    "                  [--max-players N] [--token T]... [--restart-delay S]\n"
+    "                  [--memory-on-respawn keep|wipe] [--max-players N] [--token T]... "
+    "[--restart-delay S]\n"
     "                  [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]\n"
-    "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
-    "                  [--verbose]\n"
+    "                  [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
+    "                  [--powerups LIST] [--verbose]\n"
     "  --bot SPEC        ref, ref:easy|medium|hard or path.wasm (repeatable, slot order)\n"
     "  --bots N          at least N bots: the --bot list padded with ref:hard\n"
     "  --bot-delay V     auto (default: the human clients' lead, 0 without one) or ticks\n"
@@ -183,6 +190,9 @@ template <typename T>
       }
     } else if (arg == "--fuel") {
       ok = parseNumber(v, o.fuel) && o.fuel > 0;
+    } else if (arg == "--memory-on-respawn") {
+      ok = v == "keep" || v == "wipe";
+      o.memory = v == "wipe" ? ai::RespawnMemory::Wipe : ai::RespawnMemory::Keep;
     } else if (arg == "--max-players") {
       ok = parseNumber(v, o.maxPlayers) && o.maxPlayers >= 1 && o.maxPlayers <= sim::kMaxPlayers;
     } else if (arg == "--token") {
@@ -202,6 +212,8 @@ template <typename T>
       o.arena = v;
     } else if (arg == "--mode") {
       o.mode = v;
+    } else if (arg == "--loadout") {
+      o.loadout = v;
     } else if (arg == "--powerups") {
       o.powerUps = v;
     } else {
@@ -242,6 +254,7 @@ extern "C" void onSignal(int /*signal*/) {
     c.bots.push_back(ai::BotSpec{});  // ref:hard
   c.botDelayTicks = o.botDelay;
   c.botFuelPerTick = o.fuel;
+  c.botMemory = o.memory;
   c.restartDelayTicks = o.restartDelaySeconds * sim::kTickHz;
   c.exitAfterMatches = o.exitAfterMatches;
   c.statsEveryNs = uint64_t{o.statsEverySeconds} * 1'000'000'000ull;
@@ -267,6 +280,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
     std::string error;
     if (!ok || !content::resolveMatchNames(loaded.db, o.arena, o.mode, match, error) ||
+        !content::resolveLoadoutName(loaded.db, o.loadout, match, error) ||
         !content::resolvePowerUpList(loaded.db, o.powerUps, match.powerUps, error)) {
       std::fprintf(stderr, "error: %s\n", ok ? error.c_str() : "the content failed to load");
       return EXIT_FAILURE;

@@ -5,7 +5,8 @@
 #
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
-#   kind                 rounds (default), deathmatch or survival
+#   kind                 rounds (default), deathmatch, survival, team_rounds,
+#                        team_deathmatch, hill or capture
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      all kinds: pause after a round before the next one
 #   rounds_to_win        rounds, survival: round wins that take the match
@@ -14,9 +15,55 @@
 #   score_to_win         deathmatch: eliminations that win (at least 1)
 #   respawn_ticks        deathmatch: from an elimination to the respawn (>= 1)
 #   respawn_invuln_ticks deathmatch: spawn protection after a respawn
-#   abilities            all kinds (optional): the mode's own loadout, 2 or 3
-#                        ability names [dash button, throw button, ability
-#                        button] replacing [player] abilities
+#   teams                0 = free-for-all (default), else 2 to 10 teams the
+#                        hosts split the slots into, round-robin (the team
+#                        kinds need it; such a mode plays only on an arena
+#                        with at least that many spawn_groups)
+#   baseline             a power-up name every monkey holds from its spawn
+#                        on with no expiry (none by default); one granting
+#                        tag "friendly_fire" lets allies hit each other
+#   roles                team modes: up to 10 loadout names handed out by a
+#                        slot's position within its team, round-robin
+#                        (none: every slot plays the match's loadout)
+#   hill_ticks           hill: ticks a team must hold the zone alone for a
+#                        point (>= 1); a contested or empty zone holds the
+#                        clock. Plays only on an arena with a zone; respawns
+#                        and the clock as deathmatch, score_to_win counts
+#                        points
+#   flag_return_ticks    capture: ticks a dropped flag lies untouched before
+#                        it goes home (>= 1). Team t's flag starts in zone t,
+#                        so it plays only on an arena with a zone per team;
+#                        score_to_win counts captures
+#   space                v0.34: how monkeys move, "continuous" (default, the
+#                        stick) or "grid": a monkey at rest commits to one of
+#                        its eight neighbouring cells at every turn's latch
+#                        and slides there over the turn; bananas fly as in
+#                        the continuous space. Plays only on an arena with
+#                        cells (a tilemap, `cell`)
+#   turn_ticks           grid: ticks of a turn, 1 to 60 (default 15)
+#   dash_cells           grid: cells a dash commits to, 1 to 8 (default 2),
+#                        sliding over the dash's active_ticks
+#   arena                v0.34, optional: the arena a host picks for the mode
+#                        when none is named (else the first that suits it)
+#   vision               v0.35: what a bot sees (the observation builder's
+#                        fog; humans always see everything), a table
+#                        { kind, peripheral, cone, focus, hearing,
+#                        banana_sight }. kind "all" (default: everything),
+#                        "team" (the union of the allies' sight; team modes)
+#                        or "own"; the rest are cells, Chebyshev: peripheral
+#                        around the monkey whatever the facing, the cone
+#                        within 45 degrees of the facing (eight directions)
+#                        out to `cone` behind a clear line of sight, `focus`
+#                        more cone for a monkey at rest, bananas in flight
+#                        heard within `hearing` whatever the facing and the
+#                        walls, cells around an own banana in flight within
+#                        `banana_sight`. A fog kind plays only on an arena
+#                        with cells
+# The team kinds score per slot like their free-for-all twins; a team's
+# score is the sum of its slots' (team_rounds: round wins; team_deathmatch:
+# eliminations of enemies, ally kills score nothing).
+# A mode does not carry a loadout: the kit is its own match axis since v0.31
+# (content/loadouts.toml, --loadout NAME).
 
 [[mode]]
 name = "rounds"             # free-for-all rounds: last monkey standing scores
@@ -43,27 +90,93 @@ time_limit_ticks = 3600     # 60 s per round
 round_start_ticks = 60
 round_end_ticks = 120
 
-# Ability modes (v0.21): rounds with a third ability on the ability button.
+# v0.32: team modes (architecture §5.3). No baseline: allies' bananas, dash
+# attacks and slam pushes pass through each other (no friendly fire).
 [[mode]]
-name = "rounds_blink"
-kind = "rounds"
-rounds_to_win = 3
-round_end_ticks = 120
+name = "team_rounds"        # last team standing wins the round
+kind = "team_rounds"
+teams = 2
+rounds_to_win = 3           # the first team to three round wins
 round_start_ticks = 60
-abilities = ["dash", "throw", "blink"]
+round_end_ticks = 120
 
 [[mode]]
-name = "rounds_slam"
-kind = "rounds"
-rounds_to_win = 3
-round_end_ticks = 120
+name = "team_deathmatch"    # a team's eliminations to score_to_win
+kind = "team_deathmatch"
+teams = 2
+score_to_win = 20           # the first team to twenty eliminations wins
+time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
+respawn_ticks = 120
+respawn_invuln_ticks = 90
 round_start_ticks = 60
-abilities = ["dash", "throw", "slam"]
+round_end_ticks = 120
+
+# v0.33: objective modes (architecture §5.3), on arenas with zones.
+[[mode]]
+name = "hill"               # hold the zone alone: a point per hill_ticks
+kind = "hill"
+teams = 2
+hill_ticks = 300            # 5 s alone on the hill scores a point
+score_to_win = 5            # the first team to five points wins
+time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
+respawn_ticks = 120
+respawn_invuln_ticks = 90
+round_start_ticks = 60
+round_end_ticks = 120
 
 [[mode]]
-name = "rounds_parry"
-kind = "rounds"
-rounds_to_win = 3
-round_end_ticks = 120
+name = "capture"            # carry the enemy flag home while your own is home
+kind = "capture"
+teams = 2
+score_to_win = 3            # the first team to three captures wins
+flag_return_ticks = 600     # a dropped flag left alone goes home after 10 s
+time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
+respawn_ticks = 120
+respawn_invuln_ticks = 90
 round_start_ticks = 60
-abilities = ["dash", "throw", "parry"]
+round_end_ticks = 120
+
+# v0.34: the grid space (architecture §5.12). Team rounds on cells: a turn is
+# 15 ticks (four a second) for human lobbies, a walk one cell per turn, a
+# dash two cells in one turn, a throw costs the next turn (grid_throw roots
+# its recovery). One catcher per team by role (the second monkey of a team
+# gets the base grid kit, and so on round-robin). The baseline shrinks
+# monkeys to 0.35 and bananas to 0.15 so the hit disc of 0.5 fits a cell,
+# gives HP 2 and flies bananas at 2 cells per turn (powerups.toml).
+[[mode]]
+name = "grid_rounds"
+kind = "team_rounds"
+space = "grid"
+turn_ticks = 15
+dash_cells = 2
+teams = 2
+roles = ["catcher", "grid", "grid", "grid", "grid"]
+baseline = "grid_base"
+arena = "courtyard"
+rounds_to_win = 3
+round_start_ticks = 60
+round_end_ticks = 120
+# v0.35, the squad contest (architecture §8): each bot sees its own slice.
+# The cone reaches 4 cells, two turns of banana flight and two thirds of the
+# 6-cell throw; hearing is one turn of warning (2 cells per turn, plus 1).
+vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banana_sight = 1 }
+
+# The same at 1-tick turns, for bot matches at full speed (kfm_arena): the
+# _1t loadouts and baseline count the same turns in single ticks, except
+# the bananas, which content cannot fly at 2 cells per tick (§12).
+[[mode]]
+name = "grid_rounds_1t"
+kind = "team_rounds"
+space = "grid"
+turn_ticks = 1
+dash_cells = 2
+teams = 2
+roles = ["catcher_1t", "grid_1t", "grid_1t", "grid_1t", "grid_1t"]
+baseline = "grid_base_1t"
+arena = "courtyard"
+rounds_to_win = 3
+round_start_ticks = 60
+round_end_ticks = 120
+# The same vision: at about a cell per turn the bananas give hearing three
+# turns of warning here (§12).
+vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banana_sight = 1 }

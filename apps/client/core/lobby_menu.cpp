@@ -3,12 +3,23 @@
 #include "kfm/sim/constants.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 
 namespace kfm::client {
 
 namespace {
+
+// Whether a power-up is some mode's baseline (v0.32, ModeDef::baseline):
+// the lobby lists no toggle for it, since a baseline is part of its mode's
+// rules and no shipped spawner draws it.
+[[nodiscard]] bool isBaseline(const sim::ContentDB& content, uint8_t powerUp) {
+  for (uint8_t m = 0; m < content.modeCount && m < sim::kMaxModes; ++m) {
+    if (content.modes[m].baseline == powerUp) return true;
+  }
+  return false;
+}
 
 using platform::InputEventKind;
 using platform::Key;
@@ -139,15 +150,23 @@ void LobbyMenu::setContent(const sim::ContentDB& content) {
   rowCount_ = 0;
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Arena};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mode};
+  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Teams};
+  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Loadout};
   const uint8_t powerUps = std::min<uint8_t>(content.powerUpCount, sim::kMaxPowerUps);
-  for (uint8_t i = 0; i < powerUps; ++i)
+  for (uint8_t i = 0; i < powerUps; ++i) {
+    if (isBaseline(content, i)) continue;  // v0.34: a mode's rules, never spawned
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::PowerUp, i};
+  }
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Bots};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::BotDifficulty};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
   if (settings_.arena >= content.arenaCount) settings_.arena = 0;
   if (settings_.mode >= content.modeCount) settings_.mode = 0;
+  if (settings_.loadout >= content.loadoutCount) settings_.loadout = 0;
+  if (!content.compatible(settings_.arena, settings_.mode)) {
+    settings_.arena = content.firstCompatibleArena(settings_.mode).value_or(0);
+  }
   focus_ = 0;
   for (std::size_t i = 0; i < rowCount_; ++i) {
     if (rows_[i] == focused) focus_ = i;
@@ -188,10 +207,24 @@ bool LobbyMenu::change(std::size_t row, int direction) {
   const LobbyRow& r = rows_[row];
   switch (r.kind) {
     case LobbyRowKind::Arena:
-      settings_.arena = cycle(settings_.arena, db.arenaCount);
+      // The next arena that suits the mode (v0.32); the current one when
+      // no other does.
+      for (uint8_t step = 0; step < db.arenaCount; ++step) {
+        settings_.arena = cycle(settings_.arena, db.arenaCount);
+        if (db.compatible(settings_.arena, settings_.mode)) break;
+      }
       break;
     case LobbyRowKind::Mode:
       settings_.mode = cycle(settings_.mode, db.modeCount);
+      // v0.34: a mode that names its arena (ModeDef::arena) brings it.
+      if (db.modeAt(settings_.mode).hasArena() || !db.compatible(settings_.arena, settings_.mode)) {
+        settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(settings_.arena);
+      }
+      break;
+    case LobbyRowKind::Teams:
+      break;  // derived from the mode
+    case LobbyRowKind::Loadout:
+      settings_.loadout = cycle(settings_.loadout, db.loadoutCount);
       break;
     case LobbyRowKind::PowerUp:
       settings_.powerUps = static_cast<uint16_t>(settings_.powerUps ^ (1u << r.powerUp));
@@ -228,6 +261,10 @@ std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
       return "Arena";
     case LobbyRowKind::Mode:
       return "Mode";
+    case LobbyRowKind::Teams:
+      return "Teams";
+    case LobbyRowKind::Loadout:
+      return "Loadout";
     case LobbyRowKind::PowerUp:
       return std::string(content().powerUpAt(row.powerUp).name.view());
     case LobbyRowKind::Bots:
@@ -249,6 +286,12 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return std::string(db.arenaAt(settings_.arena).name.view());
     case LobbyRowKind::Mode:
       return std::string(db.modeAt(settings_.mode).name.view());
+    case LobbyRowKind::Teams: {
+      const uint8_t teams = db.modeAt(settings_.mode).teams;
+      return teams == 0 ? std::string("free-for-all") : std::to_string(teams) + " (by mode)";
+    }
+    case LobbyRowKind::Loadout:
+      return std::string(db.loadoutAt(settings_.loadout).name.view());
     case LobbyRowKind::PowerUp:
       return (settings_.powerUps & (1u << row.powerUp)) != 0 ? "on" : "off";
     case LobbyRowKind::Bots:
@@ -263,6 +306,17 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
   return {};
 }
 
+std::string loadoutSummary(const sim::ContentDB& db, uint8_t loadout) {
+  const std::array<uint8_t, sim::kAbilitySlots>& slots = db.loadoutAbilities(loadout);
+  std::string s;
+  for (uint8_t slot = 0; slot < sim::kAbilitySlots; ++slot) {
+    if (slots[slot] == 0) continue;  // an empty slot (the base kit's ability button)
+    if (!s.empty()) s += ", ";
+    s += db.abilityAt(slots[slot]).name.view();
+  }
+  return s;
+}
+
 std::string ticksClock(uint32_t ticks) {
   const uint32_t seconds = (ticks + sim::kTickHz - 1) / sim::kTickHz;
   char buf[16];
@@ -275,22 +329,45 @@ std::string modeSummary(const sim::ModeDef& mode) {
   const auto secs = [](uint32_t ticks) {
     return static_cast<double>(ticks) / static_cast<double>(sim::kTickHz);
   };
+  // v0.32: the team kinds say so ("teams of 2: ...").
+  const char* team = mode.teams > 0 ? "team " : "";
   switch (mode.kind) {
-    case sim::ModeKind::Deathmatch: {
+    case sim::ModeKind::Deathmatch:
+    case sim::ModeKind::TeamDeathmatch: {
       const std::string clock =
           mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
       if (mode.respawnInvulnTicks > 0) {
         std::snprintf(buf, sizeof buf,
-                      "first to %u eliminations, %s, respawn %.1f s (%.1f s protected)",
+                      "first %sto %u eliminations, %s, respawn %.1f s (%.1f s protected)", team,
                       static_cast<unsigned>(mode.scoreToWin), clock.c_str(),
                       secs(mode.respawnTicks), secs(mode.respawnInvulnTicks));
       } else {
-        std::snprintf(buf, sizeof buf, "first to %u eliminations, %s, respawn %.1f s",
+        std::snprintf(buf, sizeof buf, "first %sto %u eliminations, %s, respawn %.1f s", team,
                       static_cast<unsigned>(mode.scoreToWin), clock.c_str(),
                       secs(mode.respawnTicks));
       }
       return buf;
     }
+    case sim::ModeKind::Hill: {
+      const std::string clock =
+          mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      std::snprintf(buf, sizeof buf,
+                    "first team to %u points, a point per %.1f s alone on the hill, %s",
+                    static_cast<unsigned>(mode.scoreToWin), secs(mode.hillTicks), clock.c_str());
+      return buf;
+    }
+    case sim::ModeKind::Capture: {
+      const std::string clock =
+          mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      std::snprintf(
+          buf, sizeof buf, "first team to %u captures, a dropped flag home after %.1f s, %s",
+          static_cast<unsigned>(mode.scoreToWin), secs(mode.flagReturnTicks), clock.c_str());
+      return buf;
+    }
+    case sim::ModeKind::TeamRounds:
+      std::snprintf(buf, sizeof buf, "first team to %u rounds, last team standing",
+                    static_cast<unsigned>(mode.roundsToWin));
+      return buf;
     case sim::ModeKind::Survival:
       if (mode.timeLimitTicks != 0) {
         std::snprintf(buf, sizeof buf, "first to %u rounds of %s, last monkey standing",

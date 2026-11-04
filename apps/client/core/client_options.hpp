@@ -2,8 +2,8 @@
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
 //              [--bot-difficulty easy|medium|hard] [--bot-module PATH] [--bot SPEC]
-//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
-//              [--no-hot-reload] [--no-settings]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
+//              [--powerups LIST] [--no-hot-reload] [--no-settings]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
@@ -22,8 +22,8 @@ namespace kfm::client {
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
     "                  [--bot-difficulty easy|medium|hard] [--bot-module PATH] [--bot SPEC]\n"
-    "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
-    "                  [--no-hot-reload] [--no-settings]\n"
+    "                  [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
+    "                  [--powerups LIST] [--no-hot-reload] [--no-settings]\n"
     "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
     "                  [--mute] [--volume 0..100]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
@@ -41,13 +41,15 @@ inline constexpr const char* kUsage =
     "                         executable, else the copy built into it\n"
     "  --arena NAME           arena of local matches (default: the first one)\n"
     "  --mode NAME            mode of local matches (default: the first one)\n"
+    "  --loadout NAME         loadout of local matches: base (default, the player's\n"
+    "                         kit) or one of content/loadouts.toml (blink, slam, ...)\n"
     "  --powerups LIST        power-ups the spawners of local matches may draw: all\n"
     "                         (default), none or comma-separated names\n"
     "  --no-hot-reload        do not watch the content directory (native local play\n"
     "                         reloads it on change and restarts the match)\n"
     "  --no-settings          neither read nor save the lobby settings (arena, mode,\n"
-    "                         power-ups, bots, bot difficulty, volume, mute; flags win\n"
-    "                         over saved ones)\n"
+    "                         loadout, power-ups, bots, bot difficulty, volume, mute;\n"
+    "                         flags win over saved ones)\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
     "  --capsules             draw players as capsules, not the skinned model\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
@@ -75,8 +77,9 @@ struct ClientOptions {
   ai::ReferenceTier botDifficulty{kDefaultBotTier};
   std::string botModule;   // --bot-module; empty = the reference bot
   std::string contentDir;  // --content; empty = next to the executable, else embedded
-  std::string arena;       // --arena / --mode names; empty = index 0
+  std::string arena;       // --arena / --mode / --loadout names; empty = index 0
   std::string mode;
+  std::string loadout;
   std::string powerUps;  // --powerups list; empty = all
   bool hotReload{true};
   bool settings{true};  // read and save the lobby settings (lobby_settings.hpp)

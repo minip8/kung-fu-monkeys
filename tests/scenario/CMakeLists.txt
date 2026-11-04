@@ -14,10 +14,15 @@ kfm_add_test_exe(kfm_scenario_tests
   match_config_scenario.cpp
   arena_scenario.cpp
   mode_scenario.cpp
+  mode_hooks_scenario.cpp
   powerup_scenario.cpp
   blink_scenario.cpp
   slam_scenario.cpp
   parry_scenario.cpp
+  call_scenario.cpp
   ability_bots_scenario.cpp
+  team_scenario.cpp
+  objective_scenario.cpp
+  grid_scenario.cpp
 )
 target_link_libraries(kfm_scenario_tests PRIVATE kfm::sim)

@@ -98,14 +98,23 @@ enum {
   KFM_PHASE_ROUND_ENDED = 3,
   KFM_PHASE_MATCH_ENDED = 4
 };
-enum { KFM_MODE_ROUNDS = 0, KFM_MODE_DEATHMATCH = 1, KFM_MODE_SURVIVAL = 2 };
+enum {
+  KFM_MODE_ROUNDS = 0,
+  KFM_MODE_DEATHMATCH = 1,
+  KFM_MODE_SURVIVAL = 2,
+  KFM_MODE_TEAM_ROUNDS = 3,
+  KFM_MODE_TEAM_DEATHMATCH = 4,
+  KFM_MODE_HILL = 5,
+  KFM_MODE_CAPTURE = 6
+};
 enum {
   KFM_ABILITY_NONE = 0,
   KFM_ABILITY_DASH = 1,
   KFM_ABILITY_THROW = 2,
   KFM_ABILITY_BLINK = 3,
   KFM_ABILITY_SLAM = 4,
-  KFM_ABILITY_PARRY = 5
+  KFM_ABILITY_PARRY = 5,
+  KFM_ABILITY_CALL = 6 /* architecture v0.35 */
 };
 enum {
   KFM_ABILITY_IDLE = 0,
@@ -114,7 +123,7 @@ enum {
   KFM_ABILITY_RECOVERY = 3
 };
 enum { KFM_BANANA_OUTBOUND = 0, KFM_BANANA_RETURNING = 1, KFM_BANANA_GROUNDED = 2 };
-enum { KFM_PICKUP_BANANA = 0, KFM_PICKUP_POWERUP = 1 };
+enum { KFM_PICKUP_BANANA = 0, KFM_PICKUP_POWERUP = 1, KFM_PICKUP_FLAG = 2 };
 enum { KFM_HAZARD_PIT = 0, KFM_HAZARD_SLOW = 1 };
 /* Tag bit numbers (the `tags` fields): test with kfm_has_tag(tags, KFM_TAG_...). */
 enum {
@@ -125,9 +134,17 @@ enum {
   KFM_TAG_INVULNERABLE = 4,
   KFM_TAG_ELIMINATED = 5,
   KFM_TAG_SLAMMING = 6,
-  KFM_TAG_PARRYING = 7
+  KFM_TAG_PARRYING = 7,
+  KFM_TAG_FRIENDLY_FIRE = 8, /* allies' bananas and dashes hit this monkey (team modes) */
+  KFM_TAG_CARRYING = 9       /* holds a capture flag */
 };
-#define KFM_SCHEMA_FLAG_FOG 0x1u /* header.schemaFlags; reserved, 0 in v1 */
+/* header.schemaFlags bit 0 (architecture v0.35): the mode's vision is not
+ * "all", so players[i].visible and bananas[i].visible are meaningful; an
+ * unseen monkey keeps only present, relation, team and respawnTicks, an
+ * unseen banana or pickup is all zero. */
+#define KFM_SCHEMA_FLAG_FOG 0x1u
+/* heardCalls[i].cellX/cellY of a caller this bot does not see. */
+#define KFM_NO_CELL (-1)
 
 /* ---- Observation v1 --------------------------------------------------------
  * Little-endian, 5748 bytes, alignment 4, every hole an explicit pad. Units:
@@ -155,11 +172,12 @@ typedef struct kfm_obs_match {
   uint16_t aliveMask;      /* bit i: slot i in the arena */
   uint8_t inputDelayTicks; /* the answer applies on tick + this */
   uint8_t lastRoundWinner, pad0, pad1;
-  uint16_t roundStartTicks, roundEndTicks, respawnDelayTicks, respawnInvulnTicks, reservedTurnTicks;
-  uint16_t reservedTicksToLatch;
+  uint16_t roundStartTicks, roundEndTicks, respawnDelayTicks, respawnInvulnTicks;
+  uint16_t turnTicks;    /* a grid mode's turn length, 0 in a continuous one (v0.35) */
+  uint16_t ticksToLatch; /* grid: ticks to the next latch, 0 = this tick's input is latched */
   uint8_t scores[KFM_MAX_PLAYERS], deaths[KFM_MAX_PLAYERS];
-  uint16_t respawnTicks[KFM_MAX_PLAYERS], reservedTeamScores[KFM_MAX_PLAYERS];
-  uint32_t reservedModeData[KFM_MODE_DATA_WORDS];
+  uint16_t respawnTicks[KFM_MAX_PLAYERS], teamScores[KFM_MAX_PLAYERS]; /* by team index */
+  uint32_t modeData[KFM_MODE_DATA_WORDS]; /* the mode's state (bot-abi.md §3) */
 } kfm_obs_match;
 
 typedef struct kfm_obs_rules {
@@ -210,16 +228,19 @@ typedef struct kfm_obs_self {
   uint32_t tags;
   uint16_t hitStunTicks, knockbackTicks, invulnTicks, respawnTicks;
   uint8_t facing; /* angle8 */
-  uint8_t reservedFacingOctant, reservedRole, reservedTeam;
-  int16_t reservedCellX, reservedCellY;
+  uint8_t facingOctant; /* grid: facing as 0..7 (0 east, counter-clockwise), the cone's */
+  uint8_t role;         /* the loadout index the slot plays */
+  uint8_t team;
+  int16_t cellX, cellY; /* grid: the own cell (column from the west, row from the north) */
   kfm_obs_ability abilities[KFM_ABILITY_SLOTS]; /* 0 Dash button, 1 Throw, 2 Ability1 */
   kfm_obs_modifier modifiers[KFM_MAX_MODIFIERS];
 } kfm_obs_self;
 
 typedef struct kfm_obs_player {
-  uint8_t present, alive, reservedVisible;
+  uint8_t present, alive;
+  uint8_t visible;  /* fog (KFM_SCHEMA_FLAG_FOG): 1 when seen this turn */
   uint8_t relation; /* KFM_REL_* */
-  uint8_t reservedTeam, hp, maxHp, ammo, ammoMax, facing, dashing, pad0;
+  uint8_t team, hp, maxHp, ammo, ammoMax, facing, dashing, pad0;
   uint32_t tags;
   int32_t posX, posY, velX, velY;
   uint16_t hitStunTicks, invulnTicks, respawnTicks, pad1;
@@ -229,8 +250,9 @@ typedef struct kfm_obs_player {
 } kfm_obs_player;
 
 typedef struct kfm_obs_banana {
-  uint8_t valid, reservedVisible;
-  uint8_t phase; /* KFM_BANANA_* */
+  uint8_t valid;
+  uint8_t visible; /* fog: 1 when seen or heard this turn */
+  uint8_t phase;   /* KFM_BANANA_* */
   uint8_t owner, ownerRelation, damage, pad0, pad1;
   uint16_t headingBam, ticksAlive, ticksInPhase;
   uint16_t approachTicks; /* closest approach to self, on the current velocity */
@@ -274,6 +296,9 @@ typedef struct kfm_obs_arena {
   kfm_obs_spawner spawners[KFM_MAX_SPAWNERS];
 } kfm_obs_arena;
 
+/* A call heard this turn (architecture v0.35): the caller's slot, its aim
+ * byte as the symbol, the tick of the call and the caller's cell then, or
+ * KFM_NO_CELL when this bot does not see the caller. */
 typedef struct kfm_obs_heard_call {
   uint8_t valid, slot, symbol, pad0;
   uint32_t tick;
@@ -289,7 +314,7 @@ typedef struct kfm_observation {
   kfm_obs_banana bananas[KFM_MAX_BANANAS];
   kfm_obs_pickup pickups[KFM_MAX_PICKUPS];
   kfm_obs_arena arena;
-  kfm_obs_heard_call reservedHeardCalls[KFM_MAX_HEARD_CALLS];
+  kfm_obs_heard_call heardCalls[KFM_MAX_HEARD_CALLS]; /* oldest first */
 } kfm_observation;
 
 #define KFM_CHECK_SIZE(T, n) KFM_STATIC_ASSERT(sizeof(T) == (n), "size of " #T)
@@ -315,7 +340,7 @@ KFM_CHECK_AT(kfm_observation, players, 472);
 KFM_CHECK_AT(kfm_observation, bananas, 1112);
 KFM_CHECK_AT(kfm_observation, pickups, 3928);
 KFM_CHECK_AT(kfm_observation, arena, 4440);
-KFM_CHECK_AT(kfm_observation, reservedHeardCalls, 5556);
+KFM_CHECK_AT(kfm_observation, heardCalls, 5556);
 KFM_CHECK_AT(kfm_obs_match, modeIndex, 16);
 KFM_CHECK_AT(kfm_obs_match, presentMask, 24);
 KFM_CHECK_AT(kfm_obs_match, inputDelayTicks, 28);
@@ -323,8 +348,8 @@ KFM_CHECK_AT(kfm_obs_match, roundStartTicks, 32);
 KFM_CHECK_AT(kfm_obs_match, scores, 44);
 KFM_CHECK_AT(kfm_obs_match, deaths, 54);
 KFM_CHECK_AT(kfm_obs_match, respawnTicks, 64);
-KFM_CHECK_AT(kfm_obs_match, reservedTeamScores, 84);
-KFM_CHECK_AT(kfm_obs_match, reservedModeData, 104);
+KFM_CHECK_AT(kfm_obs_match, teamScores, 84);
+KFM_CHECK_AT(kfm_obs_match, modeData, 104);
 KFM_CHECK_AT(kfm_obs_rules, bananaOutboundTicks, 28);
 KFM_CHECK_AT(kfm_obs_rules, bananaDamage, 36);
 KFM_CHECK_AT(kfm_obs_rules, playerMaxHp, 40);
@@ -342,10 +367,10 @@ KFM_CHECK_AT(kfm_obs_self, tags, 48);
 KFM_CHECK_AT(kfm_obs_self, hitStunTicks, 52);
 KFM_CHECK_AT(kfm_obs_self, invulnTicks, 56);
 KFM_CHECK_AT(kfm_obs_self, facing, 60);
-KFM_CHECK_AT(kfm_obs_self, reservedCellX, 64);
+KFM_CHECK_AT(kfm_obs_self, cellX, 64);
 KFM_CHECK_AT(kfm_obs_self, abilities, 68);
 KFM_CHECK_AT(kfm_obs_self, modifiers, 212);
-KFM_CHECK_AT(kfm_obs_player, reservedTeam, 4);
+KFM_CHECK_AT(kfm_obs_player, team, 4);
 KFM_CHECK_AT(kfm_obs_player, tags, 12);
 KFM_CHECK_AT(kfm_obs_player, posX, 16);
 KFM_CHECK_AT(kfm_obs_player, hitStunTicks, 32);

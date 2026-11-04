@@ -3,6 +3,7 @@
 #include "kfm/sim/abilities/registry.hpp"
 
 #include "kfm/sim/abilities/blink.hpp"
+#include "kfm/sim/abilities/call.hpp"
 #include "kfm/sim/abilities/dash.hpp"
 #include "kfm/sim/abilities/parry.hpp"
 #include "kfm/sim/abilities/slam.hpp"
@@ -33,6 +34,7 @@ constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> 
     blinkBehavior(),  // AbilityKind::Blink
     slamBehavior(),   // AbilityKind::Slam
     parryBehavior(),  // AbilityKind::Parry
+    callBehavior(),   // AbilityKind::Call (v0.35)
 };
 
 }  // namespace

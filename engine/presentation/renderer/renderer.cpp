@@ -33,8 +33,9 @@ constexpr std::size_t kBananaMesh = 1;
 constexpr std::size_t kDiscMesh = 2;
 constexpr std::size_t kFloorMesh = 3;
 constexpr std::size_t kCubeMesh = 4;
-constexpr std::size_t kSkinnedMesh = 5;
-constexpr std::size_t kStaticMeshCount = 5;  // built in init(); the skinned one is loaded later
+constexpr std::size_t kQuadMesh = 5;  // v0.33: a unit floor quad, uv centred on 0 (zones)
+constexpr std::size_t kSkinnedMesh = 6;
+constexpr std::size_t kStaticMeshCount = 6;  // built in init(); the skinned one is loaded later
 
 // Shader and pipeline slots.
 constexpr std::size_t kLitShader = 0;
@@ -69,6 +70,7 @@ constexpr Color kDust{0.62f, 0.52f, 0.38f};
 
 constexpr float kWallHeight = 0.35f;
 constexpr float kWallThickness = 0.3f;
+constexpr float kZoneLift = 0.006f;      // v0.33: zones lie under the shadows
 constexpr float kShadowLift = 0.012f;    // above the floor, plus a depth bias
 constexpr float kDecalLift = 0.022f;     // rings and trails sit above the shadows
 constexpr float kShadowOpacity = 0.55f;  // multiplied by RenderShadow::opacity
@@ -130,7 +132,7 @@ struct DecalFsParams {
 };
 static_assert(sizeof(DecalFsParams) == static_cast<std::size_t>(shaders::kDecalFsVec4s) * 16);
 
-enum class DecalMode : uint8_t { Shadow = 0, Ring = 1, Burst = 2 };
+enum class DecalMode : uint8_t { Shadow = 0, Ring = 1, Burst = 2, Rect = 3 };
 
 template <typename T>
 [[nodiscard]] sg_range rangeOf(const T& value) {
@@ -312,6 +314,19 @@ class FrameDrawer {
     decal(model, color, alpha, mode, inner);
   }
 
+  // A floor rectangle (v0.33, zones): `alpha` at the rim band from `inner`
+  // of the half-size outward, `fill` x alpha inside it.
+  void groundRect(Vec3 center, float lift, float sizeX, float sizeZ, Color color, float alpha,
+                  float inner, float fill) {
+    if (alpha <= 0.0f) return;
+    const Mat4 model = translate({center.x, lift, center.z}) *
+                       scale({std::max(sizeX, 1e-3f), 1.0f, std::max(sizeZ, 1e-3f)});
+    const DecalVsParams vs{.mvp = viewProj_ * model};
+    const DecalFsParams fs{.color = {color.r, color.g, color.b, clamp01(alpha)},
+                           .shape = {static_cast<float>(DecalMode::Rect), inner, fill, 0.0f}};
+    submit(kQuadMesh, rangeOf(vs), rangeOf(fs));
+  }
+
   // A disc at `center` facing the camera.
   void billboard(Vec3 center, float radius, Color color, float alpha, DecalMode mode,
                  float inner = 0.0f) {
@@ -463,9 +478,10 @@ bool Renderer::init(const sim::MatchContent& match) {
       makeDisc(1.0f, 40),
       makeFloorQuad(match.arena.halfExtents.x.toFloat(), match.arena.halfExtents.y.toFloat()),
       makeUnitCube(),
+      makeFloorQuad(0.5f, 0.5f),
   };
   constexpr std::array<const char*, kStaticMeshCount> kLabels = {
-      "kfm-capsule", "kfm-banana", "kfm-disc", "kfm-floor", "kfm-cube"};
+      "kfm-capsule", "kfm-banana", "kfm-disc", "kfm-floor", "kfm-cube", "kfm-quad"};
   for (std::size_t i = 0; i < kStaticMeshCount; ++i) {
     const MeshData& m = data[i];
     meshes_[i].vertexBuffer =
@@ -703,6 +719,15 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
               translate({r + (kAimLength * 0.5f), 0.0f, 0.0f}) *
               scale({kAimLength, kAimThickness, kAimThickness}),
           mix(own, kWhite, 0.45f), 0.0f, 0.15f);
+    // v0.33: a capture flag's carrier wears a small gold diamond overhead.
+    if (p.has(PlayerFlag::Carrying)) {
+      const float s = kFlagCarrySize;
+      d.lit(kCubeMesh,
+            translate(p.position + Vec3{0.0f, bodyHeight + kFlagCarryLift, 0.0f}) *
+                rotateY(state.time * kFlagCarrySpinRadPerSec) * rotateZ(0.25f * kPi) *
+                rotateX(0.25f * kPi) * scale({s, s, s}),
+            kGold, 0.0f, 0.3f);
+    }
     // A banana in hand while the player has ammo.
     if (p.has(PlayerFlag::HasAmmo)) {
       d.lit(kBananaMesh,
@@ -720,8 +745,8 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   }
   for (uint16_t i = 0; i < state.pickupCount; ++i) {
     const RenderPickup& p = state.pickups[i];
-    if (p.kind == PickupKindView::PowerUp) {
-      drawPowerUp(d, p, r, bodyHeight, state.time);
+    if (p.kind == PickupKindView::PowerUp || p.kind == PickupKindView::Flag) {
+      drawPowerUp(d, p, r, bodyHeight, state.time);  // a flag: its team's colour (v0.33)
     } else {
       d.lit(kBananaMesh, translate(p.position) * rotateY(p.spin), kPickupColor, 0.0f, 0.1f);
     }
@@ -729,6 +754,13 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
 
   // --- ground decals (alpha) -------------------------------------------------------
   d.usePipeline(kDecalAlphaPipeline);
+  // Objective zones (v0.33) under everything else on the floor.
+  for (uint8_t i = 0; i < state.zoneCount; ++i) {
+    const RenderZone& z = state.zones[i];
+    const Color c = z.team >= 0 ? playerColor(static_cast<uint32_t>(z.team)) : kWhite;
+    d.groundRect(z.center, kZoneLift, z.size.x, z.size.z, c, kZoneRimOpacity, kZoneRimStart,
+                 kZoneOpacity / kZoneRimOpacity);
+  }
   for (uint16_t i = 0; i < state.shadowCount; ++i) {
     const RenderShadow& s = state.shadows[i];
     d.groundDisc(s.ground, kShadowLift, 0.0f, s.radius, s.radius, kShadowColor,
@@ -757,7 +789,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   // A pulsing ring in the power-up's colour marks a power-up pickup.
   for (uint16_t i = 0; i < state.pickupCount; ++i) {
     const RenderPickup& p = state.pickups[i];
-    if (p.kind != PickupKindView::PowerUp) continue;
+    if (p.kind == PickupKindView::Banana) continue;
     const float pulse = 0.5f + (0.5f * std::sin(kTwoPi * kPowerUpRingPulseHz * state.time));
     d.groundDisc(p.ground, kDecalLift, 0.0f, kPowerUpRingRadius, kPowerUpRingRadius,
                  playerColor(p.colorIndex), lerp(0.45f, 0.9f, pulse), DecalMode::Ring, 0.75f);
@@ -879,6 +911,16 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const float t = e.progress();
     const float fade = 1.0f - t;
     switch (e.kind) {
+      case EffectKind::CallShout: {
+        // v0.35: a call, rings popping over the caller's head.
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.3f) : kWhite;
+        d.billboard(e.position, lerp(0.25f, 0.7f + (0.3f * e.size), easeOut(t)), c, fade,
+                    DecalMode::Ring, 0.7f);
+        d.billboard(e.position, lerp(0.1f, 0.35f, easeOut(t)), kWhite, fade, DecalMode::Burst,
+                    0.2f);
+        break;
+      }
       case EffectKind::PerfectCatchFlash:
         d.billboard(e.position, lerp(0.6f, 1.8f, t), kGold, fade, DecalMode::Burst, 0.25f);
         d.billboard(e.position, lerp(0.3f, 0.8f, t), kWhite, fade, DecalMode::Burst, 0.1f);

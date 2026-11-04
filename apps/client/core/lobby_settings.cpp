@@ -34,13 +34,21 @@ namespace {
 bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& content,
                        LobbySettings& out, std::string& error) {
   sim::MatchConfig config{};
-  if (!content::resolveMatchNames(content, options.arena, options.mode, config, error) ||
+  // v0.32: an arena that does not suit the mode (a saved arena=dojo under a
+  // --mode team_rounds flag) gives way to the first one that does; an
+  // unknown name is still an error.
+  const bool known = options.arena.empty() || content.findArena(options.arena).has_value();
+  const bool resolved =
+      content::resolveMatchNames(content, options.arena, options.mode, config, error) ||
+      (known && content::resolveMatchNames(content, "", options.mode, config, error));
+  if (!resolved || !content::resolveLoadoutName(content, options.loadout, config, error) ||
       !content::resolvePowerUpList(content, options.powerUps, config.powerUps, error)) {
     return false;
   }
   out.arena = config.arena;
   out.mode = config.mode;
   out.powerUps = config.powerUps;
+  out.loadout = config.loadout;
   out.bots = options.bots;
   out.botTier = options.botDifficulty;
   out.volume = options.volume;
@@ -52,6 +60,7 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
                         ClientOptions& options) {
   options.arena = content.arenaAt(settings.arena).name.view();
   options.mode = content.modeAt(settings.mode).name.view();
+  options.loadout = content.loadoutAt(settings.loadout).name.view();
   options.powerUps = content::powerUpListText(content, settings.powerUps);
   options.bots = settings.bots;
   options.botDifficulty = settings.botTier;
@@ -63,6 +72,7 @@ std::string settingsText(const ClientOptions& options) {
   std::string s;
   s += "arena=" + options.arena + "\n";
   s += "mode=" + options.mode + "\n";
+  s += "loadout=" + options.loadout + "\n";
   s += "powerups=" + (options.powerUps.empty() ? std::string("all") : options.powerUps) + "\n";
   s += "bots=" + std::to_string(options.bots) + "\n";
   s += "bot_difficulty=" + std::string(ai::toString(options.botDifficulty)) + "\n";
@@ -90,15 +100,25 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
     }
     const std::string_view key = trim(line.substr(0, eq));
     const std::string_view value = trim(line.substr(eq + 1));
-    if (key == "arena" || key == "mode") {
+    if (key == "arena" || key == "mode" || key == "loadout") {
       if (value.empty()) continue;  // the default
-      const bool known = key == "arena" ? content.findArena(value).has_value()
-                                        : content.findMode(value).has_value();
+      bool known = false;
+      std::string* target = nullptr;
+      if (key == "arena") {
+        known = content.findArena(value).has_value();
+        target = &options.arena;
+      } else if (key == "mode") {
+        known = content.findMode(value).has_value();
+        target = &options.mode;
+      } else {
+        known = content.findLoadout(value).has_value();
+        target = &options.loadout;
+      }
       if (!known) {
         warn("this content has no " + std::string(key) + " '" + std::string(value) + "'");
         continue;
       }
-      (key == "arena" ? options.arena : options.mode) = value;
+      *target = value;
     } else if (key == "powerups") {
       uint16_t set = 0;
       std::string error;

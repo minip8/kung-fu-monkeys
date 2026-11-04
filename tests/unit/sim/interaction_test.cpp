@@ -92,7 +92,8 @@ EventSink resolve(WorldState& s, const Contacts& cs, const ContentDB& content = 
 TEST_CASE("rules table is sorted and every row ignores eliminated players", "[sim][interaction]") {
   const auto rules = interactionRules();
   // M1 six + the shield rows and power-ups (v0.20) + the pit (v0.22) + the slam (v0.21)
-  REQUIRE(rules.size() == 13);  // + the parry (v0.21)
+  // + the parry (v0.21) + seven Ally twins (v0.32) + the capture flag (v0.33)
+  REQUIRE(rules.size() == 21);
   for (size_t i = 0; i < rules.size(); ++i) {
     if (i > 0) CHECK(rules[i - 1].priority < rules[i].priority);
     CHECK(rules[i].kindA == EntityKind::Player);
@@ -116,9 +117,49 @@ TEST_CASE("the dash attack row: Player[Dashing] x Player[!HitStun, !Invulnerable
   CHECK(row->forbidB.has(Tag::Invulnerable));
   CHECK(row->ownership == Ownership::Any);
   CHECK(row->resolve == &dashAttack);
+  CHECK(row->relationB == relationBit(Relation::Enemy));
   // The rows on Player x Player: the attack, the shield that pre-empts it (v0.20)
-  // and the slam push (v0.21).
-  CHECK(std::ranges::count(rules, EntityKind::Player, &InteractionRule::kindB) == 3);
+  // and the slam push (v0.21), each with its Ally twin (v0.32).
+  CHECK(std::ranges::count(rules, EntityKind::Player, &InteractionRule::kindB) == 6);
+}
+
+TEST_CASE("every Ally row is an Enemy row's friendly-fire twin", "[sim][interaction]") {
+  const auto rules = interactionRules();
+  const uint8_t ally = relationBit(Relation::Ally);
+  const uint8_t enemy = relationBit(Relation::Enemy);
+  int twins = 0;
+  for (const InteractionRule& r : rules) {
+    CHECK((r.relationB == kRelationAny || r.relationB == ally || r.relationB == enemy));
+    if (r.relationB != ally) continue;
+    ++twins;
+    // The receiving end holds FriendlyFire: A for a banana row, B for a player pair.
+    const bool pair = r.kindB == EntityKind::Player;
+    CHECK((pair ? r.requireB : r.requireA).has(Tag::FriendlyFire));
+    const auto twin = std::ranges::find_if(rules, [&](const InteractionRule& e) {
+      return e.relationB == enemy && e.resolve == r.resolve && e.kindB == r.kindB &&
+             e.priority < r.priority;
+    });
+    REQUIRE(twin != rules.end());
+    Tags want = pair ? twin->requireB : twin->requireA;
+    want.set(Tag::FriendlyFire);
+    CHECK((pair ? r.requireB : r.requireA) == want);
+    CHECK((pair ? r.requireA : r.requireB) == (pair ? twin->requireA : twin->requireB));
+    CHECK(r.forbidA == twin->forbidA);
+    CHECK(r.forbidB == twin->forbidB);
+    CHECK(r.phaseMaskB == twin->phaseMaskB);
+    CHECK(r.ownership == twin->ownership);
+    CHECK(r.reachA == twin->reachA);
+  }
+  CHECK(twins == 7);
+  // Damage: row 30 for enemies, row 31 for allies under friendly fire.
+  const auto r30 = std::ranges::find(rules, uint8_t{30}, &InteractionRule::priority);
+  const auto r31 = std::ranges::find(rules, uint8_t{31}, &InteractionRule::priority);
+  REQUIRE(r30 != rules.end());
+  REQUIRE(r31 != rules.end());
+  CHECK(r30->relationB == enemy);
+  CHECK(r31->relationB == ally);
+  CHECK(r31->resolve == &damagePlayer);
+  CHECK(r31->requireA == Tags::of(Tag::FriendlyFire));
 }
 
 TEST_CASE("perfect catch inside the window takes the banana and an ammo", "[sim][interaction]") {

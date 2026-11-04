@@ -26,12 +26,14 @@ kfm_add_test_exe(kfm_sim_tests
   sim/lifecycle_test.cpp
   sim/rules_test.cpp
   sim/statics_test.cpp
+  sim/grid_cells_test.cpp
 )
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
 kfm_add_test_exe(kfm_content_tests
   content/decimal_test.cpp
   content/loader_test.cpp
+  content/tilemap_test.cpp
 )
 target_link_libraries(kfm_content_tests PRIVATE kfm::content)
 # The loader test reads the repo's content/ from disk: in place natively,
@@ -71,6 +73,7 @@ kfm_add_test_exe(kfm_ai_tests
   ai/observation_test.cpp
   ai/agent_host_test.cpp
   ai/reference_bot_test.cpp
+  ai/vision_test.cpp
 )
 target_link_libraries(kfm_ai_tests PRIVATE kfm::ai)
 

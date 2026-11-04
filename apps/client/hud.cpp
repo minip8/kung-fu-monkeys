@@ -41,6 +41,12 @@ constexpr ImU32 kEmptyPip = IM_COL32(40, 40, 40, 200);
   return {c.r, c.g, c.b, 1.0f};
 }
 
+// v0.32: a team is drawn in the palette colour of its index (team 1 red,
+// team 2 blue, ...), named "Team 1".. on screen.
+[[nodiscard]] ImU32 teamColor(uint32_t team, int alpha = 255) {
+  return slotColor(team, alpha);
+}
+
 // "P1".."P10" for local players, "BOT3" (slot number) for bots: several bots
 // must stay distinguishable in the score bar and banners.
 void slotLabel(const HudView& view, uint8_t slot, char (&out)[8]) {
@@ -82,6 +88,22 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       std::snprintf(line, sizeof line, "Deathmatch  (first to %u)",
                     static_cast<unsigned>(hud.scoreToWin));
       break;
+    case sim::ModeKind::TeamDeathmatch:
+      std::snprintf(line, sizeof line, "Team deathmatch  (first team to %u)",
+                    static_cast<unsigned>(hud.scoreToWin));
+      break;
+    case sim::ModeKind::Hill:
+      std::snprintf(line, sizeof line, "Hill  (first team to %u points)",
+                    static_cast<unsigned>(hud.scoreToWin));
+      break;
+    case sim::ModeKind::Capture:
+      std::snprintf(line, sizeof line, "Capture  (first team to %u flags)",
+                    static_cast<unsigned>(hud.scoreToWin));
+      break;
+    case sim::ModeKind::TeamRounds:
+      std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
+                    static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
+      break;
     case sim::ModeKind::Survival:
       std::snprintf(line, sizeof line, "Round %u  (first to %u)  %u alive",
                     static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin),
@@ -94,6 +116,20 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       break;
   }
   centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y), kWhite, line);
+  if (hud.teamCount > 0) {
+    // v0.32: the team scores, each in its team's colour, side by side.
+    y += 22.0f;
+    constexpr float kTeamW = 128.0f;
+    const uint8_t teams = std::min<uint8_t>(hud.teamCount, sim::kMaxPlayers);
+    float x = (viewW * 0.5f) - (static_cast<float>(teams - 1) * kTeamW * 0.5f);
+    for (uint8_t t = 0; t < teams; ++t) {
+      char text[32];
+      std::snprintf(text, sizeof text, "Team %u: %u", static_cast<unsigned>(t) + 1U,
+                    static_cast<unsigned>(hud.teamScores[t]));
+      centredText(dl, 18.0f, ImVec2(x, y), teamColor(t), text);
+      x += kTeamW;
+    }
+  }
   if (!hud.hasClock) return;
   char clock[16];
   clockText(hud.clockSeconds, clock);
@@ -144,7 +180,7 @@ void drawCardFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, uint8_t slot, int alp
 void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::RenderState& state,
                     float viewW) {
   const presentation::RenderHud& hud = state.hud;
-  const bool frags = hud.mode == sim::ModeKind::Deathmatch;
+  const bool frags = sim::scoresPoints(hud.mode);
   int entries = 0;
   uint8_t timers = 0;
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
@@ -184,6 +220,12 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
         waiting || (hud.phase == HudPhase::Playing && playerOfSlot(state, i) == nullptr);
     const int alpha = out ? 120 : 255;
     drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + h), i, alpha);
+    if (hud.teamCount > 0) {
+      // v0.32: the slot's team as a bar in the team colour along the bottom.
+      dl->AddRectFilled(ImVec2(x, y + h - (3.0f * k)), ImVec2(x + w, y + h),
+                        teamColor(hud.teams[i], alpha), kCardRounding,
+                        ImDrawFlags_RoundCornersBottom);
+    }
     const float lineY = y + ((kCardStripe + 4.0f) * k);
     char label[8];
     slotLabel(view, i, label);
@@ -232,6 +274,21 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
     x += w + (kGap * k);
   }
   drawModeLine(dl, state, viewW, y + h + 14.0f);
+}
+
+// The banner title of a round or match winner: "Team 2" in a team mode, the
+// slot's label otherwise, with the colour to draw it in.
+void winnerText(const HudView& session, const presentation::RenderHud& hud, uint8_t winner,
+                char (&out)[16], ImU32& color) {
+  if (hud.teamCount > 0 && winner < sim::kMaxPlayers) {
+    std::snprintf(out, sizeof out, "Team %u", static_cast<unsigned>(hud.teams[winner]) + 1U);
+    color = teamColor(hud.teams[winner]);
+    return;
+  }
+  char label[8];
+  slotLabel(session, winner, label);
+  std::snprintf(out, sizeof out, "%s", label);
+  color = slotColor(winner);
 }
 
 // Over each monkey a compact row of the same timer pies (no seconds: the
@@ -291,6 +348,12 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
       const float pop = presentation::bannerScale(state, EffectKind::RoundStartBanner);
       if (hud.mode == sim::ModeKind::Deathmatch) {
         std::snprintf(text, sizeof text, "Deathmatch");
+      } else if (hud.mode == sim::ModeKind::TeamDeathmatch) {
+        std::snprintf(text, sizeof text, "Team deathmatch");
+      } else if (hud.mode == sim::ModeKind::Hill) {
+        std::snprintf(text, sizeof text, "King of the hill");
+      } else if (hud.mode == sim::ModeKind::Capture) {
+        std::snprintf(text, sizeof text, "Capture the flag");
       } else {
         std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
       }
@@ -306,21 +369,23 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         centredText(dl, 56.0f * pop, centre, kWhite, "Draw!");
       } else {
         const auto w = static_cast<uint8_t>(hud.lastRoundWinner);
-        char label[8];
-        slotLabel(session, w, label);
+        char label[16];
+        ImU32 color = kWhite;
+        winnerText(session, hud, w, label, color);
         std::snprintf(text, sizeof text, "Round won by %s", label);
-        centredText(dl, 56.0f * pop, centre, slotColor(w), text);
+        centredText(dl, 56.0f * pop, centre, color, text);
       }
       break;
     }
     case HudPhase::MatchEnded: {
       if (hud.matchWinner != kNoSlot) {
         const auto w = static_cast<uint8_t>(hud.matchWinner);
-        char label[8];
-        slotLabel(session, w, label);
+        char label[16];
+        ImU32 color = kWhite;
+        winnerText(session, hud, w, label, color);
         std::snprintf(text, sizeof text, "%s wins the match!", label);
         centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
-                    centre, slotColor(w), text);
+                    centre, color, text);
       } else {
         // A tied lead when a mode's clock ran out (deathmatch).
         centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
@@ -399,6 +464,7 @@ struct LobbyCard {
   bool filled{false};
   char title[8]{};
   char sub[24]{};
+  int team{-1};  // v0.32: the slot's team in a team mode, -1 otherwise
 };
 void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards) {
   constexpr float kGap = 6.0f;
@@ -423,6 +489,17 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards) {
     dl->AddText(font, 17.0f, ImVec2(x + 7.0f, y + kCardStripe + 3.0f), titleColor, c.title);
     dl->AddText(font, 13.0f, ImVec2(x + 7.0f, y + kCardStripe + 22.0f),
                 c.filled ? IM_COL32(220, 220, 220, 255) : IM_COL32(150, 150, 150, 140), c.sub);
+    if (c.team >= 0) {
+      // v0.32: "T1".. at the right of the title and a bar in the team colour.
+      const auto team = static_cast<uint32_t>(c.team);
+      char tag[16];
+      std::snprintf(tag, sizeof tag, "T%u", team + 1U);
+      const float tw = textWidth(15.0f, tag);
+      dl->AddText(font, 15.0f, ImVec2(x + w - tw - 6.0f, y + kCardStripe + 4.0f),
+                  teamColor(team, alpha), tag);
+      dl->AddRectFilled(ImVec2(x, y + kH - 3.0f), ImVec2(x + w, y + kH), teamColor(team, alpha),
+                        kCardRounding, ImDrawFlags_RoundCornersBottom);
+    }
   }
 }
 
@@ -459,6 +536,14 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
     dl->AddRectFilled(a, b, toU32(presentation::kArenaWallColor));
   }
   dl->AddRect(at(-hx, hy), at(hx, -hy), toU32(presentation::kArenaWallColor), 0.0f, 0, 3.0f);
+  // v0.33: objective zones, translucent with a solid rim, lettered a, b, ...
+  for (uint8_t i = 0; i < arena.zoneCount && i < sim::kMaxArenaZones; ++i) {
+    const auto [a, b] = box2(arena.zones[i].min, arena.zones[i].max);
+    dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 50));
+    dl->AddRect(a, b, IM_COL32(255, 255, 255, 190), 0.0f, 0, 1.5f);
+    const char letter[2] = {static_cast<char>('a' + i), '\0'};
+    dl->AddText(ImVec2(a.x + 3.0f, a.y + 1.0f), IM_COL32(255, 255, 255, 220), letter);
+  }
   for (uint8_t i = 0; i < arena.spawnPointCount; ++i) {
     const Vec2 p = arena.spawnPoints[i];
     dl->AddCircleFilled(at(p.x.toFloat(), p.y.toFloat()), 3.5f, slotColor(i));
@@ -483,13 +568,19 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
 }
 
 // The match a config selects, as text: arena, mode with its key numbers,
-// the power-up set. Shared by the online lobby and the local preview column.
+// the loadout with its abilities, the power-up set. Shared by the online
+// lobby and the local preview column.
 void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   const sim::ArenaDef& arena = db.arenaAt(config.arena);
   const sim::ModeDef& mode = db.modeAt(config.mode);
   ImGui::Text("Arena  %s", arena.name.cStr());
   ImGui::Text("Mode   %s", mode.name.cStr());
+  if (mode.teams > 0) {
+    ImGui::Text("Teams  %u, balanced as players join", static_cast<unsigned>(mode.teams));
+  }
   ImGui::TextWrapped("%s", modeSummary(mode).c_str());
+  ImGui::Text("Kit    %s (%s)", db.loadoutAt(config.loadout).name.cStr(),
+              loadoutSummary(db, config.loadout).c_str());
   if (arena.pickupSpawnerCount == 0) {
     ImGui::TextDisabled("No power-up spawners in this arena.");
   } else {
@@ -519,7 +610,8 @@ HudView hudView(const NetSession& session) {
     const sim::MatchConfig& next = session.client().matchConfig();
     const sim::ContentDB& db = session.content();
     v.nextMatch = std::string("Next match: ") + db.arenaAt(next.arena).name.cStr() + ", " +
-                  db.modeAt(next.mode).name.cStr() +
+                  db.modeAt(next.mode).name.cStr() + ", loadout " +
+                  db.loadoutAt(next.loadout).name.cStr() +
                   ", power-ups: " + content::powerUpListText(db, next.powerUps);
   }
   return v;
@@ -670,10 +762,13 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
   if (ImGui::Begin("Kung Fu Monkeys: lobby", nullptr, kFlags)) {
     // Player cards: who is in each slot.
     std::array<LobbyCard, sim::kMaxPlayers> cards{};
+    const bool teamMode = !online && session.content().modeAt(menu.settings().mode).teams > 0;
+    const sim::TeamSet teams = session.teams();
     for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
       LobbyCard& c = cards[i];
       const SlotOwner owner = session.owner(PlayerId{i});
       c.filled = owner != SlotOwner::None;
+      if (teamMode && c.filled) c.team = teams[i];
       if (owner == SlotOwner::Bot) {
         std::snprintf(c.title, sizeof c.title, "BOT%u", static_cast<unsigned>(i) + 1U);
         // "bot medium", or "bot module" for a .wasm bot (its path is in F1 > Bots).
@@ -704,7 +799,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
       ImGui::Text("Server %s", connectUrl.c_str());
       ImGui::TextDisabled(
           "Each joined device gets its own slot; the server picks the slots, the arena, the "
-          "mode and the power-ups (shown once connected).");
+          "mode, the loadout and the power-ups (shown once connected).");
     } else {
       const sim::ContentDB& db = session.content();
       const LobbySettings& ls = menu.settings();
@@ -714,8 +809,11 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
         ImGui::TableNextColumn();
         out.changed = drawSettingsRows(menu, db);
         ImGui::TableNextColumn();
-        const sim::MatchConfig preview{
-            .seed = session.seed(), .arena = ls.arena, .mode = ls.mode, .powerUps = ls.powerUps};
+        const sim::MatchConfig preview{.seed = session.seed(),
+                                       .arena = ls.arena,
+                                       .mode = ls.mode,
+                                       .powerUps = ls.powerUps,
+                                       .loadout = ls.loadout};
         const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
         drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps, ImVec2(w, w * 0.62f));
         matchConfigText(db, preview);
@@ -735,7 +833,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
     ImGui::BulletText(
         "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "
         "ability");
-    ImGui::BulletText("The ability button fires the third slot (modes such as rounds_slam)");
+    ImGui::BulletText("The ability button fires the third slot (loadouts such as slam)");
     ImGui::TextDisabled("Aim follows the move direction on keyboards. F1: debug overlay");
 
     ImGui::Spacing();
