@@ -31,9 +31,10 @@ constexpr Fixed kFleeRange = Fixed::fromInt(7);       // unarmed: no gain beyond
 constexpr Fixed kPowerUpRadius = Fixed::fromInt(10);  // power-ups worth a detour
 constexpr Fixed kWallMargin = Fixed::fromInt(2);      // outer walls: penalised closer than this
 constexpr Fixed kHysteresis = Fixed::fromRaw(Fixed::kOneRaw / 4);  // keep the last direction
-constexpr uint8_t kGoalTick = 16;    // where the goal is measured on a path
-constexpr uint8_t kStrikeTick = 8;   // where the distance to dash-ready enemies is measured
-constexpr uint8_t kDirections = 16;  // stick directions considered
+constexpr uint8_t kGoalTick = 16;      // where the goal is measured on a path
+constexpr uint8_t kStrikeTick = 8;     // where the distance to dash-ready enemies is measured
+constexpr uint8_t kDirections = 16;    // stick directions considered
+constexpr uint32_t kMaxThrowHold = 2;  // a standoff's random hold before a lined-up throw
 
 [[nodiscard]] bool ready(const ObsAbility& a, uint8_t blockedButtons) {
   return a.kind != static_cast<uint8_t>(ObsAbilityKind::None) &&
@@ -58,18 +59,51 @@ constexpr uint32_t kTagShielded = 3;      // sim::Tag::Shielded
   return length(b - a);
 }
 
-// The nearest living enemy, preferring one without spawn protection; -1 when none.
-[[nodiscard]] int pickTarget(const Observation& obs) {
+// Whether enemy `p` can use ability slot `slot` of kind `kind` within `ticks`
+// ticks (idle and the cooldown running out by then).
+[[nodiscard]] bool enemyReady(const ObsPlayer& p, uint32_t slot, ObsAbilityKind kind,
+                              uint32_t ticks) {
+  return p.abilityKind[slot] == static_cast<uint8_t>(kind) &&
+         p.abilityPhase[slot] == static_cast<uint8_t>(ObsAbilityPhase::Idle) &&
+         p.abilityCooldownTicks[slot] <= ticks;
+}
+
+// Ties are broken by the bot's own Rng, never by slot, banana or direction
+// index: an index order is a fixed spatial or slot preference that two
+// mirrored bots share. Reservoir sampling over the candidates that tie with
+// the best: the k-th tie replaces the pick with chance 1/k, so every tied
+// candidate is equally likely and the Rng is drawn only on a tie (a decision
+// without ties draws nothing).
+struct TieBreak {
+  uint32_t ties{0};
+  // Whether a candidate that ties with the current best replaces it.
+  [[nodiscard]] bool replaces(Rng& rng) {
+    ++ties;
+    return rng.below(ties) == 0;
+  }
+  void reset() { ties = 1; }
+};
+
+// The nearest living enemy, preferring one without spawn protection; -1 when
+// none. Equal distances: a random one of them.
+[[nodiscard]] int pickTarget(const Observation& obs, Rng& rng) {
   const Vec2 me = vec(obs.self.posX, obs.self.posY);
   int best = -1;
   bool bestProtected = true;
   uint64_t bestD = UINT64_MAX;
+  TieBreak tie;
   for (uint32_t i = 0; i < kObsMaxPlayers; ++i) {
     const ObsPlayer& p = obs.players[i];
     if (p.alive == 0 || p.relation != static_cast<uint8_t>(ObsRelation::Enemy)) continue;
     const bool prot = hasTag(p.tags, kTagInvulnerable);
     const uint64_t d = lengthSqRaw(posOf(p) - me);
-    if ((bestProtected && !prot) || (prot == bestProtected && d < bestD)) {
+    bool take = (bestProtected && !prot) || (prot == bestProtected && d < bestD);
+    if (take) {
+      tie.reset();
+    } else if (prot == bestProtected && d == bestD) {
+      take = tie.replaces(rng);
+    }
+    if (take) {
       best = static_cast<int>(i);
       bestD = d;
       bestProtected = prot;
@@ -113,6 +147,7 @@ void ReferenceBot::init(uint64_t seed, PlayerId slot) {
   lastDecidedButtons_ = 0;
   lastMoveDir_ = 0;
   decisions_ = 0;
+  throwHold_ = -1;
   pending_.fill(sim::PlayerInput{});
 }
 
@@ -341,10 +376,13 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   sim::PlayerInput in{};
   const ObsSelf& me = obs.self;
   const Vec2 myPos = vec(me.posX, me.posY);
-  const int target = pickTarget(obs);
+  const int target = pickTarget(obs, rng_);
   in.aimDir = me.facing;
   if (target >= 0) in.aimDir = directionTo(myPos, posOf(obs.players[target]));
-  if (me.alive == 0 || obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) return in;
+  if (me.alive == 0 || obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) {
+    throwHold_ = -1;
+    return in;
+  }
 
   trackThreats(obs);
   const uint8_t lead = std::min<uint8_t>(obs.match.inputDelayTicks, kHorizon / 2);
@@ -440,6 +478,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   uint8_t bestFirstHit = 0;
   uint8_t bestDir = lastMoveDir_;
   bool bestIdle = true;
+  TieBreak moveTie;
   for (uint8_t c = 0; c <= kDirections; ++c) {
     const bool idle = c == kDirections;
     const auto dir = static_cast<uint8_t>(idle ? 0 : c * (256 / kDirections));
@@ -447,7 +486,13 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     const Outcome o = evaluate(obs, path_, 0, 0);
     Fixed util = goal(path_) - o.danger;
     if (!idle && dir == lastMoveDir_) util += kHysteresis;
-    if (util > bestUtil) {
+    bool take = util > bestUtil;
+    if (take) {
+      moveTie.reset();
+    } else if (util == bestUtil) {
+      take = moveTie.replaces(rng_);
+    }
+    if (take) {
       bestUtil = util;
       bestDanger = o.danger;
       bestFirstHit = o.firstHit;
@@ -560,9 +605,16 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   }
 
   // --- dash attack ----------------------------------------------------------
-  if (!dashed && dashReady && tgt != nullptr && me.ammo >= obs.rules.dashAttackMinAmmo &&
-      me.ammo > 0 && bestDanger < kHitThreshold && !hasTag(tgt->tags, kTagInvulnerable) &&
-      !hasTag(tgt->tags, kTagShielded)) {
+  // Only on a target that cannot answer with a dash attack of its own on the
+  // same tick: two strikes pressed on one tick at the same sub-tick are
+  // resolved in slot order (§5.11), a coin the sim tosses by slot index, not
+  // a fight the bot can win. Unarmed targets and targets whose dash is busy
+  // or cooling down are fair game.
+  const bool counterable = tgt != nullptr && tgt->ammo >= obs.rules.dashAttackMinAmmo &&
+                           tgt->ammo > 0 && enemyReady(*tgt, 0, ObsAbilityKind::Dash, lead);
+  if (!dashed && dashReady && tgt != nullptr && !counterable &&
+      me.ammo >= obs.rules.dashAttackMinAmmo && me.ammo > 0 && bestDanger < kHitThreshold &&
+      !hasTag(tgt->tags, kTagInvulnerable) && !hasTag(tgt->tags, kTagShielded)) {
     const Fixed strikeRange = (Fixed::fromRaw(obs.rules.playerRadius) * 2) - kCatchMargin;
     const uint64_t strikeSq = squareRaw(strikeRange);
     const Vec2 tp = posOf(*tgt);
@@ -589,8 +641,10 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   }
 
   // --- throw ----------------------------------------------------------------
-  if (tgt != nullptr && armed && ready(thr, blocked) &&
-      thr.kind == static_cast<uint8_t>(ObsAbilityKind::Throw)) {
+  if (tgt == nullptr || !armed || !ready(thr, blocked) ||
+      thr.kind != static_cast<uint8_t>(ObsAbilityKind::Throw)) {
+    throwHold_ = -1;
+  } else {
     const ObsRules& r = obs.rules;
     const Fixed speed = Fixed::fromRaw(r.bananaSpeed);
     const Fixed offset = Fixed::fromRaw(r.bananaSpawnOffset);
@@ -620,7 +674,23 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         }
       }
     }
-    if (clear && rng_.below(256) < config_.throwPer256) {
+    // A standoff (the target holds a banana and could throw it on this very
+    // tick): two bots that line up on the same tick, as mirrored monkeys do
+    // at a round's start, would trade and both fall on one tick. A hold of
+    // 0..kMaxThrowHold ticks, drawn once per lined-up shot from the bot's own
+    // Rng, breaks the mirror without a fixed preference; outside a standoff
+    // the shot goes at once.
+    if (!clear) {
+      throwHold_ = -1;
+    } else if (throwHold_ < 0) {
+      const bool standoff = tgt->ammo > 0 && enemyReady(*tgt, 1, ObsAbilityKind::Throw, lead);
+      throwHold_ = standoff ? static_cast<int8_t>(rng_.below(kMaxThrowHold + 1)) : 0;
+    }
+    if (clear && throwHold_ > 0) {
+      --throwHold_;
+      in.aimDir = directionTo(myPos, aimAt);
+    } else if (clear && rng_.below(256) < config_.throwPer256) {
+      throwHold_ = -1;
       in.buttons = static_cast<uint8_t>(in.buttons | thr.button);
       int32_t aim = directionTo(myPos, aimAt);
       if (config_.aimNoise != 0) aim += rng_.range(-int32_t{config_.aimNoise}, config_.aimNoise);

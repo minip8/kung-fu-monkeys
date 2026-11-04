@@ -202,6 +202,24 @@ TEST_CASE("four reference bots decide the first round quickly", "[ai][bot]") {
   }
 }
 
+TEST_CASE("two hard reference bots in a mirror mostly decide their rounds", "[ai][bot]") {
+  // 1v1 on the dojo: mirrored spawns and no noise. Without the bots' own
+  // Rng breaking the symmetry (ties, a standoff's throw hold) both throw on
+  // one tick and fall on one tick round after round, and the match runs into
+  // the tick cap; with it, most rounds have a winner.
+  MatchResult total;
+  for (uint64_t seed = 1; seed <= 5; ++seed) {
+    const MatchResult r = playMatch(seed, 0b11, 0b11, ReferenceBotConfig::hard(), 36000);
+    report("mirror", r);
+    INFO("seed " << seed);
+    CHECK(r.ended);
+    total.botRounds += r.botRounds;
+    total.draws += r.draws;
+  }
+  UNSCOPED_INFO("rounds with a winner " << total.botRounds << ", draws " << total.draws);
+  CHECK(total.botRounds > total.draws);
+}
+
 namespace {
 
 // The third-slot defs of content/abilities.toml.
@@ -246,10 +264,17 @@ TEST_CASE("the reference bot uses a third-slot ability", "[ai][bot]") {
     ContentDB c = defaultContent();
     c.abilities[c.abilityCount] = extraDef(kind);
     c.player.abilities[kAbilitySlotExtra] = c.abilityCount++;
-    const MatchResult r = playMatch(99, 0b1111, 0b1111, ReferenceBotConfig::hard(), 18000, c);
-    report("extra slot", r);
+    // Three matches: a landed parry needs a banana timed into the guard, and
+    // one short match may not offer it.
+    int events = 0;
+    for (const uint64_t seed : {99u, 100u, 101u}) {
+      const MatchResult r = playMatch(seed, 0b1111, 0b1111, ReferenceBotConfig::hard(), 18000, c);
+      report("extra slot", r);
+      INFO("ability kind " << static_cast<int>(kind) << " seed " << seed);
+      CHECK(r.ended);
+      events += eventCount(r, event);
+    }
     INFO("ability kind " << static_cast<int>(kind));
-    CHECK(eventCount(r, event) > 0);
-    CHECK(r.ended);
+    CHECK(events > 0);
   }
 }
