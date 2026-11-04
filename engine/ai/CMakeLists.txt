@@ -18,3 +18,26 @@ target_link_libraries(kfm_ai
 kfm_no_exceptions_rtti(kfm_ai)
 
 set_target_properties(kfm_ai PROPERTIES FOLDER engine)
+
+# ---------------------------------------------------------------------------
+# kfm_ai_wasm (kfm::ai_wasm): WasmRuntime, WasmModule and WasmAgent, the
+# IAgent over a sandboxed, instruction-metered bot module (§8), on WAMR's
+# classic interpreter (kfm::wamr, third_party/wamr). Native only and only with
+# KFM_WASM_BOTS: the browser runs bot modules through its own WebAssembly API.
+# A separate target so kfm_ai and everything linking it never see WAMR; its
+# public header includes nothing from it. WAMR is C and reports errors as
+# strings, so this one is exception- and RTTI-free like the rest of the
+# engine.
+# ---------------------------------------------------------------------------
+if(KFM_WASM_BOTS)
+  add_library(kfm_ai_wasm STATIC src/wasm_runtime.cpp)
+  add_library(kfm::ai_wasm ALIAS kfm_ai_wasm)
+  target_include_directories(kfm_ai_wasm
+    PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  target_link_libraries(kfm_ai_wasm
+    PUBLIC kfm::ai
+    PRIVATE kfm::wamr kfm::warnings)
+  kfm_no_exceptions_rtti(kfm_ai_wasm)
+  set_target_properties(kfm_ai_wasm PROPERTIES FOLDER engine)
+endif()
