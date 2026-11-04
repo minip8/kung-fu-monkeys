@@ -85,6 +85,8 @@ inline constexpr uint8_t kEnumCount<ModeKind> = static_cast<uint8_t>(ModeKind::k
 template <>
 inline constexpr uint8_t kEnumCount<Space> = static_cast<uint8_t>(Space::kCount);
 template <>
+inline constexpr uint8_t kEnumCount<VisionKind> = static_cast<uint8_t>(VisionKind::kCount);
+template <>
 inline constexpr uint8_t kEnumCount<GrantKind> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
@@ -317,6 +319,12 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.turnTicks);
   v.u8(d.dashCells);
   v.u8(d.arena);
+  visit(v, d.vision.kind);  // v0.35
+  v.u8(d.vision.peripheral);
+  v.u8(d.vision.cone);
+  v.u8(d.vision.focus);
+  v.u8(d.vision.hearing);
+  v.u8(d.vision.bananaSight);
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {

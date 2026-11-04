@@ -219,7 +219,8 @@ struct ContentDB {
   // Whether a match may pair this arena with this mode (v0.32, v0.33,
   // v0.34): a team mode needs a spawn group per team, hill a zone (zone 0),
   // capture a zone per team (team t's is zone t), a grid mode cells
-  // (`cellSize > 0`, §5.12). An incompatible pair is a configuration error of the
+  // (`cellSize > 0`, §5.12), and so does a fog vision (v0.35: its radii are
+  // cells, §8). An incompatible pair is a configuration error of the
   // host (the lobby skips it, a command line refuses it), never a load
   // error: the sim plays any pair (a missing zone holds nobody).
   [[nodiscard]] constexpr bool compatible(uint8_t arena, uint8_t mode) const {
@@ -229,6 +230,7 @@ struct ContentDB {
     if (m.kind == ModeKind::Hill && a.zoneCount < 1) return false;
     if (m.kind == ModeKind::Capture && a.zoneCount < (m.teams > 0 ? m.teams : 1)) return false;
     if (m.space == Space::Grid && a.cellSize <= Fixed::zero()) return false;
+    if (m.vision.fog() && a.cellSize <= Fixed::zero()) return false;
     return true;
   }
   // The arena a host picks for the mode when the match names none: the

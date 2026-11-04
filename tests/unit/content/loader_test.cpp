@@ -1108,6 +1108,69 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
       "a power-up can grant only 'shielded', 'invulnerable' or 'friendly_fire'"));
 }
 
+TEST_CASE("modes: the vision block (v0.35)", "[content][loader][modes][vision]") {
+  const std::string base = std::string(kMinimal) + R"(
+[[arena]]
+name = "cells"
+cell = 1.0
+spawn_groups = 2
+map = ["0....", ".....", "....1"]
+
+[[mode]]
+name = "fog"
+kind = "team_rounds"
+teams = 2
+)";
+  const auto with = [&](std::string_view vision) {
+    return base + "vision = " + std::string(vision) + "\n";
+  };
+  {
+    ContentDB db{};
+    Diagnostics d;
+    const bool ok = parseContent(with("{ kind = \"own\", peripheral = 1, cone = 4, focus = 1, "
+                                      "hearing = 3, banana_sight = 1 }"),
+                                 "test.toml", db, d);
+    INFO(d.format());
+    REQUIRE(ok);
+    const std::optional<uint8_t> mi = db.findMode("fog");
+    REQUIRE(mi);
+    const sim::VisionDef& v = db.modes[mi.value_or(0)].vision;
+    CHECK(v.kind == sim::VisionKind::Own);
+    CHECK(v.fog());
+    CHECK(v.peripheral == 1);
+    CHECK(v.cone == 4);
+    CHECK(v.focus == 1);
+    CHECK(v.hearing == 3);
+    CHECK(v.bananaSight == 1);
+    // A fog vision needs cells: the box arena has none, "cells" has.
+    const std::optional<uint8_t> cells = db.findArena("cells");
+    const std::optional<uint8_t> box = db.findArena("box");
+    REQUIRE(cells);
+    REQUIRE(box);
+    CHECK(db.compatible(cells.value_or(0), mi.value_or(0)));
+    CHECK_FALSE(db.compatible(box.value_or(0), mi.value_or(0)));
+    // The default is everything, and rounds keeps it.
+    CHECK(db.modes[0].vision == sim::VisionDef{});
+    CHECK_FALSE(db.modes[0].vision.fog());
+    // The hash sees the block.
+    ContentDB other = db;
+    other.modes[mi.value_or(0)].vision.cone = 5;
+    CHECK(sim::contentHash(other) != sim::contentHash(db));
+  }
+  CHECK(loads(with("{ kind = \"team\", cone = 3 }")));
+  CHECK(loads(with("{ kind = \"all\" }")));
+  CHECK(contains(loadErrors(with("{ kind = \"all\", cone = 3 }")), "the radii belong to"));
+  CHECK(contains(loadErrors(with("{ kind = \"fog\" }")), "unknown vision kind \"fog\""));
+  CHECK(contains(loadErrors(with("{ cone = 3 }")), "missing required key 'kind'"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", cone = 33 }")), "'cone' must be an integer"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", hearing = 33 }")), "'hearing'"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", peripheral = 17 }")), "'peripheral'"));
+  CHECK(contains(loadErrors(with("{ kind = \"own\", sight = 1 }")), "unknown key 'sight'"));
+  CHECK(contains(loadErrors(with("\"own\"")), "'vision' must be a table"));
+  CHECK(contains(loadErrors(replaced(with("{ kind = \"team\" }"), "teams = 2\n", "")),
+                 "vision kind \"team\" needs a team mode"));
+}
+
 TEST_CASE("team modes: teams, baseline, roles and spawn groups (v0.32)",
           "[content][loader][modes][teams]") {
   const std::string base = std::string(kMinimal) + R"(

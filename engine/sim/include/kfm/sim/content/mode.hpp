@@ -68,6 +68,42 @@ enum class Space : uint8_t {
   kCount,          // NOLINT(readability-identifier-naming): table-size sentinel, not a space
 };
 
+// What a bot sees (architecture §8, v0.35): the observation builder's fog,
+// never read by the sim. All: everything (every continuous mode, and every
+// mode before v0.35). Team: the union of the allies' sight. Own: the
+// monkey's own sight alone. The radii are in cells (Chebyshev), so a fog
+// kind needs an arena with cells (ContentDB::compatible).
+enum class VisionKind : uint8_t {
+  All = 0,
+  Team,
+  Own,
+  kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
+};
+
+// Upper bounds the loader enforces (the builder's cone and lines stay small).
+inline constexpr uint8_t kMaxVisionCone = 32;
+inline constexpr uint8_t kMaxVisionRadius = 16;  // peripheral, focus, banana sight
+inline constexpr uint8_t kMaxVisionHearing = 32;
+
+struct VisionDef {
+  VisionKind kind{VisionKind::All};
+  // Chebyshev radius around the monkey's cell seen whatever the facing.
+  uint8_t peripheral{0};
+  // The cone: the cells within 45 degrees of the facing octant, inclusive,
+  // out to Chebyshev distance `cone`, each behind a clear line of sight.
+  uint8_t cone{0};
+  // Extra cone length for a monkey at rest that did not move last tick.
+  uint8_t focus{0};
+  // Chebyshev radius within which a banana in flight is heard (seen) whatever
+  // the facing and the walls.
+  uint8_t hearing{0};
+  // Chebyshev radius around each of the monkey's own bananas in flight.
+  uint8_t bananaSight{0};
+
+  [[nodiscard]] constexpr bool fog() const { return kind != VisionKind::All; }
+  constexpr bool operator==(const VisionDef&) const = default;
+};
+
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
 // ModeDef::arena when the mode names no arena of its own (v0.34).
@@ -124,6 +160,8 @@ struct ModeDef {
   // mode when the match names none, or kNoArena: the first compatible one
   // (ContentDB::firstCompatibleArena). Never read by the sim.
   uint8_t arena{kNoArena};
+  // v0.35, the squad contest (§8): what a bot sees. Defaults to everything.
+  VisionDef vision{};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }

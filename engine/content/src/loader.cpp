@@ -1341,6 +1341,16 @@ class Builder {
         }
       }
     }
+    // v0.35: the bots' vision (§8), an inline table.
+    if (const toml::node* n = s.take("vision")) {
+      if (const toml::table* t = n->as_table()) {
+        Section v(*t, s.file(), s.diag(), s.where() + " vision");
+        parseVision(v, m.vision, m.teams);
+        v.finish();
+      } else {
+        s.error(*n, "'vision' must be a table { kind = \"all\" | \"team\" | \"own\", ... }");
+      }
+    }
     std::optional<PendingName> baseline;
     if (const toml::node* n = s.take("baseline")) {
       if (const toml::value<std::string>* str = n->as_string()) {
@@ -1391,6 +1401,32 @@ class Builder {
     modeNames_.push_back(
         ModeNames{db_.modeCount, std::move(baseline), std::move(roles), std::move(arena)});
     db_.modes[db_.modeCount++] = m;
+  }
+
+  // vision = { kind, peripheral, cone, focus, hearing, banana_sight } (v0.35).
+  // The radii are cells and belong to a fog kind; `team` needs a team mode.
+  static void parseVision(Section& v, sim::VisionDef& out, uint8_t teams) {
+    if (const std::optional<std::string> kind = v.string("kind", true)) {
+      if (*kind == "all") {
+        out.kind = sim::VisionKind::All;
+      } else if (*kind == "team") {
+        out.kind = sim::VisionKind::Team;
+        if (teams < 2) v.error("vision kind \"team\" needs a team mode ('teams' of 2 or more)");
+      } else if (*kind == "own") {
+        out.kind = sim::VisionKind::Own;
+      } else {
+        v.error("unknown vision kind " + inQuotes(*kind) + " (all, team or own)");
+      }
+    }
+    v.integer("peripheral", out.peripheral, 0, sim::kMaxVisionRadius);
+    v.integer("cone", out.cone, 0, sim::kMaxVisionCone);
+    v.integer("focus", out.focus, 0, sim::kMaxVisionRadius);
+    v.integer("hearing", out.hearing, 0, sim::kMaxVisionHearing);
+    v.integer("banana_sight", out.bananaSight, 0, sim::kMaxVisionRadius);
+    if (!out.fog() &&
+        (out.peripheral | out.cone | out.focus | out.hearing | out.bananaSight) != 0) {
+      v.error("vision kind \"all\" sees everything: the radii belong to \"team\" or \"own\"");
+    }
   }
 
   // v0.32: a mode's baseline power-up and role loadouts by name.
@@ -1923,6 +1959,16 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (m.space >= sim::Space::kCount) fail(where + ": space must be continuous or grid");
     if (m.turnTicks < 1 || m.turnTicks > 60) fail(where + ": turn_ticks must be in [1, 60]");
     if (m.dashCells < 1 || m.dashCells > 8) fail(where + ": dash_cells must be in [1, 8]");
+    // v0.35: the vision's radii (§8), as parseVision bounds them.
+    const sim::VisionDef& v = m.vision;
+    if (v.kind >= sim::VisionKind::kCount || v.cone > sim::kMaxVisionCone ||
+        v.peripheral > sim::kMaxVisionRadius || v.focus > sim::kMaxVisionRadius ||
+        v.bananaSight > sim::kMaxVisionRadius || v.hearing > sim::kMaxVisionHearing) {
+      fail(where + ": vision out of range");
+    }
+    if (v.kind == sim::VisionKind::Team && m.teams < 2) {
+      fail(where + ": vision kind \"team\" needs a team mode");
+    }
     if (m.hasArena() && m.arena >= c.arenaCount) fail(where + ": arena names an undefined arena");
     if (m.hasArena() && m.arena < c.arenaCount && !c.compatible(m.arena, i)) {
       fail(where + ": its arena " + inQuotes(c.arenas[m.arena].name.view()) +
