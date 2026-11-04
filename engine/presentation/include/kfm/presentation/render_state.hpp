@@ -212,6 +212,11 @@ struct RenderHud {
   uint8_t aliveCount{0};     // monkeys still in play
   std::array<uint8_t, sim::kMaxPlayers> deaths{};
   std::array<float, sim::kMaxPlayers> respawnSeconds{};  // > 0: dead, back in this long
+  // v0.32 (teams): the mode's team count (0 = free-for-all), every slot's
+  // team (MatchConfig::teams) and every team's score (the sum of its slots').
+  uint8_t teamCount{0};
+  std::array<uint8_t, sim::kMaxPlayers> teams{};
+  std::array<uint16_t, sim::kMaxPlayers> teamScores{};
 };
 
 struct RenderState {

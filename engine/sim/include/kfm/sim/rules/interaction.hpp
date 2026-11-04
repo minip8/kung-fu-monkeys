@@ -61,6 +61,11 @@ struct InteractionRule {
   // v0.21: 1 = also matches a contact made only through A's slam reach
   // (Contact::reach has kReachA); every other row needs the bodies to touch.
   uint8_t reachA{0};
+  // v0.32: allowed relationBit(Relation) bits of B to A, judged through
+  // MatchContent::relation between A and B (a player) or B's owner (a
+  // banana); pickups and hazards have no relation and match any mask. Every
+  // bit by default. A free-for-all makes every other slot an enemy.
+  uint8_t relationB{kRelationAny};
 };
 
 // The M1 rows, sorted by ascending priority.

@@ -21,9 +21,10 @@
 //   PlayerLeft  slot u8, tick u32
 //   MatchConfig MatchConfig, startTick u32
 //   (MatchConfig = seed u64, players u10, arena u8, mode u8, powerUps u16,
-//   loadout u8; arena and mode below kMaxArenas / kMaxModes, since protocol
-//   version 2; powerUps since version 3; loadout below kMaxLoadouts since
-//   version 4)
+//   loadout u8, teams 10×u4; arena and mode below kMaxArenas / kMaxModes,
+//   since protocol version 2; powerUps since version 3; loadout below
+//   kMaxLoadouts since version 4; teams, each below kMaxPlayers, since
+//   version 5)
 //   Disconnect  reason u8
 //   Ping        sendNs u64, tick u32
 //   Pong        echoSendNs u64, tick u32, holdNs u32
@@ -107,6 +108,10 @@ void writeMask(BitWriter& w, sim::PlayerMask m) {
   return static_cast<sim::PlayerMask>(r.readBits(kMaskBits));
 }
 
+// v0.32 (protocol 5): a team per slot, 4 bits each (below kMaxPlayers).
+constexpr uint32_t kTeamBits = 4;
+static_assert(sim::kMaxPlayers <= (1u << kTeamBits));
+
 // The match config every host shares (§6.6): arena and mode are indices
 // into the content both sides hashed in Hello, so only the capacity bound
 // can be checked here.
@@ -121,6 +126,10 @@ void writeMask(BitWriter& w, sim::PlayerMask m) {
   w.writeU8(c.mode);
   w.writeU16(c.powerUps);
   w.writeU8(c.loadout);
+  for (const uint8_t t : c.teams) {
+    if (t >= sim::kMaxPlayers) return false;
+    w.writeBits(t, kTeamBits);
+  }
   return true;
 }
 [[nodiscard]] bool readMatchConfig(BitReader& r, sim::MatchConfig& c) {
@@ -130,7 +139,13 @@ void writeMask(BitWriter& w, sim::PlayerMask m) {
   c.mode = r.readU8();
   c.powerUps = r.readU16();
   c.loadout = r.readU8();
-  return c.arena < sim::kMaxArenas && c.mode < sim::kMaxModes && c.loadout < sim::kMaxLoadouts;
+  bool teamsOk = true;
+  for (uint8_t& t : c.teams) {
+    t = static_cast<uint8_t>(r.readBits(kTeamBits));
+    teamsOk = teamsOk && t < sim::kMaxPlayers;
+  }
+  return c.arena < sim::kMaxArenas && c.mode < sim::kMaxModes && c.loadout < sim::kMaxLoadouts &&
+         teamsOk;
 }
 
 }  // namespace

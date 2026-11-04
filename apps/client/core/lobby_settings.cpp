@@ -34,8 +34,14 @@ namespace {
 bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& content,
                        LobbySettings& out, std::string& error) {
   sim::MatchConfig config{};
-  if (!content::resolveMatchNames(content, options.arena, options.mode, config, error) ||
-      !content::resolveLoadoutName(content, options.loadout, config, error) ||
+  // v0.32: an arena that does not suit the mode (a saved arena=dojo under a
+  // --mode team_rounds flag) gives way to the first one that does; an
+  // unknown name is still an error.
+  const bool known = options.arena.empty() || content.findArena(options.arena).has_value();
+  const bool resolved =
+      content::resolveMatchNames(content, options.arena, options.mode, config, error) ||
+      (known && content::resolveMatchNames(content, "", options.mode, config, error));
+  if (!resolved || !content::resolveLoadoutName(content, options.loadout, config, error) ||
       !content::resolvePowerUpList(content, options.powerUps, config.powerUps, error)) {
     return false;
   }

@@ -74,12 +74,37 @@ struct SortKey {
   return p != nullptr && p->tags.hasAll(require) && p->tags.hasNone(forbid);
 }
 
-[[nodiscard]] bool ruleMatches(const WorldState& s, const InteractionRule& rule, const Contact& c) {
+// v0.32: B's relation to the player A (B itself for a player, its owner for
+// a banana) is among the row's relationB bits. A row with every bit, and a
+// contact whose B has no owner (pickup, hazard), always passes.
+[[nodiscard]] bool relationMatches(const WorldState& s, const MatchContent& content,
+                                   const InteractionRule& rule, const Contact& c) {
+  if (rule.relationB == kRelationAny || c.kindA != EntityKind::Player) return true;
+  const Player* a = s.players.get(c.a);
+  if (a == nullptr) return false;
+  PlayerId other = PlayerId::invalid();
+  if (c.kindB == EntityKind::Player) {
+    const Player* b = s.players.get(c.b);
+    if (b == nullptr) return false;
+    other = b->id;
+  } else if (c.kindB == EntityKind::Boomerang) {
+    const Boomerang* b = s.boomerangs.get(c.b);
+    if (b == nullptr) return false;
+    other = b->owner;
+  } else {
+    return true;
+  }
+  return (rule.relationB & relationBit(content.relation(a->id, other))) != 0;
+}
+
+[[nodiscard]] bool ruleMatches(const WorldState& s, const MatchContent& content,
+                               const InteractionRule& rule, const Contact& c) {
   if (rule.kindA != c.kindA || rule.kindB != c.kindB) return false;
   // Through a slam's reach (v0.21): only a slam row, from the slammer's side.
   if (c.reach != 0 && (rule.reachA == 0 || (c.reach & kReachA) == 0)) return false;
   if (!playerTagsMatch(s, c.kindA, c.a, rule.requireA, rule.forbidA)) return false;
   if (!playerTagsMatch(s, c.kindB, c.b, rule.requireB, rule.forbidB)) return false;
+  if (!relationMatches(s, content, rule, c)) return false;
   if (c.kindB == EntityKind::Pickup) {
     const Pickup* k = s.pickups.get(c.b);
     return k != nullptr && pickupMaskMatches(rule.pickupMaskB, k->kind);
@@ -101,7 +126,7 @@ void interactionResolveContact(WorldState& s, const MatchContent& content, const
                                EventSink& sink) {
   for (const InteractionRule& rule : interactionRules()) {
     if (!isAlive(s, c.kindA, c.a) || !isAlive(s, c.kindB, c.b)) return;
-    if (!ruleMatches(s, rule, c)) continue;
+    if (!ruleMatches(s, content, rule, c)) continue;
     if (rule.resolve(s, content, c.a, c.b, c, sink)) return;
   }
 }

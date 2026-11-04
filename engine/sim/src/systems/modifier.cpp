@@ -28,12 +28,15 @@
 //      recorded in grantedTags. Tag sources therefore compose.
 //   6. hitStunTicks-- when positive; Tag::HitStun is cleared whenever the
 //      counter is 0 afterwards.
-//   7. Timers: every live entry's ticksLeft-- (saturating).
+//   7. Timers: every live entry's ticksLeft-- (saturating), except a mode's
+//      baseline (v0.32: kPermanentModifierTicks, never counted down, so
+//      never dropped; grantBaseline() adds it at the spawn).
 // An entry added on tick T (InteractionSystem, step 7 of the pipeline) with
 // ticksLeft D (the def's durationTicks, >= 1) thus shapes the stats, tags
 // and slots of the state after ticks T .. T+D-1 and is dropped on tick T+D;
 // the list, the stats and the tags always agree between ticks.
 #include "kfm/sim/systems.hpp"
+#include "systems/modifier_internal.hpp"
 #include "systems/statics.hpp"
 
 #include <algorithm>
@@ -56,7 +59,8 @@ void dropExpired(ModifierList& mods) {
 
 void countDown(ModifierList& mods) {
   for (uint8_t i = 0; i < mods.count && i < kMaxModifiers; ++i) {
-    if (mods.items[i].ticksLeft > 0) --mods.items[i].ticksLeft;
+    const uint16_t left = mods.items[i].ticksLeft;
+    if (left > 0 && left != kPermanentModifierTicks) --mods.items[i].ticksLeft;
   }
 }
 
@@ -112,7 +116,7 @@ void clampHp(Player& p, uint8_t oldMaxHp, uint8_t newMaxHp) {
 
 void applyAbilityOverrides(Player& p, const MatchContent& content) {
   const ContentDB& db = content.db;
-  std::array<uint8_t, kAbilitySlots> want = content.loadout();
+  std::array<uint8_t, kAbilitySlots> want = content.loadout(p.id);
   forEachGrant(db, p.modifiers, [&](const PowerUpGrant& g) {
     if (g.kind == GrantKind::AbilityOverride && g.slot < kAbilitySlots) want[g.slot] = g.ability;
   });
@@ -145,6 +149,33 @@ void applyTags(Player& p, const WorldState& s, const MatchContent& content) {
 }
 
 }  // namespace
+
+void grantBaseline(Player& p, const MatchContent& content) {
+  const ModeDef& mode = content.mode;
+  const ContentDB& db = content.db;
+  if (!mode.hasBaseline() || mode.baseline >= db.powerUpCount) return;
+  p.modifiers = ModifierList{};
+  p.modifiers.items[0] = ActiveModifier{mode.baseline, kPermanentModifierTicks};
+  p.modifiers.count = 1;
+  p.stats = deriveStats(db, p.modifiers, statics::speedMulAt(content.arena, p.transform.pos));
+  p.hp = p.stats.maxHp;
+  int32_t ammo = p.ammo;
+  forEachGrant(db, p.modifiers, [&](const PowerUpGrant& g) {
+    if (g.kind == GrantKind::Stat && g.stat.stat == StatKind::AmmoMax) {
+      ammo += std::max(g.stat.add.floorToInt(), int32_t{0});
+    }
+  });
+  p.ammo = static_cast<uint8_t>(std::clamp<int32_t>(ammo, 0, p.stats.ammoMax));
+  applyAbilityOverrides(p, content);
+  Tags granted{};
+  forEachGrant(db, p.modifiers, [&](const PowerUpGrant& g) {
+    if (g.kind == GrantKind::Tag) granted.set(g.tag);
+  });
+  granted.clear(Tag::HitStun);
+  granted.clear(Tag::Eliminated);
+  p.tags.bits |= granted.bits;
+  p.grantedTags = granted;
+}
 
 void modifierSystem(WorldState& s, const MatchContent& content) {
   const ContentDB& db = content.db;

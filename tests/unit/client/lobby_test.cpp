@@ -99,15 +99,18 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   LobbyMenu m;
   m.setContent(db);
   const auto rows = m.rows();
-  REQUIRE(rows.size() == 7u + db.powerUpCount);
+  REQUIRE(rows.size() == 8u + db.powerUpCount);
   CHECK(rows[0].kind == LobbyRowKind::Arena);
   CHECK(rows[1].kind == LobbyRowKind::Mode);
-  CHECK(rows[2].kind == LobbyRowKind::Loadout);
-  CHECK(m.rowLabel(rows[2]) == "Loadout");
-  CHECK(m.rowValue(rows[2]) == "base");
+  CHECK(rows[2].kind == LobbyRowKind::Teams);  // v0.32
+  CHECK(m.rowLabel(rows[2]) == "Teams");
+  CHECK(m.rowValue(rows[2]) == "free-for-all");
+  CHECK(rows[3].kind == LobbyRowKind::Loadout);
+  CHECK(m.rowLabel(rows[3]) == "Loadout");
+  CHECK(m.rowValue(rows[3]) == "base");
   for (uint8_t i = 0; i < db.powerUpCount; ++i) {
-    CHECK(rows[3 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
-    CHECK(m.rowLabel(rows[3 + i]) == db.powerUps[i].name.view());
+    CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
+    CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[i].name.view());
   }
   CHECK(rows[rows.size() - 4].kind == LobbyRowKind::Bots);
   CHECK(rows[rows.size() - 3].kind == LobbyRowKind::BotDifficulty);
@@ -118,7 +121,45 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
 
   // A menu that never saw content still has the default fixture's rows.
   const LobbyMenu bare;
-  CHECK(bare.rows().size() == 7u + sim::defaultContent().powerUpCount);
+  CHECK(bare.rows().size() == 8u + sim::defaultContent().powerUpCount);
+}
+
+TEST_CASE("lobby menu: a team mode shows its teams and keeps a suitable arena (v0.32)",
+          "[client][lobby][teams]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t teamRounds = db.findMode("team_rounds").value_or(0);
+  const uint8_t standoff = db.findArena("standoff").value_or(0);
+  REQUIRE(teamRounds != 0);
+  REQUIRE(standoff != 0);
+  LobbyMenu m;
+  m.setContent(db);
+  // Cycling the mode into team_rounds moves the arena off the dojo.
+  const std::size_t modeRow = rowOf(m, LobbyRowKind::Mode);
+  while (m.settings().mode != teamRounds)
+    (void)m.change(modeRow, +1);
+  CHECK(m.settings().arena == standoff);
+  CHECK(m.rowValue(m.rows()[rowOf(m, LobbyRowKind::Teams)]) == "2 (by mode)");
+  CHECK_FALSE(m.change(rowOf(m, LobbyRowKind::Teams), +1));  // derived, not set
+  // The arena row only offers arenas that suit the mode.
+  for (int i = 0; i < 2 * db.arenaCount; ++i) {
+    (void)m.change(rowOf(m, LobbyRowKind::Arena), +1);
+    CHECK(db.compatible(m.settings().arena, m.settings().mode));
+  }
+  // Content that loads with an unsuitable pair is clamped too.
+  LobbyMenu fresh;
+  fresh.settings().mode = teamRounds;
+  fresh.setContent(db);
+  CHECK(fresh.settings().arena == standoff);
+  // A saved arena gives way to the mode named by a flag.
+  ClientOptions o;
+  o.arena = "dojo";
+  o.mode = "team_rounds";
+  LobbySettings ls;
+  std::string error;
+  REQUIRE(lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.arena == standoff);
+  o.arena = "lava";
+  CHECK_FALSE(lobbySettingsFrom(o, db, ls, error));
 }
 
 TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][lobby]") {
@@ -465,6 +506,26 @@ TEST_CASE("the session's loadout reaches the lobby world and the match (v0.31)",
   CHECK(s.loadout() == 0);
   CHECK(client::loadoutSummary(db, slam) == "dash, throw, slam");
   CHECK(client::loadoutSummary(db, 0) == "dash, throw");
+}
+
+TEST_CASE("the session splits a team mode's slots into balanced teams (v0.32)",
+          "[client][lobby][session][teams]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t teamRounds = db.findMode("team_rounds").value_or(0);
+  const uint8_t standoff = arenaIndex("standoff");
+  REQUIRE(teamRounds != 0);
+  client::MatchSession s(client::SessionConfig{
+      .seed = 3, .arena = standoff, .mode = teamRounds, .content = &db, .bots = 3});
+  // Keyboard 0 on slot 0 plus three bots: 0 and 2 against 1 and 3.
+  CHECK(s.teams() == sim::balancedTeams(2, 0b1111));
+  REQUIRE(s.startMatch(1'000'000'000ULL));
+  CHECK(s.matchConfig().teams == sim::balancedTeams(2, 0b1111));
+  CHECK(s.matchContent().relation(PlayerId{0}, PlayerId{2}) == sim::Relation::Ally);
+  CHECK(s.matchContent().relation(PlayerId{0}, PlayerId{1}) == sim::Relation::Enemy);
+  // A free-for-all mode keeps slot i on team i.
+  s.setMode(0);
+  s.restart(2'000'000'000ULL, false);
+  CHECK(s.matchConfig().teams == sim::kFreeForAllTeams);
 }
 
 TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {

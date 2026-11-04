@@ -419,7 +419,8 @@ void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHu
   const sim::ModeDef& mode = content.mode;
   hud.mode = mode.kind;
   hud.scoreToWin = mode.scoreToWin;
-  hud.hasClock = mode.kind != sim::ModeKind::Rounds && mode.timeLimitTicks > 0;
+  hud.hasClock = mode.kind != sim::ModeKind::Rounds && mode.kind != sim::ModeKind::TeamRounds &&
+                 mode.timeLimitTicks > 0;
   hud.clockSeconds = 0.0f;
   if (hud.hasClock) {
     if (r.phase == sim::MatchPhase::Playing) {
@@ -436,6 +437,10 @@ void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHu
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     hud.respawnSeconds[i] = static_cast<float>(r.respawnTicks[i]) * kTickSeconds;
   }
+  hud.teamCount = mode.teams;
+  hud.teams = content.teams;
+  for (uint8_t t = 0; t < sim::kMaxPlayers; ++t)
+    hud.teamScores[t] = content.teamScore(r.scores, t);
 }
 
 }  // namespace

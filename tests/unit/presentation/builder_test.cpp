@@ -503,6 +503,32 @@ TEST_CASE("HUD carries the mode's scoreboard: clock, alive count, respawns",
   CHECK(rs.hud.respawnSeconds[0] == 0.0f);
 }
 
+TEST_CASE("HUD carries the teams and their scores (v0.32)", "[presentation][builder][teams]") {
+  ContentDB content = defaultContent();
+  ModeDef& tr = content.modes[1];
+  tr.name = ContentName::of("team_rounds");
+  tr.kind = ModeKind::TeamRounds;
+  tr.teams = 2;
+  content.modeCount = 2;
+  const MatchConfig config{
+      .seed = 5, .players = 0b1111, .mode = 1, .teams = balancedTeams(2, 0b1111)};
+  const MatchContent m = matchContent(content, config);
+  WorldState s = initialWorld(config);
+  s.rules.scores = {1, 0, 2, 1};
+  PresentationState ps;
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, m, 1.0f / 60.0f);
+  CHECK(rs.hud.teamCount == 2);
+  CHECK(rs.hud.teams[2] == 0);
+  CHECK(rs.hud.teams[3] == 1);
+  CHECK(rs.hud.teamScores[0] == 3);
+  CHECK(rs.hud.teamScores[1] == 1);
+  CHECK_FALSE(rs.hud.hasClock);
+  // A free-for-all: no team count, team i is slot i.
+  const RenderState ffa = buildRenderState(ps, s, s, 1.0f, {}, MatchContent(content), 1.0f / 60.0f);
+  CHECK(ffa.hud.teamCount == 0);
+  CHECK(ffa.hud.teamScores[2] == 2);
+}
+
 TEST_CASE("mode events start their effects and sounds", "[presentation][builder][modes]") {
   WorldState s = makePlayingWorld(37, 0b11);
   placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::fromInt(2)});

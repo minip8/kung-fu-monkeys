@@ -191,7 +191,9 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
 // ContentDB::powerUps[i], kAllPowerUps = the arena as defined). None of them
 // is part of WorldState: they are constant for the match like the content
 // itself, so every host carries the config next to the world (replay header,
-// join path).
+// join path). teams (v0.32) is a team index per slot, below kMaxPlayers;
+// the default is the free-for-all (slot i is team i), and a team mode's
+// hosts fill it with teamsFor().
 struct MatchConfig {
   uint64_t seed{0};
   PlayerMask players{0};
@@ -199,13 +201,47 @@ struct MatchConfig {
   uint8_t mode{0};
   uint16_t powerUps{kAllPowerUps};
   uint8_t loadout{0};  // v0.31: the kit every monkey plays (0 = [player] abilities)
+  TeamSet teams{kFreeForAllTeams};
   constexpr bool operator==(const MatchConfig&) const = default;
 };
+
+// Splits the slots into teamCount teams (v0.32): the present slots in slot
+// order go round-robin over the teams, then every other slot in slot order
+// joins the team with the fewest slots so far (the lowest on a tie), so a
+// later joiner lands on the smallest team. teamCount 0 or 1 (or above
+// kMaxPlayers) is the free-for-all.
+[[nodiscard]] constexpr TeamSet balancedTeams(uint8_t teamCount, PlayerMask present) {
+  if (teamCount < 2 || teamCount > kMaxPlayers) return kFreeForAllTeams;
+  TeamSet t{};
+  std::array<uint8_t, kMaxPlayers> size{};
+  uint8_t rank = 0;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (!maskHas(present, PlayerId{i})) continue;
+    t[i] = static_cast<uint8_t>(rank++ % teamCount);
+    ++size[t[i]];
+  }
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (maskHas(present, PlayerId{i})) continue;
+    uint8_t best = 0;
+    for (uint8_t k = 1; k < teamCount; ++k) {
+      if (size[k] < size[best]) best = k;
+    }
+    t[i] = best;
+    ++size[best];
+  }
+  return t;
+}
+// The teams a mode plays with the given slots present: balancedTeams over
+// ModeDef::teams (the free-for-all for a mode without teams).
+[[nodiscard]] constexpr TeamSet teamsFor(const ModeDef& mode, PlayerMask present) {
+  return balancedTeams(mode.teams, present);
+}
 
 // The content a match with this config simulates with.
 [[nodiscard]] constexpr MatchContent matchContent(const ContentDB& content,
                                                   const MatchConfig& config) {
-  return MatchContent{content, config.arena, config.mode, config.powerUps, config.loadout};
+  return MatchContent{content,         config.arena,   config.mode,
+                      config.powerUps, config.loadout, config.teams};
 }
 
 // Builds the initial state for a match: tick 0, seeded RNG, lobby phase.

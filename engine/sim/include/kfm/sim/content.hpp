@@ -202,7 +202,45 @@ struct ContentDB {
     }
     return std::nullopt;
   }
+
+  // Whether a match may pair this arena with this mode (v0.32): a team mode
+  // needs a spawn group per team. Later steps add zones and cells. An
+  // incompatible pair is a configuration error of the host (the lobby skips
+  // it, a command line refuses it), never a load error: the sim plays any
+  // pair, sharing a group between teams.
+  [[nodiscard]] constexpr bool compatible(uint8_t arena, uint8_t mode) const {
+    const ModeDef& m = modeAt(mode);
+    return m.teams == 0 || arenaAt(arena).spawnGroups >= m.teams;
+  }
+  // The first arena compatible with the mode, if any.
+  [[nodiscard]] constexpr std::optional<uint8_t> firstCompatibleArena(uint8_t mode) const {
+    for (uint8_t i = 0; i < arenaCount; ++i) {
+      if (compatible(i, mode)) return i;
+    }
+    return std::nullopt;
+  }
 };
+
+// Teams (v0.32, architecture §5.3): a team index per slot, constant for a
+// match like the arena (MatchConfig::teams, MatchContent::teams). A
+// free-for-all gives slot i team i, so every other slot is an enemy.
+using TeamSet = std::array<uint8_t, kMaxPlayers>;
+[[nodiscard]] constexpr TeamSet freeForAllTeams() {
+  TeamSet t{};
+  for (uint8_t i = 0; i < kMaxPlayers; ++i)
+    t[i] = i;
+  return t;
+}
+inline constexpr TeamSet kFreeForAllTeams = freeForAllTeams();
+
+// How one monkey stands to another (or to a banana's owner): the rules
+// table's InteractionRule::relationB is a mask over these bits.
+enum class Relation : uint8_t { Self = 0, Ally, Enemy };
+[[nodiscard]] constexpr uint8_t relationBit(Relation r) {
+  return static_cast<uint8_t>(1u << static_cast<uint8_t>(r));
+}
+inline constexpr uint8_t kRelationAny =
+    relationBit(Relation::Self) | relationBit(Relation::Ally) | relationBit(Relation::Enemy);
 
 // What one match simulates with (architecture §5.10): the content DB plus the
 // arena, mode, power-up set and loadout its MatchConfig selected. Every
@@ -221,26 +259,71 @@ struct MatchContent {
   const ModeDef& mode;
   uint16_t powerUps{kAllPowerUps};  // MatchConfig::powerUps: the enabled power-ups
   uint8_t loadoutIndex{0};          // MatchConfig::loadout (v0.31): into ContentDB::loadouts
+  TeamSet teams{kFreeForAllTeams};  // MatchConfig::teams (v0.32)
   // Tests only (v0.31): replaces the mode's ModeBehavior row when set, so a
   // scenario can run a probe mode without a ModeKind of its own
   // (modeBehaviorOf() in modes/registry.hpp). Hosts never set it.
   const ModeBehavior* modeBehavior{nullptr};
 
   constexpr MatchContent(const ContentDB& content, uint8_t arenaIndex, uint8_t modeIndex,
-                         uint16_t powerUpSet = kAllPowerUps, uint8_t selectedLoadout = 0)
+                         uint16_t powerUpSet = kAllPowerUps, uint8_t selectedLoadout = 0,
+                         const TeamSet& teamSet = kFreeForAllTeams)
       : db(content),
         arena(content.arenaAt(arenaIndex)),
         mode(content.modeAt(modeIndex)),
         powerUps(powerUpSet),
-        loadoutIndex(selectedLoadout) {}
+        loadoutIndex(selectedLoadout),
+        teams(teamSet) {}
   // NOLINTNEXTLINE(misc-explicit-constructor): implicit on purpose, see above
   constexpr MatchContent(const ContentDB& content) : MatchContent(content, 0, 0) {}
 
-  // The loadout the match's monkeys spawn with and ModifierSystem restores
-  // after an override, as the ability def per slot (v0.31: the match's;
-  // M5b step 2 adds the per-role lookup of team modes).
+  // The match's loadout as the ability def per slot (v0.31).
   [[nodiscard]] constexpr const std::array<uint8_t, kAbilitySlots>& loadout() const {
     return db.loadoutAbilities(loadoutIndex);
+  }
+  // The loadout index slot `id` plays (v0.32): in a team mode with roles,
+  // the role at the slot's position within its team (slots in slot order,
+  // round-robin over the roles); otherwise the match's.
+  [[nodiscard]] constexpr uint8_t loadoutIndexFor(PlayerId id) const {
+    if (mode.teams == 0 || mode.roleCount == 0 || !id.isValid() || id.value >= kMaxPlayers) {
+      return loadoutIndex;
+    }
+    uint8_t position = 0;
+    for (uint8_t j = 0; j < id.value; ++j) {
+      if (teams[j] == teams[id.value]) ++position;
+    }
+    const uint8_t count = mode.roleCount < kMaxPlayers ? mode.roleCount : kMaxPlayers;
+    return mode.roles[position % count];
+  }
+  // The kit slot `id` spawns with and ModifierSystem restores after an
+  // override, as the ability def per slot.
+  [[nodiscard]] constexpr const std::array<uint8_t, kAbilitySlots>& loadout(PlayerId id) const {
+    return db.loadoutAbilities(loadoutIndexFor(id));
+  }
+
+  // The team of a slot (an invalid slot has none: kMaxPlayers).
+  [[nodiscard]] constexpr uint8_t teamOf(PlayerId id) const {
+    return id.isValid() && id.value < kMaxPlayers ? teams[id.value] : uint8_t{kMaxPlayers};
+  }
+  // How `b` stands to `a`: Self, Ally (same team) or Enemy. A slot without a
+  // team (invalid: a banana whose thrower is unknown) is an enemy, as every
+  // other slot is in a free-for-all.
+  [[nodiscard]] constexpr Relation relation(PlayerId a, PlayerId b) const {
+    if (a == b) return Relation::Self;
+    if (!a.isValid() || !b.isValid() || a.value >= kMaxPlayers || b.value >= kMaxPlayers) {
+      return Relation::Enemy;
+    }
+    return teams[a.value] == teams[b.value] ? Relation::Ally : Relation::Enemy;
+  }
+  // A team's score (v0.32): the sum of its slots' per-slot scores
+  // (MatchRules::scores: round wins or eliminations).
+  [[nodiscard]] constexpr uint16_t teamScore(const std::array<uint8_t, kMaxPlayers>& scores,
+                                             uint8_t team) const {
+    uint16_t sum = 0;
+    for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+      if (teams[i] == team) sum = static_cast<uint16_t>(sum + scores[i]);
+    }
+    return sum;
   }
 };
 

@@ -1,6 +1,7 @@
 // The local lobby's settings panel as a headless state machine (architecture
-// §7, v0.24): a list of rows (arena, mode, loadout, one toggle per power-up,
-// bots, bot difficulty, volume, mute) with a focus, driven by MenuActions. SDL- and ImGui-free;
+// §7, v0.24): a list of rows (arena, mode, teams, loadout, one toggle per
+// power-up, bots, bot difficulty, volume, mute) with a focus, driven by
+// MenuActions. SDL- and ImGui-free;
 // hud.cpp draws it and main.cpp applies the settings to the MatchSession and
 // the audio.
 //
@@ -11,7 +12,11 @@
 // future ability adds stay free. Up/Down move the focus (wrapping); Left
 // and Right change the focused value: arena, mode, loadout and bot difficulty cycle
 // (wrapping), a power-up toggles, bots and volume step and clamp, mute toggles. Enter /
-// pad Start still starts the match (MatchSession).
+// pad Start still starts the match (MatchSession). v0.32: the Teams row only
+// shows what the mode gives (ModeDef::teams), Left/Right leave it alone; the
+// arena row skips arenas that do not suit the mode
+// (ContentDB::compatible), and a mode the arena does not suit moves the
+// arena to the first one that does.
 #pragma once
 
 #include "kfm/platform/input_event.hpp"
@@ -32,6 +37,7 @@ enum class MenuAction : uint8_t { None = 0, Up, Down, Left, Right };
 enum class LobbyRowKind : uint8_t {
   Arena = 0,
   Mode,
+  Teams,    // v0.32: read-only, from the mode
   Loadout,  // v0.31
   PowerUp,
   Bots,
@@ -79,7 +85,7 @@ class MenuInput {
 
 class LobbyMenu {
  public:
-  static constexpr std::size_t kMaxRows = 7 + sim::kMaxPowerUps;
+  static constexpr std::size_t kMaxRows = 8 + sim::kMaxPowerUps;
 
   LobbyMenu();
 

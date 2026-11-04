@@ -48,7 +48,8 @@ struct LobbySettings {
 
 // Resolves the options' names against the content. An unknown arena, mode,
 // loadout or power-up is an error (it came from a flag: applySettingsText() never
-// stores one).
+// stores one). An arena that does not suit the mode (v0.32,
+// ContentDB::compatible) is replaced by the first one that does.
 [[nodiscard]] bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& content,
                                      LobbySettings& out, std::string& error);
 

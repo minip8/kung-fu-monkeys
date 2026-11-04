@@ -17,6 +17,9 @@ namespace kfm::sim {
 inline constexpr uint8_t kMaxPowerUps = 16;
 inline constexpr uint8_t kMaxPowerUpGrants = 4;
 inline constexpr uint8_t kMaxPickupSpawners = 8;
+// ActiveModifier::ticksLeft of a mode's baseline power-up (v0.32): never
+// counted down, never dropped. Power-up durations stay below it.
+inline constexpr uint16_t kPermanentModifierTicks = 0xFFFF;
 
 // Derived player stats a StatModifier can change (Stats in world_state.hpp).
 enum class StatKind : uint8_t { MoveSpeed = 0, MaxHp, AmmoMax };

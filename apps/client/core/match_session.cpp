@@ -162,6 +162,11 @@ sim::PlayerMask MatchSession::lobbyPresentMask() const {
   return present;
 }
 
+sim::TeamSet MatchSession::teams() const {
+  if (phase_ != SessionPhase::Lobby) return matchConfig_.teams;
+  return sim::teamsFor(content_.modeAt(mode_), lobbyPresentMask());
+}
+
 void MatchSession::handleLobbyJoins() {
   for (uint32_t guard = 0; guard < sim::kMaxPlayers; ++guard) {
     const std::optional<platform::DeviceBinding> device = sampler_.pollJoin();
@@ -288,6 +293,9 @@ void MatchSession::replaceContent(const sim::ContentDB& content, uint64_t nowNs)
   if (arena_ >= content_.arenaCount) arena_ = 0;
   if (mode_ >= content_.modeCount) mode_ = 0;
   if (loadout_ >= content_.loadoutCount) loadout_ = 0;
+  // v0.32: an edited mode or arena may no longer suit each other.
+  if (!content_.compatible(arena_, mode_))
+    arena_ = content_.firstCompatibleArena(mode_).value_or(0);
   restart(nowNs, false);
 }
 
@@ -297,7 +305,8 @@ void MatchSession::createWorld(sim::PlayerMask present) {
                                   .arena = arena_,
                                   .mode = mode_,
                                   .powerUps = powerUps_,
-                                  .loadout = loadout_};
+                                  .loadout = loadout_,
+                                  .teams = sim::teamsFor(content_.modeAt(mode_), present)};
   curr_ = sim::initialWorld(matchConfig_);
   prev_ = curr_;
 }

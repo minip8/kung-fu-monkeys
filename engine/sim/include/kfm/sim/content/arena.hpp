@@ -57,7 +57,25 @@ struct ArenaDef {
   // Power-up pickup spawners (§5.8); none in the default arena.
   std::array<PickupSpawner, kMaxPickupSpawners> pickupSpawners{};
   uint8_t pickupSpawnerCount{0};
+  // v0.32: the spawn points split into this many consecutive groups (at
+  // least one point each); team t spawns and respawns in group t mod
+  // spawnGroups (spawnGroupRange). 1 = one shared list, the M1 behaviour.
+  uint8_t spawnGroups{1};
 };
+
+// Spawn points [begin, end) of group g (taken mod the group count) of an
+// arena: group g holds points [g·n/G, (g+1)·n/G) of the n points.
+struct SpawnRange {
+  uint8_t begin{0};
+  uint8_t end{0};
+};
+[[nodiscard]] constexpr SpawnRange spawnGroupRange(const ArenaDef& arena, uint8_t group) {
+  const uint32_t groups = arena.spawnGroups > 0 ? arena.spawnGroups : 1u;
+  const uint32_t n = arena.spawnPointCount;
+  const uint32_t g = group % groups;
+  return SpawnRange{static_cast<uint8_t>((g * n) / groups),
+                    static_cast<uint8_t>(((g + 1) * n) / groups)};
+}
 
 // Whether p lies in the closed box [min, max] (hazards test the centre).
 [[nodiscard]] constexpr bool boxContains(Vec2 min, Vec2 max, Vec2 p) {

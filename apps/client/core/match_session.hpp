@@ -135,6 +135,10 @@ class MatchSession {
   [[nodiscard]] uint8_t botCount() const { return bots_; }
   // Bound slots plus the lowest botCount() unbound slots.
   [[nodiscard]] sim::PlayerMask lobbyPresentMask() const;
+  // The team of every slot (v0.32): in a match its MatchConfig::teams, in
+  // the lobby what the mode would give the slots joined so far (balanced,
+  // later slots to the smallest team; slot i is team i without teams).
+  [[nodiscard]] sim::TeamSet teams() const;
   // Creates the world from lobbyPresentMask() and seed() and starts the
   // clock at nowNs. Returns false (and stays in the lobby) when the mask is empty.
   bool startMatch(uint64_t nowNs);

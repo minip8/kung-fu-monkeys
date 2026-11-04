@@ -283,6 +283,7 @@ void visit(V& v, ArenaDef& d) {
   for (PickupSpawner& sp : d.pickupSpawners)
     visit(v, sp);
   v.u8(d.pickupSpawnerCount);
+  v.u8(d.spawnGroups);  // v0.32
 }
 template <class V>
 void visit(V& v, ModeDef& d) {
@@ -295,6 +296,12 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.scoreToWin);
   v.u16(d.respawnTicks);
   v.u16(d.respawnInvulnTicks);
+  // v0.32: teams, baseline, roles.
+  v.u8(d.teams);
+  v.u8(d.baseline);
+  for (uint8_t& r : d.roles)
+    v.u8(r);
+  v.u8(d.roleCount);
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {

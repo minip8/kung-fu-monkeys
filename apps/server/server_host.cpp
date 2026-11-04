@@ -360,6 +360,12 @@ void ServerHost::frame(uint64_t nowNs) {
 
 void ServerHost::onTick() {
   const sim::WorldState& w = server_->world();
+  // " (team t)" in a team mode (v0.32), else nothing.
+  const auto teamText = [&](PlayerId p) -> std::string {
+    const sim::MatchConfig& c = server_->matchConfig();
+    if (server_->content().modeAt(c.mode).teams == 0 || p.value >= sim::kMaxPlayers) return {};
+    return std::format(" (team {})", c.teams[p.value]);
+  };
   for (const sim::SimEvent& e : server_->tickEvents()) {
     switch (e.kind) {
       case sim::EventKind::MatchStarted:
@@ -374,7 +380,8 @@ void ServerHost::onTick() {
       case sim::EventKind::RoundEnded:
         ++stats_.roundsCompleted;
         if (e.player.isValid()) {
-          log("round {} won by slot {}; scores {}", e.a, e.player.value, scoreList(w));
+          log("round {} won by slot {}{}; scores {}", e.a, e.player.value, teamText(e.player),
+              scoreList(w));
         } else {
           log("round {} drawn; scores {}", e.a, scoreList(w));
         }
@@ -383,8 +390,9 @@ void ServerHost::onTick() {
         ++stats_.matchesCompleted;
         const uint64_t seed = server_->matchConfig().seed;
         if (e.player.isValid()) {
-          log("match {} won by slot {} after {} rounds; seed=0x{:x} scores {}",
-              server_->matchIndex() + 1, e.player.value, w.rules.round, seed, scoreList(w));
+          log("match {} won by slot {}{} after {} rounds; seed=0x{:x} scores {}",
+              server_->matchIndex() + 1, e.player.value, teamText(e.player), w.rules.round, seed,
+              scoreList(w));
         } else {
           // A tied lead when a mode's clock ran out (deathmatch).
           log("match {} drawn after {} rounds; seed=0x{:x} scores {}", server_->matchIndex() + 1,
@@ -399,7 +407,13 @@ void ServerHost::onTick() {
         botSeed_ = nextMatchSeed(botSeed_);
         const Tick start =
             server_->nextTick().plus(static_cast<int32_t>(config_.restartDelayTicks));
-        server_->restartMatch(next, start, botSeed_);
+        // v0.32: the next match rebalances a team mode's teams over the
+        // slots present now (later joiners still land on the smallest team).
+        sim::MatchConfig nextConfig = server_->matchConfig();
+        nextConfig.seed = next;
+        nextConfig.teams =
+            sim::teamsFor(server_->content().modeAt(nextConfig.mode), w.rules.present);
+        server_->restartMatch(nextConfig, start, botSeed_);
         log("next match seed=0x{:x} at tick {}", next, start.value);
         break;
       }

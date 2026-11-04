@@ -17,9 +17,11 @@ void modeNoPickupTaken(WorldState& /*s*/, const MatchContent& /*content*/, Playe
 namespace {
 
 constexpr std::array<ModeBehavior, static_cast<size_t>(ModeKind::kCount)> kBehaviors = {
-    roundsBehavior(),      // ModeKind::Rounds
-    deathmatchBehavior(),  // ModeKind::Deathmatch
-    survivalBehavior(),    // ModeKind::Survival
+    roundsBehavior(),          // ModeKind::Rounds
+    deathmatchBehavior(),      // ModeKind::Deathmatch
+    survivalBehavior(),        // ModeKind::Survival
+    teamRoundsBehavior(),      // ModeKind::TeamRounds (v0.32)
+    teamDeathmatchBehavior(),  // ModeKind::TeamDeathmatch (v0.32)
 };
 
 }  // namespace

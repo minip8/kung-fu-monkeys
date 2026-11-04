@@ -236,6 +236,7 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
     h.mode = config.mode;
     h.powerUps = config.powerUps;
     h.loadout = config.loadout;
+    h.teams = config.teams;
     h.tickCount = result.ticks;
     result.replay.resize(replayMaxBytes(h));
     BitWriter w(result.replay);

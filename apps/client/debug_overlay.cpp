@@ -86,7 +86,8 @@ namespace {
 
 void tagsText(sim::Tags tags, char (&out)[96]) {
   constexpr std::array<const char*, static_cast<std::size_t>(sim::Tag::kCount)> kNames = {
-      "Dashing", "PerfectDash", "HitStun", "Shielded", "Invulnerable", "Eliminated"};
+      "Dashing",    "PerfectDash", "HitStun",  "Shielded",    "Invulnerable",
+      "Eliminated", "Slamming",    "Parrying", "FriendlyFire"};
   out[0] = '\0';
   std::size_t used = 0;
   for (std::size_t t = 0; t < kNames.size(); ++t) {
@@ -321,10 +322,12 @@ void tuningSection(MatchSession& s, std::string& printed) {
   ImGui::SeparatorText("Mode");
   sim::ModeDef& mode = c.modes[s.matchConfig().mode];
   ImGui::Text("%s", mode.name.cStr());
-  if (mode.kind != sim::ModeKind::Deathmatch) sliderU8("rounds to win", mode.roundsToWin, 1, 9);
+  const bool frags =
+      mode.kind == sim::ModeKind::Deathmatch || mode.kind == sim::ModeKind::TeamDeathmatch;
+  if (!frags) sliderU8("rounds to win", mode.roundsToWin, 1, 9);
   sliderU16("round start ticks", mode.roundStartTicks, 0, 300);
   sliderU16("round end ticks", mode.roundEndTicks, 0, 600);
-  if (mode.kind == sim::ModeKind::Deathmatch) {
+  if (frags) {
     sliderU8("score to win", mode.scoreToWin, 1, 50);
     sliderU16("respawn ticks", mode.respawnTicks, 1, 600);
     sliderU16("spawn protection ticks", mode.respawnInvulnTicks, 0, 600);

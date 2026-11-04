@@ -15,7 +15,11 @@ enum class Tag : uint8_t {
   Eliminated,
   Slamming,  // v0.21: a slam's impact tick (abilities/slam.cpp, rules/slam.cpp)
   Parrying,  // v0.21: a parry's window may be open (abilities/parry.cpp, rules/parry.cpp)
-  kCount,    // NOLINT(readability-identifier-naming): count sentinel
+  // v0.32: allies' bananas, dash attacks and slam pushes reach this monkey
+  // (the Ally rows of the rules table, rules/table.cpp). A mode grants it
+  // through its baseline power-up; nothing else sets it.
+  FriendlyFire,
+  kCount,  // NOLINT(readability-identifier-naming): count sentinel
 };
 static_assert(static_cast<uint32_t>(Tag::kCount) <= 32);
 

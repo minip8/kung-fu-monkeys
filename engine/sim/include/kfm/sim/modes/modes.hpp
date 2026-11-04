@@ -28,6 +28,16 @@ void survivalOnPlaying(WorldState& s, const MatchContent& content, EventSink& si
 void survivalOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
                           PlayerId killer, EventSink& sink);
 
+// Team rounds (modes/team_rounds.cpp, v0.32): the last team standing.
+void teamRoundsOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
+void teamRoundsOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
+                            PlayerId killer, EventSink& sink);
+
+// Team deathmatch (modes/team_deathmatch.cpp, v0.32): team scores, respawns.
+void teamDeathmatchOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
+void teamDeathmatchOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
+                                PlayerId killer, EventSink& sink);
+
 [[nodiscard]] constexpr ModeBehavior roundsBehavior() {
   return ModeBehavior{&modeNoRoundStart, &roundsOnPlaying, &roundsOnEliminated, &modeNoPickupTaken};
 }
@@ -37,6 +47,14 @@ void survivalOnEliminated(WorldState& s, const MatchContent& content, PlayerId v
 }
 [[nodiscard]] constexpr ModeBehavior survivalBehavior() {
   return ModeBehavior{&modeNoRoundStart, &survivalOnPlaying, &survivalOnEliminated,
+                      &modeNoPickupTaken};
+}
+[[nodiscard]] constexpr ModeBehavior teamRoundsBehavior() {
+  return ModeBehavior{&modeNoRoundStart, &teamRoundsOnPlaying, &teamRoundsOnEliminated,
+                      &modeNoPickupTaken};
+}
+[[nodiscard]] constexpr ModeBehavior teamDeathmatchBehavior() {
+  return ModeBehavior{&modeNoRoundStart, &teamDeathmatchOnPlaying, &teamDeathmatchOnEliminated,
                       &modeNoPickupTaken};
 }
 

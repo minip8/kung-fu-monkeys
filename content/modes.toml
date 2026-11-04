@@ -5,7 +5,8 @@
 #
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
-#   kind                 rounds (default), deathmatch or survival
+#   kind                 rounds (default), deathmatch, survival, team_rounds or
+#                        team_deathmatch
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      all kinds: pause after a round before the next one
 #   rounds_to_win        rounds, survival: round wins that take the match
@@ -14,6 +15,19 @@
 #   score_to_win         deathmatch: eliminations that win (at least 1)
 #   respawn_ticks        deathmatch: from an elimination to the respawn (>= 1)
 #   respawn_invuln_ticks deathmatch: spawn protection after a respawn
+#   teams                0 = free-for-all (default), else 2 to 10 teams the
+#                        hosts split the slots into, round-robin (the team
+#                        kinds need it; such a mode plays only on an arena
+#                        with at least that many spawn_groups)
+#   baseline             a power-up name every monkey holds from its spawn
+#                        on with no expiry (none by default); one granting
+#                        tag "friendly_fire" lets allies hit each other
+#   roles                team modes: up to 10 loadout names handed out by a
+#                        slot's position within its team, round-robin
+#                        (none: every slot plays the match's loadout)
+# The team kinds score per slot like their free-for-all twins; a team's
+# score is the sum of its slots' (team_rounds: round wins; team_deathmatch:
+# eliminations of enemies, ally kills score nothing).
 # A mode does not carry a loadout: the kit is its own match axis since v0.31
 # (content/loadouts.toml, --loadout NAME).
 
@@ -39,5 +53,26 @@ name = "survival"           # rounds on a clock: last monkey standing, or the
 kind = "survival"           # healthiest (then fewest deaths) when time runs out
 rounds_to_win = 3
 time_limit_ticks = 3600     # 60 s per round
+round_start_ticks = 60
+round_end_ticks = 120
+
+# v0.32: team modes (architecture §5.3). No baseline: allies' bananas, dash
+# attacks and slam pushes pass through each other (no friendly fire).
+[[mode]]
+name = "team_rounds"        # last team standing wins the round
+kind = "team_rounds"
+teams = 2
+rounds_to_win = 3           # the first team to three round wins
+round_start_ticks = 60
+round_end_ticks = 120
+
+[[mode]]
+name = "team_deathmatch"    # a team's eliminations to score_to_win
+kind = "team_deathmatch"
+teams = 2
+score_to_win = 20           # the first team to twenty eliminations wins
+time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
+respawn_ticks = 120
+respawn_invuln_ticks = 90
 round_start_ticks = 60
 round_end_ticks = 120

@@ -27,8 +27,22 @@ enum class ModeKind : uint8_t {
   // round's timeLimitTicks runs out, the survivor with the most hp wins it,
   // then the one with the fewest deaths this match, else it is a draw.
   Survival,
+  // v0.32, the team kinds (MatchConfig::teams; ModeDef::teams is the team
+  // count the hosts distribute the slots over). Team rounds: a round ends
+  // when at most one team has monkeys left (two or more teams present); that
+  // team wins it, credited to its lowest surviving slot, and the first team
+  // whose slots' round wins sum to roundsToWin takes the match.
+  TeamRounds,
+  // Team deathmatch: deathmatch's clock, respawns and scoring, won by the
+  // first team whose eliminations sum to scoreToWin, else the leading team
+  // when timeLimitTicks runs out (a tied lead is a draw). Eliminating an
+  // ally scores nothing.
+  TeamDeathmatch,
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
+
+// ModeDef::baseline when the mode grants no baseline power-up (v0.32).
+inline constexpr uint8_t kNoBaseline = 0xFF;
 
 struct ModeDef {
   ContentName name{};
@@ -50,6 +64,21 @@ struct ModeDef {
   uint16_t respawnInvulnTicks{90};
   // v0.21's per-mode loadout (abilities, hasAbilities) moved to its own axis
   // in v0.31: LoadoutDef and MatchConfig::loadout (content/loadout.hpp).
+  // v0.32: 0 = free-for-all, else the number of teams (2..kMaxPlayers) the
+  // hosts split the slots into (MatchConfig::teams, sim::teamsFor()).
+  uint8_t teams{0};
+  // v0.32: a power-up (index into ContentDB::powerUps) every monkey holds
+  // from its spawn on with no expiry (a permanent ModifierList entry,
+  // kPermanentModifierTicks), or kNoBaseline. How a mode switches a rule
+  // row on: friendly fire is a baseline that grants Tag::FriendlyFire.
+  uint8_t baseline{kNoBaseline};
+  // v0.32, team modes only: loadouts (indices into ContentDB::loadouts)
+  // handed out by a slot's position within its team, round-robin over
+  // roles[0..roleCount). None: every slot plays the match's loadout.
+  std::array<uint8_t, kMaxPlayers> roles{};
+  uint8_t roleCount{0};
+
+  [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
 };
 
 }  // namespace kfm::sim

@@ -7,6 +7,8 @@
 // - The same power-up again refreshes the existing entry's timer in place
 //   (no second entry, slot order unchanged).
 // - A full ModifierList (kMaxModifiers) declines: the pickup stays.
+// - The mode's baseline (v0.32, a permanent entry) stays permanent: picking
+//   up the same power-up only adds its ammo top-up.
 // - AmmoMax grants top the ammo up by their add on every pickup;
 //   ModifierSystem then caps ammo at the new ammoMax (a refresh at full ammo
 //   therefore adds nothing).
@@ -37,7 +39,7 @@ bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, Entity
     entry = &mods.items[mods.count++];
     entry->powerUp = index;
   }
-  entry->ticksLeft = def.durationTicks;
+  if (entry->ticksLeft != kPermanentModifierTicks) entry->ticksLeft = def.durationTicks;
 
   int32_t ammo = p->ammo;
   for (uint8_t g = 0; g < def.grantCount && g < kMaxPowerUpGrants; ++g) {

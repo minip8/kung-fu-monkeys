@@ -250,6 +250,7 @@ ReplayHeader headerFor(const Args& a) {
   h.mode = gMatch.mode;
   h.powerUps = gMatch.powerUps;
   h.loadout = gMatch.loadout;
+  h.teams = gMatch.teams;
   h.tickCount = a.ticks;
   return h;
 }

@@ -105,6 +105,28 @@ bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena, st
     }
     c.mode = *i;
   }
+  // v0.32: the arena must suit the mode (ContentDB::compatible). Without an
+  // --arena a team mode takes the first arena that does; a named arena that
+  // does not is a configuration error.
+  if (!content.compatible(c.arena, c.mode)) {
+    const sim::ModeDef& m = content.modeAt(c.mode);
+    const std::optional<uint8_t> first = content.firstCompatibleArena(c.mode);
+    if (!arena.empty() || !first) {
+      std::string fits;
+      for (uint8_t a = 0; a < content.arenaCount; ++a) {
+        if (!content.compatible(a, c.mode)) continue;
+        if (!fits.empty()) fits += ", ";
+        fits += content.arenas[a].name.view();
+      }
+      error = "arena '" + std::string(content.arenaAt(c.arena).name.view()) +
+              "' does not suit mode '" + std::string(m.name.view()) + "' (" +
+              std::to_string(m.teams) + " teams need as many spawn groups; arenas that do: " +
+              (fits.empty() ? std::string("none") : fits) + ")";
+      return false;
+    }
+    c.arena = *first;
+  }
+  c.teams = sim::teamsFor(content.modeAt(c.mode), c.players);
   config = c;
   return true;
 }

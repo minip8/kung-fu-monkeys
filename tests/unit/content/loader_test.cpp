@@ -656,10 +656,10 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
   CHECK(contains(
       loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
                           "{ kind = \"tag\", tag = \"hit_stun\" }")),
-      "can grant only 'shielded' or 'invulnerable'"));
+      "can grant only 'shielded', 'invulnerable' or 'friendly_fire'"));
   // Values and shapes.
   CHECK(contains(loadErrors(replaced(withPowerUp(), "duration_ticks = 300", "duration_ticks = 0")),
-                 "'duration_ticks' must be an integer in [1, 65535]"));
+                 "'duration_ticks' must be an integer in [1, 65534]"));
   CHECK(contains(loadErrors(replaced(withPowerUp(), "shape = \"diamond\"", "shape = \"blob\"")),
                  "'shape' must be one of: orb, cube, diamond, coin"));
   CHECK(contains(loadErrors(replaced(withPowerUp(), "color = 6", "color = 10")),
@@ -921,5 +921,108 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
   CHECK(contains(
       loadErrors(std::string(kMinimal) + "\n[[powerup]]\nname = \"p\"\nduration_ticks = 60\n"
                                          "grants = [{ kind = \"tag\", tag = \"parrying\" }]\n"),
-      "a power-up can grant only 'shielded' or 'invulnerable'"));
+      "a power-up can grant only 'shielded', 'invulnerable' or 'friendly_fire'"));
+}
+
+TEST_CASE("team modes: teams, baseline, roles and spawn groups (v0.32)",
+          "[content][loader][modes][teams]") {
+  const std::string base = std::string(kMinimal) + R"(
+[[arena]]
+name = "versus"
+half_extents = [10, 5]
+spawn_groups = 2
+spawn_points = [[-6, 0], [-6, 2], [6, 0], [6, 2]]
+
+[[loadout]]
+name = "twice"
+abilities = ["dash", "throw", "throw"]
+
+[[powerup]]
+name = "ff"
+duration_ticks = 1
+grants = [{ kind = "tag", tag = "friendly_fire" }]
+)";
+  const std::string teamMode = R"(
+[[mode]]
+name = "tr"
+kind = "team_rounds"
+teams = 2
+baseline = "ff"
+roles = ["base", "twice"]
+)";
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(base + teamMode, "teams.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  REQUIRE(db.modeCount == 2);
+  const sim::ModeDef& tr = db.modes[1];
+  CHECK(tr.kind == sim::ModeKind::TeamRounds);
+  CHECK(tr.teams == 2);
+  CHECK(tr.baseline == db.findPowerUp("ff"));
+  CHECK(tr.roleCount == 2);
+  CHECK(tr.roles[0] == 0);
+  CHECK(tr.roles[1] == db.findLoadout("twice"));
+  CHECK(db.modes[0].teams == 0);
+  CHECK_FALSE(db.modes[0].hasBaseline());
+  CHECK(db.arenas[0].spawnGroups == 1);
+  CHECK(db.arenas[1].spawnGroups == 2);
+  CHECK(db.powerUps[0].grants[0].tag == sim::Tag::FriendlyFire);
+  CHECK_FALSE(db.compatible(0, 1));
+  CHECK(db.compatible(1, 1));
+  CHECK(db.compatible(0, 0));
+
+  // --mode tr without --arena takes the first arena that suits it; naming
+  // one that does not is an error. The teams follow the mode.
+  sim::MatchConfig config{.players = 0b1111};
+  std::string error;
+  REQUIRE(resolveMatchNames(db, "", "tr", config, error));
+  CHECK(config.arena == 1);
+  CHECK(config.teams == sim::balancedTeams(2, 0b1111));
+  CHECK_FALSE(resolveMatchNames(db, "box", "tr", config, error));
+  CHECK(contains(error, "arena 'box' does not suit mode 'tr'"));
+  CHECK(contains(error, "arenas that do: versus"));
+  REQUIRE(resolveMatchNames(db, "versus", "rounds", config, error));
+  CHECK(config.teams == sim::kFreeForAllTeams);
+
+  const auto withMode = [&](std::string_view m) { return base + std::string(m); };
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nteams = 1\n")),
+                 "teams must be 0 (free-for-all) or 2 to 10"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nteams = 11\n")), "'teams'"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nkind = \"team_deathmatch\"\n")),
+                 "a team kind needs teams of 2 or more"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nroles = [\"base\"]\n")),
+                 "'roles' needs a team mode"));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nbaseline = \"zap\"\n")),
+                 "'baseline' names unknown power-up \"zap\""));
+  CHECK(contains(loadErrors(withMode("[[mode]]\nname = \"t\"\nteams = 2\nroles = [\"zap\"]\n")),
+                 "'roles' names unknown loadout \"zap\""));
+  CHECK(contains(loadErrors(replaced(base, "spawn_groups = 2", "spawn_groups = 5")),
+                 "spawn_groups must be in [1, 4] (every group needs a spawn point)"));
+  CHECK(contains(loadErrors(replaced(base, "spawn_groups = 2", "spawn_groups = 0")),
+                 "'spawn_groups'"));
+}
+
+TEST_CASE("content/ ships team_rounds and team_deathmatch on standoff (v0.32)",
+          "[content][loader][modes][teams]") {
+  ContentDB loaded{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
+  const uint8_t tr = loaded.findMode("team_rounds").value_or(0);
+  const uint8_t td = loaded.findMode("team_deathmatch").value_or(0);
+  const uint8_t standoff = loaded.findArena("standoff").value_or(0);
+  REQUIRE(tr != 0);
+  REQUIRE(td != 0);
+  REQUIRE(standoff != 0);
+  CHECK(loaded.modeAt(tr).kind == sim::ModeKind::TeamRounds);
+  CHECK(loaded.modeAt(td).kind == sim::ModeKind::TeamDeathmatch);
+  CHECK(loaded.modeAt(tr).teams == 2);
+  CHECK(loaded.modeAt(td).teams == 2);
+  CHECK_FALSE(loaded.modeAt(tr).hasBaseline());  // no friendly fire by default
+  CHECK(loaded.arenaAt(standoff).spawnGroups == 2);
+  CHECK(loaded.firstCompatibleArena(tr) == std::optional<uint8_t>{standoff});
+  // The free-for-all arenas keep one group: their checksums never moved.
+  for (uint8_t a = 0; a < loaded.arenaCount; ++a) {
+    if (a != standoff) CHECK(loaded.arenas[a].spawnGroups == 1);
+  }
 }

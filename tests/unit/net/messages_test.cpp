@@ -183,6 +183,12 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
   // v4: the loadout rides along (MatchConfig::loadout, v0.31).
   roundTrip(WelcomeMsg{
       0b1, sim::MatchConfig{5, 0b11, 2, 3, sim::kAllPowerUps, sim::kMaxLoadouts - 1}, Tick{7}});
+  // v5: the team of every slot (MatchConfig::teams, v0.32).
+  roundTrip(WelcomeMsg{
+      0b1, sim::MatchConfig{5, 0b11, 2, 3, sim::kAllPowerUps, 0, sim::balancedTeams(2, 0b1011)},
+      Tick{7}});
+  roundTrip(MatchConfigMsg{sim::MatchConfig{5, 0x3FF, 1, 4, 0, 1, {9, 9, 0, 1, 2, 3, 4, 5, 6, 7}},
+                           Tick{9}});
   for (uint8_t r = 0; r < kRejectReasonCount; ++r)
     roundTrip(RejectMsg{static_cast<RejectReason>(r)});
   roundTrip(JoinMatchMsg{0});
@@ -200,6 +206,19 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
     roundTrip(DisconnectMsg{static_cast<DisconnectReason>(r)});
   roundTrip(ResyncRequestMsg{Tick{0}, 0});
   roundTrip(ResyncRequestMsg{Tick{0xFFFF'FFFFu}, 0xDEAD'BEEFu});
+}
+
+TEST_CASE("A team index out of range is refused by the encoder", "[net][messages]") {
+  std::vector<std::byte> buf(kMaxReliableBytes);
+  MatchConfigMsg m{sim::MatchConfig{1, 0b11}, Tick{1}};
+  m.config.teams[3] = sim::kMaxPlayers;
+  CHECK(encode(m, buf) == 0);
+  m.config.teams[3] = 0;
+  const size_t n = encode(m, buf);
+  REQUIRE(n > 0);
+  MatchConfigMsg ok;
+  CHECK(decode(std::span<const std::byte>(buf.data(), n), ok).has_value());
+  CHECK(ok == m);
 }
 
 TEST_CASE("Encoders refuse invalid messages", "[net][messages]") {

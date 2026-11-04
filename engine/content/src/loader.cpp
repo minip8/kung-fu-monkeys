@@ -87,10 +87,12 @@ struct ModeKindName {
   std::string_view name;
   sim::ModeKind kind;
 };
-constexpr std::array<ModeKindName, 3> kModeKinds = {{
+constexpr std::array<ModeKindName, 5> kModeKinds = {{
     {"rounds", sim::ModeKind::Rounds},
     {"deathmatch", sim::ModeKind::Deathmatch},
     {"survival", sim::ModeKind::Survival},
+    {"team_rounds", sim::ModeKind::TeamRounds},          // v0.32
+    {"team_deathmatch", sim::ModeKind::TeamDeathmatch},  // v0.32
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -99,7 +101,7 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 8> kTagNames = {{
+constexpr std::array<TagName, 9> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
@@ -108,6 +110,7 @@ constexpr std::array<TagName, 8> kTagNames = {{
     {"eliminated", Tag::Eliminated},
     {"slamming", Tag::Slamming},
     {"parrying", Tag::Parrying},
+    {"friendly_fire", Tag::FriendlyFire},
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -145,8 +148,9 @@ constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash",
 
 // Tags a power-up may grant: the rest are owned by AbilitySystem (dashing,
 // perfect_dash) or by the damage rules (hit_stun, eliminated).
+// v0.32: friendly_fire too, the tag a team mode's baseline grants (§5.6).
 [[nodiscard]] constexpr bool grantableTag(Tag t) {
-  return t == Tag::Shielded || t == Tag::Invulnerable;
+  return t == Tag::Shielded || t == Tag::Invulnerable || t == Tag::FriendlyFire;
 }
 
 // Projectile multipliers stay in (0, kMaxProjectileMul].
@@ -532,6 +536,7 @@ class Builder {
     if (db_.modeCount == 0) diag_.error("", 0, "no [[mode]] defined (need at least one)");
     resolveLoadouts();
     resolvePowerUpNames();
+    resolveModeNames();
     if (diag_.hasErrors()) return false;
     if (!validateContent(db_, diag_)) return false;
     out = db_;
@@ -720,6 +725,7 @@ class Builder {
       parseSpawnEllipse(s, *ellipse, a);
     }
     const toml::node* spawners = s.take("spawners");
+    s.integer("spawn_groups", a.spawnGroups, 1, sim::kMaxPlayers);  // v0.32
     if (const toml::node* walls = s.take("walls")) parseWalls(s, *walls, a);
     if (const toml::node* hazards = s.take("hazards")) parseHazards(s, *hazards, a);
     if (!name || !uniqueName(s, *name, db_.arenas, db_.arenaCount, "arena")) return;
@@ -780,7 +786,8 @@ class Builder {
     PowerUpDef d;
     const std::optional<std::string> name = s.name(d.name);
     if (name) s.setWhere("powerup " + inQuotes(*name));
-    s.integer("duration_ticks", d.durationTicks, 1, 65535, true);
+    // At most 65534: 65535 is a baseline's permanent entry (v0.32).
+    s.integer("duration_ticks", d.durationTicks, 1, sim::kPermanentModifierTicks - 1, true);
     s.integer("color", d.visual.color, 0, sim::kMaxPlayers - 1);
     if (const ShapeName* shape =
             s.named("shape", kShapeNames, [](const ShapeName& e) { return e.name; })) {
@@ -857,7 +864,7 @@ class Builder {
         if (grantableTag(*t)) {
           out.tag = *t;
         } else {
-          g.error("a power-up can grant only 'shielded' or 'invulnerable'");
+          g.error("a power-up can grant only 'shielded', 'invulnerable' or 'friendly_fire'");
         }
       }
     } else {
@@ -980,7 +987,8 @@ class Builder {
     if (const std::optional<std::string> kind = s.string("kind")) {
       const auto* const entry = findNamed(kModeKinds, *kind);
       if (entry == nullptr) {
-        s.error("unknown kind " + inQuotes(*kind) + " (rounds, deathmatch or survival)");
+        s.error("unknown kind " + inQuotes(*kind) +
+                " (rounds, deathmatch, survival, team_rounds or team_deathmatch)");
       } else {
         m.kind = entry->kind;
       }
@@ -992,6 +1000,35 @@ class Builder {
     s.integer("score_to_win", m.scoreToWin, 0, 255);
     s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
     s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
+    // v0.32: teams, the baseline power-up and the roles. Names resolve once
+    // every file is read (powerups.toml sorts after modes.toml).
+    s.integer("teams", m.teams, 0, sim::kMaxPlayers);
+    std::optional<PendingName> baseline;
+    if (const toml::node* n = s.take("baseline")) {
+      if (const toml::value<std::string>* str = n->as_string()) {
+        baseline = PendingName{str->get(), s.where(), lineOf(*n), std::string(s.file().name)};
+      } else {
+        s.error(*n, "'baseline' must be a power-up name");
+      }
+    }
+    std::vector<PendingName> roles;
+    if (const toml::node* n = s.take("roles")) {
+      const toml::array* arr = n->as_array();
+      if (arr == nullptr || arr->empty() || arr->size() > sim::kMaxPlayers) {
+        s.error(*n,
+                "'roles' must list 1 to " + std::to_string(sim::kMaxPlayers) + " loadout names");
+      } else {
+        for (const toml::node& el : *arr) {
+          if (const toml::value<std::string>* str = el.as_string()) {
+            roles.push_back(
+                PendingName{str->get(), s.where(), lineOf(el), std::string(s.file().name)});
+          } else {
+            s.error(el, "'roles' entries must be loadout names");
+          }
+        }
+        if (m.teams == 0) s.error(*n, "'roles' needs a team mode ('teams' of 2 or more)");
+      }
+    }
     // v0.31: loadouts are their own axis. Say where the key went rather than
     // only calling it unknown.
     if (const toml::node* n = s.take("abilities")) {
@@ -1004,7 +1041,33 @@ class Builder {
       s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
       return;
     }
+    modeNames_.push_back(ModeNames{db_.modeCount, std::move(baseline), std::move(roles)});
     db_.modes[db_.modeCount++] = m;
+  }
+
+  // v0.32: a mode's baseline power-up and role loadouts by name.
+  void resolveModeNames() {
+    for (const ModeNames& n : modeNames_) {
+      ModeDef& m = db_.modes[n.mode];
+      if (n.baseline) {
+        if (const std::optional<uint8_t> i = db_.findPowerUp(n.baseline->name)) {
+          m.baseline = *i;
+        } else {
+          diag_.error(n.baseline->file, n.baseline->line,
+                      n.baseline->where + ": 'baseline' names unknown power-up " +
+                          inQuotes(n.baseline->name));
+        }
+      }
+      m.roleCount = 0;
+      for (const PendingName& r : n.roles) {
+        if (const std::optional<uint8_t> i = db_.findLoadout(r.name)) {
+          m.roles[m.roleCount++] = *i;
+        } else {
+          diag_.error(r.file, r.line,
+                      r.where + ": 'roles' names unknown loadout " + inQuotes(r.name));
+        }
+      }
+    }
   }
 
   // [[loadout]] (v0.31): a name and 2 or 3 ability names, appended after
@@ -1092,6 +1155,11 @@ class Builder {
     uint8_t grant{0};
     PendingName name;
   };
+  struct ModeNames {
+    uint8_t mode{0};
+    std::optional<PendingName> baseline;
+    std::vector<PendingName> roles;
+  };
 
   Diagnostics& diag_;
   ContentDB db_{};
@@ -1103,6 +1171,7 @@ class Builder {
   std::vector<LoadoutNames> loadoutNames_;
   std::vector<SpawnerName> spawnerNames_;
   std::vector<OverrideName> overrideNames_;
+  std::vector<ModeNames> modeNames_;
 };
 
 }  // namespace
@@ -1149,7 +1218,9 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
     for (uint8_t j = 0; j < i; ++j) {
       if (c.powerUps[j].name == d.name) fail(where + ": name used twice");
     }
-    if (d.durationTicks < 1) fail(where + ": duration_ticks must be at least 1");
+    if (d.durationTicks < 1 || d.durationTicks >= sim::kPermanentModifierTicks) {
+      fail(where + ": duration_ticks must be in [1, 65534]");
+    }
     if (d.visual.color >= sim::kMaxPlayers) fail(where + ": color must be a palette index 0-9");
     if (d.grantCount < 1 || d.grantCount > sim::kMaxPowerUpGrants) {
       fail(where + ": needs 1 to " + std::to_string(sim::kMaxPowerUpGrants) + " grants");
@@ -1189,7 +1260,7 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
           }
           break;
         case GrantKind::Tag:
-          if (!grantableTag(grant.tag)) fail(at + ": only shielded or invulnerable");
+          if (!grantableTag(grant.tag)) fail(at + ": only shielded, invulnerable or friendly_fire");
           break;
         case GrantKind::None:
           fail(at + ": grant has no kind");
@@ -1427,6 +1498,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
       }
     }
     validateStatics(c, a, where, fail);
+    // v0.32: every spawn group holds at least one point.
+    if (a.spawnGroups < 1 || a.spawnGroups > a.spawnPointCount) {
+      fail(where + ": spawn_groups must be in [1, " + std::to_string(a.spawnPointCount) +
+           "] (every group needs a spawn point)");
+    }
   }
 
   if (c.modeCount < 1 || c.modeCount > sim::kMaxModes) {
@@ -1441,9 +1517,25 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     }
     if (m.kind >= sim::ModeKind::kCount) fail(where + ": kind must be a real mode kind");
     if (m.roundsToWin < 1) fail(where + ": rounds_to_win must be at least 1");
-    if (m.kind == sim::ModeKind::Deathmatch) {
+    if (m.kind == sim::ModeKind::Deathmatch || m.kind == sim::ModeKind::TeamDeathmatch) {
       if (m.scoreToWin < 1) fail(where + ": score_to_win must be at least 1 in deathmatch");
       if (m.respawnTicks < 1) fail(where + ": respawn_ticks must be at least 1 in deathmatch");
+    }
+    // v0.32: teams, baseline, roles.
+    if (m.teams == 1 || m.teams > sim::kMaxPlayers) {
+      fail(where + ": teams must be 0 (free-for-all) or 2 to " + std::to_string(sim::kMaxPlayers));
+    }
+    const bool teamKind =
+        m.kind == sim::ModeKind::TeamRounds || m.kind == sim::ModeKind::TeamDeathmatch;
+    if (teamKind && m.teams == 0) fail(where + ": a team kind needs teams of 2 or more");
+    if (m.hasBaseline() && m.baseline >= c.powerUpCount) {
+      fail(where + ": baseline names an undefined power-up");
+    }
+    if (m.roleCount > sim::kMaxPlayers) fail(where + ": too many roles");
+    if (m.roleCount > 0 && m.teams == 0) fail(where + ": roles need a team mode (teams >= 2)");
+    for (uint8_t r = 0; r < m.roleCount && r < sim::kMaxPlayers; ++r) {
+      if (m.roles[r] >= c.loadoutCount)
+        fail(where + ": role " + std::to_string(r) + " names an undefined loadout");
     }
   }
   validatePowerUps(c, fail);

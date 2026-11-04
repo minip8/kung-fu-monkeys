@@ -25,3 +25,5 @@ scripted_4p_survival_1800t    scripted  0x4B464D53  0x5C1253    4        1800   
 scripted_4p_blink_1800t  scripted  0x4B464D61  0x5C1261  4  1800  dojo  rounds  all  blink
 scripted_4p_slam_1800t   scripted  0x4B464D62  0x5C1262  4  1800  dojo  rounds  all  slam
 scripted_4p_parry_1800t  scripted  0x4B464D63  0x5C1263  4  1800  dojo  rounds  all  parry
+scripted_4p_team_rounds_1800t      scripted  0x4B464D71  0x5C1271  4  1800  standoff  team_rounds
+scripted_4p_team_deathmatch_3600t  scripted  0x4B464D72  0x5C1272  4  3600  standoff  team_deathmatch
