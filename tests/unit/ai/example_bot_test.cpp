@@ -438,7 +438,8 @@ TEST_CASE("the chaser plays matches against the reference bot", "[ai][sdk][wasm]
     for (size_t i = 0; i < m.stats.size(); ++i) {
       const WasmAgentStats& st = m.stats[i];
       INFO("chaser in slot " << int{kChaserSlots[i]});
-      CHECK(st.acts == static_cast<uint64_t>(m.ticks));
+      // Every tick, but those it sat out eliminated (v0.35, the lifecycle).
+      CHECK(st.acts + m.slotStats[i].paused == static_cast<uint64_t>(m.ticks));
       CHECK(st.traps == 0);
       CHECK(st.overBudget == 0);
       CHECK(st.badReturns == 0);

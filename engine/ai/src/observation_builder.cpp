@@ -5,8 +5,10 @@
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/content.hpp"
 #include "kfm/sim/content/arena.hpp"
+#include "kfm/sim/content/mode.hpp"
 #include "kfm/sim/content/powerup.hpp"
 #include "kfm/sim/input.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/tags.hpp"
 
 #include <cstdint>
@@ -149,6 +151,10 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   // team index (the slot's own score in a free-for-all, team i = slot i).
   for (uint8_t t = 0; t < sim::kMaxPlayers; ++t)
     m.reservedTeamScores[t] = content.teamScore(r.scores, t);
+  // bot-abi.md §3, filled since architecture v0.35: a grid mode's turn clock.
+  const TurnClock clock = turnClock(world, content);
+  m.reservedTurnTicks = clock.turnTicks;
+  m.reservedTicksToLatch = clock.ticksToLatch;
 }
 
 void fillRules(const sim::ContentDB& db, ObsRules& r) {
@@ -230,6 +236,14 @@ void fillSelf(const sim::WorldState& world, const sim::MatchContent& content, Pl
   o.knockbackTicks = p->knockbackTicks;
   o.invulnTicks = world.rules.invulnTicks[self.value];
   o.facing = angle8(t.facing);
+  // bot-abi.md §3, filled since architecture v0.35: the cell and the facing
+  // octant in a grid mode (the cone's direction, §8).
+  if (content.mode.space == sim::Space::Grid && sim::grid::hasCells(content.arena)) {
+    const Cell cell = sim::grid::cellOf(content.arena, t.pos);
+    o.reservedCellX = static_cast<int16_t>(cell.col);
+    o.reservedCellY = static_cast<int16_t>(cell.row);
+    o.reservedFacingOctant = facingOctant(t.facing);
+  }
   for (uint8_t s = 0; s < sim::kAbilitySlots; ++s) {
     fillAbility(p->abilities[s], content.db, s, o.abilities[s]);
   }
@@ -358,7 +372,67 @@ void fillArena(const sim::ArenaDef& a, ObsArena& o) {
   }
 }
 
+// Fog (v0.35): unseen entries are zeroed, seen ones flagged. An unseen
+// monkey keeps what the roster and the scoreboard say anyway.
+void applyFog(const sim::WorldState& world, const ObsVisibility& seen, PlayerId self,
+              Observation& out) {
+  out.header.schemaFlags |= kObsFlagFog;
+  for (uint8_t i = 0; i < kObsMaxPlayers; ++i) {
+    ObsPlayer& o = out.players[i];
+    if (o.alive == 0) continue;
+    if (i == self.value || (seen.players & (1u << i)) != 0) {
+      o.reservedVisible = 1;
+      continue;
+    }
+    const ObsPlayer kept = o;
+    o = ObsPlayer{};
+    o.present = kept.present;
+    o.relation = kept.relation;
+    o.reservedTeam = kept.reservedTeam;
+    o.respawnTicks = kept.respawnTicks;
+  }
+  if (self.isValid() && self.value < kObsMaxPlayers) out.players[self.value].reservedVisible = 1;
+  world.boomerangs.forEachAlive([&](EntityId id, const sim::Boomerang& /*b*/) {
+    ObsBanana& o = out.bananas[id.index];
+    if (seen.bananas[id.index] == id) {
+      o.reservedVisible = 1;
+    } else {
+      o = ObsBanana{};
+    }
+  });
+  world.pickups.forEachAlive([&](EntityId id, const sim::Pickup& /*k*/) {
+    if (seen.pickups[id.index] != id) out.pickups[id.index] = ObsPickup{};
+  });
+}
+
+void fillCalls(const ObservationContext& context, bool fog, const Observation& obs,
+               ObsHeardCall (&calls)[kObsMaxHeardCalls]) {
+  const uint32_t n = context.calls == nullptr ? 0u : context.callCount;
+  for (uint32_t i = 0; i < n && i < kObsMaxHeardCalls; ++i) {
+    const HeardCall& h = context.calls[i];
+    ObsHeardCall& o = calls[i];
+    o.valid = 1;
+    o.slot = h.slot;
+    o.symbol = h.symbol;
+    o.tick = h.tick;
+    const bool seen = !fog || (h.slot < kObsMaxPlayers && obs.players[h.slot].reservedVisible != 0);
+    const bool cell = h.hasCell && seen;
+    o.cellX = cell ? static_cast<int16_t>(h.cell.col) : kObsNoCell;
+    o.cellY = cell ? static_cast<int16_t>(h.cell.row) : kObsNoCell;
+  }
+}
+
 }  // namespace
+
+void ObsVisibility::add(const Sight& sight, const sim::WorldState& world) {
+  players = static_cast<uint16_t>(players | sight.players);
+  world.boomerangs.forEachAlive([&](EntityId id, const sim::Boomerang& /*b*/) {
+    if ((sight.bananas >> id.index & 1u) != 0) bananas[id.index] = id;
+  });
+  world.pickups.forEachAlive([&](EntityId id, const sim::Pickup& /*k*/) {
+    if ((sight.pickups >> id.index & 1u) != 0) pickups[id.index] = id;
+  });
+}
 
 ClosestApproach closestApproach(Vec2 rel, Vec2 vel, uint16_t horizon) {
   const int64_t rx = rel.x.raw;
@@ -387,6 +461,12 @@ ClosestApproach closestApproach(Vec2 rel, Vec2 vel, uint16_t horizon) {
 void buildObservation(const sim::WorldState& world, const sim::MatchContent& content,
                       uint32_t contentHash, PlayerId self, uint8_t inputDelayTicks,
                       Observation& out) {
+  buildObservation(world, content, contentHash, self, inputDelayTicks, ObservationContext{}, out);
+}
+
+void buildObservation(const sim::WorldState& world, const sim::MatchContent& content,
+                      uint32_t contentHash, PlayerId self, uint8_t inputDelayTicks,
+                      const ObservationContext& context, Observation& out) {
   out = Observation{};
   out.header.version = kObservationVersion;
   out.header.size = sizeof(Observation);
@@ -397,6 +477,17 @@ void buildObservation(const sim::WorldState& world, const sim::MatchContent& con
   fillBananas(world, content, self, out.bananas);
   fillPickups(world, content, out.pickups);
   fillArena(content.arena, out.arena);
+  const bool fog = content.mode.vision.fog();
+  if (fog) {
+    if (context.visibility != nullptr) {
+      applyFog(world, *context.visibility, self, out);
+    } else {
+      ObsVisibility now;
+      now.add(visionOf(world, content, self), world);
+      applyFog(world, now, self, out);
+    }
+  }
+  fillCalls(context, fog, out, out.reservedHeardCalls);
 }
 
 void buildObservation(const sim::WorldState& world, const sim::MatchContent& content, PlayerId self,

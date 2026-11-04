@@ -127,6 +127,7 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
   prev_ = curr_;
   sink_.clear();
   sim::step(curr_, frame, matchContent(), sink_);
+  agents_.observe(sink_, curr_, matchContent());  // v0.35: the calls the bots hear
   appendEvents(sink_);
   ++ticksThisFrame_;
 }

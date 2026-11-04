@@ -2,7 +2,9 @@
 #include "kfm/ai/agent_host.hpp"
 
 #include "kfm/ai/observation_builder.hpp"
+#include "kfm/ai/vision.hpp"
 #include "kfm/core/assert.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -22,6 +24,15 @@ AgentHost::Slot* AgentHost::slotAt(PlayerId slot) {
   return &slots_[slot.value];
 }
 
+void AgentHost::restartLine(Slot& s) {
+  s.fills = 0;
+  s.next = 0;
+  s.last = {};
+  s.ring = {};
+  s.seen.clear();
+  s.heardCount = 0;
+}
+
 void AgentHost::attach(PlayerId slot, std::unique_ptr<IAgent> agent, uint64_t seed,
                        uint8_t delayTicks) {
   if (agent == nullptr || slotAt(slot) == nullptr) return;
@@ -29,6 +40,7 @@ void AgentHost::attach(PlayerId slot, std::unique_ptr<IAgent> agent, uint64_t se
   s = Slot{};
   s.agent = std::move(agent);
   s.delay = std::min(delayTicks, kMaxAgentDelayTicks);
+  s.seed = seed;
   s.agent->init(seed, slot);
   invalidateContentHash();
 }
@@ -51,10 +63,10 @@ void AgentHost::clear() {
 void AgentHost::reinit(PlayerId slot, uint64_t seed) {
   Slot* s = slotAt(slot);
   if (s == nullptr || s->agent == nullptr) return;
-  s->fills = 0;
-  s->next = 0;
-  s->last = {};
-  s->ring = {};
+  restartLine(*s);
+  s->paused = false;
+  s->hadMonkey = false;
+  s->seed = seed;
   s->agent->init(seed, slot);
   invalidateContentHash();
 }
@@ -88,18 +100,66 @@ AgentSlotStats AgentHost::stats(PlayerId slot) const {
   return s != nullptr ? s->stats : AgentSlotStats{};
 }
 
+bool AgentHost::paused(PlayerId slot) const {
+  const Slot* s = slotAt(slot);
+  return s != nullptr && s->agent != nullptr && s->paused;
+}
+
+uint32_t AgentHost::wipes(PlayerId slot) const {
+  const Slot* s = slotAt(slot);
+  return s != nullptr ? s->wipes : 0;
+}
+
 void AgentHost::fill(sim::InputFrame& frame, const sim::WorldState& world,
                      const sim::MatchContent& content) {
   KFM_ASSERT(frame.tick == world.tick);
+  const bool fog = content.mode.vision.fog();
+  const bool windowEnds = turnWindowEnds(world, content);
+  bool sightsReady = false;
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     Slot& s = slots_[i];
     const PlayerId id{i};
     if (s.agent == nullptr || !sim::maskHas(frame.present, id)) continue;
+
+    // The lifecycle: a slot whose monkey is gone (eliminated) is paused.
+    const bool monkey = world.playerBySlot(id) != nullptr;
+    if (monkey) s.hadMonkey = true;
+    if (!monkey && s.hadMonkey) {
+      if (!s.paused) {
+        s.paused = true;
+        restartLine(s);
+      }
+      ++s.stats.paused;
+      frame.inputs[i] = sim::PlayerInput{};
+      continue;
+    }
+    if (s.paused) {
+      s.paused = false;
+      restartLine(s);
+      if (memory_ == RespawnMemory::Wipe) {
+        s.agent->init(s.seed, id);
+        ++s.wipes;
+      }
+    }
+
     if (hashFor_ != &content.db) {  // only when some agent plays (see the header)
       hash_ = sim::contentHash(content.db);
       hashFor_ = &content.db;
     }
-    buildObservation(world, content, hash_, id, s.delay, obs_);
+    if (fog) {
+      if (!sightsReady) {
+        for (uint8_t j = 0; j < sim::kMaxPlayers; ++j)
+          sights_[j] = sightOf(world, content, PlayerId{j});
+        sightsReady = true;
+      }
+      s.seen.add(visionOf(world, content, id, &sights_), world);
+    }
+    const ObservationContext context{fog ? &s.seen : nullptr, s.heard.data(), s.heardCount};
+    buildObservation(world, content, hash_, id, s.delay, context, obs_);
+    if (windowEnds) {
+      s.seen.clear();
+      s.heardCount = 0;
+    }
     const std::optional<sim::PlayerInput> answer = s.agent->act(obs_, world.tick);
     ++s.stats.acts;
     if (!answer.has_value()) ++s.stats.substitutions;
@@ -119,6 +179,33 @@ void AgentHost::fill(sim::InputFrame& frame, const sim::WorldState& world,
     }
     ++s.fills;
     frame.inputs[i] = s.last;
+  }
+}
+
+void AgentHost::observe(const sim::EventSink& events, const sim::WorldState& after,
+                        const sim::MatchContent& content) {
+  const sim::ArenaDef& arena = content.arena;
+  for (const sim::SimEvent& e : events) {
+    if (e.kind != sim::EventKind::MonkeyCalled) continue;
+    const sim::Player* caller = after.playerBySlot(e.player);
+    if (caller == nullptr) continue;  // gone with the step that called: nobody heard where
+    const Fixed range = Fixed::fromRaw(static_cast<int32_t>(e.b));
+    const Vec2 from = caller->transform.pos;
+    HeardCall call;
+    call.slot = e.player.value;
+    call.symbol = static_cast<uint8_t>(e.a);
+    call.tick = e.tick.value;
+    call.hasCell = sim::grid::hasCells(arena);
+    if (call.hasCell) call.cell = sim::grid::cellOf(arena, from);
+    for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+      Slot& s = slots_[i];
+      if (s.agent == nullptr || s.paused || i == e.player.value) continue;
+      const sim::Player* listener = after.playerBySlot(PlayerId{i});
+      if (listener == nullptr) continue;
+      const Vec2 d = listener->transform.pos - from;
+      if (abs(d.x) > range || abs(d.y) > range) continue;
+      if (s.heardCount < s.heard.size()) s.heard[s.heardCount++] = call;
+    }
   }
 }
 

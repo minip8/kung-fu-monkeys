@@ -116,7 +116,10 @@ TEST_CASE("reference bots finish a match with a winner", "[arena]") {
   CHECK(w.score > r.slots[1 - r.winner.value].score);
   CHECK(r.ticks < 36'000);
   for (const SlotResult& s : r.slots) {
-    CHECK(s.acts == r.ticks);  // every tick of the match, slot present throughout
+    // Every tick of the match, slot present throughout: acting, or paused
+    // while eliminated (v0.35).
+    CHECK(s.acts + s.paused == r.ticks);
+    CHECK(s.paused > 0);
     CHECK(s.substitutions == 0);
     CHECK(!s.module);
   }
@@ -217,7 +220,9 @@ TEST_CASE("the summary totals a tournament", "[arena]") {
   REQUIRE(sum.slots.size() == 2);
   CHECK(sum.slots[0].wins + sum.slots[1].wins == sum.ended);
   CHECK(sum.slots[0].placeSum + sum.slots[1].placeSum == 2 * (1 + 2));
-  CHECK(sum.slots[0].acts == uint64_t{results[0].ticks} + results[1].ticks);
+  CHECK(sum.slots[0].acts <= uint64_t{results[0].ticks} + results[1].ticks);
+  CHECK(sum.slots[0].acts + results[0].slots[0].paused + results[1].slots[0].paused ==
+        uint64_t{results[0].ticks} + results[1].ticks);
   const std::string line = formatSummaryLine(sum);
   CHECK(line.starts_with("summary matches 2 "));
   CHECK(contains(line, " | slot 0 ref:hard wins "));
@@ -276,7 +281,7 @@ TEST_CASE("a rotated tournament totals per slot and per bot", "[arena]") {
   // The same matches counted two ways.
   CHECK(sum.bots[0].wins + sum.bots[1].wins == sum.slots[0].wins + sum.slots[1].wins);
   CHECK(sum.bots[0].placeSum + sum.bots[1].placeSum == 4 * (1 + 2));
-  CHECK(sum.bots[0].acts == sum.slots[0].acts);  // both slots play every tick
+  CHECK(sum.bots[0].acts + sum.bots[1].acts == sum.slots[0].acts + sum.slots[1].acts);
   CHECK(sum.bots[0].kills + sum.bots[1].kills == sum.slots[0].kills + sum.slots[1].kills);
   CHECK(sum.bots[0].wins > sum.bots[1].wins);  // hard beats easy from either slot
 
@@ -354,7 +359,7 @@ TEST_CASE("an echo module plays a match through the factory", "[arena][wasm]") {
   for (const uint8_t slot : {uint8_t{0}, uint8_t{2}}) {
     const SlotResult& s = r.slots[slot];
     CHECK(s.module);
-    CHECK(s.acts == r.ticks);
+    CHECK(s.acts + s.paused == r.ticks);
     CHECK(s.substitutions == 0);
     CHECK(s.traps == 0);
     CHECK(s.overBudget == 0);
@@ -376,7 +381,8 @@ TEST_CASE("an echo module plays a match through the factory", "[arena][wasm]") {
 
 TEST_CASE("a trapping module is substituted every tick", "[arena][wasm]") {
   BotFactory factory;
-  const MatchResult r = play(setupOf({fixture("trap"), "ref:easy"}, 2, 600), factory);
+  // Against an idle module nobody is eliminated, so the slot acts every tick.
+  const MatchResult r = play(setupOf({fixture("trap"), fixture("idle")}, 2, 600), factory);
   const SlotResult& s = r.slots[0];
   CHECK(s.acts == r.ticks);
   CHECK(s.traps == s.acts);
@@ -387,7 +393,7 @@ TEST_CASE("a trapping module is substituted every tick", "[arena][wasm]") {
 
 TEST_CASE("a spinning module runs over its budget on every even tick", "[arena][wasm]") {
   BotFactory factory(5'000);
-  const MatchResult r = play(setupOf({fixture("spin"), "ref:easy"}, 2, 301), factory);
+  const MatchResult r = play(setupOf({fixture("spin"), fixture("idle")}, 2, 301), factory);
   const SlotResult& s = r.slots[0];
   REQUIRE(s.acts == r.ticks);
   const uint32_t evenTicks = (s.acts + 1) / 2;  // ticks 0, 2, 4, ...

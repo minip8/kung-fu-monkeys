@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <format>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -375,9 +376,25 @@ TEST_CASE("ServerHost's reference bots throw and dash in the authoritative frame
                                        [](const std::string& l) { return l.contains("] stats "); });
   REQUIRE(it != std::views::reverse(rig.lines).end());
   INFO(*it);
-  CHECK(
-      it->contains(" bot_delay=0 | bot 0 ref:hard acts=+60 subst=+0 | bot 1 ref:hard acts=+60 "
-                   "subst=+0 | bot 2 ref:hard acts=+60 subst=+0"));
+  // Every bot plays every tick of the last second, or sits it out eliminated
+  // (v0.35: paused=+P, printed when non-zero).
+  CHECK(it->contains(" bot_delay=0 | bot 0 ref:hard acts=+"));
+  for (uint8_t s = 0; s < 3; ++s) {
+    INFO("slot " << int{s});
+    const std::string tag = std::format(" | bot {} ref:hard acts=+", s);
+    const size_t at = it->find(tag);
+    REQUIRE(at != std::string::npos);
+    const std::string rest = it->substr(at + tag.size());
+    const uint32_t acts = static_cast<uint32_t>(std::stoul(rest));
+    uint32_t paused = 0;
+    const size_t next = rest.find(" | ");
+    const size_t p = rest.find(" paused=+");
+    if (p != std::string::npos && (next == std::string::npos || p < next)) {
+      paused = static_cast<uint32_t>(std::stoul(rest.substr(p + 9)));
+    }
+    CHECK(acts + paused == 60);
+    CHECK(rest.contains(" subst=+0"));
+  }
 }
 
 TEST_CASE("ServerHost's bots take the humans' lead as their delay, once a second",
@@ -449,11 +466,13 @@ TEST_CASE("ServerHost runs a wasm bot module, its inputs delayed by the humans' 
           "[server][bots][wasm]") {
   // echo.wasm answers aimDir = the observed tick's low byte, so the frame of
   // tick T carries (T − delay) & 255.
+  // An idle module in slot 2, not a reference bot: nobody is eliminated, so
+  // no slot is ever paused (v0.35) and every frame carries the echo.
   server::HostConfig cfg = botConfig(0);
-  cfg.bots = {fixture("echo.wasm"), fixture("echo.wasm"), ai::BotSpec{}};
+  cfg.bots = {fixture("echo.wasm"), fixture("echo.wasm"), fixture("idle.wasm")};
   cfg.statsEveryNs = kSec;
   Rig rig(cfg);
-  CHECK(rig.linesWith("bot_specs=echo.wasm,echo.wasm,ref:hard") == 1);
+  CHECK(rig.linesWith("bot_specs=echo.wasm,echo.wasm,idle.wasm") == 1);
   rig.runFor(2 * kSec);
   const auto lagOf = [&](const sim::InputFrame& f, uint8_t slot) {
     return static_cast<uint8_t>((f.tick.value - f.inputs[slot].aimDir) & 0xFFu);
@@ -476,7 +495,7 @@ TEST_CASE("ServerHost runs a wasm bot module, its inputs delayed by the humans' 
   CHECK(
       it->contains(" bot_delay=5 | bot 0 echo.wasm acts=+60 subst=+0 traps=+0 over_budget=+0 "
                    "fuel_mean="));
-  CHECK(it->contains(" | bot 2 ref:hard acts=+60 subst=+0"));
+  CHECK(it->contains(" | bot 2 idle.wasm acts=+60 subst=+0"));
 }
 
 TEST_CASE("ServerHost re-initialises its wasm bots with the next match's seeds",
@@ -500,7 +519,14 @@ TEST_CASE("ServerHost re-initialises its wasm bots with the next match's seeds",
     CHECK(first->inputs[s].moveMag == s);
     CHECK(first->inputs[s].aimDir == (server::agentSeed(0x1234, PlayerId{s}) & 0xFFu));
   }
-  CHECK(rig.recorded.back().inputs[3].moveDir == static_cast<uint8_t>(rig.recorded.size()));
+  // One act per tick while its monkey stands (v0.35: an eliminated slot is
+  // paused, and the reference bots get the first counter after tick 200).
+  const sim::InputFrame* early = rig.recordedAt(Tick{50});
+  if (early == nullptr) {
+    FAIL("no frame 50");
+    return;
+  }
+  CHECK(early->inputs[3].moveDir == 51);
 
   REQUIRE(rig.runUntil([&] { return rig.host->server().matchIndex() == 1; }, 900 * kSec));
   const uint64_t seed2 = server::nextMatchSeed(0x1234);

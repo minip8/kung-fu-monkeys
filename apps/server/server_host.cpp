@@ -297,6 +297,8 @@ std::string ServerHost::botStats() {
     const ai::AgentSlotStats& was = b.lastStats[s];
     out += std::format(" | bot {} {} acts=+{} subst=+{}", s, specName(*spec), now.acts - was.acts,
                        now.substitutions - was.substitutions);
+    // v0.35: ticks sat out eliminated (the lifecycle), when there were any.
+    if (now.paused != was.paused) out += std::format(" paused=+{}", now.paused - was.paused);
     b.lastStats[s] = now;
 #ifdef KFM_SERVER_WASM_BOTS
     if (const ai::WasmAgent* a = b.wasm[s]) {
@@ -360,6 +362,9 @@ void ServerHost::frame(uint64_t nowNs) {
 
 void ServerHost::onTick() {
   const sim::WorldState& w = server_->world();
+  // v0.35: the calls each bot hears, from the step that just ran.
+  bots_->agents.observe(server_->tickEvents(), w,
+                        sim::matchContent(server_->content(), server_->matchConfig()));
   // " (team t)" in a team mode (v0.32), else nothing.
   const auto teamText = [&](PlayerId p) -> std::string {
     const sim::MatchConfig& c = server_->matchConfig();

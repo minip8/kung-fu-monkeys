@@ -187,6 +187,7 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
     if (setup.recordReplay) frames.push_back(frame);
     sink.clear();
     step(*world, frame, match, sink);
+    host.observe(sink, *world, match);  // v0.35: the calls each bot hears
     ++result.ticks;
     bool ended = false;
     for (const SimEvent& e : sink) {
@@ -208,6 +209,7 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
     const ai::AgentSlotStats stats = host.stats(PlayerId{static_cast<uint8_t>(i)});
     s.acts = stats.acts;
     s.substitutions = stats.substitutions;
+    s.paused = stats.paused;
 #ifdef KFM_WASM_BOTS
     if (wasm[i] != nullptr) {
       const ai::WasmAgentStats& w = wasm[i]->stats();

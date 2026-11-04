@@ -113,8 +113,9 @@ struct SlotResult {
   uint32_t score{0};
   uint32_t kills{0};   // PlayerEliminated with this slot as the killer (not itself)
   uint32_t deaths{0};  // PlayerEliminated with this slot as the victim
-  uint32_t acts{0};    // AgentHost counters
+  uint32_t acts{0};    // AgentHost counters (acts: ticks with a monkey, v0.35)
   uint32_t substitutions{0};
+  uint32_t paused{0};  // v0.35: ticks the slot sat out eliminated (acts + paused = ticks)
   // Module only (WasmAgentStats):
   uint64_t traps{0};
   uint64_t overBudget{0};
