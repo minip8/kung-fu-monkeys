@@ -530,7 +530,7 @@ void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content,
   // The order of step() (step.cpp, architecture §5.3); callers compare the
   // checksum with a step() shadow every tick.
   rulesPreTick(s, content, sink);
-  inputSystem(s, in);
+  inputSystem(s, content, in);
   abilitySystem(s, content, sink);
   movementSystem(s, content);
   projectileSystem(s, content, sink);

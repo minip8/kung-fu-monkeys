@@ -4,12 +4,14 @@
 // stick is idle iff moveMag == 0; moveDir is always an angle (0 = +x).
 // The frame's present mask is the authoritative roster (v0.17): it becomes
 // MatchRules::present, so a player who joins or leaves mid-match is spawned
-// or removed by RulesSystem at the next round start (§6.6).
+// or removed by RulesSystem at the next round start (§6.6). Then the mode's
+// space latches (§5.12): facing, and in the grid the turn's commitments.
+#include "kfm/sim/spaces/registry.hpp"
 #include "kfm/sim/systems.hpp"
 
 namespace kfm::sim {
 
-void inputSystem(WorldState& s, const InputFrame& in) {
+void inputSystem(WorldState& s, const MatchContent& content, const InputFrame& in) {
   s.rules.present = static_cast<PlayerMask>(in.present & ((1u << kMaxPlayers) - 1u));
   s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
     const PlayerInput pi = maskHas(in.present, p.id) ? in.inputs[p.id.value] : PlayerInput{};
@@ -24,8 +26,8 @@ void inputSystem(WorldState& s, const InputFrame& in) {
     intent.subTick = pi.subTick;
     p.intent = intent;
     p.prevButtons = pi.buttons;
-    p.transform.facing = intent.aim;  // aim always wins; movement does not rotate the body
   });
+  spaceBehaviorFor(Space::Continuous).latch(s, content, in);
 }
 
 }  // namespace kfm::sim

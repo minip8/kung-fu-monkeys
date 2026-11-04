@@ -24,7 +24,7 @@ const PlayerId kP0{0};
 void abilityTick(WorldState& s, InputFrame f, const ContentDB& content, EventSink& sink) {
   f.tick = s.tick;
   sink.clear();
-  inputSystem(s, f);
+  inputSystem(s, content, f);
   abilitySystem(s, content, sink);
   ++s.tick;
 }

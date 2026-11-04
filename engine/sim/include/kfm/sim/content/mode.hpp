@@ -60,6 +60,14 @@ enum class ModeKind : uint8_t {
          k == ModeKind::Capture;
 }
 
+// How monkeys move in a mode (architecture §5.12, v0.29): the SpaceBehavior
+// table (kfm/sim/spaces/registry.hpp) is indexed by it.
+enum class Space : uint8_t {
+  Continuous = 0,  // the sim as built: stick velocity, walls slide
+  Grid,            // one of eight neighbouring cells per turn of turnTicks
+  kCount,          // NOLINT(readability-identifier-naming): table-size sentinel, not a space
+};
+
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
 

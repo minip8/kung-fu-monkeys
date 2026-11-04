@@ -12,7 +12,7 @@ namespace kfm::sim {
 void step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink) {
   KFM_ASSERT(in.tick == s.tick);
   rulesPreTick(s, content, sink);                 // 1
-  inputSystem(s, in);                             // 2
+  inputSystem(s, content, in);                    // 2
   abilitySystem(s, content, sink);                // 3
   movementSystem(s, content);                     // 4
   projectileSystem(s, content, sink);             // 5
