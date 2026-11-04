@@ -4,6 +4,7 @@
 #include "kfm/ai/reference_bot.hpp"
 
 #include "bot_math.hpp"
+#include "kfm/ai/vision.hpp"
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/tags.hpp"
@@ -270,7 +271,8 @@ void ReferenceBot::prepareGrid(const Observation& obs) {
       for (uint32_t w = 0; free && w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
         if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) free = false;
       }
-      gridFree_[static_cast<size_t>((row * gridCols_) + col)] = free ? 1 : 0;
+      const int32_t i = (row * gridCols_) + col;
+      gridFree_[static_cast<size_t>(i)] = free ? 1 : 0;
     }
   }
 }
@@ -288,26 +290,29 @@ void ReferenceBot::distancesTo(Vec2 goal) {
   const int32_t g = cellIndexOf(goal);
   if (g < 0 || g == distGoal_) return;
   distGoal_ = g;
-  const auto cells = static_cast<size_t>(gridCols_ * gridRows_);
+  const int32_t count = gridCols_ * gridRows_;
+  const auto cells = static_cast<size_t>(count);
   std::fill_n(gridDist_.begin(), cells, uint16_t{0xFFFF});
   size_t head = 0;
   size_t tail = 0;
   gridDist_[static_cast<size_t>(g)] = 0;
   gridQueue_[tail++] = static_cast<uint16_t>(g);
   const auto freeAt = [&](int32_t col, int32_t row) {
+    const int32_t i = (row * gridCols_) + col;
     return col >= 0 && row >= 0 && col < gridCols_ && row < gridRows_ &&
-           gridFree_[static_cast<size_t>((row * gridCols_) + col)] != 0;
+           gridFree_[static_cast<size_t>(i)] != 0;
   };
   while (head < tail) {
     const int32_t at = gridQueue_[head++];
     const int32_t col = at % gridCols_;
     const int32_t row = at / gridCols_;
     for (uint8_t o = 0; o < sim::grid::kOctants; ++o) {
-      const int32_t nc = col + sim::grid::kOctantCol[o];
-      const int32_t nr = row + sim::grid::kOctantRow[o];
+      const int32_t nc = col + kStepCol[o];
+      const int32_t nr = row + kStepRow[o];
       if (!freeAt(nc, nr)) continue;
       if (sim::grid::diagonal(o) && (!freeAt(nc, row) || !freeAt(col, nr))) continue;
-      const auto n = static_cast<size_t>((nr * gridCols_) + nc);
+      const int32_t ni = (nr * gridCols_) + nc;
+      const auto n = static_cast<size_t>(ni);
       if (gridDist_[n] != 0xFFFF) continue;
       gridDist_[n] = static_cast<uint16_t>(gridDist_[static_cast<size_t>(at)] + 1);
       gridQueue_[tail++] = static_cast<uint16_t>(n);
@@ -347,8 +352,8 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
     }
     return true;
   };
-  const Vec2 dc{c * int32_t{sim::grid::kOctantCol[octant & 7u]}, Fixed{}};
-  const Vec2 dr{Fixed{}, c * -int32_t{sim::grid::kOctantRow[octant & 7u]}};
+  const Vec2 dc{c * kStepCol[octant & 7u], Fixed{}};
+  const Vec2 dr{Fixed{}, c * -kStepRow[octant & 7u]};
   p.pos[0] = vec(obs.self.posX, obs.self.posY);
   uint8_t k = 1;
   for (; k <= start && k <= kHorizon; ++k)

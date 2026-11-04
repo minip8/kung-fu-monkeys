@@ -64,6 +64,20 @@ using sim::grid::Cell;
   return chebyshev(b.col - a.col, b.row - a.row);
 }
 
+// The column and row step of each octant as int32 (grid_cells.hpp's int8
+// tables, widened once here; asserted equal below).
+inline constexpr std::array<int32_t, sim::grid::kOctants> kStepCol = {1, 1, 0, -1, -1, -1, 0, 1};
+inline constexpr std::array<int32_t, sim::grid::kOctants> kStepRow = {0, -1, -1, -1, 0, 1, 1, 1};
+[[nodiscard]] constexpr bool sameSteps() {
+  for (uint8_t o = 0; o < sim::grid::kOctants; ++o) {
+    if (kStepCol[o] != sim::grid::kOctantCol[o] || kStepRow[o] != sim::grid::kOctantRow[o]) {
+      return false;
+    }
+  }
+  return true;
+}
+static_assert(sameSteps(), "kStepCol/kStepRow must equal sim::grid::kOctantCol/kOctantRow");
+
 // The facing quantised to eight directions (0 = east, counter-clockwise; a
 // half-way aim byte rounds counter-clockwise, as a moveDir does).
 [[nodiscard]] constexpr uint8_t facingOctant(Angle facing) {
@@ -74,8 +88,8 @@ using sim::grid::Cell;
 // monkey lies in the cone of `octant` out to Chebyshev distance `range`.
 [[nodiscard]] constexpr bool inCone(int32_t dc, int32_t dr, uint8_t octant, int32_t range) {
   if (range <= 0 || (dc == 0 && dr == 0) || chebyshev(dc, dr) > range) return false;
-  const int32_t oc = sim::grid::kOctantCol[octant & 7u];
-  const int32_t orow = sim::grid::kOctantRow[octant & 7u];
+  const int32_t oc = kStepCol[octant & 7u];
+  const int32_t orow = kStepRow[octant & 7u];
   if (sim::grid::diagonal(octant)) return dc * oc >= 0 && dr * orow >= 0;
   const int32_t forward = (dc * oc) + (dr * orow);
   const int32_t side = oc != 0 ? dr : dc;

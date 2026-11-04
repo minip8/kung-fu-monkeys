@@ -58,7 +58,7 @@ void put(WorldState& s, PlayerId id, int32_t col, int32_t row, uint8_t aim = 0) 
 }
 
 [[nodiscard]] Observation observe(const WorldState& s, const MatchContent& content, PlayerId self) {
-  Observation o;
+  Observation o{};
   buildObservation(s, content, 0, self, 0, o);
   return o;
 }
@@ -94,8 +94,8 @@ TEST_CASE("the cone holds R² + 2R cells for every facing", "[ai][vision]") {
           if (dc == 0 && dr == 0) CHECK_FALSE(in);
           // The shapes: a cardinal cone is the band |side| <= forward, a
           // diagonal one the closed quadrant.
-          const int32_t oc = grid::kOctantCol[o];
-          const int32_t orow = grid::kOctantRow[o];
+          const int32_t oc = kStepCol[o];
+          const int32_t orow = kStepRow[o];
           bool expected = false;
           if (chebyshev(dc, dr) <= r && (dc != 0 || dr != 0)) {
             if (grid::diagonal(o)) {
@@ -280,11 +280,11 @@ TEST_CASE("vision all is the pre-fog observation byte for byte", "[ai][vision]")
   put(s, kP1, 7, 5);
   spawnBanana(s, kP1, centre(9, 9), Vec2{Fixed::one(), Fixed::zero()});
   const MatchContent mc(c);
-  Observation plain;
+  Observation plain{};
   buildObservation(s, mc, 0, kP0, 0, plain);
   // Any visibility a host hands in is ignored without fog.
-  ObsVisibility none;
-  Observation withContext;
+  const ObsVisibility none;
+  Observation withContext{};
   buildObservation(s, mc, 0, kP0, 0, ObservationContext{&none, nullptr, 0}, withContext);
   CHECK(std::memcmp(&plain, &withContext, sizeof(Observation)) == 0);
   CHECK(plain.header.schemaFlags == 0);
@@ -307,7 +307,7 @@ TEST_CASE("a grid mode fills the cell, the octant and the turn clock", "[ai][vis
   const MatchContent mc(c);
   put(s, kP0, 6, 2, 96);  // north-west
   s.rules.ticksInPhase = 7;
-  Observation o = observe(s, mc, kP0);
+  const Observation o = observe(s, mc, kP0);
   CHECK(o.self.reservedCellX == 6);
   CHECK(o.self.reservedCellY == 2);
   CHECK(o.self.reservedFacingOctant == 3);

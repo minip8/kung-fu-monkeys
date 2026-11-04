@@ -137,7 +137,8 @@ void MatchSession::appendEvents(const sim::EventSink& sink) {
   for (const sim::SimEvent& e : sink) {
     if (e.kind == sim::EventKind::MonkeyCalled) {
       if (recentCallCount_ == recentCalls_.size()) {
-        std::shift_left(recentCalls_.begin(), recentCalls_.end(), 1);
+        for (std::size_t i = 1; i < recentCalls_.size(); ++i)
+          recentCalls_[i - 1] = recentCalls_[i];
         --recentCallCount_;
       }
       recentCalls_[recentCallCount_++] =

@@ -1348,7 +1348,7 @@ class Builder {
         parseVision(v, m.vision, m.teams);
         v.finish();
       } else {
-        s.error(*n, "'vision' must be a table { kind = \"all\" | \"team\" | \"own\", ... }");
+        s.error(*n, R"('vision' must be a table { kind = "all" | "team" | "own", ... })");
       }
     }
     std::optional<PendingName> baseline;
@@ -1425,7 +1425,7 @@ class Builder {
     v.integer("banana_sight", out.bananaSight, 0, sim::kMaxVisionRadius);
     if (!out.fog() &&
         (out.peripheral | out.cone | out.focus | out.hearing | out.bananaSight) != 0) {
-      v.error("vision kind \"all\" sees everything: the radii belong to \"team\" or \"own\"");
+      v.error(R"(vision kind "all" sees everything: the radii belong to "team" or "own")");
     }
   }
 

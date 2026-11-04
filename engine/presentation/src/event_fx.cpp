@@ -337,7 +337,7 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       shout.size = static_cast<float>(e.a & 0xFFu) / 255.0f;
       addEffect(ps, shout);
       if (sim::maskHas(ps.pingSlots, e.player)) {
-        SoundCue ping{SoundId::CallPing, 1.0f, soundPan(player.x, halfWidth)};
+        const SoundCue ping{SoundId::CallPing, 1.0f, soundPan(player.x, halfWidth)};
         pushSound(out, ping);
       }
       break;
