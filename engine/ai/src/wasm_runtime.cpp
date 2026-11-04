@@ -262,7 +262,8 @@ struct WasmModule::Impl {
     // The start function and __wasm_call_ctors run on an exec env WAMR
     // creates inside the call; the patched runtime gives it this budget.
     kfm_wamr_set_default_instruction_limit(static_cast<int>(config.fuelInit));
-    in->inst = wasm_runtime_instantiate_ex(module, &args, err.data(), err.size());
+    in->inst =
+        wasm_runtime_instantiate_ex(module, &args, err.data(), static_cast<uint32_t>(err.size()));
     kfm_wamr_set_default_instruction_limit(-1);
     if (in->inst == nullptr) {
       error = err.data();
@@ -354,7 +355,7 @@ std::expected<WasmModule, LoadError> WasmModule::load(std::span<const std::byte>
 
   std::array<char, kErrorBufBytes> err{};
   impl->module = wasm_runtime_load(impl->bytes.data(), static_cast<uint32_t>(impl->bytes.size()),
-                                   err.data(), err.size());
+                                   err.data(), static_cast<uint32_t>(err.size()));
   if (impl->module == nullptr) return fail(LoadErrorKind::Malformed, err.data());
 
   // Imports: env.kfm_log (i32, i32) -> () and nothing else.
