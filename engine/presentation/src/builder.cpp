@@ -74,6 +74,10 @@ void decayOffset(EntityTrack& t, float dt) {
 }
 
 [[nodiscard]] Vec3 playerScale(const Player& p, const ContentDB& content) {
+  // v0.34: the contact radius is a stat; the model (built at the def's
+  // radius) grows and shrinks with it so the body still marks the hitbox.
+  const float def = content.player.radius.toFloat();
+  const float size = def > 0.0f && p.stats.radius.raw > 0 ? p.stats.radius.toFloat() / def : 1.0f;
   Vec3 s{1.0f, 1.0f, 1.0f};
   if (dashActive(p, content)) {
     s.x += kDashStretch;
@@ -86,7 +90,7 @@ void decayOffset(EntityTrack& t, float dt) {
     s.x *= 1.0f + (kHitSquash * 0.5f * stun);
     s.z *= 1.0f + (kHitSquash * 0.5f * stun);
   }
-  return s;
+  return Vec3{s.x * size, s.y * size, s.z * size};
 }
 
 [[nodiscard]] uint16_t playerFlags(const Player& p, const ContentDB& content) {
@@ -212,7 +216,6 @@ void phaseSounds(PresentationState& ps, const RenderHud& hud, RenderState& out) 
 
 void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldState& curr,
                   float alpha, const ContentDB& content, float dt, RenderState& out) {
-  const float radius = content.player.radius.toFloat();
   for (uint16_t i = 0; i < sim::kMaxPlayers; ++i) {
     if (!curr.players.isAliveIndex(i)) continue;
     const uint16_t gen = curr.players.generation[i];
@@ -269,6 +272,8 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.maxHp = cp.stats.maxHp;
     for (uint8_t m = 0; m < cp.modifiers.count && m < sim::kMaxModifiers; ++m) {
       const sim::ActiveModifier& am = cp.modifiers.items[m];
+      // A mode's baseline (v0.32) is the rules, not a power-up to time.
+      if (am.ticksLeft == sim::kPermanentModifierTicks) continue;
       const sim::PowerUpDef& def = content.powerUpAt(am.powerUp);
       RenderPowerUp& pu = rp.powerUps[rp.powerUpCount++];
       pu.powerUp = am.powerUp;
@@ -284,7 +289,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     const uint16_t cd = content.abilityAt(dash.defIndex).cooldownTicks;
     rp.dashCooldown =
         cd > 0 ? clamp01(static_cast<float>(dash.cooldownTicks) / static_cast<float>(cd)) : 0.0f;
-    pushShadow(out, rp.ground, radius, height, ShadowOwner::Player);
+    pushShadow(out, rp.ground, cp.stats.radius.toFloat(), height, ShadowOwner::Player);
 
     // Dash trail: afterimages while the Dash is active.
     if (dashActive(cp, content) && !cp.tags.has(Tag::Eliminated)) {
@@ -350,7 +355,9 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     rb.spin = spin;
     rb.phase = bananaPhase(cb.phase);
     rb.ownerSlot = slotOrNone(cb.owner);
-    pushShadow(out, rb.ground, radius, height, ShadowOwner::Banana);
+    // v0.34: the shadow marks the banana's contact radius (big banana, the
+    // grid's baseline).
+    pushShadow(out, rb.ground, radius * cb.radiusMul.toFloat(), height, ShadowOwner::Banana);
 
     // A short trail behind a flying banana.
     if (cb.phase != BoomerangPhase::Grounded &&
