@@ -5,6 +5,7 @@
 
 #include "bot_math.hpp"
 #include "kfm/sim/input.hpp"
+#include "kfm/sim/tags.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -54,6 +55,10 @@ constexpr uint32_t kMaxThrowHold = 2;  // a standoff's random hold before a line
 }
 constexpr uint32_t kTagInvulnerable = 4;  // sim::Tag::Invulnerable
 constexpr uint32_t kTagShielded = 3;      // sim::Tag::Shielded
+constexpr uint32_t kTagFriendlyFire = 8;  // sim::Tag::FriendlyFire (v0.32)
+static_assert(kTagInvulnerable == static_cast<uint32_t>(sim::Tag::Invulnerable));
+static_assert(kTagShielded == static_cast<uint32_t>(sim::Tag::Shielded));
+static_assert(kTagFriendlyFire == static_cast<uint32_t>(sim::Tag::FriendlyFire));
 
 [[nodiscard]] Fixed distanceBetween(Vec2 a, Vec2 b) {
   return length(b - a);
@@ -248,9 +253,13 @@ void ReferenceBot::trackThreats(const Observation& obs) {
     dist[worst] = d;
     return &tracks_[worst];
   };
+  // v0.32: a teammate's banana passes through unless friendly fire is on
+  // (the mode's baseline grants the tag), so it is no threat to track.
+  const bool friendlyFire = hasTag(obs.self.tags, kTagFriendlyFire);
   for (const ObsBanana& b : obs.bananas) {
     if (b.valid == 0 || b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded) ||
-        b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self)) {
+        b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self) ||
+        (b.ownerRelation == static_cast<uint8_t>(ObsRelation::Ally) && !friendlyFire)) {
       continue;
     }
     const uint64_t d = lengthSqRaw(vec(b.posX, b.posY) - me);

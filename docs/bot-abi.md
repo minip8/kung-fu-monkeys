@@ -127,7 +127,7 @@ Units:
 | bam | u16 1/65536 turn, same orientation (a banana's heading, which the sim steers at that precision). |
 | ticks | 60 per second. Tick numbers are the sim's tick counter. |
 | slot | player slot 0..9; `0xFF` = none. |
-| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying. |
+| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it). |
 
 The world: the arena is the box [−halfExtents, +halfExtents] centred on the origin, +x right,
 +y up. Everything is full information in v1 (no fog).
@@ -136,9 +136,9 @@ Enumerations (byte values):
 
 | Enum | Values |
 |---|---|
-| relation | 0 None (empty slot), 1 Self, 2 Ally (reserved: no teams in v1), 3 Enemy |
+| relation | 0 None (empty slot), 1 Self, 2 Ally (a teammate in a team mode, since architecture v0.32; a free-for-all has none), 3 Enemy |
 | match phase | 0 Lobby, 1 RoundStarting (spawned, frozen), 2 Playing, 3 RoundEnded, 4 MatchEnded |
-| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival |
+| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded |
@@ -316,7 +316,7 @@ its banana along the aim on the Startup → Active transition.
 |---:|---|---|---|
 | 0 | u8 | `powerUp` | index of the power-up def in the content |
 | 1 | u8 | `pad0` | |
-| 2 | u16 | `ticksLeft` | ticks it stays live |
+| 2 | u16 | `ticksLeft` | ticks it stays live; `0xFFFF` = for good (the mode's baseline power-up, architecture v0.32) |
 
 ### 2.7 `players[i]` (offset 472 + 64 i, 64 bytes)
 
@@ -442,19 +442,22 @@ All zero in v1 (§3).
 Architecture v0.29 (§5.3, §5.12, §8 "Teams, fog and calls") designs squads, fog and calls. v1
 reserves their fields so the first such mode fills them without a version bump. All are zero in
 v1 except the ones the last column marks as filled (architecture v0.31 fills `self.reservedRole`
-with the loadout index the match plays and `match.reservedModeData` with the mode's state), and
+with the loadout index the match plays and `match.reservedModeData` with the mode's state;
+architecture v0.32 fills the team fields: `players[i].reservedTeam`, `self.reservedTeam`,
+`match.reservedTeamScores` and the Ally relation of `players[i].relation` and
+`bananas[i].ownerRelation`), and
 `header.schemaFlags` bit 0 stays clear until fog exists.
 
 | Field | Meaning once used |
 |---|---|
-| `players[i].reservedTeam`, `self.reservedTeam` | the slot's team index (`MatchConfig::teams`); `relation` then also reports Ally |
+| `players[i].reservedTeam`, `self.reservedTeam` | the slot's team index (`MatchConfig::teams`); `relation` and `bananas[i].ownerRelation` then also report Ally. Filled since architecture v0.32: in a free-for-all slot i is team i (every other slot an Enemy); in a team mode the teammates share an index below the mode's team count. An empty `players[i]` entry stays all zero |
 | `players[i].reservedVisible`, `bananas[i].reservedVisible` | 1 when the entity is seen this turn under the mode's vision; unseen entries are zeroed (counts stay at capacity) |
 | `reservedHeardCalls[16]` | the calls heard last turn: caller slot, symbol (its aim byte), tick, the caller's cell when visible |
 | `self.reservedCellX`, `self.reservedCellY` | the own cell in a grid mode |
 | `self.reservedFacingOctant` | the facing quantised to eight directions in a grid mode |
 | `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks to the next latch |
-| `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; per slot once team modes hand out roles) |
-| `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index |
+| `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; since v0.32 the role's in a team mode with `roles`: the slot's position within its team, round-robin) |
+| `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index; filled since architecture v0.32 (in a free-for-all team i is slot i, so entry i equals `scores[i]`) |
 | `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`, words 8–15 stay 0. The shipped kinds (rounds, deathmatch, survival) leave all of it 0 |
 | `header.reserved0` | nothing yet |
 

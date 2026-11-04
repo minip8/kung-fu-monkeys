@@ -201,8 +201,9 @@ TEST_CASE("a hand-built world maps field by field", "[ai][observation]") {
     CHECK(obs.match.respawnTicks[2] == 33);
     CHECK(obs.match.reservedTurnTicks == 0);
     CHECK(obs.match.reservedTicksToLatch == 0);
-    for (const uint16_t v : obs.match.reservedTeamScores)
-      CHECK(v == 0);
+    // v0.32: a free-for-all's team i is slot i, so its team score is the slot's.
+    for (uint32_t i = 0; i < kObsMaxPlayers; ++i)
+      CHECK(obs.match.reservedTeamScores[i] == obs.match.scores[i]);
     // v0.31: MatchRules::modeData fills the first kModeDataWords words.
     CHECK(obs.match.reservedModeData[0] == 0xA1B2C3D4);
     CHECK(obs.match.reservedModeData[kModeDataWords - 1] == 9);
@@ -273,7 +274,7 @@ TEST_CASE("a hand-built world maps field by field", "[ai][observation]") {
     CHECK(p1.alive == 1);
     CHECK(p1.reservedVisible == 0);
     CHECK(p1.relation == static_cast<uint8_t>(ObsRelation::Enemy));
-    CHECK(p1.reservedTeam == 0);
+    CHECK(p1.reservedTeam == 1);  // v0.32: a free-for-all's team is the slot
     CHECK(p1.ammo == 1);
     CHECK(p1.posX == fx(-6).raw);
     CHECK(p1.velY == fx(-1, 8).raw);
@@ -408,4 +409,45 @@ TEST_CASE("the host delay and the content hash are copied through", "[ai][observ
   Observation twin{};
   buildObservation(s, defaultContent(), kP1, 255, twin);
   CHECK(std::memcmp(&obs, &twin, sizeof obs) == 0);
+}
+
+TEST_CASE("a team match fills team, Ally, team scores and the role (v0.32)",
+          "[ai][observation][teams]") {
+  ContentDB c = defaultContent();
+  c.loadouts[1] = c.loadouts[0];
+  c.loadouts[1].name = ContentName::of("other");
+  c.loadoutCount = 2;
+  ModeDef& m = c.modes[1];
+  m.name = ContentName::of("team_rounds");
+  m.kind = ModeKind::TeamRounds;
+  m.teams = 2;
+  m.roles[0] = 0;
+  m.roles[1] = 1;
+  m.roleCount = 2;
+  c.modeCount = 2;
+  const MatchConfig config{
+      .seed = 4, .players = 0b1111, .mode = 1, .teams = balancedTeams(2, 0b1111)};
+  const MatchContent match = matchContent(c, config);
+  WorldState s = makePlayingWorld(4, 0b1111);
+  s.rules.scores = {1, 2, 3, 4};
+  spawnBanana(s, kP2, Vec2{}, Vec2{Fixed::one(), Fixed{}});
+  spawnBanana(s, kP1, Vec2{fx(3), fx(3)}, Vec2{Fixed::one(), Fixed{}});
+  Observation obs{};
+  buildObservation(s, match, kP0, 0, obs);
+  CHECK(obs.self.reservedTeam == 0);
+  CHECK(obs.self.reservedRole == 0);
+  CHECK(obs.players[2].relation == static_cast<uint8_t>(ObsRelation::Ally));
+  CHECK(obs.players[2].reservedTeam == 0);
+  CHECK(obs.players[1].relation == static_cast<uint8_t>(ObsRelation::Enemy));
+  CHECK(obs.players[1].reservedTeam == 1);
+  CHECK(obs.bananas[0].ownerRelation == static_cast<uint8_t>(ObsRelation::Ally));
+  CHECK(obs.bananas[1].ownerRelation == static_cast<uint8_t>(ObsRelation::Enemy));
+  CHECK(obs.match.reservedTeamScores[0] == 4);
+  CHECK(obs.match.reservedTeamScores[1] == 6);
+  for (uint32_t t = 2; t < kObsMaxPlayers; ++t)
+    CHECK(obs.match.reservedTeamScores[t] == 0);
+  // Slot 2 is the second of its team: role 1.
+  buildObservation(s, match, kP2, 0, obs);
+  CHECK(obs.self.reservedRole == 1);
+  CHECK(obs.players[0].relation == static_cast<uint8_t>(ObsRelation::Ally));
 }

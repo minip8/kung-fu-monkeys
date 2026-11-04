@@ -7,6 +7,7 @@
 
 #include "../sim/sim_test_util.hpp"
 #include "kfm/ai/agent_host.hpp"
+#include "kfm/ai/observation_builder.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
 
@@ -327,4 +328,50 @@ TEST_CASE("an unarmed reference bot fetches a banana lying inside the wall band"
   }
   CHECK(taken >= 1);
   CHECK(roundEnded);
+}
+
+TEST_CASE("the reference bot ignores a teammate's banana unless friendly fire is on (v0.32)",
+          "[ai][bot][teams]") {
+  // Slots 0 and 2 are allies, 1 and 3 their enemies. A banana flies at slot
+  // 0 from close by; the bot dodges or catches an enemy's but walks on as if
+  // a teammate's were not there.
+  ContentDB c = defaultContent();
+  const uint8_t ff = addPowerUp(c, "ff", 1, {tagGrant(Tag::FriendlyFire)});
+  ModeDef& m = c.modes[1];
+  m = c.modes[0];
+  m.name = ContentName::of("team_rounds");
+  m.kind = ModeKind::TeamRounds;
+  m.teams = 2;
+  c.modeCount = 2;
+  const MatchConfig config{
+      .seed = 7, .players = 0b1111, .mode = 1, .teams = balancedTeams(2, 0b1111)};
+  const MatchContent match = matchContent(c, config);
+  WorldState base = makePlayingWorld(7, 0b1111);
+  placePlayer(base, PlayerId{0}, Vec2{Fixed::zero(), Fixed::zero()});
+  placePlayer(base, PlayerId{1}, Vec2{Fixed::fromInt(12), Fixed::fromInt(6)});
+  placePlayer(base, PlayerId{2}, Vec2{-Fixed::fromInt(12), Fixed::fromInt(6)});
+  placePlayer(base, PlayerId{3}, Vec2{Fixed::fromInt(12), -Fixed::fromInt(6)});
+  const auto decide = [&](PlayerId owner, bool friendlyFire) {
+    WorldState s = base;
+    if (owner.isValid()) {
+      spawnBanana(s, owner, Vec2{-Fixed::fromInt(3), Fixed::zero()},
+                  Vec2{Fixed::fromRatio(16, 60), Fixed::zero()});
+    }
+    if (friendlyFire) {
+      playerAt(s, PlayerId{0}).tags.set(Tag::FriendlyFire);
+      givePowerUp(playerAt(s, PlayerId{0}), ff, kPermanentModifierTicks);
+    }
+    ReferenceBot bot(ReferenceBotConfig{});
+    bot.init(99, PlayerId{0});
+    Observation obs{};
+    buildObservation(s, match, PlayerId{0}, 0, obs);
+    return bot.act(obs, s.tick).value_or(PlayerInput{});
+  };
+  const PlayerInput none = decide(PlayerId::invalid(), false);
+  const PlayerInput ally = decide(PlayerId{2}, false);
+  const PlayerInput enemy = decide(PlayerId{1}, false);
+  CHECK(ally == none);
+  CHECK_FALSE(enemy == none);
+  // With friendly fire the teammate's banana is a threat like any other.
+  CHECK_FALSE(decide(PlayerId{2}, true) == decide(PlayerId::invalid(), true));
 }

@@ -32,7 +32,12 @@ static_assert(static_cast<uint8_t>(sim::MatchPhase::Playing) ==
               static_cast<uint8_t>(sim::MatchPhase::MatchEnded) ==
                   static_cast<uint8_t>(ObsMatchPhase::MatchEnded));
 static_assert(static_cast<uint8_t>(sim::ModeKind::Survival) ==
-              static_cast<uint8_t>(ObsModeKind::Survival));
+                  static_cast<uint8_t>(ObsModeKind::Survival) &&
+              static_cast<uint8_t>(sim::ModeKind::TeamRounds) ==
+                  static_cast<uint8_t>(ObsModeKind::TeamRounds) &&
+              static_cast<uint8_t>(sim::ModeKind::TeamDeathmatch) ==
+                  static_cast<uint8_t>(ObsModeKind::TeamDeathmatch) &&
+              static_cast<uint8_t>(sim::ModeKind::kCount) == 5);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::kCount) == 6);
@@ -69,10 +74,19 @@ template <class E>
   return Fixed::fromRaw(r > static_cast<uint32_t>(INT32_MAX) ? INT32_MAX : static_cast<int32_t>(r));
 }
 
-[[nodiscard]] uint8_t relationTo(PlayerId self, PlayerId other) {
+// bot-abi.md §3, filled since architecture v0.32: Ally through the match's
+// teams (MatchContent::relation; a free-for-all has none).
+[[nodiscard]] uint8_t relationTo(const sim::MatchContent& content, PlayerId self, PlayerId other) {
   if (!other.isValid() || other.value >= sim::kMaxPlayers) return byteOf(ObsRelation::None);
-  // Free-for-all until teams land (v0.29): everyone else is an enemy.
-  return other == self ? byteOf(ObsRelation::Self) : byteOf(ObsRelation::Enemy);
+  switch (content.relation(self, other)) {
+    case sim::Relation::Self:
+      return byteOf(ObsRelation::Self);
+    case sim::Relation::Ally:
+      return byteOf(ObsRelation::Ally);
+    case sim::Relation::Enemy:
+      break;
+  }
+  return byteOf(ObsRelation::Enemy);
 }
 
 // The index of `def` in `defs[0, count)`, else 0 (MatchContent always
@@ -125,6 +139,10 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   static_assert(sim::kModeDataWords <= kObsModeDataWords);
   for (uint8_t i = 0; i < sim::kModeDataWords; ++i)
     m.reservedModeData[i] = r.modeData[i];
+  // bot-abi.md §3, filled since architecture v0.32: every team's score by
+  // team index (the slot's own score in a free-for-all, team i = slot i).
+  for (uint8_t t = 0; t < sim::kMaxPlayers; ++t)
+    m.reservedTeamScores[t] = content.teamScore(r.scores, t);
 }
 
 void fillRules(const sim::ContentDB& db, ObsRules& r) {
@@ -175,10 +193,12 @@ void fillSelf(const sim::WorldState& world, const sim::MatchContent& content, Pl
               ObsSelf& o) {
   o.slot = self.value;
   // bot-abi.md §3, filled since architecture v0.31: the loadout index the
-  // slot plays (the match's; team modes will hand out roles per slot).
-  o.reservedRole = content.loadoutIndex < content.db.loadoutCount ? content.loadoutIndex : 0;
+  // slot plays (v0.32: its role's in a team mode with roles).
+  const uint8_t role = content.loadoutIndexFor(self);
+  o.reservedRole = role < content.db.loadoutCount ? role : 0;
   if (self.isValid() && self.value < sim::kMaxPlayers) {
     o.respawnTicks = world.rules.respawnTicks[self.value];
+    o.reservedTeam = content.teams[self.value];  // filled since v0.32
   }
   const sim::Player* p = world.playerBySlot(self);
   if (p == nullptr) return;
@@ -225,7 +245,8 @@ void fillPlayers(const sim::WorldState& world, const sim::MatchContent& content,
     const sim::Player* p = world.playerBySlot(id);
     if (!present && p == nullptr) continue;  // an empty slot stays all zero
     o.present = present ? 1 : 0;
-    o.relation = relationTo(self, id);
+    o.relation = relationTo(content, self, id);
+    o.reservedTeam = content.teams[i];  // filled since v0.32
     o.respawnTicks = world.rules.respawnTicks[i];
     if (p == nullptr) continue;
     const sim::Transform& t = p->transform;
@@ -263,7 +284,7 @@ void fillBananas(const sim::WorldState& world, const sim::MatchContent& content,
     o.valid = 1;
     o.phase = byteOf(b.phase);
     o.owner = b.owner.value;
-    o.ownerRelation = relationTo(self, b.owner);
+    o.ownerRelation = relationTo(content, self, b.owner);
     o.damage = b.damage;
     o.headingBam = t.facing.bam;
     o.ticksAlive = b.ticksAlive;

@@ -15,7 +15,9 @@
 //     §8 "Observation v1 reserves"), so the first fog or team mode fills them
 //     without a schema bump; since architecture v0.31 `self.reservedRole`
 //     carries the loadout index and `match.reservedModeData[0..8)` the
-//     mode's MatchRules::modeData (docs/bot-abi.md §3).
+//     mode's MatchRules::modeData, and since v0.32 the team fields
+//     (`reservedTeam`, `match.reservedTeamScores`, relation Ally) carry
+//     MatchConfig::teams (docs/bot-abi.md §3).
 //
 // Units:
 //   Q16.16  int32 raw fixed point: value / 65536 arena units (positions,
@@ -73,7 +75,13 @@ enum class ObsMatchPhase : uint8_t {
   RoundEnded = 3,
   MatchEnded = 4
 };
-enum class ObsModeKind : uint8_t { Rounds = 0, Deathmatch = 1, Survival = 2 };
+enum class ObsModeKind : uint8_t {
+  Rounds = 0,
+  Deathmatch = 1,
+  Survival = 2,
+  TeamRounds = 3,      // v0.32
+  TeamDeathmatch = 4,  // v0.32
+};
 enum class ObsAbilityKind : uint8_t {
   None = 0,
   Dash = 1,
@@ -129,7 +137,7 @@ struct ObsMatch {
   uint8_t scores[kObsMaxPlayers];         // round wins (rounds, survival) or eliminations
   uint8_t deaths[kObsMaxPlayers];         // eliminations suffered this match
   uint16_t respawnTicks[kObsMaxPlayers];  // ticks until a dead slot respawns, 0 = none due
-  uint16_t reservedTeamScores[kObsMaxPlayers];   // v0.29: per team index (0 in v1)
+  uint16_t reservedTeamScores[kObsMaxPlayers];   // v0.29: per team index (filled since v0.32)
   uint32_t reservedModeData[kObsModeDataWords];  // v0.29: MatchRules::modeData (v0.31: words 0-7)
 };
 
@@ -219,7 +227,7 @@ struct ObsSelf {
   uint8_t facing;                // angle8: aim direction (the body faces it)
   uint8_t reservedFacingOctant;  // v0.29 grid space: facing as 0..7 (0 in v1)
   uint8_t reservedRole;          // v0.29: loadout index (filled since v0.31)
-  uint8_t reservedTeam;          // v0.29: own team index (0 in v1)
+  uint8_t reservedTeam;          // v0.29: own team index (filled since v0.32)
   int16_t reservedCellX;         // v0.29 grid space: own cell (0 in v1)
   int16_t reservedCellY;
   ObsAbility abilities[kObsAbilitySlots];   // slot 0 Dash button, 1 Throw, 2 Ability1
@@ -232,7 +240,7 @@ struct ObsPlayer {
   uint8_t alive;            // 1: a monkey in the arena (a slot that left keeps it until it dies)
   uint8_t reservedVisible;  // v0.29 fog: 1 when seen (0 in v1: everything is seen)
   uint8_t relation;         // ObsRelation to self; None for an empty slot
-  uint8_t reservedTeam;     // v0.29: team index (0 in v1)
+  uint8_t reservedTeam;     // v0.29: team index (filled since v0.32)
   uint8_t hp;
   uint8_t maxHp;
   uint8_t ammo;

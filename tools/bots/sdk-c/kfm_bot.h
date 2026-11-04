@@ -98,7 +98,13 @@ enum {
   KFM_PHASE_ROUND_ENDED = 3,
   KFM_PHASE_MATCH_ENDED = 4
 };
-enum { KFM_MODE_ROUNDS = 0, KFM_MODE_DEATHMATCH = 1, KFM_MODE_SURVIVAL = 2 };
+enum {
+  KFM_MODE_ROUNDS = 0,
+  KFM_MODE_DEATHMATCH = 1,
+  KFM_MODE_SURVIVAL = 2,
+  KFM_MODE_TEAM_ROUNDS = 3,
+  KFM_MODE_TEAM_DEATHMATCH = 4
+};
 enum {
   KFM_ABILITY_NONE = 0,
   KFM_ABILITY_DASH = 1,
@@ -125,7 +131,8 @@ enum {
   KFM_TAG_INVULNERABLE = 4,
   KFM_TAG_ELIMINATED = 5,
   KFM_TAG_SLAMMING = 6,
-  KFM_TAG_PARRYING = 7
+  KFM_TAG_PARRYING = 7,
+  KFM_TAG_FRIENDLY_FIRE = 8 /* allies' bananas and dashes hit this monkey (team modes) */
 };
 #define KFM_SCHEMA_FLAG_FOG 0x1u /* header.schemaFlags; reserved, 0 in v1 */
 
