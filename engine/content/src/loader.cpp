@@ -1797,11 +1797,18 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
                             m.kind == sim::ModeKind::TeamDeathmatch ||
                             m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture;
     if (respawning) {
-      const std::string kind = m.kind == sim::ModeKind::Hill      ? "hill"
-                               : m.kind == sim::ModeKind::Capture ? "capture"
-                                                                  : "deathmatch";
-      if (m.scoreToWin < 1) fail(where + ": score_to_win must be at least 1 in " + kind);
-      if (m.respawnTicks < 1) fail(where + ": respawn_ticks must be at least 1 in " + kind);
+      const auto atLeastOne = [&](std::string_view key) {
+        std::string message = where;
+        message += ": ";
+        message += key;
+        message += " must be at least 1 in ";
+        for (const ModeKindName& e : kModeKinds) {
+          if (e.kind == m.kind) message += e.name;
+        }
+        fail(message);
+      };
+      if (m.scoreToWin < 1) atLeastOne("score_to_win");
+      if (m.respawnTicks < 1) atLeastOne("respawn_ticks");
     }
     if (m.kind == sim::ModeKind::Hill && m.hillTicks < 1) {
       fail(where + ": hill_ticks must be at least 1");

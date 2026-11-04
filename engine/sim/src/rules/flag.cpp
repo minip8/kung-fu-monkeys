@@ -11,7 +11,7 @@ namespace kfm::sim {
 
 bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
               const Contact& /*contact*/, EventSink& sink) {
-  Player* p = s.players.get(a);
+  const Player* p = s.players.get(a);
   const Pickup* pickup = s.pickups.get(b);
   if (p == nullptr || pickup == nullptr || pickup->kind != PickupKind::Flag) return false;
   if (p->tags.has(Tag::Carrying) || content.teamOf(p->id) == pickup->spawner) return false;

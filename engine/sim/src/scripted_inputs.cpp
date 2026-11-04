@@ -187,9 +187,9 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
       found = true;
     }
   });
-  if (found && target != pos) {
-    in.moveDir = directionTo(pos, target);
-  } else if (!wantBanana && objectiveTarget(s, content, p, target) && target != pos) {
+  // Else the objective (v0.33), with the same hands-full condition.
+  const bool chase = found && target != pos;
+  if (chase || (!wantBanana && objectiveTarget(s, content, p, target) && target != pos)) {
     in.moveDir = directionTo(pos, target);
   }
 

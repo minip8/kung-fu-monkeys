@@ -247,7 +247,7 @@ zones = [{ min = [-1, -1], max = [1, 1] }, { min = [5, 2], max = [6, 5] }])";
   std::string nine = "name = \"nine\"\nhalf_extents = [10, 5]\nspawn_points = [[0, 0]]\nzones = [";
   for (int i = 0; i < 9; ++i)
     nine += "{ min = [0, 0], max = [1, 1] },";
-  nine += "]";
+  nine += ']';
   CHECK(arenaErrors(nine).contains("'zones' must list at most 8"));
 }
 
