@@ -563,19 +563,19 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   if (!dashed && dashReady && tgt != nullptr && me.ammo >= obs.rules.dashAttackMinAmmo &&
       me.ammo > 0 && bestDanger < kHitThreshold && !hasTag(tgt->tags, kTagInvulnerable) &&
       !hasTag(tgt->tags, kTagShielded)) {
-    const Fixed contactSq = Fixed::fromRaw(obs.rules.playerRadius) * 2 - kCatchMargin;
-    const uint64_t strikeSq = squareRaw(contactSq);
+    const Fixed strikeRange = (Fixed::fromRaw(obs.rules.playerRadius) * 2) - kCatchMargin;
+    const uint64_t strikeSq = squareRaw(strikeRange);
     const Vec2 tp = posOf(*tgt);
     const Vec2 tv = velOf(*tgt);
     const uint8_t active =
-        static_cast<uint8_t>(std::min<uint32_t>(dash.defActiveTicks, kHorizon - lead));
+        static_cast<uint8_t>(std::min<uint32_t>(dash.defActiveTicks, uint32_t{kHorizon} - lead));
     bool found = false;
     uint8_t strikeDir = 0;
     for (uint8_t aim = 1; aim <= active && !found; ++aim) {
       const uint8_t dir = directionTo(myPos, tp + (tv * int32_t{lead + aim}));
       dashPath(obs, dir, path_);
-      for (uint8_t k = lead + 1; k <= lead + active; ++k) {
-        const Vec2 e0 = tp + (tv * int32_t{k - 1});
+      for (uint32_t k = uint32_t{lead} + 1; k <= uint32_t{lead} + active; ++k) {
+        const Vec2 e0 = tp + (tv * static_cast<int32_t>(k - 1));
         const Vec2 r = e0 - path_.pos[k - 1];
         const Vec2 d = tv - (path_.pos[k] - path_.pos[k - 1]);
         if (segmentMinSq(r, d) < strikeSq) {
