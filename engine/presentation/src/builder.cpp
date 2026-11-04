@@ -104,6 +104,7 @@ void decayOffset(EntityTrack& t, float dt) {
   set(content.abilityAt(thr.defIndex).kind == AbilityKind::Throw && thr.phase != AbilityPhase::Idle,
       PlayerFlag::Throwing);
   set(p.ammo > 0, PlayerFlag::HasAmmo);
+  set(p.tags.has(Tag::Carrying), PlayerFlag::Carrying);
   return f;
 }
 
@@ -392,6 +393,10 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
       rp.colorIndex = def.visual.color;
       rp.shape = static_cast<PowerUpShapeView>(def.visual.shape);
       rp.powerUp = cp.powerUpIndex;
+    } else if (cp.kind == sim::PickupKind::Flag) {
+      rp.kind = PickupKindView::Flag;
+      rp.colorIndex = cp.spawner;  // the team's colour
+      rp.shape = kFlagShape;
     }
     pushShadow(out, rp.ground, radius, height, ShadowOwner::Pickup);
   }
@@ -528,6 +533,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
       Vec3{ps.shake * std::sin(w), ps.shake * 0.6f * std::sin((1.37f * w) + 1.1f), 0.0f};
   out.arenaHalfExtents = toFloat(match.arena.halfExtents);
   buildArenaPieces(match.arena, out);
+  buildZones(match, out);
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
   out.bananaRadius = content.boomerang.radius.toFloat();
@@ -626,6 +632,20 @@ void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out) {
                    [&](float a, float c) { addRim({b.hi.x - wx, a}, {b.hi.x, c}); });
   }
   out.arenaPieceCount = n;
+}
+
+void buildZones(const sim::MatchContent& match, RenderState& out) {
+  const sim::ArenaDef& arena = match.arena;
+  const uint8_t teamZones = match.mode.kind == sim::ModeKind::Capture ? match.mode.teams : 0;
+  out.zoneCount = 0;
+  for (uint8_t k = 0; k < arena.zoneCount && k < sim::kMaxArenaZones; ++k) {
+    const Vec2f lo = toFloat(arena.zones[k].min);
+    const Vec2f hi = toFloat(arena.zones[k].max);
+    out.zones[out.zoneCount++] =
+        RenderZone{.center = simToWorld(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}),
+                   .size = Vec3{hi.x - lo.x, 0.0f, hi.y - lo.y},
+                   .team = k < teamZones ? static_cast<int8_t>(k) : kNoSlot};
+  }
 }
 
 void onRollback(PresentationState& ps, const WorldState& newPrev, const WorldState& newCurr,

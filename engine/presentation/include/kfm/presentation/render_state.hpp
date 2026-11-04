@@ -35,7 +35,7 @@ inline constexpr uint16_t kMaxRenderSounds = 32;
 inline constexpr int8_t kNoSlot = -1;
 
 // RenderPlayer::flags bits.
-enum class PlayerFlag : uint8_t {
+enum class PlayerFlag : uint16_t {
   Dashing = 1u << 0,
   PerfectDash = 1u << 1,  // the perfect-dash (catch) window is open
   HitStun = 1u << 2,
@@ -44,6 +44,7 @@ enum class PlayerFlag : uint8_t {
   Shielded = 1u << 5,
   Throwing = 1u << 6,  // the Throw slot is in Startup/Active/Recovery
   HasAmmo = 1u << 7,
+  Carrying = 1u << 8,  // v0.33: holds a capture flag (Tag::Carrying)
 };
 [[nodiscard]] constexpr uint16_t flagBit(PlayerFlag f) {
   return static_cast<uint16_t>(f);
@@ -95,7 +96,10 @@ struct RenderBanana {
   int8_t ownerSlot{kNoSlot};
 };
 
-enum class PickupKindView : uint8_t { Banana = 0, PowerUp };
+// v0.33: Flag, a capture team's flag, drawn like a power-up in its team's
+// colour with this shape.
+enum class PickupKindView : uint8_t { Banana = 0, PowerUp, Flag };
+inline constexpr PowerUpShapeView kFlagShape = PowerUpShapeView::Diamond;
 
 struct RenderPickup {
   Vec3 position{};  // world space, hovering slightly
@@ -103,7 +107,9 @@ struct RenderPickup {
   float spin{0.0f};
   float radius{0.0f};  // sim contact radius
   PickupKindView kind{PickupKindView::Banana};
-  // PowerUp only: the def's look (palette.hpp index, shape) and its index.
+  // PowerUp: the def's look (palette.hpp index, shape) and its index.
+  // Flag (v0.33): the team's colour (team t is palette colour t), shape
+  // kFlagShape, powerUp 0.
   uint8_t colorIndex{0};
   PowerUpShapeView shape{PowerUpShapeView::Orb};
   uint8_t powerUp{0};
@@ -185,6 +191,15 @@ struct RenderArenaPiece {
   Vec3 size{};
 };
 
+// An objective zone (v0.33): a translucent floor rectangle in world space,
+// tinted with its team's colour when it is a team's (capture: zone t is team
+// t's), neutral otherwise (hill).
+struct RenderZone {
+  Vec3 center{};  // on the ground, y = 0
+  Vec3 size{};    // world extents (x, 0, z)
+  int8_t team{kNoSlot};
+};
+
 // Rim strips are capped; a pit layout needing more draws without the excess.
 inline constexpr uint16_t kMaxRenderPitRims = 64;
 inline constexpr uint16_t kMaxRenderArenaPieces =
@@ -236,6 +251,8 @@ struct RenderState {
   Vec2f arenaHalfExtents{};    // sim units, for the floor and wall rim
   std::array<RenderArenaPiece, kMaxRenderArenaPieces> arenaPieces{};  // interior walls, hazards
   uint16_t arenaPieceCount{0};
+  std::array<RenderZone, sim::kMaxArenaZones> zones{};  // v0.33, in content order
+  uint8_t zoneCount{0};
   float playerRadius{0.0f};
   float playerHeight{0.0f};
   float bananaRadius{0.0f};

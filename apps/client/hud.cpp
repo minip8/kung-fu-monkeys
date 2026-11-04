@@ -536,6 +536,14 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
     dl->AddRectFilled(a, b, toU32(presentation::kArenaWallColor));
   }
   dl->AddRect(at(-hx, hy), at(hx, -hy), toU32(presentation::kArenaWallColor), 0.0f, 0, 3.0f);
+  // v0.33: objective zones, translucent with a solid rim, lettered a, b, ...
+  for (uint8_t i = 0; i < arena.zoneCount && i < sim::kMaxArenaZones; ++i) {
+    const auto [a, b] = box2(arena.zones[i].min, arena.zones[i].max);
+    dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 50));
+    dl->AddRect(a, b, IM_COL32(255, 255, 255, 190), 0.0f, 0, 1.5f);
+    const char letter[2] = {static_cast<char>('a' + i), '\0'};
+    dl->AddText(ImVec2(a.x + 3.0f, a.y + 1.0f), IM_COL32(255, 255, 255, 220), letter);
+  }
   for (uint8_t i = 0; i < arena.spawnPointCount; ++i) {
     const Vec2 p = arena.spawnPoints[i];
     dl->AddCircleFilled(at(p.x.toFloat(), p.y.toFloat()), 3.5f, slotColor(i));

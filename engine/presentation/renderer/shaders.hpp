@@ -135,8 +135,12 @@ void main() {
 // The disc mesh has uv (0.5, 0.5) at the centre and its rim at distance 0.5,
 // so r = 2 |uv - 0.5| is 0 at the centre and 1 on the rim.
 // fs_params[0] = colour (rgb) and opacity (a)
-// fs_params[1] = shape: mode (0 blob shadow, 1 ring, 2 burst), inner radius
-//                (ring: where the band starts; burst: where the fade starts)
+// fs_params[1] = shape: mode (0 blob shadow, 1 ring, 2 burst, 3 rect), inner
+//                radius (ring: where the band starts; burst: where the fade
+//                starts; rect: where the rim band starts), and for a rect the
+//                fill's opacity relative to the rim's
+// A rect (v0.33, zones) is drawn on the quad mesh, whose uv is centred on 0
+// with the edges at ±0.5: d = 2 max(|uv|) is 1 on the edge.
 inline constexpr const char* kDecalVs = KFM_GLSL_HEADER R"(
 layout(location = 0) in vec3 a_position;
 layout(location = 2) in vec2 a_uv;
@@ -157,6 +161,15 @@ void main() {
   vec4 color = fs_params[0];
   float mode = fs_params[1].x;
   float inner = fs_params[1].y;
+  if (mode > 2.5) {
+    vec2 q = abs(v_uv) * 2.0;
+    float d = max(q.x, q.y);
+    float aaR = max(fwidth(d), 1e-4) * 1.5;
+    float edge = 1.0 - smoothstep(1.0 - aaR, 1.0, d);
+    float ar = edge * mix(fs_params[1].z, 1.0, smoothstep(inner - aaR, inner, d));
+    frag_color = vec4(color.rgb, color.a * ar);
+    return;
+  }
   float r = 2.0 * length(v_uv - vec2(0.5));
   float aa = max(fwidth(r), 1e-4) * 1.5;
   float outer = 1.0 - smoothstep(1.0 - aa, 1.0, r);

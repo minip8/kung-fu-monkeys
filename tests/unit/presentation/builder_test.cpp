@@ -1014,3 +1014,55 @@ TEST_CASE("ability events (v0.21): blink, slam and parry effects and sounds",
   CHECK(slam == 1);
   CHECK(parry == 1);
 }
+
+TEST_CASE("zones and capture flags render (v0.33)", "[presentation][builder][capture]") {
+  ContentDB content = defaultContent();
+  const auto at = [](int32_t x, int32_t y) { return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)}; };
+  ArenaDef& a = content.arenas[0];
+  a.zones[0] = Zone{at(-14, -2), at(-10, 2)};
+  a.zones[1] = Zone{at(10, -1), at(14, 3)};
+  a.zoneCount = 2;
+  content.modes[1] = content.modes[0];
+  content.modes[1].name = ContentName::of("capture");
+  content.modes[1].kind = ModeKind::Capture;
+  content.modes[1].teams = 2;
+  content.modeCount = 2;
+  WorldState s = makePlayingWorld(24, 0b11, content);
+  const EntityId flag = s.pickups.spawn();
+  REQUIRE(flag.isValid());
+  s.pickups.items[flag.index] = Pickup{PickupKind::Flag, at(12, 1), 0, 1};
+  playerAt(s, kP0).tags.set(Tag::Carrying);
+
+  // In a free-for-all mode the zones are nobody's.
+  {
+    auto rs = std::make_unique<RenderState>();
+    buildZones(MatchContent(content), *rs);
+    REQUIRE(rs->zoneCount == 2);
+    CHECK(rs->zones[0].team == kNoSlot);
+    CHECK(rs->zones[1].team == kNoSlot);
+  }
+  const MatchContent capture(content, 0, 1);
+  PresentationState ps;
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, capture, kDt);
+  REQUIRE(rs.zoneCount == 2);
+  CHECK(rs.zones[0].team == 0);
+  CHECK(rs.zones[1].team == 1);
+  CHECK(worldToSim(rs.zones[1].center).x == Approx(12.0f));
+  CHECK(worldToSim(rs.zones[1].center).y == Approx(1.0f));
+  CHECK(rs.zones[1].size.x == Approx(4.0f));
+  CHECK(rs.zones[1].size.z == Approx(4.0f));
+  REQUIRE(rs.pickupCount == 1);
+  CHECK(rs.pickups[0].kind == PickupKindView::Flag);
+  CHECK(rs.pickups[0].colorIndex == 1);  // team 1's colour
+  CHECK(rs.pickups[0].shape == kFlagShape);
+  const RenderPlayer* p0 = nullptr;
+  for (uint16_t i = 0; i < rs.playerCount; ++i) {
+    if (rs.players[i].slot == 0) p0 = &rs.players[i];
+  }
+  REQUIRE(p0 != nullptr);
+  CHECK(p0->has(PlayerFlag::Carrying));
+  // Taking a flag sounds like a power-up.
+  const SimEvent taken{
+      EventKind::PickupTaken, s.tick, kP1, flag, static_cast<uint32_t>(PickupKind::Flag), 1};
+  CHECK(soundForEvent(taken).value_or(SoundCue{SoundId::Count, 0.0f, 0.0f}).id == SoundId::PowerUp);
+}

@@ -95,8 +95,9 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::PlayerEliminated:
       return cue(SoundId::Elimination);
     case EventKind::PickupTaken:
-      return cue(e.a == static_cast<uint32_t>(sim::PickupKind::PowerUp) ? SoundId::PowerUp
-                                                                        : SoundId::Pickup);
+      // A power-up or a capture flag (v0.33) sounds the same.
+      return cue(e.a != static_cast<uint32_t>(sim::PickupKind::Banana) ? SoundId::PowerUp
+                                                                       : SoundId::Pickup);
     case EventKind::ShieldBroken:
       return cue(SoundId::ShieldBreak);
     case EventKind::PlayerBlinked:
@@ -239,7 +240,7 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       const Vec2f at = pickupPlane(ps, prev, curr, e.entity).value_or(player);
       addEffect(ps, makeEffect(EffectKind::PickupSparkle, slot, simToWorld(at, kPickupHeight),
                                kPickupSparkleSeconds));
-      if (e.a == static_cast<uint32_t>(sim::PickupKind::PowerUp)) {
+      if (e.a != static_cast<uint32_t>(sim::PickupKind::Banana)) {
         addEffect(ps, makeEffect(EffectKind::PowerUpBurst, slot, simToWorld(at, kPickupHeight),
                                  kPowerUpBurstSeconds));
       }

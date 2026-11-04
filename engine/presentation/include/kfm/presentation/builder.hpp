@@ -95,6 +95,11 @@ void buildRenderState(PresentationState& ps, const sim::WorldState& prev,
 // on the arena only.
 void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out);
 
+// The arena's zones (v0.33) as floor rectangles: zone k belongs to team k in
+// a capture match (the mode's team count, as far as there are zones), to
+// nobody otherwise. buildRenderState() calls it every frame.
+void buildZones(const sim::MatchContent& match, RenderState& out);
+
 [[nodiscard]] inline RenderState buildRenderState(
     PresentationState& ps, const sim::WorldState& prev, const sim::WorldState& curr, float alpha,
     std::span<const sim::SimEvent> newEvents, const sim::MatchContent& content, float dtSeconds) {
