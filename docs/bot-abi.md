@@ -62,15 +62,37 @@ A module must import nothing else. A module importing anything else is refused.
 
 ### 1.4 Budget and faults
 
-- Each `kfm_act` (and `kfm_init`) runs under a fuel budget counted in wasm instructions, never wall
-  clock, so results do not depend on the machine. The default budget per tick, the module size cap
-  and the linear-memory cap: see architecture §8 (pinned with the runtime).
+- Each `kfm_act` runs under a fuel budget counted in wasm instructions (one unit per executed
+  opcode plus one per function entry, as the runtime meters it), never wall clock, so results do
+  not depend on the machine. Default `fuelPerTick` = 100 000 instructions. Instantiation (the
+  `start` function and the constructors) and `kfm_init` each run under `fuelInit` = 10 000 000.
+  Caps: a module file of at most 4 MiB; a linear memory whose declared minimum is at most 16 MiB
+  (a larger minimum is refused at load; the maximum is clamped to it; `memory.grow` past the cap
+  returns −1 and never traps); the runtime's interpreter stack is 64 KiB. All of these are host
+  settings (`kfm_arena --fuel`), and a contest publishes the values it runs with.
+- Loading validates the file size, the imports, the four exports and their signatures and the
+  memory, then runs a probe instance that checks `kfm_abi_version` and `kfm_obs_buffer`, so a bad
+  module is refused at load, not mid-match. Instantiation is repeated for every `kfm_init`: a host
+  that re-inits a bot (a match restart, `memory_on_respawn = wipe`) gives it a fresh memory.
 - A trap, or running out of fuel, costs the bot that tick: the host applies the bot's last applied
   input again ("repeat last input", the server's rule for a late network input) and counts a
   substitution in the match result. A held button in the repeated input does not re-fire. The
-  instance continues on the next tick with whatever its memory holds.
-- A return value with bits 40..63 set, or a `buttons` byte with bits 5..7 set, is reserved; v1
-  hosts mask those bits off.
+  instance continues on the next tick with whatever its memory holds. A fault inside `kfm_init`
+  (a trap or more than `fuelInit`) leaves the bot dead: every later tick is a substitution and the
+  module is never entered again.
+- A return value with bits 40..63 set is a fault of its own (`BadReturn`, counted like a trap: the
+  input is substituted). A `buttons` byte with bits 5..7 set is reserved; v1 hosts mask those bits
+  off.
+- The host records per bot: acts, substitutions, traps, over-budget ticks, bad returns, the fuel
+  of the last act, the maximum and the total, the fuel of `kfm_init`, and the bytes logged and
+  dropped. `kfm_arena` prints them in its result line.
+- Compiled C and Rust keep their stack in linear memory behind a mutable global named
+  `__stack_pointer`, and a trap or an over-budget exit skips the function's epilogue, so every
+  fault would leak a stack frame. If the module exports that global, the host saves it before
+  `kfm_act` and restores it after a fault. Export it (wasm-ld `--export=__stack_pointer`, or
+  `--export-all`); the SDKs do by default.
+- The runtime is single-threaded; nothing a module does can observe another instance, the clock
+  or the host, and two instances of one module never share memory.
 
 ### 1.5 Input delay
 
