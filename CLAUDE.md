@@ -93,7 +93,8 @@ build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players
 #   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
-build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 [--seed S] [--ticks N]   # headless bot matches
+build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]   # headless bot matches
+#   --rotate moves every bot through every slot across the tournament (the sim's spawn order favours some slots)
 #   [--arena NAME --mode NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
 #   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
 #   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O

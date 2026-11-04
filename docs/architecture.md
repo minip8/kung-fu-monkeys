@@ -2081,15 +2081,18 @@ which the contract needs.
   score S kills K deaths D acts A subs U [traps T over O bad B fuel_mean F fuel_max M fuel_init
   I log L dead no|<init fault>] | ...`) plus a `summary` line (matches, ended, draws, capped,
   mean ticks, per slot wins, mean place, totals); `--json` prints the same as one object per
-  line. Places: the `MatchEnded` winner first, then higher final score, fewer deaths, lower
-  slot, all distinct; kills and deaths come from `PlayerEliminated` (a self-elimination is a
+  line (`--rotate` plays bot b in slot (b + k) mod n in match k, labels a slot several bots
+  played `mixed`, and adds per-bot totals: `bot B SPEC wins ...`; every slot entry carries
+  `bot B`, and in JSON `"bot"` is that index and `"spec"` the name). Places: the `MatchEnded`
+  winner first, then higher final score, fewer deaths, lower slot, all distinct; kills and deaths come from `PlayerEliminated` (a self-elimination is a
   death, not a kill); the final checksum lets a replay be checked against its line. Exit codes:
   0, 2 bad arguments or content, 3 a module refused at load (or a module spec in a build without
   `KFM_WASM_BOTS`), 4 I/O. `kfm_arena_core` (`runMatch`, placements, formatting, the module
   cache) is the library under test; the CLI is a thin wrapper, and it builds under Emscripten
   as a node CLI with reference bots only. Release, this machine: a 4-bot reference tournament
-  runs about 20 k ticks/s (hashing dominated, see the follow-ups) and `kfm_replay bench` steps
-  the same sim at about 1 M ticks/s.
+  runs about 40–50 k ticks/s, dominated by the bot's own evaluation (20 k before the content
+  hash was cached), four `echo.wasm` modules about 8× that, and `kfm_replay bench` steps the
+  same sim at about 1 M ticks/s.
 - **Hosts as built (v0.30).** The server (`apps/server`): `engine/net` has exactly one bot hook,
   `ServerConfig::botInputs` (a function given the world, the content and the tick's frame with
   the bot slots present, called once per tick before assembly, after a restart has been
@@ -2196,7 +2199,11 @@ which the contract needs.
   - *Hosts.* `AgentHost` owns up to ten agents, fills a frame in slot order (present agent slots
     only, humans' and network inputs untouched), delays each answer by the slot's delay (at most
     120 ticks; the slot idles until the first answer is due; the line pauses while the slot is
-    absent) and repeats the last applied input on no answer. The reference bot's reaction delay
+    absent) and repeats the last applied input on no answer. It caches the content hash the
+    observation carries per `ContentDB` object (recomputed after `attach`, `detach`, `reinit`
+    and `clear`, or on `invalidateContentHash()`, which the client calls when live tuning edits
+    its content in place): hashing every tick had been 60 % of a reference tournament and 95 %
+    of a module run; `fill` is now allocation-free and O(agents). The reference bot's reaction delay
     is on top of the host delay and not compensated. Every host names bots by one grammar,
     `BotSpec`: `ref`, `ref:easy|medium|hard` or a `.wasm` path (`engine/ai` parses, the app reads
     the file), and seeds slot `s` of a match with seed `S` as `S ^ (0x9E3779B97F4A7C15 · (s + 1))`
@@ -2207,8 +2214,26 @@ which the contract needs.
     slam), a dash attack and a lead throw with a range and wall check; presses are fresh edges at
     sub-tick 0. Tiers `{reactionDelayTicks, aimNoise, catchPer256, throwPer256}`: easy
     `{18, 12, 48, 16}`, medium `{8, 5, 128, 64}`, hard `{0, 0, 256, 256}`. Two hard bots against
-    two scripted players over ten 4-player matches took 41 rounds to 10 (83 eliminations to 8);
-    four hard bots on `dojo`/`rounds` end a round in 3–4.5 s.
+    two scripted players over ten 4-player matches took 42 rounds to 8 (85 eliminations to 6);
+    four hard bots on `dojo`/`rounds` end a round in 3–4.5 s. Fairness pass (v0.30): equal
+    target distances and equal movement utilities go to a random tied candidate from the bot's
+    own Rng (reservoir sampling, a draw only on a tie) instead of the lowest slot or the +x
+    direction; a dash attack is only started on a target that cannot answer with one on the
+    same tick (unarmed, or its dash busy or cooling), because two strikes pressed on one tick at
+    the same sub-tick are resolved by slot index, a coin the bot cannot win; in a standoff (the
+    target holds a banana and its throw is ready) a lined-up throw is held 0..2 ticks, drawn
+    once per lined-up shot, which is what breaks the mirrored openings of two noise-free hard
+    bots (1v1 hard against hard: 0 of 20 matches capped and 68 % of rounds decided, from 13
+    capped and 2 %); the wall band (2 units, penalised at 3 per unit) ends where an unarmed
+    bot's fetch point lies, so a banana lying inside the band is still fetched (two bots had
+    parked at the band's edge for ever). Residual slot bias is the sim's, not the bot's: with
+    four players the dojo's spawn order puts slots 0 and 3 only 36° apart on odd offsets while 1
+    and 2 face each other, so slots 1 and 2 win more whatever drives them (200 fixed-slot
+    matches: scripted 28/65/72/35, hard bots 42/67/62/29; with four cyclic spawn points the
+    same bots give 56/54/41/49, p ≈ 0.44), and equal-time Player × Player contacts resolve by
+    pool index. Tournaments therefore rotate (`kfm_arena --rotate`): over 40 rotated matches of
+    hard, medium, easy, hard the two hard bots win 20 and 19 with mean places 1.62 and 1.77,
+    medium 1 and easy 0. The hard tier keeps zero noise.
 
 Teams, fog and calls (v0.29). The contest shape is a squad: a team of monkeys, each run by its
 own program, seeing a slice of the world and talking through the game. One rule sits behind
@@ -2763,8 +2788,14 @@ baseline moved to C++23 (§9).
   by `BotSpec` and seeded per slot by one formula in every host; the server delays bots by the
   humans' lead (§8, §10, §11).
 - Open (M5 follow-ups): the browser JS shim for bot modules in the client (metering best effort
-  there); per-bot fuel in the client's F1 overlay for modules; bots that yield a slot to a joining
-  human; contests at thousands of times real time through parallel processes (§8).
+  there); bots that yield a slot to a joining human; contests at thousands of times real time
+  through parallel processes (§8). Two sim-side sources of slot bias found by the bot fairness
+  pass (§8) are left as they are, because changing either regenerates the corpus: the spawn
+  assignment `order[(rank + offset) % 10]` puts four players on uneven arcs of the dojo's ring
+  (slots 1 and 2 face each other, 0 and 3 sit 36° apart on odd offsets), and equal-time,
+  equal-press Player × Player contacts resolve by pool index. A per-round shuffle of present
+  slots onto spawn ranks from the world Rng, or spawn groups (M5b), would fix the first;
+  tournaments rotate slots meanwhile.
 - Decided (v0.29): a mode is content along five axes, each with its own seam (§5.3); teams ride
   in `MatchConfig` and reach the rules table as a relation mask, friendly fire being a tag the
   mode's baseline grants (§5.6); loadouts are their own match axis (§5.10); the grid is a
