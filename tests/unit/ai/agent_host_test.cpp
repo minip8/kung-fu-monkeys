@@ -171,3 +171,70 @@ TEST_CASE("agents act in slot order on present slots only", "[ai][host]") {
   CHECK(host.stats(PlayerId{2}).acts == 0);
   CHECK(host.lastObservation().self.slot == 3);
 }
+
+TEST_CASE("setDelay grows by holding and shrinks by skipping, never replaying", "[ai][host]") {
+  std::vector<Call> log;
+  WorldState s = makePlayingWorld(5, 0b11);
+  const uint32_t start = s.tick.value;
+  AgentHost host;
+  host.attach(PlayerId{1}, std::make_unique<EchoAgent>(log), 9, 2);
+  const auto answered = [&](const PlayerInput& in) {
+    return static_cast<uint32_t>(in.moveDir);  // the low byte of the observed tick
+  };
+  const auto tickByte = [&](uint32_t k) { return (start + k) & 0xFFu; };
+
+  std::vector<PlayerInput> in = run(host, s, PlayerId{1}, 10);  // k = 0..9, delay 2
+  CHECK(answered(in[9]) == tickByte(7));
+
+  host.setDelay(PlayerId{1}, 5);  // k = 10..19
+  CHECK(host.delayTicks(PlayerId{1}) == 5);
+  in = run(host, s, PlayerId{1}, 10);
+  // k = 10..12 would be due answers 5..7, all applied already: hold answer 7.
+  for (int k = 0; k < 3; ++k)
+    CHECK(answered(in[static_cast<size_t>(k)]) == tickByte(7));
+  for (uint32_t k = 3; k < 10; ++k)
+    CHECK(answered(in[k]) == tickByte(10 + k - 5));
+  CHECK(log.back().delay == 5);
+
+  host.setDelay(PlayerId{1}, 1);  // k = 20..29: answers 15..18 are skipped
+  in = run(host, s, PlayerId{1}, 10);
+  for (uint32_t k = 0; k < 10; ++k)
+    CHECK(answered(in[k]) == tickByte(20 + k - 1));
+  CHECK(host.stats(PlayerId{1}).acts == 30);
+
+  host.setDelay(PlayerId{1}, 200);
+  CHECK(host.delayTicks(PlayerId{1}) == kMaxAgentDelayTicks);
+  host.setDelay(PlayerId{4}, 3);  // no agent there: nothing happens
+  CHECK(host.delayTicks(PlayerId{4}) == 0);
+}
+
+TEST_CASE("reinit re-seeds the agent and empties its delay line; clear empties the host",
+          "[ai][host]") {
+  std::vector<Call> log;
+  WorldState s = makePlayingWorld(5, 0b11);
+  AgentHost host;
+  auto agent = std::make_unique<EchoAgent>(log);
+  const EchoAgent* raw = agent.get();
+  host.attach(PlayerId{0}, std::move(agent), 1, 3);
+  std::vector<PlayerInput> in = run(host, s, PlayerId{0}, 8);
+  CHECK(in.back().moveMag == 255);
+
+  host.reinit(PlayerId{0}, 0xC0FFEE);
+  CHECK(raw->seed() == 0xC0FFEE);
+  CHECK(raw->slot() == PlayerId{0});
+  CHECK(host.delayTicks(PlayerId{0}) == 3);
+  const uint32_t start = s.tick.value;
+  in = run(host, s, PlayerId{0}, 6);
+  for (uint32_t k = 0; k < 3; ++k)
+    CHECK(in[k] == PlayerInput{});  // idle until the first answer of the new match is due
+  for (uint32_t k = 3; k < 6; ++k)
+    CHECK(in[k].moveDir == static_cast<uint8_t>((start + k - 3) & 0xFFu));
+  CHECK(host.stats(PlayerId{0}).acts == 14);  // counters are per attach
+
+  host.reinit(PlayerId{5}, 7);  // no agent: no-op
+  host.attach(PlayerId{4}, std::make_unique<EchoAgent>(log), 2);
+  CHECK(host.slots() == 0b10001);
+  host.clear();
+  CHECK(host.slots() == 0);
+  CHECK(host.stats(PlayerId{0}).acts == 0);
+}
