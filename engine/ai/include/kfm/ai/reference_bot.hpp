@@ -32,6 +32,22 @@
 // bots would play mirrored rounds (the same opening for every spawn
 // rotation, both falling on one tick); the tie-breaks and the standoff hold
 // are where the per-slot seed breaks that symmetry without a handicap.
+// On the grid (v0.35: match.reservedTurnTicks > 0) it walks cells: the
+// eight octants and idle, each a slide of one cell per turn from the next
+// latch (match.reservedTicksToLatch) on; dashes go along octants; it fights
+// at close range (two cells: a banana from farther is side-stepped, and
+// hearing warns of one from behind), its throw range capped at three cells
+// and its flight speed learned from the bananas it sees (Observation v1
+// carries only the base speed); the catcher's dash catches as any dash
+// with a perfect window. The cell size it infers from its own cell while at
+// rest. Under fog it acts only on what it sees (zeroed entries are never
+// monkeys or bananas): with no enemy in sight it heads for the last one it
+// saw or an ally called out, else the arena's centre, and turns its cone
+// toward that goal (sweeping a quarter turn every four turns once there).
+// With a call on the ability button it calls out a seen enemy's coarse
+// cell, symbol = (col / 2) | (row / 2) << 4, at most once per eight turns;
+// a call on a latch tick also sets the facing to the symbol for that turn,
+// the price of talking.
 // It aims ahead by the observation's inputDelayTicks, presses buttons only
 // as fresh edges (never two ticks in a row) at sub-tick 0, and is
 // deterministic: fixed-point only, its own Rng seeded by init(), no
@@ -114,6 +130,19 @@ class ReferenceBot final : public IAgent {
   void trackThreats(const Observation& obs);
   static void predictBanana(const Observation& obs, const ObsBanana& b, Track& t);
   static void walkPath(const Observation& obs, uint8_t dir, bool idle, Path& p);
+  // v0.35: a grid walk along an octant (idle: stay) from the next latch on.
+  void gridWalkPath(const Observation& obs, uint8_t octant, bool idle, Path& p) const;
+  // v0.35: what the grid and the fog let the bot learn and remember.
+  void learn(const Observation& obs, int target);
+  // v0.35: the grid's free cells (for the own circle), once per match, and
+  // the walking distance in cells from every cell to `goal` (BFS over the
+  // eight neighbours without corner cutting, as the grid steps).
+  void prepareGrid(const Observation& obs);
+  void distancesTo(Vec2 goal);
+  [[nodiscard]] int32_t cellIndexOf(Vec2 at) const;
+  // The walking distance from `at` to the goal of the last distancesTo(), in
+  // units (unreachable: across the whole grid).
+  [[nodiscard]] Fixed walkDistance(Vec2 at) const;
   static void dashPath(const Observation& obs, uint8_t dir, Path& p);
   static void blinkPath(const Observation& obs, uint8_t dir, Path& p);
   // Scores a path against the tracks. Ticks [catchFrom, catchUntil) of the
@@ -136,6 +165,26 @@ class ReferenceBot final : public IAgent {
   std::array<Track, kMaxTracks> tracks_{};
   uint8_t trackCount_{0};
   Path path_{};
+  // v0.35 (grid, fog): the inferred cell size, the learned banana flight
+  // speed (0 = none seen yet), the last place an enemy was seen or called
+  // out (and when), the tick of the last call.
+  Fixed cellSize_{Fixed::one()};
+  Fixed bananaSpeed_{};
+  Vec2 lastSeen_{};
+  uint32_t lastSeenTick_{0};
+  bool haveLastSeen_{false};
+  uint32_t lastCallTick_{0};
+  bool called_{false};
+  // The grid map (prepareGrid, distancesTo); 64 x 64 cells at most, else no
+  // map (gridCols_ 0) and plain distances.
+  static constexpr int32_t kMaxGridCells = 64 * 64;
+  std::array<uint8_t, kMaxGridCells> gridFree_{};
+  std::array<uint16_t, kMaxGridCells> gridDist_{};
+  std::array<uint16_t, kMaxGridCells> gridQueue_{};
+  int32_t gridCols_{0};
+  int32_t gridRows_{0};
+  Fixed gridCell_{};      // the cell size the map was built for (0: none)
+  int32_t distGoal_{-1};  // the cell gridDist_ measures to
 };
 
 }  // namespace kfm::ai

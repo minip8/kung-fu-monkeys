@@ -5,6 +5,7 @@
 
 #include "bot_math.hpp"
 #include "kfm/sim/input.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/tags.hpp"
 
 #include <algorithm>
@@ -36,6 +37,14 @@ constexpr uint8_t kGoalTick = 16;      // where the goal is measured on a path
 constexpr uint8_t kStrikeTick = 8;     // where the distance to dash-ready enemies is measured
 constexpr uint8_t kDirections = 16;    // stick directions considered
 constexpr uint32_t kMaxThrowHold = 2;  // a standoff's random hold before a lined-up throw
+// v0.35, the grid: the fighting range and the throw cap in cells, the turns
+// between two calls, how long a sighting or a call stays a goal, the turns
+// between two quarter turns of the sweep.
+constexpr int32_t kGridPreferredCells = 2;
+constexpr int32_t kGridThrowCells = 3;
+constexpr uint32_t kCallEveryTurns = 8;
+constexpr uint32_t kSightingTicks = 600;
+constexpr uint32_t kSweepTurns = 4;
 
 [[nodiscard]] bool ready(const ObsAbility& a, uint8_t blockedButtons) {
   return a.kind != static_cast<uint8_t>(ObsAbilityKind::None) &&
@@ -140,6 +149,19 @@ struct TieBreak {
   return from;
 }
 
+// Whether a banana of radius r flies from `from` to `to` clear of the
+// interior walls (the line sampled every half unit).
+[[nodiscard]] bool lineClear(const Observation& obs, Vec2 from, Vec2 to, Fixed r) {
+  const int32_t samples = std::max<int32_t>(1, (distanceBetween(from, to) * 2).ceilToInt());
+  for (int32_t s = 1; s <= samples; ++s) {
+    const Vec2 pt = from + ((to - from) * Fixed::fromRatio(s, samples));
+    for (uint32_t w = 0; w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
+      if (botmath::circleOverlaps(obs.arena.walls[w], pt, r)) return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 ReferenceBot::ReferenceBot(const ReferenceBotConfig& config) : config_(config) {
@@ -154,6 +176,182 @@ void ReferenceBot::init(uint64_t seed, PlayerId slot) {
   decisions_ = 0;
   throwHold_ = -1;
   pending_.fill(sim::PlayerInput{});
+  cellSize_ = Fixed::one();
+  bananaSpeed_ = Fixed{};
+  gridCols_ = 0;
+  gridRows_ = 0;
+  gridCell_ = Fixed{};
+  distGoal_ = -1;
+  lastSeen_ = Vec2{};
+  lastSeenTick_ = 0;
+  haveLastSeen_ = false;
+  lastCallTick_ = 0;
+  called_ = false;
+}
+
+void ReferenceBot::learn(const Observation& obs, int target) {
+  const ObsSelf& me = obs.self;
+  const ObsPoint& half = obs.arena.halfExtents;
+  // The cell size, from the own cell while at rest on its centre: x + hx =
+  // (col + 1/2)·cell, and the same down the rows; the two must agree.
+  if (obs.match.reservedTurnTicks > 0 && me.alive != 0 && me.velX == 0 && me.velY == 0 &&
+      me.posX == me.prevPosX && me.posY == me.prevPosY && me.reservedCellX >= 0 &&
+      me.reservedCellY >= 0) {
+    const int64_t cx = ((int64_t{me.posX} + half.x) * 2) / ((2 * int64_t{me.reservedCellX}) + 1);
+    const int64_t cy = ((int64_t{half.y} - me.posY) * 2) / ((2 * int64_t{me.reservedCellY}) + 1);
+    if (cx > 0 && cx < INT32_MAX && cx - cy <= 2 && cy - cx <= 2) {
+      cellSize_ = Fixed::fromRaw(static_cast<int32_t>(cx));
+    }
+  }
+  // The flight speed: Observation v1 has only the base one, a mode's
+  // baseline scales every banana alike; the own banana's wins.
+  for (const ObsBanana& b : obs.bananas) {
+    if (b.valid == 0 || b.speed <= 0 || b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
+      continue;
+    }
+    if (b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self) || bananaSpeed_ == Fixed{}) {
+      bananaSpeed_ = Fixed::fromRaw(b.speed);
+    }
+  }
+  if (target >= 0) {
+    lastSeen_ = posOf(obs.players[target]);
+    lastSeenTick_ = obs.match.tick;
+    haveLastSeen_ = true;
+    return;
+  }
+  // An ally's call: the coarse cell of an enemy it saw (this bot's encoding).
+  for (const ObsHeardCall& c : obs.reservedHeardCalls) {
+    if (c.valid == 0 || c.slot >= kObsMaxPlayers ||
+        obs.players[c.slot].relation != static_cast<uint8_t>(ObsRelation::Ally) ||
+        (haveLastSeen_ && c.tick <= lastSeenTick_)) {
+      continue;
+    }
+    const int32_t col = (2 * int32_t{static_cast<uint8_t>(c.symbol & 15u)}) + 1;
+    const int32_t row = (2 * int32_t{static_cast<uint8_t>(c.symbol >> 4)}) + 1;
+    lastSeen_ = Vec2{(cellSize_ * col) - Fixed::fromRaw(half.x),
+                     Fixed::fromRaw(half.y) - (cellSize_ * row)};
+    lastSeenTick_ = c.tick;
+    haveLastSeen_ = true;
+  }
+}
+
+void ReferenceBot::prepareGrid(const Observation& obs) {
+  if (gridCell_ == cellSize_ && gridCols_ > 0) return;
+  gridCell_ = cellSize_;
+  distGoal_ = -1;
+  const Fixed c = cellSize_;
+  const Fixed hx = Fixed::fromRaw(obs.arena.halfExtents.x);
+  const Fixed hy = Fixed::fromRaw(obs.arena.halfExtents.y);
+  const Fixed r = Fixed::fromRaw(obs.self.radius);
+  gridCols_ = ((hx * 2) / c).floorToInt();
+  gridRows_ = ((hy * 2) / c).floorToInt();
+  if (gridCols_ <= 0 || gridRows_ <= 0 || gridCols_ * gridRows_ > kMaxGridCells) {
+    gridCols_ = 0;
+    return;
+  }
+  for (int32_t row = 0; row < gridRows_; ++row) {
+    for (int32_t col = 0; col < gridCols_; ++col) {
+      const Vec2 at{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
+      bool free = abs(at.x) <= hx - r && abs(at.y) <= hy - r;
+      for (uint32_t w = 0; free && w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
+        if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) free = false;
+      }
+      gridFree_[static_cast<size_t>((row * gridCols_) + col)] = free ? 1 : 0;
+    }
+  }
+}
+
+int32_t ReferenceBot::cellIndexOf(Vec2 at) const {
+  if (gridCols_ <= 0) return -1;
+  const Fixed hx = Fixed::fromRaw(gridCols_ * cellSize_.raw / 2);
+  const Fixed hy = Fixed::fromRaw(gridRows_ * cellSize_.raw / 2);
+  const int32_t col = std::clamp(((at.x + hx) / cellSize_).floorToInt(), 0, gridCols_ - 1);
+  const int32_t row = std::clamp(((hy - at.y) / cellSize_).floorToInt(), 0, gridRows_ - 1);
+  return (row * gridCols_) + col;
+}
+
+void ReferenceBot::distancesTo(Vec2 goal) {
+  const int32_t g = cellIndexOf(goal);
+  if (g < 0 || g == distGoal_) return;
+  distGoal_ = g;
+  const auto cells = static_cast<size_t>(gridCols_ * gridRows_);
+  std::fill_n(gridDist_.begin(), cells, uint16_t{0xFFFF});
+  size_t head = 0;
+  size_t tail = 0;
+  gridDist_[static_cast<size_t>(g)] = 0;
+  gridQueue_[tail++] = static_cast<uint16_t>(g);
+  const auto freeAt = [&](int32_t col, int32_t row) {
+    return col >= 0 && row >= 0 && col < gridCols_ && row < gridRows_ &&
+           gridFree_[static_cast<size_t>((row * gridCols_) + col)] != 0;
+  };
+  while (head < tail) {
+    const int32_t at = gridQueue_[head++];
+    const int32_t col = at % gridCols_;
+    const int32_t row = at / gridCols_;
+    for (uint8_t o = 0; o < sim::grid::kOctants; ++o) {
+      const int32_t nc = col + sim::grid::kOctantCol[o];
+      const int32_t nr = row + sim::grid::kOctantRow[o];
+      if (!freeAt(nc, nr)) continue;
+      if (sim::grid::diagonal(o) && (!freeAt(nc, row) || !freeAt(col, nr))) continue;
+      const auto n = static_cast<size_t>((nr * gridCols_) + nc);
+      if (gridDist_[n] != 0xFFFF) continue;
+      gridDist_[n] = static_cast<uint16_t>(gridDist_[static_cast<size_t>(at)] + 1);
+      gridQueue_[tail++] = static_cast<uint16_t>(n);
+    }
+  }
+}
+
+Fixed ReferenceBot::walkDistance(Vec2 at) const {
+  const int32_t i = cellIndexOf(at);
+  if (i < 0 || distGoal_ < 0) return Fixed{};
+  const uint16_t d = gridDist_[static_cast<size_t>(i)];
+  return cellSize_ * (d == 0xFFFF ? gridCols_ + gridRows_ : int32_t{d});
+}
+
+void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idle, Path& p) const {
+  // The slide in progress runs until the next latch (or the host delay);
+  // then a step to the octant's neighbour every turn, taken only when that
+  // cell is free for the monkey's circle (the outer box, the walls, and for
+  // a diagonal both orthogonal neighbours), else it stays.
+  const uint32_t turn = obs.match.reservedTurnTicks > 0 ? obs.match.reservedTurnTicks : 1u;
+  const uint8_t start = static_cast<uint8_t>(std::min<uint32_t>(
+      std::max<uint32_t>(obs.match.inputDelayTicks, obs.match.reservedTicksToLatch), kHorizon / 2));
+  const Vec2 cur = vec(obs.self.velX, obs.self.velY);
+  const Fixed c = cellSize_;
+  const Fixed r = Fixed::fromRaw(obs.self.radius);
+  const Fixed hx = Fixed::fromRaw(obs.arena.halfExtents.x);
+  const Fixed hy = Fixed::fromRaw(obs.arena.halfExtents.y);
+  const auto centreOf = [&](Vec2 at) {
+    const int32_t col = ((at.x + hx) / c).floorToInt();
+    const int32_t row = ((hy - at.y) / c).floorToInt();
+    return Vec2{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
+  };
+  const auto free = [&](Vec2 at) {
+    if (abs(at.x) > hx - r || abs(at.y) > hy - r) return false;
+    for (uint32_t w = 0; w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
+      if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) return false;
+    }
+    return true;
+  };
+  const Vec2 dc{c * int32_t{sim::grid::kOctantCol[octant & 7u]}, Fixed{}};
+  const Vec2 dr{Fixed{}, c * -int32_t{sim::grid::kOctantRow[octant & 7u]}};
+  p.pos[0] = vec(obs.self.posX, obs.self.posY);
+  uint8_t k = 1;
+  for (; k <= start && k <= kHorizon; ++k)
+    p.pos[k] = stepMonkey(obs, p.pos[k - 1], cur);
+  Vec2 at = centreOf(p.pos[k - 1]);
+  while (k <= kHorizon) {
+    Vec2 to = at;
+    if (!idle && free(at + dc + dr) &&
+        (!sim::grid::diagonal(octant) || (free(at + dc) && free(at + dr)))) {
+      to = at + dc + dr;
+    }
+    for (uint32_t j = 1; j <= turn && k <= kHorizon; ++j, ++k) {
+      p.pos[k] =
+          at + ((to - at) * Fixed::fromRatio(static_cast<int32_t>(j), static_cast<int32_t>(turn)));
+    }
+    at = to;
+  }
 }
 
 std::optional<sim::PlayerInput> ReferenceBot::act(const Observation& obs, Tick /*tick*/) {
@@ -188,6 +386,10 @@ void ReferenceBot::predictBanana(const Observation& obs, const ObsBanana& b, Tra
   const Vec2 lim = vec(obs.arena.halfExtents) - Vec2{t.radius, t.radius};
   const bool ownerAlive = b.owner < kObsMaxPlayers && obs.players[b.owner].alive != 0;
   const Vec2 ownerPos = ownerAlive ? posOf(obs.players[b.owner]) : Vec2{};
+  // v0.35, fog: an owner alive (the roster's aliveMask) but unseen keeps its
+  // banana flying; only a gone owner grounds it. Without fog the two agree.
+  const bool ownerHidden =
+      !ownerAlive && b.owner < kObsMaxPlayers && ((obs.match.aliveMask >> b.owner) & 1u) != 0;
   t.pos[0] = pos;
   t.harmlessFrom = kHorizon + 1;
   for (uint8_t k = 1; k <= kHorizon; ++k) {
@@ -198,7 +400,9 @@ void ReferenceBot::predictBanana(const Observation& obs, const ObsBanana& b, Tra
         inPhase = 0;
       }
       if (phase == ObsBananaPhase::Returning) {
-        if (!ownerAlive || inPhase > rules.bananaMaxReturnTicks) {
+        if (ownerHidden && inPhase <= rules.bananaMaxReturnTicks) {
+          // Unknown homing: straight on.
+        } else if (!ownerAlive || inPhase > rules.bananaMaxReturnTicks) {
           phase = ObsBananaPhase::Grounded;
           vel = Vec2{};
           if (t.harmlessFrom > kHorizon) t.harmlessFrom = k;
@@ -388,8 +592,28 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   const ObsSelf& me = obs.self;
   const Vec2 myPos = vec(me.posX, me.posY);
   const int target = pickTarget(obs, rng_);
+  // v0.35: the grid and the fog (the turn clock is 0 in a continuous mode).
+  const bool grid = obs.match.reservedTurnTicks > 0;
+  const bool fog = (obs.header.schemaFlags & kObsFlagFog) != 0;
+  const uint32_t turn = grid ? obs.match.reservedTurnTicks : 1u;
+  if (grid || fog) learn(obs, target);
   in.aimDir = me.facing;
   if (target >= 0) in.aimDir = directionTo(myPos, posOf(obs.players[target]));
+  // Nobody in sight under fog or on the grid: the last sighting (or an
+  // ally's call), else the centre; the cone turns toward it.
+  bool explore = false;
+  Vec2 exploreAt{};
+  if (target < 0 && (grid || fog)) {
+    if (haveLastSeen_ && obs.match.tick - lastSeenTick_ > kSightingTicks) haveLastSeen_ = false;
+    if (haveLastSeen_ && distanceBetween(myPos, lastSeen_) <= cellSize_) haveLastSeen_ = false;
+    explore = true;
+    exploreAt = haveLastSeen_ ? lastSeen_ : Vec2{};
+    if (distanceBetween(myPos, exploreAt) > cellSize_) {
+      in.aimDir = directionTo(myPos, exploreAt);
+    } else {
+      in.aimDir = static_cast<uint8_t>(((obs.match.tick / (kSweepTurns * turn)) & 3u) * 64u);
+    }
+  }
   if (me.alive == 0 || obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) {
     throwHold_ = -1;
     return in;
@@ -402,7 +626,14 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   // --- movement: the best of 16 directions and idle -------------------------
   // Goal points, measured kGoalTick ticks into each path.
   const ObsPlayer* tgt = target >= 0 ? &obs.players[target] : nullptr;
-  const Vec2 tgtAt = tgt != nullptr ? posOf(*tgt) + (velOf(*tgt) * int32_t{kGoalTick}) : Vec2{};
+  // Where a path's goal is measured: kGoalTick ticks, on the grid two turns
+  // after the next latch.
+  const auto goalTick = static_cast<uint8_t>(
+      grid ? std::clamp<uint32_t>(uint32_t{obs.match.reservedTicksToLatch} + (2 * turn), 1u,
+                                  kHorizon)
+           : kGoalTick);
+  const Fixed preferredRange = grid ? cellSize_ * kGridPreferredCells : kPreferredRange;
+  const Vec2 tgtAt = tgt != nullptr ? posOf(*tgt) + (velOf(*tgt) * int32_t{goalTick}) : Vec2{};
   bool haveFetch = false;
   Vec2 fetch{};
   Fixed fetchWeight = Fixed::one();
@@ -467,14 +698,40 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     return u;
   };
   const Vec2 half = vec(obs.arena.halfExtents);
+  // v0.35, the grid: the walking distance (around walls) to what the bot
+  // goes for: an armed bot's target, an unarmed one's banana, or where it
+  // explores; walls make the straight distance a trap.
+  bool walk = false;
+  if (grid) {
+    prepareGrid(obs);
+    if (gridCols_ > 0) {
+      if (armed && tgt != nullptr) {
+        distancesTo(posOf(*tgt));
+        walk = true;
+      } else if (!armed && haveFetch) {
+        distancesTo(fetch);
+        walk = true;
+      } else if (explore) {
+        distancesTo(exploreAt);
+        walk = true;
+      }
+    }
+  }
   const auto goal = [&](const Path& p) {
-    const Vec2 end = p.pos[kGoalTick];
+    const Vec2 end = p.pos[goalTick];
     Fixed u{};
     if (tgt != nullptr) {
-      const Fixed d = distanceBetween(end, tgtAt);
-      u -= armed ? abs(d - kPreferredRange) : -min(d, kFleeRange) / 2;
+      const Fixed d = walk && armed ? walkDistance(end) : distanceBetween(end, tgtAt);
+      u -= armed ? abs(d - preferredRange) : -min(d, kFleeRange) / 2;
+      // v0.35, the grid: an armed bot wants a clear line to its target (a
+      // wall between two bots at fighting range is a standoff for ever).
+      if (grid && armed && !lineClear(obs, end, tgtAt, Fixed::fromRaw(obs.rules.bananaRadius))) {
+        u -= preferredRange;
+      }
+    } else if (explore && (armed || !haveFetch)) {
+      u -= walk ? walkDistance(end) : distanceBetween(end, exploreAt);
     }
-    if (haveFetch) u -= distanceBetween(end, fetch) * fetchWeight;
+    if (haveFetch) u -= (walk ? walkDistance(end) : distanceBetween(end, fetch)) * fetchWeight;
     if (havePowerUp) u -= distanceBetween(end, powerUp) / 2;
     // The wall band is penalised at 3 per unit, more than the fetch pull, so
     // it must never forbid the fetch point itself: a banana lying inside the
@@ -501,10 +758,16 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   uint8_t bestDir = lastMoveDir_;
   bool bestIdle = true;
   TieBreak moveTie;
-  for (uint8_t c = 0; c <= kDirections; ++c) {
-    const bool idle = c == kDirections;
-    const auto dir = static_cast<uint8_t>(idle ? 0 : c * (256 / kDirections));
-    walkPath(obs, dir, idle, path_);
+  // On the grid: the eight octants (moveDir 32·o is exactly octant o) and idle.
+  const uint8_t directions = grid ? sim::grid::kOctants : kDirections;
+  for (uint8_t c = 0; c <= directions; ++c) {
+    const bool idle = c == directions;
+    const auto dir = static_cast<uint8_t>(idle ? 0 : c * (256 / directions));
+    if (grid) {
+      gridWalkPath(obs, c, idle, path_);
+    } else {
+      walkPath(obs, dir, idle, path_);
+    }
     const Outcome o = evaluate(obs, path_, 0, 0);
     Fixed util = goal(path_) - o.danger;
     if (!idle && dir == lastMoveDir_) util += kHysteresis;
@@ -537,6 +800,10 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     in.moveDir = dir;
     in.moveMag = 255;
   };
+  // A grid dash goes along the octant of its direction.
+  const auto snap = [&](uint8_t dir) {
+    return grid ? static_cast<uint8_t>(sim::grid::octantOf(dir) * 32u) : dir;
+  };
   bool dashed = false;
 
   // --- dash-catch -----------------------------------------------------------
@@ -550,7 +817,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       const Track& t = tracks_[i];
       if (!t.catchable) continue;
       for (uint8_t aim = catchFrom; aim < catchUntil && aim <= kHorizon; ++aim) {
-        const uint8_t dir = directionTo(myPos, t.pos[aim]);
+        const uint8_t dir = snap(directionTo(myPos, t.pos[aim]));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, catchFrom, catchUntil);
         if (o.catches && o.danger < catchDanger) {
@@ -572,8 +839,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       Fixed best = bestDanger;
       bool found = false;
       uint8_t bestDash = 0;
-      for (uint8_t c = 0; c < kDirections; ++c) {
-        const auto dir = static_cast<uint8_t>(c * (256 / kDirections));
+      for (uint8_t c = 0; c < directions; ++c) {
+        const auto dir = static_cast<uint8_t>(c * (256 / directions));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, canCatch ? catchFrom : 0, canCatch ? catchUntil : 0);
         if (o.danger < best) {
@@ -646,7 +913,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     bool found = false;
     uint8_t strikeDir = 0;
     for (uint8_t aim = 1; aim <= active && !found; ++aim) {
-      const uint8_t dir = directionTo(myPos, tp + (tv * int32_t{lead + aim}));
+      const uint8_t dir = snap(directionTo(myPos, tp + (tv * int32_t{lead + aim})));
       dashPath(obs, dir, path_);
       for (uint32_t k = uint32_t{lead} + 1; k <= uint32_t{lead} + active; ++k) {
         const Vec2 e0 = tp + (tv * static_cast<int32_t>(k - 1));
@@ -668,7 +935,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     throwHold_ = -1;
   } else {
     const ObsRules& r = obs.rules;
-    const Fixed speed = Fixed::fromRaw(r.bananaSpeed);
+    const Fixed speed =
+        grid && bananaSpeed_ > Fixed{} ? bananaSpeed_ : Fixed::fromRaw(r.bananaSpeed);
     const Fixed offset = Fixed::fromRaw(r.bananaSpawnOffset);
     const int32_t windUp = int32_t{lead} + thr.defStartupTicks;
     const Vec2 from = myPos + (vec(me.velX, me.velY) * windUp);
@@ -679,7 +947,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       const Fixed flight = max(distanceBetween(from, aimAt) - offset, Fixed{}) / speed;
       aimAt = tp + (tv * (flight + Fixed::fromInt(windUp)));
     }
-    const Fixed range = (speed * int32_t{r.bananaOutboundTicks}) + offset - Fixed::half();
+    Fixed range = (speed * int32_t{r.bananaOutboundTicks}) + offset - Fixed::half();
+    if (grid) range = min(range, cellSize_ * kGridThrowCells);
     const Fixed dist = distanceBetween(from, aimAt);
     bool clear = dist <= range;
     if (clear && obs.arena.wallCount > 0) {
@@ -720,6 +989,22 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     } else {
       in.aimDir = directionTo(myPos, aimAt);
     }
+  }
+
+  // --- call (v0.35): an enemy's coarse cell to the team --------------------
+  if (grid && tgt != nullptr && ready(extra, blocked) && (in.buttons & thr.button) == 0 &&
+      extra.kind == static_cast<uint8_t>(ObsAbilityKind::Call) &&
+      (turn == 1 || obs.match.reservedTicksToLatch != 0) &&
+      (!called_ || obs.match.tick - lastCallTick_ >= kCallEveryTurns * turn)) {
+    const Vec2 at = posOf(*tgt);
+    const Fixed hx = Fixed::fromRaw(obs.arena.halfExtents.x);
+    const Fixed hy = Fixed::fromRaw(obs.arena.halfExtents.y);
+    const int32_t col = std::clamp(((at.x + hx) / cellSize_).floorToInt(), 0, 31);
+    const int32_t row = std::clamp(((hy - at.y) / cellSize_).floorToInt(), 0, 31);
+    in.buttons = static_cast<uint8_t>(in.buttons | extra.button);
+    in.aimDir = static_cast<uint8_t>((col >> 1) | ((row >> 1) << 4));
+    lastCallTick_ = obs.match.tick;
+    called_ = true;
   }
 
   // --- slam on a monkey in reach ---------------------------------------------

@@ -369,6 +369,29 @@ TEST_CASE("a team match fills each team's slots from its entrant (--team)", "[ar
   CHECK_FALSE(runMatch(ffa, db, factory).has_value());
 }
 
+TEST_CASE("reference bots finish grid matches under fog (v0.35)", "[arena][teams][grid]") {
+  // Step 4's bots never lost a grid round (they saw every banana and
+  // side-stepped it); grid-aware bots under own vision end their matches.
+  BotFactory factory;
+  const sim::ContentDB& db = gameContent().db;
+  const std::optional<uint8_t> mode = db.findMode("grid_rounds_1t");
+  REQUIRE(mode);
+  for (const uint64_t seed : {uint64_t{1}, uint64_t{3}}) {
+    INFO("seed " << seed);
+    MatchSetup setup;
+    setup.config.seed = seed;
+    setup.config.mode = mode.value_or(0);
+    setup.config.arena = db.firstCompatibleArena(mode.value_or(0)).value_or(0);
+    setup.teams = {{spec("ref:hard")}, {spec("ref:hard")}};
+    setup.teams[0].resize(2, spec("ref:hard"));
+    setup.tickCap = 36'000;
+    const MatchResult r = play(setup, factory);
+    CHECK(r.outcome == MatchOutcome::Ended);
+    CHECK(r.winner.isValid());
+    CHECK(r.teams[0].kills + r.teams[1].kills > 0);
+  }
+}
+
 TEST_CASE("team places: the winner's team, then team score, then fewer deaths", "[arena][teams]") {
   MatchResult r;
   r.slots = {slotWith(0, 0, 3), slotWith(1, 1, 0), slotWith(2, 0, 1), slotWith(3, 0, 0)};
