@@ -13,6 +13,9 @@
 # ... except the bot ABI test fixtures, assembled from the .wat beside them
 # (tools/bots/build_fixtures.sh) and checked in because CI has no wabt
 !/tests/fixtures/bots/*.wasm
+# ... and the C SDK's example bots, built from the .c beside them
+# (tools/bots/build_example.sh) and checked in because CI has no wasm32 clang
+!/tools/bots/examples/*.wasm
 
 # Generated assets (built by the pipeline, source models are checked in)
 /content/sprites/generated/
