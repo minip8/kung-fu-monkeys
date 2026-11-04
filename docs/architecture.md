@@ -226,7 +226,9 @@ interpreter with instruction metering; the numbers are pinned (100 k instruction
 10 M for instantiation and `kfm_init`, 4 MiB modules, 16 MiB memory); bots are named by one
 `BotSpec` grammar in every host; `kfm_arena` runs matches and tournaments headlessly; the server
 and the client drive their bot slots through `AgentHost`, the server delaying bots by the humans'
-lead. The no-float check covers `engine/ai`.
+lead. The no-float check covers `engine/ai`. CI's lint job pins clang-format 23.1.3 and
+clang-tidy 23.1.4, the versions developers run locally (PyPI wheels), so a local pass is a CI
+pass; clang-format 23.1.3 is the formatter of record (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
