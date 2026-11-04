@@ -73,6 +73,26 @@ kfm_add_test_exe(kfm_ai_tests
 )
 target_link_libraries(kfm_ai_tests PRIVATE kfm::ai)
 
+if(KFM_WASM_BOTS)
+  # WasmAgent over WAMR (§8), on the hand-written modules in tests/fixtures/bots
+  # (the .wasm files are checked in: CI has no wabt).
+  set(KFM_BOT_FIXTURES_DIR "${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
+  kfm_add_test_exe(kfm_ai_wasm_tests
+    ai/wasm_agent_test.cpp
+  )
+  target_link_libraries(kfm_ai_wasm_tests PRIVATE kfm::ai_wasm)
+  target_compile_definitions(kfm_ai_wasm_tests PRIVATE KFM_BOT_FIXTURES_DIR="${KFM_BOT_FIXTURES_DIR}")
+
+  # Each fixture's .wasm matches its .wat (tools/bots/build_fixtures.sh
+  # regenerates them); skipped where wabt's wat2wasm is not on PATH.
+  add_test(NAME bot_fixtures_up_to_date
+    COMMAND ${CMAKE_COMMAND}
+      -DFIXTURES_DIR=${KFM_BOT_FIXTURES_DIR}
+      -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/bot_fixtures
+      -P ${PROJECT_SOURCE_DIR}/tools/bots/check_fixtures.cmake)
+  set_tests_properties(bot_fixtures_up_to_date PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED: wat2wasm")
+endif()
+
 kfm_add_test_exe(kfm_presentation_tests
   presentation/math_test.cpp
   presentation/camera_test.cpp

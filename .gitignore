@@ -10,6 +10,9 @@
 # Emscripten / wasm artifacts
 *.wasm
 *.wasm.map
+# ... except the bot ABI test fixtures, assembled from the .wat beside them
+# (tools/bots/build_fixtures.sh) and checked in because CI has no wabt
+!/tests/fixtures/bots/*.wasm
 
 # Generated assets (built by the pipeline, source models are checked in)
 /content/sprites/generated/

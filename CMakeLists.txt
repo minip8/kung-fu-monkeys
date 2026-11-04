@@ -36,6 +36,13 @@ option(KFM_BUILD_APPS "Build the apps (replay runner, later client/server)" ON)
 option(KFM_HEADLESS "Headless build: no presentation or platform layer" OFF)
 option(KFM_CXX23_PROBE "Build the C++23 feature probe (architecture §9)" ON)
 option(KFM_WEBRTC "Build the WebRTC transport (libdatachannel / datachannel-wasm, §6.4)" ON)
+option(KFM_WASM_BOTS "Build the wasm bot runtime (WAMR, kfm_ai_wasm, §8); native only" ON)
+if(EMSCRIPTEN AND KFM_WASM_BOTS)
+  # The browser runs bot modules through its own WebAssembly API behind a JS
+  # shim (§8), not through an interpreter compiled to wasm.
+  message(STATUS "KFM: KFM_WASM_BOTS is native only; off under Emscripten")
+  set(KFM_WASM_BOTS OFF CACHE BOOL "Build the wasm bot runtime (WAMR, kfm_ai_wasm, §8); native only" FORCE)
+endif()
 set(KFM_SANITIZE "" CACHE STRING "Sanitizers to enable, e.g. address,undefined")
 set(KFM_CXX_STANDARD 23 CACHE STRING "C++ standard for all targets (architecture §9)")
 
