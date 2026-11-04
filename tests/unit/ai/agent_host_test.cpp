@@ -238,3 +238,40 @@ TEST_CASE("reinit re-seeds the agent and empties its delay line; clear empties t
   CHECK(host.slots() == 0);
   CHECK(host.stats(PlayerId{0}).acts == 0);
 }
+
+TEST_CASE("the content hash is cached and recomputed after an invalidation", "[ai][host]") {
+  // fill() hashes the ContentDB once, not every tick; an in-place edit needs
+  // invalidateContentHash() (the client's live tuning), while a different
+  // ContentDB object, attach and reinit each recompute on their own.
+  std::vector<Call> log;
+  WorldState s = makePlayingWorld(5, 0b11);
+  ContentDB c = defaultContent();
+  const uint32_t original = contentHash(c);
+  AgentHost host;
+  host.attach(PlayerId{0}, std::make_unique<EchoAgent>(log), 1);
+  const auto fillOnce = [&](const ContentDB& db) {
+    InputFrame f = frameFor(s);
+    host.fill(f, s, db);
+    return host.lastObservation().match.contentHash;
+  };
+  CHECK(fillOnce(c) == original);
+
+  const uint16_t stun = c.player.hitStunTicks;
+  c.player.hitStunTicks = static_cast<uint16_t>(stun + 1);
+  const uint32_t edited = contentHash(c);
+  REQUIRE(edited != original);
+  CHECK(fillOnce(c) == original);  // an in-place edit is not seen by itself
+  host.invalidateContentHash();
+  CHECK(fillOnce(c) == edited);
+
+  const ContentDB other = defaultContent();
+  CHECK(fillOnce(other) == original);  // another object: recomputed
+  CHECK(fillOnce(c) == edited);
+
+  c.player.hitStunTicks = stun;
+  host.reinit(PlayerId{0}, 2);
+  CHECK(fillOnce(c) == original);
+  c.player.hitStunTicks = static_cast<uint16_t>(stun + 1);
+  host.attach(PlayerId{1}, std::make_unique<EchoAgent>(log), 3);
+  CHECK(fillOnce(c) == edited);
+}

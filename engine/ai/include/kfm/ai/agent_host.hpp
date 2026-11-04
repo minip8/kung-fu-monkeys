@@ -19,9 +19,19 @@
 // empties the delay line (idle until the first answer is due), keeping the
 // delay and the counters, which are per attach.
 //
+// The content hash in the observation (Observation::match.contentHash) is
+// sim::contentHash(content.db), which serialises the whole ContentDB: far too
+// slow for every tick. The host caches it: computed at the first fill() after
+// attach/detach/reinit/clear or invalidateContentHash(), and again whenever
+// fill() is handed a different ContentDB object (keyed on its address). A
+// host whose ContentDB is edited in place between ticks (the client's live
+// feel tuning) must call invalidateContentHash() after the edit.
+//
 // Ownership: the host owns its agents (std::unique_ptr); attach() hands one
 // over and detach() hands it back. Allocation happens only in attach/detach;
-// fill() allocates nothing and never writes the world.
+// fill() allocates nothing, never writes the world and costs O(agents) apart
+// from the observations themselves (plus one contentHash() after a cache
+// invalidation).
 #pragma once
 
 #include "kfm/ai/agent.hpp"
@@ -58,7 +68,7 @@ class AgentHost {
   void attach(PlayerId slot, std::unique_ptr<IAgent> agent, uint64_t seed, uint8_t delayTicks = 0);
   // Removes the agent from `slot` and returns it (null when there was none).
   std::unique_ptr<IAgent> detach(PlayerId slot);
-  // Destroys every agent.
+  // Destroys every agent (and drops the cached content hash).
   void clear();
   // Calls init(seed, slot) on the agent in `slot` again and empties its delay
   // line and last input; the delay and the counters stay. No-op without an
@@ -67,6 +77,11 @@ class AgentHost {
   // Changes the slot's input delay (clamped to kMaxAgentDelayTicks) from the
   // next fill() on; see the header comment. No-op without an agent.
   void setDelay(PlayerId slot, uint8_t delayTicks);
+
+  // The content hash cache (see the header comment): the next fill()
+  // recomputes sim::contentHash(content.db). Call it after editing, in place,
+  // the ContentDB a host passes to fill().
+  void invalidateContentHash() { hashFor_ = nullptr; }
 
   [[nodiscard]] bool has(PlayerId slot) const { return agent(slot) != nullptr; }
   [[nodiscard]] IAgent* agent(PlayerId slot) const;
@@ -106,6 +121,9 @@ class AgentHost {
 
   std::array<Slot, sim::kMaxPlayers> slots_{};
   Observation obs_{};
+  // The content hash cache: hash_ is contentHash(*hashFor_) while hashFor_ is set.
+  const sim::ContentDB* hashFor_{nullptr};
+  uint32_t hash_{0};
 };
 
 }  // namespace kfm::ai

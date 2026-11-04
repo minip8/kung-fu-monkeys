@@ -30,6 +30,7 @@ void AgentHost::attach(PlayerId slot, std::unique_ptr<IAgent> agent, uint64_t se
   s.agent = std::move(agent);
   s.delay = std::min(delayTicks, kMaxAgentDelayTicks);
   s.agent->init(seed, slot);
+  invalidateContentHash();
 }
 
 std::unique_ptr<IAgent> AgentHost::detach(PlayerId slot) {
@@ -37,12 +38,14 @@ std::unique_ptr<IAgent> AgentHost::detach(PlayerId slot) {
   Slot& s = slots_[slot.value];
   std::unique_ptr<IAgent> agent = std::move(s.agent);
   s = Slot{};
+  invalidateContentHash();
   return agent;
 }
 
 void AgentHost::clear() {
   for (Slot& s : slots_)
     s = Slot{};
+  invalidateContentHash();
 }
 
 void AgentHost::reinit(PlayerId slot, uint64_t seed) {
@@ -53,6 +56,7 @@ void AgentHost::reinit(PlayerId slot, uint64_t seed) {
   s->last = {};
   s->ring = {};
   s->agent->init(seed, slot);
+  invalidateContentHash();
 }
 
 void AgentHost::setDelay(PlayerId slot, uint8_t delayTicks) {
@@ -87,17 +91,15 @@ AgentSlotStats AgentHost::stats(PlayerId slot) const {
 void AgentHost::fill(sim::InputFrame& frame, const sim::WorldState& world,
                      const sim::MatchContent& content) {
   KFM_ASSERT(frame.tick == world.tick);
-  bool hashed = false;
-  uint32_t hash = 0;
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     Slot& s = slots_[i];
     const PlayerId id{i};
     if (s.agent == nullptr || !sim::maskHas(frame.present, id)) continue;
-    if (!hashed) {  // once per tick, and only when some agent plays
-      hash = sim::contentHash(content.db);
-      hashed = true;
+    if (hashFor_ != &content.db) {  // only when some agent plays (see the header)
+      hash_ = sim::contentHash(content.db);
+      hashFor_ = &content.db;
     }
-    buildObservation(world, content, hash, id, s.delay, obs_);
+    buildObservation(world, content, hash_, id, s.delay, obs_);
     const std::optional<sim::PlayerInput> answer = s.agent->act(obs_, world.tick);
     ++s.stats.acts;
     if (!answer.has_value()) ++s.stats.substitutions;
