@@ -1,6 +1,7 @@
 // kfm_client: the playable client (architecture §3, §6.8, §7, §11 M2, M3).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
+//              [--bot-difficulty easy|medium|hard] [--bot-module PATH] [--bot SPEC]
 //              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
 //              [--no-hot-reload] [--no-settings] [--overlay] [--capsules] [--exit-after-frames N]
 //              [--screenshot out.ppm]
@@ -29,12 +30,17 @@
 // content kept). Online the server's content and match config rule.
 //
 // Lobby settings (v0.24, core/lobby_menu.hpp, core/lobby_settings.hpp): the
-// local lobby's panel picks the arena, mode, power-up set, bots, volume and
-// mute, from the mouse, the arrow keys / WASD or a joined pad's d-pad and
+// local lobby's panel picks the arena, mode, power-up set, bots, the bot
+// difficulty, volume and mute, from the mouse, the arrow keys / WASD or a joined pad's d-pad and
 // stick. Every change applies to the lobby's MatchSession and the audio at
 // once and is saved (natively in SDL's preference directory, in the browser
 // in localStorage) unless --no-settings; at startup the saved settings come
 // first and the flags (or URL parameters) override them.
+//
+// Bots (§8, core/bot_roster.hpp): local bot slots are agents in the session's
+// AgentHost, the reference bot at the lobby's difficulty tier, or natively a
+// --bot-module .wasm (loaded once; one that fails to load is reported and
+// the reference bot plays instead). Online the server owns the bots.
 //
 // Keys outside the game bindings: F1 debug overlay, P pause, O single step,
 // Escape back to the lobby (quits from the lobby, natively; online it
@@ -198,6 +204,7 @@ void applyLobbySettings(App& app) {
   if (s.powerUps() != ls.powerUps) s.setPowerUps(ls.powerUps);
   s.setBotCount(ls.bots);
   ls.bots = s.botCount();  // clamped to the free slots
+  if (s.botSpec().tier != ls.botTier) s.setBotTier(ls.botTier);
   app.audio.setMuted(ls.mute);
   app.audio.setVolumePercent(ls.volume);
   client::storeLobbySettings(ls, app.content.db, app.options);
@@ -624,7 +631,15 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
                             .content = &app.content.db,
                             .botSeed = app.options.playersSeed,
                             .bots = online ? std::uint8_t{0} : lobby.bots,
+                            .botSpec = client::botSpec(app.options),
                             .hostHandlesStart = online});
+  if (!app.session->botSpecError().empty()) {
+    std::fprintf(stderr, "error: %s; the bots are the reference bot (%s)\n",
+                 app.session->botSpecError().c_str(), app.session->botRoster().describe().c_str());
+  } else if (!online && app.session->botRoster().moduleActive()) {
+    std::printf("kfm_client: bots run %s\n", app.session->botRoster().describe().c_str());
+    std::fflush(stdout);
+  }
   // A renderer that cannot create its buffers, shaders or pipelines is fatal
   // (so client_smoke catches it); a missing character model is not.
   if (!syncRenderer(app, app.session->matchContent(), app.content.hash,

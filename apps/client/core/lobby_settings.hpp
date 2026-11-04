@@ -11,6 +11,7 @@
 //   mode=deathmatch
 //   powerups=shield,big_banana      (all, none or comma-separated names)
 //   bots=3
+//   bot_difficulty=medium           (easy, medium or hard: the reference bot's tier)
 //   volume=80
 //   mute=0
 //
@@ -36,6 +37,7 @@ struct LobbySettings {
   uint8_t mode{0};
   uint16_t powerUps{sim::kAllPowerUps};
   uint8_t bots{0};
+  ai::ReferenceTier botTier{kDefaultBotTier};
   uint8_t volume{80};  // percent
   bool mute{false};
   constexpr bool operator==(const LobbySettings&) const = default;

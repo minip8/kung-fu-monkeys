@@ -143,6 +143,7 @@ void LobbyMenu::setContent(const sim::ContentDB& content) {
   for (uint8_t i = 0; i < powerUps; ++i)
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::PowerUp, i};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Bots};
+  rows_[rowCount_++] = LobbyRow{LobbyRowKind::BotDifficulty};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
   if (settings_.arena >= content.arenaCount) settings_.arena = 0;
@@ -201,6 +202,12 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       settings_.bots = static_cast<uint8_t>(bots);
       break;
     }
+    case LobbyRowKind::BotDifficulty: {
+      constexpr uint8_t kTiers = 3;  // easy, medium, hard
+      settings_.botTier =
+          static_cast<ai::ReferenceTier>(cycle(static_cast<uint8_t>(settings_.botTier), kTiers));
+      break;
+    }
     case LobbyRowKind::Volume: {
       const int volume = std::clamp(
           static_cast<int>(settings_.volume) + (direction > 0 ? kVolumeStep : -kVolumeStep), 0,
@@ -225,6 +232,8 @@ std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
       return std::string(content().powerUpAt(row.powerUp).name.view());
     case LobbyRowKind::Bots:
       return "Bots";
+    case LobbyRowKind::BotDifficulty:
+      return "Bot difficulty";
     case LobbyRowKind::Volume:
       return "Volume";
     case LobbyRowKind::Mute:
@@ -244,6 +253,8 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return (settings_.powerUps & (1u << row.powerUp)) != 0 ? "on" : "off";
     case LobbyRowKind::Bots:
       return std::to_string(settings_.bots);
+    case LobbyRowKind::BotDifficulty:
+      return std::string(ai::toString(settings_.botTier));
     case LobbyRowKind::Volume:
       return std::to_string(settings_.volume) + "%";
     case LobbyRowKind::Mute:

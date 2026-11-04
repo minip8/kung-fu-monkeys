@@ -166,6 +166,37 @@ void matchSection(const MatchSession& s) {
   }
 }
 
+// Who the bots are and, per bot slot, the host's counters (AgentHost::stats)
+// and, for a module, the runtime's (WasmAgent::stats).
+void botsSection(const MatchSession& s) {
+  const BotRoster& roster = s.botRoster();
+  ImGui::Text("bots: %s%s", roster.describe().c_str(),
+              roster.moduleActive() ? "  (wasm module)" : "  (reference bot)");
+  if (!s.botSpecError().empty()) {
+    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "module fell back: %s",
+                       s.botSpecError().c_str());
+  }
+  if (s.phase() != SessionPhase::Match || s.botMask() == 0) {
+    ImGui::TextDisabled("no bot slots in play");
+    return;
+  }
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    const PlayerId slot{i};
+    if (!s.agents().has(slot)) continue;
+    const BotSlotStats st = s.botStats(slot);
+    ImGui::Text("P%u  acts %u  substituted %u", static_cast<unsigned>(i) + 1, st.acts,
+                st.substitutions);
+    if (st.module) {
+      ImGui::SameLine();
+      ImGui::Text(" traps %llu  over budget %llu  bad returns %llu  fuel %u (max %u)%s",
+                  static_cast<unsigned long long>(st.traps),
+                  static_cast<unsigned long long>(st.overBudget),
+                  static_cast<unsigned long long>(st.badReturns), st.fuelLast, st.fuelMax,
+                  st.alive ? "" : "  DEAD");
+    }
+  }
+}
+
 void interpolationSection(MatchSession& s) {
   int policy = static_cast<int>(s.interpolationPolicy());
   constexpr const char* kPolicies[] = {"Auto", "Interpolate", "Newest tick"};
@@ -472,6 +503,7 @@ void DebugOverlay::draw(MatchSession& session, const presentation::RendererStats
     if (ImGui::CollapsingHeader("Controls", ImGuiTreeNodeFlags_DefaultOpen)) {
       controlsSection(session, nowNs);
     }
+    if (ImGui::CollapsingHeader("Bots")) botsSection(session);
     if (ImGui::CollapsingHeader("Interpolation")) interpolationSection(session);
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
     if (ImGui::CollapsingHeader("Feel tuning")) tuningSection(session, printedCpp_);
