@@ -143,11 +143,17 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   config.players = static_cast<PlayerMask>((1u << n) - 1u);
   const MatchContent match = matchContent(content, config);
 
+  // Slot i plays bot botOf[i]: bot b sits in slot (b + rotation) mod n.
+  std::vector<size_t> botOf(n);
+  const size_t shift = setup.rotation % n;
+  for (size_t i = 0; i < n; ++i)
+    botOf[i] = (i + n - shift) % n;
+
   // Agents first: a failing module leaves no half-played match.
   ai::AgentHost host;
   std::vector<ai::WasmAgent*> wasm(n, nullptr);
   for (size_t i = 0; i < n; ++i) {
-    auto made = factory.make(setup.bots[i]);
+    auto made = factory.make(setup.bots[botOf[i]]);
     if (!made) return std::unexpected(std::move(made.error()));
     const auto slot = static_cast<uint8_t>(i);
     wasm[i] = made->wasm;
@@ -160,9 +166,11 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   result.seed = config.seed;
   result.slots.resize(n);
   for (size_t i = 0; i < n; ++i) {
+    const ai::BotSpec& bot = setup.bots[botOf[i]];
     result.slots[i].slot = static_cast<uint8_t>(i);
-    result.slots[i].bot = ai::toString(setup.bots[i]);
-    result.slots[i].module = setup.bots[i].kind == ai::BotKind::Module;
+    result.slots[i].botIndex = static_cast<uint8_t>(botOf[i]);
+    result.slots[i].bot = ai::toString(bot);
+    result.slots[i].module = bot.kind == ai::BotKind::Module;
   }
 
   // A WorldState is large: keep it off the stack.
@@ -252,13 +260,19 @@ void Summary::add(const MatchResult& result) {
   } else {
     ++draws;
   }
-  for (const SlotResult& s : result.slots) {
-    if (slots.size() <= s.slot) slots.resize(size_t{s.slot} + 1);
-    SlotSummary& t = slots[s.slot];
-    t.slot = s.slot;
-    t.bot = s.bot;
-    t.module = s.module;
-    if (result.winner.isValid() && result.winner.value == s.slot) ++t.wins;
+  const bool won = result.winner.isValid();
+  const auto fold = [&](std::vector<SlotSummary>& rows, uint8_t index, const SlotResult& s) {
+    if (rows.size() <= index) rows.resize(size_t{index} + 1);
+    SlotSummary& t = rows[index];
+    const bool first = t.bot.empty();
+    t.index = index;
+    if (first) {
+      t.bot = s.bot;
+    } else if (t.bot != s.bot) {
+      t.bot = "mixed";
+    }
+    t.module = t.module || s.module;
+    if (won && result.winner.value == s.slot) ++t.wins;
     t.placeSum += s.place;
     t.score += s.score;
     t.kills += s.kills;
@@ -269,6 +283,11 @@ void Summary::add(const MatchResult& result) {
     t.overBudget += s.overBudget;
     t.badReturns += s.badReturns;
     t.fuelMax = std::max(t.fuelMax, s.fuelMax);
+  };
+  for (const SlotResult& s : result.slots) {
+    fold(slots, s.slot, s);
+    fold(bots, s.botIndex, s);
+    if (s.botIndex != s.slot) rotated = true;
   }
 }
 
@@ -332,8 +351,9 @@ std::string formatResultLine(const MatchResult& r) {
                   r.ticks, r.checksum, outcomeText(r.outcome), winnerText(r.winner));
   for (const SlotResult& s : r.slots) {
     std::format_to(std::back_inserter(out),
-                   " | slot {} {} place {} score {} kills {} deaths {} acts {} subs {}", s.slot,
-                   s.bot, s.place, s.score, s.kills, s.deaths, s.acts, s.substitutions);
+                   " | slot {} bot {} {} place {} score {} kills {} deaths {} acts {} subs {}",
+                   s.slot, s.botIndex, s.bot, s.place, s.score, s.kills, s.deaths, s.acts,
+                   s.substitutions);
     if (s.module) {
       std::format_to(
           std::back_inserter(out),
@@ -355,10 +375,10 @@ std::string formatResultJson(const MatchResult& r) {
     const SlotResult& s = r.slots[i];
     if (i != 0) out.push_back(',');
     std::format_to(std::back_inserter(out),
-                   R"({{"slot":{},"bot":{},"module":{},"place":{},"score":{},"kills":{},)"
-                   R"("deaths":{},"acts":{},"subs":{})",
-                   s.slot, jsonString(s.bot), s.module, s.place, s.score, s.kills, s.deaths, s.acts,
-                   s.substitutions);
+                   R"({{"slot":{},"bot":{},"spec":{},"module":{},"place":{},"score":{},)"
+                   R"("kills":{},"deaths":{},"acts":{},"subs":{})",
+                   s.slot, s.botIndex, jsonString(s.bot), s.module, s.place, s.score, s.kills,
+                   s.deaths, s.acts, s.substitutions);
     if (s.module) {
       std::format_to(std::back_inserter(out),
                      R"(,"traps":{},"over":{},"bad":{},"fuel_mean":{},"fuel_max":{},)"
@@ -376,40 +396,51 @@ std::string formatSummaryLine(const Summary& sum) {
   const uint64_t ticksMean = sum.matches == 0 ? 0 : sum.ticks / sum.matches;
   std::string out = std::format("summary matches {} ended {} draws {} cap {} ticks_mean {}",
                                 sum.matches, sum.ended, sum.draws, sum.capped, ticksMean);
-  for (const SlotSummary& s : sum.slots) {
-    std::format_to(std::back_inserter(out),
-                   " | slot {} {} wins {} mean_place {:.2f} score {} kills {} deaths {} acts {} "
-                   "subs {}",
-                   s.slot, s.bot, s.wins, meanPlace(s, sum.matches), s.score, s.kills, s.deaths,
-                   s.acts, s.substitutions);
-    if (s.module) {
-      std::format_to(std::back_inserter(out), " traps {} over {} bad {} fuel_max {}", s.traps,
-                     s.overBudget, s.badReturns, s.fuelMax);
+  const auto rows = [&](std::string_view label, const std::vector<SlotSummary>& totals) {
+    for (const SlotSummary& s : totals) {
+      std::format_to(std::back_inserter(out),
+                     " | {} {} {} wins {} mean_place {:.2f} score {} kills {} deaths {} acts {} "
+                     "subs {}",
+                     label, s.index, s.bot, s.wins, meanPlace(s, sum.matches), s.score, s.kills,
+                     s.deaths, s.acts, s.substitutions);
+      if (s.module) {
+        std::format_to(std::back_inserter(out), " traps {} over {} bad {} fuel_max {}", s.traps,
+                       s.overBudget, s.badReturns, s.fuelMax);
+      }
     }
-  }
+  };
+  rows("slot", sum.slots);
+  if (sum.rotated) rows("bot", sum.bots);
   return out;
 }
 
 std::string formatSummaryJson(const Summary& sum) {
   const uint64_t ticksMean = sum.matches == 0 ? 0 : sum.ticks / sum.matches;
-  std::string out = std::format(
-      R"({{"summary":true,"matches":{},"ended":{},"draws":{},"cap":{},"ticks_mean":{},"slots":[)",
-      sum.matches, sum.ended, sum.draws, sum.capped, ticksMean);
-  for (size_t i = 0; i < sum.slots.size(); ++i) {
-    const SlotSummary& s = sum.slots[i];
-    if (i != 0) out.push_back(',');
-    std::format_to(std::back_inserter(out),
-                   R"({{"slot":{},"bot":{},"module":{},"wins":{},"mean_place":{:.2f},"score":{},)"
-                   R"("kills":{},"deaths":{},"acts":{},"subs":{})",
-                   s.slot, jsonString(s.bot), s.module, s.wins, meanPlace(s, sum.matches), s.score,
-                   s.kills, s.deaths, s.acts, s.substitutions);
-    if (s.module) {
-      std::format_to(std::back_inserter(out), R"(,"traps":{},"over":{},"bad":{},"fuel_max":{})",
-                     s.traps, s.overBudget, s.badReturns, s.fuelMax);
+  std::string out =
+      std::format(R"({{"summary":true,"matches":{},"ended":{},"draws":{},"cap":{},"ticks_mean":{})",
+                  sum.matches, sum.ended, sum.draws, sum.capped, ticksMean);
+  const auto rows = [&](std::string_view key, std::string_view label,
+                        const std::vector<SlotSummary>& totals) {
+    std::format_to(std::back_inserter(out), R"(,"{}":[)", key);
+    for (size_t i = 0; i < totals.size(); ++i) {
+      const SlotSummary& s = totals[i];
+      if (i != 0) out.push_back(',');
+      std::format_to(std::back_inserter(out),
+                     R"({{"{}":{},"spec":{},"module":{},"wins":{},"mean_place":{:.2f},"score":{},)"
+                     R"("kills":{},"deaths":{},"acts":{},"subs":{})",
+                     label, s.index, jsonString(s.bot), s.module, s.wins, meanPlace(s, sum.matches),
+                     s.score, s.kills, s.deaths, s.acts, s.substitutions);
+      if (s.module) {
+        std::format_to(std::back_inserter(out), R"(,"traps":{},"over":{},"bad":{},"fuel_max":{})",
+                       s.traps, s.overBudget, s.badReturns, s.fuelMax);
+      }
+      out.push_back('}');
     }
-    out.push_back('}');
-  }
-  out += "]}";
+    out.push_back(']');
+  };
+  rows("slots", "slot", sum.slots);
+  if (sum.rotated) rows("bots", "bot", sum.bots);
+  out.push_back('}');
   return out;
 }
 

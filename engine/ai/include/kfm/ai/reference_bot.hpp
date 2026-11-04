@@ -17,10 +17,21 @@
 //   - dodge: when no walk escapes a hit, the safest dash, else the third
 //     slot's blink, parry or slam when the loadout has one;
 //   - dash attack: holding the ammo that arms it, a dash that meets the
-//     target's predicted path;
+//     target's predicted path, only on a target that cannot strike back on
+//     the same tick (unarmed, or its dash busy or cooling down): two strikes
+//     pressed on one tick are resolved in slot order, a coin tossed by slot
+//     index rather than a fight;
 //   - throw: a lead shot (intercept of the target's velocity at banana
 //     speed, after the wind-up and the host delay) within the outbound range
-//     and clear of the walls.
+//     and clear of the walls; in a standoff (the target can throw back at
+//     once) held for a random 0..2 ticks, drawn once per lined-up shot.
+// Fairness: nothing in the evaluation depends on the bot's own slot, and
+// ties (equal target distances, equal movement scores) go to a random
+// candidate, never to the lowest slot, banana or direction index. With no
+// noise a bot is otherwise a pure function of the world, so mirrored hard
+// bots would play mirrored rounds (the same opening for every spawn
+// rotation, both falling on one tick); the tie-breaks and the standoff hold
+// are where the per-slot seed breaks that symmetry without a handicap.
 // It aims ahead by the observation's inputDelayTicks, presses buttons only
 // as fresh edges (never two ticks in a row) at sub-tick 0, and is
 // deterministic: fixed-point only, its own Rng seeded by init(), no
@@ -117,6 +128,8 @@ class ReferenceBot final : public IAgent {
   uint8_t lastDecidedButtons_{0};
   uint8_t lastMoveDir_{0};
   uint32_t decisions_{0};
+  // Ticks left of a standoff's throw hold; -1 while none is drawn.
+  int8_t throwHold_{-1};
   // The reaction delay line: decision n is played on act n + reactionDelayTicks.
   std::array<sim::PlayerInput, kMaxReactionDelayTicks + 1> pending_{};
   // Scratch, kept here rather than on the stack (no allocation after construction).
