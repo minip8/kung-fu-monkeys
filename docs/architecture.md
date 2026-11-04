@@ -498,8 +498,10 @@ Teams never enter `WorldState`: like the power-up set (v0.24) they ride in `Matc
 world checksum. A free-for-all config gives every slot its own team. Kinds added with the
 seams: `team_rounds` (the last team standing wins the round), `team_deathmatch` (a team's
 eliminations to `scoreToWin`), `hill` (a team scores a point for every `hillTicks` it holds the
-zone alone), `capture` (carry the flag pickup into the own zone). Each is a behaviour file plus
-a scenario test, like the three kinds before them. Candidates that wait for a use: `hot_potato`
+zone alone; a contested or empty zone holds the clock, it never resets), `capture` (carry the
+flag pickup into the own zone; an eliminated carrier drops it where it stood, and a dropped flag
+nobody touches for `flagReturnTicks` returns to its zone). Each is a behaviour file plus a
+scenario test, like the three kinds before them. Candidates that wait for a use: `hot_potato`
 (a fused banana tag), `infection`.
 
 ### 5.4 Input model
@@ -1268,6 +1270,22 @@ What the grid is not: it is not a second sim. One monkey per slot stays load-bea
 "with an army" is a team of slots (§8) and `kMaxPlayers` caps a side at five. Armies of dozens
 would be a different `WorldState` and a different game; if that day comes it is a sibling sim
 over `core`, not a switch in this one.
+
+Alternatives considered (v0.29), so they are not re-proposed without new evidence:
+- Facing from the last move, with rotation costing a turn: rejected. It makes retreating a blind
+  walk, so the dominant play against an unseen threat is to stand still, and it kills kiting,
+  the throw-dodge-catch loop the game runs on. Free rotation makes facing a bet about where the
+  threat is, which fog keeps interesting.
+- A cell-coincidence narrowphase (a banana hits when its centre's swept segment crosses the
+  monkey's cell): the deliberate fallback, not the first cut. Radii tuned so the hit disc sits
+  inside the cell need no code; the narrowphase is one variant behind the space table and the
+  same `Contact`, to be built only if bot authors trip on the corner cases.
+- Bananas on eight-direction cell paths: rejected in favour of continuous flight. Paths need a
+  new projectile system and lose curved returns and bank shots; continuous bananas reuse
+  everything and give any throw angle for free.
+- One program per team (`kfm_act(tick, slot)`) and a shared team array first: rejected in §8.
+- A second, turn-based sim: rejected above; the only line that would reopen it is more than one
+  monkey per slot.
 
 ---
 
@@ -2360,6 +2378,19 @@ ALSA plugins. CI installs `libasound2-dev`. Windows (WASAPI), macOS (CoreAudio) 
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting, the bot ladder (`kfm_arena` as a service, rankings, replay viewing) | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
+
+M5b sequencing (v0.29): one PR and one architecture version per step, each green on the
+determinism gate before the next starts. (1) Mode foundations: `kMaxModes` 32, the loadout axis,
+`onRoundStart`/`onPickupTaken`, `modeData` (content hash changes once; `modeData` regenerates
+the corpus). (2) Teams: `MatchConfig::teams`, `relation`, the relation mask and row 31, spawn
+groups, `team_rounds` and `team_deathmatch` (checksums unchanged). (3) Objectives: zones, the
+tilemap format, `hill`, then `capture` (checksums unchanged). (4) The `grid` space: the
+`SpaceBehavior` table, commitments, rooting, the radius stat, the catcher loadout, a grid
+rounds mode (the commitment fields regenerate the corpus). (5) The squad contest: `vision`,
+calls, `Observation` fields, `kfm_arena --team`, per-instance lifecycle (no sim checksum
+change beyond the `call` ability's event). Steps 1 to 3 are worth doing even if the grid is
+dropped; step 4 is the only one with design risk and is prototyped behind the table before the
+contest layer goes on top.
 
 Progress: M3 landed in v0.17. `engine/net` holds the `ITransport` seam, the loopback
 transport with its deterministic emulator and the transport contract suite, the bit-packed
