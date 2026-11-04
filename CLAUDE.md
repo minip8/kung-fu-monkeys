@@ -23,7 +23,9 @@ event-driven effects and procedural sound, procedural meshes, skinning, the soko
 page); `engine/net` (`ITransport`, loopback + emulator, message layer, `NetServer`, `NetClient`
 with rollback and clock sync, `WebRtcTransport`), `apps/server`, `apps/netsim`, `apps/net-probe`
 and the client's `--connect` mode. Next is M5 (agent platform: `IAgent`, the wasm bot ABI,
-the reference bot, `kfm_arena`). `docs/architecture.md` is the
+the reference bot, `kfm_arena`), then M5b (teams and relations, the five mode seams, the loadout axis,
+zones and tilemap arenas, the `grid` space and the squad contest shape with fog and calls; designed in
+architecture v0.29, §5.3, §5.10, §5.12, §8). `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.

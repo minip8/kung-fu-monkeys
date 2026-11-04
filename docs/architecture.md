@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.28 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.29 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -200,6 +200,24 @@ v0.28 changes: the pierce switch is gone. Every banana flies on through the monk
 `BoomerangDef::pierce`, `Boomerang::pierce`, `ProjectileModifier::pierce` and their TOML keys
 are removed, and a banana no longer grounds on a hit under any content (§5.2, §5.6, §5.7, §5.8,
 §5.10, §12).
+v0.29 changes: modes along five axes and the grid space (§2, §5.3, §5.4, §5.6, §5.10, §5.12,
+§8, §11, §12, Appendices). A mode varies win condition, roster, baseline rules, objectives and
+space, with a seam per axis: `ModeBehavior` gains `onRoundStart` and `onPickupTaken` and a
+mode-owned `MatchRules::modeData` scratch block; teams ride in `MatchConfig::teams`, reach the
+sim as `MatchContent::relation(a, b)` and the rules table as a per-row relation mask (friendly
+fire is row 31 behind `Tag::FriendlyFire`); loadouts leave the mode list for a `[[loadout]]` def
+and a `MatchConfig::loadout` axis, and team modes hand them out per position as roles; a mode's
+permanent baseline is a power-up it names; arenas gain zones, spawn groups and a tilemap
+authoring format; `kMaxModes` rises to 32. `ModeDef::space` picks `continuous` (today's sim, bit
+for bit) or `grid`: monkeys commit to one of eight neighbouring cells per turn of `turnTicks` and
+slide there, contested cells resolve at the latch, facing follows aim, a throw roots for the
+turn; bananas stay continuous (any angle, the same flight, collision and rules), the base grid
+dash never catches and one monkey per team carries the catcher's dash as a role; the contact
+radius becomes a derived stat so grid content fits the hit disc inside a cell. Bots (§8): an
+entrant is a team, one module instance per monkey, fog of war and in-game calls (a `call`
+ability whose payload is the aim byte) are computed in the observation builder from mode
+content, never in the sim; the `Observation` v1 field list reserves team, visibility, calls and
+the turn clock. The roadmap gains M5b.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -238,6 +256,7 @@ platform seams.
 | Netcode | Server-authoritative deterministic sim with **input synchronisation**: clients send inputs, server relays authoritative inputs, clients predict everyone and roll back | GGPO-style feel (no local input delay) plus a trusted authority, join-in-progress and resync; bandwidth independent of entity count |
 | Transport | WebRTC data channels as the single production transport (libdatachannel natively, the same C++ API via datachannel-wasm in the browser); in-process loopback with network emulation for tests; GameNetworkingSockets only if a Steam build happens. All behind one `ITransport` with an unreliable lane and a reliable lane; our message layer (input frames, redundancy, clock sync) sits above | One transport to harden, built-in encryption, browsers and native clients share a match with no bridging; the game netcode never knows which transport is in use |
 | Gameplay modularity | Content defs (abilities, power-ups, arenas, modes) + behaviour registries keyed by kind + a prioritised interaction rules table | New ability or twist = new file + def + registration, no edits to existing systems |
+| Modes and spaces | A mode is content along five independent axes (win condition, roster, baseline rules, objectives, space), each behind its own seam; the grid is a `Space` of the same sim in which monkeys move cell to cell while bananas stay continuous; fog and communication are computed on the observation side | A new mode is TOML plus one behaviour file; the grid reuses flight, collision, the rules table, netcode, rendering and the bot ABI unchanged |
 | Presentation | Real-time low-poly 3D over a strictly 2D sim: fixed tilted camera, skinned glTF characters, flat/toon shading, blob shadows mark true positions. SDL3 (window/input/audio) + sokol_gfx, Dear ImGui debug UI | Rendering is a read-only consumer of sim state; smooth facing matches continuous aim; sokol_gfx has WebGL2/WebGPU backends for the browser build |
 | Bots | A bot is a wasm module behind a versioned C ABI (observation in, `PlayerInput` out), sandboxed and metered in instructions per tick; `IAgent` wraps modules and the built-in bot alike; SDKs, example bots and any training live in a separate repository, no training stack in the engine | Same action space for humans and every bot; any language; a match is reproducible from seed plus modules; fairness by fuel, not wall clock |
 | Tooling | CMake presets, vcpkg, Catch2, Tracy, sanitizers, clang-format/clang-tidy, CI with a cross-OS determinism gate | Determinism is enforced, not hoped for |
@@ -463,6 +482,26 @@ protected for the interactions of the next `respawnInvulnTicks` ticks. The damag
 dash-attack (25) rows already forbid `Invulnerable` on the victim; a protected monkey can still
 attack and catch. A round start clears every timer.
 
+Mode seams (v0.29). The table above covers one axis of a mode, the win condition. A mode varies
+along five, and each has its own seam, so a new mode never needs a switch inside a system:
+
+| Axis | Seam | Where |
+|---|---|---|
+| Win condition and scoring | the `ModeBehavior` table, now four hooks: `onRoundStart(s, content, sink)` after the shared spawn and before the countdown (objective placement, counters), `onPlaying`, `onEliminated`, `onPickupTaken(s, content, player, pickup, sink)` right after a pickup row applied; plus `MatchRules::modeData`, eight `uint32_t` the mode owns, visited unconditionally and cleared at match start | `src/modes/` |
+| Roster: teams | `MatchConfig::teams` → `MatchContent::relation(a, b)` (Self, Ally, Enemy); a team's score is the sum of its slots' `scores` through `teamScore()`; spawn groups (§5.10) | §5.4, §5.10, §6.6 |
+| Baseline rules | `ModeDef::baseline`, a power-up the mode names, granted at every spawn with no expiry: stats, overrides and tags through the existing `ModifierSystem`; a rule row that is on or off in a mode keys on a tag the baseline grants (friendly fire, §5.6) | §5.8 |
+| Objectives | arena zones and `zoneOccupants()`, `PickupKind::Flag` with `Tag::Carrying`, boomerang tags | §5.10 |
+| Space | `ModeDef::space` and the `SpaceBehavior` table | §5.12 |
+
+Teams never enter `WorldState`: like the power-up set (v0.24) they ride in `MatchConfig` and
+`MatchContent`, the replay header and the join messages, so free-for-all content keeps every
+world checksum. A free-for-all config gives every slot its own team. Kinds added with the
+seams: `team_rounds` (the last team standing wins the round), `team_deathmatch` (a team's
+eliminations to `scoreToWin`), `hill` (a team scores a point for every `hillTicks` it holds the
+zone alone), `capture` (carry the flag pickup into the own zone). Each is a behaviour file plus
+a scenario test, like the three kinds before them. Candidates that wait for a use: `hot_potato`
+(a fused banana tag), `infection`.
+
 ### 5.4 Input model
 
 ```cpp
@@ -534,6 +573,15 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   Throw and Dash. Default bindings: L or E (keyboard profile 0), Semicolon or Apostrophe
   (profile 1), North or East (gamepads). `PlayerInput` stays 5 bytes: the bit already existed.
   The in-game controls help lists it; the browser page needs nothing (SDL maps the keys).
+
+Grid space (v0.29, §5.12): `PlayerInput` is unchanged. In a grid mode `InputSystem` latches the
+frame once per turn, on the Playing tick where `ticksInPhase % turnTicks == 0`: the latched
+`moveDir` (quantised to the nearest of the eight neighbours, idle when `moveMag == 0`) is the
+cell the monkey commits to for the turn. Presses are still edge-detected every tick, so a tap
+inside a turn is not lost, and the `subTick` of the latch tick breaks ties for a contested cell.
+Facing follows `aimDir` quantised to eight directions at the latch; the SDKs set aim to move by
+default, so facing follows movement unless the bot or player aims. On a one-tick turn a bot
+sees no difference from the continuous mode.
 
 ### 5.5 Abilities (the modularity core)
 
@@ -657,6 +705,23 @@ in `MovementSystem` and bananas bouncing in `ProjectileSystem`, through one func
 (`statics::moveCircle`, §5.10), so a wall never produces a contact. A `Boomerang × Wall` row
 would come back only when some banana kind should not bounce; it would then be a
 `MoveParams::response` choice made from the banana's modifiers rather than a contact.
+
+Relation (v0.29). Every row carries a `relationB` mask over {Self, Ally, Enemy}, judged between
+A and B's owner (B itself for a player pair) through `MatchContent::relation`; the default is
+every bit, and `Ownership` stays the own-banana test it is. A free-for-all config makes every
+other slot an enemy, so with these two rows the table plays bit for bit as before:
+
+```
+prio  A                               B                                    handler
+ 30   Player[!HitStun]                Boomerang[InFlight, !own] (Enemy)    DamagePlayer
+ 31   Player[!HitStun, FriendlyFire]  Boomerang[InFlight, !own] (Ally)     DamagePlayer
+```
+
+Friendly fire is therefore a tag the mode's baseline grants (§5.3), not a flag a handler reads;
+the dash attack and the slam push get the same pair of rows when a team mode wants them.
+Contested cells on the grid are not rows: they are resolved before anyone moves (§5.12). The
+catch stays row 10 in every space; what changes on the grid is who can ever be `PerfectDash`
+(§5.12).
 
 Pit (v0.22): `CollisionSystem` emits `Player × Hazard` for every hazard holding a player's
 centre at the end of the tick (`EntityKind::Hazard`, `b.index` = the hazard's index in
@@ -1050,6 +1115,51 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   a spawner outside the arena (by the pickup radius), inside a wall or in a pit (v0.22 statics), spawners without any power-up defined, an
   arena's `max_alive` sum above 16.
 
+- Modes, second cut (v0.29, §5.3): `ModeDef` gains `space` (`continuous` | `grid`), `turnTicks`
+  (grid, 1–60), `teams` (0 = free-for-all, else the team count the lobby distributes the slots
+  over), `baseline` (a power-up name resolved to an index, none by default), `roles` (up to 10
+  loadout names assigned by position within a team, round-robin; team modes only), `hillTicks`
+  (hill), the `vision` block §8 reads (`vision = { kind, peripheral, cone, focus, hearing,
+  banana_sight }`) and the kinds `team_rounds`, `team_deathmatch`, `hill`, `capture`. `kMaxModes`
+  rises to 32; every slot is hashed, so the content hash changes once (corpus regenerated,
+  checksums unchanged).
+- Loadouts (v0.29) are their own axis. `[[loadout]]` = `name` plus 2–3 ability names
+  (`ContentDB::loadouts`, `kMaxLoadouts` 16; index 0 is `[player] abilities`).
+  `MatchConfig::loadout` picks one for the match (the lobby, `--loadout NAME`, `?loadout=`) and
+  rides in `MatchContent`, the replay header (format version 4) and the join messages (protocol
+  version 4). `ModeDef::abilities` and `hasAbilities` go away: `rounds_blink`, `rounds_slam` and
+  `rounds_parry` leave `content/modes.toml` for `content/loadouts.toml` (`blink`, `slam`,
+  `parry`), and `MatchContent::loadout()` returns the role's loadout in a team mode, else the
+  match's. Corpus replays that named those modes are re-recorded with `--loadout`.
+- Teams (v0.29): `MatchConfig::teams`, a team index per slot (free-for-all: slot i is team i);
+  the lobby fills it from `ModeDef::teams`, balanced, joiners to the smallest team. Arenas gain
+  `spawn_groups` (default 1): the spawn list splits into that many consecutive groups and team
+  t spawns from group t mod groups; validation requires every group to hold a point.
+- Zones (v0.29): `zones = [{ min, max }, ...]` (`kMaxArenaZones` 8), boxes like hazards that
+  block nothing and emit nothing; `zoneOccupants(s, arena, k)` returns the mask of the monkeys
+  whose centre is inside, for `onPlaying`. `hill` needs one zone, `capture` one per team.
+- Tilemap arenas (v0.29): an `[[arena]]` may give `cell = 1.0` and `map = ["...", ...]` in place
+  of `half_extents`, `walls`, `hazards`, `spawn_points` and `zones`: rows of equal length, one
+  glyph per cell, `#` wall, `.` floor, `~` pit, `:` mud (`mud_speed_mul`, default 0.5), `0`–`9`
+  spawn points in that order, `a`–`h` zone cells. The loader merges runs of a glyph into
+  axis-aligned boxes (along a row, then equal rows vertically) and fails over the statics caps
+  rather than raising them; `halfExtents` is the map size times the cell. A tilemap arena
+  records `cellSize` (0 for a hand-placed arena) and plays in either space; a grid mode requires
+  `cellSize > 0`. `ContentDB::compatible(arena, mode)` collects these requirements (cells,
+  zones, spawn groups at least the team count) for the lobby and the command lines; an
+  incompatible pair is a configuration error, never a load error.
+- Contact radius as a stat (v0.29): `Stats::radius` (base `PlayerDef::radius`) replaces the
+  direct reads in `CollisionSystem`, `MovementSystem` and the spawn checks, and `StatModifier`
+  gains `stat = "radius"`. Without a modifier the value is the def's, bit for bit. Grid content
+  shrinks monkeys to 0.35 and bananas (through the existing projectile `radius_mul`) to 0.15, so
+  the hit disc of 0.5 sits inside a one-unit cell: "a banana whose centre crosses my cell hits
+  me" is exact except at the corners.
+- Rooting (v0.29): `AbilityDef::rootPhases`, a phase mask during which movement intent is
+  ignored (continuous) or no new cell commitment is taken (grid); the Blink/Slam startup
+  follow-up uses the same field. The grid throw roots through its recovery, which the content
+  sets to `turnTicks`, so a turn is move or throw; the `quick_hands` power-up overrides the
+  throw with an unrooted def, which is the only way to move and throw in one turn.
+
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
 The dash-catch lives or dies on timing consistency, so the tick quantum matters. Three options:
@@ -1096,6 +1206,68 @@ Escape hatch: inputs and packets are decoupled in the input-sync model, so a 120
 60 packets/s (two inputs per packet) is possible later. It needs a real-time 120 Hz client step
 loop (a sim thread or a 120 fps render loop) to gain anything for input timing. Treat it as a
 measured experiment after M2 playtesting, not a default.
+
+### 5.12 Spaces: continuous and grid (v0.29)
+
+A mode's `space` chooses how monkeys move, and nothing else. `continuous` is the sim as built,
+bit for bit. `grid` turns the arena into cells for the monkeys and leaves everything else where
+it is, which is the whole design: flight, collision, the rules table, snapshots, rollback, the
+renderer and the bot ABI see Q16.16 positions either way, and a grid monkey is a circle whose
+centre happens to rest on a cell centre.
+
+- **Behaviour table.** `SpaceBehavior` (`kfm/sim/spaces/registry.hpp`, one file per space under
+  `src/spaces/`, constexpr like the ability and mode tables) with two hooks: `latch(s, content,
+  frame)` called by `InputSystem` and `move(s, content)` called by `MovementSystem`. The
+  continuous behaviour's `latch` is a no-op and its `move` is today's `movementSystem` body.
+- **Turns.** `turnTicks` ticks (content, 1–60). A turn starts on every Playing tick with
+  `ticksInPhase % turnTicks == 0`; phases, round timers and the mode clock run in ticks exactly
+  as before, so `RulesSystem` knows nothing about turns. Bot-only matches set 1 and run at full
+  speed in `kfm_arena`; human lobbies set about 15 (four moves a second).
+- **Commitment.** At the latch each monkey that is alive, not rooted and at rest takes the
+  latched intent: idle, or one of the eight neighbouring cells. The target must lie inside the
+  outer box and overlap no wall (a pit is allowed: the monkey falls, §5.6 row 60). Contested
+  cells resolve at the latch: two monkeys that target one cell, or each other's cell, keep the
+  earlier press (`subTick` of the latch tick), then the lower slot; the loser stays. Nothing
+  about this is a rule row: the table says what happens when things touch, the space says who
+  gets to move. The commitment is state, `Player::moveTarget` (Vec2) and `Player::moveTicks`
+  (0 = at rest), visited like every field; the continuous space leaves them zero, so its
+  checksums change once when the fields land (corpus regenerated).
+- **Slide.** A committed monkey moves `(target − pos) / moveTicks` per tick through
+  `statics::moveCircle` like any other monkey and snaps to the target exactly on its last tick,
+  so rounding never accumulates. Mid-turn it is genuinely between cells and only the continuous
+  contact test has an answer; at the turn boundary, where bots observe and act, every monkey is
+  on a cell. A dash is a commitment of `dashCells` (content, 2) with `Tag::Dashing` for its
+  active phase; a wall stops it on the last free cell. Knockback, hit stun and pits act on the
+  position as in the continuous space.
+- **Facing.** `Transform::facing` is the latched `aimDir`. The cone (§8) quantises it to the
+  nearest of eight directions when it reads.
+- **Bananas.** Untouched: thrown at any of the 256 angles, flying, steering home, bouncing off
+  walls and swept against monkey circles by `ProjectileSystem` and `CollisionSystem` exactly as
+  in §5.7. A banana has no cell in the sim; the observation builder reports the cell of its
+  centre next to its exact position (§8).
+- **Move or throw.** The grid throw roots through its recovery phase, `turnTicks` long (§5.10),
+  so a monkey that throws takes no commitment at the next latch; a slide in progress finishes.
+  Rotation is aim and never costs anything.
+- **The catch.** A bot has perfect timing, so a reflex catch is free for it and the loop breaks:
+  every seen banana would be caught, throws would work only from blind spots, and hearing (§8)
+  would close even those. On the grid the base dash has a perfect window of 0 ticks, which
+  validation now allows: `PerfectDash` is never granted and row 10 never matches. One loadout,
+  `catcher`, carries a dash whose window spans the active phase with a cooldown of several
+  turns, and `roles` give it to one monkey per team. Scarcity, not timing, is the balance: the
+  cooldown turns the catch from a reflex into a resource, and killing the catcher disarms a
+  team's defence. Second levers if it is still too strong: the catch only inside the facing cone,
+  and HP 2 so one caught banana does not swing the fight.
+- **Numbers to start with** (grid content, tuned with `kfm_arena`, open in §12): cell 1.0,
+  monkey radius 0.35, banana radius 0.15, HP 2, banana speed 2 cells per turn, throw range 6
+  cells, dash 2 cells, catcher cooldown 4 turns.
+- **Presentation.** Nothing new: the interpolated slide reads as a hop; cones and fog are not
+  drawn for humans (§8).
+
+What the grid is not: it is not a second sim. One monkey per slot stays load-bearing
+(`Pool<Player, kMaxPlayers>` indexed by `PlayerId`, the roster mask, the observation), so a bot
+"with an army" is a team of slots (§8) and `kMaxPlayers` caps a side at five. Armies of dozens
+would be a different `WorldState` and a different game; if that day comes it is a sibling sim
+over `core`, not a switch in this one.
 
 ---
 
@@ -1882,6 +2054,72 @@ which the contract needs.
   metering: wasm3 or WAMR, wasmtime only if metering accuracy demands it), the fuel budget per
   tick, the module and memory caps, and the `Observation` v1 field list.
 
+Teams, fog and calls (v0.29). The contest shape is a squad: a team of monkeys, each run by its
+own program, seeing a slice of the world and talking through the game. One rule sits behind
+every choice here: anything hard for a human by reflex is free for a bot, which has perfect
+timing and can simulate the deterministic flight exactly, so bot balance comes from scarcity
+(fuel, cooldowns, ammo), information (fog) and commitment (roots, travel time), never from
+difficulty.
+
+- **An entrant is a team.** The sim never learns that one author controls several monkeys: a
+  team is the slots sharing a `MatchConfig::teams` index (§5.3). `kfm_arena --team
+  a.wasm,b.wasm,...` fills a team's slots in order (one module repeated or several), and the
+  result line reports per team and per slot. `kMaxPlayers` makes it five a side at most.
+- **One module instance per monkey.** Isolated linear memory, its own fuel budget, and the four
+  exports unchanged: no `slot` argument on `kfm_act`, no multi-input return. A trap or an
+  over-budget tick costs that monkey its input, never the team's. An eliminated monkey's
+  instance is paused and resumes on respawn; `memory_on_respawn = keep | wipe` is a host knob
+  (`wipe` calls `kfm_init` again). Centralised planning needs no separate ABI: under team vision
+  five instances of one deterministic module receive the same team picture, compute the same
+  plan and each execute its own slice, at five times the fuel, which is the fair price.
+- **Fog is a projection, not sim state.** The sim is full-information always, so determinism,
+  rollback and replays are untouched and a replay is complete. `buildObservation` applies the
+  mode's `vision` block (§5.10) per monkey:
+  - `kind`: `all` (today's contract and every continuous mode), `team` (the union of the
+    allies' sight), `own`.
+  - `peripheral`: Chebyshev radius in cells around the monkey, seen whatever the facing
+    (start 1).
+  - `cone`: every cell whose direction from the monkey is within 45° of facing, inclusive, out
+    to Chebyshev distance R. A cardinal cone is the band where the sideways offset is at most
+    the forward one, a diagonal cone the closed quadrant, and both hold exactly R² + 2R cells,
+    which a unit test asserts for all eight facings. Start at half to two thirds of the throw
+    range and at least two turns of banana flight deep, so sight is worth more than sound.
+  - `focus`: extra cone length for a monkey that took no commitment last turn (start 1):
+    sentries see far, movers see near, and scouts have a reason to stop.
+  - `hearing`: Chebyshev radius within which a banana in flight is observed whatever the
+    facing (start: banana cells per turn plus 1, one turn of warning from any direction).
+  - `banana_sight`: cells around an own banana in flight that its owner sees (start 1):
+    scouting costs a banana and its flight time.
+  - Line of sight: the cone yes, by integer Bresenham to each of its cells through the arena's
+    walls (at most R² + 2R lines per monkey per turn); peripheral and hearing no.
+  - Time: visibility is ORed over the ticks of a turn (the host steps every tick anyway), so a
+    banana that crosses a cone inside one turn is seen; a one-tick turn is just the current
+    tick. A banana's cell is the cell of its centre; the observation also carries its exact
+    position and velocity, because the SDK flight helper is exact and a cell is an
+    approximation.
+  - Humans see everything: a client holds the whole world for rollback, so fog for a human is
+    cosmetic and cheatable. Fog modes are bot-contest modes; the client draws no cone.
+- **Calls: communication through the game.** A `call` ability kind (content: cooldown, `range`
+  in cells on the grid or in units in the continuous space): on the press the monkey shouts its
+  `aimDir` byte, 256 symbols, with no change to the 5-byte `PlayerInput`; the sim emits
+  `MonkeyCalled{player, a = symbol}` and every monkey within range, ally or enemy, hears it, so
+  interception is free and encoding is the author's problem. The observation builder folds the
+  last turn's heard calls in (slot, symbol, tick, the caller's cell when visible); the client
+  draws a shout, and a human on the ability button gets a ping. Position is a free channel too.
+- **No shared array in v1.** An instant, global, lossless team array degrades fog to team vision
+  with a one-turn delay, which the `vision` knob already offers. If squads prove too hard to
+  write without it, it becomes a writable tail of the observation buffer read back after
+  `kfm_act`, double-buffered so writes land next tick and instance order never matters, still
+  behind four exports.
+- **`Observation` v1 reserves** the fields these need, so the first fog mode is not a schema
+  bump: team per player and its relation to self, a visible flag per player and banana (unseen
+  entries zeroed, counts kept), the heard-calls list, self cell and facing octant, `turnTicks`
+  and the ticks to the next latch, the role (loadout index), team scores and `modeData`.
+- **Contest knobs** are content and host settings, never code: team size, `vision` and its
+  radii, call range, cooldown and alphabet (a mask over the 256 symbols), memory on respawn,
+  fuel per instance, `turnTicks`, the catcher's cooldown. Tournaments pick rows; the engine
+  stays one.
+
 ---
 
 ## 9. Tooling, testing, quality
@@ -2119,6 +2357,7 @@ ALSA plugins. CI installs `libasound2-dev`. Windows (WASAPI), macOS (CoreAudio) 
 | M3 Netcode | Loopback + emulator, `NetServer`/`NetClient`, prediction + rollback, clock sync, snapshots/join, `WebRtcTransport` (libdatachannel natively, datachannel-wasm in the browser), `netsim` with 10 clients, soak tests under loss and jitter | 10 clients at 100 ms RTT, 2% loss, no desyncs, rollback depth bounded; a browser client joins a real server |
 | M4 Content | Power-ups, modifiers, more abilities, arenas, modes, lobby UI, audio/VFX | Content added without touching system code |
 | M5 Agent platform | `IAgent` and the versioned `Observation`, bot ABI v1 and `WasmAgent` over the wasm runtime, the reference bot in lobbies and on the server, `kfm_arena`, SDK v1 and example bots published from the bots repository (§8) | A bot built outside this repository against SDK v1 beats the reference bot in a `kfm_arena` tournament run |
+| M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
 | M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting, the bot ladder (`kfm_arena` as a service, rankings, replay viewing) | Send a link, friends are in a match within a minute, no install |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
@@ -2319,10 +2558,20 @@ baseline moved to C++23 (§9).
   (§8, §10, §11).
 - Open (M5 start): the wasm runtime and its metering accuracy, the fuel budget per tick, module
   and memory caps, the `Observation` v1 field list (§8).
-- Open: team modes (v0.23 leaves them out: they need a team per slot in `MatchConfig`, team
-  scoring in a `ModeBehavior` and a friendly-fire decision in the rules table; the mode table
-  and the per-player mode counters are the seams); WebTransport as a later replacement for WebRTC;
-  mobile browsers and touch controls.
+- Decided (v0.29): a mode is content along five axes, each with its own seam (§5.3); teams ride
+  in `MatchConfig` and reach the rules table as a relation mask, friendly fire being a tag the
+  mode's baseline grants (§5.6); loadouts are their own match axis (§5.10); the grid is a
+  `Space` of the same sim with continuous bananas (§5.12); the contest shape is a squad of
+  one-instance monkeys under fog with in-game calls (§8). Checksums: the relation mask, the
+  radius stat and the loadout axis keep every existing checksum; the commitment fields and
+  `modeData` change them once when they land (corpus regenerated); `kMaxModes` changes the
+  content hash only.
+- Open (M5b): the grid numbers (§5.12: cone, hearing, radii, `turnTicks`, the catcher's
+  cooldown), tuned with `kfm_arena` and recorded here when they settle; whether the catch also
+  needs the in-cone restriction; whether `hot_potato` and `infection` earn a kind; a shared team
+  array (§8) if squads prove unwritable without one. Fog for humans is not enforceable and stays
+  out.
+- Open: WebTransport as a later replacement for WebRTC; mobile browsers and touch controls.
 
 ---
 
@@ -2468,11 +2717,29 @@ struct InteractionRule {
   EntityKind kindB; Tags requireB; Tags forbidB;
   uint8_t    phaseMaskB;                   // BoomerangPhase bits when B is a boomerang (0 = any)
   Ownership  ownership;                    // Any, Own, NotOwn: A vs. the owner of B
+  RelationMask relationB;                  // Self/Ally/Enemy bits of A vs. the owner of B (v0.29)
   // false = did not apply, keep scanning (a mistimed catch falls through to damage)
   bool     (*resolve)(WorldState&, const ContentDB&, EntityId a, EntityId b, const Contact&,
                       EventSink&);
 };
 std::span<const InteractionRule> interactionRules();  // sorted by priority
+
+// sim/modes/registry.hpp (v0.23, v0.29)
+struct ModeBehavior {
+  void (*onRoundStart)(WorldState&, const MatchContent&, EventSink&);
+  void (*onPlaying)(WorldState&, const MatchContent&, EventSink&);
+  void (*onEliminated)(WorldState&, const MatchContent&, PlayerId victim, PlayerId killer,
+                       EventSink&);
+  void (*onPickupTaken)(WorldState&, const MatchContent&, PlayerId, const Pickup&, EventSink&);
+};
+const ModeBehavior& modeBehaviorFor(ModeKind);        // constexpr table indexed by kind
+
+// sim/spaces/registry.hpp (v0.29)
+struct SpaceBehavior {
+  void (*latch)(WorldState&, const MatchContent&, const InputFrame&);  // InputSystem; grid: once per turn
+  void (*move)(WorldState&, const MatchContent&);                       // MovementSystem
+};
+const SpaceBehavior& spaceBehaviorFor(Space);          // Continuous, Grid
 ```
 
 ## Appendix B: glossary
@@ -2489,3 +2756,13 @@ std::span<const InteractionRule> interactionRules();  // sorted by priority
 - **Observation**: the versioned POD the host writes into a bot module before each `act`.
 - **Fuel**: a bot's per-tick budget in wasm instructions; running out costs that tick's input.
 - **Bot delay**: ticks a bot's input is held back to match the human lead in a mixed match.
+- **Team**: the slots sharing a `MatchConfig::teams` index; **relation**: Self, Ally or Enemy between two slots.
+- **Loadout**: the 2–3 abilities a monkey spawns with, a match axis; a **role** is the loadout a team mode gives a position within a team.
+- **Baseline**: the power-up a mode grants every monkey at spawn with no expiry.
+- **Space**: how monkeys move, `continuous` or `grid`; bananas are continuous in both.
+- **Turn**: `turnTicks` ticks of a grid mode; **latch**: the first tick of a turn, when movement intent becomes a commitment.
+- **Commitment**: a grid monkey's target cell for the turn; **contested cell**: two commitments to one cell, resolved at the latch.
+- **Cell**: a square of `cellSize` arena units; a monkey rests on cell centres, a banana's cell is the cell of its centre.
+- **Cone, peripheral, hearing**: the three parts of a monkey's vision (§8), in cells.
+- **Call**: a one-byte shout heard by every monkey in range, the in-game communication channel.
+- **Zone**: an arena box that blocks nothing; modes read who stands in it.
