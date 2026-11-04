@@ -6,6 +6,7 @@
 # modules; the wasm runtime wrapper catches nothing because WAMR is C.
 add_library(kfm_ai STATIC
   src/agent.cpp
+  src/agent_host.cpp
   src/observation_builder.cpp
 )
 add_library(kfm::ai ALIAS kfm_ai)
