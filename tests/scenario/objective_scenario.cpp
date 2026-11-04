@@ -123,6 +123,14 @@ const Pickup* flagOf(const WorldState& s, uint8_t team) {
   return found;
 }
 
+// Where team `team`'s flag lies, or far outside every arena when it is gone
+// (a value, not a pointer: GCC's Release -Wnull-dereference cannot see
+// through REQUIRE, so a dereference after it trips the build).
+Vec2 flagPos(const WorldState& s, uint8_t team) {
+  const Pickup* f = flagOf(s, team);
+  return f != nullptr ? f->pos : Vec2{Fixed::fromInt(9999), Fixed::fromInt(9999)};
+}
+
 // Kills `victim` with a banana of `owner` fired from one unit to its left.
 void eliminate(WorldState& s, const MatchContent& m, PlayerId owner, PlayerId victim,
                EventLog& log) {
@@ -348,7 +356,7 @@ TEST_CASE("capture: take the enemy flag, carry it home, score", "[scenario][capt
   CHECK(scores[0].a == 1);
   CHECK_FALSE(playerAt(s, kP1).tags.has(Tag::Carrying));
   REQUIRE(flagOf(s, 0) != nullptr);
-  CHECK(flagOf(s, 0)->pos == at(-13, 0));  // back home
+  CHECK(flagPos(s, 0) == at(-13, 0));  // back home
   // A second capture takes the match.
   placePlayer(s, kP3, at(-13, 0));
   runTicks(s, frameFor(s), 1, m, log);
@@ -384,13 +392,13 @@ TEST_CASE("capture: an eliminated carrier drops the flag, which goes home untouc
   // The victim's own team cannot pick it up: only the clock returns it.
   placePlayer(s, kP2, at(0, 5));
   int ticks = 1;  // the drop tick counted none
-  while (flagOf(s, 0) != nullptr && flagOf(s, 0)->pos == at(0, 5) && ticks < 200) {
+  while (flagPos(s, 0) == at(0, 5) && ticks < 200) {
     runTicks(s, frameFor(s), 1, m, log);
     ++ticks;
   }
   CHECK(ticks == kFlagReturnTicks + 1);
   REQUIRE(flagOf(s, 0) != nullptr);
-  CHECK(flagOf(s, 0)->pos == at(-13, 0));
+  CHECK(flagPos(s, 0) == at(-13, 0));
   CHECK(s.playerBySlot(kP1) != nullptr);  // respawned in the meantime
 }
 
@@ -424,13 +432,13 @@ TEST_CASE("capture: no capture while the own flag is away; picking up again rest
   placePlayer(s, kP2, at(-4, -2));  // clear of every spawn point
   eliminate(s, m, kP3, kP2, log);
   REQUIRE(flagOf(s, 1) != nullptr);
-  CHECK(flagOf(s, 1)->pos == at(-4, -2));
+  CHECK(flagPos(s, 1) == at(-4, -2));
   CHECK(scoresSince(log, 0).empty());
   // A fresh return clock: home after kFlagReturnTicks, then P1 captures.
   const size_t before = log.size();
   runTicks(s, frameFor(s), kFlagReturnTicks, m, log);
   REQUIRE(flagOf(s, 1) != nullptr);
-  CHECK(flagOf(s, 1)->pos == at(13, 0));
+  CHECK(flagPos(s, 1) == at(13, 0));
   runTicks(s, frameFor(s), 1, m, log);
   const std::vector<SimEvent> scores = scoresSince(log, before);
   REQUIRE(scores.size() == 1);
