@@ -211,6 +211,7 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
   server_ = std::make_unique<net::NetServer>(transport, content, std::move(sc));
   Bots& b = *bots_;
   b.delay = config_.botDelayTicks.value_or(0);
+  b.agents.setRespawnMemory(config_.botMemory);
   uint8_t placed = 0;
   std::string specs;
   uint8_t s = 0;

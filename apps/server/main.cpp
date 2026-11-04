@@ -4,7 +4,7 @@
 //
 //   kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bot SPEC]...
 //              [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]
-//              [--max-players N] [--token T]... [--restart-delay S]
+//              [--memory-on-respawn keep|wipe] [--max-players N] [--token T]... [--restart-delay S]
 //              [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]
 //              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
 //              [--powerups LIST] [--verbose]
@@ -27,6 +27,9 @@
 //                      N fixes it (0..120)
 // --fuel N             a bot module's instruction budget per tick (default
 //                      100000); over it the tick repeats the last input
+// --memory-on-respawn keep|wipe   v0.35: a bot whose monkey was eliminated is
+//                      paused until it is back; wipe init()s it again then
+//                      (a module gets a fresh instance), keep (default) not
 // --max-players N      slots open to clients and bots, 1..10 (default 10)
 // --token T            accept only these connection tokens (repeatable;
 //                      none = accept every client)
@@ -89,6 +92,7 @@ struct Options {
   uint64_t botsSeed{0xB07B07};
   std::optional<uint8_t> botDelay;  // nullopt = auto
   uint32_t fuel{0};                 // 0 = the runtime default
+  ai::RespawnMemory memory{ai::RespawnMemory::Keep};
   uint32_t maxPlayers{sim::kMaxPlayers};
   std::vector<std::string> tokens;
   uint32_t restartDelaySeconds{3};
@@ -106,7 +110,8 @@ struct Options {
 constexpr const char* kUsage =
     "usage: kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bot SPEC]...\n"
     "                  [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]\n"
-    "                  [--max-players N] [--token T]... [--restart-delay S]\n"
+    "                  [--memory-on-respawn keep|wipe] [--max-players N] [--token T]... "
+    "[--restart-delay S]\n"
     "                  [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]\n"
     "                  [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
     "                  [--powerups LIST] [--verbose]\n"
@@ -185,6 +190,9 @@ template <typename T>
       }
     } else if (arg == "--fuel") {
       ok = parseNumber(v, o.fuel) && o.fuel > 0;
+    } else if (arg == "--memory-on-respawn") {
+      ok = v == "keep" || v == "wipe";
+      o.memory = v == "wipe" ? ai::RespawnMemory::Wipe : ai::RespawnMemory::Keep;
     } else if (arg == "--max-players") {
       ok = parseNumber(v, o.maxPlayers) && o.maxPlayers >= 1 && o.maxPlayers <= sim::kMaxPlayers;
     } else if (arg == "--token") {
@@ -246,6 +254,7 @@ extern "C" void onSignal(int /*signal*/) {
     c.bots.push_back(ai::BotSpec{});  // ref:hard
   c.botDelayTicks = o.botDelay;
   c.botFuelPerTick = o.fuel;
+  c.botMemory = o.memory;
   c.restartDelayTicks = o.restartDelaySeconds * sim::kTickHz;
   c.exitAfterMatches = o.exitAfterMatches;
   c.statsEveryNs = uint64_t{o.statsEverySeconds} * 1'000'000'000ull;

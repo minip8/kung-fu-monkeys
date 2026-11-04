@@ -47,6 +47,7 @@
 // linger so the messages leave, then finishShutdown() closes every peer.
 #pragma once
 
+#include "kfm/ai/agent_host.hpp"
 #include "kfm/ai/bot_spec.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/net/net_server.hpp"
@@ -77,6 +78,8 @@ struct HostConfig {
   std::optional<uint8_t> botDelayTicks;
   // A wasm bot's instruction budget per tick (0 = the runtime default).
   uint32_t botFuelPerTick{0};
+  // v0.35: memory_on_respawn for every bot (ai::AgentHost::setRespawnMemory).
+  ai::RespawnMemory botMemory{ai::RespawnMemory::Keep};
   // Pause between a MatchEnded and the next match's first tick (3 s).
   uint32_t restartDelayTicks{3 * sim::kTickHz};
   // Report done() after this many matches have ended (0 = never).
