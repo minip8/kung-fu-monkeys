@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.32 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.33 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -260,6 +260,15 @@ gains `spawnGroups` and `ContentDB::compatible`/`firstCompatibleArena`; kinds `t
 and `team_deathmatch`, the `standoff` arena (two groups of five), two corpus entries; the
 lobby's read-only Teams row and the team scoreboard; Observation v1 fills its team fields and
 the reference bot ignores a teammate's banana. Replay checksums unchanged.
+v0.33 changes: M5b step 3, objectives, as built (§5.3, §5.6, §5.9, §5.10, §7, §8, §11, §12).
+`ArenaDef` gains `zones` (`kMaxArenaZones` 8) and `cellSize`; `zoneOccupants()`; tilemap arenas
+(`cell`, `map`, glyphs `# . ~ : 0-9 a-h`, runs merged into boxes, the statics caps kept);
+`ContentDB::compatible` adds hill's zone and capture's zone per team; `kMaxArenas` 8 → 16. Kinds
+`hill` (`hillTicks`) and `capture` (`flagReturnTicks`), both on deathmatch's clock and respawns;
+`PickupKind::Flag` (the team in the pickup's `spawner` byte), `Tag::Carrying`, rule row 52, the
+`HillHolderChanged` event; the arenas `hilltop` and `outposts` (the first tilemaps) and two corpus
+entries. Observation v1 names the flag (pickup kind 2), the kinds (5, 6) and Carrying (tag bit
+9). No world-state field added; replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -515,6 +524,8 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 | `survival` | as rounds, plus a per-round `timeLimitTicks`: on timeout the survivor with the most hp wins the round, then the one with the fewest deaths this match, else a draw | +1 death | no respawn within a round |
 | `team_rounds` (v0.32) | monkeys of at most one team left (two or more teams present): that team wins the round (none: draw), credited to its lowest surviving slot; the first team whose slots' round wins sum to `roundsToWin` takes the match | nothing | one team present never ends a round |
 | `team_deathmatch` (v0.32) | one round; the first team whose slots' eliminations sum to `scoreToWin`, or the leading team once `timeLimitTicks` pass (a tied lead: draw); `MatchEnded` names the team's present top scorer | +1 score for an enemy attacker only (an ally's or one's own scores nothing), +1 death, respawn as deathmatch | a slot that leaves keeps its score: it is the team's |
+| `hill` (v0.33) | one round; every Playing tick, if the monkeys in zone 0 are of exactly one team, that team's hold clock advances, and at `hillTicks` the team scores a point (credited to its lowest slot in the zone) and that clock alone restarts; a contested or empty zone holds every clock; the first team to `scoreToWin` points, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch; nobody scores | `HillHolderChanged` when the sole holder changes; a leaver keeps its score |
+| `capture` (v0.33) | one round; team t's flag starts at the centre of zone t; a carrier in its own team's zone while its own flag is home scores a capture (credited to the carrier) and the flag goes home; the first team to `scoreToWin` captures, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch, nobody scores; a carrier drops the flag as a pickup where it stood | a dropped flag no enemy picks up for `flagReturnTicks` goes home; its own team cannot touch it |
 
 Respawn (`LifecycleSystem`, v0.23) is driven only by the timers: during Playing a dead present slot
 with a pending `respawnTicks` counts down before this tick's despawns and respawns at 0, so a
@@ -582,6 +593,33 @@ over every point, present slots in slot order); with several, `RulesSystem` draw
 per group in group order and each team's present slots take their group's points from it,
 wrapping; the respawn's farthest-point choice is restricted to the slot's group
 (`spawnRangeOf`).
+
+As built (v0.33, step 3: objectives). Zones are `ArenaDef::zones` (§5.10) and
+`zoneOccupants(s, arena, k)` (`kfm/sim/zones.hpp`) is their only reader: the mask of the alive,
+not `Eliminated` monkeys whose centre lies in the closed box (a zone the arena lacks holds
+nobody). Neither kind adds a world-state field: both keep their state in `modeData` and clear it
+in `onRoundStart` (they play one round, so that is the match start). `hill`
+(`src/modes/hill.cpp`): words 0–4 hold the ten teams' clocks as u16 halves (team t in word t/2,
+low half for even t), word 5 the sole holder + 1 (0 = nobody); the credited slot is the team's
+lowest slot standing in the zone (step 2's `team_rounds` convention applied to the zone, so a
+point goes to someone who held it). `capture` (`src/modes/capture.cpp`): word t is team t's flag
+(bits 0–1 Home/Carried/Dropped, 8–15 the carrier's slot, 16–31 ticks since the drop); there is
+one flag per team as far as the arena has zones (`min(teams, zoneCount)`). The flag is a
+`PickupKind::Flag` pickup whose `spawner` byte holds its team (and so its home zone): no new
+pickup field, the snapshot reader's enum check simply admits the third kind. Rule row 52
+(`rules/flag.cpp`, `Player[!Carrying] × Pickup[Flag]`) takes it for a monkey of another team and
+calls `onPickupTaken`, where capture sets `Tag::Carrying` and records the carrier; its own team's
+touch declines, so a dropped flag goes home only by the clock (no touch-to-return). Scoring is
+judged in `onPlaying`, after the interactions, against the carrier's centre; the drop happens in
+`onEliminated` (the victim is still in the pool, so its position is known; a pit drops the flag
+into the pit, where the clock returns it). A flag dropped on tick T goes home on tick
+T + `flagReturnTicks`; a pickup pool too full to lay a flag sends it home, or retries the home
+flag on the next Playing tick. Carrying changes no stat and bananas treat a carrier like anyone.
+Both kinds are team kinds (`teams` >= 2) and respawning kinds (`score_to_win`, `respawn_ticks` >=
+1); `sim::scoresPoints(kind)` tells the hosts their scores are points, not round wins. The scripted
+input generator walks to the objective in these two kinds only (hill: zone 0 while outside it;
+capture: a carrier home, anyone else the nearest flag of another team), from state alone with no
+Rng draw, so every other mode's inputs are unchanged.
 
 ### 5.4 Input model
 
@@ -756,6 +794,7 @@ prio  A                          B                              handler
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
  50   Player[]                   Pickup[Banana]                 TakePickup (declines at ammoMax)
  51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
+ 52   Player[!Carrying]          Pickup[Flag]                   TakeFlag (v0.33; declines for the flag's own team)
  60   Player[]                   Hazard[Pit]                    FallIntoPit
 ```
 
@@ -1090,6 +1129,12 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `PowerUpPicked` would carry, so there is no separate event. `ShieldBroken{victim, entity = the
   banana or the dashing player, a = attacker slot, b = the power-up whose shield broke}` (§5.6).
   No event marks a power-up's expiry: presentation reads the `ModifierList` timers from state.
+- v0.33 (objectives): `HillHolderChanged{a = the team now holding zone 0 alone, or 0xFF when
+  it is contested or empty, b = the zone}`, pushed by `hill` when the sole holder changes (the
+  match starts with nobody). A capture flag uses the pickup events: `PickupSpawned` and
+  `PickupTaken` carry `a = Flag` and `b = the flag's team` (laid at the round start, dropped,
+  sent home), and a capture is a `ScoreChanged` of the carrier. Presentation reads
+  `Tag::Carrying` from state; there is no separate flag event.
 - Consumers: presentation (VFX/SFX), scoring, the match runner's result line, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
@@ -1280,6 +1325,13 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   the deathmatch numbers. Shipped: `team_rounds` (index 3: 2 teams, first team to 3 round wins)
   and `team_deathmatch` (index 4: 2 teams, first team to 20, 3 min, deathmatch's respawn
   numbers), neither with a baseline or roles.
+  As built (v0.33): `hillTicks` (u16, TOML `hill_ticks`, >= 1, default 300) and
+  `flagReturnTicks` (u16, `flag_return_ticks`, >= 1, default 600), visited after `roleCount`.
+  `hill` and `capture` are team kinds (`teams` >= 2) and validate like deathmatch
+  (`score_to_win`, `respawn_ticks` >= 1, the message naming the kind). Shipped: `hill` (index
+  5: 2 teams, a point per 5 s alone, first to 5, 3 min, deathmatch's respawn numbers) and
+  `capture` (index 6: 2 teams, first to 3 captures, a dropped flag home after 10 s, 3 min, the
+  same respawns).
 - Loadouts (v0.29) are their own axis. `[[loadout]]` = `name` plus 2–3 ability names
   (`ContentDB::loadouts`, `kMaxLoadouts` 16; index 0 is `[player] abilities`).
   `MatchConfig::loadout` picks one for the match (the lobby, `--loadout NAME`, `?loadout=`) and
@@ -1332,6 +1384,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
 - Zones (v0.29): `zones = [{ min, max }, ...]` (`kMaxArenaZones` 8), boxes like hazards that
   block nothing and emit nothing; `zoneOccupants(s, arena, k)` returns the mask of the monkeys
   whose centre is inside, for `onPlaying`. `hill` needs one zone, `capture` one per team.
+  As built (v0.33): `ArenaDef::zones` (`Zone{min, max}`, `Zone::centre()`) and `zoneCount`,
+  visited after `spawnGroups` with `cellSize`. TOML `zones = [{ min = [x, y], max = [x, y] },
+  ...]` (unknown keys are errors); validation as the statics' boxes: non-empty and inside the
+  arena, at most 8. Nothing in `CollisionSystem`, `moveCircle` or the contacts reads a zone.
 - Tilemap arenas (v0.29): an `[[arena]]` may give `cell = 1.0` and `map = ["...", ...]` in place
   of `half_extents`, `walls`, `hazards`, `spawn_points` and `zones`: rows of equal length, one
   glyph per cell, `#` wall, `.` floor, `~` pit, `:` mud (`mud_speed_mul`, default 0.5), `0`–`9`
@@ -1342,6 +1398,44 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `cellSize > 0`. `ContentDB::compatible(arena, mode)` collects these requirements (cells,
   zones, spawn groups at least the team count) for the lobby and the command lines; an
   incompatible pair is a configuration error, never a load error.
+  As built (v0.33, `engine/content/src/loader.cpp` `parseTilemap`): an `[[arena]]` with `map`
+  takes `cell` (required, 0.25 to 16) and `mud_speed_mul` (default 0.5, (0, 4]); giving
+  `half_extents`, `walls`, `hazards`, `spawn_points`, `spawn_ellipse` or `zones` with it is an
+  error, and so are `cell`/`mud_speed_mul` without it; `spawn_groups` and `spawners` work as
+  in a hand-placed arena. Glyphs:
+
+  | Glyph | Cell |
+  |---|---|
+  | `#` | wall |
+  | `.` | floor |
+  | `~` | pit (`HazardKind::Pit`) |
+  | `:` | mud (`HazardKind::Slow`, `speedMul = mud_speed_mul`) |
+  | `0`–`9` | floor with a spawn point at the cell's centre; digit order is spawn order; each digit once, no gaps |
+  | `a`–`h` | floor in zone `letter − 'a'`; each letter's cells must fill one rectangle, letters without gaps |
+
+  At most 256 rows of at most 256 cells, all of one length; the top row is +y, the origin the
+  map's centre, `halfExtents = (columns, rows) × cell / 2`, which must be exact in Q16.16 and at
+  most 1024. Merge (per glyph class): each row's maximal runs, then a run whose columns equal
+  those of a box ending on the row above extends that box downward (an unequal run starts a new
+  box); boxes come out by top row, then left column. Walls are the `#` boxes; hazards are the pit
+  boxes, then the mud boxes. A map that merges into more than `kMaxArenaWalls` (32) walls or
+  `kMaxArenaHazards` (16) hazards fails with the count ("simplify the walls"); the caps are
+  never raised. `cellSize` is the cell (0 for a hand-placed arena). The result then runs the
+  hand-placed validation (spawn points clear of walls by the player radius, out of pits, inside
+  the box), so a spawn cell beside a wall needs a cell of at least twice the radius. Tilemaps
+  play in the continuous space today; step 4's grid reads `cellSize`. `compatible(arena, mode)`
+  as built: spawn groups at least `mode.teams` (v0.32), `hill` at least one zone, `capture` at
+  least `mode.teams` zones; the grid's `cellSize > 0` joins with the `space` field (step 4).
+  The pair `outposts`/`hill` is compatible (zone 0 is the west base); the lobby's first pick for
+  `hill` is `hilltop`, and judging fairness of a zone is left to content. `kMaxArenas` rose to
+  16 (v0.33): `hilltop` and `outposts` filled the 8, and the loader test appends one more; the
+  arena is a u8 in replays and the join messages, so only the content hash changed.
+  Shipped: `content/arenas/06-hilltop.toml` (`hilltop`, index 6, the dojo's 32 × 18 at one
+  cell per unit: a 4 × 4 hill at the centre between two low walls, four flank blocks, two
+  centre walls, four mud patches, two groups of five, symmetric under a half turn; 8 walls, 4
+  hazards) and `07-outposts.toml` (`outposts`, index 7: a 4 × 4 base at either end, zone 0
+  west and 1 east, each group beside its base, two pits on the centre line at the edges, mud in
+  the corners; 8 walls, 6 hazards).
 - Contact radius as a stat (v0.29): `Stats::radius` (base `PlayerDef::radius`) replaces the
   direct reads in `CollisionSystem`, `MovementSystem` and the spawn checks, and `StatModifier`
   gains `stat = "radius"`. Without a modifier the value is the def's, bit for bit. Grid content
@@ -2006,6 +2100,19 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   team scores in team colours sits under the mode line, and the round and match banners say
   "Round won by Team N" / "Team N wins the match!". `?mode=team_rounds` needs nothing new: it
   maps onto `--mode`, which takes the first compatible arena.
+- Objectives in the client (v0.33): `RenderState::zones` (`buildZones`) holds each zone as a
+  floor rectangle, nobody's (white) unless the match is `capture`, where zone t is team t's and
+  takes its colour; the renderer draws it first in the decal pass as a `DecalMode::Rect` on a
+  unit quad mesh (`kQuadMesh`, `makeFloorQuad(0.5, 0.5)`), `kZoneOpacity` inside and
+  `kZoneRimOpacity` on the band from `kZoneRimStart` out. A flag pickup is `PickupKindView::Flag`
+  drawn by the power-up path in its team's colour with `kFlagShape` (diamond) and the pulsing
+  ring; taking one sounds and bursts like a power-up. `PlayerFlag::Carrying` (the enum widened
+  to u16) puts a small spinning gold diamond over the carrier. The HUD's mode line names the
+  kind ("Hill (first team to 5 points)", "Capture (first team to 3 flags)"), the start banner
+  says "King of the hill" / "Capture the flag", and the cards count points like deathmatch
+  (`sim::scoresPoints`); the team score line is step 2's. The lobby's arena preview draws the
+  zones (translucent, lettered); the hill holder is not drawn yet (`HillHolderChanged` is
+  there for it).
 
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
@@ -2509,6 +2616,11 @@ difficulty.
   since v0.30) and, from v0.32, does not track a teammate's banana as a threat unless its own
   monkey holds `FriendlyFire`; it does not yet keep its throws off a teammate's line when
   friendly fire is on (follow-up).
+  v0.33, appended values only: `ObsModeKind` `Hill` (5) and `Capture` (6), `ObsPickupKind::Flag`
+  (2) with the flag's team in the pickup's `spawner` byte, tags bit 9 Carrying; the hill and
+  capture `modeData` layouts are documented for `match.reservedModeData`. Zones are not in the
+  v1 layout (a capture bot finds the flags in `pickups`; the zones wait for step 5's fields).
+  The reference bot ignores flags and zones: it plays hill and capture as team deathmatch.
 - **Contest knobs** are content and host settings, never code: team size, `vision` and its
   radii, call range, cooldown and alphabet (a mask over the 256 symbols), memory on respawn,
   fuel per instance, `turnTicks`, the catcher's cooldown. Tournaments pick rows; the engine
@@ -2857,6 +2969,49 @@ throws off a teammate's line under friendly fire; `kfm_arena` places and result 
 (with `--team`, step 5); a fairer free-for-all spawn (a per-round shuffle of slots onto ranks,
 §12) for arenas with several groups.
 
+Progress: M5b step 3 (objectives) landed in v0.33. Arena zones (`ArenaDef::zones`,
+`zoneOccupants()`) and the tilemap arena format (`cell`, `map`, merged into the same wall and
+hazard boxes, `cellSize` recorded) in `engine/content` (§5.10); `ContentDB::compatible` with
+hill's zone and capture's zone per team, `kMaxArenas` 16; the kinds `hill` and `capture`
+(§5.3), `PickupKind::Flag`, `Tag::Carrying`, rule row 52 (§5.6), `HillHolderChanged` (§5.9);
+the tilemap arenas `hilltop` and `outposts`, the modes `hill` and `capture`; zones, flags and
+carriers in the client (§7); the flag, the kinds and Carrying named in Observation v1 (§8,
+`docs/bot-abi.md`). Decisions recorded on the way: both kinds keep their state in `modeData`
+and add no world-state field, the flag's team riding in the pickup's `spawner` byte (§5.3); a
+hill point goes to the team's lowest slot standing in the zone (§5.3); a flag's own team cannot
+touch it, so only the clock returns a dropped flag, and a flag dropped on tick T is home on
+T + `flagReturnTicks` (§5.3); tilemap hazards list pits before mud, and a cap overflow is an
+error that names the merged count (§5.10); `outposts` is also compatible with `hill`, content
+decides which zone is fair (§5.10); `kMaxArenas` rose to 16 because the two arenas filled the
+8 (§5.10); the scripted generator walks to the objective in these two kinds only, without an
+Rng draw (§5.3); `kfm_replay stats` counts banana pickups only in the banana supply (it had
+counted power-ups too). Replay checksums: unchanged. The content hash changed three times
+(zones and the cell size, the hill numbers, the flag numbers and the larger arena table), the
+corpus was re-recorded each time and every existing `.checksums` file is byte-identical; two
+entries are new, `scripted_4p_hill_3600t` on `hilltop` and `scripted_4p_capture_3600t` on
+`outposts` (18 replays). Round length with the scripted generator (`kfm_replay stats
+--players 4 --matches 50`, Release): `hilltop`/`hill` 99.1 s mean (p10 75.8, median 100.0,
+p90 119.0), no draws; `outposts`/`capture` 173.1 s mean (p10 140.3, median and p90 at the
+3 min clock), 18 of 50 drawn at the clock. Four hard reference bots, which ignore objectives,
+play `hill` as team deathmatch (`kfm_arena --bots 4 --mode hill --matches 3`: 2 decided by
+incidental holds, 1 draw) and score no capture in 3 `capture` matches. Verified locally on
+GCC 15: the headless Debug build (33 ctest targets), the dev preset (all 41 incl. the 18-entry
+corpus, both soak gates and the real-socket tests), clang-format 23.1.3 and clang-tidy 23.1.4
+over the whole tree with zero findings, the no-float check, `kfm_client --no-settings
+--autostart --bots 3 --mode hill` and `--mode capture` 180 frames with screenshots (the hill a
+white rectangle between its walls, the two bases in team colours with their flags),
+`kfm_netsim --clients 6 --mode capture` at 100 ms ± 10 / 2 % for 20 s (701 checksums compared,
+0 mismatches, rollback depth max 11) and `kfm_arena --mode hill`/`capture`; MSVC, Apple Clang,
+Clang, ASan+UBSan and Emscripten are left to CI. Bench (`kfm_replay bench --ticks 36000
+--players 10`, Release, `step()` alone, the shared WSL2 machine): 1.29 µs/tick on
+`dojo`/`rounds` (unchanged), 3.46–3.52 µs on `hilltop`/`hill`, 3.35 µs on `outposts`/`capture`,
+against 3.32 µs for `team_deathmatch` on `hilltop` and 2.61 µs on `standoff`: the tilemaps'
+eight walls and the crowding at the objective cost the time, the modes' own work about
+0.2 µs. Follow-ups: an objective-aware reference bot (walk to the hill, run flags); zones in
+the observation (step 5); drawing the hill's holder (`HillHolderChanged`); a touch-to-return
+rule for the own team, if playtests want one; the grid's `cellSize` check in `compatible`
+with the `space` field (step 4).
+
 Progress: M3 landed in v0.17. `engine/net` holds the `ITransport` seam, the loopback
 transport with its deterministic emulator and the transport contract suite, the bit-packed
 message layer, `NetServer`, `NetClient` (prediction, a 32-state rollback ring plus an anchor,
@@ -3095,6 +3250,12 @@ baseline moved to C++23 (§9).
   never draw from) so a friendly-fire baseline can ship without changing `dojo_powerups`'
   draws; the reference bot holding fire when a teammate is on the line under friendly fire;
   per-team places and result lines in `kfm_arena` (step 5's `--team`).
+- Open (M5b step 3 follow-ups, v0.33): the reference bot ignores zones and flags, so a bot
+  `capture` match scores nothing and `hill` is won by incidental holds; an objective-aware
+  reference bot needs the zones, which Observation v1 does not carry (step 5 adds them);
+  whether a dropped flag should go home when its own team touches it (classic capture the flag
+  does; v0.33 returns it only by the clock); content-level fairness of a zone (`compatible`
+  only counts zones, so `outposts` also accepts `hill` with the hill on a base).
 - Decided (v0.29): a mode is content along five axes, each with its own seam (§5.3); teams ride
   in `MatchConfig` and reach the rules table as a relation mask, friendly fire being a tag the
   mode's baseline grants (§5.6); loadouts are their own match axis (§5.10); the grid is a
