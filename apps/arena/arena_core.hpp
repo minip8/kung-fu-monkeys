@@ -19,9 +19,20 @@
 // scorer, so the first key only makes "winner N" and "place 1" agree by
 // construction; a draw or a capped match falls through to the other keys.
 // Every slot gets a distinct place 1..n.
+//
+// Teams (v0.35, kfm_arena --team): an entrant is a team (§8). With
+// MatchSetup::teams set, entrant e plays the mode's team (e + rotation) mod T
+// (so --rotate moves every entrant through every side), its specs fill that
+// team's slots in slot order (the last one repeating), every team has the
+// longest list's size and the slots are 0..T·size-1 split round-robin
+// (teamsFor: slot s is team s mod T). Team places: the team of the
+// MatchEnded winner first, then the higher team score (MatchContent::
+// teamScore), then fewer deaths, then the lower team index. The slots keep
+// their own places as without teams.
 #pragma once
 
 #include "kfm/ai/agent.hpp"
+#include "kfm/ai/agent_host.hpp"
 #include "kfm/ai/bot_spec.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/sim/content.hpp"
@@ -96,6 +107,11 @@ struct MatchSetup {
   // seed, arena, mode, loadout and powerUps; players is set by runMatch from bots.
   sim::MatchConfig config{.seed = kDefaultSeed};
   std::vector<ai::BotSpec> bots;  // 1..kMaxPlayers; bot b plays slot (b + rotation) mod n
+  // v0.35: the entrants of a team match (see the header comment); when set,
+  // `bots` is ignored. teams.size() must equal the mode's team count.
+  std::vector<std::vector<ai::BotSpec>> teams;
+  // v0.35: memory_on_respawn for every bot (AgentHost::setRespawnMemory).
+  ai::RespawnMemory memory{ai::RespawnMemory::Keep};
   // kfm_arena --rotate sets it to the match index k, so across n matches every
   // bot plays every slot (and with it every spawn position and tie-break order).
   uint32_t rotation{0};
@@ -106,8 +122,11 @@ struct MatchSetup {
 
 struct SlotResult {
   uint8_t slot{0};
-  uint8_t botIndex{0};  // the bot's index in MatchSetup::bots (== slot without rotation)
-  std::string bot;      // toString(spec): "ref:hard" or the module path
+  // The bot's index in MatchSetup::bots (== slot without rotation); in a
+  // team match entrant × team size + its position in the team.
+  uint8_t botIndex{0};
+  uint8_t team{0};  // MatchConfig::teams[slot] (slot i in a free-for-all)
+  std::string bot;  // toString(spec): "ref:hard" or the module path
   bool module{false};
   uint8_t place{0};  // 1..n
   uint32_t score{0};
@@ -128,6 +147,17 @@ struct SlotResult {
   std::string log;   // the captured kfm_log output
 };
 
+// One team of a team match (v0.35).
+struct TeamResult {
+  uint8_t team{0};     // the mode's team index (its side)
+  uint8_t entrant{0};  // index into MatchSetup::teams
+  std::string bots;    // the specs of its slots in slot order, comma-separated
+  uint8_t place{0};    // 1..T
+  uint32_t score{0};   // MatchContent::teamScore
+  uint32_t kills{0};   // its slots' kills of enemies
+  uint32_t deaths{0};
+};
+
 enum class MatchOutcome : uint8_t {
   Ended,  // MatchEnded (winner invalid: a draw)
   Cap,    // the tick cap was reached first
@@ -141,6 +171,7 @@ struct MatchResult {
   MatchOutcome outcome{MatchOutcome::Cap};
   PlayerId winner{PlayerId::invalid()};
   std::vector<SlotResult> slots;  // by slot
+  std::vector<TeamResult> teams;  // v0.35: by team index, team matches only
   std::vector<std::byte> replay;  // the .kfmr bytes when recordReplay
 };
 
@@ -154,6 +185,8 @@ struct MatchResult {
 
 // Assigns SlotResult::place by the rule above (also used by the tests).
 void assignPlaces(MatchResult& result);
+// Assigns TeamResult::place by the team rule above.
+void assignTeamPlaces(MatchResult& result);
 
 // The totals of a tournament for one slot, or (Summary::bots) for one bot.
 struct SlotSummary {
@@ -173,19 +206,41 @@ struct SlotSummary {
   uint32_t fuelMax{0};
 };
 
+// The totals of a tournament for one entrant of a team match (v0.35).
+struct EntrantSummary {
+  uint8_t index{0};
+  std::string bots;      // its specs
+  uint32_t wins{0};      // matches its team won
+  uint64_t placeSum{0};  // team places, for the mean
+  uint64_t score{0};
+  uint64_t kills{0};
+  uint64_t deaths{0};
+};
+
 struct Summary {
   uint32_t matches{0};
   uint32_t ended{0};   // MatchEnded with a winner
   uint32_t draws{0};   // MatchEnded without one
   uint32_t capped{0};  // the tick cap first
   uint64_t ticks{0};
-  bool rotated{false};             // some match put a bot in a slot other than its index
-  std::vector<SlotSummary> slots;  // by slot
-  std::vector<SlotSummary> bots;   // by bot index
+  bool rotated{false};                   // some match put a bot in a slot other than its index
+  std::vector<SlotSummary> slots;        // by slot
+  std::vector<SlotSummary> bots;         // by bot index
+  std::vector<EntrantSummary> entrants;  // v0.35: by entrant, team matches only
 
   void add(const MatchResult& result);
 };
 
+// v0.35, a team match: "winner_team T|none" follows "winner W", then one
+// segment per team before the slots:
+//   ... winner 3 winner_team 1 | team 0 entrant 1 ref:hard,ref:hard place 2 score 1 kills 4
+//   deaths 6 | team 1 entrant 0 bots/x.wasm,bots/x.wasm place 1 score 3 kills 6 deaths 4 |
+//   slot 0 ...
+// and every slot segment carries "team T" after its bot text. The summary
+// appends " | entrant E SPECS wins W mean_place X score S kills K deaths D"
+// per entrant; the JSON forms add "winner_team", "teams":[...] (before
+// "slots"), a slot's "team" and the summary's "entrants":[...].
+//
 // The result line (no trailing newline), fields in this order:
 //   match 0 seed 7 ticks 5432 checksum 0c0ffee1 result ended winner 1 | slot 0 bot 0
 //   ref:hard place 2 score 1 kills 3 deaths 2 acts 5432 subs 0 | slot 1 bot 1 bots/x.wasm

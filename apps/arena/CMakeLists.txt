@@ -37,6 +37,10 @@ endif()
 # against reference bots when modules are built. Exit 0 is the check.
 if(KFM_BUILD_TESTS)
   add_test(NAME arena_smoke COMMAND kfm_arena --bots 4 --ticks 7200 --quiet)
+  # v0.35: a 2v2 squad on the grid under fog, entrants rotated, bots wiped on respawn.
+  add_test(NAME arena_smoke_team
+    COMMAND kfm_arena --mode grid_rounds_1t --team ref:hard,ref:medium --team ref:hard
+            --matches 2 --rotate --memory-on-respawn wipe --ticks 3600 --quiet)
   if(KFM_WASM_BOTS)
     add_test(NAME arena_smoke_wasm
       COMMAND kfm_arena --bot ${PROJECT_SOURCE_DIR}/tests/fixtures/bots/echo.wasm --bots 4

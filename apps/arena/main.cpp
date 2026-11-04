@@ -3,9 +3,10 @@
 // played at full speed; a .kfmr replay (playable by kfm_replay and the
 // client) and a result line per match plus a summary line out.
 //
-//   kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--rotate]
+//   kfm_arena [--bot SPEC]... [--bots N] | [--team SPEC,SPEC,...]...
+//             [--seed S] [--matches M] [--rotate]
 //             [--ticks N] [--arena NAME] [--mode NAME] [--loadout NAME]
-//             [--powerups LIST]
+//             [--powerups LIST] [--memory-on-respawn keep|wipe]
 //             [--content DIR] [--fuel N] [--delay T]
 //             [--replay out.kfmr | --replay-dir DIR] [--result out.txt]
 //             [--json] [--quiet] [--log]
@@ -14,13 +15,26 @@
 //                  ref:easy|medium|hard or a path to a .wasm module (BotSpec)
 //   --bots N       pads to N slots with ref:hard (default: the --bot count,
 //                  at least 2)
+//   --team LIST    v0.35, repeatable, one per team of a team mode (exactly
+//                  its team count, no --bot/--bots): entrant e's
+//                  comma-separated specs fill its team's slots in slot order,
+//                  the last repeating, every team as large as the longest
+//                  list (`--team ref:hard` alone fills a team of that size
+//                  with one spec); the result line and the summary add the
+//                  teams (arena_core.hpp)
+//   --memory-on-respawn keep|wipe
+//                  v0.35: what a bot keeps when its eliminated monkey comes
+//                  back (wipe: init() again, a module gets a fresh
+//                  instance; default keep)
 //   --seed S       world seed of match 0; match k uses S + k (default 1);
 //                  slot i is init()ed with slotSeed(S + k, i), arena_core.hpp
 //   --matches M    a tournament of M matches (default 1)
 //   --rotate       match k rotates the bots by k slots (bot b plays slot
 //                  (b + k) mod n), so over n matches every bot plays every
 //                  slot; the summary then adds the totals per bot (by index
-//                  in the --bot order, the padding last) after those per slot
+//                  in the --bot order, the padding last) after those per slot.
+//                  With --team it rotates the entrants across the sides:
+//                  entrant e plays team (e + k) mod T
 //   --ticks N      tick cap per match (default 36000, 10 minutes)
 //   --fuel N       wasm instructions per tick for every module (default 100000)
 //   --delay T      per-slot input delay in ticks (default 0: bot versus bot)
@@ -70,17 +84,21 @@ constexpr uint32_t kMaxMatches = 1'000'000;
 constexpr uint32_t kMaxTicks = 1'000'000;
 
 constexpr const char* kUsage =
-    "usage: kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--rotate]\n"
+    "usage: kfm_arena [--bot SPEC]... [--bots N] | [--team SPEC,SPEC,...]...\n"
+    "                 [--seed S] [--matches M] [--rotate]\n"
     "                 [--ticks N] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
-    "                 [--powerups LIST]\n"
+    "                 [--powerups LIST] [--memory-on-respawn keep|wipe]\n"
     "                 [--content DIR] [--fuel N] [--delay T]\n"
     "                 [--replay out.kfmr | --replay-dir DIR] [--result out.txt]\n"
     "                 [--json] [--quiet] [--log]\n"
     "  SPEC: ref | ref:easy | ref:medium | ref:hard | path/to/bot.wasm\n"
-    "  --rotate: match k moves bot b to slot (b + k) mod n; the summary adds per-bot totals\n";
+    "  --rotate: match k moves bot b to slot (b + k) mod n; the summary adds per-bot totals\n"
+    "  --team: one per team of a team mode, its specs fill the team's slots in order\n";
 
 struct Args {
   std::vector<std::string> bots;
+  std::vector<std::string> teams;  // v0.35: one comma-separated list per --team
+  ai::RespawnMemory memory{ai::RespawnMemory::Keep};
   std::optional<uint32_t> slots;
   uint64_t seed{arena::kDefaultSeed};
   uint32_t matches{1};
@@ -118,11 +136,12 @@ bool parseNumber(std::string_view flag, const char* text, uint64_t lo, uint64_t 
 bool parseArgs(int argc, const char* const* argv, Args& a) {
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
-    const bool takesValue = arg == "--bot" || arg == "--bots" || arg == "--seed" ||
-                            arg == "--matches" || arg == "--ticks" || arg == "--fuel" ||
-                            arg == "--delay" || arg == "--content" || arg == "--arena" ||
-                            arg == "--mode" || arg == "--loadout" || arg == "--powerups" ||
-                            arg == "--replay" || arg == "--replay-dir" || arg == "--result";
+    const bool takesValue = arg == "--bot" || arg == "--bots" || arg == "--team" ||
+                            arg == "--memory-on-respawn" || arg == "--seed" || arg == "--matches" ||
+                            arg == "--ticks" || arg == "--fuel" || arg == "--delay" ||
+                            arg == "--content" || arg == "--arena" || arg == "--mode" ||
+                            arg == "--loadout" || arg == "--powerups" || arg == "--replay" ||
+                            arg == "--replay-dir" || arg == "--result";
     if (takesValue) {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "error: %s needs a value\n", argv[i]);
@@ -132,6 +151,18 @@ bool parseArgs(int argc, const char* const* argv, Args& a) {
       uint64_t n = 0;
       if (arg == "--bot") {
         a.bots.emplace_back(v);
+      } else if (arg == "--team") {
+        a.teams.emplace_back(v);
+      } else if (arg == "--memory-on-respawn") {
+        const std::string_view m = v;
+        if (m == "keep") {
+          a.memory = ai::RespawnMemory::Keep;
+        } else if (m == "wipe") {
+          a.memory = ai::RespawnMemory::Wipe;
+        } else {
+          std::fprintf(stderr, "error: --memory-on-respawn must be keep or wipe, got '%s'\n", v);
+          return false;
+        }
       } else if (arg == "--bots") {
         if (!parseNumber(arg, v, 1, sim::kMaxPlayers, n)) return false;
         a.slots = static_cast<uint32_t>(n);
@@ -183,6 +214,10 @@ bool parseArgs(int argc, const char* const* argv, Args& a) {
       return false;
     }
   }
+  if (!a.teams.empty() && (!a.bots.empty() || a.slots.has_value())) {
+    std::fprintf(stderr, "error: --team replaces --bot and --bots\n");
+    return false;
+  }
   if (!a.replay.empty() && !a.replayDir.empty()) {
     std::fprintf(stderr, "error: --replay and --replay-dir are exclusive\n");
     return false;
@@ -206,24 +241,45 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     return kExitArgs;
   }
 
-  // The bots, slot 0 first, padded with ref:hard.
-  std::vector<ai::BotSpec> bots;
-  for (const std::string& text : a.bots) {
+  const auto parseSpec = [](const std::string& text) {
     const std::optional<ai::BotSpec> spec = ai::parseBotSpec(text);
     if (!spec) {
       std::fprintf(stderr, "error: '%s' is not a bot (ref, ref:easy|medium|hard or a .wasm path)\n",
                    text.c_str());
+    }
+    return spec;
+  };
+  // The bots, slot 0 first, padded with ref:hard; or the teams (v0.35).
+  std::vector<ai::BotSpec> bots;
+  std::vector<std::vector<ai::BotSpec>> teams;
+  for (const std::string& list : a.teams) {
+    std::vector<ai::BotSpec>& team = teams.emplace_back();
+    size_t from = 0;
+    while (true) {
+      const size_t comma = list.find(',', from);
+      const std::optional<ai::BotSpec> spec = parseSpec(
+          list.substr(from, comma == std::string::npos ? std::string::npos : comma - from));
+      if (!spec) return kExitArgs;
+      team.push_back(*spec);
+      bots.push_back(*spec);  // for the module cache below
+      if (comma == std::string::npos) break;
+      from = comma + 1;
+    }
+  }
+  if (teams.empty()) {
+    for (const std::string& text : a.bots) {
+      const std::optional<ai::BotSpec> spec = parseSpec(text);
+      if (!spec) return kExitArgs;
+      bots.push_back(*spec);
+    }
+    const size_t slots = a.slots.value_or(std::max<size_t>(bots.size(), 2));
+    if (bots.size() > slots || bots.size() > sim::kMaxPlayers) {
+      std::fprintf(stderr, "error: %zu bots for %zu slots (at most %u)\n", bots.size(), slots,
+                   sim::kMaxPlayers);
       return kExitArgs;
     }
-    bots.push_back(*spec);
+    bots.resize(slots, ai::BotSpec{});  // BotSpec{} is ref:hard
   }
-  const size_t slots = a.slots.value_or(std::max<size_t>(bots.size(), 2));
-  if (bots.size() > slots || bots.size() > sim::kMaxPlayers) {
-    std::fprintf(stderr, "error: %zu bots for %zu slots (at most %u)\n", bots.size(), slots,
-                 sim::kMaxPlayers);
-    return kExitArgs;
-  }
-  bots.resize(slots, ai::BotSpec{});  // BotSpec{} is ref:hard
 
   // Embedded unless --content: a result must not depend on files next to the
   // binary.
@@ -244,6 +300,26 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     return kExitArgs;
   }
   setup.bots = bots;
+  setup.memory = a.memory;
+  if (!teams.empty()) {
+    // v0.35: a team mode with exactly one --team per team.
+    const sim::ModeDef& mode = loaded.db.modeAt(setup.config.mode);
+    if (mode.teams < 2 || teams.size() != mode.teams) {
+      std::fprintf(stderr, "error: mode %.*s has %u teams, got %zu --team\n",
+                   static_cast<int>(mode.name.view().size()), mode.name.view().data(),
+                   unsigned{mode.teams}, teams.size());
+      return kExitArgs;
+    }
+    size_t size = 0;
+    for (const std::vector<ai::BotSpec>& t : teams)
+      size = std::max(size, t.size());
+    if (teams.size() * size > sim::kMaxPlayers) {
+      std::fprintf(stderr, "error: %zu teams of %zu make more than %u slots\n", teams.size(), size,
+                   sim::kMaxPlayers);
+      return kExitArgs;
+    }
+    setup.teams = teams;
+  }
   setup.tickCap = a.ticks;
   setup.delayTicks = static_cast<uint8_t>(a.delay);
 

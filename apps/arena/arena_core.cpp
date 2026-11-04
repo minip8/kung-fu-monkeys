@@ -130,30 +130,95 @@ void assignPlaces(MatchResult& result) {
   }
 }
 
+void assignTeamPlaces(MatchResult& result) {
+  std::vector<size_t> order(result.teams.size());
+  std::ranges::iota(order, size_t{0});
+  int winnerTeam = -1;
+  if (result.winner.isValid() && result.winner.value < result.slots.size()) {
+    winnerTeam = result.slots[result.winner.value].team;
+  }
+  std::ranges::sort(order, [&](size_t ia, size_t ib) {
+    const TeamResult& a = result.teams[ia];
+    const TeamResult& b = result.teams[ib];
+    const bool wa = int{a.team} == winnerTeam;
+    const bool wb = int{b.team} == winnerTeam;
+    if (wa != wb) return wa;
+    if (a.score != b.score) return a.score > b.score;
+    if (a.deaths != b.deaths) return a.deaths < b.deaths;
+    return a.team < b.team;
+  });
+  for (size_t place = 0; place < order.size(); ++place) {
+    result.teams[order[place]].place = static_cast<uint8_t>(place + 1);
+  }
+}
+
 std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
                                               const sim::ContentDB& content, BotFactory& factory,
                                               uint32_t index) {
   using namespace kfm::sim;
-  const size_t n = setup.bots.size();
-  if (n == 0 || n > kMaxPlayers) {
-    return std::unexpected(BotError{
-        BotErrorKind::Load, std::format("a match needs 1..{} bots, got {}", kMaxPlayers, n)});
-  }
   MatchConfig config = setup.config;
-  config.players = static_cast<PlayerMask>((1u << n) - 1u);
+  // The spec and the bot index of every slot.
+  std::vector<const ai::BotSpec*> specOf;
+  std::vector<uint8_t> botOf;
+  std::vector<uint8_t> entrantOf;  // by team index (team matches)
+  const bool teamMatch = !setup.teams.empty();
+  if (teamMatch) {
+    const ModeDef& mode = content.modeAt(config.mode);
+    const size_t teams = setup.teams.size();
+    if (mode.teams < 2 || teams != mode.teams) {
+      return std::unexpected(
+          BotError{BotErrorKind::Load, std::format("mode {} has {} teams, got {} --team entrants",
+                                                   mode.name.view(), unsigned{mode.teams}, teams)});
+    }
+    size_t size = 1;
+    for (const std::vector<ai::BotSpec>& t : setup.teams) {
+      if (t.empty()) return std::unexpected(BotError{BotErrorKind::Load, "an empty --team"});
+      size = std::max(size, t.size());
+    }
+    if (teams * size > kMaxPlayers) {
+      return std::unexpected(
+          BotError{BotErrorKind::Load, std::format("{} teams of {} make {} slots (at most {})",
+                                                   teams, size, teams * size, kMaxPlayers)});
+    }
+    const size_t n = teams * size;
+    config.players = static_cast<PlayerMask>((1u << n) - 1u);
+    config.teams = teamsFor(mode, config.players);
+    entrantOf.resize(teams);
+    for (size_t t = 0; t < teams; ++t)
+      entrantOf[t] = static_cast<uint8_t>((t + teams - (setup.rotation % teams)) % teams);
+    std::vector<size_t> position(teams, 0);
+    for (size_t i = 0; i < n; ++i) {
+      const uint8_t t = config.teams[i];
+      const uint8_t e = entrantOf[t];
+      const std::vector<ai::BotSpec>& list = setup.teams[e];
+      const size_t p = position[t]++;
+      specOf.push_back(&list[std::min(p, list.size() - 1)]);
+      botOf.push_back(static_cast<uint8_t>((e * size) + p));
+    }
+  } else {
+    const size_t n = setup.bots.size();
+    if (n == 0 || n > kMaxPlayers) {
+      return std::unexpected(BotError{
+          BotErrorKind::Load, std::format("a match needs 1..{} bots, got {}", kMaxPlayers, n)});
+    }
+    config.players = static_cast<PlayerMask>((1u << n) - 1u);
+    // Slot i plays bot botOf[i]: bot b sits in slot (b + rotation) mod n.
+    const size_t shift = setup.rotation % n;
+    for (size_t i = 0; i < n; ++i) {
+      const size_t b = (i + n - shift) % n;
+      specOf.push_back(&setup.bots[b]);
+      botOf.push_back(static_cast<uint8_t>(b));
+    }
+  }
+  const size_t n = specOf.size();
   const MatchContent match = matchContent(content, config);
-
-  // Slot i plays bot botOf[i]: bot b sits in slot (b + rotation) mod n.
-  std::vector<size_t> botOf(n);
-  const size_t shift = setup.rotation % n;
-  for (size_t i = 0; i < n; ++i)
-    botOf[i] = (i + n - shift) % n;
 
   // Agents first: a failing module leaves no half-played match.
   ai::AgentHost host;
+  host.setRespawnMemory(setup.memory);
   std::vector<ai::WasmAgent*> wasm(n, nullptr);
   for (size_t i = 0; i < n; ++i) {
-    auto made = factory.make(setup.bots[botOf[i]]);
+    auto made = factory.make(*specOf[i]);
     if (!made) return std::unexpected(std::move(made.error()));
     const auto slot = static_cast<uint8_t>(i);
     wasm[i] = made->wasm;
@@ -166,12 +231,14 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   result.seed = config.seed;
   result.slots.resize(n);
   for (size_t i = 0; i < n; ++i) {
-    const ai::BotSpec& bot = setup.bots[botOf[i]];
+    const ai::BotSpec& bot = *specOf[i];
     result.slots[i].slot = static_cast<uint8_t>(i);
-    result.slots[i].botIndex = static_cast<uint8_t>(botOf[i]);
+    result.slots[i].botIndex = botOf[i];
+    result.slots[i].team = config.teams[i];
     result.slots[i].bot = ai::toString(bot);
     result.slots[i].module = bot.kind == ai::BotKind::Module;
   }
+  std::vector<uint32_t> teamKills(teamMatch ? setup.teams.size() : 0, 0);
 
   // A WorldState is large: keep it off the stack.
   const auto world = std::make_unique<WorldState>(initialWorld(config));
@@ -194,6 +261,11 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
       if (e.kind == EventKind::PlayerEliminated) {
         if (e.player.isValid() && e.player.value < n) ++result.slots[e.player.value].deaths;
         if (e.a < n && e.a != e.player.value) ++result.slots[e.a].kills;
+        if (teamMatch && e.a < n && e.player.isValid() && e.player.value < n &&
+            config.teams[e.a] != config.teams[e.player.value] &&
+            config.teams[e.a] < teamKills.size()) {
+          ++teamKills[config.teams[e.a]];
+        }
       } else if (e.kind == EventKind::MatchEnded) {
         ended = true;
         result.outcome = MatchOutcome::Ended;
@@ -227,6 +299,23 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   }
   result.checksum = checksum(*world);
   assignPlaces(result);
+  if (teamMatch) {
+    result.teams.resize(setup.teams.size());
+    for (size_t t = 0; t < result.teams.size(); ++t) {
+      TeamResult& tr = result.teams[t];
+      tr.team = static_cast<uint8_t>(t);
+      tr.entrant = entrantOf[t];
+      tr.score = match.teamScore(world->rules.scores, tr.team);
+      tr.kills = teamKills[t];
+      for (const SlotResult& s : result.slots) {
+        if (s.team != tr.team) continue;
+        if (!tr.bots.empty()) tr.bots.push_back(',');
+        tr.bots += s.bot;
+        tr.deaths += s.deaths;
+      }
+    }
+    assignTeamPlaces(result);
+  }
 
   if (setup.recordReplay) {
     ReplayHeader h;
@@ -293,6 +382,22 @@ void Summary::add(const MatchResult& result) {
     fold(bots, s.botIndex, s);
     if (s.botIndex != s.slot) rotated = true;
   }
+  // v0.35: per entrant of a team match.
+  int winnerTeam = -1;
+  if (won && result.winner.value < result.slots.size()) {
+    winnerTeam = result.slots[result.winner.value].team;
+  }
+  for (const TeamResult& t : result.teams) {
+    if (entrants.size() <= t.entrant) entrants.resize(size_t{t.entrant} + 1);
+    EntrantSummary& e = entrants[t.entrant];
+    e.index = t.entrant;
+    e.bots = t.bots;
+    if (int{t.team} == winnerTeam) ++e.wins;
+    e.placeSum += t.place;
+    e.score += t.score;
+    e.kills += t.kills;
+    e.deaths += t.deaths;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -307,6 +412,12 @@ std::string_view outcomeText(MatchOutcome o) {
 
 std::string winnerText(PlayerId w) {
   return w.isValid() ? std::to_string(w.value) : std::string("none");
+}
+
+// The winning team of a team match (the winner slot's), or none.
+std::string winnerTeamText(const MatchResult& r) {
+  if (!r.winner.isValid() || r.winner.value >= r.slots.size()) return "none";
+  return std::to_string(r.slots[r.winner.value].team);
 }
 
 // A JSON string literal: quotes, backslashes and control characters escaped.
@@ -347,17 +458,28 @@ double meanPlace(const SlotSummary& s, uint32_t matches) {
   return matches == 0 ? 0.0 : static_cast<double>(s.placeSum) / static_cast<double>(matches);
 }
 
+double meanEntrantPlace(const EntrantSummary& e, uint32_t matches) {
+  return matches == 0 ? 0.0 : static_cast<double>(e.placeSum) / static_cast<double>(matches);
+}
+
 }  // namespace
 
 std::string formatResultLine(const MatchResult& r) {
   std::string out =
       std::format("match {} seed {} ticks {} checksum {:08x} result {} winner {}", r.index, r.seed,
                   r.ticks, r.checksum, outcomeText(r.outcome), winnerText(r.winner));
-  for (const SlotResult& s : r.slots) {
+  const bool teams = !r.teams.empty();
+  if (teams) out += " winner_team " + winnerTeamText(r);
+  for (const TeamResult& t : r.teams) {
     std::format_to(std::back_inserter(out),
-                   " | slot {} bot {} {} place {} score {} kills {} deaths {} acts {} subs {}",
-                   s.slot, s.botIndex, s.bot, s.place, s.score, s.kills, s.deaths, s.acts,
-                   s.substitutions);
+                   " | team {} entrant {} {} place {} score {} kills {} deaths {}", t.team,
+                   t.entrant, t.bots, t.place, t.score, t.kills, t.deaths);
+  }
+  for (const SlotResult& s : r.slots) {
+    std::format_to(std::back_inserter(out), " | slot {} bot {} {}", s.slot, s.botIndex, s.bot);
+    if (teams) std::format_to(std::back_inserter(out), " team {}", s.team);
+    std::format_to(std::back_inserter(out), " place {} score {} kills {} deaths {} acts {} subs {}",
+                   s.place, s.score, s.kills, s.deaths, s.acts, s.substitutions);
     if (s.module) {
       std::format_to(
           std::back_inserter(out),
@@ -374,15 +496,31 @@ std::string formatResultJson(const MatchResult& r) {
       R"({{"match":{},"seed":{},"ticks":{},"checksum":"{:08x}","result":"{}","winner":{})", r.index,
       r.seed, r.ticks, r.checksum, outcomeText(r.outcome),
       r.winner.isValid() ? std::to_string(r.winner.value) : "null");
+  const bool teams = !r.teams.empty();
+  if (teams) {
+    const std::string w = winnerTeamText(r);
+    std::format_to(std::back_inserter(out), R"(,"winner_team":{},"teams":[)",
+                   w == "none" ? std::string("null") : w);
+    for (size_t i = 0; i < r.teams.size(); ++i) {
+      const TeamResult& t = r.teams[i];
+      if (i != 0) out.push_back(',');
+      std::format_to(std::back_inserter(out),
+                     R"({{"team":{},"entrant":{},"spec":{},"place":{},"score":{},"kills":{},)"
+                     R"("deaths":{}}})",
+                     t.team, t.entrant, jsonString(t.bots), t.place, t.score, t.kills, t.deaths);
+    }
+    out.push_back(']');
+  }
   out += R"(,"slots":[)";
   for (size_t i = 0; i < r.slots.size(); ++i) {
     const SlotResult& s = r.slots[i];
     if (i != 0) out.push_back(',');
+    std::format_to(std::back_inserter(out), R"({{"slot":{},"bot":{},"spec":{},"module":{},)",
+                   s.slot, s.botIndex, jsonString(s.bot), s.module);
+    if (teams) std::format_to(std::back_inserter(out), R"("team":{},)", s.team);
     std::format_to(std::back_inserter(out),
-                   R"({{"slot":{},"bot":{},"spec":{},"module":{},"place":{},"score":{},)"
-                   R"("kills":{},"deaths":{},"acts":{},"subs":{})",
-                   s.slot, s.botIndex, jsonString(s.bot), s.module, s.place, s.score, s.kills,
-                   s.deaths, s.acts, s.substitutions);
+                   R"("place":{},"score":{},"kills":{},"deaths":{},"acts":{},"subs":{})", s.place,
+                   s.score, s.kills, s.deaths, s.acts, s.substitutions);
     if (s.module) {
       std::format_to(std::back_inserter(out),
                      R"(,"traps":{},"over":{},"bad":{},"fuel_mean":{},"fuel_max":{},)"
@@ -415,6 +553,12 @@ std::string formatSummaryLine(const Summary& sum) {
   };
   rows("slot", sum.slots);
   if (sum.rotated) rows("bot", sum.bots);
+  for (const EntrantSummary& e : sum.entrants) {
+    std::format_to(std::back_inserter(out),
+                   " | entrant {} {} wins {} mean_place {:.2f} score {} kills {} deaths {}",
+                   e.index, e.bots, e.wins, meanEntrantPlace(e, sum.matches), e.score, e.kills,
+                   e.deaths);
+  }
   return out;
 }
 
@@ -444,6 +588,19 @@ std::string formatSummaryJson(const Summary& sum) {
   };
   rows("slots", "slot", sum.slots);
   if (sum.rotated) rows("bots", "bot", sum.bots);
+  if (!sum.entrants.empty()) {
+    out += R"(,"entrants":[)";
+    for (size_t i = 0; i < sum.entrants.size(); ++i) {
+      const EntrantSummary& e = sum.entrants[i];
+      if (i != 0) out.push_back(',');
+      std::format_to(std::back_inserter(out),
+                     R"({{"entrant":{},"spec":{},"wins":{},"mean_place":{:.2f},"score":{},)"
+                     R"("kills":{},"deaths":{}}})",
+                     e.index, jsonString(e.bots), e.wins, meanEntrantPlace(e, sum.matches), e.score,
+                     e.kills, e.deaths);
+    }
+    out.push_back(']');
+  }
   out.push_back('}');
   return out;
 }

@@ -298,6 +298,96 @@ TEST_CASE("a rotated tournament totals per slot and per bot", "[arena]") {
   CHECK(json.ends_with("}]}"));
 }
 
+TEST_CASE("a team match fills each team's slots from its entrant (--team)", "[arena][teams]") {
+  BotFactory factory;
+  const sim::ContentDB& db = gameContent().db;
+  MatchSetup setup;
+  setup.config.seed = 41;
+  const std::optional<uint8_t> mode = db.findMode("team_rounds");
+  const std::optional<uint8_t> arena = db.findArena("standoff");
+  REQUIRE(mode);
+  REQUIRE(arena);
+  setup.config.mode = mode.value_or(0);
+  setup.config.arena = arena.value_or(0);
+  setup.teams = {{spec("ref:easy"), spec("ref:medium")}, {spec("ref:hard")}};
+  setup.tickCap = 36'000;
+  const MatchResult r = play(setup, factory);
+  // Two teams of two: slots 0, 2 are team 0 (entrant 0 in order), 1, 3 team
+  // 1 (entrant 1's one spec repeated).
+  REQUIRE(r.slots.size() == 4);
+  CHECK(r.slots[0].bot == "ref:easy");
+  CHECK(r.slots[2].bot == "ref:medium");
+  CHECK(r.slots[1].bot == "ref:hard");
+  CHECK(r.slots[3].bot == "ref:hard");
+  for (const SlotResult& s : r.slots)
+    CHECK(s.team == s.slot % 2);
+  REQUIRE(r.teams.size() == 2);
+  CHECK(r.teams[0].bots == "ref:easy,ref:medium");
+  CHECK(r.teams[1].bots == "ref:hard,ref:hard");
+  CHECK(r.teams[0].entrant == 0);
+  CHECK(r.teams[1].entrant == 1);
+  CHECK(r.teams[0].place + r.teams[1].place == 3);
+  CHECK(r.teams[0].deaths == r.slots[0].deaths + r.slots[2].deaths);
+  if (r.outcome == MatchOutcome::Ended && r.winner.isValid()) {
+    const uint8_t won = r.slots[r.winner.value].team;
+    CHECK(r.teams[won].place == 1);
+    CHECK(r.teams[won].score >= 3);  // first team to 3 round wins
+  }
+  const std::string line = formatResultLine(r);
+  CHECK(contains(line, " winner_team "));
+  CHECK(contains(line, " | team 0 entrant 0 ref:easy,ref:medium place "));
+  CHECK(contains(line, " | slot 0 bot 0 ref:easy team 0 place "));
+  CHECK(contains(line, " | slot 3 bot 3 ref:hard team 1 place "));
+  const std::string json = formatResultJson(r);
+  CHECK(contains(json, R"("teams":[{"team":0,"entrant":0,"spec":"ref:easy,ref:medium","place":)"));
+  CHECK(contains(json, R"({"slot":1,"bot":2,"spec":"ref:hard","module":false,"team":1,"place":)"));
+
+  // Rotated: entrant 0 plays team 1 (the east side) in match 1.
+  MatchSetup rotated = setup;
+  rotated.rotation = 1;
+  const MatchResult q = play(rotated, factory, 1);
+  CHECK(q.slots[1].bot == "ref:easy");
+  CHECK(q.slots[3].bot == "ref:medium");
+  CHECK(q.slots[0].bot == "ref:hard");
+  CHECK(q.teams[1].entrant == 0);
+  Summary sum;
+  sum.add(r);
+  sum.add(q);
+  REQUIRE(sum.entrants.size() == 2);
+  CHECK(sum.entrants[0].bots == "ref:easy,ref:medium");
+  CHECK(sum.entrants[0].placeSum + sum.entrants[1].placeSum == 2 * (1 + 2));
+  CHECK(sum.entrants[0].wins + sum.entrants[1].wins == sum.ended);
+  CHECK(contains(formatSummaryLine(sum), " | entrant 1 ref:hard,ref:hard wins "));
+  CHECK(contains(formatSummaryJson(sum), R"("entrants":[{"entrant":0,)"));
+
+  // The entrants must match the mode's teams.
+  MatchSetup three = setup;
+  three.teams.push_back({spec("ref")});
+  CHECK_FALSE(runMatch(three, db, factory).has_value());
+  MatchSetup ffa = setup;
+  ffa.config.mode = 0;
+  CHECK_FALSE(runMatch(ffa, db, factory).has_value());
+}
+
+TEST_CASE("team places: the winner's team, then team score, then fewer deaths", "[arena][teams]") {
+  MatchResult r;
+  r.slots = {slotWith(0, 0, 3), slotWith(1, 1, 0), slotWith(2, 0, 1), slotWith(3, 0, 0)};
+  for (SlotResult& s : r.slots)
+    s.team = static_cast<uint8_t>(s.slot % 2);
+  r.teams.resize(2);
+  r.teams[0] = TeamResult{0, 0, "a", 0, 2, 0, 4};
+  r.teams[1] = TeamResult{1, 1, "b", 0, 2, 0, 1};
+  assignTeamPlaces(r);
+  CHECK(r.teams[1].place == 1);  // tied score, fewer deaths
+  r.winner = PlayerId{2};        // a team-0 slot won the match
+  assignTeamPlaces(r);
+  CHECK(r.teams[0].place == 1);
+  r.winner = PlayerId::invalid();
+  r.teams[0].score = 3;
+  assignTeamPlaces(r);
+  CHECK(r.teams[0].place == 1);
+}
+
 TEST_CASE("the replay runMatch writes plays back to the same final state", "[arena]") {
   MatchSetup setup = setupOf({"ref:hard", "ref:medium", "ref:easy"}, 5, 36'000);
   setup.recordReplay = true;
