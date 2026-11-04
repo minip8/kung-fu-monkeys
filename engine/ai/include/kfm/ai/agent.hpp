@@ -12,6 +12,9 @@
 #include "kfm/core/types.hpp"
 #include "kfm/sim/input.hpp"
 
+#include <cstdint>
+#include <optional>
+
 namespace kfm::ai {
 
 struct IAgent {
@@ -25,7 +28,11 @@ struct IAgent {
   // Called once when the agent takes a slot in a match (before the first act()).
   virtual void init(uint64_t seed, PlayerId slot) = 0;
   // The input for `tick`, given the observation the host built for it.
-  virtual sim::PlayerInput act(const Observation& obs, Tick tick) = 0;
+  // nullopt = the agent produced no input this tick (a wasm module that
+  // trapped or ran over its fuel budget): the host substitutes "repeat last
+  // input", exactly the server's rule for a late network input (§6.1), and
+  // counts the substitution.
+  virtual std::optional<sim::PlayerInput> act(const Observation& obs, Tick tick) = 0;
 };
 
 }  // namespace kfm::ai
