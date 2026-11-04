@@ -1,11 +1,15 @@
 // ServerHost over the loopback emulator (apps/server): a real NetClient
 // plays against server-side bots through a whole match, sees the restart and
-// keeps playing; stats lines; shutdown; --exit-after-matches. Time is a
-// deterministic 1 ms step loop, as in tests/netcode.
+// keeps playing; stats lines; shutdown; --exit-after-matches; the bots
+// (reference bots and, with KFM_WASM_BOTS, a fixture module) writing the
+// authoritative frames, re-initialised per match, delayed by the humans'
+// lead. Time is a deterministic 1 ms step loop, as in tests/netcode.
 #include "server_host.hpp"
 
+#include "kfm/ai/bot_spec.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/net/loopback.hpp"
+#include "kfm/net/messages.hpp"
 #include "kfm/net/net_client.hpp"
 #include "kfm/net/netsim.hpp"
 #include "kfm/sim/content.hpp"
@@ -18,6 +22,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -31,11 +36,75 @@ using kfm::net::netsim::kSec;
 
 namespace {
 
+// A hand-driven client on a zero-latency link: joins with one slot, then
+// every tick sends an idle input for nextTick + margin acknowledging the
+// newest authoritative frame it holds, so the server measures its lead as
+// exactly `margin` ticks (rtt 0).
+struct FakeHuman {
+  LoopbackTransport* t{nullptr};
+  int32_t margin{0};
+  bool welcomed{false};
+  std::optional<Tick> newestAuth;
+  std::optional<Tick> sentFor;  // the server tick of the last input sent
+
+  void hello(const sim::ContentDB& content) const {
+    HelloMsg h;
+    h.contentHash = sim::contentHash(content);
+    h.requestedSlots = 1;
+    std::vector<std::byte> buf(kMaxReliableBytes);
+    const size_t n = encode(h, buf);
+    REQUIRE(n > 0);
+    t->sendReliable(kServerPeer, {buf.data(), n});
+  }
+  void poll(uint64_t now, Tick serverNext) {
+    ConnectionEvents ev;
+    t->poll(now, ev);
+    Packet p;
+    while (t->recv(p)) {
+      const auto type = peekType(p.data);
+      if (!type) continue;
+      WelcomeMsg w;
+      if (*type == MessageType::Welcome && decode(p.data, w)) {
+        welcomed = true;
+        mySlots = w.assignedSlots;
+      }
+      AuthInputsMsg a;
+      if (*type == MessageType::AuthInputs && decode(p.data, a)) {
+        const Tick end = a.endTick().plus(-1);
+        if (!newestAuth || end > *newestAuth) newestAuth = end;
+      }
+    }
+    if (!welcomed || !newestAuth || sentFor == serverNext) return;
+    sentFor = serverNext;
+    InputMsg m;
+    m.startTick = serverNext.plus(margin);
+    m.count = 1;
+    m.lastAuthTick = newestAuth;
+    m.slots = mySlots;
+    std::array<std::byte, kMaxUnreliableBytes> buf{};
+    const size_t n = encode(m, buf);
+    if (n > 0) t->sendUnreliable(kServerPeer, {buf.data(), n});
+  }
+  sim::PlayerMask mySlots{0};
+};
+
 struct Rig {
   explicit Rig(server::HostConfig config, const sim::ContentDB& db = sim::defaultContent())
       : content(db), net(77) {
     config.log = [this](std::string_view line) { lines.emplace_back(line); };
-    host = std::make_unique<server::ServerHost>(net.server(), content, std::move(config), now);
+    auto created = server::ServerHost::create(net.server(), content, std::move(config), now);
+    if (!created) FAIL("ServerHost::create: " << created.error());
+    host = std::move(*created);
+  }
+
+  FakeHuman& addFakeHuman(int32_t margin) {
+    fakes.push_back(std::make_unique<FakeHuman>());
+    FakeHuman& f = *fakes.back();
+    f.t = &net.connectClient(now);
+    f.margin = margin;
+    step();
+    f.hello(content);
+    return f;
   }
 
   NetClient& addClient(const std::string& token) {
@@ -50,6 +119,9 @@ struct Rig {
   void step() {
     now += kMs;
     host->frame(now);
+    for (auto& f : fakes)
+      f->poll(now, host->server().nextTick());
+    record();
     for (size_t i = 0; i < clients.size(); ++i) {
       NetClient& c = *clients[i];
       c.beginFrame();
@@ -83,6 +155,21 @@ struct Rig {
       step();
   }
 
+  // Every authoritative frame since the last call.
+  void record() {
+    const std::optional<Tick> newest = host->server().frames().newest();
+    if (!newest) return;
+    Tick t = recorded.empty() ? *newest : recorded.back().tick.plus(1);
+    for (; t <= *newest; t = t.plus(1)) {
+      if (const sim::InputFrame* f = host->server().frames().get(t)) recorded.push_back(*f);
+    }
+  }
+  [[nodiscard]] const sim::InputFrame* recordedAt(Tick t) const {
+    for (const sim::InputFrame& f : std::views::reverse(recorded))
+      if (f.tick == t) return &f;
+    return nullptr;
+  }
+
   [[nodiscard]] size_t linesWith(std::string_view what) const {
     return static_cast<size_t>(
         std::ranges::count_if(lines, [&](const std::string& l) { return l.contains(what); }));
@@ -95,12 +182,14 @@ struct Rig {
   std::unique_ptr<server::ServerHost> host;
   std::vector<std::unique_ptr<NetClient>> clients;
   std::vector<Rng> rngs;
+  std::vector<std::unique_ptr<FakeHuman>> fakes;
+  std::vector<sim::InputFrame> recorded;
 };
 
 [[nodiscard]] server::HostConfig botConfig(uint8_t bots) {
   server::HostConfig c;
   c.server.match.seed = 0xAB;
-  c.bots = bots;
+  c.bots = server::referenceBots(bots);
   c.restartDelayTicks = 2 * sim::kTickHz;
   return c;
 }
@@ -245,3 +334,210 @@ TEST_CASE("ServerHost shutdown disconnects clients with ServerShuttingDown", "[s
   CHECK(rig.linesWith("shutting down") == 1);
   CHECK(rig.linesWith("leave peer=1") == 1);
 }
+
+TEST_CASE("ServerHost's reference bots throw and dash in the authoritative frames",
+          "[server][bots]") {
+  server::HostConfig cfg = botConfig(3);
+  cfg.statsEveryNs = kSec;
+  Rig rig(cfg);
+  CHECK(rig.host->server().bots() == 0b111);
+  for (uint8_t s = 0; s < 3; ++s) {
+    const std::optional<ai::BotSpec> spec = rig.host->botSpec(PlayerId{s});
+    CHECK(spec == ai::BotSpec{});  // ref:hard
+  }
+  CHECK_FALSE(rig.host->botSpec(PlayerId{3}).has_value());
+  CHECK(rig.linesWith("bot_specs=ref:hard,ref:hard,ref:hard bot_delay=auto") == 1);
+  rig.runFor(20 * kSec);
+  std::array<uint32_t, 3> throws{};
+  std::array<uint32_t, 3> dashes{};
+  std::array<uint32_t, 3> moving{};
+  for (size_t i = 1; i < rig.recorded.size(); ++i) {
+    for (uint8_t s = 0; s < 3; ++s) {
+      const sim::PlayerInput& in = rig.recorded[i].inputs[s];
+      const sim::PlayerInput& was = rig.recorded[i - 1].inputs[s];
+      const auto pressed = [&](sim::Button b) {
+        const auto bit = static_cast<uint8_t>(b);
+        return (in.buttons & bit) != 0 && (was.buttons & bit) == 0;
+      };
+      if (pressed(sim::Button::Throw)) ++throws[s];
+      if (pressed(sim::Button::Dash)) ++dashes[s];
+      if (in.moveMag != 0) ++moving[s];
+    }
+  }
+  for (uint8_t s = 0; s < 3; ++s) {
+    INFO("slot " << int{s});
+    CHECK(throws[s] > 0);
+    CHECK(dashes[s] > 0);
+    CHECK(moving[s] > 60);
+  }
+  CHECK(rig.host->botDelayTicks() == 0);  // bot versus bot: no delay
+  const auto it = std::ranges::find_if(std::views::reverse(rig.lines),
+                                       [](const std::string& l) { return l.contains("] stats "); });
+  REQUIRE(it != std::views::reverse(rig.lines).end());
+  INFO(*it);
+  CHECK(
+      it->contains(" bot_delay=0 | bot 0 ref:hard acts=+60 subst=+0 | bot 1 ref:hard acts=+60 "
+                   "subst=+0 | bot 2 ref:hard acts=+60 subst=+0"));
+}
+
+TEST_CASE("ServerHost's bots take the humans' lead as their delay, once a second",
+          "[server][bots][delay]") {
+  SECTION("auto: the median lead of the peers holding slots") {
+    Rig rig(botConfig(2));
+    FakeHuman& h = rig.addFakeHuman(4);
+    REQUIRE(rig.runUntil([&] { return h.welcomed && h.mySlots != 0; }, kSec));
+    CHECK(h.mySlots == 0b100);
+    rig.runFor(3 * kSec);
+    CHECK(rig.host->server().humanLeadTicks() == 4);
+    CHECK(rig.host->botDelayTicks() == 4);
+    // The second fake human's lead is 7: the lower median of 4 and 7 is 4;
+    // with a third at 9 the median is 7.
+    rig.addFakeHuman(7);
+    rig.runFor(3 * kSec);
+    CHECK(rig.host->botDelayTicks() == 4);
+    rig.addFakeHuman(9);
+    rig.runFor(3 * kSec);
+    CHECK(rig.host->server().humanLeadTicks() == 7);
+    CHECK(rig.host->botDelayTicks() == 7);
+  }
+  SECTION("a fixed delay ignores the lead") {
+    server::HostConfig cfg = botConfig(1);
+    cfg.botDelayTicks = 2;
+    Rig rig(cfg);
+    CHECK(rig.host->botDelayTicks() == 2);
+    rig.addFakeHuman(6);
+    rig.runFor(3 * kSec);
+    CHECK(rig.host->server().humanLeadTicks() == 6);
+    CHECK(rig.host->botDelayTicks() == 2);
+  }
+  SECTION("a real client over a 40 ms link") {
+    Rig rig(botConfig(2));
+    NetClient& c = rig.addClient("human");
+    REQUIRE(rig.runUntil([&] { return c.running(); }, 3 * kSec));
+    rig.runFor(5 * kSec);
+    // lead ≈ one-way 40 ms (2.4 ticks) + a margin of 1..2 ticks.
+    const uint8_t lead = rig.host->server().humanLeadTicks();
+    CHECK(lead >= 3);
+    CHECK(lead <= 6);
+    CHECK(rig.host->botDelayTicks() == lead);
+    CHECK(c.netStats().checksumMismatches == 0);
+  }
+}
+
+TEST_CASE("ServerHost refuses a bot module that does not load", "[server][bots]") {
+  server::HostConfig cfg = botConfig(1);
+  cfg.bots.push_back(
+      ai::BotSpec{ai::BotKind::Module, ai::ReferenceTier::Hard, "/nonexistent/x.wasm"});
+  LoopbackNetwork net(3);
+  auto created = server::ServerHost::create(net.server(), sim::defaultContent(), cfg, 0);
+  REQUIRE_FALSE(created.has_value());
+  CHECK(created.error().contains("/nonexistent/x.wasm"));
+}
+
+#ifdef KFM_SERVER_TEST_WASM
+
+namespace {
+
+[[nodiscard]] ai::BotSpec fixture(std::string_view name) {
+  return ai::BotSpec{ai::BotKind::Module, ai::ReferenceTier::Hard,
+                     std::string(KFM_BOT_FIXTURES_DIR) + "/" + std::string(name)};
+}
+
+}  // namespace
+
+TEST_CASE("ServerHost runs a wasm bot module, its inputs delayed by the humans' lead",
+          "[server][bots][wasm]") {
+  // echo.wasm answers aimDir = the observed tick's low byte, so the frame of
+  // tick T carries (T − delay) & 255.
+  server::HostConfig cfg = botConfig(0);
+  cfg.bots = {fixture("echo.wasm"), fixture("echo.wasm"), ai::BotSpec{}};
+  cfg.statsEveryNs = kSec;
+  Rig rig(cfg);
+  CHECK(rig.linesWith("bot_specs=echo.wasm,echo.wasm,ref:hard") == 1);
+  rig.runFor(2 * kSec);
+  const auto lagOf = [&](const sim::InputFrame& f, uint8_t slot) {
+    return static_cast<uint8_t>((f.tick.value - f.inputs[slot].aimDir) & 0xFFu);
+  };
+  CHECK(lagOf(rig.recorded.back(), 0) == 0);  // bot versus bot
+  CHECK(rig.recorded.back().inputs[0].moveMag == 255);
+  CHECK(rig.recorded.back().inputs[1].moveDir == 64);
+
+  rig.addFakeHuman(5);
+  rig.runFor(3 * kSec);
+  REQUIRE(rig.host->botDelayTicks() == 5);
+  for (size_t i = rig.recorded.size() - 30; i < rig.recorded.size(); ++i) {
+    CHECK(lagOf(rig.recorded[i], 0) == 5);
+    CHECK(lagOf(rig.recorded[i], 1) == 5);
+  }
+  const auto it = std::ranges::find_if(std::views::reverse(rig.lines),
+                                       [](const std::string& l) { return l.contains("] stats "); });
+  REQUIRE(it != std::views::reverse(rig.lines).end());
+  INFO(*it);
+  CHECK(
+      it->contains(" bot_delay=5 | bot 0 echo.wasm acts=+60 subst=+0 traps=+0 over_budget=+0 "
+                   "fuel_mean="));
+  CHECK(it->contains(" | bot 2 ref:hard acts=+60 subst=+0"));
+}
+
+TEST_CASE("ServerHost re-initialises its wasm bots with the next match's seeds",
+          "[server][bots][wasm][restart]") {
+  // counter.wasm answers moveDir = its act count since kfm_init (a fresh
+  // instance counts from 1), moveMag = its slot, aimDir = its seed's low byte.
+  server::HostConfig cfg = botConfig(3);
+  cfg.bots.push_back(fixture("counter.wasm"));
+  cfg.bots.push_back(fixture("counter.wasm"));
+  cfg.server.botSeed = 0x1234;
+  Rig rig(cfg);
+  rig.runFor(kSec);
+  const sim::InputFrame* first = rig.recordedAt(Tick{0});
+  if (first == nullptr) {
+    FAIL("no frame 0");
+    return;
+  }
+  for (uint8_t s = 3; s < 5; ++s) {
+    INFO("slot " << int{s});
+    CHECK(first->inputs[s].moveDir == 1);
+    CHECK(first->inputs[s].moveMag == s);
+    CHECK(first->inputs[s].aimDir == (server::agentSeed(0x1234, PlayerId{s}) & 0xFFu));
+  }
+  CHECK(rig.recorded.back().inputs[3].moveDir == static_cast<uint8_t>(rig.recorded.size()));
+
+  REQUIRE(rig.runUntil([&] { return rig.host->server().matchIndex() == 1; }, 900 * kSec));
+  const uint64_t seed2 = server::nextMatchSeed(0x1234);
+  CHECK(rig.host->server().botSeed() == seed2);
+  const sim::InputFrame& start = rig.recorded.back();  // the restart tick: match 2's first
+  const sim::InputFrame* before = rig.recordedAt(start.tick.plus(-1));
+  if (before == nullptr) {
+    FAIL("no frame before the restart");
+    return;
+  }
+  for (uint8_t s = 3; s < 5; ++s) {
+    INFO("slot " << int{s});
+    CHECK(before->inputs[s].moveDir != 1);
+    CHECK(start.inputs[s].moveDir == 1);  // a fresh instance
+    CHECK(start.inputs[s].aimDir == (server::agentSeed(seed2, PlayerId{s}) & 0xFFu));
+  }
+  CHECK(server::agentSeed(seed2, PlayerId{3}) != server::agentSeed(0x1234, PlayerId{3}));
+}
+
+TEST_CASE("ServerHost counts a trapping module's substitutions and refuses a bad one",
+          "[server][bots][wasm]") {
+  server::HostConfig cfg = botConfig(0);
+  cfg.bots = {fixture("trap.wasm")};
+  cfg.statsEveryNs = kSec;
+  Rig rig(cfg);
+  rig.runFor(2 * kSec);
+  const auto it = std::ranges::find_if(std::views::reverse(rig.lines),
+                                       [](const std::string& l) { return l.contains("] stats "); });
+  REQUIRE(it != std::views::reverse(rig.lines).end());
+  INFO(*it);
+  CHECK(it->contains("bot 0 trap.wasm acts=+60 subst=+60 traps=+60 over_budget=+0"));
+
+  cfg.bots = {fixture("abi_mismatch.wasm")};
+  LoopbackNetwork net(3);
+  auto created = server::ServerHost::create(net.server(), sim::defaultContent(), cfg, 0);
+  REQUIRE_FALSE(created.has_value());
+  CHECK(created.error().contains("abi_mismatch.wasm"));
+}
+
+#endif

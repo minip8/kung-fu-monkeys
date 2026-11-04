@@ -183,6 +183,11 @@ if(TARGET kfm::server_host)
     server/server_host_test.cpp
   )
   target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim)
+  if(KFM_WASM_BOTS)
+    # The host's wasm bots on the fixture modules (echo, trap, abi_mismatch).
+    target_compile_definitions(kfm_server_tests PRIVATE KFM_SERVER_TEST_WASM=1
+      KFM_BOT_FIXTURES_DIR="${KFM_BOT_FIXTURES_DIR}")
+  endif()
 
   if(TARGET kfm_server)
     # The same over real sockets: WebRtcTransport on 127.0.0.1, two NetClients
