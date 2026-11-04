@@ -343,6 +343,14 @@ std::string modeSummary(const sim::ModeDef& mode) {
                     static_cast<unsigned>(mode.scoreToWin), secs(mode.hillTicks), clock.c_str());
       return buf;
     }
+    case sim::ModeKind::Capture: {
+      const std::string clock =
+          mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      std::snprintf(
+          buf, sizeof buf, "first team to %u captures, a dropped flag home after %.1f s, %s",
+          static_cast<unsigned>(mode.scoreToWin), secs(mode.flagReturnTicks), clock.c_str());
+      return buf;
+    }
     case sim::ModeKind::TeamRounds:
       std::snprintf(buf, sizeof buf, "first team to %u rounds, last team standing",
                     static_cast<unsigned>(mode.roundsToWin));

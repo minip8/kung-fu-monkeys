@@ -28,3 +28,4 @@ scripted_4p_parry_1800t  scripted  0x4B464D63  0x5C1263  4  1800  dojo  rounds  
 scripted_4p_team_rounds_1800t      scripted  0x4B464D71  0x5C1271  4  1800  standoff  team_rounds
 scripted_4p_team_deathmatch_3600t  scripted  0x4B464D72  0x5C1272  4  3600  standoff  team_deathmatch
 scripted_4p_hill_3600t             scripted  0x4B464D81  0x5C1281  4  3600  hilltop   hill
+scripted_4p_capture_3600t          scripted  0x4B464D82  0x5C1282  4  3600  outposts  capture

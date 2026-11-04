@@ -28,7 +28,8 @@ constexpr uint8_t kReach = 1;
 //
 // The shield (v0.20, rows 20 and 24) sits just above the row it pre-empts
 // and keys on the same tags, so it only breaks on a hit that would land.
-// Pickups are split by kind: row 50 the grounded banana, row 51 a power-up.
+// Pickups are split by kind: row 50 the grounded banana, row 51 a power-up,
+// row 52 (v0.33) a capture flag, which a carrier cannot take a second of.
 // Player × Hazard (row 60, v0.22) is the pit: no tag spares a player whose
 // centre is over it.
 // The parry (v0.21, row 15) sits below the perfect catch (both reward
@@ -56,7 +57,7 @@ constexpr uint8_t kEnemy = relationBit(Relation::Enemy);
 constexpr uint8_t kAlly = relationBit(Relation::Ally);
 constexpr Tag kFf = Tag::FriendlyFire;
 
-constexpr std::array<InteractionRule, 20> kRules = {{
+constexpr std::array<InteractionRule, 21> kRules = {{
     // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseInFlight, Ownership::NotOwn, &catchBoomerang},
@@ -129,6 +130,9 @@ constexpr std::array<InteractionRule, 20> kRules = {{
     // Player[] x Pickup[PowerUp]: grant the power-up.
     {51, EntityKind::Player, Tags{}, kGone, EntityKind::Pickup, Tags{}, Tags{}, kPhaseAny,
      Ownership::Any, &grantPowerUp, pickupKindBit(PickupKind::PowerUp)},
+    // Player[!Carrying] x Pickup[Flag] (v0.33): an enemy of the flag's team takes it.
+    {52, EntityKind::Player, Tags{}, kGone | Tag::Carrying, EntityKind::Pickup, Tags{}, Tags{},
+     kPhaseAny, Ownership::Any, &takeFlag, pickupKindBit(PickupKind::Flag)},
     // Player[] x Hazard[Pit]: falls in, eliminated by nobody.
     {60, EntityKind::Player, Tags{}, kGone, EntityKind::Hazard, Tags{}, Tags{}, kPhaseAny,
      Ownership::Any, &fallIntoPit},

@@ -23,6 +23,7 @@ constexpr std::array<ModeBehavior, static_cast<size_t>(ModeKind::kCount)> kBehav
     teamRoundsBehavior(),      // ModeKind::TeamRounds (v0.32)
     teamDeathmatchBehavior(),  // ModeKind::TeamDeathmatch (v0.32)
     hillBehavior(),            // ModeKind::Hill (v0.33)
+    captureBehavior(),         // ModeKind::Capture (v0.33)
 };
 
 }  // namespace

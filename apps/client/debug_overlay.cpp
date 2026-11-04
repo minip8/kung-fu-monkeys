@@ -332,6 +332,9 @@ void tuningSection(MatchSession& s, std::string& printed) {
     sliderU16("spawn protection ticks", mode.respawnInvulnTicks, 0, 600);
   }
   if (mode.kind == sim::ModeKind::Hill) sliderU16("hill ticks", mode.hillTicks, 1, 1200);
+  if (mode.kind == sim::ModeKind::Capture) {
+    sliderU16("flag return ticks", mode.flagReturnTicks, 1, 3600);
+  }
 
   ImGui::Spacing();
   if (ImGui::Button("reset to defaults")) s.resetContent();

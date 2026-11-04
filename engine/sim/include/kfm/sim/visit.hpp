@@ -77,7 +77,7 @@ inline constexpr uint8_t kEnumCount<StatKind> = 3;
 template <>
 inline constexpr uint8_t kEnumCount<BoomerangPhase> = 3;
 template <>
-inline constexpr uint8_t kEnumCount<PickupKind> = 2;
+inline constexpr uint8_t kEnumCount<PickupKind> = 3;
 template <>
 inline constexpr uint8_t kEnumCount<MatchPhase> = 5;
 template <>
@@ -91,7 +91,7 @@ inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
 static_assert(static_cast<uint8_t>(StatKind::AmmoMax) + 1 == kEnumCount<StatKind>);
 static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
-static_assert(static_cast<uint8_t>(PickupKind::PowerUp) + 1 == kEnumCount<PickupKind>);
+static_assert(static_cast<uint8_t>(PickupKind::Flag) + 1 == kEnumCount<PickupKind>);
 static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);
 static_assert(static_cast<uint8_t>(PowerUpShape::Coin) + 1 == kEnumCount<PowerUpShape>);
 static_assert(static_cast<uint8_t>(MatchPhase::MatchEnded) + 1 == kEnumCount<MatchPhase>);
@@ -309,6 +309,7 @@ void visit(V& v, ModeDef& d) {
     v.u8(r);
   v.u8(d.roleCount);
   v.u16(d.hillTicks);  // v0.33
+  v.u16(d.flagReturnTicks);
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {

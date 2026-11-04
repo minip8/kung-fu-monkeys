@@ -304,3 +304,54 @@ TEST_CASE("hill: mode keys and validation (v0.33)", "[content][modes][hill]") {
   CHECK(errors(mode("teams = 2\nscore_to_win = 0\n"))
             .contains("score_to_win must be at least 1 in hill"));
 }
+
+TEST_CASE("content/ ships capture on the outposts tilemap (v0.33)", "[content][tilemap][modes]") {
+  ContentDB loaded{};
+  Diagnostics diag;
+  const bool ok = loadContentDir(KFM_CONTENT_DIR, loaded, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  const uint8_t capture = loaded.findMode("capture").value_or(0);
+  const uint8_t outposts = loaded.findArena("outposts").value_or(0);
+  REQUIRE(capture != 0);
+  REQUIRE(outposts == 7);  // appended after hilltop
+  const sim::ModeDef& m = loaded.modeAt(capture);
+  CHECK(m.kind == sim::ModeKind::Capture);
+  CHECK(m.teams == 2);
+  CHECK(m.scoreToWin == 3);
+  CHECK(m.flagReturnTicks == 600);
+  const sim::ArenaDef& a = loaded.arenaAt(outposts);
+  REQUIRE(a.zoneCount == 2);
+  CHECK(a.zones[0].max.x < Fixed::zero());  // team 0's base in the west
+  CHECK(a.zones[1].min.x > Fixed::zero());
+  CHECK(a.spawnGroups == 2);
+  CHECK(loaded.firstCompatibleArena(capture) == std::optional<uint8_t>{outposts});
+  CHECK_FALSE(loaded.compatible(loaded.findArena("hilltop").value_or(0), capture));
+  // Every spawn group sits next to its team's base.
+  for (uint8_t k = sim::spawnGroupRange(a, 0).begin; k < sim::spawnGroupRange(a, 0).end; ++k)
+    CHECK(a.spawnPoints[k].x < Fixed::zero());
+}
+
+TEST_CASE("capture: mode keys and validation (v0.33)", "[content][modes][capture]") {
+  const std::string arena = "name = \"z\"\ncell = 1\nspawn_groups = 2\nmap = [\"a0.1b\"]";
+  const auto mode = [&](std::string_view m) {
+    return withArena(arena) + "\n[[mode]]\nname = \"c\"\nkind = \"capture\"\n" + std::string(m);
+  };
+  {
+    ContentDB db{};
+    Diagnostics diag;
+    const bool ok = parseContent(mode("teams = 2\nflag_return_ticks = 90\n"), "m.toml", db, diag);
+    INFO(diag.format());
+    REQUIRE(ok);
+    CHECK(db.modes[1].kind == sim::ModeKind::Capture);
+    CHECK(db.modes[1].flagReturnTicks == 90);
+    CHECK(db.compatible(0, 1));
+  }
+  ContentDB db{};
+  Diagnostics diag;
+  CHECK_FALSE(parseContent(mode(""), "m.toml", db, diag));
+  CHECK(diag.format().contains("a team kind needs teams of 2 or more"));
+  Diagnostics zero;
+  CHECK_FALSE(parseContent(mode("teams = 2\nflag_return_ticks = 0\n"), "m.toml", db, zero));
+  CHECK(zero.format().contains("'flag_return_ticks'"));
+}

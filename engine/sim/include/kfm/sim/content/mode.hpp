@@ -44,6 +44,11 @@ enum class ModeKind : uint8_t {
   // zone holds every clock, nothing resets), the first team to scoreToWin
   // wins, else the leading team when timeLimitTicks runs out.
   Hill,
+  // Capture: hill's round, clock and respawns; team t's flag starts in zone
+  // t, an enemy carries it into its own team's zone while its own flag is
+  // home to score; an eliminated carrier drops it where it stood, a dropped
+  // flag left alone for flagReturnTicks goes home.
+  Capture,
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 
@@ -51,7 +56,8 @@ enum class ModeKind : uint8_t {
 // MatchRules::scores counting points (eliminations, hill points, captures)
 // rather than round wins (v0.33; the hosts' HUD and tools read it).
 [[nodiscard]] constexpr bool scoresPoints(ModeKind k) {
-  return k == ModeKind::Deathmatch || k == ModeKind::TeamDeathmatch || k == ModeKind::Hill;
+  return k == ModeKind::Deathmatch || k == ModeKind::TeamDeathmatch || k == ModeKind::Hill ||
+         k == ModeKind::Capture;
 }
 
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
@@ -92,6 +98,8 @@ struct ModeDef {
   uint8_t roleCount{0};
   // v0.33, hill: ticks of holding the zone alone that score a point (>= 1).
   uint16_t hillTicks{300};
+  // v0.33, capture: ticks a dropped flag lies untouched before it goes home (>= 1).
+  uint16_t flagReturnTicks{600};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
 };

@@ -31,15 +31,15 @@ static_assert(static_cast<uint8_t>(sim::MatchPhase::Playing) ==
                   static_cast<uint8_t>(ObsMatchPhase::Playing) &&
               static_cast<uint8_t>(sim::MatchPhase::MatchEnded) ==
                   static_cast<uint8_t>(ObsMatchPhase::MatchEnded));
-static_assert(static_cast<uint8_t>(sim::ModeKind::Survival) ==
-                  static_cast<uint8_t>(ObsModeKind::Survival) &&
-              static_cast<uint8_t>(sim::ModeKind::TeamRounds) ==
-                  static_cast<uint8_t>(ObsModeKind::TeamRounds) &&
-              static_cast<uint8_t>(sim::ModeKind::TeamDeathmatch) ==
-                  static_cast<uint8_t>(ObsModeKind::TeamDeathmatch) &&
-              static_cast<uint8_t>(sim::ModeKind::Hill) ==
-                  static_cast<uint8_t>(ObsModeKind::Hill) &&
-              static_cast<uint8_t>(sim::ModeKind::kCount) == 6);
+static_assert(
+    static_cast<uint8_t>(sim::ModeKind::Survival) == static_cast<uint8_t>(ObsModeKind::Survival) &&
+    static_cast<uint8_t>(sim::ModeKind::TeamRounds) ==
+        static_cast<uint8_t>(ObsModeKind::TeamRounds) &&
+    static_cast<uint8_t>(sim::ModeKind::TeamDeathmatch) ==
+        static_cast<uint8_t>(ObsModeKind::TeamDeathmatch) &&
+    static_cast<uint8_t>(sim::ModeKind::Hill) == static_cast<uint8_t>(ObsModeKind::Hill) &&
+    static_cast<uint8_t>(sim::ModeKind::Capture) == static_cast<uint8_t>(ObsModeKind::Capture) &&
+    static_cast<uint8_t>(sim::ModeKind::kCount) == 7);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::kCount) == 6);
@@ -48,7 +48,9 @@ static_assert(static_cast<uint8_t>(sim::AbilityPhase::Recovery) ==
 static_assert(static_cast<uint8_t>(sim::BoomerangPhase::Grounded) ==
               static_cast<uint8_t>(ObsBananaPhase::Grounded));
 static_assert(static_cast<uint8_t>(sim::PickupKind::PowerUp) ==
-              static_cast<uint8_t>(ObsPickupKind::PowerUp));
+                  static_cast<uint8_t>(ObsPickupKind::PowerUp) &&
+              static_cast<uint8_t>(sim::PickupKind::Flag) ==
+                  static_cast<uint8_t>(ObsPickupKind::Flag));
 static_assert(static_cast<uint8_t>(sim::HazardKind::Slow) ==
               static_cast<uint8_t>(ObsHazardKind::Slow));
 

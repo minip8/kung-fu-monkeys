@@ -53,6 +53,11 @@ bool takePickup(WorldState& s, const MatchContent& content, EntityId a, EntityId
 // ModifierList entry; declines with the list full (§5.8).
 bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                   const Contact& contact, EventSink& sink);
+// Prio 52, rules/flag.cpp (v0.33): an enemy of a flag's team takes it;
+// declines for the flag's own team (the mode's onPickupTaken makes the
+// taker its carrier).
+bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
+              const Contact& contact, EventSink& sink);
 // Prio 60, rules/hazard.cpp (v0.22): a player whose centre is in a Pit is
 // eliminated, killer 0xFF; declines for every other HazardKind. b.index is
 // the hazard's index in content.arena.hazards.

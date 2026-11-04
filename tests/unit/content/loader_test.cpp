@@ -560,7 +560,7 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
     manyArenas += "[[arena]]\nname = \"a" + std::to_string(i) +
                   "\"\nhalf_extents = [10, 5]\nspawn_points = [[0, 0]]\n";
   }
-  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 8, kMaxArenas)"));
+  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 16, kMaxArenas)"));
 }
 
 // --- power-ups (§5.8, v0.20) ------------------------------------------------

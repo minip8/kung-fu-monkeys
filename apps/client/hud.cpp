@@ -96,6 +96,10 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       std::snprintf(line, sizeof line, "Hill  (first team to %u points)",
                     static_cast<unsigned>(hud.scoreToWin));
       break;
+    case sim::ModeKind::Capture:
+      std::snprintf(line, sizeof line, "Capture  (first team to %u flags)",
+                    static_cast<unsigned>(hud.scoreToWin));
+      break;
     case sim::ModeKind::TeamRounds:
       std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
                     static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
@@ -348,6 +352,8 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         std::snprintf(text, sizeof text, "Team deathmatch");
       } else if (hud.mode == sim::ModeKind::Hill) {
         std::snprintf(text, sizeof text, "King of the hill");
+      } else if (hud.mode == sim::ModeKind::Capture) {
+        std::snprintf(text, sizeof text, "Capture the flag");
       } else {
         std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
       }

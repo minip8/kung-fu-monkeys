@@ -497,7 +497,10 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
       ++alive;
     });
     s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& /*b*/) { ++supply; });
-    supply += s.pickups.size();
+    // Banana pickups only: power-ups and capture flags (v0.33) are no ammo.
+    s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+      if (k.kind == PickupKind::Banana) ++supply;
+    });
     if (roundPlayers_ == 0) {  // first Playing tick of the round
       roundPlayers_ = alive;
       roundMinSupply_ = supply;

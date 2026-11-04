@@ -87,13 +87,14 @@ struct ModeKindName {
   std::string_view name;
   sim::ModeKind kind;
 };
-constexpr std::array<ModeKindName, 6> kModeKinds = {{
+constexpr std::array<ModeKindName, 7> kModeKinds = {{
     {"rounds", sim::ModeKind::Rounds},
     {"deathmatch", sim::ModeKind::Deathmatch},
     {"survival", sim::ModeKind::Survival},
     {"team_rounds", sim::ModeKind::TeamRounds},          // v0.32
     {"team_deathmatch", sim::ModeKind::TeamDeathmatch},  // v0.32
     {"hill", sim::ModeKind::Hill},                       // v0.33
+    {"capture", sim::ModeKind::Capture},                 // v0.33
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -102,7 +103,7 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 9> kTagNames = {{
+constexpr std::array<TagName, 10> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
@@ -112,6 +113,7 @@ constexpr std::array<TagName, 9> kTagNames = {{
     {"slamming", Tag::Slamming},
     {"parrying", Tag::Parrying},
     {"friendly_fire", Tag::FriendlyFire},
+    {"carrying", Tag::Carrying},  // v0.33: the capture mode's, never granted
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -1250,7 +1252,7 @@ class Builder {
       const auto* const entry = findNamed(kModeKinds, *kind);
       if (entry == nullptr) {
         s.error("unknown kind " + inQuotes(*kind) +
-                " (rounds, deathmatch, survival, team_rounds, team_deathmatch or hill)");
+                " (rounds, deathmatch, survival, team_rounds, team_deathmatch, hill or capture)");
       } else {
         m.kind = entry->kind;
       }
@@ -1266,6 +1268,7 @@ class Builder {
     // every file is read (powerups.toml sorts after modes.toml).
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);
     s.integer("hill_ticks", m.hillTicks, 1, 65535);  // v0.33
+    s.integer("flag_return_ticks", m.flagReturnTicks, 1, 65535);
     std::optional<PendingName> baseline;
     if (const toml::node* n = s.take("baseline")) {
       if (const toml::value<std::string>* str = n->as_string()) {
@@ -1792,21 +1795,27 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     // v0.33: the objective kinds respawn and score like deathmatch.
     const bool respawning = m.kind == sim::ModeKind::Deathmatch ||
                             m.kind == sim::ModeKind::TeamDeathmatch ||
-                            m.kind == sim::ModeKind::Hill;
+                            m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture;
     if (respawning) {
-      const std::string kind = m.kind == sim::ModeKind::Hill ? "hill" : "deathmatch";
+      const std::string kind = m.kind == sim::ModeKind::Hill      ? "hill"
+                               : m.kind == sim::ModeKind::Capture ? "capture"
+                                                                  : "deathmatch";
       if (m.scoreToWin < 1) fail(where + ": score_to_win must be at least 1 in " + kind);
       if (m.respawnTicks < 1) fail(where + ": respawn_ticks must be at least 1 in " + kind);
     }
     if (m.kind == sim::ModeKind::Hill && m.hillTicks < 1) {
       fail(where + ": hill_ticks must be at least 1");
     }
+    if (m.kind == sim::ModeKind::Capture && m.flagReturnTicks < 1) {
+      fail(where + ": flag_return_ticks must be at least 1");
+    }
     // v0.32: teams, baseline, roles.
     if (m.teams == 1 || m.teams > sim::kMaxPlayers) {
       fail(where + ": teams must be 0 (free-for-all) or 2 to " + std::to_string(sim::kMaxPlayers));
     }
     const bool teamKind = m.kind == sim::ModeKind::TeamRounds ||
-                          m.kind == sim::ModeKind::TeamDeathmatch || m.kind == sim::ModeKind::Hill;
+                          m.kind == sim::ModeKind::TeamDeathmatch ||
+                          m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture;
     if (teamKind && m.teams == 0) fail(where + ": a team kind needs teams of 2 or more");
     if (m.hasBaseline() && m.baseline >= c.powerUpCount) {
       fail(where + ": baseline names an undefined power-up");

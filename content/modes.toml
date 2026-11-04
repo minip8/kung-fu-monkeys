@@ -6,7 +6,7 @@
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
 #   kind                 rounds (default), deathmatch, survival, team_rounds,
-#                        team_deathmatch or hill
+#                        team_deathmatch, hill or capture
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      all kinds: pause after a round before the next one
 #   rounds_to_win        rounds, survival: round wins that take the match
@@ -30,6 +30,10 @@
 #                        clock. Plays only on an arena with a zone; respawns
 #                        and the clock as deathmatch, score_to_win counts
 #                        points
+#   flag_return_ticks    capture: ticks a dropped flag lies untouched before
+#                        it goes home (>= 1). Team t's flag starts in zone t,
+#                        so it plays only on an arena with a zone per team;
+#                        score_to_win counts captures
 # The team kinds score per slot like their free-for-all twins; a team's
 # score is the sum of its slots' (team_rounds: round wins; team_deathmatch:
 # eliminations of enemies, ally kills score nothing).
@@ -89,6 +93,18 @@ kind = "hill"
 teams = 2
 hill_ticks = 300            # 5 s alone on the hill scores a point
 score_to_win = 5            # the first team to five points wins
+time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
+respawn_ticks = 120
+respawn_invuln_ticks = 90
+round_start_ticks = 60
+round_end_ticks = 120
+
+[[mode]]
+name = "capture"            # carry the enemy flag home while your own is home
+kind = "capture"
+teams = 2
+score_to_win = 3            # the first team to three captures wins
+flag_return_ticks = 600     # a dropped flag left alone goes home after 10 s
 time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
 respawn_ticks = 120
 respawn_invuln_ticks = 90

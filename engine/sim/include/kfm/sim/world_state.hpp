@@ -112,13 +112,17 @@ struct Boomerang {
   Fixed radiusMul{Fixed::one()};
 };
 
-enum class PickupKind : uint8_t { Banana = 0, PowerUp };
+// v0.33: Flag, a capture team's flag (modes/capture.cpp); no spawner, no
+// supply, taken by rule row 52 only.
+enum class PickupKind : uint8_t { Banana = 0, PowerUp, Flag };
 
 struct Pickup {
   PickupKind kind{PickupKind::Banana};
   Vec2 pos{};
   uint8_t powerUpIndex{0};  // PowerUp: index into ContentDB::powerUps
-  uint8_t spawner{0};       // PowerUp: index into the arena's pickupSpawners
+  // PowerUp: index into the arena's pickupSpawners. Flag (v0.33): the team
+  // whose flag it is, which is also the index of its home zone.
+  uint8_t spawner{0};
 };
 
 // --- match --------------------------------------------------------------------

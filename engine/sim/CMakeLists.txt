@@ -21,6 +21,7 @@ add_library(kfm_sim STATIC
   src/modes/team_rounds.cpp
   src/modes/team_deathmatch.cpp
   src/modes/hill.cpp
+  src/modes/capture.cpp
   src/rules/table.cpp
   src/rules/catch.cpp
   src/rules/damage.cpp
@@ -28,6 +29,7 @@ add_library(kfm_sim STATIC
   src/rules/auto_catch.cpp
   src/rules/pickup.cpp
   src/rules/powerup.cpp
+  src/rules/flag.cpp
   src/rules/shield.cpp
   src/rules/hazard.cpp
   src/rules/slam.cpp

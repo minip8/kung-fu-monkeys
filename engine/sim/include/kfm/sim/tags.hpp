@@ -19,6 +19,9 @@ enum class Tag : uint8_t {
   // (the Ally rows of the rules table, rules/table.cpp). A mode grants it
   // through its baseline power-up; nothing else sets it.
   FriendlyFire,
+  // v0.33: holds a capture flag (modes/capture.cpp sets and clears it; rule
+  // row 52 lets no carrier take a second flag). No stat change.
+  Carrying,
   kCount,  // NOLINT(readability-identifier-naming): count sentinel
 };
 static_assert(static_cast<uint32_t>(Tag::kCount) <= 32);

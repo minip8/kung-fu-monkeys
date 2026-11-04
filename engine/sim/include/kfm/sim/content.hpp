@@ -49,8 +49,8 @@ static_assert(kAbilitySlots == 3);
   return 0;
 }
 inline constexpr uint8_t kMaxAbilityDefs = 16;
-inline constexpr uint8_t kMaxArenas = 8;
-inline constexpr uint8_t kMaxModes = 32;  // v0.31 (8 before)
+inline constexpr uint8_t kMaxArenas = 16;  // v0.33 (8 before: the objective arenas filled it)
+inline constexpr uint8_t kMaxModes = 32;   // v0.31 (8 before)
 
 enum class AbilityKind : uint8_t {
   None = 0,
@@ -214,6 +214,7 @@ struct ContentDB {
     const ArenaDef& a = arenaAt(arena);
     if (m.teams != 0 && a.spawnGroups < m.teams) return false;
     if (m.kind == ModeKind::Hill && a.zoneCount < 1) return false;
+    if (m.kind == ModeKind::Capture && a.zoneCount < (m.teams > 0 ? m.teams : 1)) return false;
     return true;
   }
   // The first arena compatible with the mode, if any.

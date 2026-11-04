@@ -44,6 +44,14 @@ void hillOnEliminated(WorldState& s, const MatchContent& content, PlayerId victi
                       EventSink& sink);
 void hillOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
 
+// Capture (modes/capture.cpp, v0.33): carry the enemy flag into the own zone.
+void captureOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
+void captureOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
+void captureOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
+                         PlayerId killer, EventSink& sink);
+void captureOnPickupTaken(WorldState& s, const MatchContent& content, PlayerId player,
+                          const Pickup& pickup, EventSink& sink);
+
 [[nodiscard]] constexpr ModeBehavior roundsBehavior() {
   return ModeBehavior{&modeNoRoundStart, &roundsOnPlaying, &roundsOnEliminated, &modeNoPickupTaken};
 }
@@ -66,6 +74,11 @@ void hillOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sin
 
 [[nodiscard]] constexpr ModeBehavior hillBehavior() {
   return ModeBehavior{&hillOnRoundStart, &hillOnPlaying, &hillOnEliminated, &modeNoPickupTaken};
+}
+
+[[nodiscard]] constexpr ModeBehavior captureBehavior() {
+  return ModeBehavior{&captureOnRoundStart, &captureOnPlaying, &captureOnEliminated,
+                      &captureOnPickupTaken};
 }
 
 }  // namespace kfm::sim
