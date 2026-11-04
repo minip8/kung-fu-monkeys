@@ -2125,6 +2125,16 @@ which the contract needs.
   there. The project ships no training tooling: a trained policy is a weight array in a source
   file plus the forward pass the bot writes. No PyTorch export, no ONNX, no Python environment;
   the nanobind `VecEnv` is dropped, not deferred, unless someone asks for it with a use.
+  Seed (v0.30): `tools/bots/sdk-c/kfm_bot.h` is the C SDK the bots repository starts from, a
+  single freestanding C11 header that mirrors Observation v1 with static asserts and reproduces
+  the engine's sine table, atan2, `Fixed`, `Rng` and one banana flight tick bit for bit (checked
+  against the engine by `example_bot_test`); `tools/bots/examples/` holds `idle.c` (the minimal
+  skeleton) and `chaser.c` (approach, dodge, dash-catch, throw) with their compiled `.wasm`
+  checked in (the compiler is recorded beside them; `build_example.sh` rebuilds them with any
+  clang that targets wasm32), and `docs/bot-abi.md` §5 pins the build flags (MVP plus mutable
+  globals, no binaryen pass, no libc imports). In the test, two chasers against two medium
+  reference bots over four matches win 14 rounds to 0 at about 7 k instructions per act (max
+  29 k), with 0 faults, and the match replays to identical checksums.
 - **Decided at M5 (v0.30): the runtime, the numbers and the ABI as built.**
   - *Runtime.* WAMR 2.4.5 (`kfm::wamr`, §10), classic interpreter only, built with
     `WAMR_BUILD_INSTRUCTION_METERING`, no AOT/JIT/SIMD/WASI/libc, software bounds checks

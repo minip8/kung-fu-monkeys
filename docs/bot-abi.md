@@ -475,3 +475,35 @@ A module must not depend on a reserved field being zero beyond v1, and must igno
 - The four exports and the optional import are fixed for the life of the ABI; helpers (nearest
   banana, flight prediction, "can I dash-catch now") belong in the SDKs and run inside the bot's
   own budget.
+
+## 5. Building a module
+
+The C SDK seed (`tools/bots/sdk-c/kfm_bot.h`, a single freestanding C11 header) and the example
+bots (`tools/bots/examples/*.c`, built by `tools/bots/build_example.sh`) show the shape every SDK
+follows. The header mirrors every struct above with `_Static_assert`s on the sizes and offsets,
+and reproduces the engine's sine table, atan2, Q16.16 arithmetic, Rng and one banana flight tick
+bit for bit (`example_bot_test.cpp` checks each against the engine), so a bot can simulate the
+deterministic flight exactly; its predictor over several ticks is approximate because it cannot
+foresee catches, hits or the owner's moves.
+
+Recommended clang flags (any clang that targets wasm32 and finds `wasm-ld`; the emsdk one does):
+
+```
+clang --target=wasm32 -mcpu=mvp -mmutable-globals --no-wasm-opt -O2 -std=c11 -nostdlib
+      -Wl,--no-entry -Wl,--export=kfm_abi_version -Wl,--export=kfm_obs_buffer
+      -Wl,--export=kfm_init -Wl,--export=kfm_act -Wl,--export=__stack_pointer
+      -Wl,--allow-undefined -Wl,-z,stack-size=65536 -Wl,--strip-all -o bot.wasm bot.c
+```
+
+- `-mcpu=mvp -mmutable-globals` pins the module to MVP wasm plus the exported mutable
+  `__stack_pointer`, the portable baseline every host accepts; the reference host (WAMR) also
+  accepts bulk memory, sign extension, non-trapping float conversions, multi-value and
+  reference types, never SIMD, threads, exceptions or memory64. `--no-wasm-opt` keeps the clang
+  driver from running binaryen after the link, which would add features back and make the
+  output depend on what is installed.
+- No libc: a struct copy or a large zero-fill may compile to a `memcpy`/`memset` import, and the
+  host refuses any import but `env.kfm_log`. Copy field by field, or link a tiny implementation
+  of your own.
+- `-Wl,--allow-undefined` leaves `kfm_log` as the one import; importing memory
+  (`--import-memory`) is refused.
+
