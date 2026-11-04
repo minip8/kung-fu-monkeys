@@ -62,7 +62,8 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content) 
   p.transform.pos = pos;
   p.transform.prevPos = pos;
   p.transform.facing = facingTowardCentre(pos);
-  p.stats = Stats{content.db.player.moveSpeed, content.db.player.maxHp, content.db.player.ammoMax};
+  p.stats = Stats{content.db.player.moveSpeed, content.db.player.maxHp, content.db.player.ammoMax,
+                  content.db.player.radius};
   p.hp = content.db.player.maxHp;
   p.ammo = content.db.player.ammoStart;
   const std::array<uint8_t, kAbilitySlots>& loadout = content.loadout(id);

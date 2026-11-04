@@ -38,6 +38,9 @@ struct Stats {
   Fixed moveSpeed{};
   uint8_t maxHp{0};
   uint8_t ammoMax{0};
+  // v0.34: the contact radius (base PlayerDef::radius), read by collision,
+  // movement and the grid's cell checks instead of the def.
+  Fixed radius{};
 };
 
 // One live power-up on a player (§5.8): its def and the ticks it has left.
@@ -94,6 +97,11 @@ struct Player {
   // the next knockbackTicks ticks (units per tick).
   Vec2 knockback{};
   uint16_t knockbackTicks{0};
+  // v0.34, the grid space's commitment (§5.12): the cell centre the monkey
+  // slides to and the ticks the slide has left (0 = at rest). The
+  // continuous space leaves both zero.
+  Vec2 moveTarget{};
+  uint16_t moveTicks{0};
 };
 
 enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded };

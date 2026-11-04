@@ -399,6 +399,7 @@ void visit(V& v, Stats& st) {
   visit(v, st.moveSpeed);
   v.u8(st.maxHp);
   v.u8(st.ammoMax);
+  visit(v, st.radius);  // v0.34
 }
 template <class V>
 void visit(V& v, ActiveModifier& m) {
@@ -472,6 +473,8 @@ void visit(V& v, Player& p) {
     visit(v, a);
   visit(v, p.knockback);
   v.u16(p.knockbackTicks);
+  visit(v, p.moveTarget);  // v0.34: the grid's commitment
+  v.u16(p.moveTicks);
 }
 template <class V>
 void visit(V& v, Boomerang& b) {

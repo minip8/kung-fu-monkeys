@@ -101,6 +101,7 @@ void forEachGrant(const ContentDB& db, const ModifierList& mods, F&& f) {
   out.moveSpeed = max(base.moveSpeed * mul + add, Fixed::zero());
   out.maxHp = static_cast<uint8_t>(std::clamp<int32_t>(maxHp, 1, UINT8_MAX));
   out.ammoMax = static_cast<uint8_t>(std::clamp<int32_t>(ammoMax, 0, UINT8_MAX));
+  out.radius = base.radius;
   return out;
 }
 
