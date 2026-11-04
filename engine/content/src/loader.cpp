@@ -186,6 +186,10 @@ constexpr std::string_view kNoneAbility = "none";
 
 // Arena coordinates the swept narrowphase supports (collision_internal.hpp).
 const Fixed kMaxArenaHalfExtent = Fixed::fromInt(1024);
+// Tilemap arenas (v0.33): the cell size and the cells a side.
+const Fixed kMinMapCell = Fixed::fromRaw(Fixed::kOneRaw / 4);
+const Fixed kMaxMapCell = Fixed::fromInt(16);
+constexpr size_t kMaxMapSide = 256;
 
 [[nodiscard]] bool validName(std::string_view s) {
   if (s.empty() || s.size() > ContentName::kMaxChars) return false;
@@ -710,24 +714,47 @@ class Builder {
     ArenaDef a;
     const std::optional<std::string> name = s.name(a.name);
     if (name) s.setWhere("arena " + inQuotes(*name));
-    if (s.vec2("half_extents", a.halfExtents, true) &&
-        (a.halfExtents.x <= Fixed::zero() || a.halfExtents.y <= Fixed::zero() ||
-         a.halfExtents.x > kMaxArenaHalfExtent || a.halfExtents.y > kMaxArenaHalfExtent)) {
-      s.error("'half_extents' must be in (0, 1024] on both axes");
-    }
-    const toml::node* points = s.take("spawn_points");
-    const toml::node* ellipse = s.take("spawn_ellipse");
-    if ((points == nullptr) == (ellipse == nullptr)) {
-      s.error("give exactly one of 'spawn_points' or 'spawn_ellipse'");
-    } else if (points != nullptr) {
-      parseSpawnPoints(s, *points, a);
+    if (const toml::node* map = s.take("map")) {
+      // v0.33: a tilemap gives the box, the statics, the spawn points and
+      // the zones; none of them may also be given by hand.
+      for (const std::string_view key :
+           {"half_extents", "walls", "hazards", "spawn_points", "spawn_ellipse", "zones"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) +
+                          "' cannot be given with 'map': a tilemap arena takes it from the map");
+        }
+      }
+      Fixed cell{};
+      s.fixed("cell", cell, kMinMapCell, kMaxMapCell, true);
+      Fixed mud = Fixed::half();
+      s.fixed("mud_speed_mul", mud, Fixed::epsilon(), Fixed::fromInt(4));
+      if (cell > Fixed::zero()) parseTilemap(s, *map, cell, mud, a);
     } else {
-      parseSpawnEllipse(s, *ellipse, a);
+      for (const std::string_view key : {"cell", "mud_speed_mul"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) + "' belongs to a tilemap arena (give 'map')");
+        }
+      }
+      if (s.vec2("half_extents", a.halfExtents, true) &&
+          (a.halfExtents.x <= Fixed::zero() || a.halfExtents.y <= Fixed::zero() ||
+           a.halfExtents.x > kMaxArenaHalfExtent || a.halfExtents.y > kMaxArenaHalfExtent)) {
+        s.error("'half_extents' must be in (0, 1024] on both axes");
+      }
+      const toml::node* points = s.take("spawn_points");
+      const toml::node* ellipse = s.take("spawn_ellipse");
+      if ((points == nullptr) == (ellipse == nullptr)) {
+        s.error("give exactly one of 'spawn_points' or 'spawn_ellipse'");
+      } else if (points != nullptr) {
+        parseSpawnPoints(s, *points, a);
+      } else {
+        parseSpawnEllipse(s, *ellipse, a);
+      }
+      if (const toml::node* walls = s.take("walls")) parseWalls(s, *walls, a);
+      if (const toml::node* hazards = s.take("hazards")) parseHazards(s, *hazards, a);
+      if (const toml::node* zones = s.take("zones")) parseZones(s, *zones, a);  // v0.33
     }
     const toml::node* spawners = s.take("spawners");
     s.integer("spawn_groups", a.spawnGroups, 1, sim::kMaxPlayers);  // v0.32
-    if (const toml::node* walls = s.take("walls")) parseWalls(s, *walls, a);
-    if (const toml::node* hazards = s.take("hazards")) parseHazards(s, *hazards, a);
     if (!name || !uniqueName(s, *name, db_.arenas, db_.arenaCount, "arena")) return;
     if (db_.arenaCount >= sim::kMaxArenas) {
       s.error("too many arenas (at most " + std::to_string(sim::kMaxArenas) + ", kMaxArenas)");
@@ -735,6 +762,240 @@ class Builder {
     }
     if (spawners != nullptr) parseSpawners(s, *spawners, a, db_.arenaCount);
     db_.arenas[db_.arenaCount++] = a;
+  }
+
+  // `zones = [{ min = [x, y], max = [x, y] }, ...]` (v0.33): objective
+  // boxes (validated with the statics: non-empty, inside the arena).
+  static void parseZones(Section& outer, const toml::node& n, ArenaDef& a) {
+    const toml::array* arr = n.as_array();
+    if (arr == nullptr || arr->size() > sim::kMaxArenaZones) {
+      outer.error(n, "'zones' must list at most " + std::to_string(sim::kMaxArenaZones) +
+                         " { min = [x, y], max = [x, y] } boxes (kMaxArenaZones)");
+      return;
+    }
+    uint8_t count = 0;
+    for (const toml::node& el : *arr) {
+      const toml::table* t = el.as_table();
+      if (t == nullptr) {
+        outer.error(el, "'zones' entries must be tables { min = [x, y], max = [x, y] }");
+        return;
+      }
+      Section s(*t, outer.file(), outer.diag(), outer.where() + " zone " + std::to_string(count));
+      sim::Zone& z = a.zones[count++];
+      s.vec2("min", z.min, true);
+      s.vec2("max", z.max, true);
+      s.finish();
+    }
+    a.zoneCount = count;
+  }
+
+  // A tilemap (v0.33, §5.10): `map` rows of equal length, the top row at
+  // +y, one glyph per `cell`-sized square, the origin at the map's centre.
+  // Walls, pits and mud become boxes by merging runs (mergeCells), spawn
+  // points sit at their cell's centre in digit order, zone letters give one
+  // rectangle each. Caps are never raised: too many boxes is an error.
+  static void parseTilemap(Section& s, const toml::node& n, Fixed cell, Fixed mud, ArenaDef& a) {
+    const toml::array* rowsNode = n.as_array();
+    if (rowsNode == nullptr || rowsNode->empty() || rowsNode->size() > kMaxMapSide) {
+      s.error(n, "'map' must list 1 to " + std::to_string(kMaxMapSide) + " rows (strings)");
+      return;
+    }
+    std::vector<std::string> grid;
+    for (const toml::node& el : *rowsNode) {
+      const toml::value<std::string>* row = el.as_string();
+      if (row == nullptr) {
+        s.error(el, "'map' rows must be strings");
+        return;
+      }
+      const std::string& text = row->get();
+      if (text.empty() || text.size() > kMaxMapSide) {
+        s.error(el, "'map' rows must hold 1 to " + std::to_string(kMaxMapSide) + " cells");
+        return;
+      }
+      if (!grid.empty() && text.size() != grid.front().size()) {
+        s.error(el, "'map' row " + std::to_string(grid.size()) + " has " +
+                        std::to_string(text.size()) + " cells, row 0 has " +
+                        std::to_string(grid.front().size()) + " (rows must be of equal length)");
+        return;
+      }
+      for (size_t c = 0; c < text.size(); ++c) {
+        if (!mapGlyph(text[c])) {
+          s.error(el, "'map' row " + std::to_string(grid.size()) + " column " + std::to_string(c) +
+                          ": unknown glyph '" + std::string(1, text[c]) +
+                          "' (# wall, . floor, ~ pit, : mud, 0-9 spawn, a-h zone)");
+          return;
+        }
+      }
+      grid.push_back(text);
+    }
+    const auto rows = static_cast<int64_t>(grid.size());
+    const auto cols = static_cast<int64_t>(grid.front().size());
+    const int64_t width = cols * cell.raw;
+    const int64_t height = rows * cell.raw;
+    if (width % 2 != 0 || height % 2 != 0 || width / 2 > kMaxArenaHalfExtent.raw ||
+        height / 2 > kMaxArenaHalfExtent.raw) {
+      s.error("the map (" + std::to_string(cols) + " x " + std::to_string(rows) + " cells of " +
+              fixedText(cell) + ") must be at most 2048 units a side, with exact half extents");
+      return;
+    }
+    a.cellSize = cell;
+    a.halfExtents = Vec2{Fixed::fromRaw(static_cast<int32_t>(width / 2)),
+                         Fixed::fromRaw(static_cast<int32_t>(height / 2))};
+    const auto xAt = [&](int64_t c) {
+      return Fixed::fromRaw(static_cast<int32_t>((c * cell.raw) - (width / 2)));
+    };
+    const auto yAt = [&](int64_t r) {
+      return Fixed::fromRaw(static_cast<int32_t>((height / 2) - (r * cell.raw)));
+    };
+    const auto boxMin = [&](const CellBox& b) { return Vec2{xAt(b.c0), yAt(b.r1)}; };
+    const auto boxMax = [&](const CellBox& b) { return Vec2{xAt(b.c1), yAt(b.r0)}; };
+
+    const std::vector<CellBox> walls = mergeCells(grid, '#');
+    if (walls.size() > sim::kMaxArenaWalls) {
+      s.error(n, "the map merges into " + std::to_string(walls.size()) +
+                     " wall boxes, more than kMaxArenaWalls (" +
+                     std::to_string(sim::kMaxArenaWalls) + "): simplify the walls");
+      return;
+    }
+    for (const CellBox& b : walls) {
+      a.walls[a.wallCount++] = sim::Wall{boxMin(b), boxMax(b)};
+    }
+    // Hazards: the pits first, then the mud, each in merge order.
+    const std::vector<CellBox> pits = mergeCells(grid, '~');
+    const std::vector<CellBox> muds = mergeCells(grid, ':');
+    if (pits.size() + muds.size() > sim::kMaxArenaHazards) {
+      s.error(n, "the map merges into " + std::to_string(pits.size() + muds.size()) +
+                     " pit and mud boxes, more than kMaxArenaHazards (" +
+                     std::to_string(sim::kMaxArenaHazards) + "): simplify the hazards");
+      return;
+    }
+    for (const CellBox& b : pits) {
+      a.hazards[a.hazardCount++] =
+          sim::Hazard{boxMin(b), boxMax(b), sim::HazardKind::Pit, Fixed::one()};
+    }
+    for (const CellBox& b : muds) {
+      a.hazards[a.hazardCount++] = sim::Hazard{boxMin(b), boxMax(b), sim::HazardKind::Slow, mud};
+    }
+
+    // Spawn points: digits 0..n-1, each once; zones: letters a..a+k-1, each
+    // one filled rectangle.
+    std::array<int64_t, sim::kMaxPlayers> spawnCell{};
+    spawnCell.fill(-1);
+    std::array<CellBox, sim::kMaxArenaZones> zone{};
+    std::array<int64_t, sim::kMaxArenaZones> zoneCells{};
+    for (int64_t r = 0; r < rows; ++r) {
+      for (int64_t c = 0; c < cols; ++c) {
+        const char g = grid[static_cast<size_t>(r)][static_cast<size_t>(c)];
+        if (g >= '0' && g <= '9') {
+          const auto d = static_cast<size_t>(g - '0');
+          if (spawnCell[d] >= 0) {
+            s.error(n, "spawn glyph '" + std::string(1, g) + "' appears more than once in the map");
+            return;
+          }
+          spawnCell[d] = (r * cols) + c;
+        } else if (g >= 'a' && g <= 'h') {
+          const auto k = static_cast<size_t>(g - 'a');
+          CellBox& z = zone[k];
+          if (zoneCells[k] == 0) {
+            z = CellBox{r, r + 1, c, c + 1};
+          } else {
+            z.r0 = std::min(z.r0, r);
+            z.r1 = std::max(z.r1, r + 1);
+            z.c0 = std::min(z.c0, c);
+            z.c1 = std::max(z.c1, c + 1);
+          }
+          ++zoneCells[k];
+        }
+      }
+    }
+    uint8_t points = 0;
+    while (points < sim::kMaxPlayers && spawnCell[points] >= 0)
+      ++points;
+    for (size_t d = points; d < sim::kMaxPlayers; ++d) {
+      if (spawnCell[d] >= 0) {
+        s.error(n, "spawn glyph '" + std::to_string(d) + "' needs every digit below it (0-" +
+                       std::to_string(d) + ") in the map");
+        return;
+      }
+    }
+    for (uint8_t k = 0; k < points; ++k) {
+      const int64_t r = spawnCell[k] / cols;
+      const int64_t c = spawnCell[k] % cols;
+      a.spawnPoints[k] = Vec2{Fixed::fromRaw(static_cast<int32_t>(xAt(c).raw + (cell.raw / 2))),
+                              Fixed::fromRaw(static_cast<int32_t>(yAt(r).raw - (cell.raw / 2)))};
+    }
+    a.spawnPointCount = points;
+    uint8_t zones = 0;
+    while (zones < sim::kMaxArenaZones && zoneCells[zones] > 0)
+      ++zones;
+    for (size_t k = 0; k < sim::kMaxArenaZones; ++k) {
+      const char letter = static_cast<char>('a' + k);
+      if (zoneCells[k] == 0) continue;
+      if (k >= zones) {
+        s.error(n, "zone glyph '" + std::string(1, letter) +
+                       "' needs every zone letter before it in the map (a-" +
+                       std::string(1, letter) + ")");
+        return;
+      }
+      const CellBox& z = zone[k];
+      if (zoneCells[k] != (z.r1 - z.r0) * (z.c1 - z.c0)) {
+        s.error(n, "zone glyph '" + std::string(1, letter) +
+                       "' must fill one rectangle of cells (its cells span rows " +
+                       std::to_string(z.r0) + "-" + std::to_string(z.r1 - 1) + ", columns " +
+                       std::to_string(z.c0) + "-" + std::to_string(z.c1 - 1) + ")");
+        return;
+      }
+      a.zones[k] = sim::Zone{boxMin(z), boxMax(z)};
+    }
+    a.zoneCount = zones;
+  }
+
+  // A rectangle of map cells: rows [r0, r1), columns [c0, c1), row 0 on top.
+  struct CellBox {
+    int64_t r0{0};
+    int64_t r1{0};
+    int64_t c0{0};
+    int64_t c1{0};
+  };
+
+  [[nodiscard]] static constexpr bool mapGlyph(char g) {
+    return g == '#' || g == '.' || g == '~' || g == ':' || (g >= '0' && g <= '9') ||
+           (g >= 'a' && g <= 'h');
+  }
+
+  // The cells holding `glyph` as boxes: maximal runs along each row, then a
+  // run with the same columns as a box ending on the row above extends it
+  // downward. In order of the top row, then the left column.
+  static std::vector<CellBox> mergeCells(const std::vector<std::string>& grid, char glyph) {
+    std::vector<CellBox> boxes;
+    std::vector<size_t> open;  // boxes ending on the previous row
+    for (size_t r = 0; r < grid.size(); ++r) {
+      const std::string& row = grid[r];
+      std::vector<size_t> next;
+      for (size_t c = 0; c < row.size();) {
+        if (row[c] != glyph) {
+          ++c;
+          continue;
+        }
+        size_t end = c;
+        while (end < row.size() && row[end] == glyph)
+          ++end;
+        const auto c0 = static_cast<int64_t>(c);
+        const auto c1 = static_cast<int64_t>(end);
+        const auto above = std::ranges::find_if(
+            open, [&](size_t i) { return boxes[i].c0 == c0 && boxes[i].c1 == c1; });
+        if (above != open.end()) {
+          boxes[*above].r1 = static_cast<int64_t>(r) + 1;
+          next.push_back(*above);
+        } else {
+          next.push_back(boxes.size());
+          boxes.push_back(CellBox{static_cast<int64_t>(r), static_cast<int64_t>(r) + 1, c0, c1});
+        }
+        c = end;
+      }
+      open = std::move(next);
+    }
+    return boxes;
   }
 
   // spawners = [{ pos = [x, y], power_ups = ["name", ...], first_ticks,
@@ -1358,6 +1619,15 @@ void validateStatics(const ContentDB& c, const ArenaDef& a, const std::string& w
       fail(prefix + " speed_mul must be in (0, 4]");
     }
   }
+  // v0.33: zones are boxes like the hazards; a tilemap's cell is positive.
+  if (a.zoneCount > sim::kMaxArenaZones) {
+    fail(where + ": more zones than kMaxArenaZones");
+  } else {
+    for (uint8_t z = 0; z < a.zoneCount; ++z) {
+      checkBox("zone " + std::to_string(z), a.zones[z].min, a.zones[z].max);
+    }
+  }
+  if (a.cellSize < Fixed::zero()) fail(where + ": cell size must not be negative");
   for (uint8_t k = 0; k < a.spawnPointCount && k < sim::kMaxPlayers; ++k) {
     const Vec2 p = a.spawnPoints[k];
     for (uint8_t w = 0; w < a.wallCount; ++w) {

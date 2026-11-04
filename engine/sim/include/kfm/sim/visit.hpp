@@ -283,7 +283,13 @@ void visit(V& v, ArenaDef& d) {
   for (PickupSpawner& sp : d.pickupSpawners)
     visit(v, sp);
   v.u8(d.pickupSpawnerCount);
-  v.u8(d.spawnGroups);  // v0.32
+  v.u8(d.spawnGroups);       // v0.32
+  for (Zone& z : d.zones) {  // v0.33
+    visit(v, z.min);
+    visit(v, z.max);
+  }
+  v.u8(d.zoneCount);
+  visit(v, d.cellSize);
 }
 template <class V>
 void visit(V& v, ModeDef& d) {
