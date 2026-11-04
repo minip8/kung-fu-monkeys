@@ -36,7 +36,12 @@ Ally rows behind `Tag::FriendlyFire`, the mode baseline power-up and roles, aren
 and `ContentDB::compatible`, `team_rounds`/`team_deathmatch` on the `standoff` arena), landed in
 v0.32; step 3, objectives (arena zones and `zoneOccupants()`, tilemap arenas, `hill` and
 `capture` with the flag pickup and `Tag::Carrying`, the `hilltop` and `outposts` arenas), landed
-in v0.33; step 4 (the `grid` space) is next. `docs/architecture.md` is the
+in v0.33; step 4, the `grid` space (the `SpaceBehavior` table behind `InputSystem`'s latch and
+`MovementSystem`'s move, cell commitments per turn of `turnTicks` with contested cells, the
+dash as a commitment of `dashCells`, `AbilityDef::rootPhases`, the radius stat, the catcher
+role, `grid_rounds`/`grid_rounds_1t` on the `courtyard` arena), landed in v0.34; step 5 (the
+squad contest: vision, calls, the Observation fields, `kfm_arena --team`) is next.
+`docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -80,11 +85,16 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   (standoff), a named arena that does not suit is a configuration error (non-zero exit); no friendly fire unless the mode's
 #   `baseline` power-up grants tag friendly_fire. v0.33: hill (hold zone 0 alone, a point per hill_ticks; on hilltop)
 #   and capture (carry the enemy flag into your zone while yours is home; a zone per team: outposts), both 2 teams
-#   with deathmatch's clock and respawns; compatible() also needs their zones
+#   with deathmatch's clock and respawns; compatible() also needs their zones. v0.34: grid_rounds (team rounds in the
+#   grid space: one of eight neighbouring cells per 15-tick turn, a dash 2 cells, a throw costs the next turn, one
+#   catcher per team by role, the grid_base baseline: radius 0.35, bananas 0.15, HP 2) and grid_rounds_1t (the same
+#   at 1-tick turns, for kfm_arena); a grid mode needs an arena with cells (a tilemap) and opens on its own
+#   (modes.toml `arena`: courtyard)
 #   arenas: content/arenas.toml (dojo) and content/arenas/*.toml, appended by file name; a tilemap arena gives
 #   cell = 1.0 and map = ["..."] (# wall . floor ~ pit : mud 0-9 spawns a-h zones) in place of half_extents/walls/
 #   hazards/spawn_points/zones (format: content/arenas/06-hilltop.toml, architecture §5.10)
-#   loadouts (content/loadouts.toml, --loadout NAME): base (default, [player] abilities), blink, slam, parry
+#   loadouts (content/loadouts.toml, --loadout NAME): base (default, [player] abilities), blink, slam, parry;
+#   v0.34 grid, catcher, grid_1t, catcher_1t (the grid modes hand them out by role)
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
 #   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
 #   arena (with preview; only arenas that suit the mode), mode, teams (read-only, from the mode), loadout, power-up
@@ -119,6 +129,8 @@ build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --ma
 #   [--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
 #   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
 #   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
+build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5   # v0.34: the grid at 1-tick turns (courtyard)
+build/dev/apps/client/kfm_client --mode grid_rounds --bots 3   # the grid at 15-tick turns: the stick picks a neighbour cell per turn
 ctest --preset dev -R 'kfm_ai|arena'           # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena
 build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]   # lobby bots (saved: bot_difficulty)
 #   browser: kfm_client.html?autostart&bots=3&bot=easy (modules are native only: the browser has no runtime yet)
@@ -280,7 +292,7 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
 - Next milestone: M5b, sequenced in architecture §11 (five PRs, one architecture version each,
   every one green on the determinism gate before the next; step 1 landed in v0.31, step 2 in
-  v0.32, step 3 in v0.33; step 4, the grid, is next). Spawn groups fixed the side bias between teams only: the free-for-all
+  v0.32, step 3 in v0.33, step 4 (the grid) in v0.34; step 5, the squad contest, is next). Spawn groups fixed the side bias between teams only: the free-for-all
   spawn-order slot bias of §12 is still open (tournaments rotate).
 - Teams never enter `WorldState`: a free-for-all config (slot i = team i) must keep every
   checksum. New rows that hurt or push get an Enemy row and an Ally twin needing
@@ -290,6 +302,14 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   `capture.cpp` and `docs/bot-abi.md` §3), never in a new world-state field; a capture flag is a
   `PickupKind::Flag` pickup whose `spawner` byte is its team. The scripted generator's objective
   steering must stay Rng-free and keyed on the mode kind, or every other corpus entry moves.
+- Spaces (v0.34): how monkeys move is `spaceBehaviorFor(mode.space)` (`src/spaces/`), nothing else;
+  the continuous row must stay the sim as built bit for bit. Cells come only from
+  `kfm/sim/spaces/grid_cells.hpp` (column 0 west, row 0 north, a cell centre = a tilemap spawn
+  point). The grid latch reads the frame and the world state only (rollback-exact); contested
+  cells are not rule rows. Grid content counts in turns: a grid throw's recovery equals
+  `turn_ticks` and roots, a grid dash's active ticks are the slide; a mode's numbers that must
+  scale with the turn need their own defs (the `_1t` twins). The contact radius is
+  `Stats::radius`, never `PlayerDef::radius`, in sim code.
 - A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
   `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
 

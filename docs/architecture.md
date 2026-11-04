@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.33 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.34 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -269,6 +269,21 @@ v0.33 changes: M5b step 3, objectives, as built (§5.3, §5.6, §5.9, §5.10, §
 `HillHolderChanged` event; the arenas `hilltop` and `outposts` (the first tilemaps) and two corpus
 entries. Observation v1 names the flag (pickup kind 2), the kinds (5, 6) and Carrying (tag bit
 9). No world-state field added; replay checksums unchanged.
+v0.34 changes: M5b step 4, the grid space, as built (§5.3, §5.4, §5.5, §5.8, §5.10, §5.12,
+§7, §11, §12, Appendix A; `docs/bot-abi.md`). The `SpaceBehavior` table (`kfm/sim/spaces/registry.hpp`,
+`src/spaces/continuous.cpp`, `grid.cpp`) behind `InputSystem` (latch) and `MovementSystem`
+(move); the continuous row carries the facing line and the movement body unchanged.
+`ModeDef` gains `space`, `turnTicks`, `dashCells` and `arena` (a mode's default arena);
+`Player::moveTarget`/`moveTicks` and `Stats::radius` enter the world state (every world
+checksum changed once, corpus regenerated); the contact radius is a stat (`stat = "radius"`)
+read by collision, movement, the blink and the observation; `AbilityDef::rootPhases`
+(`root_phases`); a dash's perfect window may be 0 (never perfect) or the whole active phase;
+`ContentDB::compatible` requires cells for a grid mode; the cell mapping is public
+(`kfm/sim/spaces/grid_cells.hpp`). Content: `grid_rounds` (15-tick turns), `grid_rounds_1t`
+(1-tick turns), the `grid`/`catcher` kits and their `_1t` twins, `quick_hands`, the `grid_base`
+baselines and the `courtyard` tilemap (index 8); `dojo_powerups`' spawners name their five
+power-ups. Two corpus entries (20 replays). The presentation draws the radius stat and no timer
+for a baseline; the lobby hides baselines and a mode brings its own arena.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -463,9 +478,9 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
 ```
 step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& events):
    1. RulesSystem::preTick      round start/end, spawn waves
-   2. InputSystem               decode PlayerInput → Intent; press-edge detection
+   2. InputSystem               decode PlayerInput → Intent; press-edge detection; space.latch (facing, grid commitments)
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
-   4. MovementSystem            intent × derived stats → velocity; integrate sliding along walls; arena clamp
+   4. MovementSystem            space.move: intent × derived stats → velocity, integrate sliding along walls, arena clamp (continuous); the slide to the committed cell (grid)
    5. ProjectileSystem          boomerang flight: outbound → return steering → grounded; wall bounces
    6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
    7. InteractionSystem         resolves Contacts via the rules table (hit, catch, dash attack, pickup)
@@ -621,6 +636,19 @@ input generator walks to the objective in these two kinds only (hill: zone 0 whi
 capture: a carrier home, anyone else the nearest flag of another team), from state alone with no
 Rng draw, so every other mode's inputs are unchanged.
 
+As built (v0.34, step 4: the grid). The space is a pair of hooks, not a system: `InputSystem`
+decodes every alive monkey's `Intent` as before and then calls `spaceBehaviorFor(mode.space)
+.latch(s, content, frame)`; `MovementSystem` is `spaceBehaviorFor(mode.space).move(s,
+content)`. The order of the ten systems is unchanged, and so is everything around the hooks:
+`AbilitySystem` runs between the latch and the move (so a press on a latch tick activates
+after the latch read the frame, and a dash that starts on that tick replaces the walk the latch
+committed), and `CollisionSystem` sweeps whatever `prevPos..pos` the move produced. The
+continuous row is the facing line `InputSystem` had (`facing = aim` every tick) and the movement
+body, byte for byte: the gate passed unchanged over the refactor before any state field landed.
+`InputSystem` now takes the `MatchContent` (`inputSystem(s, content, frame)`). Rooting
+(`rooted(p, content)`, §5.10) is read by both spaces: the continuous move zeroes the stick's
+velocity, the grid latch takes no commitment.
+
 ### 5.4 Input model
 
 ```cpp
@@ -712,6 +740,18 @@ Facing follows `aimDir` quantised to eight directions at the latch; the SDKs set
 default, so facing follows movement unless the bot or player aims. On a one-tick turn a bot
 sees no difference from the continuous mode.
 
+As built (v0.34, `src/spaces/grid.cpp`, `kfm/sim/spaces/grid_cells.hpp`): the latch reads the
+frame's `moveDir`, `moveMag` and `subTick` directly (an absent slot is idle), so it depends only
+on the world state (`ticksInPhase`, positions, commitments, ability phases, tags) and the frame,
+and rollback over a latch is exact like any tick. The octant is `((moveDir + 16) / 32) mod 8`:
+octant 0 is +x, counter-clockwise, a half-way direction (16, 48, ...) goes to the
+counter-clockwise octant; a unit test checks all 256 values against a brute-force nearest
+direction, and against the dash's path (`angleOf` of the decoded unit vector, with eight BAM of
+slack for its rounding). Facing: outside Playing it follows aim every tick as in the continuous
+space (so the countdown shows the stick); during Playing it is set to the aim at each latch,
+rooted or not, and held in between. The aim the throw reads (`Intent::aim`) is still the
+current tick's, so rotation never costs anything (§5.12).
+
 ### 5.5 Abilities (the modularity core)
 
 - `AbilityDef` (content): `kind`, cooldown, phase durations (startup / active / recovery),
@@ -736,6 +776,12 @@ sees no difference from the continuous mode.
   because the window `[press, press + perfectWindowTicks)` measured from the press instant
   closes inside that tick (§5.11). The tag says "the window may be open this tick"; the catch
   rule judges the exact instant. Tags are a bitset read by the interaction rules.
+  As built (v0.34): a window of 0 ticks never grants `PerfectDash`, the sub-tick tail
+  included (before, a press with a non-zero sub-tick opened the tail tick of an empty
+  window), so the grid's base dash never catches; and a window may equal the active phase
+  (the catcher's): the tail tick then falls in the recovery, where no phase grants the tag,
+  so the window closes with the active phase. Validation: a dash needs `active_ticks >= 1` and
+  `perfect_window_ticks <= active_ticks` (was: strictly less).
 - Kinds beyond the base kit (v0.21), each one behaviour file under `src/abilities/`, a def in
   `content/abilities.toml`, one registry line and a scenario test; they read only `AbilityDef`
   numbers and add no `AbilityState` field:
@@ -1028,7 +1074,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   the player palette (0–9) and `visual.shape` is `Orb`, `Cube`, `Diamond` or `Coin`; the sim
   never reads either. A `PowerUpGrant` has a `GrantKind` and the fields of its kind:
   - `Stat`: `StatModifier{stat, mul, add}` over `MoveSpeed` (mul and add), `MaxHp` and `AmmoMax`
-    (whole `add` only; the loader rejects a `mul`).
+    (whole `add` only; the loader rejects a `mul`), and (v0.34) `Radius`, the contact radius
+    (`Stats::radius`, base `PlayerDef::radius`): `mul` in (0, 4] and `add`, the result clamped to
+    [1/64, 8]; without a modifier it is the def's bit for bit (base × 1 + 0 is exact).
   - `AbilityOverride{slot, ability}`: the slot (`dash`, `throw` or, v0.21, `ability`) runs that
     ability def while the power-up is live; the last override in slot order wins. Buttons
     belong to slots (v0.21), so the def may be of any kind, and an override of the empty third
@@ -1236,7 +1284,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   on `defaultContent()` by a test): every loadout (the player's and each `[[loadout]]`) fills
   the dash and throw slots (v0.21; only the third may be `none`), loadout 0 is `base` with the
   `[player] abilities` (v0.31), a dash with no startup and its
-  perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
+  perfect window inside the active phase (v0.34: 0 allowed, and equal to it), arena half extents in (0, 1024], spawn points that
   keep a monkey inside (and, v0.22, clear of walls and out of pits), walls and hazards that are
   non-empty boxes inside the arena, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
   `file:line: error: message` lines; a failed load leaves the previous `ContentDB` untouched.
@@ -1447,6 +1495,70 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   follow-up uses the same field. The grid throw roots through its recovery, which the content
   sets to `turnTicks`, so a turn is move or throw; the `quick_hands` power-up overrides the
   throw with an unrooted def, which is the only way to move and throw in one turn.
+- As built (v0.34, M5b step 4). Modes: `ModeDef::space` (`Space::Continuous` | `Grid`, TOML
+  `space = "continuous" | "grid"`, default continuous), `turnTicks` (u8, `turn_ticks`, 1–60,
+  default 15) and `dashCells` (u8, `dash_cells`, 1–8, default 2): the dash's distance lives on
+  the mode next to the turn, since both are the space's numbers and every grid kit dashes the
+  same distance; `turn_ticks` and `dash_cells` in a continuous mode are errors ("belongs to a grid
+  mode"). `ModeDef::arena` (u8, TOML `arena = "<name>"`, `kNoArena` 0xFF by default) names the
+  arena a host picks for the mode when none is named: `firstCompatibleArena(mode)` returns it
+  when it suits, else the first compatible arena as before; validation requires it to exist and
+  suit the mode. Added because the first arena with cells is `hilltop`, while the grid modes
+  want their own smaller arena; the lobby's Mode row brings a mode's own arena with it. All four
+  are visited after `flagReturnTicks` (the content hash changed, checksums did not).
+  `compatible(arena, mode)` adds `mode.space == Grid` ⇒ `cellSize > 0`; the "does not suit"
+  message of `resolveMatchNames` names all three requirements.
+  Contact radius: `Stats::radius` is derived by `ModifierSystem` like `moveSpeed` (§5.8) and set
+  at every spawn; read by `CollisionSystem` (body radius and both pair radii), both spaces'
+  moves, the blink's jump, and Observation v1's `self.radius` (`rules.playerRadius` stays the
+  def's; the reference bot takes its own radius for a dashing enemy's, since a baseline changes
+  every monkey's alike). Nothing else read the def's radius in the sim: the spawn checks are the
+  loader's (spawn points against `PlayerDef::radius`, the largest radius content gives a
+  monkey in the shipped modes), and the respawn, round start, mode hooks, slam reach and the
+  pickup and dash-attack rows read positions and the collision's contacts only. The field
+  entered the world state with the commitment (one corpus regeneration); switching the reads
+  to it changed no checksum.
+  Rooting: `AbilityDef::rootPhases` is a mask of `phaseBit(phase)` (TOML `root_phases`, a list of
+  `startup`, `active`, `recovery`; visited after `tagsRecovery`); `rooted(p, content)` is true
+  while any slot runs a phase its def roots. The Blink/Slam startup follow-up stays open: the
+  shipped continuous defs root nothing (checksums unchanged).
+  Grid content (`content/abilities.toml`, `loadouts.toml`, `powerups.toml`, `modes.toml`,
+  `arenas/08-courtyard.toml`), §5.12's starting numbers at 15-tick turns:
+
+  | Number | Design | Content | Arithmetic |
+  |---|---|---|---|
+  | cell | 1.0 | `courtyard` `cell = 1.0` | |
+  | monkey radius | 0.35 | `grid_base`: `stat = "radius", mul = 0.7` | 0.5 × 0.7: 32768 × 45875 >> 16 = 22937 raw = 0.35 truncated |
+  | banana radius | 0.15 | `radius_mul = 0.4286` | 0.35 × 0.4286: 22937 × 28088 >> 16 = 9830 raw = 0.15 truncated; hit disc 22937 + 9830 = 0.49998 |
+  | HP | 2 | `stat = "max_hp", add = 1` | |
+  | banana speed | 2 cells per turn | `speed_mul = 0.5` | 16 u/s × 0.5 = 8 u/s = 8 / 60 × 15 = 2 cells per 15 ticks (17476 raw/tick × 0.5 = 8738; × 15 = 1.99997) |
+  | throw range | 6 cells | not reachable: 4.8 cells out | `outbound_ticks` is the `BoomerangDef`'s (36): 8 u/s × 0.6 s = 4.8 cells (2.4 turns), then it turns home; 6 cells would need 45 ticks, and no power-up reaches the def's ticks |
+  | walk | 1 cell per turn | the slide takes `turn_ticks` (15) | 4 steps a second |
+  | dash | 2 cells | `dash_cells = 2`, `grid_dash` `active_ticks = 15` | 2 cells over one turn: twice the walk, `Dashing` throughout |
+  | dash cooldown | (base 0.75 s) | `grid_dash` 45 ticks | 3 turns |
+  | catcher cooldown | 4 turns | `catcher_dash` 60 ticks, window 15 | 4 × 15; the window spans the active phase |
+  | throw | move or throw | `grid_throw` startup 2, active 1, recovery 15 rooted, cooldown 15 | the recovery holds exactly one latch whatever the press tick, since the latch reads the state of the tick before |
+
+  Kits: loadouts `grid` (`grid_dash`, `grid_throw`) and `catcher` (`catcher_dash`, `grid_throw`);
+  `grid_rounds` (index 7: team rounds, two teams, first to 3, `space = "grid"`, `turn_ticks =
+  15`, `roles = ["catcher", "grid", "grid", "grid", "grid"]`, so each team's first slot is its
+  catcher, `baseline = "grid_base"`, `arena = "courtyard"`). The bot-speed variant is
+  `grid_rounds_1t` (index 8; the task's `grid_rounds_fast` does not fit a 15-character
+  `ContentName`): `turn_ticks = 1` with the `_1t` kits (`grid_dash_1t`: 1 active tick, a 3-tick
+  cooldown, window 0; `catcher_dash_1t`: window 1 of 1, a 4-tick cooldown; `grid_throw_1t`: no
+  startup, recovery 1 rooted) and `grid_base_1t`, whose bananas fly at the projectile
+  multiplier's limit of 4 (64 u/s, about 1.07 cells per turn) where 2 cells per turn would need
+  7.5 (open, §12). `quick_hands` (power-up index 5, 600 ticks) overrides the throw slot with
+  `quick_throw` (no startup, no recovery, no root, cooldown 1), shared by both turn lengths;
+  the courtyard's two spawners drop it. The baselines are power-ups 6 and 7 with
+  `duration_ticks = 1` (required, never counted for a baseline); no shipped spawner draws them:
+  `dojo_powerups`' four spawners, which named no set and so drew from every power-up, now name
+  the five they always drew from (the same draws, checksums unchanged). The lobby lists no
+  toggle for a power-up some mode names as its baseline. The arena is `courtyard` (index 8): a
+  24 × 14 tilemap, two groups of five spawn points on the west and east edges, two 2 × 2 blocks
+  and a 1 × 4 pillar per side, a 2 × 2 block in the middle, two pits on the centre line at the
+  edges, symmetric under a half turn (7 walls, 2 hazards); `hilltop` and `outposts` suit the
+  grid modes too.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -1550,6 +1662,56 @@ centre happens to rest on a cell centre.
   cells, dash 2 cells, catcher cooldown 4 turns.
 - **Presentation.** Nothing new: the interpolated slide reads as a hop; cones and fog are not
   drawn for humans (§8).
+
+As built (v0.34, step 4; `src/spaces/grid.cpp`, `kfm/sim/spaces/grid_cells.hpp`). Where it
+differs from or adds to the design above:
+
+- **Cells.** One mapping, shared with step 5's observation builder (`engine/ai` may include
+  it): column 0 is the arena's west edge, row 0 its north (+y) edge, so `(col, row)` reads like
+  the tilemap; `cellOf` floors `(x + hx) / cell` and `(hy − y) / cell`, so a point on a vertical
+  edge belongs to the cell east of it and one on a horizontal edge to the cell south of it;
+  `cellCentre` is exactly where the tilemap loader puts a spawn point (a test checks every
+  shipped tilemap's points), so a grid monkey spawns at rest on a centre. An arena without
+  cells maps everything to cell 0 and has no columns; the sim plays an incompatible pair with
+  nobody moving.
+- **The latch, precisely.** A step needs the target cell in the arena's columns and rows, the
+  monkey's circle (its radius stat) at the target's centre inside the outer box and clear of
+  every wall, and for a diagonal the two orthogonal neighbours clear as well: no corner
+  cutting, so the slide's straight path never meets a wall and lands exactly. A pit is
+  allowed. Eligible: alive, not `Eliminated`, not in `HitStun`, not rooted, at rest. A monkey
+  that stays (idle, blocked, rooted out, or the loser of a contest) and stands off its cell's
+  centre (a slam's push, a stun that cut a slide, a blink) commits to that centre, so the turn
+  boundary puts it back on a cell.
+- **Contested cells** are judged in one pass over the steps taken at the latch: a step loses to
+  another that targets the same cell or swaps with it and has the lower key (`subTick` of the
+  latch tick, then slot). No cascade: a winner keeps its target even when the loser of a swap
+  stays in it (they then share the cell), and a step that loses one contest still blocks the
+  steps it beat. Moving into a cell another monkey stands in is no contest: monkeys overlap in
+  the continuous space too, and the dash attack needs exactly that. A dash bypasses the
+  resolution (it is an ability, committed in the move).
+- **The slide.** A walk is `moveTicks = turnTicks`, so it lands on the next latch. Each tick the
+  velocity is `(moveTarget − pos) / moveTicks` (Fixed division truncates; the last tick's step is
+  the exact remainder) through `moveCircle`, so an unobstructed slide ends on the target bit for
+  bit, which the scenario suite checks over seventeen turns. A slam's knockback adds on top and can
+  deflect it; a slide that ends off target simply ends (the next latch re-centres). `HitStun`
+  ends a commitment where the monkey stands (in the continuous space it zeroes the velocity).
+  Slow hazards and `move_speed` have no say on the grid.
+- **The dash timing decision.** The dash slides over its def's `activeTicks`: the grid content
+  sets them to one turn (15, or 1), so the dash is a turn's commitment of two cells and
+  `Dashing` (with the catcher's window) lasts exactly as long as it moves. It is committed in the
+  move on the dash slot's first Active tick (phaseTicks 0), from the cell holding the monkey's
+  centre (mid-slide: the cell it has reached) along the octant of the dash's direction, each step
+  checked like a walk, so a wall stops it on the last free cell. It replaces a walk in progress,
+  including the one its own latch tick committed. A rooted monkey can still dash (as in the
+  continuous space, where the dash's velocity always overrode the stick). The dash def's `speed`
+  is never read on the grid.
+- **Move or throw.** As designed: the latch at tick L reads the phases as the tick before left
+  them, so with recovery = `turnTicks` exactly one latch is rooted for any press tick; a throw on
+  a latch tick goes with that latch's step (the slide in progress finishes) and costs the next
+  one.
+- **Facing** is set at every latch during Playing (rooted or not) and follows aim every tick
+  outside Playing; the continuous latch is `facing = aim` every tick (the doc's "no-op" holds the
+  line `InputSystem` had).
 
 What the grid is not: it is not a second sim. One monkey per slot stays load-bearing
 (`Pool<Player, kMaxPlayers>` indexed by `PlayerId`, the roster mask, the observation), so a bot
@@ -2002,7 +2164,11 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
   quad on the ground) at its true sim position, and the shadow is where the hitbox is. This
-  keeps the catch readable: you dash at the shadow.
+  keeps the catch readable: you dash at the shadow. As built (v0.34): a monkey's shadow is its
+  radius stat (`Stats::radius`, 0.35 under the grid baseline) and its model scales by the stat
+  over the def's radius; a banana's shadow is the def's radius × its `radiusMul`. A mode's
+  baseline (a permanent `ModifierList` entry) draws no timer pie. The grid needs nothing else:
+  the interpolated slide reads as a hop from cell to cell.
 - **Facing.** Characters rotate smoothly. Upper body follows the aim angle, lower body the move
   direction, blended in the animation layer; the throw direction, the aim indicator and the
   body always agree. This is the main readability gain over direction-quantised sprites.
@@ -2969,6 +3135,42 @@ throws off a teammate's line under friendly fire; `kfm_arena` places and result 
 (with `--team`, step 5); a fairer free-for-all spawn (a per-round shuffle of slots onto ranks,
 §12) for arenas with several groups.
 
+Progress: M5b step 4 (the grid space) landed in v0.34. The `SpaceBehavior` table with the
+continuous and grid rows (§5.3, §5.12), `ModeDef::space`/`turnTicks`/`dashCells`/`arena`,
+`Player::moveTarget`/`moveTicks`, the radius stat (§5.8, §5.10), `AbilityDef::rootPhases`
+(§5.10), the 0-tick and full-phase perfect windows (§5.5), `compatible()`'s cells, the public
+cell mapping, the grid content (`grid_rounds`, `grid_rounds_1t`, four loadouts, `quick_hands`,
+two baselines, `courtyard`), the presentation of the radius stat and the lobby's own-arena and
+baseline rows (§7). Commits in order: the refactor behind the table (gate unchanged); the
+commitment fields and `Stats::radius` in the world state (every `.checksums` changed once,
+corpus regenerated; with the fields out of the visitor the gate passed on the old checksums);
+the radius reads; rooting; the grid space; the content; presentation; the lobby; lint. Every
+other commit kept every `.checksums` byte-identical (the content hash changed three times, the
+`.kfmr` were re-recorded). Two corpus entries are new, `scripted_4p_grid_rounds_3600t` and
+`scripted_4p_grid_rounds_1t_1800t` on `courtyard` (20 replays); the scripted generator needed no
+grid awareness (its stick and buttons quantise at the latch: in `kfm_replay stats --players 4
+--matches 10`, `grid_rounds` plays 33.3 s rounds with 54 throws, 4.7 hits, 2.6 eliminations and
+5.0 catches by the catcher's dash per round, 8 of 10 matches finished inside the 10-minute cap;
+`grid_rounds_1t` 4.4 s rounds, all finished). Reference bots (hard, unchanged, no grid
+awareness): `kfm_arena --bots 4 --mode grid_rounds_1t --matches 5` reaches the 36000-tick cap in
+all five with 6 eliminations in total, and `--mode grid_rounds --matches 3` all three with 6:
+the bot sees every banana and side-steps a cell faster than a 64 u/s (or 8 u/s) banana closes,
+so grid play needs bots that read the grid (step 5) and the open numbers below. Netcode:
+`kfm_netsim --clients 6 --mode grid_rounds --rtt 100 --jitter 10 --loss 2 --seconds 20` and the
+same for `grid_rounds_1t`: 701 checksums compared, 0 mismatches, rollback depth max 11 (p99 9).
+Bench (`kfm_replay bench --ticks 36000 --players 10`, Release, `step()` alone, the shared WSL2
+machine): 1.26 µs/tick on `dojo`/`rounds` (unchanged), 1.90 µs on `courtyard`/`grid_rounds` and
+2.33 µs on `courtyard`/`grid_rounds_1t`, against 2.28 µs for `team_rounds` on the same arena:
+the latch and the slide cost less than the stick's wall sliding. Verified locally on GCC 15:
+the headless Debug build and the dev preset (every ctest target incl. the 20-entry corpus, both
+soak gates and the real-socket tests), clang-format 23.1.3 and clang-tidy 23.1.4 over the whole
+tree with zero findings, the no-float check, `kfm_client --no-settings --autostart --bots 3
+--mode grid_rounds` (the courtyard, two teams, monkeys hopping cell to cell, the F1 overlay);
+MSVC, Apple Clang, Clang, ASan+UBSan and Emscripten are left to CI. Follow-ups: grid-aware bots
+and the observation's cell, facing octant, turn clock and `ticksToLatch` (step 5); a per-mode
+banana flight (or flight in turns) so the 1-tick variant can hold the 15-tick numbers; the
+Blink/Slam startup rooting; a non-spawnable power-up flag in place of the explicit spawner sets.
+
 Progress: M5b step 3 (objectives) landed in v0.33. Arena zones (`ArenaDef::zones`,
 `zoneOccupants()`) and the tilemap arena format (`cell`, `map`, merged into the same wall and
 hazard boxes, `cellSize` recorded) in `engine/content` (§5.10); `ContentDB::compatible` with
@@ -3256,6 +3458,16 @@ baseline moved to C++23 (§9).
   whether a dropped flag should go home when its own team touches it (classic capture the flag
   does; v0.33 returns it only by the clock); content-level fairness of a zone (`compatible`
   only counts zones, so `outposts` also accepts `hill` with the hill on a base).
+- Open (M5b step 4, v0.34, the grid numbers as observed): the reference bot never loses a
+  monkey it can see coming on the grid (a cell-wide side-step beats every banana content can
+  fly), so all 8 bot matches above hit the cap; the throw range is 4.8 cells, not 6, because
+  `outbound_ticks` is the `BoomerangDef`'s; the 1-tick variant's bananas fly at about 1.07 cells
+  per turn (the projectile multiplier's limit of 4), not 2, so it plays a different game from
+  the 15-tick mode it should mirror. Candidates, to settle with step 5's grid-aware bots: a
+  per-mode `BoomerangDef` override or flight counted in turns; a faster banana against the walk
+  (at 2 cells per turn a seen banana is always one side-step away); the in-cone catch.
+  Mud has no effect on the grid (a walk is a cell per turn); whether it should cost a turn is
+  open too.
 - Decided (v0.29): a mode is content along five axes, each with its own seam (§5.3); teams ride
   in `MatchConfig` and reach the rules table as a relation mask, friendly fire being a tag the
   mode's baseline grants (§5.6); loadouts are their own match axis (§5.10); the grid is a
@@ -3435,7 +3647,7 @@ struct ModeBehavior {
 };
 const ModeBehavior& modeBehaviorFor(ModeKind);        // constexpr table indexed by kind
 
-// sim/spaces/registry.hpp (v0.29)
+// sim/spaces/registry.hpp (v0.29; as built v0.34, rows Continuous and Grid)
 struct SpaceBehavior {
   void (*latch)(WorldState&, const MatchContent&, const InputFrame&);  // InputSystem; grid: once per turn
   void (*move)(WorldState&, const MatchContent&);                       // MovementSystem
