@@ -1,5 +1,5 @@
 // ModeBehavior registry (architecture §5.3, v0.23): one constexpr row per
-// ModeKind, in enum order.
+// ModeKind, in enum order, and the shared no-op hooks (v0.31).
 #include "kfm/sim/modes/registry.hpp"
 
 #include "kfm/sim/modes/modes.hpp"
@@ -8,6 +8,12 @@
 #include <cstddef>
 
 namespace kfm::sim {
+
+void modeNoRoundStart(WorldState& /*s*/, const MatchContent& /*content*/, EventSink& /*sink*/) {}
+
+void modeNoPickupTaken(WorldState& /*s*/, const MatchContent& /*content*/, PlayerId /*player*/,
+                       const Pickup& /*pickup*/, EventSink& /*sink*/) {}
+
 namespace {
 
 constexpr std::array<ModeBehavior, static_cast<size_t>(ModeKind::kCount)> kBehaviors = {

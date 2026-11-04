@@ -369,6 +369,8 @@ void visit(V& v, MatchRules& r) {
     v.u16(t);
   for (uint16_t& t : r.invulnTicks)
     v.u16(t);
+  for (uint32_t& d : r.modeData)
+    v.u32(d);
 }
 template <class V>
 void visit(V& v, Transform& t) {

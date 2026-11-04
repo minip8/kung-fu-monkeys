@@ -21,6 +21,8 @@
 namespace kfm::sim {
 
 inline constexpr uint8_t kMaxModifiers = 8;
+// MatchRules::modeData words (v0.31).
+inline constexpr uint8_t kModeDataWords = 8;
 
 // --- components ---------------------------------------------------------------
 
@@ -145,6 +147,10 @@ struct MatchRules {
   std::array<uint8_t, kMaxPlayers> deaths{};         // eliminations suffered this match
   std::array<uint16_t, kMaxPlayers> respawnTicks{};  // dead: ticks until respawn; 0 = none due
   std::array<uint16_t, kMaxPlayers> invulnTicks{};   // alive: spawn protection left (Invulnerable)
+  // v0.31: scratch the mode owns (a hill's clock, a flag's state), read and
+  // written only by its ModeBehavior hooks. Cleared at match start, visited
+  // unconditionally; the rounds, deathmatch and survival kinds never touch it.
+  std::array<uint32_t, kModeDataWords> modeData{};
 
   // Any of the mode counters is non-zero.
   [[nodiscard]] constexpr bool hasModeCounters() const {

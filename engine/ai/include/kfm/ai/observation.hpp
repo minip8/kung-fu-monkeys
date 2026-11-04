@@ -14,7 +14,8 @@
 //   - every `reserved*` field is zero in v1 (the v0.29 teams, fog and calls,
 //     §8 "Observation v1 reserves"), so the first fog or team mode fills them
 //     without a schema bump; since architecture v0.31 `self.reservedRole`
-//     carries the loadout index (docs/bot-abi.md §3).
+//     carries the loadout index and `match.reservedModeData[0..8)` the
+//     mode's MatchRules::modeData (docs/bot-abi.md §3).
 //
 // Units:
 //   Q16.16  int32 raw fixed point: value / 65536 arena units (positions,
@@ -129,7 +130,7 @@ struct ObsMatch {
   uint8_t deaths[kObsMaxPlayers];         // eliminations suffered this match
   uint16_t respawnTicks[kObsMaxPlayers];  // ticks until a dead slot respawns, 0 = none due
   uint16_t reservedTeamScores[kObsMaxPlayers];   // v0.29: per team index (0 in v1)
-  uint32_t reservedModeData[kObsModeDataWords];  // v0.29: MatchRules::modeData (0 in v1)
+  uint32_t reservedModeData[kObsModeDataWords];  // v0.29: MatchRules::modeData (v0.31: words 0-7)
 };
 
 // Content constants a bot needs to predict the sim (a flight helper needs

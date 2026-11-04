@@ -120,6 +120,11 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   }
   m.aliveCount = alive;
   m.aliveMask = aliveMask;
+  // bot-abi.md §3, filled since architecture v0.31: the mode's own state.
+  // MatchRules has kModeDataWords of it; the rest of the reserve stays 0.
+  static_assert(sim::kModeDataWords <= kObsModeDataWords);
+  for (uint8_t i = 0; i < sim::kModeDataWords; ++i)
+    m.reservedModeData[i] = r.modeData[i];
 }
 
 void fillRules(const sim::ContentDB& db, ObsRules& r) {

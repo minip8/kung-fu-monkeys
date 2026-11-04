@@ -213,12 +213,18 @@ struct ContentDB {
 // which is what the headless tests use; hosts build it from their
 // MatchConfig (matchContent() in world_state.hpp). It holds references:
 // never keep one past the DB.
+struct ModeBehavior;  // modes/registry.hpp
+
 struct MatchContent {
   const ContentDB& db;
   const ArenaDef& arena;
   const ModeDef& mode;
   uint16_t powerUps{kAllPowerUps};  // MatchConfig::powerUps: the enabled power-ups
   uint8_t loadoutIndex{0};          // MatchConfig::loadout (v0.31): into ContentDB::loadouts
+  // Tests only (v0.31): replaces the mode's ModeBehavior row when set, so a
+  // scenario can run a probe mode without a ModeKind of its own
+  // (modeBehaviorOf() in modes/registry.hpp). Hosts never set it.
+  const ModeBehavior* modeBehavior{nullptr};
 
   constexpr MatchContent(const ContentDB& content, uint8_t arenaIndex, uint8_t modeIndex,
                          uint16_t powerUpSet = kAllPowerUps, uint8_t selectedLoadout = 0)

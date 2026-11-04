@@ -2,8 +2,9 @@
 // mode shares, with the mode-specific decisions in the ModeBehavior table
 // (modes/registry.hpp) selected by content.mode.kind.
 //
-// Lobby -> (first tick) MatchStarted, round 1 -> RoundStarting (players spawned,
-// countdown of roundStartTicks) -> Playing -> (the mode ends the round)
+// Lobby -> (first tick) MatchStarted, modeData cleared, round 1 ->
+// RoundStarting (players spawned, the mode's onRoundStart, countdown of
+// roundStartTicks) -> Playing -> (the mode ends the round)
 // RoundEnded (roundEndTicks) -> next round ... -> MatchEnded (the mode ends
 // the match). A phase lasts exactly its tick count: rulesPreTick transitions
 // when ticksInPhase reaches it, and a zero-length countdown goes straight to
@@ -48,6 +49,9 @@ void startRound(WorldState& s, const MatchContent& content, EventSink& sink) {
       SimEvent{EventKind::RoundStarted, s.tick, PlayerId::invalid(), EntityId{}, s.rules.round, 0});
   s.rules.phase = MatchPhase::RoundStarting;
   s.rules.ticksInPhase = 0;
+  // v0.31: the mode's own round start, after the shared spawn and before
+  // the countdown runs.
+  modeBehaviorOf(content).onRoundStart(s, content, sink);
 }
 
 }  // namespace
@@ -56,6 +60,7 @@ void rulesPreTick(WorldState& s, const MatchContent& content, EventSink& sink) {
   MatchRules& r = s.rules;
   if (r.phase == MatchPhase::Lobby) {
     sink.push(SimEvent{EventKind::MatchStarted, s.tick, PlayerId::invalid(), EntityId{}, 0, 0});
+    r.modeData = {};  // v0.31: the mode's scratch starts every match empty
     r.round = 1;
     startRound(s, content, sink);
   } else if (r.phase == MatchPhase::RoundEnded && r.ticksInPhase >= content.mode.roundEndTicks) {
@@ -72,7 +77,7 @@ void rulesPreTick(WorldState& s, const MatchContent& content, EventSink& sink) {
 void rulesPostTick(WorldState& s, const MatchContent& content, EventSink& sink) {
   ++s.rules.ticksInPhase;
   if (s.rules.phase != MatchPhase::Playing) return;
-  modeBehaviorFor(content.mode.kind).onPlaying(s, content, sink);
+  modeBehaviorOf(content).onPlaying(s, content, sink);
 }
 
 }  // namespace kfm::sim

@@ -6,6 +6,12 @@
 
 namespace kfm::sim {
 
+// The shared no-op hooks (modes/registry.cpp) of a kind with nothing to do
+// at a round start or on a pickup (v0.31: rounds, deathmatch, survival).
+void modeNoRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
+void modeNoPickupTaken(WorldState& s, const MatchContent& content, PlayerId player,
+                       const Pickup& pickup, EventSink& sink);
+
 // Rounds (modes/rounds.cpp): last monkey standing; eliminations need no
 // bookkeeping.
 void roundsOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
@@ -23,13 +29,15 @@ void survivalOnEliminated(WorldState& s, const MatchContent& content, PlayerId v
                           PlayerId killer, EventSink& sink);
 
 [[nodiscard]] constexpr ModeBehavior roundsBehavior() {
-  return ModeBehavior{&roundsOnPlaying, &roundsOnEliminated};
+  return ModeBehavior{&modeNoRoundStart, &roundsOnPlaying, &roundsOnEliminated, &modeNoPickupTaken};
 }
 [[nodiscard]] constexpr ModeBehavior deathmatchBehavior() {
-  return ModeBehavior{&deathmatchOnPlaying, &deathmatchOnEliminated};
+  return ModeBehavior{&modeNoRoundStart, &deathmatchOnPlaying, &deathmatchOnEliminated,
+                      &modeNoPickupTaken};
 }
 [[nodiscard]] constexpr ModeBehavior survivalBehavior() {
-  return ModeBehavior{&survivalOnPlaying, &survivalOnEliminated};
+  return ModeBehavior{&modeNoRoundStart, &survivalOnPlaying, &survivalOnEliminated,
+                      &modeNoPickupTaken};
 }
 
 }  // namespace kfm::sim

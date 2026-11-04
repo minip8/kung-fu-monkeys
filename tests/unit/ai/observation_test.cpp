@@ -136,6 +136,8 @@ TEST_CASE("a hand-built world maps field by field", "[ai][observation]") {
   s.rules.deaths[1] = 4;
   s.rules.respawnTicks[2] = 33;
   s.rules.invulnTicks[0] = 12;
+  s.rules.modeData[0] = 0xA1B2C3D4;
+  s.rules.modeData[kModeDataWords - 1] = 9;
   Player& me = placePlayer(s, kP0, Vec2{fx(2), fx(1)});
   me.transform.prevPos = Vec2{fx(19, 10), fx(1)};
   me.transform.vel = Vec2{fx(1, 10), Fixed{}};
@@ -201,8 +203,13 @@ TEST_CASE("a hand-built world maps field by field", "[ai][observation]") {
     CHECK(obs.match.reservedTicksToLatch == 0);
     for (const uint16_t v : obs.match.reservedTeamScores)
       CHECK(v == 0);
-    for (const uint32_t v : obs.match.reservedModeData)
-      CHECK(v == 0);
+    // v0.31: MatchRules::modeData fills the first kModeDataWords words.
+    CHECK(obs.match.reservedModeData[0] == 0xA1B2C3D4);
+    CHECK(obs.match.reservedModeData[kModeDataWords - 1] == 9);
+    for (uint32_t i = 1; i < kModeDataWords - 1; ++i)
+      CHECK(obs.match.reservedModeData[i] == 0);
+    for (uint32_t i = kModeDataWords; i < kObsModeDataWords; ++i)
+      CHECK(obs.match.reservedModeData[i] == 0);
   }
 
   SECTION("rules") {

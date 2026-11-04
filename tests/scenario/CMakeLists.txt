@@ -14,6 +14,7 @@ kfm_add_test_exe(kfm_scenario_tests
   match_config_scenario.cpp
   arena_scenario.cpp
   mode_scenario.cpp
+  mode_hooks_scenario.cpp
   powerup_scenario.cpp
   blink_scenario.cpp
   slam_scenario.cpp

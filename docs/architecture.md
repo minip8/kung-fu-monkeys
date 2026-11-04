@@ -239,6 +239,14 @@ column, the lobby panel and saved settings, `--loadout NAME` on every host and `
 `ModeDef::abilities`/`hasAbilities` and the `rounds_blink`/`rounds_slam`/`rounds_parry` modes
 are gone (loadouts `blink`, `slam`, `parry`), and a mode's `abilities` key is an error that
 says where it went. Observation v1 fills `self.reservedRole` with the loadout index.
+`ModeBehavior` has its four hooks: `onRoundStart` runs at the end of the shared round start
+(present slots spawned, `RoundStarted` pushed, phase RoundStarting at `ticksInPhase` 0) and
+`onPickupTaken` right after rows 50 and 51 applied, with a copy of the despawned pickup; the
+shipped kinds use shared no-ops. `MatchRules::modeData` (eight `uint32_t`, `kModeDataWords`)
+is visited unconditionally and cleared at `MatchStarted`, which changed every world checksum
+(corpus regenerated; with it left out of the visitor the gate passed unchanged) and fills
+`match.reservedModeData[0..8)`. `MatchContent::modeBehavior` is a test seam that replaces the
+kind's row, so a scenario runs a probe mode without a `ModeKind` of its own.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -524,6 +532,24 @@ flag pickup into the own zone; an eliminated carrier drops it where it stood, an
 nobody touches for `flagReturnTicks` returns to its zone). Each is a behaviour file plus a
 scenario test, like the three kinds before them. Candidates that wait for a use: `hot_potato`
 (a fused banana tag), `infection`.
+
+As built (v0.31, step 1 of §11's M5b sequence): `ModeBehavior` is `{onRoundStart, onPlaying,
+onEliminated, onPickupTaken}` in that order (Appendix A). `onRoundStart` is the last statement
+of `RulesSystem`'s shared round start, so it sees the round's spawned monkeys, an empty banana
+and pickup pool, `RoundStarted` already in the sink and the phase RoundStarting with
+`ticksInPhase` 0 (a zero-length countdown still turns into Playing after it, in the same
+pre-tick). `onPickupTaken(s, content, player, pickup, sink)` is called by the two pickup rows
+themselves (50 banana, 51 power-up) as their last step, after the despawn and `PickupTaken`, with
+a copy of the pickup as it lay; a row that declines (full ammo, a full modifier list) calls
+nothing. `rounds`, `deathmatch` and `survival` use the shared no-ops `modeNoRoundStart` and
+`modeNoPickupTaken`. `MatchRules::modeData` is `std::array<uint32_t, kModeDataWords = 8>`,
+cleared in the Lobby → `MatchStarted` transition (not per round: a mode that wants per-round
+state clears it in its `onRoundStart`) and visited after the other `MatchRules` counters. Every
+hook call site goes through `modeBehaviorOf(content)`, which returns `*content.modeBehavior`
+when a test set that pointer and the kind's row otherwise: the seam lets the scenario suite run
+a probe mode (rounds plus counters in `modeData`) without a `ModeKind`, a loader name or a
+registry row that would ship; hosts never set it, and it is not part of any config, replay or
+message.
 
 ### 5.4 Input model
 
