@@ -26,10 +26,10 @@ and the client's `--connect` mode; `engine/ai` (`IAgent`, `Observation` v1 and i
 builder, `AgentHost`, the reference bot, `BotSpec`, `WasmAgent` over WAMR with instruction
 metering), `apps/arena` (`kfm_arena`, the headless match runner), bots on the server and in the
 client lobby, and the C SDK seed with an example bot under `tools/bots/` (M5, architecture
-v0.30; the SDKs themselves live in a separate bots repository). M5b is in progress (teams and
+v0.30; the SDKs themselves live in a separate bots repository). M5b landed in v0.35 (teams and
 relations, the five mode seams, the loadout axis, zones and tilemap arenas, the `grid` space and
 the squad contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12,
-§8): step 1, mode foundations (32 mode slots, the `[[loadout]]` axis picked by
+§8; the human playtest of `hill` and a 15-tick grid round is pending): step 1, mode foundations (32 mode slots, the `[[loadout]]` axis picked by
 `MatchConfig::loadout`, the `onRoundStart`/`onPickupTaken` hooks and `MatchRules::modeData`), landed
 in v0.31; step 2, teams (`MatchConfig::teams` → `MatchContent::relation`, the rules table's
 Ally rows behind `Tag::FriendlyFire`, the mode baseline power-up and roles, arena spawn groups
@@ -39,8 +39,12 @@ v0.32; step 3, objectives (arena zones and `zoneOccupants()`, tilemap arenas, `h
 in v0.33; step 4, the `grid` space (the `SpaceBehavior` table behind `InputSystem`'s latch and
 `MovementSystem`'s move, cell commitments per turn of `turnTicks` with contested cells, the
 dash as a commitment of `dashCells`, `AbilityDef::rootPhases`, the radius stat, the catcher
-role, `grid_rounds`/`grid_rounds_1t` on the `courtyard` arena), landed in v0.34; step 5 (the
-squad contest: vision, calls, the Observation fields, `kfm_arena --team`) is next.
+role, `grid_rounds`/`grid_rounds_1t` on the `courtyard` arena), landed in v0.34; step 5, the
+squad contest (the `call` ability and `MonkeyCalled`, `ModeDef::vision` and fog as a projection
+in `buildObservation` (`kfm/ai/vision.hpp`), the turn window, heard calls and per-instance
+lifecycle in `AgentHost`, the filled Observation v1 fields, `kfm_arena --team` and
+`--memory-on-respawn`, a grid- and fog-aware reference bot), landed in v0.35. Next is M6 (ship
+on the web: hosting, the lobby service, regional servers, the bot ladder).
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -130,6 +134,12 @@ build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --ma
 #   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
 #   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
 build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5   # v0.34: the grid at 1-tick turns (courtyard)
+build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
+#   v0.35: one --team LIST per team of a team mode (no --bot/--bots): the specs fill that team's slots in order, the
+#   last repeating; --rotate moves entrants across sides; team segments, winner_team and per-entrant totals in the
+#   result; --memory-on-respawn keep|wipe (kfm_server too): an eliminated bot is paused, wipe re-inits it on respawn
+#   fog and calls: content/modes.toml `vision = { kind = "own", ... }` (bots only; humans see everything),
+#   abilities.toml `kind = "call"` + `range`; what a bot sees and hears: docs/bot-abi.md §3.1-3.2
 build/dev/apps/client/kfm_client --mode grid_rounds --bots 3   # the grid at 15-tick turns: the stick picks a neighbour cell per turn
 ctest --preset dev -R 'kfm_ai|arena'           # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena
 build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]   # lobby bots (saved: bot_difficulty)
@@ -290,10 +300,13 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Third-party sources fetched into `build/<preset>/_deps` may ship their own `.clang-tidy`;
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
-- Next milestone: M5b, sequenced in architecture §11 (five PRs, one architecture version each,
-  every one green on the determinism gate before the next; step 1 landed in v0.31, step 2 in
-  v0.32, step 3 in v0.33, step 4 (the grid) in v0.34; step 5, the squad contest, is next). Spawn groups fixed the side bias between teams only: the free-for-all
+- Next milestone: M6 (ship on the web, architecture §11). M5b landed in v0.35 (five PRs, one
+  architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)
+  is pending. Spawn groups fixed the side bias between teams only: the free-for-all
   spawn-order slot bias of §12 is still open (tournaments rotate).
+- Fog lives in `engine/ai`, never in the sim: a `vision` change is content hash only, and the
+  `all` vision must stay the pre-fog observation byte for byte (a test pins it). Hosts call
+  `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls.
 - Teams never enter `WorldState`: a free-for-all config (slot i = team i) must keep every
   checksum. New rows that hurt or push get an Enemy row and an Ally twin needing
   `Tag::FriendlyFire` on the receiving monkey (a test pins the twins); hosts fill

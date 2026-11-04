@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.34 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.35 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -284,6 +284,20 @@ read by collision, movement, the blink and the observation; `AbilityDef::rootPha
 baselines and the `courtyard` tilemap (index 8); `dojo_powerups`' spawners name their five
 power-ups. Two corpus entries (20 replays). The presentation draws the radius stat and no timer
 for a baseline; the lobby hides baselines and a mode brings its own arena.
+v0.35 changes: M5b step 5, the squad contest, as built, and M5b landed (§5.5, §5.9, §5.10, §7,
+§8, §11, §12, Appendix A; `docs/bot-abi.md`). The `call` ability kind (`range`) and
+`MonkeyCalled{player, a = symbol, b = range}`; `ModeDef::vision` (`kind all|team|own`,
+`peripheral`, `cone`, `focus`, `hearing`, `banana_sight`; a fog kind needs cells); fog as a
+projection in `buildObservation` (`kfm/ai/vision.hpp`), and in `AgentHost` the turn window
+visibility is ORed over, the calls each slot hears (`observe()`, called by every host after
+`step`) and the per-instance lifecycle (an eliminated monkey's agent paused,
+`RespawnMemory::Wipe` re-inits it on respawn); Observation v1 fills the visible flags, the
+heard calls, the cell, the facing octant, the turn length and the ticks to the latch, layout
+unchanged; `kfm_arena --team` with team places and `--memory-on-respawn` (also on
+`kfm_server`); a grid- and fog-aware reference bot; the client's call shout, ping and F1 Calls
+section; the C SDK names the filled fields. The grid modes see under `own` fog and call once a
+turn: their two corpus entries changed checksums (the call slot), every other `.checksums` is
+byte-identical, and `scripted_10p_grid_rounds_1t_1800t` (5v5) is new (21 replays).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -814,6 +828,22 @@ current tick's, so rotation never costs anything (§5.12).
     `PlayerParryStarted` on the press (the stance effect). Shipped: 2-tick startup, an 8-tick
     window, 14 ticks of recovery (a whiff is punishable), 1 s cooldown, in loadout `parry`
     (mode `rounds_parry` until v0.31).
+  - Call (`call.cpp`, v0.35): communication through the game (§8). The press emits
+    `MonkeyCalled{player, entity = the player, a = the symbol, b = the def's range as raw
+    Q16.16}` and nothing else in the world changes but the slot's own cooldown and phases. The
+    symbol is the press tick's aim byte (`Intent::aim`), not the facing, which on the grid
+    follows the aim only at a latch; a call pressed on a latch tick therefore also turns the
+    monkey's facing (and its cone) to the symbol for that turn, the price of talking. TOML
+    `kind = "call"` with `range` in units (the def's `param0` under its own name: `range` on
+    another kind, or beside `param0`, is an error), validated in (0, 128]. Hearing is the bot
+    hosts' (§8, `AgentHost::observe`): every other monkey whose centre lies within `range`
+    Chebyshev (the larger of |dx| and |dy|) of the caller's after the step, ally or enemy, so
+    on a grid arena cells × `cellSize` is the content author's arithmetic. Shipped:
+    `grid_call` (cooldown 15, one call per 15-tick turn) and `grid_call_1t` (cooldown 1),
+    range 4 = the grid modes' cone on the courtyard's 1.0 cells, on the ability button of the
+    four grid kits. `ObsAbilityKind::Call` (6) is appended; the scripted generator presses a
+    call in the third slot one tick in `abilityOneIn`, with its aim as the symbol (no other
+    shipped kit has one, so no other mode's inputs change).
 
 ### 5.6 Interaction rules (where the twists live)
 
@@ -1183,6 +1213,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `PickupTaken` carry `a = Flag` and `b = the flag's team` (laid at the round start, dropped,
   sent home), and a capture is a `ScoreChanged` of the carrier. Presentation reads
   `Tag::Carrying` from state; there is no separate flag event.
+- v0.35 (the squad contest): `MonkeyCalled{player = the caller, entity = its player, a = the
+  symbol (its aim byte), b = the call's range, raw Q16.16}`. Like every event it is no state:
+  replays and rollback re-emit it from the inputs, the client journal dedups it; the bot hosts
+  fold it into the listeners' observations (§8), the presentation draws a shout and pings a
+  local human's own call (§7).
 - Consumers: presentation (VFX/SFX), scoring, the match runner's result line, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
@@ -1559,6 +1594,26 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   and a 1 × 4 pillar per side, a 2 × 2 block in the middle, two pits on the centre line at the
   edges, symmetric under a half turn (7 walls, 2 hazards); `hilltop` and `outposts` suit the
   grid modes too.
+- Vision (v0.35, `ModeDef::vision`, `VisionDef` in `kfm/sim/content/mode.hpp`): `vision = {
+  kind = "all" | "team" | "own", peripheral, cone, focus, hearing, banana_sight }`, an inline
+  table read only by the observation builder (§8), never by the sim; visited after `arena`, so
+  the content hash changed once (every `.checksums` byte-identical). `kind` is required in the
+  table, the default is `all` with zeros; the radii are cells (u8): `cone` and `hearing` at
+  most 32, `peripheral`, `focus` and `banana_sight` at most 16 (`kMaxVisionCone`,
+  `kMaxVisionHearing`, `kMaxVisionRadius`); an `all` vision with a radius is an error (it sees
+  everything anyway), `team` needs `teams >= 2`, unknown keys are errors. The radii being
+  cells, `ContentDB::compatible` refuses a fog kind (`team`, `own`) on an arena without cells,
+  as it refuses a grid mode; a continuous mode on a tilemap may use fog (the cone then reads
+  the facing every tick). Shipped: `grid_rounds` and `grid_rounds_1t` both `{ kind = "own",
+  peripheral = 1, cone = 4, focus = 1, hearing = 3, banana_sight = 1 }`, §8's starting numbers:
+  the cone reaches two turns of 15-tick banana flight (2 cells a turn) and two thirds of the
+  6-cell throw design (4.8 cells as shipped), hearing is one turn of warning plus a cell; in the
+  1-tick variant the bananas fly about 1.07 cells a turn, so the same numbers give hearing three
+  turns of warning (§12). The four grid kits gain the call on the ability button (`grid`,
+  `catcher`: `grid_call`; `grid_1t`, `catcher_1t`: `grid_call_1t`), which changed the two grid
+  corpus entries' checksums once (each monkey's third `AbilityState` now names a def, and the
+  scripted generator presses it); a 5v5 entry, `scripted_10p_grid_rounds_1t_1800t` on
+  `courtyard`, is new.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -2407,6 +2462,7 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `PlayerSlammed` (v0.21) | GroundDust under the pushed monkey, flash | — (the slam sounds once) |
 | `PlayerParryStarted` (v0.21) | ParryGuard 0.2 s (a pale ring flaring at the parrier) | — |
 | `BoomerangParried` (v0.21) | ParrySpark 0.35 s (a white flash and 8 sparks at the banana), flash, shake | Parry (metallic clang) |
+| `MonkeyCalled` (v0.35) | CallShout 0.45 s over the caller's head (`kCallShoutHeight`): a ring in the slot colour, its size growing with the symbol (`RenderEffect::size` = symbol / 255), and a white burst | CallPing (two bell notes), only for a caller in `PresentationState::pingSlots` (the app's local humans: a human on the ability button hears its own call; bots' calls are silent); the F1 overlay's Calls section lists the match's last eight (tick, slot, symbol). No fog or cone is drawn: humans see everything (§8) |
 
 Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
 (0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
@@ -2501,7 +2557,8 @@ which the contract needs.
   modules. Wasm float arithmetic is specified bit for bit, so trained policies reproduce too.
 - **`Observation`.** A versioned, little-endian, fixed-layout POD built in C++ by `engine/ai`
   (`buildObservation(WorldState, MatchContent, PlayerId, delay) → Observation`) and mirrored by
-  each SDK. Full information (the game has no fog of war): self (position, velocity, facing, HP,
+  each SDK. Full information (the game had no fog of war until a mode's `vision` adds one,
+  v0.35, below): self (position, velocity, facing, HP,
   ammo, per-slot cooldowns, modifiers, tags), every player (position, velocity, HP, ammo, alive,
   dashing, relation to self), every banana (position, velocity, phase, owner relation, time to
   closest approach), pickups, the arena's statics, the match (mode, tick, scores, round state)
@@ -2787,10 +2844,126 @@ difficulty.
   capture `modeData` layouts are documented for `match.reservedModeData`. Zones are not in the
   v1 layout (a capture bot finds the flags in `pickups`; the zones wait for step 5's fields).
   The reference bot ignores flags and zones: it plays hill and capture as team deathmatch.
+  Filled since v0.35 (as built below): `header.schemaFlags` bit 0 under fog,
+  `players[i].reservedVisible` and `bananas[i].reservedVisible`, `reservedHeardCalls[16]`,
+  `self.reservedCellX/Y` and `reservedFacingOctant`, `match.reservedTurnTicks` and
+  `reservedTicksToLatch`; `ObsAbilityKind::Call` (6) is appended. Every reserved field of the
+  v0.29 list is now filled; zones are still not in v1.
 - **Contest knobs** are content and host settings, never code: team size, `vision` and its
   radii, call range, cooldown and alphabet (a mask over the 256 symbols), memory on respawn,
   fuel per instance, `turnTicks`, the catcher's cooldown. Tournaments pick rows; the engine
   stays one.
+
+As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
+`src/observation_builder.cpp`, `src/agent_host.cpp`, `src/reference_bot.cpp`,
+`apps/arena`). Where it pins or adds to the design above:
+
+- **Geometry.** Cells are `kfm/sim/spaces/grid_cells.hpp`'s; a monkey's, a banana's and a
+  pickup's cell is the cell of its centre; the facing octant is `octantOf` of the aim byte (a
+  half-way byte rounds counter-clockwise, as a `moveDir` does). `inCone(dc, dr, octant, R)` on
+  column and row offsets (rows grow southward): a cardinal cone is `forward >= |side|`, a
+  diagonal one the closed quadrant, both within Chebyshev R and without the own cell; a unit test
+  counts R² + 2R cells for every octant and R up to 8 and checks both shapes cell by cell. A
+  cell is seen by peripheral sight (Chebyshev ≤ `peripheral`; the own cell always, radius 0
+  included), by the cone (R = `cone`, plus `focus` when focused) behind a clear line, or by
+  banana sight (Chebyshev ≤ `banana_sight` of the cell of one of the monkey's own bananas in
+  flight). Seen: every monkey and pickup whose cell is seen (pickups follow the cells: the
+  design said nothing, a power-up or flag in a hidden cell is unseen), every banana whose cell is
+  seen, every banana in flight within Chebyshev `hearing` of the monkey's cell whatever the
+  facing and the walls, and the monkey's own bananas in flight.
+- **Line of sight.** The integer Bresenham line from the monkey's cell to the target, both ends
+  included: every cell after the first must be one of the arena's columns and rows and not a
+  wall cell (its centre in a closed wall box), so a wall cell is never seen; a diagonal step
+  between two wall cells that touch at a corner is blocked, as a walk cannot cut that corner;
+  pits and mud never block. Bresenham from A to B is not always B to A reversed, so sight is not
+  symmetric at every corner, which a bot may rely on.
+- **Focus.** "No commitment last turn" is read from the state: a monkey is focused on a tick
+  when it is at rest and did not move on the previous tick (`moveTicks == 0` and `pos ==
+  prevPos`). A grid slide moves on every tick of its turn, the last included, so a monkey that
+  walked or dashed is not focused at the next latch and one that stood or threw is; a push
+  cancels it.
+- **Kinds.** `own` is the monkey's sight alone, its allies included only when seen (a team
+  shares what it knows through calls); `team` ORs the sight of every slot of the observer's team
+  that has a monkey, so allies are always seen and a dead observer still sees through them;
+  `all` is the v0.34 observation byte for byte (the visible flags stay 0, `schemaFlags` 0), and a
+  test pins that.
+- **The projection.** Under fog `schemaFlags` bit 0 is set; self and every seen monkey have
+  `reservedVisible` 1; an unseen monkey keeps only its roster fields (`present`, `relation`,
+  `reservedTeam`, `respawnTicks`), `alive` and everything physical 0, while `match.aliveMask`
+  and `aliveCount` still count it (the scoreboard is public); an unseen banana or pickup is all
+  zero, a seen banana has `reservedVisible` 1. Integer arithmetic only (the no-float check
+  covers `engine/ai`).
+- **The turn window.** `AgentHost::fill` computes every monkey's own sight once per tick when
+  the mode has fog and an agent acts (`sightOf`), and each slot ORs its vision (`visionOf`: own,
+  or the team's union) into its window, keyed by pool handle so a pool slot reused within the
+  turn by an unseen entity stays unseen; the observation shows the current state of everything
+  seen on any tick of the window. The window closes after the observation of a tick that ends
+  a turn (`turnWindowEnds`: a Playing latch tick, `ticksInPhase % turnTicks == 0`, and every
+  tick outside Playing, of a continuous mode or of a one-tick turn), so a latch observation
+  carries everything seen since the previous latch and a one-tick turn is the current tick.
+  `buildObservation` without a context projects the tick alone (tests, tools).
+- **Calls.** Every host calls `AgentHost::observe(events, the world after the step, content)`
+  after each `step` (`kfm_arena`, `kfm_server`'s per-tick hook, the client's `MatchSession`;
+  netsim and `kfm_replay` run no agents). A `MonkeyCalled` whose caller is still in the world is
+  heard by every other slot with a live (not paused) agent whose monkey stands within the call's
+  range, Chebyshev between the centres in units, after the step; it enters that slot's window
+  (16 at most, later ones dropped), so a call made on tick T is in the observations of T + 1 up
+  to and including the next latch, then gone. An entry is `valid`, `slot`, `symbol`, `tick` (of
+  the call) and the caller's cell at the call when the arena has cells and the caller is seen in
+  the observation that carries it (always without fog), else `kObsNoCell` (−1, −1). A caller
+  does not hear itself. The alphabet mask is not built (a follow-up contest knob).
+- **Grid fields.** In a grid mode on an arena with cells: `match.reservedTurnTicks` =
+  `turnTicks`; `reservedTicksToLatch` from `turnClock` (Playing: `(turn − k mod turn) mod turn`;
+  RoundStarting: `roundStartTicks − k`; RoundEnded: `roundEndTicks − k + roundStartTicks`;
+  Lobby: `roundStartTicks`; MatchEnded 0; a round that ends early moves it); while alive
+  `self.reservedCellX/Y` and `reservedFacingOctant`. `ObsPlayer` has no cell field in the v1
+  layout, so only the own cell is reported; another monkey's cell is the SDK's `cellOf` over
+  its exact position. A continuous mode leaves all of them 0.
+- **Per-instance lifecycle.** `AgentHost` pauses a slot whose monkey was in the world since
+  `attach`/`reinit` and is gone (eliminated, waiting for a respawn or the next round): no
+  `act`, an idle input, a `paused` counter (`acts + paused` = the present ticks); a slot that
+  never had a monkey yet (the lobby tick, a mid-round joiner) acts as before, so a host's
+  first frames do not change. On resume the delay line and the window start empty and, under
+  `RespawnMemory::Wipe`, `init(seed)` runs again (a module gets a fresh instance, counted in
+  `wipes()`). The knob is `--memory-on-respawn keep|wipe` on `kfm_arena` and `kfm_server`
+  (default keep; the server's stats line adds `paused=+N`); the client keeps.
+- **`kfm_arena --team LIST`** (repeatable, one per team of a team mode, exactly the mode's
+  team count, instead of `--bot`/`--bots`): entrant e's comma-separated specs fill its team's
+  slots in slot order (the hosts' round-robin split: slot s is team s mod T), the last spec
+  repeating, every team as large as the longest list; `--rotate` puts entrant e on team (e + k)
+  mod T in match k, so every entrant plays every side. The result line adds `winner_team T` and
+  one segment per team before the slots (`team T entrant E SPECS place P score S kills K deaths
+  D`: team places by the `MatchEnded` winner's team, then team score, then fewer deaths, then
+  team index; kills count enemies only), and a slot segment its `team`; the summary adds
+  `entrant E SPECS wins W mean_place X ...`; the JSON mirrors it (`winner_team`, `teams`,
+  `entrants`). A slot's bot index is entrant × team size + its position.
+- **The C SDK** (`tools/bots/sdk-c/kfm_bot.h`) names the filled fields without the prefix
+  (`turnTicks`, `ticksToLatch`, `teamScores`, `modeData`, `facingOctant`, `role`, `team`,
+  `cellX`/`cellY`, `visible`, `heardCalls`), adds `KFM_ABILITY_CALL`, the hill, capture, flag
+  and Carrying values, `KFM_NO_CELL` and the meaning of `KFM_SCHEMA_FLAG_FOG`; every offset
+  assert is unchanged and `example_bot_test` checks the renamed fields against the engine's.
+  The example bots read none of them; `build_example.sh` rebuilds `chaser.wasm` and
+  `idle.wasm` byte for byte with the emsdk clang.
+- **The reference bot on the grid and under fog** (all of it gated on a grid turn clock or the
+  fog flag, so every continuous mode plays bit for bit as before): it walks the eight octants
+  and idle from the next latch on, a cell per turn by the sim's step rule (the target cell free
+  for its circle, both orthogonals free for a diagonal, pits never free); goals are measured by
+  walking distance (a BFS over the free cells, 64 × 64 at most, cached per goal cell), so a wall
+  between it and its target or its banana is no longer a resting point, and an armed bot wants a
+  clear throwing line; it fights at two cells with its throw capped at three, its flight speed
+  learned from the bananas it sees (Observation v1 carries only the base speed) and its cell
+  size from its own cell at rest; dashes, the catcher's catching dash included, go along
+  octants. Under fog it acts on what it sees (a zeroed entry is never a monkey or banana at
+  the origin) and keeps an unseen owner's returning banana flying; with nobody in sight it heads
+  for the last enemy it saw or an ally called out (600 ticks), else the arena's centre, its cone
+  turned there and sweeping a quarter turn every four turns once there. With a call on the
+  ability button it calls out a seen enemy's coarse cell, symbol `(col / 2) | (row / 2) << 4`,
+  at most once per eight turns and, at 15-tick turns, never on a latch tick. Measured (Release,
+  this machine): `kfm_arena --mode grid_rounds_1t --bots 4 --matches 5` ends 5 of 5 (572–1591
+  ticks), `--mode grid_rounds --matches 3` 3 of 3 (1064–1746), from 0 of 8 in v0.34; 20 rotated
+  5v5 matches on `grid_rounds_1t` under `own` fog all end (mean 1140 ticks, 10 wins a side) at
+  about 30 k ticks/s with ten bots. A playable baseline, not a strong bot: it does not plan for
+  its team, read calls beyond the last sighting, or use the catch on purpose.
 
 ---
 
@@ -3063,6 +3236,57 @@ calls, `Observation` fields, `kfm_arena --team`, per-instance lifecycle (no sim 
 change beyond the `call` ability's event). Steps 1 to 3 are worth doing even if the grid is
 dropped; step 4 is the only one with design risk and is prototyped behind the table before the
 contest layer goes on top.
+
+Progress: M5b landed in v0.35. Against the exit criterion: "a 5v5 bot match on a tilemap arena
+with `own` vision and calls replays identically across the determinism gate at one-tick
+turns" is verified: `kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,
+ref:hard,ref:hard --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --matches 3
+--replay-dir DIR` on `courtyard` under `own` fog with calls (894 calls in the three) ends all three (1288, 1358 and 1321 ticks), and each `.kfmr`, recorded by
+the Release build, replays to the result line's final checksum in `kfm_replay checksums` and
+passes `kfm_replay verify` in the Debug build; the gate itself carries the shape as
+`scripted_10p_grid_rounds_1t_1800t` (ten scripted monkeys in two teams on the courtyard at
+one-tick turns, the grid kits' calls pressed), beside the two 4-player grid entries, on every
+CI leg. "A human lobby plays `hill` and a 15-tick grid round" is verified as far as a machine
+can: `kfm_client --no-settings --autostart --bots 3 --mode hill` and `--mode grid_rounds`
+render their matches through the countdown into play (screenshots, the F1 overlay with its
+Calls section); the human playtest itself is pending, as for M2.
+
+Progress: M5b step 5 (the squad contest) landed in v0.35. The `call` ability kind with
+`range` and `MonkeyCalled` (§5.5, §5.9); `ModeDef::vision` and `compatible()`'s cells for fog
+(§5.10); fog in `buildObservation`, the turn window, calls and the per-instance lifecycle in
+`AgentHost`, the filled Observation v1 fields, `kfm_arena --team`, `--memory-on-respawn`, the C
+SDK's names and the grid- and fog-aware reference bot (§8); the client's shout, ping and Calls
+overlay (§7). Decisions recorded on the way: the call goes in the grid kits' third slot (the
+only free one), so the two grid corpus entries change once; `range` is Chebyshev between the
+centres in units; a fog kind needs cells; focus means at rest and not moved on the previous
+tick; pickups follow the cell visibility; an unseen monkey keeps its roster fields; the window
+closes after each latch observation and calls appear from the next tick to the next latch; only
+the own cell is reported (`ObsPlayer` has no cell field); a slot is paused only once its monkey
+existed, so first frames do not change; `kfm_arena`'s team split follows the hosts' round
+robin. Commits in order: the call kind (checksums unchanged); the vision block (content hash
+only, every `.checksums` byte-identical); the grid content (the two grid entries' checksums
+changed, corpus regenerated; the 5v5 entry new, 21 replays); fog, calls and the lifecycle;
+`kfm_arena --team`; `kfm_server --memory-on-respawn`; the reference bot; the presentation; the
+SDK names; a Release-only `-Wnull-dereference` fix in the capture scenario; the bot's pit
+avoidance; docs; lint. Replay checksums: unchanged except `scripted_4p_grid_rounds_3600t` and
+`scripted_4p_grid_rounds_1t_1800t` (the call slot), regenerated. Netcode: `kfm_netsim
+--clients 6 --mode grid_rounds_1t --rtt 100 --jitter 10 --loss 2 --seconds 20`: 701
+checksums compared, 0 mismatches, rollback depth max 11 (p99 9), the scripted inputs pressing
+calls. Bench (`kfm_replay bench --ticks 36000 --players 10`, Release, `step()` alone, the
+shared WSL2 machine): 1.26 µs/tick on `dojo`/`rounds` (unchanged), 2.03 µs on
+`courtyard`/`grid_rounds` and 2.31 µs on `grid_rounds_1t` (calls cost nothing measurable). Bot
+matches (Release): `kfm_arena --mode grid_rounds_1t --bots 4 --matches 5` 5 of 5 ended (from 5
+capped in v0.34), `--mode grid_rounds --matches 3` 3 of 3 (from 3 capped), 20 rotated 5v5
+matches on `grid_rounds_1t` 20 ended, 10 wins a side, about 30 k ticks/s with ten fogged bots.
+Verified locally on GCC 15: the headless Debug build, the dev preset (all 45 ctest targets
+incl. the 21-entry corpus, the new `arena_smoke_team`, both soak gates and the real-socket
+tests), the Release build and its 39 tests, clang-format 23.1.3 and clang-tidy 23.1.4 over the
+whole tree with zero findings, the no-float check (fog included), `build_example.sh` with the
+emsdk clang (byte-identical modules); MSVC, Apple Clang, Clang, ASan+UBSan and Emscripten are
+left to CI. Follow-ups: the call alphabet mask and a per-mode call range check against the
+vision; zones and the other monkeys' cells in a later Observation version; a reference bot
+that plans for its team, reads calls beyond the last sighting and takes the objective; the
+human playtest of `hill` and a 15-tick grid round; the §12 grid numbers.
 
 Progress: M5b step 1 (mode foundations) landed in v0.31. `kMaxModes` is 32; loadouts are a
 match axis (`[[loadout]]` in `content/loadouts.toml`, loadout 0 `base` = the `[player]
@@ -3468,6 +3692,20 @@ baseline moved to C++23 (§9).
   (at 2 cells per turn a seen banana is always one side-step away); the in-cone catch.
   Mud has no effect on the grid (a walk is a cell per turn); whether it should cost a turn is
   open too.
+- Open (M5b step 5, v0.35, the fog and grid numbers as observed): with grid-aware reference
+  bots under `own` fog every grid match ends (above, §8), but the fights are close-range: the
+  bot only throws from three cells or nearer, because from farther a seen or heard banana is
+  side-stepped; it is the walls and the fog, not the banana, that decide. In 20 rotated 5v5
+  matches on `grid_rounds_1t` both sides won 10 (no side bias), a whole match (first team to
+  three rounds) lasting 1140 ticks on average, countdowns included. The 1-tick variant still flies its bananas at about 1.07 cells per turn, so
+  the same `vision` block gives it three turns of hearing where the 15-tick mode gets one and a
+  half: the per-mode flight (or flight in turns) of step 4 stays the first lever, then hearing 2
+  for the 1-tick mode. Calls are cheap (894 in three 5v5 matches from bots that call at most
+  once per eight turns), and a call on a latch tick turns the caller's cone for that turn; an
+  alphabet mask and a call cooldown measured in turns are the contest knobs to try. Whether the
+  catcher's catch needs the in-cone restriction is still untested: the reference bot catches
+  only incidentally. The open question of a shared team array (§8) waits for a contest bot that
+  needs one.
 - Decided (v0.29): a mode is content along five axes, each with its own seam (§5.3); teams ride
   in `MatchConfig` and reach the rules table as a relation mask, friendly fire being a tag the
   mode's baseline grants (§5.6); loadouts are their own match axis (§5.10); the grid is a
@@ -3477,7 +3715,8 @@ baseline moved to C++23 (§9).
   `modeData` change them once when they land (corpus regenerated); `kMaxModes` changes the
   content hash only.
 - Open (M5b): the grid numbers (§5.12: cone, hearing, radii, `turnTicks`, the catcher's
-  cooldown), tuned with `kfm_arena` and recorded here when they settle; whether the catch also
+  cooldown; shipped in v0.35 at §8's starting values, first observations above), tuned with
+  `kfm_arena` and recorded here when they settle; whether the catch also
   needs the in-cone restriction; whether `hot_potato` and `infection` earn a kind; a shared team
   array (§8) if squads prove unwritable without one. Fog for humans is not enforceable and stays
   out.
@@ -3653,6 +3892,21 @@ struct SpaceBehavior {
   void (*move)(WorldState&, const MatchContent&);                       // MovementSystem
 };
 const SpaceBehavior& spaceBehaviorFor(Space);          // Continuous, Grid
+
+// ai/vision.hpp (v0.35): fog, a projection of one world for one monkey
+struct Sight { uint16_t players; uint64_t bananas; uint32_t pickups; };  // by pool index
+Sight sightOf(const WorldState&, const MatchContent&, PlayerId monkey);   // its own, one tick
+Sight visionOf(const WorldState&, const MatchContent&, PlayerId observer, // own | team | all
+               const std::array<Sight, kMaxPlayers>* own = nullptr);
+bool inCone(int32_t dc, int32_t dr, uint8_t octant, int32_t range);       // R² + 2R cells
+bool lineOfSight(const ArenaDef&, Cell from, Cell to);                    // Bresenham, walls
+struct TurnClock { uint16_t turnTicks, ticksToLatch; };
+TurnClock turnClock(const WorldState&, const MatchContent&);
+
+// ai/agent_host.hpp (v0.35 additions)
+enum class RespawnMemory : uint8_t { Keep, Wipe };   // memory_on_respawn
+void AgentHost::fill(InputFrame&, const WorldState&, const MatchContent&);  // window, pause
+void AgentHost::observe(const EventSink&, const WorldState& after, const MatchContent&);  // calls
 ```
 
 ## Appendix B: glossary
@@ -3676,6 +3930,7 @@ const SpaceBehavior& spaceBehaviorFor(Space);          // Continuous, Grid
 - **Turn**: `turnTicks` ticks of a grid mode; **latch**: the first tick of a turn, when movement intent becomes a commitment.
 - **Commitment**: a grid monkey's target cell for the turn; **contested cell**: two commitments to one cell, resolved at the latch.
 - **Cell**: a square of `cellSize` arena units; a monkey rests on cell centres, a banana's cell is the cell of its centre.
-- **Cone, peripheral, hearing**: the three parts of a monkey's vision (§8), in cells.
+- **Cone, peripheral, hearing**: the three parts of a monkey's vision (§8), in cells; **focus**: extra cone for a monkey at rest; **banana sight**: cells around an own banana in flight.
+- **Turn window**: the ticks since the last latch over which a host ORs a bot's visibility and collects its heard calls (v0.35).
 - **Call**: a one-byte shout heard by every monkey in range, the in-game communication channel.
 - **Zone**: an arena box that blocks nothing; modes read who stands in it.

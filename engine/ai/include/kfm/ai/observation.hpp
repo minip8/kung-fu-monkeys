@@ -10,14 +10,16 @@
 //   - every field naturally aligned, every hole an explicit `pad*` byte, so
 //     the compiler inserts nothing and alignof(Observation) is 4;
 //   - arrays always at capacity, one `valid` (or `present`/`alive`) byte per
-//     entry; an empty, absent or (with fog, later) unseen entry is all zero;
-//   - every `reserved*` field is zero in v1 (the v0.29 teams, fog and calls,
-//     §8 "Observation v1 reserves"), so the first fog or team mode fills them
-//     without a schema bump; since architecture v0.31 `self.reservedRole`
-//     carries the loadout index and `match.reservedModeData[0..8)` the
-//     mode's MatchRules::modeData, and since v0.32 the team fields
-//     (`reservedTeam`, `match.reservedTeamScores`, relation Ally) carry
-//     MatchConfig::teams (docs/bot-abi.md §3).
+//     entry; an empty, absent or (under fog) unseen entry is all zero (an
+//     unseen monkey keeps its roster fields);
+//   - the `reserved*` fields are the v0.29 reservations for teams, fog and
+//     calls (§8 "Observation v1 reserves"), filled without a schema bump:
+//     since architecture v0.31 `self.reservedRole` and
+//     `match.reservedModeData[0..8)`, since v0.32 the team fields
+//     (`reservedTeam`, `match.reservedTeamScores`, relation Ally), since v0.35
+//     the fog, call and grid fields (`reservedVisible`, `reservedHeardCalls`,
+//     the cell, the facing octant, the turn clock) and schemaFlags bit 0
+//     (docs/bot-abi.md §3). A field a mode does not use stays 0.
 //
 // Units:
 //   Q16.16  int32 raw fixed point: value / 65536 arena units (positions,
@@ -99,15 +101,17 @@ enum class ObsBananaPhase : uint8_t { Outbound = 0, Returning = 1, Grounded = 2 
 enum class ObsPickupKind : uint8_t { Banana = 0, PowerUp = 1, Flag = 2 };
 enum class ObsHazardKind : uint8_t { Pit = 0, Slow = 1 };
 
-// ObsHeader::schemaFlags bits. None is set in v1 (full information).
-inline constexpr uint32_t kObsFlagFog = 1u << 0;  // reserved: visibility fields are meaningful
+// ObsHeader::schemaFlags bits.
+// v0.35: the mode's vision is a fog: the visible flags are meaningful and
+// unseen entries are zeroed (docs/bot-abi.md §3.1).
+inline constexpr uint32_t kObsFlagFog = 1u << 0;
 
 // --- blocks -------------------------------------------------------------------
 
 struct ObsHeader {
   uint32_t version;      // kObservationVersion
   uint32_t size;         // sizeof(Observation) in bytes
-  uint32_t schemaFlags;  // kObsFlag* bits; 0 in v1
+  uint32_t schemaFlags;  // kObsFlag* bits (v0.35: kObsFlagFog)
   uint32_t reserved0;
 };
 
@@ -132,15 +136,15 @@ struct ObsMatch {
   uint8_t lastRoundWinner;  // slot, kObsNoSlot after a draw or before the first round end
   uint8_t pad0;
   uint8_t pad1;
-  uint16_t roundStartTicks;               // ticks: countdown at a round start (players frozen)
-  uint16_t roundEndTicks;                 // ticks: pause after a round end
-  uint16_t respawnDelayTicks;             // deathmatch: ticks from an elimination to the respawn
-  uint16_t respawnInvulnTicks;            // deathmatch: spawn protection after a respawn
-  uint16_t reservedTurnTicks;             // v0.29 grid space: ticks per turn (0 in v1)
-  uint16_t reservedTicksToLatch;          // v0.29: ticks to the next latch (0 in v1)
-  uint8_t scores[kObsMaxPlayers];         // round wins (rounds, survival) or eliminations
-  uint8_t deaths[kObsMaxPlayers];         // eliminations suffered this match
-  uint16_t respawnTicks[kObsMaxPlayers];  // ticks until a dead slot respawns, 0 = none due
+  uint16_t roundStartTicks;        // ticks: countdown at a round start (players frozen)
+  uint16_t roundEndTicks;          // ticks: pause after a round end
+  uint16_t respawnDelayTicks;      // deathmatch: ticks from an elimination to the respawn
+  uint16_t respawnInvulnTicks;     // deathmatch: spawn protection after a respawn
+  uint16_t reservedTurnTicks;      // grid: ticks per turn (v0.35; 0 in a continuous mode)
+  uint16_t reservedTicksToLatch;   // grid: ticks to the next latch, 0 = this tick latches (v0.35)
+  uint8_t scores[kObsMaxPlayers];  // round wins (rounds, survival) or eliminations
+  uint8_t deaths[kObsMaxPlayers];  // eliminations suffered this match
+  uint16_t respawnTicks[kObsMaxPlayers];         // ticks until a dead slot respawns, 0 = none due
   uint16_t reservedTeamScores[kObsMaxPlayers];   // v0.29: per team index (filled since v0.32)
   uint32_t reservedModeData[kObsModeDataWords];  // v0.29: MatchRules::modeData (v0.31: words 0-7)
 };
@@ -229,10 +233,10 @@ struct ObsSelf {
   uint16_t invulnTicks;          // ticks of spawn protection left
   uint16_t respawnTicks;         // ticks until the respawn while dead, 0 = none due
   uint8_t facing;                // angle8: aim direction (the body faces it)
-  uint8_t reservedFacingOctant;  // v0.29 grid space: facing as 0..7 (0 in v1)
+  uint8_t reservedFacingOctant;  // grid, alive: facing as 0..7, 0 east, CCW (v0.35)
   uint8_t reservedRole;          // v0.29: loadout index (filled since v0.31)
   uint8_t reservedTeam;          // v0.29: own team index (filled since v0.32)
-  int16_t reservedCellX;         // v0.29 grid space: own cell (0 in v1)
+  int16_t reservedCellX;         // grid, alive: own cell, column from the west (v0.35)
   int16_t reservedCellY;
   ObsAbility abilities[kObsAbilitySlots];   // slot 0 Dash button, 1 Throw, 2 Ability1
   ObsModifier modifiers[kObsMaxModifiers];  // live power-ups, [0, modifierCount) in pickup order
@@ -242,7 +246,7 @@ struct ObsSelf {
 struct ObsPlayer {
   uint8_t present;          // 1: the slot is in the roster
   uint8_t alive;            // 1: a monkey in the arena (a slot that left keeps it until it dies)
-  uint8_t reservedVisible;  // v0.29 fog: 1 when seen (0 in v1: everything is seen)
+  uint8_t reservedVisible;  // fog: 1 when seen this turn, self always (v0.35; 0 without fog)
   uint8_t relation;         // ObsRelation to self; None for an empty slot
   uint8_t reservedTeam;     // v0.29: team index (filled since v0.32)
   uint8_t hp;
@@ -277,7 +281,7 @@ struct ObsPlayer {
 // int64 arithmetic; the smaller k on a tie), and that distance.
 struct ObsBanana {
   uint8_t valid;            // 1: a banana in this pool slot
-  uint8_t reservedVisible;  // v0.29 fog (0 in v1)
+  uint8_t reservedVisible;  // fog: 1 when seen or heard this turn (v0.35; 0 without fog)
   uint8_t phase;            // ObsBananaPhase
   uint8_t owner;            // slot of the thrower (the parrier after a parry)
   uint8_t ownerRelation;    // ObsRelation of the owner to self
@@ -352,14 +356,15 @@ struct ObsArena {
   ObsSpawner spawners[kObsMaxSpawners];
 };
 
-// v0.29 calls (reserved, all zero in v1): a call the monkey heard last turn.
+// A call the monkey heard this turn (v0.29, filled since v0.35; docs/bot-abi.md
+// §3.2). cellX/cellY: kObsNoCell (-1) when the caller is not seen.
 struct ObsHeardCall {
   uint8_t valid;
   uint8_t slot;    // the caller
   uint8_t symbol;  // the caller's aim byte
   uint8_t pad0;
-  uint32_t tick;  // when it was heard
-  int16_t cellX;  // the caller's cell when visible
+  uint32_t tick;  // the tick of the call
+  int16_t cellX;  // the caller's cell at the call when seen, else -1
   int16_t cellY;
 };
 
@@ -372,7 +377,7 @@ struct Observation {
   ObsBanana bananas[kObsMaxBananas];  // by pool slot
   ObsPickup pickups[kObsMaxPickups];  // by pool slot
   ObsArena arena;
-  ObsHeardCall reservedHeardCalls[kObsMaxHeardCalls];  // v0.29 (0 in v1)
+  ObsHeardCall reservedHeardCalls[kObsMaxHeardCalls];  // this turn's, oldest first (v0.35)
 };
 
 // --- layout -------------------------------------------------------------------
