@@ -166,6 +166,9 @@ struct Instance {
   wasm_function_inst_t obsBuffer{nullptr};
   wasm_function_inst_t initFn{nullptr};
   wasm_function_inst_t actFn{nullptr};
+  // The exported shadow-stack pointer (clang/LLVM's mutable i32 global
+  // `__stack_pointer`), if any; null otherwise. See WasmAgent::act.
+  void* stackPointer{nullptr};
 
   Instance() = default;
   Instance(const Instance&) = delete;
@@ -278,6 +281,11 @@ struct WasmModule::Impl {
         in->actFn == nullptr) {
       error = "export lookup failed";  // checked at load; unreachable
       return nullptr;
+    }
+    wasm_global_inst_t sp{};
+    if (wasm_runtime_get_export_global_inst(in->inst, "__stack_pointer", &sp) && sp.is_mutable &&
+        sp.kind == WASM_I32) {
+      in->stackPointer = sp.global_data;
     }
     return in;
   }
@@ -514,12 +522,23 @@ std::optional<sim::PlayerInput> WasmAgent::act(const Observation& obs, Tick tick
   void* dst = wasm_runtime_addr_app_to_native(in.inst, a.obsAddr);
   std::memcpy(dst, &obs, sizeof obs);
 
+  // A call cut short by a trap or the budget never runs its epilogue, so a
+  // compiled module's shadow-stack pointer would stay where the dead frames
+  // left it and every fault would leak a frame of linear memory until the
+  // stack ran into the data. When the module exports it, the host puts it
+  // back after a fault; kfm_act is the outermost frame, so the value before
+  // the call is the right one.
+  uint32_t stackPointer = 0;
+  if (in.stackPointer != nullptr) std::memcpy(&stackPointer, in.stackPointer, sizeof stackPointer);
+
   std::array<uint32_t, 2> cells{tick.value, 0};
   CallResult r = call(in, in.actFn, cells, 1, a.module->config.fuelPerTick);
   a.stats.fuelLast = r.fuelUsed;
   a.stats.fuelMax = std::max(a.stats.fuelMax, r.fuelUsed);
   a.stats.fuelTotal += r.fuelUsed;
   if (!r.ok) {
+    if (in.stackPointer != nullptr)
+      std::memcpy(in.stackPointer, &stackPointer, sizeof stackPointer);
     ++a.stats.substitutions;
     if (r.overBudget) {
       ++a.stats.overBudget;

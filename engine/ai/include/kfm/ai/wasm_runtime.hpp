@@ -18,6 +18,14 @@
 //                                   the low 40 bits (packInput); bits 40..63
 //                                   set is a fault (BadReturn)
 //
+// Shadow stack: compiled modules (clang, rustc) keep their C stack in linear
+// memory behind a mutable i32 global, `__stack_pointer`. A kfm_act cut short
+// by a trap or the budget never pops its frames; when the module exports
+// that global (wasm-ld: --export=__stack_pointer, or --export-all), the
+// host restores the value it had before the call, so a fault costs the tick
+// and nothing else. Without the export the module's own state after a fault
+// is its own business.
+//
 // Threading: single-threaded, like the whole client path. WAMR's runtime
 // state is process-wide (native registry, allocator, the instantiation
 // budget), so every call on these classes must come from one thread.

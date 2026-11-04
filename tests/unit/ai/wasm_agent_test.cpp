@@ -95,7 +95,7 @@ TEST_CASE("WasmModule needs a live WasmRuntime", "[ai][wasm]") {
 TEST_CASE("WasmModule loads the valid fixtures", "[ai][wasm]") {
   const WasmRuntime runtime;
   for (const char* name : {"idle", "echo", "reads_obs", "counter", "work", "trap", "spin", "logger",
-                           "grow", "bad_return", "init_trap", "init_spin"}) {
+                           "grow", "bad_return", "init_trap", "init_spin", "leaky"}) {
     INFO(name);
     CHECK(WasmModule::load(readFixture(name)).has_value());
   }
@@ -270,6 +270,18 @@ TEST_CASE("WasmAgent faults cost the tick, not the agent", "[ai][wasm]") {
     CHECK(agent.stats().badReturns == 1);
     CHECK(agent.stats().substitutions == 1);
   }
+}
+
+TEST_CASE("WasmAgent restores an exported __stack_pointer after a fault", "[ai][wasm]") {
+  const WasmRuntime runtime;
+  WasmAgent agent = makeAgent("leaky");
+  constexpr uint64_t kStackTop = 32768;
+  CHECK(kfm::ai::packInput(mustAct(agent, Observation{}, Tick{0})) == kStackTop);
+  for (uint32_t t = 1; t < 8; t += 2) {
+    CHECK_FALSE(agent.act(Observation{}, Tick{t}).has_value());  // traps with a frame pushed
+    CHECK(kfm::ai::packInput(mustAct(agent, Observation{}, Tick{t + 1})) == kStackTop);
+  }
+  CHECK(agent.stats().traps == 4);
 }
 
 TEST_CASE("WasmAgent init faults leave the agent dead", "[ai][wasm]") {
