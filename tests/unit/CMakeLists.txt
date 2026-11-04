@@ -200,3 +200,17 @@ if(TARGET kfm::server_host)
     set_tests_properties(kfm_server_network_tests PROPERTIES LABELS network TIMEOUT 120)
   endif()
 endif()
+
+if(TARGET kfm::arena_core)
+  # apps/arena's match runner (§8, §9): determinism, placements, the result
+  # line and JSON, replays; with KFM_WASM_BOTS the module path over the
+  # fixtures in tests/fixtures/bots.
+  kfm_add_test_exe(kfm_arena_tests
+    arena/arena_test.cpp
+  )
+  target_link_libraries(kfm_arena_tests PRIVATE kfm::arena_core kfm::content)
+  if(KFM_WASM_BOTS)
+    target_compile_definitions(kfm_arena_tests PRIVATE KFM_WASM_BOTS=1
+      KFM_BOT_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
+  endif()
+endif()
