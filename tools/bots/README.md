@@ -1,0 +1,81 @@
+# tools/bots
+
+Bot tooling kept in the game repository (architecture §8). The normative contract is
+`docs/bot-abi.md` (bot ABI and `Observation` v1).
+
+| Path | What |
+|---|---|
+| `sdk-c/kfm_bot.h` | The seed of the C SDK: one freestanding C11 header (no libc). |
+| `examples/chaser.c`, `examples/idle.c` | Example bots built from the header, with the `.wasm` built from each checked in beside it. |
+| `examples/BUILT_WITH.txt` | The compiler that built the checked-in `.wasm` files. |
+| `build_example.sh` | Builds the examples (`tools/bots/build_example.sh [name...]`). |
+| `build_fixtures.sh`, `check_fixtures.cmake` | The hand-written ABI test modules in `tests/fixtures/bots` (`.wat` to `.wasm`, wabt). |
+
+**The SDK's home is the separate bots repository**, with the other language SDKs, the example
+bots and the contest. What is here is the seed copied there, and the in-repo proof that a module
+built from it loads and plays: `tests/unit/ai/example_bot_test.cpp` (in `kfm_ai_wasm_tests`)
+checks the header's layout and constants against `engine/ai/include/kfm/ai/observation.hpp`,
+its integer math and banana flight step against the engine and the sim, and plays the checked-in
+`chaser.wasm` through `AgentHost` against the reference bot. A change to the header or to an
+example is followed by `tools/bots/build_example.sh` and a commit of the rebuilt `.wasm`.
+
+## The header
+
+Copy `kfm_bot.h` into a project, define `KFM_BOT_MAIN` in one `.c` file before including it
+(that defines `kfm_abi_version`, `kfm_obs_buffer`, the observation buffer `kfm_obs` and the
+`memcpy`/`memmove`/`memset` the compiler may call), and write `kfm_init` and `kfm_act`:
+
+```c
+#define KFM_BOT_MAIN
+#include "kfm_bot.h"
+
+void kfm_init(uint64_t seed, uint32_t slot) { /* seed a kfm_rng, reset state */ }
+uint64_t kfm_act(uint32_t tick) {
+  const kfm_observation* o = &kfm_obs;  /* written by the host before each call */
+  return kfm_pack_input(/*moveDir*/ 0, /*moveMag*/ 0, /*aimDir*/ o->self.facing, /*buttons*/ 0, 0);
+}
+```
+
+Besides the ABI (the `Observation` v1 structs with `_Static_assert`ed layout, the enum and
+button constants, `kfm_pack_input`, the export and `kfm_log` import declarations) it has
+integer helpers that behave identically on every host: Q16.16 fixed point (`kfm_fx_*`,
+`kfm_vec_*`), the engine's sine table and atan2 (`kfm_sin`, `kfm_cos`, `kfm_angle_of`,
+`kfm_angle8_of`, `kfm_dir_to`, `kfm_angle_to_vec`), the engine's xoshiro128** (`kfm_rng_*`),
+a log text builder (`kfm_text_*`), and game helpers (`kfm_nearest_enemy`,
+`kfm_nearest_threat`, `kfm_ability_ready`, `kfm_time_to_impact`, `kfm_segment_min_sq`, the
+banana flight step and predictor `kfm_flight_step` / `kfm_predict_banana`, and
+`kfm_dash_catch_dir`). The header comment says which are exact against the sim.
+
+## Building a module
+
+```sh
+clang --target=wasm32 -mcpu=mvp -mmutable-globals --no-wasm-opt -O2 -std=c11 \
+  -nostdlib -ffreestanding \
+  -Wl,--no-entry -Wl,--export=kfm_abi_version -Wl,--export=kfm_obs_buffer \
+  -Wl,--export=kfm_init -Wl,--export=kfm_act -Wl,--export=__stack_pointer \
+  -Wl,--allow-undefined -Wl,-z,stack-size=65536 -Wl,--strip-all bot.c -o bot.wasm
+```
+
+Any clang with the WebAssembly target and `wasm-ld` works; `build_example.sh` uses `$CLANG`,
+else `clang` on `PATH`, else emsdk's (`$EMSDK/upstream/bin/clang`, `~/emsdk/upstream/bin/clang`).
+`-mcpu=mvp -mmutable-globals` keeps the module to the MVP feature set (plus the exported mutable
+global) whatever the compiler's default; `--no-wasm-opt` stops the clang driver from running a
+`wasm-opt` it finds (emsdk ships one), which would re-enable features and make the output depend
+on what is installed.
+
+A module must:
+
+- export `kfm_abi_version () -> i32` (returns 1), `kfm_obs_buffer () -> i32` (a 4-aligned
+  address of at least 5748 bytes, the same for the life of the instance),
+  `kfm_init (i64 seed, i32 slot)` and `kfm_act (i32 tick) -> i64` (the packed input in the low
+  40 bits, bits 40..63 zero);
+- export its linear memory (wasm-ld does by default) and its shadow stack pointer
+  `__stack_pointer` (`--export=__stack_pointer`): the host restores it after a trap or an
+  over-budget tick, which would otherwise leak a stack frame per fault;
+- import nothing but, optionally, `env.kfm_log (i32 ptr, i32 len)`. An unresolved libc call
+  (`memcpy` from a struct copy, say) becomes an import and the host refuses the module;
+  `KFM_BOT_MAIN` provides the three the compiler emits.
+
+Budgets (host defaults, `docs/bot-abi.md` §1.4): 100 000 wasm instructions per `kfm_act`,
+10 000 000 for instantiation and for `kfm_init`, a 4 MiB file and 16 MiB of memory. The chaser
+uses about 7 000 instructions per act on average and under 30 000 at most.

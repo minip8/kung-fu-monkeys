@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.29 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.30 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -218,6 +218,17 @@ entrant is a team, one module instance per monkey, fog of war and in-game calls 
 ability whose payload is the aim byte) are computed in the observation builder from mode
 content, never in the sim; the `Observation` v1 field list reserves team, visibility, calls and
 the turn clock. The roadmap gains M5b.
+v0.30 changes: M5 landed (§4, §8, §9, §10, §11, §12). `engine/ai` holds `IAgent`, `Observation`
+v1 (5748 bytes, pinned in `docs/bot-abi.md`), its fixed-point builder, `AgentHost` (the
+per-slot runner with the input delay and the repeat-last rule), the reference bot (a utility AI
+over the observation with easy/medium/hard tiers) and `WasmAgent` over WAMR 2.4.5's classic
+interpreter with instruction metering; the numbers are pinned (100 k instructions per tick,
+10 M for instantiation and `kfm_init`, 4 MiB modules, 16 MiB memory); bots are named by one
+`BotSpec` grammar in every host; `kfm_arena` runs matches and tournaments headlessly; the server
+and the client drive their bot slots through `AgentHost`, the server delaying bots by the humans'
+lead. The no-float check covers `engine/ai`. CI's lint job pins clang-format 23.1.3 and
+clang-tidy 23.1.4, the versions developers run locally (PyPI wheels), so a local pass is a CI
+pass; clang-format 23.1.3 is the formatter of record (§9).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2061,6 +2072,57 @@ which the contract needs.
   fuel use, traps and substitutions) out. It is the contest's local test tool, the ladder's
   engine and, for anyone who wants to train by self-play or search, all the environment the
   project provides.
+  As built (v0.30): `kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--ticks N]
+  [--arena NAME] [--mode NAME] [--powerups LIST] [--content DIR] [--fuel N] [--delay T]
+  [--replay out.kfmr | --replay-dir DIR] [--result FILE] [--json] [--quiet] [--log]`. `--bot`
+  fills slots in order and `--bots` pads with `ref:hard` (at least two slots); match k of a
+  tournament uses world seed S + k and seeds slot s with the shared formula; `--ticks` caps a
+  match (default 36 000, reported as `result cap`, not an error); `--delay` applies to every
+  slot; `--log` prints each module's captured `kfm_log` text to stderr. One result line per
+  match (`match k seed S ticks N checksum H result ended|cap winner W | slot i SPEC place P
+  score S kills K deaths D acts A subs U [traps T over O bad B fuel_mean F fuel_max M fuel_init
+  I log L dead no|<init fault>] | ...`) plus a `summary` line (matches, ended, draws, capped,
+  mean ticks, per slot wins, mean place, totals); `--json` prints the same as one object per
+  line (`--rotate` plays bot b in slot (b + k) mod n in match k, labels a slot several bots
+  played `mixed`, and adds per-bot totals: `bot B SPEC wins ...`; every slot entry carries
+  `bot B`, and in JSON `"bot"` is that index and `"spec"` the name). Places: the `MatchEnded`
+  winner first, then higher final score, fewer deaths, lower slot, all distinct; kills and deaths come from `PlayerEliminated` (a self-elimination is a
+  death, not a kill); the final checksum lets a replay be checked against its line. Exit codes:
+  0, 2 bad arguments or content, 3 a module refused at load (or a module spec in a build without
+  `KFM_WASM_BOTS`), 4 I/O. `kfm_arena_core` (`runMatch`, placements, formatting, the module
+  cache) is the library under test; the CLI is a thin wrapper, and it builds under Emscripten
+  as a node CLI with reference bots only. Release, this machine: a 4-bot reference tournament
+  runs about 40–50 k ticks/s, dominated by the bot's own evaluation (20 k before the content
+  hash was cached), four `echo.wasm` modules about 8× that, and `kfm_replay bench` steps the
+  same sim at about 1 M ticks/s.
+- **Hosts as built (v0.30).** The server (`apps/server`): `engine/net` has exactly one bot hook,
+  `ServerConfig::botInputs` (a function given the world, the content and the tick's frame with
+  the bot slots present, called once per tick before assembly, after a restart has been
+  applied, so it sees the fresh world and the new `botSeed()`); unset, `NetServer` keeps the
+  scripted generator, which is what netsim and the netcode tests still run. `ServerHost` owns an
+  `AgentHost` and a `WasmRuntime`, takes `--bot SPEC` (repeatable), `--bots N` (pads with
+  `ref:hard`), `--bot-delay auto|N` and `--fuel N`, re-inits every agent on the first tick of
+  each match (bot seed B₀ = `--bots-seed`, Bₖ₊₁ = splitmix64(Bₖ), slot seed from the shared
+  formula; a module gets a fresh instance), refuses to start on a module that fails to load,
+  and reports per-bot acts, substitutions and, for modules, traps, over-budget ticks and mean
+  fuel in its stats line. The "humans' lead" is estimated per Input message as the arrival
+  margin plus half the round trip (the lead controller drives the margin itself to +1..+2 ticks
+  whatever the RTT, §6.2, so the margin alone is not the lead; the round trip is taken from the
+  message's acknowledged frame), smoothed like the margin, and `humanLeadTicks()` is the lower
+  median over the active peers that hold slots, clamped to 60, 0 when none, which is why bot
+  versus bot has no delay; `auto` re-applies it to every bot once a second. A delay change never
+  replays an answer: a longer delay holds the last input until the line catches up, a shorter
+  one skips the overdue answers. The client (`apps/client`): `MatchSession` owns an `AgentHost`
+  fed by a `BotRoster` that turns one `BotSpec` into fresh agents at every match start and
+  restart (delay 0, the shared seed formula, `--players-seed` as the base); the casual default
+  tier is `medium`, the lobby panel has a "Bot difficulty" row saved as `bot_difficulty`, the
+  flags are `--bot-difficulty easy|medium|hard`, `--bot-module PATH.wasm` and `--bot SPEC`
+  (the browser page's `?bot=easy`); a module that fails to load (or any module in the browser,
+  which has no runtime yet) falls back to the reference bot at the chosen tier with a logged
+  error, so the client always starts; the F1 overlay's Bots section shows per-slot acts and
+  substitutions and, for modules, traps, over-budget ticks, bad returns, fuel and a dead flag.
+  The scripted generator is used by no shipping host any more: `kfm_replay`, the render probe
+  and netsim keep it as test scaffolding.
 - **Outside this repository.** A separate bots repository holds the SDKs (one copy-in file per
   language with no dependencies: C, Rust and AssemblyScript to start), starter and example
   bots, the contest rules and, later, the ladder service. The dividing line: anything that
@@ -2068,9 +2130,112 @@ which the contract needs.
   there. The project ships no training tooling: a trained policy is a weight array in a source
   file plus the forward pass the bot writes. No PyTorch export, no ONNX, no Python environment;
   the nanobind `VecEnv` is dropped, not deferred, unless someone asks for it with a use.
-- **Open until M5 starts (§12).** The wasm runtime (a small C library with instruction
-  metering: wasm3 or WAMR, wasmtime only if metering accuracy demands it), the fuel budget per
-  tick, the module and memory caps, and the `Observation` v1 field list.
+  Seed (v0.30): `tools/bots/sdk-c/kfm_bot.h` is the C SDK the bots repository starts from, a
+  single freestanding C11 header that mirrors Observation v1 with static asserts and reproduces
+  the engine's sine table, atan2, `Fixed`, `Rng` and one banana flight tick bit for bit (checked
+  against the engine by `example_bot_test`); `tools/bots/examples/` holds `idle.c` (the minimal
+  skeleton) and `chaser.c` (approach, dodge, dash-catch, throw) with their compiled `.wasm`
+  checked in (the compiler is recorded beside them; `build_example.sh` rebuilds them with any
+  clang that targets wasm32), and `docs/bot-abi.md` §5 pins the build flags (MVP plus mutable
+  globals, no binaryen pass, no libc imports). In the test, two chasers against two medium
+  reference bots over four matches win 14 rounds to 0 at about 7 k instructions per act (max
+  29 k), with 0 faults, and the match replays to identical checksums.
+- **Decided at M5 (v0.30): the runtime, the numbers and the ABI as built.**
+  - *Runtime.* WAMR 2.4.5 (`kfm::wamr`, §10), classic interpreter only, built with
+    `WAMR_BUILD_INSTRUCTION_METERING`, no AOT/JIT/SIMD/WASI/libc, software bounds checks
+    (`WAMR_DISABLE_HW_BOUND_CHECK`: no signal handlers, no guard reservations, ten instances per
+    match, identical behaviour everywhere), bulk memory, reference types and the other features
+    clang emits for wasm32 by default. wasm3 was passed over: it is in minimal maintenance.
+    WAMR has no public getter for the remaining count and its interpreter never writes it back,
+    so `third_party/wamr` applies a two-anchor source patch at configure time (the loop's exits
+    store the remaining count into the exec env; a fresh exec env starts metered so a `start`
+    function cannot hang the host) and a tiny C extension reads it; the patch fails loudly if the
+    pin changes. `kfm_ai_wasm` is a separate target so `kfm_ai` never sees WAMR; the option
+    `KFM_WASM_BOTS` (default on natively, off under Emscripten) builds without it. A fuel unit is
+    one executed opcode plus one per function entry, as WAMR meters it; fuel use is exact and
+    deterministic (limit minus remaining), and an over-budget tick uses exactly the limit.
+    Measured (Release, this machine): about 820 M instructions/s on an integer loop and 600 M on
+    a float-heavy C bot, so a full 100 k budget costs about 0.12 ms and ten bots at full budget
+    about 1.2 ms per tick, roughly 14× real time per core worst case; a `-O2` C bot that
+    simulates every banana's flight uses about 63 k. Contests that need thousands of times real
+    time run matches in parallel processes (WAMR's global state rules out threads) or lower the
+    budget.
+  - *Numbers.* `WasmAgentConfig`: `fuelPerTick` 100 000 instructions, `fuelInit` 10 000 000
+    (applied separately to instantiation, i.e. `start` and constructors, and to `kfm_init`),
+    `maxModuleBytes` 4 MiB, `maxMemoryBytes` 16 MiB (a declared minimum above it is refused, the
+    maximum is clamped, `memory.grow` past it returns −1 and never traps), interpreter stack
+    64 KiB, host heap 0, `kfm_log` capture 4 KiB tail per agent. All host knobs (`--fuel`).
+  - *ABI as built.* The exports are wasm `i32`/`i64` (`kfm_abi_version() -> i32`,
+    `kfm_obs_buffer() -> i32`, `kfm_init(i64, i32)`, `kfm_act(i32) -> i64`); the only import
+    allowed is `env.kfm_log(i32, i32)`, and importing memory is refused. Load validates size,
+    imports, the four signatures and the memory, then runs a probe instance (under `fuelInit`)
+    that checks the version and the buffer, so a bad module is refused at load, not mid-match.
+    `init()` instantiates afresh every time, which is how `memory_on_respawn = wipe` falls out
+    and what the host calls on a match restart. The buffer's host address is re-resolved every
+    tick because `memory.grow` can move memory. Faults (`AgentFault`): `Trap`, `OverBudget`,
+    `BadReturn` (bits 40..63 set), `Dead` (a fault in `init` leaves the agent dead and every
+    later `act` yields no input without entering the module), plus the load-time kinds. A
+    faulting `act` returns no input and the host repeats the slot's last input and counts it
+    (`AgentHost`), the server's rule for a late network input. Compiled C and Rust bots keep
+    their stack in linear memory behind a mutable `__stack_pointer` global and a trap skips the
+    epilogue, so when a module exports that global the host saves it before `kfm_act` and
+    restores it after a fault; SDKs export it by default (`-Wl,--export=__stack_pointer`).
+  - *`Observation` v1.* 5748 bytes, alignment 4, little-endian, only u8/u16/u32/i16/i32 fields
+    with explicit padding, every offset `static_assert`ed and the layout documented field by
+    field in `docs/bot-abi.md`: header (version, size), match (tick, phase, clock, mode and arena
+    indices, scores, deaths, respawn timers, the input delay, the content hash), a `rules` block
+    of the content constants a flight helper needs (radii, speeds, flight ticks, turn rate,
+    restitution, dash-attack numbers), self (kinematics, stats, tags, timers, the previous
+    buttons, the three ability slots with the numbers of the def each runs, modifiers), the ten
+    players (relation Self/Ally/Enemy, kinematics, hp, ammo, per-slot ability kind/phase/
+    cooldown), the 64 bananas (phase, owner and its relation, heading as u16 BAM because a byte
+    would make an exact SDK flight helper impossible, speed, radius, and the closest approach to
+    a stationary self: the tick in 0..600 that minimises the distance and that distance, 0xFFFF
+    while self is dead), the 32 pickups and the arena statics, each entry with a valid flag and
+    the pools at their full capacity, and the v0.29 reservations (team and visible flags, heard
+    calls, cell and facing octant, `turnTicks`, `ticksToLatch`, role, team scores, `modeData`)
+    strictly zero. Enum values may be appended within a version; a new `AbilityKind` trips a
+    `static_assert` in the builder so the schema is reviewed. The builder is a pure function of
+    (world, content, slot, delay) in fixed-point math only: `tools/ci/check_sim_no_float.sh`
+    now covers `engine/ai`, so a bot match reproduces bit for bit on every host.
+  - *Hosts.* `AgentHost` owns up to ten agents, fills a frame in slot order (present agent slots
+    only, humans' and network inputs untouched), delays each answer by the slot's delay (at most
+    120 ticks; the slot idles until the first answer is due; the line pauses while the slot is
+    absent) and repeats the last applied input on no answer. It caches the content hash the
+    observation carries per `ContentDB` object (recomputed after `attach`, `detach`, `reinit`
+    and `clear`, or on `invalidateContentHash()`, which the client calls when live tuning edits
+    its content in place): hashing every tick had been 60 % of a reference tournament and 95 %
+    of a module run; `fill` is now allocation-free and O(agents). The reference bot's reaction delay
+    is on top of the host delay and not compensated. Every host names bots by one grammar,
+    `BotSpec`: `ref`, `ref:easy|medium|hard` or a `.wasm` path (`engine/ai` parses, the app reads
+    the file), and seeds slot `s` of a match with seed `S` as `S ^ (0x9E3779B97F4A7C15 · (s + 1))`
+    so an arena run and a server match with the same seeds agree.
+  - *Reference bot.* Scores sixteen walking directions plus idle over a 32-tick horizon with
+    enemy bananas predicted by the sim's own flight rule and the outer-box bounce, then takes,
+    when they score, a dash-catch in the perfect window, a dodge (dash, then blink, parry or
+    slam), a dash attack and a lead throw with a range and wall check; presses are fresh edges at
+    sub-tick 0. Tiers `{reactionDelayTicks, aimNoise, catchPer256, throwPer256}`: easy
+    `{18, 12, 48, 16}`, medium `{8, 5, 128, 64}`, hard `{0, 0, 256, 256}`. Two hard bots against
+    two scripted players over ten 4-player matches took 42 rounds to 8 (85 eliminations to 6);
+    four hard bots on `dojo`/`rounds` end a round in 3–4.5 s. Fairness pass (v0.30): equal
+    target distances and equal movement utilities go to a random tied candidate from the bot's
+    own Rng (reservoir sampling, a draw only on a tie) instead of the lowest slot or the +x
+    direction; a dash attack is only started on a target that cannot answer with one on the
+    same tick (unarmed, or its dash busy or cooling), because two strikes pressed on one tick at
+    the same sub-tick are resolved by slot index, a coin the bot cannot win; in a standoff (the
+    target holds a banana and its throw is ready) a lined-up throw is held 0..2 ticks, drawn
+    once per lined-up shot, which is what breaks the mirrored openings of two noise-free hard
+    bots (1v1 hard against hard: 0 of 20 matches capped and 68 % of rounds decided, from 13
+    capped and 2 %); the wall band (2 units, penalised at 3 per unit) ends where an unarmed
+    bot's fetch point lies, so a banana lying inside the band is still fetched (two bots had
+    parked at the band's edge for ever). Residual slot bias is the sim's, not the bot's: with
+    four players the dojo's spawn order puts slots 0 and 3 only 36° apart on odd offsets while 1
+    and 2 face each other, so slots 1 and 2 win more whatever drives them (200 fixed-slot
+    matches: scripted 28/65/72/35, hard bots 42/67/62/29; with four cyclic spawn points the
+    same bots give 56/54/41/49, p ≈ 0.44), and equal-time Player × Player contacts resolve by
+    pool index. Tournaments therefore rotate (`kfm_arena --rotate`): over 40 rotated matches of
+    hard, medium, easy, hard the two hard bots win 20 and 19 with mean places 1.62 and 1.77,
+    medium 1 and easy 0. The hard tier keeps zero noise.
 
 Teams, fog and calls (v0.29). The contest shape is a squad: a team of monkeys, each run by its
 own program, seeing a slice of the world and talking through the game. One rule sits behind
@@ -2316,7 +2481,7 @@ difficulty.
 | Sim, pools, fixed-point math, swept collision, abilities and rules framework | SDL3, sokol_gfx, Dear ImGui, stb |
 | Message layer, prediction/rollback, clock sync, network emulator | libdatachannel + datachannel-wasm (transport); GameNetworkingSockets only for a Steam build |
 | Bots, observation builder, the bot ABI and SDKs, match runner | LZ4, xxHash, toml++ or nlohmann-json |
-| Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, a wasm runtime with instruction metering (wasm3 or WAMR, chosen when M5 starts, §8), cgltf, Blender (asset pipeline) |
+| Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, WAMR 2.4.5 (the wasm bot runtime: classic interpreter with instruction metering, §8), cgltf, Blender (asset pipeline) |
 
 Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `server-headless`, `wasm` (Emscripten).
 M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
@@ -2362,6 +2527,19 @@ builds silent otherwise), dlopened at run time (`SDL_ALSA_SHARED`) so a machine 
 libasound or a sound card just has no device; PipeWire and PulseAudio are reached through their
 ALSA plugins. CI installs `libasound2-dev`. Windows (WASAPI), macOS (CoreAudio) and Emscripten
 (Web Audio) need nothing.
+Bot runtime (v0.30): WAMR 2.4.5 as `kfm::wamr`, FetchContent only (there is no vcpkg port) from
+the release tarball by SHA256, built by `third_party/wamr/CMakeLists.txt` in its own directory
+scope (WAMR's scripts use directory-scoped definitions and flags) through its
+`build-scripts/runtime_lib.cmake` into a static library with SYSTEM includes and its own warning
+flags; the platform comes from `CMAKE_SYSTEM_NAME` (linux, darwin, windows; anything else must
+set `KFM_WASM_BOTS=OFF`) and the target from the processor (X86_64, X86_32, AARCH64, ARM; a
+universal macOS build is refused). The configuration is the classic interpreter with
+instruction metering and nothing else (§8), plus the two-anchor source patch that reads the
+remaining budget back. C is enabled before the headless `return()` because the dedicated server
+hosts modules too. Under UBSan WAMR is compiled with `-fno-sanitize=alignment` (its own UBSan
+setup) and under ASan its use-after-return fake stacks are off, because they make its native
+stack check report an overflow on every call. Emscripten never builds it: the browser client
+instantiates modules through the browser's `WebAssembly` API behind a JS shim (an M5 follow-up).
 
 ---
 
@@ -2422,6 +2600,25 @@ roster reaches the world one tick after start), bots that yield a slot to a huma
 id constant, retracted events undone on screen, reconnect-with-token from the UI, a server-chosen
 match config, multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
 a human playtest over a real link.
+
+Progress: M5 landed in v0.30 (the in-repo half; the SDKs and example bots are published from
+the bots repository, which is where the exit criterion's tournament is run). `engine/ai` holds
+`IAgent`, `Observation` v1 with its fixed-point builder, `AgentHost`, the reference bot, `BotSpec`
+and `WasmAgent` over WAMR 2.4.5 with exact instruction metering (§8); `kfm_arena` runs matches
+and tournaments to a result line, JSON and `.kfmr` replays; `kfm_server` and `kfm_client` drive
+their bot slots through `AgentHost` (the server delaying bots by the humans' lead); the C SDK
+seed and the `chaser` example bot under `tools/bots/` are the copy the bots repository starts
+from, and a test plays the compiled example against the reference bot. Verified locally: GCC 15
+headless Debug and Release (every ctest target incl. the arena smoke tests, the wasm fixture
+suite, the soak gates and the real-socket tests), the native dev preset with the client, Clang 21
+and GCC ASan+UBSan on the wasm runtime tests, Emscripten for `kfm_arena` as a node CLI; MSVC and
+Apple Clang are left to CI (WAMR's `runtime_lib.cmake` builds on both). Numbers: Observation
+5748 bytes; WAMR classic interpreter about 820 M instructions/s (Release), a 100 k budget about
+0.12 ms; two hard reference bots against two scripted players win 41 rounds to 10. Replay
+checksums: unchanged (no sim change). Follow-ups: the browser JS shim so `kfm_client.html` can
+run modules; `kfm_arena --team` and the per-instance lifecycle (M5b); bots that yield a slot to
+a joining human; a protocol flag so a client can tell bot slots apart in the roster; running
+contests at thousands of times real time through parallel processes.
 
 Progress: M4 landed in v0.25. Content is data: `engine/content` parses the TOML under `content/`
 (toml++ 3.4.0, exact decimal to Q16.16, names resolved to indices, validation with file:line
@@ -2587,8 +2784,20 @@ baseline moved to C++23 (§9).
   no training stack in the engine (ONNX Runtime and the nanobind env dropped); human-likeness is
   a host setting (input delay equal to the human lead in mixed matches, none bot versus bot)
   (§8, §10, §11).
-- Open (M5 start): the wasm runtime and its metering accuracy, the fuel budget per tick, module
-  and memory caps, the `Observation` v1 field list (§8).
+- Decided (v0.30, M5): WAMR 2.4.5's classic interpreter with exact fuel read-back (a
+  configure-time patch), 100 k instructions per tick, 10 M for instantiation and `kfm_init`,
+  4 MiB modules, 16 MiB memory; `Observation` v1 is pinned in `docs/bot-abi.md`; bots are named
+  by `BotSpec` and seeded per slot by one formula in every host; the server delays bots by the
+  humans' lead (§8, §10, §11).
+- Open (M5 follow-ups): the browser JS shim for bot modules in the client (metering best effort
+  there); bots that yield a slot to a joining human; contests at thousands of times real time
+  through parallel processes (§8). Two sim-side sources of slot bias found by the bot fairness
+  pass (§8) are left as they are, because changing either regenerates the corpus: the spawn
+  assignment `order[(rank + offset) % 10]` puts four players on uneven arcs of the dojo's ring
+  (slots 1 and 2 face each other, 0 and 3 sit 36° apart on odd offsets), and equal-time,
+  equal-press Player × Player contacts resolve by pool index. A per-round shuffle of present
+  slots onto spawn ranks from the world Rng, or spawn groups (M5b), would fix the first;
+  tournaments rotate slots meanwhile.
 - Decided (v0.29): a mode is content along five axes, each with its own seam (§5.3); teams ride
   in `MatchConfig` and reach the rules table as a relation mask, friendly fire being a tag the
   mode's baseline grants (§5.6); loadouts are their own match axis (§5.10); the grid is a

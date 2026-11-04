@@ -22,10 +22,13 @@ event-driven effects and procedural sound, procedural meshes, skinning, the soko
 `apps/client` (local play with the lobby settings panel, bots, HUD, F1 overlay, the browser
 page); `engine/net` (`ITransport`, loopback + emulator, message layer, `NetServer`, `NetClient`
 with rollback and clock sync, `WebRtcTransport`), `apps/server`, `apps/netsim`, `apps/net-probe`
-and the client's `--connect` mode. Next is M5 (agent platform: `IAgent`, the wasm bot ABI,
-the reference bot, `kfm_arena`), then M5b (teams and relations, the five mode seams, the loadout axis,
-zones and tilemap arenas, the `grid` space and the squad contest shape with fog and calls; designed in
-architecture v0.29, §5.3, §5.10, §5.12, §8). `docs/architecture.md` is the
+and the client's `--connect` mode; `engine/ai` (`IAgent`, `Observation` v1 and its fixed-point
+builder, `AgentHost`, the reference bot, `BotSpec`, `WasmAgent` over WAMR with instruction
+metering), `apps/arena` (`kfm_arena`, the headless match runner), bots on the server and in the
+client lobby, and the C SDK seed with an example bot under `tools/bots/` (M5, architecture
+v0.30; the SDKs themselves live in a separate bots repository). Next is M5b (teams and relations,
+the five mode seams, the loadout axis, zones and tilemap arenas, the `grid` space and the squad
+contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12, §8). `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -84,10 +87,23 @@ source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/w
 #   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
 python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
 build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
+#   bots: --bot SPEC (repeatable, slot order; SPEC = ref | ref:easy|medium|hard | path.wasm), --bots N pads with
+#   ref:hard, --bot-delay auto|N (auto = the humans' lead, 0 bot vs bot), --fuel N (instructions per tick, default 100000)
 #   also --content DIR --arena NAME --mode NAME (kfm_netsim and kfm_render_probe take the same three)
 #   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
+build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]   # headless bot matches
+#   --rotate moves every bot through every slot across the tournament (the sim's spawn order favours some slots)
+#   [--arena NAME --mode NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
+#   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
+#   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
+ctest --preset dev -R 'kfm_ai|arena'           # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena
+build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]   # lobby bots (saved: bot_difficulty)
+#   browser: kfm_client.html?autostart&bots=3&bot=easy (modules are native only: the browser has no runtime yet)
+tools/bots/build_example.sh                    # compile tools/bots/examples/*.c against the C SDK seed with the emsdk clang
+tools/bots/build_fixtures.sh                   # re-assemble tests/fixtures/bots/*.wat with wat2wasm (the .wasm are checked in)
+cmake --preset dev -DKFM_WASM_BOTS=OFF         # build without WAMR (reference bots only; a module spec exits 3)
 cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
 build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL]   # join a server
 #   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves; pause/step/time scale/tuning are off online
@@ -201,7 +217,16 @@ bots write into the authoritative frame directly. Helpers (nearest banana, time 
 in the SDKs, not the host ABI. Human-likeness is a host setting: input delay equal to the
 human lead in mixed matches, none bot versus bot. SDKs, example bots and the contest live in a
 separate repository; this repo ships no training tooling (no ONNX, no nanobind, no Python env).
-`kfm_arena` is the headless match runner (modules in, replay and result line out).
+`kfm_arena` is the headless match runner (modules in, replay and result line out). As built
+(v0.30): the runtime is WAMR 2.4.5's classic interpreter (`kfm::wamr`, FetchContent only,
+patched at configure time to read the remaining budget back; `KFM_WASM_BOTS=OFF` builds without
+it, and Emscripten never builds it), `kfm_ai_wasm` is a separate target so `kfm_ai` never sees
+WAMR, the budgets are 100 k instructions per tick and 10 M for instantiation and `kfm_init`,
+modules are at most 4 MiB with 16 MiB of memory, and `docs/bot-abi.md` is the normative ABI and
+Observation v1 layout. `engine/ai` is fixed-point only (the no-float check covers it): a bot
+match reproduces bit for bit on every host. Every host names bots through `BotSpec` and seeds
+slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot hook is
+`ServerConfig::botInputs`, and `net` and `ai` never link each other.
 
 ## Working conventions specific to this repo
 

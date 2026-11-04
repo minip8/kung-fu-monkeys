@@ -12,10 +12,20 @@
 #   kfm::datachannel  libdatachannel 0.24.6 natively (vcpkg, or FetchContent static with OpenSSL),
 #                datachannel-wasm f9200eb under Emscripten; only when KFM_WEBRTC (headless too)
 #   kfm::tomlplusplus  toml++ 3.4.0 (header only, TOML_EXCEPTIONS=0), for engine/content (headless too)
+#   kfm::wamr    WAMR 2.4.5, classic interpreter with instruction metering (FetchContent only,
+#                built by third_party/wamr); only when KFM_WASM_BOTS (headless too, never wasm)
 # None of them link kfm::warnings: third-party code is compiled with its own
 # flags and its headers are SYSTEM includes, so it never trips -Werror.
 
 include(FetchContent)
+
+# SDL3, glad and WAMR are C; the project itself only declares CXX. Enabled
+# before the headless return below because WAMR builds in the headless
+# server too.
+enable_language(C)
+
+set(KFM_THIRD_PARTY_DIR "${CMAKE_CURRENT_LIST_DIR}/../third_party")
+cmake_path(NORMAL_PATH KFM_THIRD_PARTY_DIR)
 
 if(KFM_BUILD_TESTS)
   find_package(Catch2 3 CONFIG QUIET)
@@ -196,17 +206,36 @@ target_compile_definitions(kfm_tomlplusplus INTERFACE
   TOML_EXCEPTIONS=0 TOML_ENABLE_FORMATTERS=0 TOML_HEADER_ONLY=1)
 add_library(kfm::tomlplusplus ALIAS kfm_tomlplusplus)
 
+# ---------------------------------------------------------------------------
+# WAMR 2.4.5 (bytecodealliance/wasm-micro-runtime), the runtime behind
+# WasmAgent (engine/ai, architecture §8): a sandboxed bot module per slot,
+# metered in wasm instructions per tick. Classic interpreter only, instruction
+# metering on, no WASI, software bounds checks; the full configuration and a
+# two-line source patch (read back the budget left after a call, meter the
+# start function) are in third_party/wamr/CMakeLists.txt. FetchContent only:
+# vcpkg has no WAMR port. Defined before the headless return: server-side
+# bots run on the dedicated server. KFM_WASM_BOTS=OFF (forced under
+# Emscripten, where the browser's own WebAssembly API runs bot modules)
+# skips it and kfm_ai_wasm.
+# ---------------------------------------------------------------------------
+if(KFM_WASM_BOTS)
+  message(STATUS "KFM: WAMR 2.4.5 from FetchContent")
+  FetchContent_Declare(wamr
+    URL      https://github.com/bytecodealliance/wasm-micro-runtime/archive/refs/tags/WAMR-2.4.5.tar.gz
+    URL_HASH SHA256=1ab09d51099f276ca4a1d6629f6b589aab2bd0caa01445e05031a4bed22c199b
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    SOURCE_SUBDIR  kfm-deferred)  # built by third_party/wamr, not by its own CMakeLists
+  FetchContent_MakeAvailable(wamr)
+  set(KFM_WAMR_SOURCE_DIR "${wamr_SOURCE_DIR}")
+  add_subdirectory(${KFM_THIRD_PARTY_DIR}/wamr ${CMAKE_BINARY_DIR}/_deps/kfm_wamr-build
+    EXCLUDE_FROM_ALL SYSTEM)
+endif()
+
 # Everything below is the client stack (window, GPU, debug UI, assets). The
 # headless server build never needs it.
 if(KFM_HEADLESS)
   return()
 endif()
-
-# SDL3 and glad are C; the project itself only declares CXX.
-enable_language(C)
-
-set(KFM_THIRD_PARTY_DIR "${CMAKE_CURRENT_LIST_DIR}/../third_party")
-cmake_path(NORMAL_PATH KFM_THIRD_PARTY_DIR)
 
 # ---------------------------------------------------------------------------
 # SDL3 3.4.18

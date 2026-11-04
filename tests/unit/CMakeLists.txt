@@ -65,6 +65,43 @@ kfm_add_test_exe(kfm_net_tests
 )
 target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
 
+kfm_add_test_exe(kfm_ai_tests
+  ai/agent_test.cpp
+  ai/bot_spec_test.cpp
+  ai/observation_test.cpp
+  ai/agent_host_test.cpp
+  ai/reference_bot_test.cpp
+)
+target_link_libraries(kfm_ai_tests PRIVATE kfm::ai)
+
+if(KFM_WASM_BOTS)
+  # WasmAgent over WAMR (§8), on the hand-written modules in tests/fixtures/bots
+  # (the .wasm files are checked in: CI has no wabt).
+  set(KFM_BOT_FIXTURES_DIR "${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
+  kfm_add_test_exe(kfm_ai_wasm_tests
+    ai/wasm_agent_test.cpp
+    ai/example_bot_test.cpp
+  )
+  target_link_libraries(kfm_ai_wasm_tests PRIVATE kfm::ai_wasm kfm::sim_internal)
+  target_compile_definitions(kfm_ai_wasm_tests PRIVATE KFM_BOT_FIXTURES_DIR="${KFM_BOT_FIXTURES_DIR}")
+  # The C SDK seed (tools/bots/sdk-c/kfm_bot.h, compiled here as C++ against
+  # the engine) and its example bots, built with tools/bots/build_example.sh
+  # and checked in beside their source (CI has no wasm32 clang). SYSTEM: the
+  # header is C, held to the C build's warnings, not this target's.
+  target_include_directories(kfm_ai_wasm_tests SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/tools/bots/sdk-c")
+  target_compile_definitions(kfm_ai_wasm_tests PRIVATE
+    KFM_BOT_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/tools/bots/examples")
+
+  # Each fixture's .wasm matches its .wat (tools/bots/build_fixtures.sh
+  # regenerates them); skipped where wabt's wat2wasm is not on PATH.
+  add_test(NAME bot_fixtures_up_to_date
+    COMMAND ${CMAKE_COMMAND}
+      -DFIXTURES_DIR=${KFM_BOT_FIXTURES_DIR}
+      -DOUT_DIR=${CMAKE_CURRENT_BINARY_DIR}/bot_fixtures
+      -P ${PROJECT_SOURCE_DIR}/tools/bots/check_fixtures.cmake)
+  set_tests_properties(bot_fixtures_up_to_date PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED: wat2wasm")
+endif()
+
 kfm_add_test_exe(kfm_presentation_tests
   presentation/math_test.cpp
   presentation/camera_test.cpp
@@ -108,8 +145,14 @@ if(NOT KFM_HEADLESS)
     client/net_session_test.cpp
     client/event_fx_rollback_test.cpp
     client/lobby_test.cpp
+    client/bot_session_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
+  if(KFM_WASM_BOTS)
+    # Bot modules as local players: the session loads the same fixtures.
+    target_compile_definitions(kfm_client_tests PRIVATE
+      KFM_BOT_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
+  endif()
 
   if(KFM_WEBRTC AND NOT EMSCRIPTEN)
     # The client's network mode over real sockets: NetServer on
@@ -154,6 +197,11 @@ if(TARGET kfm::server_host)
     server/server_host_test.cpp
   )
   target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim)
+  if(KFM_WASM_BOTS)
+    # The host's wasm bots on the fixture modules (echo, trap, abi_mismatch).
+    target_compile_definitions(kfm_server_tests PRIVATE KFM_SERVER_TEST_WASM=1
+      KFM_BOT_FIXTURES_DIR="${KFM_BOT_FIXTURES_DIR}")
+  endif()
 
   if(TARGET kfm_server)
     # The same over real sockets: WebRtcTransport on 127.0.0.1, two NetClients
@@ -163,5 +211,19 @@ if(TARGET kfm::server_host)
     )
     target_link_libraries(kfm_server_network_tests PRIVATE kfm::server_host kfm::net_webrtc)
     set_tests_properties(kfm_server_network_tests PROPERTIES LABELS network TIMEOUT 120)
+  endif()
+endif()
+
+if(TARGET kfm::arena_core)
+  # apps/arena's match runner (§8, §9): determinism, placements, the result
+  # line and JSON, replays; with KFM_WASM_BOTS the module path over the
+  # fixtures in tests/fixtures/bots.
+  kfm_add_test_exe(kfm_arena_tests
+    arena/arena_test.cpp
+  )
+  target_link_libraries(kfm_arena_tests PRIVATE kfm::arena_core kfm::content)
+  if(KFM_WASM_BOTS)
+    target_compile_definitions(kfm_arena_tests PRIVATE KFM_WASM_BOTS=1
+      KFM_BOT_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
   endif()
 endif()

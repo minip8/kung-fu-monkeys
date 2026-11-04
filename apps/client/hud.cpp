@@ -12,6 +12,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <string>
 #include <utility>
 
 namespace kfm::client {
@@ -675,7 +676,12 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
       c.filled = owner != SlotOwner::None;
       if (owner == SlotOwner::Bot) {
         std::snprintf(c.title, sizeof c.title, "BOT%u", static_cast<unsigned>(i) + 1U);
-        std::snprintf(c.sub, sizeof c.sub, "bot");
+        // "bot medium", or "bot module" for a .wasm bot (its path is in F1 > Bots).
+        const BotRoster& roster = session.botRoster();
+        std::snprintf(c.sub, sizeof c.sub, "bot %s",
+                      roster.moduleActive()
+                          ? "module"
+                          : std::string(ai::toString(roster.spec().tier)).c_str());
       } else if (owner == SlotOwner::None) {
         std::snprintf(c.title, sizeof c.title, "P%u", static_cast<unsigned>(i) + 1U);
         std::snprintf(c.sub, sizeof c.sub, "free");

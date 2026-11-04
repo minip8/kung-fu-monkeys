@@ -1,10 +1,13 @@
 // NetServer driven by hand-written messages over a zero-latency loopback
 // (architecture §6.6, §6.7): handshake checks, input validation and rate
-// limits, reconnect reservations, spectators, resync, ping.
+// limits, reconnect reservations, spectators, resync, ping, the bot input
+// source and the human lead estimate.
 #include "kfm/net/net_server.hpp"
 
+#include "kfm/core/rng.hpp"
 #include "kfm/net/loopback.hpp"
 #include "kfm/sim/content.hpp"
+#include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/step.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,6 +17,7 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -519,4 +523,166 @@ TEST_CASE("maxPlayers caps the slots open to peers and bots", "[net][server]") {
   rig.pump();
   rig.pump();
   CHECK(b.last<RejectMsg>(MessageType::Reject).reason == RejectReason::MatchFull);
+}
+
+TEST_CASE("unset, the bot source is the scripted generator over botSeed", "[net][server][bots]") {
+  // A server with the default and one whose source replays the scripted
+  // generator by hand step identical frames: the default is unchanged.
+  ServerConfig plain;
+  plain.match.seed = 0x51;
+  plain.botSeed = 0x5EED;
+  Rig a(plain);
+  ServerConfig custom = plain;
+  Rng rng = Rng::seeded(plain.botSeed);
+  uint32_t calls = 0;
+  custom.botInputs = [&](const sim::WorldState& w, const sim::MatchContent& c, sim::InputFrame& f) {
+    ++calls;
+    CHECK(f.tick == w.tick);
+    CHECK(f.present == 0b10010);  // the bot slots, nothing else
+    for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
+      CHECK(f.inputs[s] == sim::PlayerInput{});
+      if (sim::maskHas(f.present, PlayerId{s}))
+        f.inputs[s] = sim::scriptedInput(rng, w, c, PlayerId{s}, plain.botConfig);
+    }
+  };
+  Rig b(custom);
+  for (Rig* r : {&a, &b}) {
+    REQUIRE(r->server->setBot(PlayerId{1}, true));
+    REQUIRE(r->server->setBot(PlayerId{4}, true));
+  }
+  for (int i = 0; i < 300; ++i) {
+    a.tick();
+    b.tick();
+  }
+  CHECK(calls == 300);
+  CHECK(sim::checksum(a.server->world()) == sim::checksum(b.server->world()));
+  for (uint32_t t = 200; t < 300; ++t) {
+    const sim::InputFrame* fa = a.server->frames().get(Tick{t});
+    const sim::InputFrame* fb = b.server->frames().get(Tick{t});
+    if (fa == nullptr || fb == nullptr) {
+      FAIL("frame " << t << " missing");
+      return;
+    }
+    CHECK(*fa == *fb);
+  }
+}
+
+TEST_CASE("a custom bot source writes the bot slots of the authoritative frames",
+          "[net][server][bots]") {
+  ServerConfig cfg;
+  cfg.match.seed = 0x1111;
+  cfg.botSeed = 7;
+  std::vector<std::pair<Tick, uint32_t>> seen;  // (tick, matchIndex) per call
+  NetServer* server = nullptr;
+  cfg.botInputs = [&](const sim::WorldState& w, const sim::MatchContent& /*c*/,
+                      sim::InputFrame& f) {
+    REQUIRE(server != nullptr);
+    seen.emplace_back(w.tick, server->matchIndex());
+    if (server->matchIndex() == 1) {
+      CHECK(server->botSeed() == 99);  // restartMatch's bot seed, before the first act
+    } else {
+      CHECK(server->botSeed() == 7);
+    }
+    f.inputs[3].moveDir = static_cast<uint8_t>(w.tick.value & 0xFFu);
+    f.inputs[3].moveMag = 200;
+    f.inputs[3].aimDir = 17;
+    f.inputs[5].moveMag = 255;  // not a bot slot: never read
+  };
+  Rig rig(cfg);
+  server = rig.server.get();
+  rig.tick();  // no bot: the source is not called
+  CHECK(seen.empty());
+  REQUIRE(rig.server->setBot(PlayerId{3}, true));
+  const Raw& a = rig.join(1);
+  for (int i = 0; i < 20; ++i)
+    rig.tick();
+  REQUIRE(seen.size() == 20);
+  for (const auto& [tick, match] : seen) {
+    const sim::InputFrame* f = rig.server->frames().get(tick);
+    if (f == nullptr) {
+      FAIL("frame " << tick.value << " missing");
+      return;
+    }
+    CHECK(f->inputs[3].moveDir == static_cast<uint8_t>(tick.value & 0xFFu));
+    CHECK(f->inputs[3].moveMag == 200);
+    CHECK(f->inputs[3].aimDir == 17);
+    CHECK(f->inputs[0] == sim::PlayerInput{});  // the silent peer's slot
+    CHECK(!sim::maskHas(f->present, PlayerId{5}));
+    CHECK(match == 0);
+  }
+  const auto auth = a.last<AuthInputsMsg>(MessageType::AuthInputs);
+  REQUIRE(auth.count > 0);
+  CHECK(auth.frames[auth.count - 1].inputs[3].moveMag == 200);  // and it reaches the clients
+  CHECK(rig.server->stats().substitutedInputs == 20);           // the silent peer only
+
+  // A restart: the source sees the fresh world on the restart tick itself.
+  const Tick start = rig.server->nextTick().plus(3);
+  rig.server->restartMatch(0x2222, start, 99);
+  while (rig.server->nextTick() <= start)
+    rig.tick();
+  REQUIRE(seen.size() >= 2);
+  CHECK(seen.back().first == start);
+  CHECK(seen.back().second == 1);
+  CHECK(seen[seen.size() - 2].second == 0);
+}
+
+TEST_CASE("humanLeadTicks is the median lead of the peers that hold slots", "[net][server][bots]") {
+  ServerConfig cfg;
+  cfg.maxProtocolErrors = 100000;  // the spectator's foreign inputs below
+  Rig rig(cfg);
+  CHECK(rig.server->humanLeadTicks() == 0);  // nobody
+  Raw& a = rig.join(1);
+  Raw& b = rig.join(1);
+  Raw& c = rig.join(1);
+  Raw& spectator = rig.join(0);
+  for (int i = 0; i < 5; ++i)
+    rig.tick();
+  CHECK(rig.server->humanLeadTicks() == 0);  // no input yet
+
+  // Zero latency: a client that acknowledges the newest frame has rtt 0, so
+  // its lead is its margin. Every tick each sends its input for nextTick +
+  // margin, acknowledging the frame ackLag ticks older than the newest.
+  const auto send = [&](Raw& r, sim::PlayerMask slot, int32_t margin, int32_t ackLag) {
+    InputMsg m = inputFor(slot, rig.server->nextTick().plus(margin), 1);
+    m.lastAuthTick = rig.server->nextTick().plus(-1 - ackLag);
+    r.unreliable(m);
+  };
+  for (int i = 0; i < 120; ++i) {
+    send(a, 0b001, 2, 0);
+    send(b, 0b010, 9, 0);
+    send(c, 0b100, 3, 0);
+    send(spectator, 0b001, 30, 0);  // owns nothing: ignored
+    rig.pump();
+    rig.tick();
+  }
+  const auto info = rig.server->peerInfo(rig.server->ownerOf(PlayerId{1}));
+  if (!info) {
+    FAIL("no peer for slot 1");
+    return;
+  }
+  CHECK(info->leadEmaQ8 == 9 * 256);
+  CHECK(info->marginEmaQ8 == 9 * 256);
+  CHECK(rig.server->humanLeadTicks() == 3);  // the median of 2, 9, 3
+
+  // Half the acknowledgement's round trip counts: margin 2 with frames that
+  // took 6 ticks there and back is a lead of 5.
+  for (int i = 0; i < 400; ++i) {
+    send(a, 0b001, 2, 6);
+    send(b, 0b010, 2, 6);
+    send(c, 0b100, 2, 6);
+    rig.pump();
+    rig.tick();
+  }
+  CHECK(rig.server->humanLeadTicks() == 5);
+
+  // Peers that leave stop counting; a late one (negative lead) clamps to 0.
+  b.reliable(DisconnectMsg{DisconnectReason::Quit});
+  c.reliable(DisconnectMsg{DisconnectReason::Quit});
+  rig.pump();
+  for (int i = 0; i < 400; ++i) {
+    send(a, 0b001, -4, 0);
+    rig.pump();
+    rig.tick();
+  }
+  CHECK(rig.server->humanLeadTicks() == 0);
 }

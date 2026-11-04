@@ -99,21 +99,23 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   LobbyMenu m;
   m.setContent(db);
   const auto rows = m.rows();
-  REQUIRE(rows.size() == 5u + db.powerUpCount);
+  REQUIRE(rows.size() == 6u + db.powerUpCount);
   CHECK(rows[0].kind == LobbyRowKind::Arena);
   CHECK(rows[1].kind == LobbyRowKind::Mode);
   for (uint8_t i = 0; i < db.powerUpCount; ++i) {
     CHECK(rows[2 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
     CHECK(m.rowLabel(rows[2 + i]) == db.powerUps[i].name.view());
   }
-  CHECK(rows[rows.size() - 3].kind == LobbyRowKind::Bots);
+  CHECK(rows[rows.size() - 4].kind == LobbyRowKind::Bots);
+  CHECK(rows[rows.size() - 3].kind == LobbyRowKind::BotDifficulty);
+  CHECK(m.rowLabel(rows[rows.size() - 3]) == "Bot difficulty");
   CHECK(rows[rows.size() - 2].kind == LobbyRowKind::Volume);
   CHECK(rows.back().kind == LobbyRowKind::Mute);
   CHECK(m.focus() == 0);
 
   // A menu that never saw content still has the default fixture's rows.
   const LobbyMenu bare;
-  CHECK(bare.rows().size() == 5u + sim::defaultContent().powerUpCount);
+  CHECK(bare.rows().size() == 6u + sim::defaultContent().powerUpCount);
 }
 
 TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][lobby]") {
@@ -184,6 +186,20 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
     CHECK(m.rowValue(m.focusedRow()) == "muted");
     CHECK(m.apply(MenuAction::Left));
     CHECK_FALSE(m.settings().mute);
+  }
+  SECTION("bot difficulty cycles easy, medium, hard with wrap-around") {
+    const std::size_t row = rowOf(m, LobbyRowKind::BotDifficulty);
+    m.setFocus(row);
+    CHECK(m.settings().botTier == ai::ReferenceTier::Medium);  // the casual default
+    CHECK(m.rowValue(m.focusedRow()) == "medium");
+    CHECK(m.apply(MenuAction::Right));
+    CHECK(m.settings().botTier == ai::ReferenceTier::Hard);
+    CHECK(m.rowValue(m.focusedRow()) == "hard");
+    CHECK(m.apply(MenuAction::Right));
+    CHECK(m.settings().botTier == ai::ReferenceTier::Easy);
+    CHECK(m.apply(MenuAction::Left));
+    CHECK(m.apply(MenuAction::Left));
+    CHECK(m.settings().botTier == ai::ReferenceTier::Medium);
   }
   SECTION("out-of-range rows and directions do nothing") {
     CHECK_FALSE(m.change(n, +1));
@@ -272,6 +288,7 @@ TEST_CASE("lobby settings: options names <-> indices", "[client][lobby][settings
   o.mode = "deathmatch";
   o.powerUps = "shield,speed_boost";
   o.bots = 3;
+  o.botDifficulty = ai::ReferenceTier::Easy;
   o.volume = 40;
   o.mute = true;
   LobbySettings s;
@@ -282,6 +299,7 @@ TEST_CASE("lobby settings: options names <-> indices", "[client][lobby][settings
   CHECK(s.powerUps == ((1u << db.findPowerUp("shield").value_or(0)) |
                        (1u << db.findPowerUp("speed_boost").value_or(0))));
   CHECK(s.bots == 3);
+  CHECK(s.botTier == ai::ReferenceTier::Easy);
   CHECK(s.volume == 40);
   CHECK(s.mute);
 
@@ -290,6 +308,7 @@ TEST_CASE("lobby settings: options names <-> indices", "[client][lobby][settings
   CHECK(back.arena == "pillars");
   CHECK(back.mode == "deathmatch");
   CHECK(back.powerUps == "speed_boost,shield");  // content order
+  CHECK(back.botDifficulty == ai::ReferenceTier::Easy);
   LobbySettings again;
   REQUIRE(client::lobbySettingsFrom(back, db, again, error));
   CHECK(again == s);
@@ -310,25 +329,30 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   saved.mode = "survival";
   saved.powerUps = "none";
   saved.bots = 4;
+  saved.botDifficulty = ai::ReferenceTier::Hard;
   saved.volume = 30;
   saved.mute = true;
   const std::string text = client::settingsText(saved);
-  CHECK(text == "arena=island\nmode=survival\npowerups=none\nbots=4\nvolume=30\nmute=1\n");
+  CHECK(text ==
+        "arena=island\nmode=survival\npowerups=none\nbots=4\nbot_difficulty=hard\nvolume=30\n"
+        "mute=1\n");
 
   ClientOptions loaded;
   std::vector<std::string> warnings;
   client::applySettingsText(text, db, loaded, warnings);
   CHECK(warnings.empty());
   CHECK(client::settingsText(loaded) == text);
+  CHECK(loaded.botDifficulty == ai::ReferenceTier::Hard);
 
   SECTION("names the content lost, bad numbers and unknown keys warn and are skipped") {
     ClientOptions o;
     warnings.clear();
     client::applySettingsText(
         "# kfm\n\narena=volcano\nmode = deathmatch \r\npowerups=shield,lava\nbots=12\n"
-        "volume=loud\nmute=2\ncolour=red\njunk\n",
+        "volume=loud\nmute=2\ncolour=red\njunk\nbot_difficulty=insane\n",
         db, o, warnings);
-    CHECK(warnings.size() == 7);
+    CHECK(warnings.size() == 8);
+    CHECK(o.botDifficulty == ai::ReferenceTier::Medium);
     CHECK(o.arena.empty());
     CHECK(o.mode == "deathmatch");
     CHECK(o.powerUps.empty());
@@ -343,13 +367,16 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
     warnings.clear();
     client::applySettingsText(text, db, o, warnings);
     std::string error;
-    REQUIRE(parse({"--arena", "corridors", "--powerups", "shield", "--volume", "90"}, o, error));
-    CHECK(o.arena == "corridors");  // flag
-    CHECK(o.mode == "survival");    // saved
-    CHECK(o.powerUps == "shield");  // flag
-    CHECK(o.bots == 4);             // saved
-    CHECK(o.volume == 90);          // flag
-    CHECK(o.mute);                  // saved
+    REQUIRE(parse({"--arena", "corridors", "--powerups", "shield", "--volume", "90",
+                   "--bot-difficulty", "easy"},
+                  o, error));
+    CHECK(o.botDifficulty == ai::ReferenceTier::Easy);  // flag over the saved hard
+    CHECK(o.arena == "corridors");                      // flag
+    CHECK(o.mode == "survival");                        // saved
+    CHECK(o.powerUps == "shield");                      // flag
+    CHECK(o.bots == 4);                                 // saved
+    CHECK(o.volume == 90);                              // flag
+    CHECK(o.mute);                                      // saved
   }
 }
 

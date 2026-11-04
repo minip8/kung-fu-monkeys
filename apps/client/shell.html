@@ -31,7 +31,9 @@
     window.addEventListener('load', () => canvas.focus());
     const statusElement = document.getElementById('status');
     // Command-line flags from the query string: ?autostart&bots=3&seed=7 runs
-    // kfm_client --autostart --bots 3 --seed 7; network mode is
+    // kfm_client --autostart --bots 3 --seed 7; ?bots=3&bot=easy picks the
+    // reference bot's tier (easy, medium, hard; bot modules are native only
+    // for now); network mode is
     // ?connect=ws://host:port (plus &token=T, &spectate, &stun=stun:host:port,
     // &players=N), the same --connect path as the native client.
     const kfmArguments = [];

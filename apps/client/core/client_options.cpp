@@ -4,6 +4,7 @@
 #include "kfm/sim/constants.hpp"
 
 #include <charconv>
+#include <optional>
 #include <string_view>
 #include <system_error>
 
@@ -23,6 +24,15 @@ namespace {
 }
 
 }  // namespace
+
+ai::BotSpec botSpec(const ClientOptions& options) {
+  ai::BotSpec spec{.kind = ai::BotKind::Reference, .tier = options.botDifficulty, .path = {}};
+  if (!options.botModule.empty()) {
+    spec.kind = ai::BotKind::Module;
+    spec.path = options.botModule;
+  }
+  return spec;
+}
 
 NetSessionConfig netSessionConfig(const ClientOptions& options, bool atStartup) {
   NetSessionConfig c;
@@ -95,6 +105,41 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       if (!value(i, out.seed)) return false;
     } else if (arg == "--players-seed") {
       if (!value(i, out.playersSeed)) return false;
+    } else if (arg == "--bot-difficulty" || arg == "--bot-module" || arg == "--bot") {
+      if (i + 1 >= args.size()) {
+        error = std::string(arg) + " needs a value";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      const std::optional<ai::ReferenceTier> tier = ai::parseReferenceTier(v);
+      const std::optional<ai::BotSpec> spec = ai::parseBotSpec(v);
+      if (arg == "--bot-difficulty") {
+        if (!tier) {
+          error = "--bot-difficulty must be easy, medium or hard, got '" + std::string(v) + "'";
+          return false;
+        }
+        out.botDifficulty = *tier;
+      } else if (arg == "--bot-module") {
+        if (!spec || spec->kind != ai::BotKind::Module) {
+          error = "--bot-module needs a .wasm path, got '" + std::string(v) + "'";
+          return false;
+        }
+        out.botModule = spec->path;
+      } else if (tier) {
+        out.botDifficulty = *tier;
+        out.botModule.clear();
+      } else if (spec) {
+        if (spec->kind == ai::BotKind::Module) {
+          out.botModule = spec->path;
+        } else {
+          out.botDifficulty = spec->tier;
+          out.botModule.clear();
+        }
+      } else {
+        error = "--bot needs easy|medium|hard, ref, ref:TIER or a .wasm path, got '" +
+                std::string(v) + "'";
+        return false;
+      }
     } else if (arg == "--content" || arg == "--arena" || arg == "--mode" || arg == "--powerups") {
       if (i + 1 >= args.size()) {
         error = std::string(arg) + " needs a value";

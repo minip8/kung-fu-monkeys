@@ -1,0 +1,2 @@
+# The compiler that built the checked-in example .wasm files (tools/bots/build_example.sh).
+clang version 24.0.0git (https://github.com/llvm/llvm-project 83ee07799c341b60965f07892f7bb3d175da05be)

@@ -1,7 +1,8 @@
 # Playable client (architecture §3, §11 M2): SDL3 window, sokol_gfx, Dear ImGui.
 #
 #   kfm_client_core  headless match loop (MatchSession, fixed-step clock, lobby,
-#                    bots, content tuning, options) and network mode
+#                    bots through kfm::ai's AgentHost, content tuning, options)
+#                    and network mode
 #                    (NetSession over any ITransport); no SDL, sokol, ImGui or
 #                    WebRTC, so tests/unit/client exercises it without a window.
 #   kfm_client_sdl   SDL_Event -> platform::InputEvent translation and gamepad
@@ -15,13 +16,21 @@ add_library(kfm_client_core STATIC
   core/net_session.cpp
   core/lobby_settings.cpp
   core/lobby_menu.cpp
+  core/bot_roster.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kfm_client_core
-  PUBLIC kfm::sim kfm::net kfm::presentation kfm::platform_input
+  PUBLIC kfm::sim kfm::ai kfm::net kfm::presentation kfm::platform_input
   PRIVATE kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client_core)
+# Bot modules as local players (§8) natively, over the same WAMR runtime as
+# the server and kfm_arena. Without it (the browser) a module spec falls back
+# to the reference bot. PUBLIC so the tests know which build they test.
+if(KFM_WASM_BOTS)
+  target_link_libraries(kfm_client_core PRIVATE kfm::ai_wasm)
+  target_compile_definitions(kfm_client_core PUBLIC KFM_CLIENT_WASM_BOTS=1)
+endif()
 set_target_properties(kfm_client_core PROPERTIES FOLDER apps)
 
 add_library(kfm_client_sdl STATIC sdl_input.cpp)

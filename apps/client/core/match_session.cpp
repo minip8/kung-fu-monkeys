@@ -1,6 +1,5 @@
 #include "match_session.hpp"
 
-#include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/step.hpp"
 
 #include <algorithm>
@@ -50,6 +49,7 @@ MatchSession::MatchSession(const SessionConfig& config)
     (void)sampler_.bind(PlayerId{0}, platform::DeviceBinding::keyboard(0));
   }
   setBotCount(config.bots);
+  (void)setBotSpec(config.botSpec);
   createWorld(lobbyPresentMask());
 }
 
@@ -114,12 +114,12 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     if (!has(frame.present, i)) {
       frame.inputs[i] = sim::PlayerInput{};
-    } else if (has(botMask_, i)) {
-      frame.inputs[i] = sim::scriptedInput(botRng_, curr_, matchContent(), PlayerId{i});
     } else if (has(localMask_, i) && !has(bound, i)) {
       frame.inputs[i] = lastInputs_[i];  // dropped pad: repeat last input
     }
   }
+  // The bots' slots (and only theirs), in slot order, from this tick's world.
+  agents_.fill(frame, curr_, matchContent());
   lastInputs_ = frame.inputs;
   lastFrame_ = frame;
 
@@ -204,6 +204,7 @@ void MatchSession::returnToLobby() {
   phase_ = SessionPhase::Lobby;
   localMask_ = 0;
   botMask_ = 0;
+  detachAgents();
   frameEventCount_ = 0;
   // Match visuals (effects, shake, flash, yaw tracks) and a pause, with any
   // pending single step, do not outlive the match.
@@ -241,6 +242,35 @@ void MatchSession::setMode(uint8_t mode) {
   if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
 }
 
+bool MatchSession::setBotSpec(const ai::BotSpec& spec) {
+  botSpecError_.clear();
+  return roster_.configure(spec, botSpecError_);
+}
+
+void MatchSession::setBotTier(ai::ReferenceTier tier) {
+  ai::BotSpec spec = roster_.spec();
+  spec.tier = tier;
+  std::string ignored;  // the module (if any) is already loaded: only the tier changes
+  (void)roster_.configure(spec, ignored);
+}
+
+BotSlotStats MatchSession::botStats(PlayerId slot) const {
+  BotSlotStats out;
+  const ai::IAgent* agent = agents_.agent(slot);
+  if (agent == nullptr) return out;
+  const ai::AgentSlotStats host = agents_.stats(slot);
+  out.acts = host.acts;
+  out.substitutions = host.substitutions;
+  if (has(moduleMask_, slot.value)) BotRoster::moduleStats(*agent, out);
+  return out;
+}
+
+void MatchSession::detachAgents() {
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
+    (void)agents_.detach(PlayerId{i});
+  moduleMask_ = 0;
+}
+
 void MatchSession::setPowerUps(uint16_t powerUps) {
   powerUps_ = powerUps;
   if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
@@ -266,7 +296,16 @@ void MatchSession::beginMatch(sim::PlayerMask present, sim::PlayerMask local, ui
   phase_ = SessionPhase::Match;
   localMask_ = local;
   botMask_ = static_cast<sim::PlayerMask>(present & ~local);
-  botRng_ = Rng::seeded(botSeed_);
+  // Fresh agents every match: a restart (or a dropped slot turned bot) starts
+  // from init() like the first match did.
+  detachAgents();
+  const bool modules = roster_.moduleActive();
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if (!has(botMask_, i)) continue;
+    const PlayerId slot{i};
+    agents_.attach(slot, roster_.make(), botAgentSeed(botSeed_, slot), 0);
+    if (modules) moduleMask_ = static_cast<sim::PlayerMask>(moduleMask_ | bit(i));
+  }
   lastInputs_ = {};
   lastFrame_ = {};
   frameEventCount_ = 0;
@@ -308,6 +347,7 @@ float MatchSession::renderAlpha() const {
 
 void MatchSession::resetContent() {
   content_ = loaded_;
+  agents_.invalidateContentHash();
 }
 
 uint32_t MatchSession::contentHash() const {

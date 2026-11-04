@@ -68,6 +68,7 @@ NetServer::NetServer(ITransport& transport, const sim::ContentDB& content, Serve
       assembler_(world_.tick),
       present_(static_cast<sim::PlayerMask>(config_.match.players & kAllPlayersMask)),
       botRng_(Rng::seeded(config_.botSeed)),
+      botSeed_(config_.botSeed),
       peers_(kMaxPeers),
       buf_(kMaxReliableBytes) {
   assembler_.setPresent(present_);
@@ -235,6 +236,25 @@ void NetServer::restartMatch(const sim::MatchConfig& config, Tick startTick, uin
   }
 }
 
+uint8_t NetServer::humanLeadTicks() const {
+  std::array<int32_t, kMaxPeers> leads{};
+  size_t n = 0;
+  for (const Peer& p : peers_) {
+    if (!p.used || p.info.state != PeerState::Active || p.info.slots == 0 ||
+        p.info.leadSamples == 0 || n == leads.size()) {
+      continue;
+    }
+    leads[n++] = p.info.leadEmaQ8;
+  }
+  if (n == 0) return 0;
+  // The lower median: one slow link does not slow every bot down.
+  const auto mid = static_cast<std::ptrdiff_t>((n - 1) / 2);
+  std::nth_element(leads.begin(), leads.begin() + mid,
+                   leads.begin() + static_cast<std::ptrdiff_t>(n));
+  const int32_t rounded = (leads[static_cast<size_t>(mid)] + 128) / 256;  // Q8 → ticks, rounded
+  return static_cast<uint8_t>(std::clamp<int32_t>(rounded, 0, kMaxHumanLeadTicks));
+}
+
 std::optional<Tick> NetServer::pendingRestart() const {
   if (!restart_) return std::nullopt;
   return restart_->startTick;
@@ -245,6 +265,7 @@ void NetServer::applyRestart(Tick t, const PendingRestart& r) {
   world_ = sim::initialWorld(config_.match);
   world_.tick = t;  // ticks are monotonic across matches; the sim only uses differences
   botRng_ = Rng::seeded(r.botSeed);
+  botSeed_ = r.botSeed;
   restart_.reset();
   ++matchIndex_;
   ++stats_.matchRestarts;
@@ -585,6 +606,15 @@ void NetServer::onInput(Peer& p, const Packet& packet) {
     const int32_t q8 = int32_t{margin} * 256;
     p.info.marginEmaQ8 =
         p.info.inputMsgs <= 1 ? q8 : p.info.marginEmaQ8 + (q8 - p.info.marginEmaQ8) / 8;
+    // Lead = margin + rtt/2, the round trip from the frame it acknowledges
+    // (sent when nextTick() was ack + 1); see the header comment.
+    if (m.lastAuthTick) {
+      const int32_t rtt = std::max<int32_t>(nextTick().minus(*m.lastAuthTick) - 1, 0);
+      const int32_t leadQ8 = q8 + rtt * 128;
+      p.info.leadEmaQ8 =
+          p.info.leadSamples == 0 ? leadQ8 : p.info.leadEmaQ8 + (leadQ8 - p.info.leadEmaQ8) / 8;
+      ++p.info.leadSamples;
+    }
   }
   if (bad) protocolError(p, nowNs_);
 }
@@ -630,13 +660,27 @@ void NetServer::tick(uint64_t nowNs) {
   expireReservations();
   const Tick t = nextTick();
   if (const std::optional<PendingRestart> r = restart_; r && t >= r->startTick) applyRestart(t, *r);
-  for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
-    const PlayerId id{static_cast<PlayerId::rep>(s)};
-    if (has(bots_, s)) {
-      static_cast<void>(assembler_.put(
-          id, t,
-          sim::scriptedInput(botRng_, world_, sim::matchContent(*content_, config_.match), id,
-                             config_.botConfig)));
+  const sim::MatchContent content = sim::matchContent(*content_, config_.match);
+  if (config_.botInputs) {
+    if (bots_ != 0) {
+      sim::InputFrame botFrame{};
+      botFrame.tick = t;
+      botFrame.present = bots_;
+      config_.botInputs(world_, content, botFrame);
+      for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
+        if (has(bots_, s)) {
+          static_cast<void>(
+              assembler_.put(PlayerId{static_cast<PlayerId::rep>(s)}, t, botFrame.inputs[s]));
+        }
+      }
+    }
+  } else {
+    for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
+      const PlayerId id{static_cast<PlayerId::rep>(s)};
+      if (has(bots_, s)) {
+        static_cast<void>(assembler_.put(
+            id, t, sim::scriptedInput(botRng_, world_, content, id, config_.botConfig)));
+      }
     }
   }
   // A reserved slot stands still until its owner is back.
@@ -659,7 +703,7 @@ void NetServer::tick(uint64_t nowNs) {
     stats_.substitutedLastTick += n;
   }
   sink_.clear();
-  sim::step(world_, frame, sim::matchContent(*content_, config_.match), sink_);
+  sim::step(world_, frame, content, sink_);
   static_cast<void>(frames_.put(frame));
   ++stats_.ticks;
   broadcastAuth();
