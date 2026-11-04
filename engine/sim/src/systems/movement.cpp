@@ -8,7 +8,7 @@
 namespace kfm::sim {
 
 void movementSystem(WorldState& s, const MatchContent& content) {
-  spaceBehaviorFor(Space::Continuous).move(s, content);
+  spaceBehaviorFor(content.mode.space).move(s, content);
 }
 
 }  // namespace kfm::sim

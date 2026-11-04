@@ -212,10 +212,10 @@ struct ContentDB {
     return std::nullopt;
   }
 
-  // Whether a match may pair this arena with this mode (v0.32, v0.33): a
-  // team mode needs a spawn group per team, hill a zone (zone 0), capture a
-  // zone per team (team t's is zone t). Step 4 (§5.12) adds a grid mode's
-  // `cellSize > 0`. An incompatible pair is a configuration error of the
+  // Whether a match may pair this arena with this mode (v0.32, v0.33,
+  // v0.34): a team mode needs a spawn group per team, hill a zone (zone 0),
+  // capture a zone per team (team t's is zone t), a grid mode cells
+  // (`cellSize > 0`, §5.12). An incompatible pair is a configuration error of the
   // host (the lobby skips it, a command line refuses it), never a load
   // error: the sim plays any pair (a missing zone holds nobody).
   [[nodiscard]] constexpr bool compatible(uint8_t arena, uint8_t mode) const {
@@ -224,6 +224,7 @@ struct ContentDB {
     if (m.teams != 0 && a.spawnGroups < m.teams) return false;
     if (m.kind == ModeKind::Hill && a.zoneCount < 1) return false;
     if (m.kind == ModeKind::Capture && a.zoneCount < (m.teams > 0 ? m.teams : 1)) return false;
+    if (m.space == Space::Grid && a.cellSize <= Fixed::zero()) return false;
     return true;
   }
   // The first arena compatible with the mode, if any.

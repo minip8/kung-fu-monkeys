@@ -10,8 +10,9 @@
 namespace kfm::sim {
 namespace {
 
-constexpr std::array<SpaceBehavior, 1> kBehaviors = {
+constexpr std::array<SpaceBehavior, static_cast<size_t>(Space::kCount)> kBehaviors = {
     continuousSpace(),  // Space::Continuous
+    gridSpace(),        // Space::Grid (v0.34)
 };
 
 }  // namespace

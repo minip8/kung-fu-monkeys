@@ -541,8 +541,36 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
   CHECK(contains(loadErrors(replaced(kMinimal, "min_ammo = 1", "min_ammo = 0")),
                  "min_ammo must be at least 1"));
   CHECK(contains(
-      loadErrors(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 12")),
-      "active_ticks must exceed perfect_window_ticks"));
+      loadErrors(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 13")),
+      "a dash needs active_ticks >= 1 and perfect_window_ticks <= active_ticks"));
+  // v0.34: a window of 0 (never perfect) and one spanning the active phase load.
+  CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 0")));
+  CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 12")));
+  // v0.34: the space, and the grid's keys only in a grid mode.
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nspace = \"hex\"")),
+                 "unknown space \"hex\" (continuous or grid)"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nturn_ticks = 15")),
+                 "'turn_ticks' belongs to a grid mode (give space = \"grid\")"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nspace = \"grid\"\nturn_ticks = 61")),
+                 "'turn_ticks' must be an integer in [1, 60]"));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nspace = \"grid\"\ndash_cells = 0")),
+                 "'dash_cells' must be an integer in [1, 8]"));
+  {
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(parseContent(replaced(kMinimal, "name = \"rounds\"",
+                                  "name = \"rounds\"\nspace = \"grid\"\nturn_ticks = 4\n"
+                                  "dash_cells = 3"),
+                         "test.toml", db, diag));
+    CHECK(db.modes[0].space == sim::Space::Grid);
+    CHECK(db.modes[0].turnTicks == 4);
+    CHECK(db.modes[0].dashCells == 3);
+    CHECK_FALSE(db.compatible(0, 0));  // a hand-placed arena has no cells
+  }
   CHECK(contains(
       loadErrors(replaced(kMinimal, "active_ticks = 12", "active_ticks = 12\nstartup_ticks = 1")),
       "startup_ticks = 0"));

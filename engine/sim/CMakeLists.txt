@@ -24,6 +24,7 @@ add_library(kfm_sim STATIC
   src/modes/capture.cpp
   src/spaces/registry.cpp
   src/spaces/continuous.cpp
+  src/spaces/grid.cpp
   src/rules/table.cpp
   src/rules/catch.cpp
   src/rules/damage.cpp

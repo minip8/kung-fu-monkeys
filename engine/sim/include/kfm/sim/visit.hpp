@@ -83,6 +83,8 @@ inline constexpr uint8_t kEnumCount<MatchPhase> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<ModeKind> = static_cast<uint8_t>(ModeKind::kCount);
 template <>
+inline constexpr uint8_t kEnumCount<Space> = static_cast<uint8_t>(Space::kCount);
+template <>
 inline constexpr uint8_t kEnumCount<GrantKind> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
@@ -311,6 +313,9 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.roleCount);
   v.u16(d.hillTicks);  // v0.33
   v.u16(d.flagReturnTicks);
+  visit(v, d.space);  // v0.34
+  v.u8(d.turnTicks);
+  v.u8(d.dashCells);
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {

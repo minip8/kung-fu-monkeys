@@ -1307,6 +1307,26 @@ class Builder {
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);
     s.integer("hill_ticks", m.hillTicks, 1, 65535);  // v0.33
     s.integer("flag_return_ticks", m.flagReturnTicks, 1, 65535);
+    // v0.34: the space, and the grid's turn and dash.
+    if (const std::optional<std::string> space = s.string("space")) {
+      if (*space == "continuous") {
+        m.space = sim::Space::Continuous;
+      } else if (*space == "grid") {
+        m.space = sim::Space::Grid;
+      } else {
+        s.error("unknown space " + inQuotes(*space) + " (continuous or grid)");
+      }
+    }
+    if (m.space == sim::Space::Grid) {
+      s.integer("turn_ticks", m.turnTicks, 1, 60);
+      s.integer("dash_cells", m.dashCells, 1, 8);
+    } else {
+      for (const std::string_view key : {"turn_ticks", "dash_cells"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) + "' belongs to a grid mode (give space = \"grid\")");
+        }
+      }
+    }
     std::optional<PendingName> baseline;
     if (const toml::node* n = s.take("baseline")) {
       if (const toml::value<std::string>* str = n->as_string()) {
@@ -1715,8 +1735,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (d.kind == AbilityKind::Dash && d.startupTicks != 0) {
       fail(where + ": a dash must have startup_ticks = 0 (PerfectDash starts at the press)");
     }
-    if (d.kind == AbilityKind::Dash && d.activeTicks <= d.perfectWindowTicks) {
-      fail(where + ": active_ticks must exceed perfect_window_ticks");
+    // v0.34: a window of 0 never grants PerfectDash (the grid's base dash),
+    // and a window as long as the active phase spans it (the catcher's).
+    if (d.kind == AbilityKind::Dash &&
+        (d.activeTicks < 1 || d.activeTicks < d.perfectWindowTicks)) {
+      fail(where + ": a dash needs active_ticks >= 1 and perfect_window_ticks <= active_ticks");
     }
     // A blink jumps speed × active_ticks (v0.21).
     if (d.kind == AbilityKind::Blink && (d.activeTicks < 1 || d.speed <= Fixed::zero())) {
@@ -1858,6 +1881,10 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (m.kind == sim::ModeKind::Capture && m.flagReturnTicks < 1) {
       fail(where + ": flag_return_ticks must be at least 1");
     }
+    // v0.34: the space and the grid's numbers.
+    if (m.space >= sim::Space::kCount) fail(where + ": space must be continuous or grid");
+    if (m.turnTicks < 1 || m.turnTicks > 60) fail(where + ": turn_ticks must be in [1, 60]");
+    if (m.dashCells < 1 || m.dashCells > 8) fail(where + ": dash_cells must be in [1, 8]");
     // v0.32: teams, baseline, roles.
     if (m.teams == 1 || m.teams > sim::kMaxPlayers) {
       fail(where + ": teams must be 0 (free-for-all) or 2 to " + std::to_string(sim::kMaxPlayers));

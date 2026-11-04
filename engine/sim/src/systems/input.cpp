@@ -27,7 +27,7 @@ void inputSystem(WorldState& s, const MatchContent& content, const InputFrame& i
     p.intent = intent;
     p.prevButtons = pi.buttons;
   });
-  spaceBehaviorFor(Space::Continuous).latch(s, content, in);
+  spaceBehaviorFor(content.mode.space).latch(s, content, in);
 }
 
 }  // namespace kfm::sim

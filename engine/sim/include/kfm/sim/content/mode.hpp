@@ -108,6 +108,16 @@ struct ModeDef {
   uint16_t hillTicks{300};
   // v0.33, capture: ticks a dropped flag lies untouched before it goes home (>= 1).
   uint16_t flagReturnTicks{600};
+  // v0.34, the space (§5.12): how monkeys move. A grid mode plays only on an
+  // arena with cells (ArenaDef::cellSize > 0, ContentDB::compatible).
+  Space space{Space::Continuous};
+  // Grid: the ticks of a turn (1..60): a monkey at rest takes a commitment
+  // on every Playing tick with ticksInPhase % turnTicks == 0, and a walk
+  // slides one cell over a whole turn.
+  uint8_t turnTicks{15};
+  // Grid: the cells a dash commits to (1..8), sliding over the dash def's
+  // active ticks; a wall stops it on the last free cell.
+  uint8_t dashCells{2};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
 };
