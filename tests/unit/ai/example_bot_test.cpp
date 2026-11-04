@@ -52,6 +52,9 @@ static_assert(KFM_OBS_SIZE == sizeof(Observation));
 static_assert(KFM_ABI_VERSION == kObservationVersion);
 static_assert(alignof(kfm_observation) == alignof(Observation));
 #define KFM_SAME_AT(ct, cf, cppt) static_assert(offsetof(ct, cf) == offsetof(cppt, cf), #ct "." #cf)
+// The SDK names a filled reserved field without the prefix (v0.35).
+#define KFM_SAME_AS(ct, cf, cppt, cppf) \
+  static_assert(offsetof(ct, cf) == offsetof(cppt, cppf), #ct "." #cf)
 KFM_SAME_AT(kfm_observation, match, Observation);
 KFM_SAME_AT(kfm_observation, rules, Observation);
 KFM_SAME_AT(kfm_observation, self, Observation);
@@ -59,10 +62,13 @@ KFM_SAME_AT(kfm_observation, players, Observation);
 KFM_SAME_AT(kfm_observation, bananas, Observation);
 KFM_SAME_AT(kfm_observation, pickups, Observation);
 KFM_SAME_AT(kfm_observation, arena, Observation);
-KFM_SAME_AT(kfm_observation, reservedHeardCalls, Observation);
+KFM_SAME_AS(kfm_observation, heardCalls, Observation, reservedHeardCalls);
 KFM_SAME_AT(kfm_obs_match, lastRoundWinner, ObsMatch);
 KFM_SAME_AT(kfm_obs_match, respawnInvulnTicks, ObsMatch);
-KFM_SAME_AT(kfm_obs_match, reservedModeData, ObsMatch);
+KFM_SAME_AS(kfm_obs_match, modeData, ObsMatch, reservedModeData);
+KFM_SAME_AS(kfm_obs_match, turnTicks, ObsMatch, reservedTurnTicks);
+KFM_SAME_AS(kfm_obs_match, ticksToLatch, ObsMatch, reservedTicksToLatch);
+KFM_SAME_AS(kfm_obs_match, teamScores, ObsMatch, reservedTeamScores);
 KFM_SAME_AT(kfm_obs_rules, bananaTurnRateBam, ObsRules);
 KFM_SAME_AT(kfm_obs_rules, playerAmmoStart, ObsRules);
 KFM_SAME_AT(kfm_obs_ability, activatedSubTick, ObsAbility);
@@ -71,7 +77,14 @@ KFM_SAME_AT(kfm_obs_ability, dirY, ObsAbility);
 KFM_SAME_AT(kfm_obs_self, lastButtons, ObsSelf);
 KFM_SAME_AT(kfm_obs_self, radius, ObsSelf);
 KFM_SAME_AT(kfm_obs_self, respawnTicks, ObsSelf);
-KFM_SAME_AT(kfm_obs_self, reservedCellY, ObsSelf);
+KFM_SAME_AS(kfm_obs_self, cellX, ObsSelf, reservedCellX);
+KFM_SAME_AS(kfm_obs_self, cellY, ObsSelf, reservedCellY);
+KFM_SAME_AS(kfm_obs_self, facingOctant, ObsSelf, reservedFacingOctant);
+KFM_SAME_AS(kfm_obs_self, role, ObsSelf, reservedRole);
+KFM_SAME_AS(kfm_obs_self, team, ObsSelf, reservedTeam);
+KFM_SAME_AS(kfm_obs_player, visible, ObsPlayer, reservedVisible);
+KFM_SAME_AS(kfm_obs_player, team, ObsPlayer, reservedTeam);
+KFM_SAME_AS(kfm_obs_banana, visible, ObsBanana, reservedVisible);
 KFM_SAME_AT(kfm_obs_self, modifiers, ObsSelf);
 KFM_SAME_AT(kfm_obs_player, dashing, ObsPlayer);
 KFM_SAME_AT(kfm_obs_player, respawnTicks, ObsPlayer);
@@ -86,6 +99,7 @@ KFM_SAME_AT(kfm_obs_arena, spawnerCount, ObsArena);
 KFM_SAME_AT(kfm_obs_arena, spawners, ObsArena);
 KFM_SAME_AT(kfm_obs_heard_call, cellY, ObsHeardCall);
 #undef KFM_SAME_AT
+#undef KFM_SAME_AS
 
 static_assert(KFM_BTN_THROW == buttonBit(Button::Throw));
 static_assert(KFM_BTN_DASH == buttonBit(Button::Dash));
@@ -95,6 +109,11 @@ static_assert(KFM_TAG_PERFECT_DASH == static_cast<int>(Tag::PerfectDash));
 static_assert(KFM_TAG_INVULNERABLE == static_cast<int>(Tag::Invulnerable));
 static_assert(KFM_TAG_PARRYING == static_cast<int>(Tag::Parrying));
 static_assert(KFM_TAG_FRIENDLY_FIRE == static_cast<int>(Tag::FriendlyFire));
+static_assert(KFM_TAG_CARRYING == static_cast<int>(Tag::Carrying));
+static_assert(KFM_SCHEMA_FLAG_FOG == kObsFlagFog);
+static_assert(KFM_NO_CELL == kObsNoCell);
+static_assert(KFM_MODE_CAPTURE == static_cast<int>(ObsModeKind::Capture));
+static_assert(KFM_PICKUP_FLAG == static_cast<int>(ObsPickupKind::Flag));
 static_assert(KFM_REL_ALLY == static_cast<int>(ObsRelation::Ally));
 static_assert(KFM_REL_ENEMY == static_cast<int>(ObsRelation::Enemy));
 static_assert(KFM_PHASE_PLAYING == static_cast<int>(ObsMatchPhase::Playing));
@@ -274,7 +293,13 @@ TEST_CASE("the C SDK header mirrors Observation v1", "[ai][sdk]") {
   CHECK(c.players[9].abilityPhaseTicks[2] == 11);
   CHECK(c.bananas[63].approachDistance == -5);
   CHECK(c.arena.spawners[7].maxAlive == 13);
-  CHECK(c.reservedHeardCalls[15].cellY == -17);
+  CHECK(c.heardCalls[15].cellY == -17);
+  obs.self.reservedFacingOctant = 5;
+  obs.match.reservedTicksToLatch = 9;
+  obs.players[4].reservedVisible = 1;
+  CHECK(c.self.facingOctant == 5);
+  CHECK(c.match.ticksToLatch == 9);
+  CHECK(c.players[4].visible == 1);
   CHECK(kfm_pack_input(1, 2, 3, 4, 5) == packInput(PlayerInput{1, 2, 3, 4, 5}));
 }
 
