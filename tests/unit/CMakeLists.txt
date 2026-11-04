@@ -67,6 +67,7 @@ target_link_libraries(kfm_net_tests PRIVATE kfm::net kfm::transport_contract)
 
 kfm_add_test_exe(kfm_ai_tests
   ai/agent_test.cpp
+  ai/bot_spec_test.cpp
   ai/observation_test.cpp
   ai/agent_host_test.cpp
   ai/reference_bot_test.cpp

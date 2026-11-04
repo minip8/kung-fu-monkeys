@@ -59,6 +59,8 @@ struct ReferenceBotConfig {
   [[nodiscard]] static constexpr ReferenceBotConfig medium() { return {8, 5, 128, 64}; }
   // No delay, no noise: the baseline contest bots are measured against.
   [[nodiscard]] static constexpr ReferenceBotConfig hard() { return {0, 0, 256, 256}; }
+
+  constexpr bool operator==(const ReferenceBotConfig&) const = default;
 };
 
 class ReferenceBot final : public IAgent {
