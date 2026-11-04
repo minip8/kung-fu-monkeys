@@ -127,7 +127,7 @@ Units:
 | bam | u16 1/65536 turn, same orientation (a banana's heading, which the sim steers at that precision). |
 | ticks | 60 per second. Tick numbers are the sim's tick counter. |
 | slot | player slot 0..9; `0xFF` = none. |
-| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it). |
+| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it), 9 Carrying (architecture v0.33: holds a capture flag; no stat change). |
 
 The world: the arena is the box [−halfExtents, +halfExtents] centred on the origin, +x right,
 +y up. Everything is full information in v1 (no fog).
@@ -138,11 +138,11 @@ Enumerations (byte values):
 |---|---|
 | relation | 0 None (empty slot), 1 Self, 2 Ally (a teammate in a team mode, since architecture v0.32; a free-for-all has none), 3 Enemy |
 | match phase | 0 Lobby, 1 RoundStarting (spawned, frozen), 2 Playing, 3 RoundEnded, 4 MatchEnded |
-| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32) |
+| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded |
-| pickup kind | 0 Banana, 1 PowerUp |
+| pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
 | hazard kind | 0 Pit (a centre inside is eliminated), 1 Slow (move speed × `speedMul` inside) |
 
 ### 2.2 Top level
@@ -393,7 +393,7 @@ banana is caught on contact.
 | 0 | u8 | `valid` | 1: a pickup in this pool slot |
 | 1 | u8 | `kind` | pickup kind |
 | 2 | u8 | `powerUp` | PowerUp: index of the power-up def in the content |
-| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners` |
+| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners`; Flag (architecture v0.33): the flag's team |
 | 4 | i32 | `posX` | Q16.16 |
 | 8 | i32 | `posY` | Q16.16 |
 | 12 | i32 | `radius` | Q16.16: contact radius |
@@ -458,7 +458,7 @@ architecture v0.32 fills the team fields: `players[i].reservedTeam`, `self.reser
 | `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks to the next latch |
 | `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; since v0.32 the role's in a team mode with `roles`: the slot's position within its team, round-robin) |
 | `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index; filled since architecture v0.32 (in a free-for-all team i is slot i, so entry i equals `scores[i]`) |
-| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`, words 8–15 stay 0. The shipped kinds (rounds, deathmatch, survival) leave all of it 0 |
+| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`, words 8–15 stay 0. The shipped kinds (rounds, deathmatch, survival) leave all of it 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). The arena's zones are not in v1 (a later version adds them); a capture bot finds the flags in `pickups` |
 | `header.reserved0` | nothing yet |
 
 A module must not depend on a reserved field being zero beyond v1, and must ignore it while

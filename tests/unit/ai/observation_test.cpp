@@ -451,3 +451,22 @@ TEST_CASE("a team match fills team, Ally, team scores and the role (v0.32)",
   CHECK(obs.self.reservedRole == 1);
   CHECK(obs.players[0].relation == static_cast<uint8_t>(ObsRelation::Ally));
 }
+
+TEST_CASE("a capture flag is a pickup of kind Flag with its team (v0.33)",
+          "[ai][observation][capture]") {
+  const ContentDB& c = defaultContent();
+  WorldState s = makePlayingWorld(4, 0b11);
+  const EntityId id = s.pickups.spawn();
+  REQUIRE(id.isValid());
+  s.pickups.items[id.index] = Pickup{PickupKind::Flag, Vec2{fx(3), fx(-1)}, 0, 1};
+  playerAt(s, kP0).tags.set(Tag::Carrying);
+  Observation obs{};
+  buildObservation(s, MatchContent(c), kP0, 0, obs);
+  const ObsPickup& k = obs.pickups[id.index];
+  CHECK(k.valid == 1);
+  CHECK(k.kind == static_cast<uint8_t>(ObsPickupKind::Flag));
+  CHECK(k.kind == 2);
+  CHECK(k.spawner == 1);
+  CHECK(k.posX == fx(3).raw);
+  CHECK((obs.self.tags & (1u << 9)) != 0);  // Carrying, bit 9
+}
