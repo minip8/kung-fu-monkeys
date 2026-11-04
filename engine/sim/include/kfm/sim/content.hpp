@@ -227,8 +227,12 @@ struct ContentDB {
     if (m.space == Space::Grid && a.cellSize <= Fixed::zero()) return false;
     return true;
   }
-  // The first arena compatible with the mode, if any.
+  // The arena a host picks for the mode when the match names none: the
+  // mode's own (ModeDef::arena, v0.34) when it suits, else the first
+  // compatible one, if any.
   [[nodiscard]] constexpr std::optional<uint8_t> firstCompatibleArena(uint8_t mode) const {
+    const ModeDef& m = modeAt(mode);
+    if (m.hasArena() && m.arena < arenaCount && compatible(m.arena, mode)) return m.arena;
     for (uint8_t i = 0; i < arenaCount; ++i) {
       if (compatible(i, mode)) return i;
     }

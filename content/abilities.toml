@@ -79,3 +79,80 @@ cooldown_ticks = 60         # 1 s from press to the next parry
 startup_ticks = 2           # the guard comes up
 active_ticks = 8            # 0.13 s window
 recovery_ticks = 14         # a whiff leaves the monkey open
+
+# v0.34, the grid space (architecture §5.12): monkeys move a cell per turn
+# (turn_ticks in modes.toml), so these defs count in turns. On the grid a
+# dash slides dash_cells cells (the mode's) over its active ticks; its speed
+# is never read there and is written as the same distance per second for
+# readers. Timings below are for 15-tick turns (grid_rounds); the _1t
+# defs are the same game at 1-tick turns (grid_rounds_1t).
+#
+# The base grid dash: two cells over one turn, a 3-turn cooldown and a
+# perfect window of 0, so it never catches (row 10 never matches).
+[[ability]]
+name = "grid_dash"
+kind = "dash"
+cooldown_ticks = 45         # 3 turns
+active_ticks = 15           # the slide takes one turn, Dashing throughout
+perfect_window_ticks = 0    # never PerfectDash: a bot's timing would make every catch free
+speed = 8                   # 2 cells per 15 ticks (unused on the grid)
+tags_active = ["dashing"]
+
+# The catcher's dash (loadout catcher, one monkey per team by role): the
+# window spans the whole active phase, the cooldown is 4 turns. Scarcity,
+# not timing, balances the catch.
+[[ability]]
+name = "catcher_dash"
+kind = "dash"
+cooldown_ticks = 60         # 4 turns
+active_ticks = 15
+perfect_window_ticks = 15   # the whole slide catches
+speed = 8
+tags_active = ["dashing"]
+
+# The grid throw roots through its recovery, one turn long, so the latch
+# after a throw takes no step: a turn is move or throw. A walk already
+# committed at the throw's latch finishes.
+[[ability]]
+name = "grid_throw"
+kind = "throw"
+cooldown_ticks = 15         # 1 turn
+startup_ticks = 2
+active_ticks = 1
+recovery_ticks = 15         # = turn_ticks: exactly one latch falls inside it
+root_phases = ["recovery"]
+
+# Quick Hands (powerups.toml) runs the throw slot on this unrooted def: the
+# only way to move and throw in one turn. Shared by both turn lengths.
+[[ability]]
+name = "quick_throw"
+kind = "throw"
+cooldown_ticks = 1
+active_ticks = 1
+
+# The same kit at 1-tick turns (grid_rounds_1t, bot matches).
+[[ability]]
+name = "grid_dash_1t"
+kind = "dash"
+cooldown_ticks = 3          # 3 turns
+active_ticks = 1            # two cells in one turn
+perfect_window_ticks = 0
+speed = 120                 # 2 cells per tick (unused on the grid)
+tags_active = ["dashing"]
+
+[[ability]]
+name = "catcher_dash_1t"
+kind = "dash"
+cooldown_ticks = 4          # 4 turns
+active_ticks = 1
+perfect_window_ticks = 1    # the whole active phase
+speed = 120
+tags_active = ["dashing"]
+
+[[ability]]
+name = "grid_throw_1t"
+kind = "throw"
+cooldown_ticks = 1
+active_ticks = 1            # no startup: the banana leaves on the press tick
+recovery_ticks = 1          # = turn_ticks
+root_phases = ["recovery"]

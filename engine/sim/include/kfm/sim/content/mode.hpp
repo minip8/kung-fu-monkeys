@@ -70,6 +70,8 @@ enum class Space : uint8_t {
 
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
+// ModeDef::arena when the mode names no arena of its own (v0.34).
+inline constexpr uint8_t kNoArena = 0xFF;
 
 struct ModeDef {
   ContentName name{};
@@ -118,8 +120,13 @@ struct ModeDef {
   // Grid: the cells a dash commits to (1..8), sliding over the dash def's
   // active ticks; a wall stops it on the last free cell.
   uint8_t dashCells{2};
+  // v0.34: the arena (index into ContentDB::arenas) a host picks for the
+  // mode when the match names none, or kNoArena: the first compatible one
+  // (ContentDB::firstCompatibleArena). Never read by the sim.
+  uint8_t arena{kNoArena};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
+  [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }
 };
 
 }  // namespace kfm::sim

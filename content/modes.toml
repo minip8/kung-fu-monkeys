@@ -34,6 +34,17 @@
 #                        it goes home (>= 1). Team t's flag starts in zone t,
 #                        so it plays only on an arena with a zone per team;
 #                        score_to_win counts captures
+#   space                v0.34: how monkeys move, "continuous" (default, the
+#                        stick) or "grid": a monkey at rest commits to one of
+#                        its eight neighbouring cells at every turn's latch
+#                        and slides there over the turn; bananas fly as in
+#                        the continuous space. Plays only on an arena with
+#                        cells (a tilemap, `cell`)
+#   turn_ticks           grid: ticks of a turn, 1 to 60 (default 15)
+#   dash_cells           grid: cells a dash commits to, 1 to 8 (default 2),
+#                        sliding over the dash's active_ticks
+#   arena                v0.34, optional: the arena a host picks for the mode
+#                        when none is named (else the first that suits it)
 # The team kinds score per slot like their free-for-all twins; a team's
 # score is the sum of its slots' (team_rounds: round wins; team_deathmatch:
 # eliminations of enemies, ally kills score nothing).
@@ -108,5 +119,43 @@ flag_return_ticks = 600     # a dropped flag left alone goes home after 10 s
 time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
 respawn_ticks = 120
 respawn_invuln_ticks = 90
+round_start_ticks = 60
+round_end_ticks = 120
+
+# v0.34: the grid space (architecture §5.12). Team rounds on cells: a turn is
+# 15 ticks (four a second) for human lobbies, a walk one cell per turn, a
+# dash two cells in one turn, a throw costs the next turn (grid_throw roots
+# its recovery). One catcher per team by role (the second monkey of a team
+# gets the base grid kit, and so on round-robin). The baseline shrinks
+# monkeys to 0.35 and bananas to 0.15 so the hit disc of 0.5 fits a cell,
+# gives HP 2 and flies bananas at 2 cells per turn (powerups.toml).
+[[mode]]
+name = "grid_rounds"
+kind = "team_rounds"
+space = "grid"
+turn_ticks = 15
+dash_cells = 2
+teams = 2
+roles = ["catcher", "grid", "grid", "grid", "grid"]
+baseline = "grid_base"
+arena = "courtyard"
+rounds_to_win = 3
+round_start_ticks = 60
+round_end_ticks = 120
+
+# The same at 1-tick turns, for bot matches at full speed (kfm_arena): the
+# _1t loadouts and baseline count the same turns in single ticks, except
+# the bananas, which content cannot fly at 2 cells per tick (§12).
+[[mode]]
+name = "grid_rounds_1t"
+kind = "team_rounds"
+space = "grid"
+turn_ticks = 1
+dash_cells = 2
+teams = 2
+roles = ["catcher_1t", "grid_1t", "grid_1t", "grid_1t", "grid_1t"]
+baseline = "grid_base_1t"
+arena = "courtyard"
+rounds_to_win = 3
 round_start_ticks = 60
 round_end_ticks = 120

@@ -17,9 +17,11 @@
 name = "dojo_powerups"
 half_extents = [16, 9]
 spawn_ellipse = { radii = [12, 6], step_degrees = 36, order = [0, 5, 2, 7, 4, 9, 6, 1, 8, 3] }
+# v0.34: the five power-ups this arena has always drawn from, named, so the
+# grid's power-ups (quick_hands, the grid baselines) never join its draws.
 spawners = [
-  { pos = [-8, 4], first_ticks = 60, interval_ticks = 480, max_alive = 1 },
-  { pos = [8, -4], first_ticks = 60, interval_ticks = 480, max_alive = 1 },
-  { pos = [8, 4], first_ticks = 240, interval_ticks = 480, max_alive = 1 },
-  { pos = [-8, -4], first_ticks = 240, interval_ticks = 480, max_alive = 1 },
+  { pos = [-8, 4], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 60, interval_ticks = 480, max_alive = 1 },
+  { pos = [8, -4], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 60, interval_ticks = 480, max_alive = 1 },
+  { pos = [8, 4], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 240, interval_ticks = 480, max_alive = 1 },
+  { pos = [-8, -4], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 240, interval_ticks = 480, max_alive = 1 },
 ]

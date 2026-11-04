@@ -22,3 +22,22 @@ abilities = ["dash", "throw", "slam"]
 [[loadout]]
 name = "parry"
 abilities = ["dash", "throw", "parry"]
+
+# v0.34, the grid space (architecture §5.12): the kits grid_rounds hands out
+# by role (modes.toml), one catcher per team and the base grid kit for the
+# rest; the _1t pair is the same at 1-tick turns (grid_rounds_1t).
+[[loadout]]
+name = "grid"
+abilities = ["grid_dash", "grid_throw"]
+
+[[loadout]]
+name = "catcher"
+abilities = ["catcher_dash", "grid_throw"]
+
+[[loadout]]
+name = "grid_1t"
+abilities = ["grid_dash_1t", "grid_throw_1t"]
+
+[[loadout]]
+name = "catcher_1t"
+abilities = ["catcher_dash_1t", "grid_throw_1t"]

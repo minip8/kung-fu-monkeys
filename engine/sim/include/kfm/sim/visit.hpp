@@ -316,6 +316,7 @@ void visit(V& v, ModeDef& d) {
   visit(v, d.space);  // v0.34
   v.u8(d.turnTicks);
   v.u8(d.dashCells);
+  v.u8(d.arena);
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {

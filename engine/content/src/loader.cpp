@@ -1335,6 +1335,15 @@ class Builder {
         s.error(*n, "'baseline' must be a power-up name");
       }
     }
+    // v0.34: the arena a host picks for the mode when none is named.
+    std::optional<PendingName> arena;
+    if (const toml::node* n = s.take("arena")) {
+      if (const toml::value<std::string>* str = n->as_string()) {
+        arena = PendingName{str->get(), s.where(), lineOf(*n), std::string(s.file().name)};
+      } else {
+        s.error(*n, "'arena' must be an arena name");
+      }
+    }
     std::vector<PendingName> roles;
     if (const toml::node* n = s.take("roles")) {
       const toml::array* arr = n->as_array();
@@ -1365,7 +1374,8 @@ class Builder {
       s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
       return;
     }
-    modeNames_.push_back(ModeNames{db_.modeCount, std::move(baseline), std::move(roles)});
+    modeNames_.push_back(
+        ModeNames{db_.modeCount, std::move(baseline), std::move(roles), std::move(arena)});
     db_.modes[db_.modeCount++] = m;
   }
 
@@ -1380,6 +1390,14 @@ class Builder {
           diag_.error(n.baseline->file, n.baseline->line,
                       n.baseline->where + ": 'baseline' names unknown power-up " +
                           inQuotes(n.baseline->name));
+        }
+      }
+      if (n.arena) {
+        if (const std::optional<uint8_t> i = db_.findArena(n.arena->name)) {
+          m.arena = *i;
+        } else {
+          diag_.error(n.arena->file, n.arena->line,
+                      n.arena->where + ": 'arena' names unknown arena " + inQuotes(n.arena->name));
         }
       }
       m.roleCount = 0;
@@ -1483,6 +1501,7 @@ class Builder {
     uint8_t mode{0};
     std::optional<PendingName> baseline;
     std::vector<PendingName> roles;
+    std::optional<PendingName> arena;  // v0.34
   };
 
   Diagnostics& diag_;
@@ -1885,6 +1904,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (m.space >= sim::Space::kCount) fail(where + ": space must be continuous or grid");
     if (m.turnTicks < 1 || m.turnTicks > 60) fail(where + ": turn_ticks must be in [1, 60]");
     if (m.dashCells < 1 || m.dashCells > 8) fail(where + ": dash_cells must be in [1, 8]");
+    if (m.hasArena() && m.arena >= c.arenaCount) fail(where + ": arena names an undefined arena");
+    if (m.hasArena() && m.arena < c.arenaCount && !c.compatible(m.arena, i)) {
+      fail(where + ": its arena " + inQuotes(c.arenas[m.arena].name.view()) +
+           " does not suit it (ContentDB::compatible)");
+    }
     // v0.32: teams, baseline, roles.
     if (m.teams == 1 || m.teams > sim::kMaxPlayers) {
       fail(where + ": teams must be 0 (free-for-all) or 2 to " + std::to_string(sim::kMaxPlayers));

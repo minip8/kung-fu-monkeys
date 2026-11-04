@@ -2,6 +2,7 @@
 
 #include "kfm/content/app_content.hpp"
 #include "kfm/sim/content.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/visit.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -571,6 +572,14 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
     CHECK(db.modes[0].dashCells == 3);
     CHECK_FALSE(db.compatible(0, 0));  // a hand-placed arena has no cells
   }
+  // v0.34: a mode's own arena must exist and suit it.
+  CHECK(loads(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\narena = \"box\"")));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\narena = \"nope\"")),
+                 "'arena' names unknown arena \"nope\""));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nspace = \"grid\"\narena = \"box\"")),
+                 "its arena \"box\" does not suit it"));
   CHECK(contains(
       loadErrors(replaced(kMinimal, "active_ticks = 12", "active_ticks = 12\nstartup_ticks = 1")),
       "startup_ticks = 0"));
@@ -747,13 +756,15 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                  "spawner 0: pos (3.000, 1.000) is in pit hazard 0"));
 }
 
-TEST_CASE("content/ ships the five power-ups and an arena that spawns them",
+TEST_CASE("content/ ships the power-ups and an arena that spawns them",
           "[content][loader][powerup]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
-  const std::array<std::string_view, 5> names = {"speed_boost", "big_banana", "triple_banana",
-                                                 "shield", "fast_hands"};
+  // v0.34 appended quick_hands and the grid modes' two baselines.
+  const std::array<std::string_view, 8> names = {
+      "speed_boost", "big_banana", "triple_banana", "shield",
+      "fast_hands",  "quick_hands", "grid_base",    "grid_base_1t"};
   REQUIRE(db.powerUpCount == names.size());
   for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);
@@ -767,6 +778,103 @@ TEST_CASE("content/ ships the five power-ups and an arena that spawns them",
   const sim::PowerUpGrant& hands = db.powerUps[db.findPowerUp("fast_hands").value_or(0)].grants[0];
   CHECK(hands.kind == sim::GrantKind::AbilityOverride);
   CHECK(db.abilities[hands.ability].name.view() == "throw_fast");
+  // v0.34: its spawners name the five they always drew from, so the grid's
+  // power-ups never join their draws.
+  for (uint8_t k = 0; k < db.arenas[arena.value_or(0)].pickupSpawnerCount; ++k) {
+    CHECK(db.arenas[arena.value_or(0)].pickupSpawners[k].powerUpSet == 0x1F);
+  }
+}
+
+// v0.34 (architecture §5.12): the grid content and the numbers §5.12 starts
+// with, as content/ ships them.
+TEST_CASE("content/ ships the grid modes, their kits and the courtyard", "[content][loader][grid]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> courtyard = db.findArena("courtyard");
+  REQUIRE(courtyard);
+  const sim::ArenaDef& a = db.arenas[courtyard.value_or(0)];
+  CHECK(a.cellSize == Fixed::one());
+  CHECK(a.spawnGroups == 2);
+  CHECK(a.spawnPointCount == 10);
+  // Every tilemap's spawn points sit on cell centres (grid_cells.hpp's
+  // mapping is the loader's), so a grid monkey spawns at rest on a cell.
+  for (uint8_t i = 0; i < db.arenaCount; ++i) {
+    const sim::ArenaDef& t = db.arenas[i];
+    if (!sim::grid::hasCells(t)) continue;
+    INFO(t.name.view());
+    for (uint8_t k = 0; k < t.spawnPointCount; ++k) {
+      const sim::grid::Cell cell = sim::grid::cellOf(t, t.spawnPoints[k]);
+      CHECK(sim::grid::inside(t, cell));
+      CHECK(sim::grid::cellCentre(t, cell) == t.spawnPoints[k]);
+    }
+  }
+  for (const std::string_view name : {"grid_rounds", "grid_rounds_1t"}) {
+    INFO(name);
+    const std::optional<uint8_t> mi = db.findMode(name);
+    REQUIRE(mi);
+    const sim::ModeDef& m = db.modes[mi.value_or(0)];
+    CHECK(m.space == sim::Space::Grid);
+    CHECK(m.kind == sim::ModeKind::TeamRounds);
+    CHECK(m.teams == 2);
+    CHECK(m.dashCells == 2);
+    CHECK(m.arena == courtyard);
+    CHECK(db.firstCompatibleArena(mi.value_or(0)) == courtyard);
+    CHECK(db.compatible(courtyard.value_or(0), mi.value_or(0)));
+    CHECK_FALSE(db.compatible(0, mi.value_or(0)));  // the dojo has no cells
+    REQUIRE(m.roleCount == 5);
+    REQUIRE(m.hasBaseline());
+    const bool fast = name == "grid_rounds_1t";
+    CHECK(m.turnTicks == (fast ? 1 : 15));
+    // One catcher per team, then the base grid kit.
+    const sim::LoadoutDef& catcher = db.loadouts[m.roles[0]];
+    const sim::LoadoutDef& base = db.loadouts[m.roles[1]];
+    CHECK(catcher.name.view() == (fast ? "catcher_1t" : "catcher"));
+    CHECK(base.name.view() == (fast ? "grid_1t" : "grid"));
+    for (uint8_t r = 1; r < m.roleCount; ++r)
+      CHECK(m.roles[r] == m.roles[1]);
+    const sim::AbilityDef& dash = db.abilities[base.abilities[sim::kAbilitySlotDash]];
+    const sim::AbilityDef& catchDash = db.abilities[catcher.abilities[sim::kAbilitySlotDash]];
+    const sim::AbilityDef& thr = db.abilities[base.abilities[sim::kAbilitySlotThrow]];
+    CHECK(dash.perfectWindowTicks == 0);
+    CHECK(dash.activeTicks == m.turnTicks);  // two cells in one turn
+    CHECK(catchDash.perfectWindowTicks == catchDash.activeTicks);
+    CHECK(catchDash.cooldownTicks == 4 * m.turnTicks);  // four turns
+    CHECK(thr.recoveryTicks == m.turnTicks);
+    CHECK(thr.rootPhases == sim::phaseBit(sim::AbilityPhase::Recovery));
+    // The baseline: monkeys of 0.35, bananas of 0.15, HP 2.
+    const sim::PowerUpDef& baseline = db.powerUps[m.baseline];
+    Fixed radiusMul = Fixed::one();
+    int32_t hp = 0;
+    Fixed bananaMul = Fixed::one();
+    Fixed speedMul = Fixed::one();
+    for (uint8_t g = 0; g < baseline.grantCount; ++g) {
+      const sim::PowerUpGrant& grant = baseline.grants[g];
+      if (grant.kind == sim::GrantKind::Stat && grant.stat.stat == sim::StatKind::Radius)
+        radiusMul = grant.stat.mul;
+      if (grant.kind == sim::GrantKind::Stat && grant.stat.stat == sim::StatKind::MaxHp)
+        hp = grant.stat.add.floorToInt();
+      if (grant.kind == sim::GrantKind::Projectile) {
+        bananaMul = grant.projectile.radiusMul;
+        speedMul = grant.projectile.speedMul;
+      }
+    }
+    CHECK(db.player.radius * radiusMul == Fixed::fromRatio(35, 100));
+    CHECK(db.boomerang.radius * bananaMul == Fixed::fromRatio(15, 100));
+    CHECK(db.player.maxHp + hp == 2);
+    if (!fast) {
+      // 2 cells per 15-tick turn, within the per-tick truncation.
+      const Fixed perTurn = db.boomerang.speed * speedMul * Fixed::fromInt(15);
+      CHECK(abs(perTurn - Fixed::fromInt(2)) < Fixed::fromRatio(1, 1000));
+    }
+  }
+  // Quick Hands overrides the throw with an unrooted def.
+  const std::optional<uint8_t> quick = db.findPowerUp("quick_hands");
+  REQUIRE(quick);
+  const sim::PowerUpGrant& g = db.powerUps[quick.value_or(0)].grants[0];
+  CHECK(g.kind == sim::GrantKind::AbilityOverride);
+  CHECK(g.slot == sim::kAbilitySlotThrow);
+  CHECK(db.abilities[g.ability].rootPhases == 0);
 }
 
 TEST_CASE("a bad content directory is reported", "[content][loader]") {

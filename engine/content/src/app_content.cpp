@@ -119,8 +119,9 @@ bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena, st
         fits += content.arenas[a].name.view();
       }
       error = "arena '" + std::string(content.arenaAt(c.arena).name.view()) +
-              "' does not suit mode '" + std::string(m.name.view()) + "' (" +
-              std::to_string(m.teams) + " teams need as many spawn groups; arenas that do: " +
+              "' does not suit mode '" + std::string(m.name.view()) +
+              "' (a spawn group per team, the mode's zones, cells for a grid mode; arenas that "
+              "do: " +
               (fits.empty() ? std::string("none") : fits) + ")";
       return false;
     }

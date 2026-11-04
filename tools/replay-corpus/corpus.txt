@@ -29,3 +29,5 @@ scripted_4p_team_rounds_1800t      scripted  0x4B464D71  0x5C1271  4  1800  stan
 scripted_4p_team_deathmatch_3600t  scripted  0x4B464D72  0x5C1272  4  3600  standoff  team_deathmatch
 scripted_4p_hill_3600t             scripted  0x4B464D81  0x5C1281  4  3600  hilltop   hill
 scripted_4p_capture_3600t          scripted  0x4B464D82  0x5C1282  4  3600  outposts  capture
+scripted_4p_grid_rounds_3600t      scripted  0x4B464D91  0x5C1291  4  3600  courtyard  grid_rounds
+scripted_4p_grid_rounds_1t_1800t   scripted  0x4B464D92  0x5C1292  4  1800  courtyard  grid_rounds_1t
