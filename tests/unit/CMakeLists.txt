@@ -80,9 +80,17 @@ if(KFM_WASM_BOTS)
   set(KFM_BOT_FIXTURES_DIR "${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
   kfm_add_test_exe(kfm_ai_wasm_tests
     ai/wasm_agent_test.cpp
+    ai/example_bot_test.cpp
   )
-  target_link_libraries(kfm_ai_wasm_tests PRIVATE kfm::ai_wasm)
+  target_link_libraries(kfm_ai_wasm_tests PRIVATE kfm::ai_wasm kfm::sim_internal)
   target_compile_definitions(kfm_ai_wasm_tests PRIVATE KFM_BOT_FIXTURES_DIR="${KFM_BOT_FIXTURES_DIR}")
+  # The C SDK seed (tools/bots/sdk-c/kfm_bot.h, compiled here as C++ against
+  # the engine) and its example bots, built with tools/bots/build_example.sh
+  # and checked in beside their source (CI has no wasm32 clang). SYSTEM: the
+  # header is C, held to the C build's warnings, not this target's.
+  target_include_directories(kfm_ai_wasm_tests SYSTEM PRIVATE "${PROJECT_SOURCE_DIR}/tools/bots/sdk-c")
+  target_compile_definitions(kfm_ai_wasm_tests PRIVATE
+    KFM_BOT_EXAMPLES_DIR="${PROJECT_SOURCE_DIR}/tools/bots/examples")
 
   # Each fixture's .wasm matches its .wat (tools/bots/build_fixtures.sh
   # regenerates them); skipped where wabt's wat2wasm is not on PATH.
