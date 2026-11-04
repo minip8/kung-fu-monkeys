@@ -166,8 +166,8 @@ std::expected<std::unique_ptr<ServerHost>, std::string> ServerHost::create(
     if (spec.kind != ai::BotKind::Module) continue;
 #ifdef KFM_SERVER_WASM_BOTS
     if (!bots->runtime) {
-      bots->runtime.emplace();
-      if (!bots->runtime->ok()) return std::unexpected(std::string("the wasm runtime failed"));
+      const ai::WasmRuntime& runtime = bots->runtime.emplace();
+      if (!runtime.ok()) return std::unexpected(std::string("the wasm runtime failed"));
     }
     if (bots->module(spec.path) != nullptr) continue;
     ai::WasmAgentConfig wc;

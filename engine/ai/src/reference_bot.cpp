@@ -695,7 +695,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       throwHold_ = -1;
     } else if (throwHold_ < 0) {
       const bool standoff = tgt->ammo > 0 && enemyReady(*tgt, 1, ObsAbilityKind::Throw, lead);
-      throwHold_ = standoff ? static_cast<int8_t>(rng_.below(kMaxThrowHold + 1)) : 0;
+      throwHold_ = standoff ? static_cast<int8_t>(rng_.below(kMaxThrowHold + 1)) : int8_t{0};
     }
     if (clear && throwHold_ > 0) {
       --throwHold_;

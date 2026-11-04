@@ -207,9 +207,20 @@ add_library(kfm::wamr ALIAS kfm_wamr)
 target_include_directories(kfm_wamr SYSTEM INTERFACE
   ${WAMR_ROOT_DIR}/core/iwasm/include
   ${CMAKE_CURRENT_SOURCE_DIR})
-# A static library: no dllimport/dllexport or visibility decoration on the
-# API, for the library and its users alike.
-target_compile_definitions(kfm_wamr PUBLIC "WASM_RUNTIME_API_EXTERN=")
+# A static library: its users see the API undecorated (wasm_export.h would
+# otherwise declare it dllimport on MSVC, which does not link against a
+# static library). INTERFACE, never PUBLIC: WAMR's own translation units
+# must keep the dllexport that COMPILING_WASM_RUNTIME_API gives them, because
+# platform_common.h declares wasm_runtime_malloc/free with an explicit
+# __declspec(dllexport) and MSVC rejects a second declaration with another
+# linkage (C2375). A user includes wasm_export.h alone, so it is consistent.
+target_compile_definitions(kfm_wamr INTERFACE "WASM_RUNTIME_API_EXTERN=")
+# WAMR ships a .clang-tidy whose keys clang-tidy 19 (the CI pin) rejects
+# (AnalyzeTemporaryDtors), and clang-tidy reads the nearest config for every
+# file a diagnostic lands in, headers included. Third-party code is never
+# tidied, so the fetched tree gets a config that says so.
+file(WRITE "${WAMR_ROOT_DIR}/.clang-tidy"
+  "# Written by third_party/wamr/CMakeLists.txt: third-party code is never tidied.\nChecks: '-*'\n")
 if(MSVC)
   target_compile_options(kfm_wamr PRIVATE /w)
 else()

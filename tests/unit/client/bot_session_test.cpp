@@ -198,7 +198,7 @@ TEST_CASE("bots: a restart re-initialises the agents", "[client][bots]") {
 }
 
 TEST_CASE("bots: a dropped pad's slot becomes a bot on restart", "[client][bots]") {
-  SessionConfig cfg = botsOnly(1, ai::ReferenceTier::Hard);
+  const SessionConfig cfg = botsOnly(1, ai::ReferenceTier::Hard);
   Bots b(cfg);
   platform::InputEvent e{};
   e.kind = platform::InputEventKind::PadAdded;
