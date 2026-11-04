@@ -124,12 +124,13 @@ struct StatName {
   StatKind stat;
   bool integer;  // add-only
 };
-constexpr std::array<StatName, 3> kStatNames = {{
+constexpr std::array<StatName, 4> kStatNames = {{
     {"move_speed", StatKind::MoveSpeed, false},
     {"max_hp", StatKind::MaxHp, true},
     {"ammo_max", StatKind::AmmoMax, true},
+    {"radius", StatKind::Radius, false},  // v0.34: the contact radius
 }};
-static_assert(kStatNames.size() == static_cast<size_t>(StatKind::AmmoMax) + 1,
+static_assert(kStatNames.size() == static_cast<size_t>(StatKind::Radius) + 1,
               "every StatKind needs a TOML name in kStatNames");
 
 struct ShapeName {
@@ -156,8 +157,13 @@ constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash",
   return t == Tag::Shielded || t == Tag::Invulnerable || t == Tag::FriendlyFire;
 }
 
-// Projectile multipliers stay in (0, kMaxProjectileMul].
+// Projectile multipliers (and v0.34 the radius stat's) stay in (0, kMaxProjectileMul].
 const Fixed kMaxProjectileMul = Fixed::fromInt(4);
+
+// Whether a stat is an integer stat (add-only, whole).
+[[nodiscard]] constexpr bool integerStat(StatKind k) {
+  return k == StatKind::MaxHp || k == StatKind::AmmoMax;
+}
 
 [[nodiscard]] constexpr bool isWhole(Fixed f) {
   return f.raw % Fixed::kOneRaw == 0;
@@ -1107,6 +1113,10 @@ class Builder {
           g.error("'" + std::string(stat->name) + "' is an integer stat: 'add' must be whole");
         }
       }
+      if (stat != nullptr && stat->stat == StatKind::Radius &&
+          (out.stat.mul <= Fixed::zero() || out.stat.mul > kMaxProjectileMul)) {
+        g.error("'radius' takes a 'mul' in (0, 4]");
+      }
     } else if (*kind == "ability") {
       out.kind = GrantKind::AbilityOverride;
       const std::string_view* slot =
@@ -1497,13 +1507,17 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
       const std::string at = where + " grant " + std::to_string(g);
       switch (grant.kind) {
         case GrantKind::Stat:
-          if (grant.stat.stat != StatKind::MoveSpeed && grant.stat.mul != Fixed::one()) {
+          if (integerStat(grant.stat.stat) && grant.stat.mul != Fixed::one()) {
             fail(at + ": an integer stat takes 'add' only, never 'mul'");
           }
-          if (grant.stat.stat != StatKind::MoveSpeed && !isWhole(grant.stat.add)) {
+          if (integerStat(grant.stat.stat) && !isWhole(grant.stat.add)) {
             fail(at + ": an integer stat's 'add' must be whole");
           }
           if (grant.stat.mul < Fixed::zero()) fail(at + ": 'mul' must not be negative");
+          if (grant.stat.stat == StatKind::Radius &&
+              (grant.stat.mul <= Fixed::zero() || grant.stat.mul > kMaxProjectileMul)) {
+            fail(at + ": a radius 'mul' must be in (0, 4]");
+          }
           break;
         case GrantKind::AbilityOverride: {
           if (grant.slot >= sim::kAbilitySlots) {

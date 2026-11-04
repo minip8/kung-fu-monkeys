@@ -211,7 +211,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 
 | Offset | Type | Field | Meaning |
 |---:|---|---|---|
-| 0 | i32 | `playerRadius` | Q16.16: every monkey's contact radius |
+| 0 | i32 | `playerRadius` | Q16.16: the base contact radius (`PlayerDef`; v0.34: a derived stat, `self.radius` is this monkey's, and a mode's baseline changes every monkey's alike) |
 | 4 | i32 | `playerMoveSpeed` | Q16.16 per tick: base walking speed (`self.moveSpeed` is the derived one) |
 | 8 | i32 | `bananaRadius` | Q16.16: base banana contact radius (`bananas[i].radius` is the derived one) |
 | 12 | i32 | `bananaSpeed` | Q16.16 per tick: base flight speed |
@@ -260,7 +260,7 @@ All zero except `slot`, `respawnTicks` and the reserved fields while `alive` is 
 | 24 | i32 | `velX` | Q16.16 per tick: last tick's velocity |
 | 28 | i32 | `velY` | Q16.16 per tick |
 | 32 | i32 | `moveSpeed` | Q16.16 per tick: derived walking speed (power-ups, slow hazards) |
-| 36 | i32 | `radius` | Q16.16: contact radius |
+| 36 | i32 | `radius` | Q16.16: contact radius (v0.34: the derived radius stat, `PlayerDef` × power-ups and the mode's baseline) |
 | 40 | i32 | `knockbackX` | Q16.16 per tick: a slam's push, added to the velocity for `knockbackTicks` more ticks |
 | 44 | i32 | `knockbackY` | Q16.16 per tick |
 | 48 | u32 | `tags` | tags |

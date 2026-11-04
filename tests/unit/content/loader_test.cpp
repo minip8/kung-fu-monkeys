@@ -651,7 +651,16 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                                      "stat = \"ammo_max\", add = 1.5")),
                  "'ammo_max' is an integer stat: 'add' must be whole"));
   CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\"", "stat = \"luck\"")),
-                 "'stat' must be one of: move_speed, max_hp, ammo_max"));
+                 "'stat' must be one of: move_speed, max_hp, ammo_max, radius"));
+  // v0.34: the radius stat takes a mul in (0, 4] and an add.
+  CHECK(loads(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
+                       "stat = \"radius\", mul = 0.7, add = -0.05")));
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
+                                     "stat = \"radius\", mul = 5")),
+                 "'radius' takes a 'mul' in (0, 4]"));
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "stat = \"move_speed\", mul = 1.5",
+                                     "stat = \"radius\", mul = 0")),
+                 "'radius' takes a 'mul' in (0, 4]"));
   // Tags a power-up may not grant.
   CHECK(contains(
       loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",

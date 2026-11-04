@@ -220,7 +220,7 @@ void fillSelf(const sim::WorldState& world, const sim::MatchContent& content, Pl
   o.velX = t.vel.x.raw;
   o.velY = t.vel.y.raw;
   o.moveSpeed = p->stats.moveSpeed.raw;
-  o.radius = content.db.player.radius.raw;
+  o.radius = p->stats.radius.raw;  // v0.34: the radius stat
   o.knockbackX = p->knockback.x.raw;
   o.knockbackY = p->knockback.y.raw;
   o.tags = p->tags.bits;

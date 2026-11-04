@@ -31,10 +31,11 @@ static_assert(kMaxPlayers <= 16, "player sets below are uint16_t bit masks");
   return content.db.pickup.radius;
 }
 
-// A player's contact radius: its body, or (v0.21) a slammer's reach on its
-// impact tick (the def's param0), so the broadphase finds what the slam hits.
+// A player's contact radius: its body (v0.34: the radius stat), or (v0.21) a
+// slammer's reach on its impact tick (the def's param0), so the broadphase
+// finds what the slam hits.
 [[nodiscard]] Fixed contactRadius(const Player& p, const MatchContent& content) {
-  const Fixed body = content.db.player.radius;
+  const Fixed body = p.stats.radius;
   if (!p.tags.has(Tag::Slamming)) return body;
   const AbilityState* slam = slotGranting(p, content, Tag::Slamming);
   if (slam == nullptr) return body;
@@ -186,7 +187,7 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
       const Transform& tb = other.transform;
       prevB = tb.prevPos;
       posB = tb.pos;
-      radiusB = content.db.player.radius;
+      radiusB = other.stats.radius;
       reachB = contactRadius(other, content);
       idB = s.players.idAt(pair.indexB);
       break;
@@ -211,7 +212,7 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
   }
 
   if (reachB < radiusB) reachB = radiusB;
-  const Fixed radiusA = content.db.player.radius;
+  const Fixed radiusA = player.stats.radius;
   const Fixed reachA = contactRadius(player, content);
   collision::SweptHit hit =
       collision::sweptCircleHit(ta.prevPos, ta.pos, prevB, posB, radiusA + radiusB);

@@ -7,10 +7,11 @@
 # per second), color (palette index 0-9: 0 red, 1 blue, 2 yellow, 3 green,
 # 4 orange, 5 purple, 6 cyan, 7 pink, 8 white, 9 charcoal), shape (orb |
 # cube | diamond | coin), grants = a list of 1 to 4 tables, each one of
-#   { kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max", mul, add }
+#   { kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max" | "radius", mul, add }
 #       stat = base x product of mul + sum of add over the live power-ups;
 #       max_hp and ammo_max are integer stats: whole 'add' only, no 'mul'.
 #       ammo_max also tops the ammo up by 'add' on every pickup.
+#       radius (v0.34) is the contact radius: a mul in (0, 4], an add, or both.
 #   { kind = "ability", slot = "dash" | "throw" | "ability", ability = "<ability name>" }
 #       the slot runs that ability (any kind: buttons belong to slots) while live;
 #       it switches when the slot is idle, its cooldown capped at the new def's.

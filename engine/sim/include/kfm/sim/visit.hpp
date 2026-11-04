@@ -73,7 +73,7 @@ inline constexpr uint8_t kEnumCount<HazardKind> = static_cast<uint8_t>(HazardKin
 template <>
 inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
-inline constexpr uint8_t kEnumCount<StatKind> = 3;
+inline constexpr uint8_t kEnumCount<StatKind> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<BoomerangPhase> = 3;
 template <>
@@ -89,7 +89,7 @@ inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
-static_assert(static_cast<uint8_t>(StatKind::AmmoMax) + 1 == kEnumCount<StatKind>);
+static_assert(static_cast<uint8_t>(StatKind::Radius) + 1 == kEnumCount<StatKind>);
 static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
 static_assert(static_cast<uint8_t>(PickupKind::Flag) + 1 == kEnumCount<PickupKind>);
 static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);

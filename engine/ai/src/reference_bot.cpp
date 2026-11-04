@@ -277,7 +277,9 @@ void ReferenceBot::trackThreats(const Observation& obs) {
     }
     Track* t = add(lengthSqRaw(posOf(p) - me));
     if (t == nullptr) continue;
-    t->radius = Fixed::fromRaw(obs.rules.playerRadius);
+    // v0.34: the radius is a derived stat; Observation v1 carries only our
+    // own, and a mode's baseline gives every monkey the same one.
+    t->radius = Fixed::fromRaw(obs.self.radius);
     t->catchable = false;
     const uint16_t active = p.abilityPhase[0] == static_cast<uint8_t>(ObsAbilityPhase::Active)
                                 ? p.abilityPhaseTicks[0]

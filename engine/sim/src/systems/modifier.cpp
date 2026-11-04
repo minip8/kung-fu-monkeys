@@ -11,7 +11,8 @@
 //      hazard holding the player's centre (v0.22, statics::speedMulAt;
 //      outside them it is 1 and not multiplied in at all); maxHp and ammoMax
 //      are integer stats, add-only (mul is ignored), clamped to [1, 255] and
-//      [0, 255].
+//      [0, 255]; radius (v0.34) = base × Π mul + Σ add, clamped to
+//      [kMinRadius, kMaxRadius] (no modifier: the def's radius bit for bit).
 //   3. HP clamp against the previous tick's maxHp: a rise raises hp by the
 //      same amount; a fall gives hp = max(1, min(hp, maxHp)), so losing a
 //      modifier never eliminates. A player already at hp 0 is left alone.
@@ -45,6 +46,11 @@
 
 namespace kfm::sim {
 namespace {
+
+// The contact radius a modifier can reach (v0.34): positive, and at most the
+// slam's widest reach so the broadphase's swept boxes stay a few cells.
+constexpr Fixed kMinRadius = Fixed::fromRatio(1, 64);
+constexpr Fixed kMaxRadius = Fixed::fromInt(8);
 
 void dropExpired(ModifierList& mods) {
   uint8_t kept = 0;
@@ -81,6 +87,8 @@ void forEachGrant(const ContentDB& db, const ModifierList& mods, F&& f) {
   Fixed add{};
   int32_t maxHp = base.maxHp;
   int32_t ammoMax = base.ammoMax;
+  Fixed radiusMul = Fixed::one();
+  Fixed radiusAdd{};
   forEachGrant(db, mods, [&](const PowerUpGrant& g) {
     if (g.kind != GrantKind::Stat) return;
     switch (g.stat.stat) {
@@ -94,6 +102,10 @@ void forEachGrant(const ContentDB& db, const ModifierList& mods, F&& f) {
       case StatKind::AmmoMax:
         ammoMax += g.stat.add.floorToInt();
         break;
+      case StatKind::Radius:
+        radiusMul = radiusMul * g.stat.mul;
+        radiusAdd = radiusAdd + g.stat.add;
+        break;
     }
   });
   if (hazardSpeedMul != Fixed::one()) mul = mul * hazardSpeedMul;
@@ -101,7 +113,7 @@ void forEachGrant(const ContentDB& db, const ModifierList& mods, F&& f) {
   out.moveSpeed = max(base.moveSpeed * mul + add, Fixed::zero());
   out.maxHp = static_cast<uint8_t>(std::clamp<int32_t>(maxHp, 1, UINT8_MAX));
   out.ammoMax = static_cast<uint8_t>(std::clamp<int32_t>(ammoMax, 0, UINT8_MAX));
-  out.radius = base.radius;
+  out.radius = clamp(base.radius * radiusMul + radiusAdd, kMinRadius, kMaxRadius);
   return out;
 }
 
