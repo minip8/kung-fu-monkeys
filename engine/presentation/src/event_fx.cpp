@@ -330,6 +330,18 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
     case EventKind::PlayerParryStarted:
       addEffect(ps, makeEffect(EffectKind::ParryGuard, slot, bodyAt(player), kParryGuardSeconds));
       break;
+    case EventKind::MonkeyCalled: {
+      // v0.35: a shout over the head; the symbol tints its size.
+      RenderEffect shout = makeEffect(EffectKind::CallShout, slot,
+                                      simToWorld(player, kCallShoutHeight), kCallShoutSeconds);
+      shout.size = static_cast<float>(e.a & 0xFFu) / 255.0f;
+      addEffect(ps, shout);
+      if (sim::maskHas(ps.pingSlots, e.player)) {
+        SoundCue ping{SoundId::CallPing, 1.0f, soundPan(player.x, halfWidth)};
+        pushSound(out, ping);
+      }
+      break;
+    }
     case EventKind::BoomerangParried: {
       const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity);
       Vec2f dir{};

@@ -911,6 +911,16 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const float t = e.progress();
     const float fade = 1.0f - t;
     switch (e.kind) {
+      case EffectKind::CallShout: {
+        // v0.35: a call, rings popping over the caller's head.
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.3f) : kWhite;
+        d.billboard(e.position, lerp(0.25f, 0.7f + (0.3f * e.size), easeOut(t)), c, fade,
+                    DecalMode::Ring, 0.7f);
+        d.billboard(e.position, lerp(0.1f, 0.35f, easeOut(t)), kWhite, fade, DecalMode::Burst,
+                    0.2f);
+        break;
+      }
       case EffectKind::PerfectCatchFlash:
         d.billboard(e.position, lerp(0.6f, 1.8f, t), kGold, fade, DecalMode::Burst, 0.25f);
         d.billboard(e.position, lerp(0.3f, 0.8f, t), kWhite, fade, DecalMode::Burst, 0.1f);

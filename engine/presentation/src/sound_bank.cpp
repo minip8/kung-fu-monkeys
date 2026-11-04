@@ -44,6 +44,7 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.18f, 0.50f},   // Blink
     {0.50f, 0.95f},   // Slam
     {0.32f, 0.75f},   // Parry
+    {0.20f, 0.45f},   // CallPing
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -285,6 +286,10 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         // A metallic clang: two inharmonic bells over a click.
         v = bell(t, 1560.0f, 0.12f) + (0.6f * bell(t, 2410.0f, 0.08f)) +
             (0.5f * env(t, 0.0f, 0.003f) * noise.next());
+        break;
+      case SoundId::CallPing:
+        // A call (v0.35): two quick bell notes a fifth apart.
+        v = bell(t, 1760.0f, 0.05f) + (0.7f * bell(t - 0.06f, 2637.0f, 0.06f));
         break;
       case SoundId::Count:
         break;

@@ -126,6 +126,9 @@ inline constexpr float kBlinkFlashSeconds = 0.3f;
 inline constexpr float kSlamShockwaveSeconds = 0.45f;
 inline constexpr float kShakeOnSlam = 0.25f;
 inline constexpr float kParryGuardSeconds = 0.2f;
+// v0.35: a call's shout over the caller's head, and its height above the body.
+inline constexpr float kCallShoutSeconds = 0.45f;
+inline constexpr float kCallShoutHeight = 1.9f;
 inline constexpr float kParrySparkSeconds = 0.35f;
 inline constexpr int kParrySparks = 8;
 // Banners in the HUD pop in: scale 1 + this at the start, settling to 1 over

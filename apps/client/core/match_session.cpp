@@ -135,6 +135,14 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
 void MatchSession::appendEvents(const sim::EventSink& sink) {
   droppedEvents_ += sink.dropped;
   for (const sim::SimEvent& e : sink) {
+    if (e.kind == sim::EventKind::MonkeyCalled) {
+      if (recentCallCount_ == recentCalls_.size()) {
+        std::shift_left(recentCalls_.begin(), recentCalls_.end(), 1);
+        --recentCallCount_;
+      }
+      recentCalls_[recentCallCount_++] =
+          RecentCall{e.player.value, static_cast<uint8_t>(e.a), e.tick.value};
+    }
     if (frameEventCount_ < frameEvents_.size()) {
       frameEvents_[frameEventCount_++] = e;
     } else {
@@ -268,6 +276,7 @@ BotSlotStats MatchSession::botStats(PlayerId slot) const {
   const ai::AgentSlotStats host = agents_.stats(slot);
   out.acts = host.acts;
   out.substitutions = host.substitutions;
+  out.paused = host.paused;
   if (has(moduleMask_, slot.value)) BotRoster::moduleStats(*agent, out);
   return out;
 }
@@ -330,6 +339,7 @@ void MatchSession::beginMatch(sim::PlayerMask present, sim::PlayerMask local, ui
   lastInputs_ = {};
   lastFrame_ = {};
   frameEventCount_ = 0;
+  recentCallCount_ = 0;
   presentation_ = presentation::PresentationState{};
   sampler_.clearDropped();
   sampler_.endTick();

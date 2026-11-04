@@ -40,6 +40,7 @@ inline constexpr ai::ReferenceTier kDefaultBotTier = ai::ReferenceTier::Medium;
 struct BotSlotStats {
   uint32_t acts{0};
   uint32_t substitutions{0};  // ticks whose input repeated the last one
+  uint32_t paused{0};         // v0.35: ticks sat out eliminated (acts + paused = present ticks)
   bool module{false};         // the fields below are meaningful
   bool alive{true};           // a module whose init faulted is dead
   uint64_t traps{0};

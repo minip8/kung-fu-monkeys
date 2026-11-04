@@ -220,6 +220,18 @@ class MatchSession {
   [[nodiscard]] uint64_t droppedEvents() const { return droppedEvents_; }
   [[nodiscard]] uint32_t ticksThisFrame() const { return ticksThisFrame_; }
 
+  // v0.35: the last kRecentCalls calls (MonkeyCalled) of the match, oldest
+  // first, for the F1 overlay.
+  static constexpr std::size_t kRecentCalls = 8;
+  struct RecentCall {
+    uint8_t slot{0};
+    uint8_t symbol{0};
+    uint32_t tick{0};
+  };
+  [[nodiscard]] std::span<const RecentCall> recentCalls() const {
+    return {recentCalls_.data(), recentCallCount_};
+  }
+
   [[nodiscard]] presentation::PresentationState& presentation() { return presentation_; }
 
   // The live content copy (edited by the debug UI) and the loaded content
@@ -290,6 +302,8 @@ class MatchSession {
 
   std::array<sim::SimEvent, kMaxFrameEvents> frameEvents_{};
   std::size_t frameEventCount_{0};
+  std::array<RecentCall, kRecentCalls> recentCalls_{};
+  std::size_t recentCallCount_{0};
   uint64_t droppedEvents_{0};
   uint32_t ticksThisFrame_{0};
 

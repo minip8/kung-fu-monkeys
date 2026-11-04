@@ -949,6 +949,39 @@ TEST_CASE("arena walls and hazards become world-space pieces", "[presentation][b
   CHECK(rimLength == Approx(4.0f + 4.0f + 4.0f + 18.0f + 22.0f + 2.0f));
 }
 
+TEST_CASE("a call shouts over the caller and pings only a local human (v0.35)",
+          "[presentation][builder][audio]") {
+  using enum EventKind;
+  CHECK_FALSE(soundForEvent(SimEvent{MonkeyCalled, Tick{0}, kP0, EntityId{}, 9, 0}).has_value());
+  WorldState s = makePlayingWorld(28, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-3), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(3), Fixed::zero()});
+  const auto pings = [](const RenderState& rs) {
+    int n = 0;
+    for (uint16_t i = 0; i < rs.soundCount; ++i) {
+      if (rs.sounds[i].id == SoundId::CallPing) ++n;
+    }
+    return n;
+  };
+  PresentationState ps;
+  ps.pingSlots = 0b01;  // P0 is the local human
+  const std::vector<SimEvent> events = {
+      SimEvent{MonkeyCalled, s.tick, kP0, EntityId{}, 255, 0},
+      SimEvent{MonkeyCalled, s.tick, kP1, EntityId{}, 0, 0},
+  };
+  build(ps, s, s, 1.0f);
+  const RenderState rs = build(ps, s, s, 1.0f, events);
+  REQUIRE(countEffects(rs, EffectKind::CallShout) == 2);
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& e = rs.effects[i];
+    if (e.kind != EffectKind::CallShout) continue;
+    CHECK(e.position.y == Approx(kCallShoutHeight));  // over the head
+    if (e.slot == 0) CHECK(e.size == Approx(1.0f));
+    if (e.slot == 1) CHECK(e.size == Approx(0.0f));
+  }
+  CHECK(pings(rs) == 1);  // the bot's call is silent
+}
+
 TEST_CASE("ability events (v0.21): blink, slam and parry effects and sounds",
           "[presentation][builder][audio]") {
   using enum EventKind;

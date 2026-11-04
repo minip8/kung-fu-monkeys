@@ -158,6 +158,8 @@ enum class EffectKind : uint8_t {
   SlamShockwave,  // a ring racing out to the slam's reach (size = reach, units)
   ParryGuard,     // the parry stance flaring up at the press (slot colour)
   ParrySpark,     // a bright clash where a banana was parried (direction: its new heading)
+  // v0.35 (the squad contest):
+  CallShout,  // a call: rings popping over the caller's head (slot colour; size = symbol / 255)
 };
 
 struct RenderEffect {

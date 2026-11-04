@@ -35,6 +35,8 @@ enum class SoundId : uint8_t {
   Blink,  // a blink: a rising zap
   Slam,   // a slam lands: a deep boom with a dusty crack
   Parry,  // a banana parried: a bright metallic clang
+  // v0.35 (the squad contest):
+  CallPing,  // a local human's call: a short two-note ping
   Count,
 };
 
@@ -86,6 +88,8 @@ inline constexpr uint8_t kSoundCount = static_cast<uint8_t>(SoundId::Count);
       return "slam";
     case SoundId::Parry:
       return "parry";
+    case SoundId::CallPing:
+      return "call-ping";
     case SoundId::Count:
       break;
   }

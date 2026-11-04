@@ -435,6 +435,7 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   s.advance(now);
   // Network mode: the lobby's Start connects, from the next frame on.
   if (s.takeStartRequest()) app.connectRequested = true;
+  s.presentation().pingSlots = s.localMask();  // v0.35: a local human's call pings
   presentation::buildRenderState(
       s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(),
       s.matchContent(), static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);

@@ -80,6 +80,9 @@ struct PresentationState {
   HudPhase lastHudPhase{HudPhase::Lobby};
   int lastCountdownWhole{0};
   bool hudSeen{false};
+  // v0.35: the slots whose calls ping (the app's local humans: a human on
+  // the ability button hears the call it made; bots' calls are silent).
+  sim::PlayerMask pingSlots{0};
 };
 
 void buildRenderState(PresentationState& ps, const sim::WorldState& prev,

@@ -129,7 +129,8 @@ TEST_CASE("bots: a four-bot match throws, dashes and ends a round", "[client][bo
   CHECK(dashes > 0);
   CHECK(roundEnded);
   const client::BotSlotStats st = b.s->botStats(PlayerId{0});
-  CHECK(st.acts == b.s->curr().tick.value);  // one act per tick
+  // One act per tick, but for the ticks it sat out eliminated (v0.35).
+  CHECK(st.acts + st.paused == b.s->curr().tick.value);
   CHECK(st.substitutions == 0);
   CHECK_FALSE(st.module);
   CHECK(b.s->botStats(PlayerId{5}).acts == 0);  // not a bot slot
@@ -183,7 +184,7 @@ TEST_CASE("bots: a restart re-initialises the agents", "[client][bots]") {
     b.tick();
     first.push_back(b.s->checksum());
   }
-  CHECK(b.s->botStats(PlayerId{1}).acts == 400);
+  CHECK(b.s->botStats(PlayerId{1}).acts + b.s->botStats(PlayerId{1}).paused == 400);
   b.restart();
   CHECK(b.s->botStats(PlayerId{1}).acts == 0);
   for (int t = 0; t < 400; ++t) {
