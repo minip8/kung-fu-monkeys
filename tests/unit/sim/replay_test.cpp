@@ -41,10 +41,10 @@ TEST_CASE("Replay header round-trip and validation", "[sim][replay]") {
   CHECK(ReplayHeader{}.loadout == 0);
 
   // A version 3 header (before the loadout, v0.31) is refused, not misread.
-  std::vector<std::byte> old(w.written().begin(), w.written().end());
-  old[4] = std::byte{3};
-  BitReader v3(old);
+  buf[4] = std::byte{3};  // the low byte of the version
+  BitReader v3(w.written());
   CHECK_FALSE(readReplayHeader(v3, g));
+  buf[4] = std::byte{kReplayVersion & 0xFF};
 
   buf[0] = std::byte{'X'};
   BitReader bad(w.written());

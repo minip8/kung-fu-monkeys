@@ -26,9 +26,12 @@ and the client's `--connect` mode; `engine/ai` (`IAgent`, `Observation` v1 and i
 builder, `AgentHost`, the reference bot, `BotSpec`, `WasmAgent` over WAMR with instruction
 metering), `apps/arena` (`kfm_arena`, the headless match runner), bots on the server and in the
 client lobby, and the C SDK seed with an example bot under `tools/bots/` (M5, architecture
-v0.30; the SDKs themselves live in a separate bots repository). Next is M5b (teams and relations,
-the five mode seams, the loadout axis, zones and tilemap arenas, the `grid` space and the squad
-contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12, §8). `docs/architecture.md` is the
+v0.30; the SDKs themselves live in a separate bots repository). M5b is in progress (teams and
+relations, the five mode seams, the loadout axis, zones and tilemap arenas, the `grid` space and
+the squad contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12,
+§8): step 1, mode foundations (32 mode slots, the `[[loadout]]` axis picked by
+`MatchConfig::loadout`, the `onRoundStart`/`onPickupTaken` hooks and `MatchRules::modeData`), landed
+in v0.31; step 2 (teams) is next. `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -260,8 +263,10 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
 - Next milestone: M5b, sequenced in architecture §11 (five PRs, one architecture version each,
-  every one green on the determinism gate before the next); step 2's spawn groups are the fix
-  for the spawn-order slot bias recorded in §12.
+  every one green on the determinism gate before the next; step 1 landed in v0.31); step 2's
+  spawn groups are the fix for the spawn-order slot bias recorded in §12.
+- A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
+  `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
 
 ## Git workflow
 

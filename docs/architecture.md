@@ -2639,6 +2639,32 @@ change beyond the `call` ability's event). Steps 1 to 3 are worth doing even if 
 dropped; step 4 is the only one with design risk and is prototyped behind the table before the
 contest layer goes on top.
 
+Progress: M5b step 1 (mode foundations) landed in v0.31. `kMaxModes` is 32; loadouts are a
+match axis (`[[loadout]]` in `content/loadouts.toml`, loadout 0 `base` = the `[player]
+abilities`, `MatchConfig::loadout` through `MatchContent`, replay format 4, protocol 4, the
+lobby's Loadout row and `loadout=` setting, `--loadout` on `kfm_client`, `kfm_server`,
+`kfm_netsim`, `kfm_render_probe`, `kfm_replay` and `kfm_arena`, `?loadout=`), and the
+`rounds_blink`/`rounds_slam`/`rounds_parry` modes became the `blink`/`slam`/`parry` loadouts;
+`ModeBehavior` has `onRoundStart` and `onPickupTaken` (no-ops in the three shipped kinds) and
+`MatchRules::modeData` holds eight mode-owned words (§5.3, §5.10). Observation v1 fills
+`self.reservedRole` and `match.reservedModeData` without a layout change (§8, `docs/bot-abi.md`
+§3). Replay checksums: the loadout axis and the larger mode table changed only the content hash
+(corpus re-recorded, every `.checksums` byte-identical, the three ability replays included now
+that they record `rounds` plus a loadout); `modeData` then changed every world checksum (corpus
+regenerated; the gate passed against the old checksums with `modeData` left out of the visitor,
+so play is unchanged). Verified locally on GCC 15: the headless Debug build, the dev preset
+(every ctest target incl. the 14-entry corpus, both soak gates and the real-socket tests), the
+Release build (corpus, bench), clang-format 23.1.3 and clang-tidy 23.1.4 over the whole tree
+with zero findings, the no-float check, `kfm_client --loadout slam --bots 3 --autostart` 60
+frames with a screenshot and the lobby with its Loadout row, `kfm_netsim` 6 clients at 100 ms /
+2 % on `--loadout slam` (0 mismatches) and `kfm_arena --loadout parry`; MSVC, Apple Clang,
+Clang, ASan+UBSan and Emscripten are left to CI. Bench (`kfm_replay bench --ticks 36000
+--players 10`, Release, `step()` alone, the shared WSL2 machine): 1.30–1.38 µs/tick on
+`dojo`/`rounds`, 1.40 µs/tick with `--loadout slam`, within the noise of v0.25's 1.23 µs.
+Follow-ups (later M5b steps): the per-role loadout lookup and `MatchConfig::teams` (step 2), the
+first kinds that use the new hooks (`hill`, `capture`, step 3), and `--powerups` on
+`kfm_netsim` and the render probe (open since M4; both now take `--loadout`).
+
 Progress: M3 landed in v0.17. `engine/net` holds the `ITransport` seam, the loopback
 transport with its deterministic emulator and the transport contract suite, the bit-packed
 message layer, `NetServer`, `NetClient` (prediction, a 32-state rollback ring plus an anchor,
