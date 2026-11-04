@@ -170,8 +170,7 @@ static_assert(kHazardKinds.size() == static_cast<size_t>(sim::HazardKind::kCount
 // than an iterator: std::array's iterator is a class on MSVC, so the
 // clang-tidy-preferred `const auto*` would not compile there.
 template <class Table>
-[[nodiscard]] const Table::value_type* findNamed(const Table& table,
-                                                          std::string_view name) {
+[[nodiscard]] const Table::value_type* findNamed(const Table& table, std::string_view name) {
   for (const auto& entry : table) {
     if (entry.name == name) return &entry;
   }
