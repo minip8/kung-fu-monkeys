@@ -33,8 +33,9 @@ std::vector<std::byte> bytesOf(const T& def) {
 }
 
 // defaultContent() is the minimal fixture and content/ a superset (§5.10):
-// the singletons, every ability the fixture defines, arena 0 and mode 0
-// must agree; further abilities, arenas and modes are TOML-only.
+// the singletons, every ability the fixture defines, arena 0, mode 0 and
+// loadout 0 must agree; further abilities, arenas, modes and loadouts are
+// TOML-only.
 void requireAgreesWithFixture(const ContentDB& loaded) {
   const ContentDB& fixture = sim::defaultContent();
   CHECK(bytesOf(loaded.player) == bytesOf(fixture.player));
@@ -50,6 +51,8 @@ void requireAgreesWithFixture(const ContentDB& loaded) {
   REQUIRE(loaded.modeCount >= 1);
   CHECK(bytesOf(loaded.arenas[0]) == bytesOf(fixture.arenas[0]));
   CHECK(bytesOf(loaded.modes[0]) == bytesOf(fixture.modes[0]));
+  REQUIRE(loaded.loadoutCount >= 1);
+  CHECK(bytesOf(loaded.loadouts[0]) == bytesOf(fixture.loadouts[0]));
 }
 
 // A minimal complete content set; tests break one piece at a time.
@@ -206,32 +209,97 @@ TEST_CASE("a minimal content set loads, names resolve to indices", "[content][lo
   CHECK(db.modes[0].roundsToWin == sim::ModeDef{}.roundsToWin);  // optional keys keep defaults
 }
 
-TEST_CASE("loadouts: a third slot, mode loadouts and MatchContent::loadout", "[content][loader]") {
+TEST_CASE("loadouts: [[loadout]] defs, loadout 0 and MatchContent::loadout (v0.31)",
+          "[content][loader][loadout]") {
   ContentDB db{};
   Diagnostics diag;
   const std::string text = std::string(kMinimal) +
-                           "\n[[mode]]\nname = \"swap\"\nabilities = [\"throw\", \"dash\", "
+                           "\n[[loadout]]\nname = \"swap\"\nabilities = [\"throw\", \"dash\", "
                            "\"dash\"]\n";
   const bool ok = parseContent(text, "min.toml", db, diag);
   INFO(diag.format());
   REQUIRE(ok);
-  // The base kit leaves the ability button's slot on none.
+  // The base kit leaves the ability button's slot on none and is loadout 0.
   CHECK(db.player.abilities[sim::kAbilitySlotExtra] == 0);
-  CHECK(db.modes[0].hasAbilities == 0);
-  REQUIRE(db.modeCount == 2);
-  CHECK(db.modes[1].hasAbilities == 1);
-  CHECK(db.modes[1].abilities == std::array<uint8_t, sim::kAbilitySlots>{2, 1, 1});
-  const sim::MatchContent rounds(db, 0, 0);
-  const sim::MatchContent swap(db, 0, 1);
-  CHECK(rounds.loadout(sim::kAbilitySlotDash) == 1);
-  CHECK(rounds.loadout(sim::kAbilitySlotExtra) == 0);
-  CHECK(swap.loadout(sim::kAbilitySlotDash) == 2);
-  CHECK(swap.loadout(sim::kAbilitySlotExtra) == 1);
-  CHECK(
-      contains(loadErrors(text + "\n[[mode]]\nname = \"bad\"\nabilities = [\"dash\", \"none\"]\n"),
-               "mode \"bad\" abilities: the throw slot must hold an ability"));
-  CHECK(contains(loadErrors(text + "\n[[mode]]\nname = \"bad\"\nabilities = [\"dash\", \"zap\"]\n"),
-                 "names unknown ability \"zap\""));
+  REQUIRE(db.loadoutCount == 2);
+  CHECK(db.loadouts[0].name.view() == sim::kBaseLoadoutName);
+  CHECK(db.loadouts[0].abilities == db.player.abilities);
+  CHECK(db.loadouts[1].name.view() == "swap");
+  CHECK(db.loadouts[1].abilities == std::array<uint8_t, sim::kAbilitySlots>{2, 1, 1});
+  CHECK(db.findLoadout("base") == std::optional<uint8_t>{0});
+  CHECK(db.findLoadout("swap") == std::optional<uint8_t>{1});
+  CHECK_FALSE(db.findLoadout("zap").has_value());
+  const sim::MatchContent base(db, 0, 0);
+  const sim::MatchContent swap = sim::matchContent(db, sim::MatchConfig{.loadout = 1});
+  CHECK(base.loadout() == db.player.abilities);
+  CHECK(swap.loadout() == db.loadouts[1].abilities);
+  // An index past the content falls back to the base kit.
+  CHECK(sim::matchContent(db, sim::MatchConfig{.loadout = 9}).loadout() == db.player.abilities);
+
+  CHECK(contains(
+      loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"dash\", \"none\"]\n"),
+      "loadout \"bad\" abilities: the throw slot must hold an ability"));
+  CHECK(contains(
+      loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"none\", \"throw\"]\n"),
+      "loadout \"bad\" abilities: the dash slot must hold an ability"));
+  CHECK(contains(
+      loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"dash\", \"zap\"]\n"),
+      "names unknown ability \"zap\""));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"bad\"\nabilities = [\"dash\"]\n"),
+                 "'abilities' must list 2 or 3 ability names"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"bad\"\n"),
+                 "missing required key 'abilities'"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"swap\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\n"),
+                 "loadout \"swap\" is defined twice"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"base\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\n"),
+                 "\"base\" is the built-in loadout of [player] abilities"));
+  CHECK(contains(loadErrors(text + "\n[[loadout]]\nname = \"x\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\ncolor = 3\n"),
+                 "unknown key 'color'"));
+  // v0.31: a mode no longer carries a loadout.
+  CHECK(contains(loadErrors(std::string(kMinimal) +
+                            "\n[[mode]]\nname = \"m\"\nabilities = [\"dash\", \"throw\"]\n"),
+                 "a mode no longer carries a loadout"));
+
+  // At most kMaxLoadouts in all: base plus 15 [[loadout]] tables.
+  std::string many(kMinimal);
+  for (int i = 1; i < sim::kMaxLoadouts; ++i) {
+    many +=
+        "\n[[loadout]]\nname = \"l" + std::to_string(i) + "\"\nabilities = [\"dash\", \"throw\"]\n";
+  }
+  ContentDB full{};
+  REQUIRE(parseContent(many, "many.toml", full, diag));
+  CHECK(full.loadoutCount == sim::kMaxLoadouts);
+  CHECK(contains(loadErrors(many + "\n[[loadout]]\nname = \"one_more\"\nabilities = [\"dash\", "
+                                   "\"throw\"]\n"),
+                 "too many loadouts (at most 15 besides base, kMaxLoadouts)"));
+
+  // validateContent() holds loadout 0 to the [player] abilities.
+  ContentDB broken = db;
+  broken.loadouts[0].abilities[sim::kAbilitySlotExtra] = 2;
+  Diagnostics bad;
+  CHECK_FALSE(validateContent(broken, bad));
+  CHECK(contains(bad.format(), "loadout 0 must be \"base\" with the [player] abilities"));
+}
+
+TEST_CASE("--loadout names resolve to MatchConfig::loadout", "[content][app][loadout]") {
+  sim::ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadEmbeddedContent(db, diag));
+  sim::MatchConfig config{.seed = 3, .arena = 1, .loadout = 7};
+  std::string error;
+  REQUIRE(resolveLoadoutName(db, "", config, error));
+  CHECK(config.loadout == 0);
+  CHECK(config.arena == 1);  // the rest of the config is left alone
+  REQUIRE(resolveLoadoutName(db, "slam", config, error));
+  CHECK(config.loadout == db.findLoadout("slam").value_or(0xFF));
+  REQUIRE(resolveLoadoutName(db, "base", config, error));
+  CHECK(config.loadout == 0);
+  CHECK_FALSE(resolveLoadoutName(db, "zap", config, error));
+  CHECK(contains(error, "unknown loadout 'zap'"));
+  CHECK(contains(error, "base, blink, slam, parry"));
 }
 
 TEST_CASE("documents merge in order; lists append", "[content][loader]") {
@@ -768,6 +836,18 @@ score_to_win = 0
       contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_to_win = 256\n"), "score_to_win"));
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_limit = 3\n"),
                  "unknown key 'score_limit'"));
+
+  // kMaxModes is 32 since v0.31 (8 before): kMinimal's rounds plus 31 more.
+  std::string many = base;
+  for (int i = 1; i < sim::kMaxModes; ++i)
+    many += "[[mode]]\nname = \"m" + std::to_string(i) + "\"\n";
+  ContentDB full{};
+  Diagnostics fullDiag;
+  REQUIRE(parseContent(many, "modes.toml", full, fullDiag));
+  CHECK(full.modeCount == 32);
+  CHECK(full.findMode("m31") == std::optional<uint8_t>{31});
+  CHECK(contains(loadErrors(many + "[[mode]]\nname = \"m32\"\n"),
+                 "too many modes (at most 32, kMaxModes)"));
 }
 
 TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][modes]") {
@@ -786,13 +866,14 @@ TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][m
   CHECK(loaded.modes[survival].timeLimitTicks > 0);
 }
 
-TEST_CASE("content/ ships blink, slam and parry with a mode each (v0.21)",
-          "[content][loader][abilities]") {
+TEST_CASE("content/ ships blink, slam and parry as loadouts (v0.21, v0.31)",
+          "[content][loader][abilities][loadout]") {
   ContentDB loaded{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
   // The base kit keeps the ability button empty.
   CHECK(loaded.player.abilities[sim::kAbilitySlotExtra] == 0);
+  CHECK(loaded.loadouts[0].name.view() == sim::kBaseLoadoutName);
   const std::array<std::pair<std::string_view, sim::AbilityKind>, 3> kinds = {{
       {"blink", sim::AbilityKind::Blink},
       {"slam", sim::AbilityKind::Slam},
@@ -800,17 +881,16 @@ TEST_CASE("content/ ships blink, slam and parry with a mode each (v0.21)",
   }};
   for (const auto& [name, kind] : kinds) {
     INFO(name);
-    const std::string modeName = "rounds_" + std::string(name);
-    const uint8_t mode = loaded.findMode(modeName).value_or(0);
-    REQUIRE(mode != 0);
-    const sim::ModeDef& m = loaded.modes[mode];
-    CHECK(m.kind == sim::ModeKind::Rounds);
-    REQUIRE(m.hasAbilities == 1);
-    CHECK(m.abilities[sim::kAbilitySlotDash] == loaded.player.abilities[sim::kAbilitySlotDash]);
-    CHECK(m.abilities[sim::kAbilitySlotThrow] == loaded.player.abilities[sim::kAbilitySlotThrow]);
-    const sim::AbilityDef& def = loaded.abilityAt(m.abilities[sim::kAbilitySlotExtra]);
+    const uint8_t index = loaded.findLoadout(name).value_or(0);
+    REQUIRE(index != 0);
+    const sim::LoadoutDef& l = loaded.loadouts[index];
+    CHECK(l.abilities[sim::kAbilitySlotDash] == loaded.player.abilities[sim::kAbilitySlotDash]);
+    CHECK(l.abilities[sim::kAbilitySlotThrow] == loaded.player.abilities[sim::kAbilitySlotThrow]);
+    const sim::AbilityDef& def = loaded.abilityAt(l.abilities[sim::kAbilitySlotExtra]);
     CHECK(def.name.view() == name);
     CHECK(def.kind == kind);
+    // The v0.21 ability modes are gone: the kit is its own axis.
+    CHECK_FALSE(loaded.findMode("rounds_" + std::string(name)).has_value());
   }
 }
 

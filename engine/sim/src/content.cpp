@@ -83,6 +83,9 @@ constexpr ContentDB makeDefaultContent() {
   c.player.hitStunTicks = 6;
   c.player.abilities[kAbilitySlotDash] = static_cast<uint8_t>(AbilityKind::Dash);
   c.player.abilities[kAbilitySlotThrow] = static_cast<uint8_t>(AbilityKind::Throw);
+  c.loadouts[0].name = ContentName::of(kBaseLoadoutName);
+  c.loadouts[0].abilities = c.player.abilities;
+  c.loadoutCount = 1;
 
   c.arenas[0] = makeArena();
   c.arenaCount = 1;

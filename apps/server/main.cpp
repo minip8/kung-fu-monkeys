@@ -6,8 +6,8 @@
 //              [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]
 //              [--max-players N] [--token T]... [--restart-delay S]
 //              [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]
-//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
-//              [--verbose]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
+//              [--powerups LIST] [--verbose]
 //
 // --port P             signaling port (default 9000; 0 = ephemeral, printed)
 // --bind ADDR          signaling bind address (default all interfaces)
@@ -37,8 +37,9 @@
 //                      over-budget ticks, mean fuel per act)
 // --content DIR        content directory (default: content/ next to the
 //                      executable, else the copy built into it)
-// --arena NAME, --mode NAME   the matches' arena and mode (default: the first
-//                      of each); clients receive them in Welcome/MatchConfig
+// --arena NAME, --mode NAME, --loadout NAME   the matches' arena, mode and
+//                      loadout (default: the first of each); clients receive
+//                      them in Welcome/MatchConfig
 // --powerups LIST      the power-ups the arena's spawners may draw: all
 //                      (default), none or comma-separated names
 //                      (shield,speed_boost); sent with the arena and mode
@@ -97,6 +98,7 @@ struct Options {
   std::string contentDir;  // empty: next to the executable, else embedded
   std::string arena;       // names; empty = the first one
   std::string mode;
+  std::string loadout;
   std::string powerUps;  // --powerups list; empty = all
   bool verbose{false};
 };
@@ -106,8 +108,8 @@ constexpr const char* kUsage =
     "                  [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]\n"
     "                  [--max-players N] [--token T]... [--restart-delay S]\n"
     "                  [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]\n"
-    "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
-    "                  [--verbose]\n"
+    "                  [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
+    "                  [--powerups LIST] [--verbose]\n"
     "  --bot SPEC        ref, ref:easy|medium|hard or path.wasm (repeatable, slot order)\n"
     "  --bots N          at least N bots: the --bot list padded with ref:hard\n"
     "  --bot-delay V     auto (default: the human clients' lead, 0 without one) or ticks\n"
@@ -202,6 +204,8 @@ template <typename T>
       o.arena = v;
     } else if (arg == "--mode") {
       o.mode = v;
+    } else if (arg == "--loadout") {
+      o.loadout = v;
     } else if (arg == "--powerups") {
       o.powerUps = v;
     } else {
@@ -267,6 +271,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     if (!diag.items().empty()) std::fprintf(stderr, "%s", diag.format().c_str());
     std::string error;
     if (!ok || !content::resolveMatchNames(loaded.db, o.arena, o.mode, match, error) ||
+        !content::resolveLoadoutName(loaded.db, o.loadout, match, error) ||
         !content::resolvePowerUpList(loaded.db, o.powerUps, match.powerUps, error)) {
       std::fprintf(stderr, "error: %s\n", ok ? error.c_str() : "the content failed to load");
       return EXIT_FAILURE;

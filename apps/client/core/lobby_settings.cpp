@@ -35,12 +35,14 @@ bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& conte
                        LobbySettings& out, std::string& error) {
   sim::MatchConfig config{};
   if (!content::resolveMatchNames(content, options.arena, options.mode, config, error) ||
+      !content::resolveLoadoutName(content, options.loadout, config, error) ||
       !content::resolvePowerUpList(content, options.powerUps, config.powerUps, error)) {
     return false;
   }
   out.arena = config.arena;
   out.mode = config.mode;
   out.powerUps = config.powerUps;
+  out.loadout = config.loadout;
   out.bots = options.bots;
   out.botTier = options.botDifficulty;
   out.volume = options.volume;
@@ -52,6 +54,7 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
                         ClientOptions& options) {
   options.arena = content.arenaAt(settings.arena).name.view();
   options.mode = content.modeAt(settings.mode).name.view();
+  options.loadout = content.loadoutAt(settings.loadout).name.view();
   options.powerUps = content::powerUpListText(content, settings.powerUps);
   options.bots = settings.bots;
   options.botDifficulty = settings.botTier;
@@ -63,6 +66,7 @@ std::string settingsText(const ClientOptions& options) {
   std::string s;
   s += "arena=" + options.arena + "\n";
   s += "mode=" + options.mode + "\n";
+  s += "loadout=" + options.loadout + "\n";
   s += "powerups=" + (options.powerUps.empty() ? std::string("all") : options.powerUps) + "\n";
   s += "bots=" + std::to_string(options.bots) + "\n";
   s += "bot_difficulty=" + std::string(ai::toString(options.botDifficulty)) + "\n";
@@ -90,15 +94,16 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
     }
     const std::string_view key = trim(line.substr(0, eq));
     const std::string_view value = trim(line.substr(eq + 1));
-    if (key == "arena" || key == "mode") {
+    if (key == "arena" || key == "mode" || key == "loadout") {
       if (value.empty()) continue;  // the default
-      const bool known = key == "arena" ? content.findArena(value).has_value()
-                                        : content.findMode(value).has_value();
+      const bool known = key == "arena"  ? content.findArena(value).has_value()
+                         : key == "mode" ? content.findMode(value).has_value()
+                                         : content.findLoadout(value).has_value();
       if (!known) {
         warn("this content has no " + std::string(key) + " '" + std::string(value) + "'");
         continue;
       }
-      (key == "arena" ? options.arena : options.mode) = value;
+      (key == "arena" ? options.arena : key == "mode" ? options.mode : options.loadout) = value;
     } else if (key == "powerups") {
       uint16_t set = 0;
       std::string error;

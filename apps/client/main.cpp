@@ -2,8 +2,9 @@
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
 //              [--bot-difficulty easy|medium|hard] [--bot-module PATH] [--bot SPEC]
-//              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
-//              [--no-hot-reload] [--no-settings] [--overlay] [--capsules] [--exit-after-frames N]
+//              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
+//              [--powerups LIST] [--no-hot-reload] [--no-settings] [--overlay] [--capsules]
+//              [--exit-after-frames N]
 //              [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
@@ -30,7 +31,7 @@
 // content kept). Online the server's content and match config rule.
 //
 // Lobby settings (v0.24, core/lobby_menu.hpp, core/lobby_settings.hpp): the
-// local lobby's panel picks the arena, mode, power-up set, bots, the bot
+// local lobby's panel picks the arena, mode, loadout, power-up set, bots, the bot
 // difficulty, volume and mute, from the mouse, the arrow keys / WASD or a joined pad's d-pad and
 // stick. Every change applies to the lobby's MatchSession and the audio at
 // once and is saved (natively in SDL's preference directory, in the browser
@@ -202,6 +203,7 @@ void applyLobbySettings(App& app) {
   if (s.arena() != ls.arena) s.setArena(ls.arena);
   if (s.mode() != ls.mode) s.setMode(ls.mode);
   if (s.powerUps() != ls.powerUps) s.setPowerUps(ls.powerUps);
+  if (s.loadout() != ls.loadout) s.setLoadout(ls.loadout);
   s.setBotCount(ls.bots);
   ls.bots = s.botCount();  // clamped to the free slots
   if (s.botSpec().tier != ls.botTier) s.setBotTier(ls.botTier);
@@ -270,6 +272,7 @@ void reloadContent(App& app, std::uint64_t nowNs) {
   app.lobby.setContent(app.content.db);
   app.lobby.settings().arena = app.session->arena();  // kept when the new content has it
   app.lobby.settings().mode = app.session->mode();
+  app.lobby.settings().loadout = app.session->loadout();
   std::printf("kfm_client: reloaded %s; match restarted\n", app.content.describe().c_str());
   std::fflush(stdout);
 }
@@ -628,6 +631,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
                             .arena = lobby.arena,
                             .mode = lobby.mode,
                             .powerUps = lobby.powerUps,
+                            .loadout = lobby.loadout,
                             .content = &app.content.db,
                             .botSeed = app.options.playersSeed,
                             .bots = online ? std::uint8_t{0} : lobby.bots,

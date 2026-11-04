@@ -112,9 +112,7 @@ void clampHp(Player& p, uint8_t oldMaxHp, uint8_t newMaxHp) {
 
 void applyAbilityOverrides(Player& p, const MatchContent& content) {
   const ContentDB& db = content.db;
-  std::array<uint8_t, kAbilitySlots> want{};
-  for (uint8_t slot = 0; slot < kAbilitySlots; ++slot)
-    want[slot] = content.loadout(slot);
+  std::array<uint8_t, kAbilitySlots> want = content.loadout();
   forEachGrant(db, p.modifiers, [&](const PowerUpGrant& g) {
     if (g.kind == GrantKind::AbilityOverride && g.slot < kAbilitySlots) want[g.slot] = g.ability;
   });

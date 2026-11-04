@@ -44,6 +44,7 @@ MatchSession::MatchSession(const SessionConfig& config)
       content_(loaded_) {
   arena_ = config.arena < loaded_.arenaCount ? config.arena : 0;
   mode_ = config.mode < loaded_.modeCount ? config.mode : 0;
+  loadout_ = config.loadout < loaded_.loadoutCount ? config.loadout : 0;
   clock_.setMaxTicksPerFrame(std::min(config.maxTicksPerFrame, kDefaultMaxTicksPerFrame));
   if (config.bindKeyboardToSlot0) {
     (void)sampler_.bind(PlayerId{0}, platform::DeviceBinding::keyboard(0));
@@ -276,17 +277,27 @@ void MatchSession::setPowerUps(uint16_t powerUps) {
   if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
 }
 
+void MatchSession::setLoadout(uint8_t loadout) {
+  loadout_ = loadout < content_.loadoutCount ? loadout : 0;
+  if (phase_ == SessionPhase::Lobby) createWorld(lobbyPresentMask());
+}
+
 void MatchSession::replaceContent(const sim::ContentDB& content, uint64_t nowNs) {
   loaded_ = content;
   content_ = content;
   if (arena_ >= content_.arenaCount) arena_ = 0;
   if (mode_ >= content_.modeCount) mode_ = 0;
+  if (loadout_ >= content_.loadoutCount) loadout_ = 0;
   restart(nowNs, false);
 }
 
 void MatchSession::createWorld(sim::PlayerMask present) {
-  matchConfig_ = sim::MatchConfig{
-      .seed = seed_, .players = present, .arena = arena_, .mode = mode_, .powerUps = powerUps_};
+  matchConfig_ = sim::MatchConfig{.seed = seed_,
+                                  .players = present,
+                                  .arena = arena_,
+                                  .mode = mode_,
+                                  .powerUps = powerUps_,
+                                  .loadout = loadout_};
   curr_ = sim::initialWorld(matchConfig_);
   prev_ = curr_;
 }

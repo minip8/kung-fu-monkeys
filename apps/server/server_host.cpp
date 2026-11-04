@@ -227,11 +227,12 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
   }
   lastStatsNs_ = nowNs;
   nextStatsNs_ = config_.statsEveryNs > 0 ? nowNs + config_.statsEveryNs : 0;
-  log("start seed=0x{:x} arena={} mode={} power_ups=0x{:04x} bots={} slots={} max_players={} "
-      "tokens={} bot_specs={} bot_delay={} bot_seed=0x{:x}",
+  log("start seed=0x{:x} arena={} mode={} loadout={} power_ups=0x{:04x} bots={} slots={} "
+      "max_players={} tokens={} bot_specs={} bot_delay={} bot_seed=0x{:x}",
       config_.server.match.seed, content.arenaAt(config_.server.match.arena).name.view(),
-      content.modeAt(config_.server.match.mode).name.view(), config_.server.match.powerUps, placed,
-      slotList(server_->bots()), config_.server.maxPlayers,
+      content.modeAt(config_.server.match.mode).name.view(),
+      content.loadoutAt(config_.server.match.loadout).name.view(), config_.server.match.powerUps,
+      placed, slotList(server_->bots()), config_.server.maxPlayers,
       config_.server.acceptToken ? "checked" : "any", specs.empty() ? std::string("-") : specs,
       config_.botDelayTicks ? std::to_string(*config_.botDelayTicks) : std::string("auto"),
       config_.server.botSeed);

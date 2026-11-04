@@ -13,7 +13,8 @@
 //     entry; an empty, absent or (with fog, later) unseen entry is all zero;
 //   - every `reserved*` field is zero in v1 (the v0.29 teams, fog and calls,
 //     §8 "Observation v1 reserves"), so the first fog or team mode fills them
-//     without a schema bump.
+//     without a schema bump; since architecture v0.31 `self.reservedRole`
+//     carries the loadout index (docs/bot-abi.md §3).
 //
 // Units:
 //   Q16.16  int32 raw fixed point: value / 65536 arena units (positions,
@@ -216,7 +217,7 @@ struct ObsSelf {
   uint16_t respawnTicks;         // ticks until the respawn while dead, 0 = none due
   uint8_t facing;                // angle8: aim direction (the body faces it)
   uint8_t reservedFacingOctant;  // v0.29 grid space: facing as 0..7 (0 in v1)
-  uint8_t reservedRole;          // v0.29: loadout index (0 in v1)
+  uint8_t reservedRole;          // v0.29: loadout index (filled since v0.31)
   uint8_t reservedTeam;          // v0.29: own team index (0 in v1)
   int16_t reservedCellX;         // v0.29 grid space: own cell (0 in v1)
   int16_t reservedCellY;

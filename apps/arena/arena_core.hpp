@@ -93,7 +93,7 @@ class BotFactory {
 };
 
 struct MatchSetup {
-  // seed, arena, mode and powerUps; players is set by runMatch from bots.
+  // seed, arena, mode, loadout and powerUps; players is set by runMatch from bots.
   sim::MatchConfig config{.seed = kDefaultSeed};
   std::vector<ai::BotSpec> bots;  // 1..kMaxPlayers; bot b plays slot (b + rotation) mod n
   // kfm_arena --rotate sets it to the match index k, so across n matches every

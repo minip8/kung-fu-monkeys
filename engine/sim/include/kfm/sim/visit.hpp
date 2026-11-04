@@ -295,7 +295,10 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.scoreToWin);
   v.u16(d.respawnTicks);
   v.u16(d.respawnInvulnTicks);
-  v.u8(d.hasAbilities);
+}
+template <class V>
+void visit(V& v, LoadoutDef& d) {
+  visit(v, d.name);
   for (uint8_t& a : d.abilities)
     v.u8(a);
 }
@@ -323,6 +326,9 @@ void visit(V& v, ContentDB& c) {
   for (PowerUpDef& d : c.powerUps)
     visit(v, d);
   v.u8(c.powerUpCount);
+  for (LoadoutDef& d : c.loadouts)
+    visit(v, d);
+  v.u8(c.loadoutCount);
 }
 
 // --- input and state ---------------------------------------------------------

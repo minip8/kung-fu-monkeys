@@ -1,6 +1,7 @@
 // Helpers for the v0.21 ability scenarios: content with an extra ability in
-// the third slot (or a mode loadout), and a Playing world for any
-// MatchContent. The defs mirror content/abilities.toml.
+// the third slot (or a loadout picked through MatchConfig::loadout, v0.31),
+// and a Playing world for any MatchContent. The defs mirror
+// content/abilities.toml and content/loadouts.toml.
 #pragma once
 
 #include "scenario_util.hpp"
@@ -68,8 +69,27 @@ namespace kfm::sim::test {
   return c;
 }
 
+// Appends a loadout named `name` to `c`: the base kit's dash and throw plus
+// ability def `extra` on the ability button. Returns its index, what
+// MatchConfig::loadout selects.
+[[nodiscard]] inline uint8_t addLoadout(ContentDB& c, std::string_view name, uint8_t extra) {
+  REQUIRE(c.loadoutCount >= 1);
+  REQUIRE(c.loadoutCount < kMaxLoadouts);
+  const auto index = c.loadoutCount++;
+  LoadoutDef& l = c.loadouts[index];
+  l.name = ContentName::of(name);
+  l.abilities = {c.player.abilities[kAbilitySlotDash], c.player.abilities[kAbilitySlotThrow],
+                 extra};
+  return index;
+}
+
+// The match content of `c` with loadout `loadout` (arena 0, mode 0).
+[[nodiscard]] inline MatchContent withLoadoutMatch(const ContentDB& c, uint8_t loadout) {
+  return matchContent(c, MatchConfig{.loadout = loadout});
+}
+
 // Steps idle frames until the match is Playing (makePlayingWorld for any
-// MatchContent, e.g. a mode with its own loadout).
+// MatchContent, e.g. one with a loadout of its own).
 [[nodiscard]] inline WorldState playingWorld(uint64_t seed, PlayerMask players,
                                              const MatchContent& content) {
   WorldState s = initialWorld(MatchConfig{seed, players});

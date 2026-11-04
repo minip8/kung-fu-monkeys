@@ -441,7 +441,9 @@ All zero in v1 (§3).
 
 Architecture v0.29 (§5.3, §5.12, §8 "Teams, fog and calls") designs squads, fog and calls. v1
 reserves their fields so the first such mode fills them without a version bump. All are zero in
-v1, and `header.schemaFlags` bit 0 stays clear until fog exists.
+v1 except the ones the last column marks as filled (architecture v0.31 fills `self.reservedRole`
+with the loadout index the match plays), and `header.schemaFlags` bit 0 stays clear until fog
+exists.
 
 | Field | Meaning once used |
 |---|---|
@@ -451,7 +453,7 @@ v1, and `header.schemaFlags` bit 0 stays clear until fog exists.
 | `self.reservedCellX`, `self.reservedCellY` | the own cell in a grid mode |
 | `self.reservedFacingOctant` | the facing quantised to eight directions in a grid mode |
 | `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks to the next latch |
-| `self.reservedRole` | the loadout index the slot plays |
+| `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; per slot once team modes hand out roles) |
 | `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index |
 | `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state) |
 | `header.reserved0` | nothing yet |

@@ -109,6 +109,22 @@ bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena, st
   return true;
 }
 
+bool resolveLoadoutName(const sim::ContentDB& content, std::string_view loadout,
+                        sim::MatchConfig& config, std::string& error) {
+  if (loadout.empty()) {
+    config.loadout = 0;
+    return true;
+  }
+  const std::optional<uint8_t> i = content.findLoadout(loadout);
+  if (!i) {
+    error = "unknown loadout '" + std::string(loadout) +
+            "' (content has: " + nameList(content.loadouts, content.loadoutCount) + ")";
+    return false;
+  }
+  config.loadout = *i;
+  return true;
+}
+
 bool resolvePowerUpList(const sim::ContentDB& content, std::string_view list, uint16_t& powerUps,
                         std::string& error) {
   if (list.empty() || list == "all") {

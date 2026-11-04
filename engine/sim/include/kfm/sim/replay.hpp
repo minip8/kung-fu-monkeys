@@ -5,10 +5,10 @@
 // Layout (all little-endian, bit-packed):
 //   header : magic "KFMR" (4×u8), version u16, seed u64, contentHash u32,
 //            buildHash u32, players u16, arena u8, mode u8, powerUps u16,
-//            tickCount u32
+//            loadout u8, tickCount u32
 //   (version 2, M4: arena and mode joined the header; version 3: the
-//   per-match power-up set. Older files are refused and re-recorded by
-//   regen-replay-corpus)
+//   per-match power-up set; version 4 (v0.31): the loadout. Older files are
+//   refused and re-recorded by regen-replay-corpus)
 //   frames : tickCount × InputFrame via visit() (present mask + inputs)
 #pragma once
 
@@ -22,8 +22,8 @@
 
 namespace kfm::sim {
 
-inline constexpr uint16_t kReplayVersion = 3;
-inline constexpr size_t kReplayHeaderBytes = 4 + 2 + 8 + 4 + 4 + 2 + 1 + 1 + 2 + 4;
+inline constexpr uint16_t kReplayVersion = 4;
+inline constexpr size_t kReplayHeaderBytes = 4 + 2 + 8 + 4 + 4 + 2 + 1 + 1 + 2 + 1 + 4;
 
 struct ReplayHeader {
   uint64_t seed{0};
@@ -33,10 +33,11 @@ struct ReplayHeader {
   uint8_t arena{0};                 // MatchConfig::arena / ::mode: indices into the content
   uint8_t mode{0};                  // whose hash is contentHash
   uint16_t powerUps{kAllPowerUps};  // MatchConfig::powerUps
+  uint8_t loadout{0};               // MatchConfig::loadout (version 4)
   uint32_t tickCount{0};
 
   [[nodiscard]] constexpr MatchConfig matchConfig() const {
-    return MatchConfig{seed, players, arena, mode, powerUps};
+    return MatchConfig{seed, players, arena, mode, powerUps, loadout};
   }
 };
 

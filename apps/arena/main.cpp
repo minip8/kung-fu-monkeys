@@ -4,7 +4,8 @@
 // client) and a result line per match plus a summary line out.
 //
 //   kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--rotate]
-//             [--ticks N] [--arena NAME] [--mode NAME] [--powerups LIST]
+//             [--ticks N] [--arena NAME] [--mode NAME] [--loadout NAME]
+//             [--powerups LIST]
 //             [--content DIR] [--fuel N] [--delay T]
 //             [--replay out.kfmr | --replay-dir DIR] [--result out.txt]
 //             [--json] [--quiet] [--log]
@@ -30,7 +31,7 @@
 //   --quiet        no per-match lines on stdout (the summary still prints)
 //   --log          print each module's captured kfm_log output at the end
 //                  (stderr)
-//   --content DIR, --arena, --mode, --powerups: as kfm_replay; the content
+//   --content DIR, --arena, --mode, --loadout, --powerups: as kfm_replay; the content
 //                  defaults to the copy built into the binary
 //
 // Exit codes: 0 ok (a capped match is a result, not an error), 2 bad
@@ -70,7 +71,8 @@ constexpr uint32_t kMaxTicks = 1'000'000;
 
 constexpr const char* kUsage =
     "usage: kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--rotate]\n"
-    "                 [--ticks N] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
+    "                 [--ticks N] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
+    "                 [--powerups LIST]\n"
     "                 [--content DIR] [--fuel N] [--delay T]\n"
     "                 [--replay out.kfmr | --replay-dir DIR] [--result out.txt]\n"
     "                 [--json] [--quiet] [--log]\n"
@@ -88,6 +90,7 @@ struct Args {
   std::string contentDir;
   std::string arenaName;
   std::string modeName;
+  std::string loadoutName;
   std::string powerUps;
   std::string replay;
   std::string replayDir;
@@ -118,8 +121,8 @@ bool parseArgs(int argc, const char* const* argv, Args& a) {
     const bool takesValue = arg == "--bot" || arg == "--bots" || arg == "--seed" ||
                             arg == "--matches" || arg == "--ticks" || arg == "--fuel" ||
                             arg == "--delay" || arg == "--content" || arg == "--arena" ||
-                            arg == "--mode" || arg == "--powerups" || arg == "--replay" ||
-                            arg == "--replay-dir" || arg == "--result";
+                            arg == "--mode" || arg == "--loadout" || arg == "--powerups" ||
+                            arg == "--replay" || arg == "--replay-dir" || arg == "--result";
     if (takesValue) {
       if (i + 1 >= argc) {
         std::fprintf(stderr, "error: %s needs a value\n", argv[i]);
@@ -153,6 +156,8 @@ bool parseArgs(int argc, const char* const* argv, Args& a) {
         a.arenaName = v;
       } else if (arg == "--mode") {
         a.modeName = v;
+      } else if (arg == "--loadout") {
+        a.loadoutName = v;
       } else if (arg == "--powerups") {
         a.powerUps = v;
       } else if (arg == "--replay") {
@@ -233,6 +238,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   arena::MatchSetup setup;
   std::string error;
   if (!content::resolveMatchNames(loaded.db, a.arenaName, a.modeName, setup.config, error) ||
+      !content::resolveLoadoutName(loaded.db, a.loadoutName, setup.config, error) ||
       !content::resolvePowerUpList(loaded.db, a.powerUps, setup.config.powerUps, error)) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
     return kExitArgs;

@@ -58,8 +58,8 @@ clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | 
 clang-tidy -p build/dev $(find engine apps tests -name '*.cpp')
 build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|verify ...  # replay tool
 build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
-#   record-*/bench/stats take --arena NAME --mode NAME; every command takes --content DIR (default: the
-#   content compiled into the binary); `info` prints the replay's arena/mode and both content hashes
+#   record-*/bench/stats take --arena NAME --mode NAME --loadout NAME; every command takes --content DIR (default:
+#   the content compiled into the binary); `info` prints the replay's arena/mode/loadout and both content hashes
 build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
 build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay] [--mute] [--volume 0..100]   # playable client
@@ -67,11 +67,13 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
 #   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
 #   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock)
+#   loadouts (content/loadouts.toml, --loadout NAME): base (default, [player] abilities), blink, slam, parry
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
 #   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
-#   arena (with preview), mode, power-up toggles, bots, volume, mute; saved between runs (SDL pref dir / browser
-#   localStorage), flags win: --arena NAME --mode NAME --powerups all|none|a,b ; --no-settings ignores the saved file
-#   browser: kfm_client.html?arena=pillars&mode=deathmatch&powerups=shield,big_banana
+#   arena (with preview), mode, loadout, power-up toggles, bots, volume, mute; saved between runs (SDL pref dir /
+#   browser localStorage), flags win: --arena NAME --mode NAME --loadout NAME --powerups all|none|a,b ;
+#   --no-settings ignores the saved file
+#   browser: kfm_client.html?arena=pillars&mode=deathmatch&loadout=slam&powerups=shield,big_banana
 #   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
 ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
@@ -89,13 +91,13 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
 #   bots: --bot SPEC (repeatable, slot order; SPEC = ref | ref:easy|medium|hard | path.wasm), --bots N pads with
 #   ref:hard, --bot-delay auto|N (auto = the humans' lead, 0 bot vs bot), --fuel N (instructions per tick, default 100000)
-#   also --content DIR --arena NAME --mode NAME (kfm_netsim and kfm_render_probe take the same three)
+#   also --content DIR --arena NAME --mode NAME --loadout NAME (kfm_netsim and kfm_render_probe take the same four)
 #   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
 build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]   # headless bot matches
 #   --rotate moves every bot through every slot across the tournament (the sim's spawn order favours some slots)
-#   [--arena NAME --mode NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
+#   [--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
 #   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
 #   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
 ctest --preset dev -R 'kfm_ai|arena'           # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena

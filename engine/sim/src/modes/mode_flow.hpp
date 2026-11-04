@@ -12,8 +12,8 @@
 
 namespace kfm::sim {
 
-// A fresh monkey for slot `id` at `pos` (full hp, starting ammo, the base
-// loadout, facing the arena centre). Keeps p.prevButtons so a button held
+// A fresh monkey for slot `id` at `pos` (full hp, starting ammo, the
+// match's loadout, facing the arena centre). Keeps p.prevButtons so a button held
 // across a round boundary is not a fresh press.
 void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content);
 

@@ -483,13 +483,16 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
 }
 
 // The match a config selects, as text: arena, mode with its key numbers,
-// the power-up set. Shared by the online lobby and the local preview column.
+// the loadout with its abilities, the power-up set. Shared by the online
+// lobby and the local preview column.
 void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   const sim::ArenaDef& arena = db.arenaAt(config.arena);
   const sim::ModeDef& mode = db.modeAt(config.mode);
   ImGui::Text("Arena  %s", arena.name.cStr());
   ImGui::Text("Mode   %s", mode.name.cStr());
   ImGui::TextWrapped("%s", modeSummary(mode).c_str());
+  ImGui::Text("Kit    %s (%s)", db.loadoutAt(config.loadout).name.cStr(),
+              loadoutSummary(db, config.loadout).c_str());
   if (arena.pickupSpawnerCount == 0) {
     ImGui::TextDisabled("No power-up spawners in this arena.");
   } else {
@@ -519,7 +522,8 @@ HudView hudView(const NetSession& session) {
     const sim::MatchConfig& next = session.client().matchConfig();
     const sim::ContentDB& db = session.content();
     v.nextMatch = std::string("Next match: ") + db.arenaAt(next.arena).name.cStr() + ", " +
-                  db.modeAt(next.mode).name.cStr() +
+                  db.modeAt(next.mode).name.cStr() + ", loadout " +
+                  db.loadoutAt(next.loadout).name.cStr() +
                   ", power-ups: " + content::powerUpListText(db, next.powerUps);
   }
   return v;
@@ -704,7 +708,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
       ImGui::Text("Server %s", connectUrl.c_str());
       ImGui::TextDisabled(
           "Each joined device gets its own slot; the server picks the slots, the arena, the "
-          "mode and the power-ups (shown once connected).");
+          "mode, the loadout and the power-ups (shown once connected).");
     } else {
       const sim::ContentDB& db = session.content();
       const LobbySettings& ls = menu.settings();
@@ -714,8 +718,11 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
         ImGui::TableNextColumn();
         out.changed = drawSettingsRows(menu, db);
         ImGui::TableNextColumn();
-        const sim::MatchConfig preview{
-            .seed = session.seed(), .arena = ls.arena, .mode = ls.mode, .powerUps = ls.powerUps};
+        const sim::MatchConfig preview{.seed = session.seed(),
+                                       .arena = ls.arena,
+                                       .mode = ls.mode,
+                                       .powerUps = ls.powerUps,
+                                       .loadout = ls.loadout};
         const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
         drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps, ImVec2(w, w * 0.62f));
         matchConfigText(db, preview);
@@ -735,7 +742,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
     ImGui::BulletText(
         "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "
         "ability");
-    ImGui::BulletText("The ability button fires the third slot (modes such as rounds_slam)");
+    ImGui::BulletText("The ability button fires the third slot (loadouts such as slam)");
     ImGui::TextDisabled("Aim follows the move direction on keyboards. F1: debug overlay");
 
     ImGui::Spacing();

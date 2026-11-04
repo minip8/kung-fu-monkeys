@@ -1,7 +1,7 @@
 // Blink end to end (architecture §5.5, v0.21): a teleport dash in the third
 // slot, fired by the ability button. Activation, the startup telegraph, the
 // jump (walls stop it, nothing on the path is touched), cooldown, and the
-// two ways to reach it: a mode loadout and a power-up override of a slot.
+// two ways to reach it: a loadout (MatchConfig::loadout) and a power-up override of a slot.
 #include "loadout_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -117,23 +117,19 @@ TEST_CASE("blink: the cooldown is counted from the press", "[scenario][blink]") 
   CHECK(countEvents(log, EventKind::PlayerBlinked) == 2);
 }
 
-TEST_CASE("blink: reachable through a mode loadout and a power-up override", "[scenario][blink]") {
+TEST_CASE("blink: reachable through a loadout and a power-up override", "[scenario][blink]") {
   uint8_t blink = 0;
   ContentDB c = withAbility(blinkDef(), blink);
-  SECTION("a mode loadout puts it on the ability button for that mode only") {
-    ModeDef& mode = c.modes[c.modeCount++];
-    mode = c.modes[0];
-    mode.name = ContentName::of("rounds_blink");
-    mode.hasAbilities = 1;
-    mode.abilities = {c.player.abilities[0], c.player.abilities[1], blink};
-    const MatchContent blinkMatch(c, 0, 1);
+  SECTION("a loadout puts it on the ability button for the matches that pick it") {
+    const uint8_t loadout = addLoadout(c, "blink", blink);
+    const MatchContent blinkMatch = withLoadoutMatch(c, loadout);
     WorldState s = playingWorld(5, 0b11, blinkMatch);
     CHECK(playerAt(s, kP0).abilities[kAbilitySlotExtra].defIndex == blink);
     EventLog log;
     pressOnce(s, kP0, kAbility, blinkMatch, log);
     idle(s, blinkDef().startupTicks, blinkMatch, log);
     CHECK(countEvents(log, EventKind::PlayerBlinked) == 1);
-    // The default mode keeps the base kit: the ability button does nothing.
+    // The default loadout keeps the base kit: the ability button does nothing.
     const MatchContent rounds(c, 0, 0);
     WorldState r = playingWorld(5, 0b11, rounds);
     CHECK(playerAt(r, kP0).abilities[kAbilitySlotExtra].defIndex == 0);

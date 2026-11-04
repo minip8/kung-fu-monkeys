@@ -3,6 +3,7 @@
 #include "kfm/sim/constants.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 
@@ -139,6 +140,7 @@ void LobbyMenu::setContent(const sim::ContentDB& content) {
   rowCount_ = 0;
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Arena};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mode};
+  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Loadout};
   const uint8_t powerUps = std::min<uint8_t>(content.powerUpCount, sim::kMaxPowerUps);
   for (uint8_t i = 0; i < powerUps; ++i)
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::PowerUp, i};
@@ -148,6 +150,7 @@ void LobbyMenu::setContent(const sim::ContentDB& content) {
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
   if (settings_.arena >= content.arenaCount) settings_.arena = 0;
   if (settings_.mode >= content.modeCount) settings_.mode = 0;
+  if (settings_.loadout >= content.loadoutCount) settings_.loadout = 0;
   focus_ = 0;
   for (std::size_t i = 0; i < rowCount_; ++i) {
     if (rows_[i] == focused) focus_ = i;
@@ -193,6 +196,9 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     case LobbyRowKind::Mode:
       settings_.mode = cycle(settings_.mode, db.modeCount);
       break;
+    case LobbyRowKind::Loadout:
+      settings_.loadout = cycle(settings_.loadout, db.loadoutCount);
+      break;
     case LobbyRowKind::PowerUp:
       settings_.powerUps = static_cast<uint16_t>(settings_.powerUps ^ (1u << r.powerUp));
       break;
@@ -228,6 +234,8 @@ std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
       return "Arena";
     case LobbyRowKind::Mode:
       return "Mode";
+    case LobbyRowKind::Loadout:
+      return "Loadout";
     case LobbyRowKind::PowerUp:
       return std::string(content().powerUpAt(row.powerUp).name.view());
     case LobbyRowKind::Bots:
@@ -249,6 +257,8 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return std::string(db.arenaAt(settings_.arena).name.view());
     case LobbyRowKind::Mode:
       return std::string(db.modeAt(settings_.mode).name.view());
+    case LobbyRowKind::Loadout:
+      return std::string(db.loadoutAt(settings_.loadout).name.view());
     case LobbyRowKind::PowerUp:
       return (settings_.powerUps & (1u << row.powerUp)) != 0 ? "on" : "off";
     case LobbyRowKind::Bots:
@@ -261,6 +271,17 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return settings_.mute ? "muted" : "on";
   }
   return {};
+}
+
+std::string loadoutSummary(const sim::ContentDB& db, uint8_t loadout) {
+  const std::array<uint8_t, sim::kAbilitySlots>& slots = db.loadoutAbilities(loadout);
+  std::string s;
+  for (uint8_t slot = 0; slot < sim::kAbilitySlots; ++slot) {
+    if (slots[slot] == 0) continue;  // an empty slot (the base kit's ability button)
+    if (!s.empty()) s += ", ";
+    s += db.abilityAt(slots[slot]).name.view();
+  }
+  return s;
 }
 
 std::string ticksClock(uint32_t ticks) {

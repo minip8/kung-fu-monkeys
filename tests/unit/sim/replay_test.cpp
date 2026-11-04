@@ -16,6 +16,7 @@ TEST_CASE("Replay header round-trip and validation", "[sim][replay]") {
   h.arena = 3;
   h.mode = 5;
   h.powerUps = 0x0A5;
+  h.loadout = 2;
   h.tickCount = 600;
 
   std::vector<std::byte> buf(replayMaxBytes(h));
@@ -34,8 +35,16 @@ TEST_CASE("Replay header round-trip and validation", "[sim][replay]") {
   CHECK(g.arena == 3);
   CHECK(g.mode == 5);
   CHECK(g.powerUps == 0x0A5);
-  CHECK(g.matchConfig() == MatchConfig{h.seed, h.players, 3, 5, 0x0A5});
+  CHECK(g.loadout == 2);
+  CHECK(g.matchConfig() == MatchConfig{h.seed, h.players, 3, 5, 0x0A5, 2});
   CHECK(ReplayHeader{}.powerUps == kAllPowerUps);
+  CHECK(ReplayHeader{}.loadout == 0);
+
+  // A version 3 header (before the loadout, v0.31) is refused, not misread.
+  std::vector<std::byte> old(w.written().begin(), w.written().end());
+  old[4] = std::byte{3};
+  BitReader v3(old);
+  CHECK_FALSE(readReplayHeader(v3, g));
 
   buf[0] = std::byte{'X'};
   BitReader bad(w.written());

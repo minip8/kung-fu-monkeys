@@ -127,7 +127,9 @@ TEST_CASE("a hand-built world maps field by field", "[ai][observation]") {
   mode.respawnInvulnTicks = 90;
   c.modeCount = 2;
   const uint8_t shield = addPowerUp(c, "shield", 600, {tagGrant(Tag::Shielded)});
-  const MatchContent content(c, 1, 1);
+  c.loadouts[1] = LoadoutDef{ContentName::of("pair"), c.player.abilities};
+  c.loadoutCount = 2;
+  const MatchContent content(c, 1, 1, kAllPowerUps, 1);
 
   WorldState s = makePlayingWorld(7, 0b0111, defaultContent());
   s.rules.scores = {1, 2, 3};
@@ -236,6 +238,7 @@ TEST_CASE("a hand-built world maps field by field", "[ai][observation]") {
     CHECK(o.facing == 77);
     CHECK(o.reservedFacingOctant == 0);
     CHECK(o.reservedCellX == 0);
+    CHECK(o.reservedRole == 1);  // v0.31: the loadout index the slot plays
     const ObsAbility& dash = o.abilities[kAbilitySlotDash];
     CHECK(dash.kind == static_cast<uint8_t>(ObsAbilityKind::Dash));
     CHECK(dash.phase == static_cast<uint8_t>(ObsAbilityPhase::Active));

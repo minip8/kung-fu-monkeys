@@ -1,0 +1,24 @@
+# Loadouts (LoadoutDef, architecture §5.10, v0.31): a match picks one by
+# index (MatchConfig::loadout); command lines (--loadout NAME), the lobby and
+# the browser page (?loadout=) use the name. Loadout 0 is "base", the
+# [player] abilities (player.toml); these follow in load order. Indices go
+# into replay headers and are part of the content hash: append new loadouts,
+# never reorder.
+#
+# Keys: name (lowercase, up to 15 of a-z 0-9 _ -, not "base") and abilities,
+# 2 or 3 ability names [dash button, throw button, ability button]; the dash
+# and throw slots must hold an ability, a missing third is "none".
+
+# v0.21's ability modes (rounds_blink, rounds_slam, rounds_parry) as
+# loadouts: the base kit plus a third ability on the ability button.
+[[loadout]]
+name = "blink"
+abilities = ["dash", "throw", "blink"]
+
+[[loadout]]
+name = "slam"
+abilities = ["dash", "throw", "slam"]
+
+[[loadout]]
+name = "parry"
+abilities = ["dash", "throw", "parry"]

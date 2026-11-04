@@ -478,6 +478,9 @@ class Builder {
     db_.abilities[0] = AbilityDef{};
     db_.abilities[0].name = ContentName::of(kNoneAbility);
     db_.abilityCount = 1;
+    // Loadout 0 is the [player] abilities (v0.31), resolved in finish().
+    db_.loadouts[0].name = ContentName::of(sim::kBaseLoadoutName);
+    db_.loadoutCount = 1;
   }
 
   void addDocument(const ContentSource& source) {
@@ -508,11 +511,13 @@ class Builder {
         list(file, node, "mode", [&](Section& s) { parseMode(s); });
       } else if (k == "powerup") {
         list(file, node, "powerup", [&](Section& s) { parsePowerUp(s); });
+      } else if (k == "loadout") {
+        list(file, node, "loadout", [&](Section& s) { parseLoadoutDef(s); });
       } else {
         diag_.error(file.name, lineOf(node),
                     "unknown top-level key '" + std::string(k) +
                         "' (expected [player], [boomerang], [pickup], [dash_attack], "
-                        "[[ability]], [[arena]], [[mode]] or [[powerup]])");
+                        "[[ability]], [[arena]], [[mode]], [[powerup]] or [[loadout]])");
       }
     }
   }
@@ -546,8 +551,8 @@ class Builder {
     PendingName name;
   };
   using Loadout = std::array<std::optional<PendingName>, sim::kAbilitySlots>;
-  struct ModeLoadout {
-    uint8_t mode{0};
+  struct LoadoutNames {
+    uint8_t loadout{0};  // index into db_.loadouts
     Loadout names;
   };
 
@@ -987,18 +992,43 @@ class Builder {
     s.integer("score_to_win", m.scoreToWin, 0, 255);
     s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
     s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
-    Loadout loadout{};
+    // v0.31: loadouts are their own axis. Say where the key went rather than
+    // only calling it unknown.
     if (const toml::node* n = s.take("abilities")) {
-      parseLoadout(s, *n, loadout);
-      m.hasAbilities = 1;
+      s.error(*n,
+              "a mode no longer carries a loadout: define a [[loadout]] (content/loadouts.toml) "
+              "and pick it per match (--loadout NAME)");
     }
     if (!name || !uniqueName(s, *name, db_.modes, db_.modeCount, "mode")) return;
     if (db_.modeCount >= sim::kMaxModes) {
       s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
       return;
     }
-    if (m.hasAbilities != 0) modeLoadouts_.push_back(ModeLoadout{db_.modeCount, loadout});
     db_.modes[db_.modeCount++] = m;
+  }
+
+  // [[loadout]] (v0.31): a name and 2 or 3 ability names, appended after
+  // loadout 0 (the [player] abilities, named "base").
+  void parseLoadoutDef(Section& s) {
+    sim::LoadoutDef d;
+    const std::optional<std::string> name = s.name(d.name);
+    if (name) s.setWhere("loadout " + inQuotes(*name));
+    Loadout names{};
+    if (const toml::node* n = s.take("abilities", true)) parseLoadout(s, *n, names);
+    if (!name) return;
+    if (*name == sim::kBaseLoadoutName) {
+      s.error(inQuotes(sim::kBaseLoadoutName) +
+              " is the built-in loadout of [player] abilities; pick another name");
+      return;
+    }
+    if (!uniqueName(s, *name, db_.loadouts, db_.loadoutCount, "loadout")) return;
+    if (db_.loadoutCount >= sim::kMaxLoadouts) {
+      s.error("too many loadouts (at most " + std::to_string(sim::kMaxLoadouts - 1) +
+              " besides base, kMaxLoadouts)");
+      return;
+    }
+    loadoutNames_.push_back(LoadoutNames{db_.loadoutCount, names});
+    db_.loadouts[db_.loadoutCount++] = d;
   }
 
   // An ability name in a loadout: "none" is index 0.
@@ -1022,10 +1052,11 @@ class Builder {
 
   void resolveLoadouts() {
     resolveLoadout(loadout_, db_.player.abilities);
-    for (const ModeLoadout& m : modeLoadouts_) {
-      sim::ModeDef& mode = db_.modes[m.mode];
-      mode.abilities = {};
-      resolveLoadout(m.names, mode.abilities);
+    db_.loadouts[0].abilities = db_.player.abilities;
+    for (const LoadoutNames& l : loadoutNames_) {
+      sim::LoadoutDef& def = db_.loadouts[l.loadout];
+      def.abilities = {};
+      resolveLoadout(l.names, def.abilities);
     }
   }
 
@@ -1069,7 +1100,7 @@ class Builder {
   std::optional<Origin> pickupAt_;
   std::optional<Origin> dashAttackAt_;
   Loadout loadout_{};
-  std::vector<ModeLoadout> modeLoadouts_;
+  std::vector<LoadoutNames> loadoutNames_;
   std::vector<SpawnerName> spawnerNames_;
   std::vector<OverrideName> overrideNames_;
 };
@@ -1337,12 +1368,23 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     }
   };
   checkLoadout(c.player.abilities, "[player]");
-  for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {
-    if (c.modes[i].hasAbilities > 1)
-      fail("mode " + inQuotes(c.modes[i].name.view()) + ": bad flag");
-    if (c.modes[i].hasAbilities == 1) {
-      checkLoadout(c.modes[i].abilities, "mode " + inQuotes(c.modes[i].name.view()));
+  // Loadouts (v0.31): loadout 0 is the base kit, named "base", with the
+  // [player] abilities (the sim reads player.abilities for it); every other
+  // one is a [[loadout]] with a unique name.
+  if (c.loadoutCount < 1 || c.loadoutCount > sim::kMaxLoadouts) {
+    fail("loadout count " + std::to_string(c.loadoutCount) + " outside [1, kMaxLoadouts]");
+  } else if (c.loadouts[0].name.view() != sim::kBaseLoadoutName ||
+             c.loadouts[0].abilities != c.player.abilities) {
+    fail("loadout 0 must be " + inQuotes(sim::kBaseLoadoutName) + " with the [player] abilities");
+  }
+  for (uint8_t i = 0; i < c.loadoutCount && i < sim::kMaxLoadouts; ++i) {
+    const sim::LoadoutDef& l = c.loadouts[i];
+    const std::string where = "loadout " + inQuotes(l.name.view());
+    if (!validName(l.name.view())) fail(where + ": invalid name");
+    for (uint8_t j = 0; j < i; ++j) {
+      if (c.loadouts[j].name == l.name) fail(where + ": name used twice");
     }
+    checkLoadout(l.abilities, where);
   }
   if (c.player.radius <= Fixed::zero()) fail("[player] radius must be positive");
   if (c.player.maxHp < 1) fail("[player] max_hp must be at least 1");

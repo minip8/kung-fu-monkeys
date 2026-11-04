@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.30 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.31 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -229,6 +229,16 @@ and the client drive their bot slots through `AgentHost`, the server delaying bo
 lead. The no-float check covers `engine/ai`. CI's lint job pins clang-format 23.1.3 and
 clang-tidy 23.1.4, the versions developers run locally (PyPI wheels), so a local pass is a CI
 pass; clang-format 23.1.3 is the formatter of record (§9).
+v0.31 changes: M5b step 1, mode foundations, as built (§5.3, §5.10, §6.6, §8, §9, §11).
+`kMaxModes` is 32. Loadouts are a match axis: `[[loadout]]` in `content/loadouts.toml`
+(`LoadoutDef`, `ContentDB::loadouts`, `kMaxLoadouts` 16, `findLoadout`), loadout 0 is the
+`[player] abilities` under the reserved name `base` and the sim reads it from
+`PlayerDef::abilities` itself; `MatchConfig::loadout` rides in `MatchContent`, the replay header
+(format version 4), the join messages (protocol version 4), a tenth optional corpus manifest
+column, the lobby panel and saved settings, `--loadout NAME` on every host and `?loadout=`;
+`ModeDef::abilities`/`hasAbilities` and the `rounds_blink`/`rounds_slam`/`rounds_parry` modes
+are gone (loadouts `blink`, `slam`, `parry`), and a mode's `abilities` key is an error that
+says where it went. Observation v1 fills `self.reservedRole` with the loadout index.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -632,7 +642,7 @@ sees no difference from the continuous mode.
     so a standing blinker would strike whoever walked into it; without it the startup is a
     plain, readable telegraph during which a banana hits as usual, and nothing in the rules
     table changes. `PlayerBlinked` carries the origin. Shipped: 6-tick startup, a 5-unit jump
-    (30 u/s over 10 ticks), 1.5 s cooldown, in mode `rounds_blink`.
+    (30 u/s over 10 ticks), 1.5 s cooldown, in loadout `blink` (mode `rounds_blink` until v0.31).
   - Slam (`slam.cpp`, `rules/slam.cpp`): the behaviour only marks the impact. `kindTags`
     grants `Tag::Slamming` on the first Active tick only (phaseTicks 0), so a slam acts once
     however long its active phase; the Startup → Active transition emits `SlamLanded`. While a
@@ -643,15 +653,15 @@ sees no difference from the continuous mode.
     `MovementSystem` adds the knockback to whatever velocity it computed (stick, dash, stun)
     and counts it down, its only change. The slammer walks during the startup (no `Dashing`,
     as for Blink). Shipped: 0.2 s startup, reach 3, push 4 units over 0.2 s, 2 s cooldown, in
-    mode `rounds_slam`. New state: `Player::knockback`, `knockbackTicks` (visited).
+    loadout `slam` (mode `rounds_slam` until v0.31). New state: `Player::knockback`, `knockbackTicks` (visited).
   - Parry (`parry.cpp`, `rules/parry.cpp`): the window is `[press + startupTicks, press +
     startupTicks + activeTicks)` from the press instant (`activatedTick + activatedSubTick /
     256`), like the perfect dash's. `kindTags` grants `Tag::Parrying` on the Active ticks plus
     the first Recovery tick when the press had a non-zero sub-tick (the window closes inside
     it; the loader requires `recovery_ticks >= 1`); the rule judges the exact instant (§5.6).
     `PlayerParryStarted` on the press (the stance effect). Shipped: 2-tick startup, an 8-tick
-    window, 14 ticks of recovery (a whiff is punishable), 1 s cooldown, in mode
-    `rounds_parry`.
+    window, 14 ticks of recovery (a whiff is punishable), 1 s cooldown, in loadout `parry`
+    (mode `rounds_parry` until v0.31).
 
 ### 5.6 Interaction rules (where the twists live)
 
@@ -1032,7 +1042,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   grounded banana is easier to walk over than to dodge.
 - Files: `content/*.toml` (any depth), read in sorted relative-path order and merged. Top-level
   keys: `[player]`, `[boomerang]`, `[pickup]`, `[dash_attack]` exactly once in the whole set;
-  `[[ability]]`, `[[arena]]`, `[[mode]]`, `[[powerup]]` (v0.20) appended in load order. Keys are the C++ field names in
+  `[[ability]]`, `[[arena]]`, `[[mode]]`, `[[powerup]]` (v0.20), `[[loadout]]` (v0.31) appended
+  in load order. Keys are the C++ field names in
   snake_case; unknown keys and unknown top-level tables are errors (a typo never falls back to a
   default); keys other than `name`, `kind` and a few required lengths are optional and keep the
   struct default. Each file's header comment lists its keys and units.
@@ -1044,23 +1055,25 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   per second and divided by `kTickHz` in the same single truncation (`22` is
   `fromRatio(22, 60)`). Tags are lists of names (`dashing`, `perfect_dash`, ...), ability kinds
   are names (`dash`, `throw`); the loader's name tables static_assert they cover the enums.
-- Names: abilities, arenas, modes and power-ups have a `ContentName` (`std::array<char, 16>`, NUL padded,
+- Names: abilities, arenas, modes, power-ups and loadouts have a `ContentName` (`std::array<char, 16>`, NUL padded,
   1–15 of `a-z 0-9 _ -`), hashed with the def. Defs reference each other by name in TOML (the
   player's loadout `abilities = ["dash", "throw"]`) and the loader resolves them to indices;
-  ability index 0 is the built-in inert `none`. Arena and mode names are how command lines and
-  the lobby choose (`ContentDB::findArena` / `findMode`); the sim only sees indices.
+  ability index 0 is the built-in inert `none`. Arena, mode and loadout names are how command
+  lines and the lobby choose (`ContentDB::findArena` / `findMode` / `findLoadout`); the sim only
+  sees indices.
 - Validation: duplicate names, unresolved references, counts against the capacities
-  (`kMaxAbilityDefs` 16 since v0.21, `kMaxArenas` 8, `kMaxModes` 8, `kMaxPowerUps` 16; at least one arena
-  and one mode), and
+  (`kMaxAbilityDefs` 16 since v0.21, `kMaxArenas` 8, `kMaxModes` 32 since v0.31 (8 before),
+  `kMaxPowerUps` 16, `kMaxLoadouts` 16 since v0.31; at least one arena and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
-  on `defaultContent()` by a test): every loadout (the player's and each mode's) fills the dash
-  and throw slots (v0.21; only the third may be `none`), a dash with no startup and its
+  on `defaultContent()` by a test): every loadout (the player's and each `[[loadout]]`) fills
+  the dash and throw slots (v0.21; only the third may be `none`), loadout 0 is `base` with the
+  `[player] abilities` (v0.31), a dash with no startup and its
   perfect window inside the active phase, arena half extents in (0, 1024], spawn points that
   keep a monkey inside (and, v0.22, clear of walls and out of pits), walls and hazards that are
   non-empty boxes inside the arena, a thrown banana clear of its thrower, `minAmmo >= 1`. Diagnostics are
   `file:line: error: message` lines; a failed load leaves the previous `ContentDB` untouched.
 - Selection: a `MatchConfig` carries `arena` and `mode` indices (index 0 is the default, the
-  first loaded). They are constant for a match like the content and are not part of
+  first loaded), and since v0.31 a `loadout` index (0 = `base`). They are constant for a match like the content and are not part of
   `WorldState`, so world checksums and snapshots are unchanged; every host keeps the config next
   to the world. `step()`, every system, ability hook and rule handler takes a `MatchContent`
   (`db`, `arena`, `mode` references; `matchContent(db, config)`), and arena- or mode-dependent
@@ -1105,11 +1118,12 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   read (they keep their struct defaults and are hashed like every field). Validation: a known
   kind, `rounds_to_win >= 1`, and in deathmatch `score_to_win >= 1` and `respawn_ticks >= 1`.
   The file ships `rounds` (index 0, the M1 numbers), `deathmatch` (first to 10, 3 min, 2 s
-  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). Any kind may
-  carry `abilities = [...]` (v0.21): its own loadout of 2 or 3 ability names replacing
-  `[player] abilities` for the match (`ModeDef::hasAbilities`/`abilities`, applied at spawn and
-  by `ModifierSystem` through `MatchContent::loadout()`). The modes stay
-  in one file so their order, and so their indices, is explicit.
+  respawn, 1.5 s protection) and `survival` (first to 3 rounds of at most 60 s). From v0.21 to
+  v0.30 any kind could carry `abilities = [...]`, its own loadout (`ModeDef::hasAbilities`/
+  `abilities`), and the file shipped `rounds_blink`, `rounds_slam` and `rounds_parry`; since
+  v0.31 the kit is its own axis (Loadouts below) and the key is an error naming
+  `content/loadouts.toml`. The modes stay in one file so their order, and so their indices, is
+  explicit.
 - `DashAttackDef` (v0.16): `damage` (1), `minAmmo` (1: a banana in hand), `consumesAmmo`
   (0: kept). Visited for the content hash like every other def; the TOML key is
   `[dash_attack]`. The loader's validation requires `minAmmo >= 1` like the M1 tables did;
@@ -1135,7 +1149,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   (hill), the `vision` block §8 reads (`vision = { kind, peripheral, cone, focus, hearing,
   banana_sight }`) and the kinds `team_rounds`, `team_deathmatch`, `hill`, `capture`. `kMaxModes`
   rises to 32; every slot is hashed, so the content hash changes once (corpus regenerated,
-  checksums unchanged).
+  checksums unchanged). As built (v0.31): `kMaxModes` is 32; the other fields arrive with the
+  later steps of §11.
 - Loadouts (v0.29) are their own axis. `[[loadout]]` = `name` plus 2–3 ability names
   (`ContentDB::loadouts`, `kMaxLoadouts` 16; index 0 is `[player] abilities`).
   `MatchConfig::loadout` picks one for the match (the lobby, `--loadout NAME`, `?loadout=`) and
@@ -1144,6 +1159,26 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `rounds_parry` leave `content/modes.toml` for `content/loadouts.toml` (`blink`, `slam`,
   `parry`), and `MatchContent::loadout()` returns the role's loadout in a team mode, else the
   match's. Corpus replays that named those modes are re-recorded with `--loadout`.
+  As built (v0.31, `kfm/sim/content/loadout.hpp`): `LoadoutDef{name, abilities[3]}`; the
+  loader puts loadout 0 in place before any file is read, named `base` (reserved: a
+  `[[loadout]]` of that name is an error) with the resolved `[player] abilities`, and appends
+  each `[[loadout]]` (`name`, required `abilities`; unknown keys are errors) after it, at most
+  15. `ContentDB::loadoutAbilities(i)` is the kit per slot, and for index 0 (or an index out of
+  range) it reads `PlayerDef::abilities` itself rather than the mirror in `loadouts[0]`, so code
+  and tests that edit the player's kit play what they say; `validateContent` holds the mirror
+  equal. `MatchContent::loadoutIndex` is the selection and `loadout()` returns
+  `loadoutAbilities(loadoutIndex)`, read by `resetPlayer` at every spawn and by
+  `ModifierSystem` when an override ends; there is no role lookup until teams (step 2).
+  `defaultContent()` holds loadout 0 only, and the content test compares loadout 0 field by
+  field like arena 0 and mode 0. `content/loadouts.toml` ships `blink`, `slam`, `parry` (the base
+  kit plus the third ability). The lobby panel gains a Loadout row after Mode (the preview
+  lists its abilities), the settings file a `loadout=` line (a stale name, `rounds_slam` from
+  a v0.24 file included, warns and is skipped), and every host takes `--loadout NAME`
+  (`content::resolveLoadoutName`): `kfm_client`, `kfm_server`, `kfm_netsim`,
+  `kfm_render_probe`, `kfm_replay record-*`/`bench`/`stats`, `kfm_arena`; the browser's
+  `?loadout=` maps onto the flag. Since loadouts are a `MatchConfig` axis like the power-up set,
+  no world checksum changed: the three ability replays were re-recorded with `rounds` plus their
+  loadout and kept their `.checksums` byte for byte.
 - Teams (v0.29): `MatchConfig::teams`, a team index per slot (free-for-all: slot i is team i);
   the lobby fills it from `ModeDef::teams`, balanced, joiners to the smallest team. Arenas gain
   `spawn_groups` (default 1): the spawn list splits into that many consecutive groups and team
@@ -1576,8 +1611,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   Content negotiation (v0.18) is the content hash in `Hello`: equal hashes mean identical
   arena and mode lists, so the `MatchConfig` in `Welcome`, `Snapshot` and `MatchConfig`
   (seed, roster, arena index, mode index; protocol version 2; the power-up set as a u16 since
-  protocol version 3, v0.24) is all a client needs to simulate the server's arena, mode and
-  power-ups. A client steps with the config of the snapshot it last loaded
+  protocol version 3, v0.24; the loadout index as a u8 below `kMaxLoadouts` since protocol
+  version 4, v0.31) is all a client needs to simulate the server's arena, mode, power-ups and
+  loadout. A client steps with the config of the snapshot it last loaded
   (`NetClient::simConfig()`); an announced restart's config (`matchConfig()`) takes effect
   with the new match's snapshot, so a restart into another arena costs no resync.
   Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
@@ -2298,6 +2334,8 @@ difficulty.
   bump: team per player and its relation to self, a visible flag per player and banana (unseen
   entries zeroed, counts kept), the heard-calls list, self cell and facing octant, `turnTicks`
   and the ticks to the next latch, the role (loadout index), team scores and `modeData`.
+  Filled since v0.31, with the meaning `docs/bot-abi.md` §3 gives them and no layout change:
+  `self.reservedRole` (the match's loadout index until roles exist).
 - **Contest knobs** are content and host settings, never code: team size, `vision` and its
   radii, call range, cooldown and alphabet (a mask over the 256 symbols), memory on respawn,
   fuel per instance, `turnTicks`, the catcher's cooldown. Tournaments pick rows; the engine
@@ -2408,8 +2446,13 @@ difficulty.
   names it (`all`, `none` or comma-separated names, default all), and
   `scripted_4p_powerset_1800t` (dojo_powerups with only shield and big_banana) keeps the
   intersection under the gate.
+  v0.31: replays (format version 4) store the loadout index (`kfm_replay info` prints it); a
+  tenth optional column names it (`kfm_replay --loadout`, default `base`), which needs the
+  ninth, so a loadout line reads `... dojo rounds all slam`; lines with 6, 8 or 9 columns stay
+  valid.
   v0.21 adds `scripted_4p_blink_1800t`, `scripted_4p_slam_1800t` and `scripted_4p_parry_1800t`
-  (dojo, the `rounds_*` ability modes): the scripted bots use the third slot when it holds an
+  (dojo, the `rounds_*` ability modes; since v0.31 `rounds` with the `blink`, `slam` and
+  `parry` loadouts): the scripted bots use the third slot when it holds an
   ability (blink sideways out of an incoming banana's path or now and then, slam with an enemy or
   incoming banana within the reach, parry a close incoming banana) and draw nothing from their
   Rng while it is empty, so the base-kit entries keep their inputs. `kfm_replay stats` counts

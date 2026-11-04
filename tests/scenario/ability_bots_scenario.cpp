@@ -1,5 +1,5 @@
 // The scripted bots use the third slot (architecture §9, v0.21): with blink,
-// slam or parry in a mode loadout, a scripted match produces that ability's
+// slam or parry in a loadout, a scripted match produces that ability's
 // events (the corpus entries scripted_4p_{blink,slam,parry}_1800t rely on
 // it), and with the slot empty the bots never press the ability button.
 #include "kfm/core/rng.hpp"
@@ -40,37 +40,36 @@ Tally runBots(const MatchContent& content, int ticks = 1800) {
   return t;
 }
 
-// The default content plus a mode whose loadout puts `def` on the ability button.
-struct ModeWith {
+// The default content plus a loadout that puts `def` on the ability button,
+// selected through MatchConfig::loadout (v0.31).
+struct LoadoutWith {
   ContentDB db;
-  explicit ModeWith(const AbilityDef& def) {
+  uint8_t loadout{0};
+  explicit LoadoutWith(const AbilityDef& def) {
     uint8_t index = 0;
     db = withAbility(def, index);
-    ModeDef& mode = db.modes[db.modeCount++];
-    mode = db.modes[0];
-    mode.hasAbilities = 1;
-    mode.abilities = {db.player.abilities[0], db.player.abilities[1], index};
+    loadout = addLoadout(db, def.name.view(), index);
   }
-  [[nodiscard]] MatchContent content() const { return {db, 0, 1}; }
+  [[nodiscard]] MatchContent content() const { return withLoadoutMatch(db, loadout); }
 };
 
 }  // namespace
 
-TEST_CASE("scripted bots blink, slam and parry when the mode gives them the ability",
+TEST_CASE("scripted bots blink, slam and parry when the loadout gives them the ability",
           "[scenario][bots]") {
   SECTION("blink") {
-    const ModeWith m(blinkDef());
+    const LoadoutWith m(blinkDef());
     Tally t = runBots(m.content());
     CHECK(t.events[EventKind::PlayerBlinked] > 0);
   }
   SECTION("slam") {
-    const ModeWith m(slamDef());
+    const LoadoutWith m(slamDef());
     Tally t = runBots(m.content());
     CHECK(t.events[EventKind::SlamLanded] > 0);
     CHECK(t.events[EventKind::PlayerSlammed] > 0);
   }
   SECTION("parry") {
-    const ModeWith m(parryDef());
+    const LoadoutWith m(parryDef());
     Tally t = runBots(m.content());
     CHECK(t.events[EventKind::PlayerParryStarted] > 0);
     CHECK(t.events[EventKind::BoomerangParried] > 0);

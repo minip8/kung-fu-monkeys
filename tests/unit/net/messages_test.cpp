@@ -180,6 +180,9 @@ TEST_CASE("Control messages round-trip", "[net][messages]") {
   roundTrip(WelcomeMsg{0b1100, sim::MatchConfig{99, 0x3FF}, Tick{1234}});
   roundTrip(WelcomeMsg{0, sim::MatchConfig{1, 1}, Tick{0}});  // spectator
   roundTrip(WelcomeMsg{0b1, sim::MatchConfig{5, 0b11, 2, sim::kMaxModes - 1}, Tick{7}});
+  // v4: the loadout rides along (MatchConfig::loadout, v0.31).
+  roundTrip(WelcomeMsg{
+      0b1, sim::MatchConfig{5, 0b11, 2, 3, sim::kAllPowerUps, sim::kMaxLoadouts - 1}, Tick{7}});
   for (uint8_t r = 0; r < kRejectReasonCount; ++r)
     roundTrip(RejectMsg{static_cast<RejectReason>(r)});
   roundTrip(JoinMatchMsg{0});
@@ -243,6 +246,9 @@ TEST_CASE("Encoders refuse invalid messages", "[net][messages]") {
   // Arena and mode indices beyond the content capacities never go out.
   CHECK(encode(MatchConfigMsg{sim::MatchConfig{0, 1, sim::kMaxArenas, 0}, {}}, buf) == 0);
   CHECK(encode(WelcomeMsg{1, sim::MatchConfig{0, 1, 0, sim::kMaxModes}, {}}, buf) == 0);
+  CHECK(
+      encode(WelcomeMsg{1, sim::MatchConfig{0, 1, 0, 0, sim::kAllPowerUps, sim::kMaxLoadouts}, {}},
+             buf) == 0);
 
   // Too small a buffer is an overflow, not a partial message.
   std::array<std::byte, 8> small{};

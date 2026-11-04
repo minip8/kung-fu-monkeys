@@ -140,7 +140,8 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
                 std::string(v) + "'";
         return false;
       }
-    } else if (arg == "--content" || arg == "--arena" || arg == "--mode" || arg == "--powerups") {
+    } else if (arg == "--content" || arg == "--arena" || arg == "--mode" || arg == "--loadout" ||
+               arg == "--powerups") {
       if (i + 1 >= args.size()) {
         error = std::string(arg) + " needs a value";
         return false;
@@ -152,6 +153,8 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         out.arena = v;
       } else if (arg == "--mode") {
         out.mode = v;
+      } else if (arg == "--loadout") {
+        out.loadout = v;
       } else {
         out.powerUps = v;
       }

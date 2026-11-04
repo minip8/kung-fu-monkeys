@@ -169,6 +169,9 @@ void fillAbility(const sim::AbilityState& st, const sim::ContentDB& db, uint8_t 
 void fillSelf(const sim::WorldState& world, const sim::MatchContent& content, PlayerId self,
               ObsSelf& o) {
   o.slot = self.value;
+  // bot-abi.md §3, filled since architecture v0.31: the loadout index the
+  // slot plays (the match's; team modes will hand out roles per slot).
+  o.reservedRole = content.loadoutIndex < content.db.loadoutCount ? content.loadoutIndex : 0;
   if (self.isValid() && self.value < sim::kMaxPlayers) {
     o.respawnTicks = world.rules.respawnTicks[self.value];
   }
