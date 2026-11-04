@@ -101,19 +101,19 @@ struct ObsHeader {
 struct ObsMatch {
   uint32_t tick;          // ticks: the tick this observation is for (the input's tick)
   uint32_t ticksInPhase;  // ticks spent in the current phase (the mode clock while Playing)
-  uint32_t
-      timeLimitTicks;    // ticks: the mode's clock (deathmatch: match, survival: round), 0 = none
-  uint32_t contentHash;  // XXH32 of the content (contentHash()), as in the replay header
-  uint8_t modeIndex;     // index into the content's modes
-  uint8_t modeKind;      // ObsModeKind
-  uint8_t arenaIndex;    // index into the content's arenas
-  uint8_t phase;         // ObsMatchPhase
-  uint8_t round;         // current round number (1-based once the match started)
-  uint8_t roundsToWin;   // rounds, survival: round wins that take the match
-  uint8_t scoreToWin;    // deathmatch: eliminations that win
-  uint8_t aliveCount;    // players alive in the arena
-  uint16_t presentMask;  // bit i: slot i is in the match (the roster)
-  uint16_t aliveMask;    // bit i: slot i has a monkey in the arena
+  // ticks: the mode's clock (deathmatch: the match, survival: a round), 0 = none
+  uint32_t timeLimitTicks;
+  uint32_t contentHash;     // XXH32 of the content (contentHash()), as in the replay header
+  uint8_t modeIndex;        // index into the content's modes
+  uint8_t modeKind;         // ObsModeKind
+  uint8_t arenaIndex;       // index into the content's arenas
+  uint8_t phase;            // ObsMatchPhase
+  uint8_t round;            // current round number (1-based once the match started)
+  uint8_t roundsToWin;      // rounds, survival: round wins that take the match
+  uint8_t scoreToWin;       // deathmatch: eliminations that win
+  uint8_t aliveCount;       // players alive in the arena
+  uint16_t presentMask;     // bit i: slot i is in the match (the roster)
+  uint16_t aliveMask;       // bit i: slot i has a monkey in the arena
   uint8_t inputDelayTicks;  // ticks between this observation and the tick the answer applies on
   uint8_t lastRoundWinner;  // slot, kObsNoSlot after a draw or before the first round end
   uint8_t pad0;
