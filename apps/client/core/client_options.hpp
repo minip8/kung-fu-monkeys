@@ -1,6 +1,7 @@
 // kfm_client command line (headless-testable).
 //
 //   kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]
+//              [--bot-difficulty easy|medium|hard] [--bot-module PATH] [--bot SPEC]
 //              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
 //              [--no-hot-reload] [--no-settings]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
@@ -8,6 +9,7 @@
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 #pragma once
 
+#include "kfm/ai/bot_spec.hpp"
 #include "match_session.hpp"
 #include "net_session.hpp"
 
@@ -19,6 +21,7 @@ namespace kfm::client {
 
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
+    "                  [--bot-difficulty easy|medium|hard] [--bot-module PATH] [--bot SPEC]\n"
     "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
     "                  [--no-hot-reload] [--no-settings]\n"
     "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
@@ -28,7 +31,12 @@ inline constexpr const char* kUsage =
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
-    "  --players-seed S       seed of the bots' scripted-input Rng\n"
+    "  --players-seed S       seed of the bots (each slot's agent seed derives from it)\n"
+    "  --bot-difficulty T     the reference bot's tier: easy, medium (default) or hard\n"
+    "  --bot-module PATH      run bots from this .wasm bot module (ABI v1; native only).\n"
+    "                         One that cannot be loaded falls back to the reference bot\n"
+    "  --bot SPEC             easy|medium|hard, ref, ref:TIER or PATH.wasm: the two\n"
+    "                         flags above in one (the browser's ?bot=easy)\n"
     "  --content DIR          content directory (*.toml); default: content/ next to the\n"
     "                         executable, else the copy built into it\n"
     "  --arena NAME           arena of local matches (default: the first one)\n"
@@ -38,7 +46,8 @@ inline constexpr const char* kUsage =
     "  --no-hot-reload        do not watch the content directory (native local play\n"
     "                         reloads it on change and restarts the match)\n"
     "  --no-settings          neither read nor save the lobby settings (arena, mode,\n"
-    "                         power-ups, bots, volume, mute; flags win over saved ones)\n"
+    "                         power-ups, bots, bot difficulty, volume, mute; flags win\n"
+    "                         over saved ones)\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
     "  --capsules             draw players as capsules, not the skinned model\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
@@ -62,7 +71,9 @@ struct ClientOptions {
   bool capsules{false};  // capsule placeholders instead of the skinned character model
   uint8_t bots{0};
   uint64_t seed{1};
-  uint64_t playersSeed{kDefaultBotSeed};
+  uint64_t playersSeed{kDefaultBotSeed};  // the bots' seed (SessionConfig::botSeed)
+  ai::ReferenceTier botDifficulty{kDefaultBotTier};
+  std::string botModule;   // --bot-module; empty = the reference bot
   std::string contentDir;  // --content; empty = next to the executable, else embedded
   std::string arena;       // --arena / --mode names; empty = index 0
   std::string mode;
@@ -81,6 +92,10 @@ struct ClientOptions {
 
   [[nodiscard]] bool networkMode() const { return !connect.empty(); }
 };
+
+// The bots of local play: the module when one is given (falling back to
+// the reference bot at botDifficulty), else the reference bot at it.
+[[nodiscard]] ai::BotSpec botSpec(const ClientOptions& options);
 
 // The NetSession settings of the network flags. `atStartup` is the connect
 // at launch, which requests one slot unless --players says otherwise; a

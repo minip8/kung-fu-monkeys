@@ -6,7 +6,8 @@
 // it is passed to step() every tick with the session's arena and mode), the
 // per-tick EventSink and a per-frame event
 // accumulator for the presentation builder, the PresentationState, the
-// InputSampler, the bot slots with their own Rng, and the fixed-step clock.
+// InputSampler, the bot slots (an ai::AgentHost fed by a BotRoster), and the
+// fixed-step clock.
 //
 // Two phases:
 //   Lobby  (client-side, no world stepping). Slot 0 starts bound to keyboard
@@ -17,8 +18,11 @@
 //          seed. curr() is initialWorld({seed, lobbyPresentMask()}) so the
 //          arena can still be drawn.
 //   Match  ticks are stepped by advance(). Local slots are sampled from the
-//          InputSampler; bot slots get sim::scriptedInput() from the bot Rng
-//          (slot order, so the Rng is consumed deterministically); a local
+//          InputSampler; bot slots are agents (§8) in an ai::AgentHost: the
+//          reference bot at the lobby's difficulty tier, or a bot module
+//          (BotRoster), attached afresh at every match start and restart
+//          with seed botAgentSeed(botSeed, slot) and no input delay (local
+//          play has no lead); a local
 //          slot whose pad was removed is driven by "repeat last input" until
 //          any unbound device presses a button (it is rebound to the lowest
 //          such slot) or the match restarts (it becomes a bot). After
@@ -28,7 +32,10 @@
 // RenderState from renderPrev(), curr(), renderAlpha(), frameEvents().
 #pragma once
 
+#include "bot_roster.hpp"
 #include "fixed_step_clock.hpp"
+#include "kfm/ai/agent_host.hpp"
+#include "kfm/ai/bot_spec.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/platform/input_event.hpp"
@@ -44,6 +51,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 
 namespace kfm::client {
 
@@ -54,7 +62,7 @@ enum class SlotOwner : uint8_t {
   None = 0,  // not present
   Local,     // a bound local device
   Dropped,   // local, but its pad was removed: repeats its last input
-  Bot,       // sim::scriptedInput
+  Bot,       // an agent (BotRoster: the reference bot or a bot module)
   Remote,    // network mode: a slot driven by another client or the server
 };
 
@@ -69,9 +77,15 @@ enum class InterpolationPolicy : uint8_t {
 // (a tolerance so a 59.94 Hz display or a jittery measurement still counts).
 inline constexpr double kNewestTickRateTolerance = 0.95;
 
-// Seed of the bots' scripted-input Rng unless configured (the same default as
-// kfm_replay's --input-seed).
+// The bots' seed unless configured (--players-seed), separate from the
+// world's.
 inline constexpr uint64_t kDefaultBotSeed = 0x5C121DULL;
+
+// The seed AgentHost::attach() gives the agent in `slot`: the same derivation
+// as kfm_arena and kfm_server, so one bot seed means the same bots everywhere.
+[[nodiscard]] constexpr uint64_t botAgentSeed(uint64_t botSeed, PlayerId slot) {
+  return botSeed ^ (0x9E3779B97F4A7C15ULL * (uint64_t{slot.value} + 1));
+}
 
 struct SessionConfig {
   uint64_t seed{1};                      // world seed (MatchConfig::seed)
@@ -81,8 +95,12 @@ struct SessionConfig {
   // The loaded content (content/*.toml); nullptr = sim::defaultContent().
   // Copied: the session owns its content.
   const sim::ContentDB* content{nullptr};
-  uint64_t botSeed{kDefaultBotSeed};  // bots' Rng, separate from the world's
+  uint64_t botSeed{kDefaultBotSeed};  // the agents' seeds (botAgentSeed)
   uint8_t bots{0};                    // lobby bot count
+  // What the bots are: the reference bot at a tier (default medium, the
+  // casual lobby's), or a .wasm module (native only; one that cannot be
+  // loaded falls back to the reference bot at spec.tier, see botSpecError()).
+  ai::BotSpec botSpec{.kind = ai::BotKind::Reference, .tier = kDefaultBotTier, .path = {}};
   uint32_t maxTicksPerFrame{kDefaultMaxTicksPerFrame};
   bool bindKeyboardToSlot0{true};  // slot 0 starts bound to keyboard profile 0
   // The host starts what the lobby's start request means (network mode
@@ -159,6 +177,20 @@ class MatchSession {
     return sim::matchContent(content_, matchConfig_);
   }
   [[nodiscard]] uint64_t botSeed() const { return botSeed_; }
+  // The bots of the next start/restart (a running match keeps its agents).
+  // A module spec loads the file now unless it is already loaded; false
+  // (and botSpecError()) when it could not be: the bots are then reference
+  // bots at spec.tier.
+  bool setBotSpec(const ai::BotSpec& spec);
+  // Only the tier of the current spec (the lobby's Bot difficulty row).
+  void setBotTier(ai::ReferenceTier tier);
+  [[nodiscard]] const ai::BotSpec& botSpec() const { return roster_.spec(); }
+  [[nodiscard]] const BotRoster& botRoster() const { return roster_; }
+  // Why the last module spec fell back to the reference bot (empty: it did not).
+  [[nodiscard]] const std::string& botSpecError() const { return botSpecError_; }
+  // Match: the agent counters of a bot slot (zero for any other slot).
+  [[nodiscard]] BotSlotStats botStats(PlayerId slot) const;
+  [[nodiscard]] const ai::AgentHost& agents() const { return agents_; }
 
   // --- state ------------------------------------------------------------------
   [[nodiscard]] const sim::WorldState& prev() const { return prev_; }
@@ -210,6 +242,7 @@ class MatchSession {
  private:
   void createWorld(sim::PlayerMask present);
   void beginMatch(sim::PlayerMask present, sim::PlayerMask local, uint64_t nowNs);
+  void detachAgents();
   void handleLobbyJoins();
   void handleRebinds();
   void stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t tickEndNs);
@@ -234,7 +267,10 @@ class MatchSession {
   sim::EventSink sink_{};
   sim::InputFrame lastFrame_{};
   std::array<sim::PlayerInput, sim::kMaxPlayers> lastInputs_{};
-  Rng botRng_{};
+  BotRoster roster_{};
+  std::string botSpecError_;
+  ai::AgentHost agents_{};
+  sim::PlayerMask moduleMask_{0};  // bot slots whose agent is a WasmAgent
   sim::PlayerMask localMask_{0};
   sim::PlayerMask botMask_{0};
 

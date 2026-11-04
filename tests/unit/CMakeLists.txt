@@ -137,8 +137,14 @@ if(NOT KFM_HEADLESS)
     client/net_session_test.cpp
     client/event_fx_rollback_test.cpp
     client/lobby_test.cpp
+    client/bot_session_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
+  if(KFM_WASM_BOTS)
+    # Bot modules as local players: the session loads the same fixtures.
+    target_compile_definitions(kfm_client_tests PRIVATE
+      KFM_BOT_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
+  endif()
 
   if(KFM_WEBRTC AND NOT EMSCRIPTEN)
     # The client's network mode over real sockets: NetServer on

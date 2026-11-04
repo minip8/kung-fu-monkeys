@@ -4,6 +4,7 @@
 #include "kfm/sim/constants.hpp"
 
 #include <charconv>
+#include <optional>
 #include <system_error>
 
 namespace kfm::client {
@@ -41,6 +42,7 @@ bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& conte
   out.mode = config.mode;
   out.powerUps = config.powerUps;
   out.bots = options.bots;
+  out.botTier = options.botDifficulty;
   out.volume = options.volume;
   out.mute = options.mute;
   return true;
@@ -52,6 +54,7 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
   options.mode = content.modeAt(settings.mode).name.view();
   options.powerUps = content::powerUpListText(content, settings.powerUps);
   options.bots = settings.bots;
+  options.botDifficulty = settings.botTier;
   options.volume = settings.volume;
   options.mute = settings.mute;
 }
@@ -62,6 +65,7 @@ std::string settingsText(const ClientOptions& options) {
   s += "mode=" + options.mode + "\n";
   s += "powerups=" + (options.powerUps.empty() ? std::string("all") : options.powerUps) + "\n";
   s += "bots=" + std::to_string(options.bots) + "\n";
+  s += "bot_difficulty=" + std::string(ai::toString(options.botDifficulty)) + "\n";
   s += "volume=" + std::to_string(options.volume) + "\n";
   s += std::string("mute=") + (options.mute ? "1" : "0") + "\n";
   return s;
@@ -105,6 +109,13 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
       options.powerUps = value;
     } else if (key == "bots") {
       if (!parseSmall(value, sim::kMaxPlayers - 1u, options.bots)) warn("bots must be 0..9");
+    } else if (key == "bot_difficulty") {
+      const std::optional<ai::ReferenceTier> tier = ai::parseReferenceTier(value);
+      if (tier) {
+        options.botDifficulty = *tier;
+      } else {
+        warn("bot_difficulty must be easy, medium or hard");
+      }
     } else if (key == "volume") {
       if (!parseSmall(value, 100, options.volume)) warn("volume must be 0..100");
     } else if (key == "mute") {
