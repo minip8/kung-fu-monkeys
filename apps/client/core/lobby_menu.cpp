@@ -217,8 +217,7 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     case LobbyRowKind::Mode:
       settings_.mode = cycle(settings_.mode, db.modeCount);
       // v0.34: a mode that names its arena (ModeDef::arena) brings it.
-      if (db.modeAt(settings_.mode).hasArena() ||
-          !db.compatible(settings_.arena, settings_.mode)) {
+      if (db.modeAt(settings_.mode).hasArena() || !db.compatible(settings_.arena, settings_.mode)) {
         settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(settings_.arena);
       }
       break;

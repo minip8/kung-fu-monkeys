@@ -548,12 +548,12 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
   CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 0")));
   CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 12")));
   // v0.34: the space, and the grid's keys only in a grid mode.
-  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
-                                     "name = \"rounds\"\nspace = \"hex\"")),
-                 "unknown space \"hex\" (continuous or grid)"));
-  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
-                                     "name = \"rounds\"\nturn_ticks = 15")),
-                 "'turn_ticks' belongs to a grid mode (give space = \"grid\")"));
+  CHECK(contains(
+      loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\nspace = \"hex\"")),
+      "unknown space \"hex\" (continuous or grid)"));
+  CHECK(contains(
+      loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\nturn_ticks = 15")),
+      "'turn_ticks' belongs to a grid mode (give space = \"grid\")"));
   CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
                                      "name = \"rounds\"\nspace = \"grid\"\nturn_ticks = 61")),
                  "'turn_ticks' must be an integer in [1, 60]"));
@@ -574,9 +574,9 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
   }
   // v0.34: a mode's own arena must exist and suit it.
   CHECK(loads(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\narena = \"box\"")));
-  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
-                                     "name = \"rounds\"\narena = \"nope\"")),
-                 "'arena' names unknown arena \"nope\""));
+  CHECK(contains(
+      loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\narena = \"nope\"")),
+      "'arena' names unknown arena \"nope\""));
   CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
                                      "name = \"rounds\"\nspace = \"grid\"\narena = \"box\"")),
                  "its arena \"box\" does not suit it"));
@@ -596,14 +596,12 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
     REQUIRE(parseContent(replaced(kMinimal, "kind = \"throw\"",
                                   "kind = \"throw\"\nroot_phases = [\"recovery\", \"startup\"]"),
                          "test.toml", db, diag));
-    const std::optional<uint8_t> thr = [&]() -> std::optional<uint8_t> {
-      for (uint8_t i = 0; i < db.abilityCount; ++i) {
-        if (db.abilities[i].name.view() == "throw") return i;
-      }
-      return std::nullopt;
-    }();
-    REQUIRE(thr);
-    CHECK(db.abilities[thr.value_or(0)].rootPhases ==
+    uint8_t thr = 0;
+    for (uint8_t i = 0; i < db.abilityCount; ++i) {
+      if (db.abilities[i].name.view() == "throw") thr = i;
+    }
+    REQUIRE(thr != 0);
+    CHECK(db.abilities[thr].rootPhases ==
           (sim::phaseBit(sim::AbilityPhase::Recovery) | sim::phaseBit(sim::AbilityPhase::Startup)));
   }
   CHECK(contains(
@@ -762,9 +760,9 @@ TEST_CASE("content/ ships the power-ups and an arena that spawns them",
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
   // v0.34 appended quick_hands and the grid modes' two baselines.
-  const std::array<std::string_view, 8> names = {
-      "speed_boost", "big_banana", "triple_banana", "shield",
-      "fast_hands",  "quick_hands", "grid_base",    "grid_base_1t"};
+  const std::array<std::string_view, 8> names = {"speed_boost", "big_banana",  "triple_banana",
+                                                 "shield",      "fast_hands",  "quick_hands",
+                                                 "grid_base",   "grid_base_1t"};
   REQUIRE(db.powerUpCount == names.size());
   for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);
@@ -787,7 +785,8 @@ TEST_CASE("content/ ships the power-ups and an arena that spawns them",
 
 // v0.34 (architecture §5.12): the grid content and the numbers §5.12 starts
 // with, as content/ ships them.
-TEST_CASE("content/ ships the grid modes, their kits and the courtyard", "[content][loader][grid]") {
+TEST_CASE("content/ ships the grid modes, their kits and the courtyard",
+          "[content][loader][grid]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));

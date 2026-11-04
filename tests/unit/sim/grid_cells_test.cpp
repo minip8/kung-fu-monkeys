@@ -48,8 +48,9 @@ uint8_t nearestOctant(uint32_t steps) {
 }  // namespace
 
 TEST_CASE("cellOf and cellCentre round-trip on every cell", "[sim][grid]") {
-  for (const ArenaDef& a : {cellArena(32, 18, Fixed::kOneRaw), cellArena(7, 5, Fixed::kOneRaw),
-                            cellArena(9, 4, Fixed::kOneRaw / 2), cellArena(6, 6, 3 * Fixed::kOneRaw)}) {
+  for (const ArenaDef& a :
+       {cellArena(32, 18, Fixed::kOneRaw), cellArena(7, 5, Fixed::kOneRaw),
+        cellArena(9, 4, Fixed::kOneRaw / 2), cellArena(6, 6, 3 * Fixed::kOneRaw)}) {
     REQUIRE(hasCells(a));
     const int32_t cols = columns(a);
     const int32_t rws = rows(a);

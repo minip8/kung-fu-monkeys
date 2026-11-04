@@ -57,8 +57,8 @@ ContentDB gridContent(uint16_t perfectWindow = 0) {
   a.walls[0] = Wall{wallMin, wallMin + Vec2{Fixed::one(), Fixed::one()}};
   a.wallCount = 1;
   const Vec2 pitMin = centreOf(a, Cell{8, 8}) - Vec2{Fixed::half(), Fixed::half()};
-  a.hazards[0] = Hazard{pitMin, pitMin + Vec2{Fixed::one(), Fixed::one()}, HazardKind::Pit,
-                        Fixed::one()};
+  a.hazards[0] =
+      Hazard{pitMin, pitMin + Vec2{Fixed::one(), Fixed::one()}, HazardKind::Pit, Fixed::one()};
   a.hazardCount = 1;
   a.spawnPoints[0] = centreOf(a, Cell{2, 2});
   a.spawnPoints[1] = centreOf(a, Cell{13, 2});
