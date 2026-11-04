@@ -2070,6 +2070,54 @@ which the contract needs.
   fuel use, traps and substitutions) out. It is the contest's local test tool, the ladder's
   engine and, for anyone who wants to train by self-play or search, all the environment the
   project provides.
+  As built (v0.30): `kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--ticks N]
+  [--arena NAME] [--mode NAME] [--powerups LIST] [--content DIR] [--fuel N] [--delay T]
+  [--replay out.kfmr | --replay-dir DIR] [--result FILE] [--json] [--quiet] [--log]`. `--bot`
+  fills slots in order and `--bots` pads with `ref:hard` (at least two slots); match k of a
+  tournament uses world seed S + k and seeds slot s with the shared formula; `--ticks` caps a
+  match (default 36 000, reported as `result cap`, not an error); `--delay` applies to every
+  slot; `--log` prints each module's captured `kfm_log` text to stderr. One result line per
+  match (`match k seed S ticks N checksum H result ended|cap winner W | slot i SPEC place P
+  score S kills K deaths D acts A subs U [traps T over O bad B fuel_mean F fuel_max M fuel_init
+  I log L dead no|<init fault>] | ...`) plus a `summary` line (matches, ended, draws, capped,
+  mean ticks, per slot wins, mean place, totals); `--json` prints the same as one object per
+  line. Places: the `MatchEnded` winner first, then higher final score, fewer deaths, lower
+  slot, all distinct; kills and deaths come from `PlayerEliminated` (a self-elimination is a
+  death, not a kill); the final checksum lets a replay be checked against its line. Exit codes:
+  0, 2 bad arguments or content, 3 a module refused at load (or a module spec in a build without
+  `KFM_WASM_BOTS`), 4 I/O. `kfm_arena_core` (`runMatch`, placements, formatting, the module
+  cache) is the library under test; the CLI is a thin wrapper, and it builds under Emscripten
+  as a node CLI with reference bots only. Release, this machine: a 4-bot reference tournament
+  runs about 20 k ticks/s (hashing dominated, see the follow-ups) and `kfm_replay bench` steps
+  the same sim at about 1 M ticks/s.
+- **Hosts as built (v0.30).** The server (`apps/server`): `engine/net` has exactly one bot hook,
+  `ServerConfig::botInputs` (a function given the world, the content and the tick's frame with
+  the bot slots present, called once per tick before assembly, after a restart has been
+  applied, so it sees the fresh world and the new `botSeed()`); unset, `NetServer` keeps the
+  scripted generator, which is what netsim and the netcode tests still run. `ServerHost` owns an
+  `AgentHost` and a `WasmRuntime`, takes `--bot SPEC` (repeatable), `--bots N` (pads with
+  `ref:hard`), `--bot-delay auto|N` and `--fuel N`, re-inits every agent on the first tick of
+  each match (bot seed B₀ = `--bots-seed`, Bₖ₊₁ = splitmix64(Bₖ), slot seed from the shared
+  formula; a module gets a fresh instance), refuses to start on a module that fails to load,
+  and reports per-bot acts, substitutions and, for modules, traps, over-budget ticks and mean
+  fuel in its stats line. The "humans' lead" is estimated per Input message as the arrival
+  margin plus half the round trip (the lead controller drives the margin itself to +1..+2 ticks
+  whatever the RTT, §6.2, so the margin alone is not the lead; the round trip is taken from the
+  message's acknowledged frame), smoothed like the margin, and `humanLeadTicks()` is the lower
+  median over the active peers that hold slots, clamped to 60, 0 when none, which is why bot
+  versus bot has no delay; `auto` re-applies it to every bot once a second. A delay change never
+  replays an answer: a longer delay holds the last input until the line catches up, a shorter
+  one skips the overdue answers. The client (`apps/client`): `MatchSession` owns an `AgentHost`
+  fed by a `BotRoster` that turns one `BotSpec` into fresh agents at every match start and
+  restart (delay 0, the shared seed formula, `--players-seed` as the base); the casual default
+  tier is `medium`, the lobby panel has a "Bot difficulty" row saved as `bot_difficulty`, the
+  flags are `--bot-difficulty easy|medium|hard`, `--bot-module PATH.wasm` and `--bot SPEC`
+  (the browser page's `?bot=easy`); a module that fails to load (or any module in the browser,
+  which has no runtime yet) falls back to the reference bot at the chosen tier with a logged
+  error, so the client always starts; the F1 overlay's Bots section shows per-slot acts and
+  substitutions and, for modules, traps, over-budget ticks, bad returns, fuel and a dead flag.
+  The scripted generator is used by no shipping host any more: `kfm_replay`, the render probe
+  and netsim keep it as test scaffolding.
 - **Outside this repository.** A separate bots repository holds the SDKs (one copy-in file per
   language with no dependencies: C, Rust and AssemblyScript to start), starter and example
   bots, the contest rules and, later, the ladder service. The dividing line: anything that
@@ -2515,6 +2563,25 @@ roster reaches the world one tick after start), bots that yield a slot to a huma
 id constant, retracted events undone on screen, reconnect-with-token from the UI, a server-chosen
 match config, multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
 a human playtest over a real link.
+
+Progress: M5 landed in v0.30 (the in-repo half; the SDKs and example bots are published from
+the bots repository, which is where the exit criterion's tournament is run). `engine/ai` holds
+`IAgent`, `Observation` v1 with its fixed-point builder, `AgentHost`, the reference bot, `BotSpec`
+and `WasmAgent` over WAMR 2.4.5 with exact instruction metering (§8); `kfm_arena` runs matches
+and tournaments to a result line, JSON and `.kfmr` replays; `kfm_server` and `kfm_client` drive
+their bot slots through `AgentHost` (the server delaying bots by the humans' lead); the C SDK
+seed and the `chaser` example bot under `tools/bots/` are the copy the bots repository starts
+from, and a test plays the compiled example against the reference bot. Verified locally: GCC 15
+headless Debug and Release (every ctest target incl. the arena smoke tests, the wasm fixture
+suite, the soak gates and the real-socket tests), the native dev preset with the client, Clang 21
+and GCC ASan+UBSan on the wasm runtime tests, Emscripten for `kfm_arena` as a node CLI; MSVC and
+Apple Clang are left to CI (WAMR's `runtime_lib.cmake` builds on both). Numbers: Observation
+5748 bytes; WAMR classic interpreter about 820 M instructions/s (Release), a 100 k budget about
+0.12 ms; two hard reference bots against two scripted players win 41 rounds to 10. Replay
+checksums: unchanged (no sim change). Follow-ups: the browser JS shim so `kfm_client.html` can
+run modules; `kfm_arena --team` and the per-instance lifecycle (M5b); bots that yield a slot to
+a joining human; a protocol flag so a client can tell bot slots apart in the roster; running
+contests at thousands of times real time through parallel processes.
 
 Progress: M4 landed in v0.25. Content is data: `engine/content` parses the TOML under `content/`
 (toml++ 3.4.0, exact decimal to Q16.16, names resolved to indices, validation with file:line
