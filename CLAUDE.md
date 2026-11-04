@@ -31,7 +31,10 @@ relations, the five mode seams, the loadout axis, zones and tilemap arenas, the 
 the squad contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12,
 §8): step 1, mode foundations (32 mode slots, the `[[loadout]]` axis picked by
 `MatchConfig::loadout`, the `onRoundStart`/`onPickupTaken` hooks and `MatchRules::modeData`), landed
-in v0.31; step 2 (teams) is next. `docs/architecture.md` is the
+in v0.31; step 2, teams (`MatchConfig::teams` → `MatchContent::relation`, the rules table's
+Ally rows behind `Tag::FriendlyFire`, the mode baseline power-up and roles, arena spawn groups
+and `ContentDB::compatible`, `team_rounds`/`team_deathmatch` on the `standoff` arena), landed in
+v0.32; step 3 (objectives: zones, tilemaps, `hill`, `capture`) is next. `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
 a changelog line. Do not let code and doc disagree silently.
@@ -69,14 +72,19 @@ build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay]
 build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
 #   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
 #   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
-#   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock)
+#   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock),
+#   team_rounds and team_deathmatch (2 teams, balanced over the joined slots; v0.32). A team mode needs an arena with a
+#   spawn group per team (spawn_groups, ContentDB::compatible): without --arena every host picks the first that suits
+#   (standoff), a named arena that does not suit is a configuration error (non-zero exit); no friendly fire unless the mode's
+#   `baseline` power-up grants tag friendly_fire
 #   loadouts (content/loadouts.toml, --loadout NAME): base (default, [player] abilities), blink, slam, parry
 #   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
 #   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
-#   arena (with preview), mode, loadout, power-up toggles, bots, volume, mute; saved between runs (SDL pref dir /
+#   arena (with preview; only arenas that suit the mode), mode, teams (read-only, from the mode), loadout, power-up
+#   toggles, bots, volume, mute; saved between runs (SDL pref dir /
 #   browser localStorage), flags win: --arena NAME --mode NAME --loadout NAME --powerups all|none|a,b ;
 #   --no-settings ignores the saved file
-#   browser: kfm_client.html?arena=pillars&mode=deathmatch&loadout=slam&powerups=shield,big_banana
+#   browser: kfm_client.html?arena=pillars&mode=deathmatch&loadout=slam&powerups=shield,big_banana (?mode=team_rounds)
 #   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
 ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
@@ -97,6 +105,7 @@ build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players
 #   also --content DIR --arena NAME --mode NAME --loadout NAME (kfm_netsim and kfm_render_probe take the same four)
 #   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
+build/dev/apps/netsim/kfm_netsim --clients 6 --mode team_deathmatch --rtt 100 --jitter 10 --loss 2 --seconds 20   # a team mode (teams ride in MatchConfig, protocol 5)
 ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
 build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]   # headless bot matches
 #   --rotate moves every bot through every slot across the tournament (the sim's spawn order favours some slots)
@@ -263,8 +272,13 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
 - Next milestone: M5b, sequenced in architecture §11 (five PRs, one architecture version each,
-  every one green on the determinism gate before the next; step 1 landed in v0.31); step 2's
-  spawn groups are the fix for the spawn-order slot bias recorded in §12.
+  every one green on the determinism gate before the next; step 1 landed in v0.31, step 2 in
+  v0.32; step 3 is next). Spawn groups fixed the side bias between teams only: the free-for-all
+  spawn-order slot bias of §12 is still open (tournaments rotate).
+- Teams never enter `WorldState`: a free-for-all config (slot i = team i) must keep every
+  checksum. New rows that hurt or push get an Enemy row and an Ally twin needing
+  `Tag::FriendlyFire` on the receiving monkey (a test pins the twins); hosts fill
+  `MatchConfig::teams` with `sim::teamsFor(mode, present)` (or through `resolveMatchNames`).
 - A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
   `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
 

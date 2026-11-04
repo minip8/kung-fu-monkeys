@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.31 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.32 (2026-11-04). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -247,6 +247,19 @@ is visited unconditionally and cleared at `MatchStarted`, which changed every wo
 (corpus regenerated; with it left out of the visitor the gate passed unchanged) and fills
 `match.reservedModeData[0..8)`. `MatchContent::modeBehavior` is a test seam that replaces the
 kind's row, so a scenario runs a probe mode without a `ModeKind` of its own.
+v0.32 changes: M5b step 2, teams, as built (§5.3, §5.4, §5.6, §5.8, §5.10, §6.6, §7, §8, §11,
+§12, Appendix A). `MatchConfig::teams` (a team per slot, slot i = team i in a free-for-all)
+rides in `MatchContent` (`relation`, `teamOf`, `teamScore`, `loadoutIndexFor`), the replay
+header (format 5) and the join messages (protocol 5, 4 bits a slot); every host derives it from
+the mode (`sim::teamsFor`, balanced, later slots to the smallest team). Every rule row carries
+`relationB`; the rows that hurt, push or answer a hit (15, 16, 20, 24, 25, 26, 30) apply to an
+Enemy and each has an Ally twin (17, 18, 21, 27, 28, 29, 31) that needs `Tag::FriendlyFire` on
+the receiving monkey. `ModeDef` gains `teams`, `baseline` (a permanent `ModifierList` entry,
+`ticksLeft = kPermanentModifierTicks`, applied in full at the spawn) and `roles`; `ArenaDef`
+gains `spawnGroups` and `ContentDB::compatible`/`firstCompatibleArena`; kinds `team_rounds`
+and `team_deathmatch`, the `standoff` arena (two groups of five), two corpus entries; the
+lobby's read-only Teams row and the team scoreboard; Observation v1 fills its team fields and
+the reference bot ignores a teammate's banana. Replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -500,6 +513,8 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 | `rounds` | at most one monkey left (two or more present): the survivor wins the round (none: draw); first to `roundsToWin` round wins takes the match | nothing | the M1 rules; never sets a mode counter |
 | `deathmatch` | one round; the first to `scoreToWin` eliminations, or the leader once `timeLimitTicks` of play pass (a tied lead: draw) ends the match (`RoundEnded` + `MatchEnded`) | +1 score for the attacker (`ScoreChanged`), +1 death, respawn due in `respawnTicks` | a present slot without a monkey or a pending respawn (a late joiner) is scheduled like a respawn; a slot that left keeps its monkey until eliminated, then forfeits its score |
 | `survival` | as rounds, plus a per-round `timeLimitTicks`: on timeout the survivor with the most hp wins the round, then the one with the fewest deaths this match, else a draw | +1 death | no respawn within a round |
+| `team_rounds` (v0.32) | monkeys of at most one team left (two or more teams present): that team wins the round (none: draw), credited to its lowest surviving slot; the first team whose slots' round wins sum to `roundsToWin` takes the match | nothing | one team present never ends a round |
+| `team_deathmatch` (v0.32) | one round; the first team whose slots' eliminations sum to `scoreToWin`, or the leading team once `timeLimitTicks` pass (a tied lead: draw); `MatchEnded` names the team's present top scorer | +1 score for an enemy attacker only (an ally's or one's own scores nothing), +1 death, respawn as deathmatch | a slot that leaves keeps its score: it is the team's |
 
 Respawn (`LifecycleSystem`, v0.23) is driven only by the timers: during Playing a dead present slot
 with a pending `respawnTicks` counts down before this tick's despawns and respawns at 0, so a
@@ -551,6 +566,23 @@ a probe mode (rounds plus counters in `modeData`) without a `ModeKind`, a loader
 registry row that would ship; hosts never set it, and it is not part of any config, replay or
 message.
 
+As built (v0.32, step 2: teams). The team kinds are two behaviour files
+(`src/modes/team_rounds.cpp`, `team_deathmatch.cpp`) over shared helpers in `mode_flow`
+(`teamsPresent`, `teamsAlive`, `lowestAliveOf`, `teamScoreLeader`, and deathmatch's roster as
+`deathmatchRoster(…, forfeitScore)`, which deathmatch calls with `true`, so its code path is
+unchanged). Scores stay per slot (`ScoreChanged`, `RoundEnded`/`MatchEnded` name a slot); a
+team's score is always derived, `MatchContent::teamScore(scores, team)`. `endRound` judges the
+match on the winner's team score, which in a free-for-all (team i = slot i) is the slot's own:
+the rounds and survival code paths are bit for bit the same. Both kinds judge the teams the
+config holds, not `ModeDef::teams`, so a free-for-all config makes them play like `rounds` and
+`deathmatch`. The round winner of `team_rounds` is the winning team's lowest surviving slot
+(one slot, so the sum stays the number of rounds won); presentation shows "Team N". Spawn
+groups at the round start (§5.10): an arena with one group keeps the M1 code (one RNG offset
+over every point, present slots in slot order); with several, `RulesSystem` draws one offset
+per group in group order and each team's present slots take their group's points from it,
+wrapping; the respawn's farthest-point choice is restricted to the slot's group
+(`spawnRangeOf`).
+
 ### 5.4 Input model
 
 ```cpp
@@ -584,6 +616,16 @@ leaves mid-round keeps its idle monkey until it is eliminated or the round ends.
 (v0.23), whose match is one round, a joiner spawns `respawnTicks` after it appears and a leaver's
 eliminated monkey does not respawn (§5.3). The server
 changes the mask only through its frames, so prediction, rollback and replays need nothing else.
+
+Teams (v0.32): `MatchConfig::teams` is `TeamSet`, a team index per slot below `kMaxPlayers`,
+constant for the match (not in `InputFrame`, not in `WorldState`); the default
+`kFreeForAllTeams` gives slot i team i. Hosts fill it with `sim::teamsFor(mode, present)` =
+`balancedTeams(ModeDef::teams, present)`: the present slots in slot order round-robin over the
+teams, then every other slot in slot order to the team with the fewest slots so far, so a slot
+that joins during the match lands on the smallest team as it stood at the start. Ten bytes in
+the replay header, four bits a slot on the wire. The local lobby recomputes it from the joined
+slots and bots whenever a match starts or restarts; `kfm_server` at every restart from the
+slots present then; the command-line hosts from the mode through `resolveMatchNames`.
 
 Input sampler (v0.15, `engine/platform`, SDL-free and unit-tested headlessly): the client
 translates OS events into a platform-neutral `InputEvent` (key, pad button, pad axis, pad
@@ -768,6 +810,46 @@ prio  A                               B                                    handl
 
 Friendly fire is therefore a tag the mode's baseline grants (§5.3), not a flag a handler reads;
 the dash attack and the slam push get the same pair of rows when a team mode wants them.
+
+As built (v0.32). `InteractionRule::relationB` is a mask over `relationBit(Relation::Self |
+Ally | Enemy)`, default `kRelationAny`; `InteractionSystem` judges it after the tag checks,
+between A and B (a player pair, either orientation) or B's owner (a banana), and passes any
+mask for a pickup or hazard. An owner slot that is invalid counts as an enemy, as every other
+slot is in a free-for-all. Every row that hurts, pushes or answers a hit applies to an Enemy
+and has an Ally twin that additionally requires `Tag::FriendlyFire` on the monkey on the
+receiving end (A for a banana row, B for a player pair), the rest of the row unchanged. The
+twins sit a few priorities below the Enemy rows; a contact is either Ally or Enemy, so a twin
+only ever competes with its own relation's rows, in the same order:
+
+```
+prio  A                                   B                                       relation
+ 10   Player[PerfectDash]                 Boomerang[InFlight, !own]               any (a pass)
+ 11   Player[PerfectDash]                 Boomerang[Returning, own]               any
+ 15   Player[Parrying, !HitStun]          Boomerang[InFlight, !own]               Enemy
+ 16   Player[Slamming, !HitStun]          Boomerang[InFlight, !own] (reach)       Enemy
+ 17   Player[Parrying, FF, !HitStun]      Boomerang[InFlight, !own]               Ally
+ 18   Player[Slamming, FF, !HitStun]      Boomerang[InFlight, !own] (reach)       Ally
+ 20   Player[Shielded, !HitStun]          Boomerang[InFlight, !own]               Enemy
+ 21   Player[Shielded, FF, !HitStun]      Boomerang[InFlight, !own]               Ally
+ 24   Player[Dashing, !HitStun]           Player[Shielded, !HitStun, !Invuln]     Enemy
+ 25   Player[Dashing, !HitStun]           Player[!HitStun, !Invuln]               Enemy
+ 26   Player[Slamming, !HitStun]          Player[] (reach)                        Enemy
+ 27   Player[Dashing, !HitStun]           Player[Shielded, FF, !HitStun, !Invuln] Ally
+ 28   Player[Dashing, !HitStun]           Player[FF, !HitStun, !Invuln]           Ally
+ 29   Player[Slamming, !HitStun]          Player[FF] (reach)                      Ally
+ 30   Player[!HitStun, !Invuln]           Boomerang[InFlight, !own]               Enemy
+ 31   Player[FF, !HitStun, !Invuln]       Boomerang[InFlight, !own]               Ally
+ 40, 50, 51, 60 as before                                                          any
+```
+
+Decided beyond the v0.29 sketch: the parry, the slam's grounding and both shield rows get twins
+too, because each pre-empts a row that has one (a shield breaks only on a hit that would land;
+a parry or a slam would otherwise steal or knock down a teammate's banana that passes through
+harmlessly). The perfect catch keeps every relation: catching a teammate's banana is a pass.
+`Tag::FriendlyFire` is bit 8 (nine of 32 used), grantable by a power-up's `tag` grant
+(`friendly_fire`) and by nothing else. A test pins every twin against its Enemy row field by
+field. In a free-for-all no Ally row can match and every Enemy row matches what the row matched
+before, so the gate's checksums did not move.
 Contested cells on the grid are not rows: they are resolved before anyone moves (§5.12). The
 catch stays row 10 in every space; what changes on the grid is who can ever be `PerfectDash`
 (§5.12).
@@ -969,6 +1051,21 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
 
   Fast Hands is an `AbilityOverride` rather than a cooldown stat: a new def needs no new
   `StatKind` and no special case in `AbilitySystem`.
+- A mode's baseline (v0.32, `ModeDef::baseline`): the convention is a permanent entry, not a
+  slot of its own. `resetPlayer` (every round-start spawn and every respawn) ends with
+  `grantBaseline`, which, for a mode with a baseline only, makes the list `{baseline,
+  ticksLeft = kPermanentModifierTicks (0xFFFF)}` and applies it at once the way
+  `ModifierSystem` would (stats with hp at the new `maxHp`, ammo topped up like a pickup,
+  ability overrides, tags recorded in `grantedTags`), so a respawned monkey is covered on its
+  first tick rather than after the next `ModifierSystem` pass. `ModifierSystem` never counts a
+  permanent entry down (so never drops it); a pickup of the same power-up leaves it permanent
+  and only adds its ammo top-up; a shield block may still remove it like any shield. Power-up
+  durations are capped at 65534 (loader and `validateContent`) so no pickup is ever permanent.
+  A mode without a baseline never takes the new branch, which kept the free-for-all
+  checksums. The shipped team modes have none (no friendly fire); a friendly-fire baseline is a
+  power-up `grants = [{ kind = "tag", tag = "friendly_fire" }]`, tested in code but not shipped,
+  because any new power-up would join every spawner set that names none and change the draws
+  of `dojo_powerups` (follow-up: a non-spawnable power-up flag).
 
 ### 5.9 Events
 
@@ -1176,7 +1273,13 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   banana_sight }`) and the kinds `team_rounds`, `team_deathmatch`, `hill`, `capture`. `kMaxModes`
   rises to 32; every slot is hashed, so the content hash changes once (corpus regenerated,
   checksums unchanged). As built (v0.31): `kMaxModes` is 32; the other fields arrive with the
-  later steps of §11.
+  later steps of §11. As built (v0.32): `teams` (u8; validation: 0 or 2..10, and the team kinds
+  need 2 or more), `baseline` (u8 power-up index, `kNoBaseline` = 0xFF; the TOML name resolves
+  after every file is read, an unknown one is an error) and `roles` (`roles[10]` loadout
+  indices plus `roleCount`; names resolve the same way; only with `teams > 0`), visited after
+  the deathmatch numbers. Shipped: `team_rounds` (index 3: 2 teams, first team to 3 round wins)
+  and `team_deathmatch` (index 4: 2 teams, first team to 20, 3 min, deathmatch's respawn
+  numbers), neither with a baseline or roles.
 - Loadouts (v0.29) are their own axis. `[[loadout]]` = `name` plus 2–3 ability names
   (`ContentDB::loadouts`, `kMaxLoadouts` 16; index 0 is `[player] abilities`).
   `MatchConfig::loadout` picks one for the match (the lobby, `--loadout NAME`, `?loadout=`) and
@@ -1195,6 +1298,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   equal. `MatchContent::loadoutIndex` is the selection and `loadout()` returns
   `loadoutAbilities(loadoutIndex)`, read by `resetPlayer` at every spawn and by
   `ModifierSystem` when an override ends; there is no role lookup until teams (step 2).
+  As built (v0.32): `MatchContent::loadoutIndexFor(slot)` is the role in a team mode with
+  roles (the slot's position among the slots of its team in slot order, round-robin over
+  `roles[0..roleCount)`), else `loadoutIndex`; `loadout(slot)` its abilities, read by
+  `resetPlayer` and `ModifierSystem`. `loadout()` without a slot stays the match's.
   `defaultContent()` holds loadout 0 only, and the content test compares loadout 0 field by
   field like arena 0 and mode 0. `content/loadouts.toml` ships `blink`, `slam`, `parry` (the base
   kit plus the third ability). The lobby panel gains a Loadout row after Mode (the preview
@@ -1209,6 +1316,19 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   the lobby fills it from `ModeDef::teams`, balanced, joiners to the smallest team. Arenas gain
   `spawn_groups` (default 1): the spawn list splits into that many consecutive groups and team
   t spawns from group t mod groups; validation requires every group to hold a point.
+  As built (v0.32): `ArenaDef::spawnGroups` (u8, default 1, visited last), TOML `spawn_groups`
+  in [1, 10] and validated against the point count; group g holds points [g·n/G, (g+1)·n/G)
+  (`spawnGroupRange`). `ContentDB::compatible(arena, mode)` is `mode.teams == 0 ||
+  spawnGroups >= mode.teams`, with `firstCompatibleArena(mode)`; the sim itself plays any pair.
+  `content::resolveMatchNames` (every command line, the client's flags and `?mode=`) takes the
+  first compatible arena when no arena is named and refuses a named incompatible one with the
+  list of arenas that suit; the client's lobby settings let a saved arena give way instead; the
+  lobby's Arena row skips incompatible arenas and a mode change moves the arena to the first
+  compatible one. `dojo` keeps one group: in a free-for-all team t is slot t, so two groups would
+  move slots 1 and 3 to the other half and change every dojo checksum. The team arena is new,
+  `content/arenas/05-standoff.toml` (`standoff`, index 5): the dojo's 32 × 18 box, two 2 × 3
+  blocks in the middle with an open lane between them, and two groups of five points at
+  x = ∓11..13.5 facing each other.
 - Zones (v0.29): `zones = [{ min, max }, ...]` (`kMaxArenaZones` 8), boxes like hazards that
   block nothing and emit nothing; `zoneOccupants(s, arena, k)` returns the mask of the monkeys
   whose centre is inside, for `onPlaying`. `hill` needs one zone, `capture` one per team.
@@ -1638,8 +1758,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   arena and mode lists, so the `MatchConfig` in `Welcome`, `Snapshot` and `MatchConfig`
   (seed, roster, arena index, mode index; protocol version 2; the power-up set as a u16 since
   protocol version 3, v0.24; the loadout index as a u8 below `kMaxLoadouts` since protocol
-  version 4, v0.31) is all a client needs to simulate the server's arena, mode, power-ups and
-  loadout. A client steps with the config of the snapshot it last loaded
+  version 4, v0.31; the team of every slot, 4 bits each and below `kMaxPlayers`, since protocol
+  version 5, v0.32) is all a client needs to simulate the server's arena, mode, power-ups,
+  loadout and teams. A client steps with the config of the snapshot it last loaded
   (`NetClient::simConfig()`); an announced restart's config (`matchConfig()`) takes effect
   with the new match's snapshot, so a restart into another arena costs no resync.
   Slots are the lowest free ones; `requestedSlots = 0` is a spectator; `JoinMatch` grows or shrinks
@@ -1676,7 +1797,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   its clock (one round, so `round` stays 1), survival and rounds on `roundsToWin`; a draw
   (deathmatch's tied lead) is a `MatchEnded` with an invalid winner, logged as "drawn". The
   restart keeps the mode, and `initialWorld` starts the next match with zeroed mode counters,
-  so nothing (scores, deaths, respawn timers) carries over. A deathmatch joiner does not wait for
+  so nothing (scores, deaths, respawn timers) carries over. Since v0.32 `kfm_server` restarts
+  with the teams rebalanced over the slots present at that moment (`sim::teamsFor`), through
+  `restartMatch(MatchConfig, …)`, and logs the winner's team in a team mode. A deathmatch joiner does not wait for
   a next round that never comes: its slot spawns `respawnTicks` after it appears in the frames
   (§5.3), at the farthest spawn point.
 
@@ -1872,6 +1995,17 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   card dims while its slot waits to respawn or is out of the round. The mode line and clock sit
   under the cards. Over each monkey the same pies, smaller and without numbers, follow the ammo
   pips.
+- Teams in the client (v0.32): a team is drawn in the palette colour of its index (team 1 red,
+  team 2 blue), named "Team N". The lobby gains a read-only Teams row after Mode ("free-for-all"
+  or "2 (by mode)"; Left/Right do nothing), the Arena row skips arenas the mode does not suit
+  and a mode change moves to the first that does; in a team mode each filled slot card carries
+  "T<n>" and a bar in its team colour (`MatchSession::teams()`: the balanced split of the
+  joined slots and bots, the match's `MatchConfig::teams` once it runs), and the preview says
+  "Teams 2, balanced as players join". In the match `RenderHud` carries `teamCount`, every
+  slot's team and every team's score; the scoreboard cards get the same team bar, a line of
+  team scores in team colours sits under the mode line, and the round and match banners say
+  "Round won by Team N" / "Team N wins the match!". `?mode=team_rounds` needs nothing new: it
+  maps onto `--mode`, which takes the first compatible arena.
 
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
@@ -2256,7 +2390,8 @@ which the contract needs.
     while self is dead), the 32 pickups and the arena statics, each entry with a valid flag and
     the pools at their full capacity, and the v0.29 reservations (team and visible flags, heard
     calls, cell and facing octant, `turnTicks`, `ticksToLatch`, role, team scores, `modeData`)
-    strictly zero. Enum values may be appended within a version; a new `AbilityKind` trips a
+    strictly zero (since v0.31 and v0.32 the role, `modeData` and the team fields are filled,
+    below). Enum values may be appended within a version; a new `AbilityKind` trips a
     `static_assert` in the builder so the schema is reviewed. The builder is a pure function of
     (world, content, slot, delay) in fixed-point math only: `tools/ci/check_sim_no_float.sh`
     now covers `engine/ai`, so a bot match reproduces bit for bit on every host.
@@ -2361,7 +2496,19 @@ difficulty.
   entries zeroed, counts kept), the heard-calls list, self cell and facing octant, `turnTicks`
   and the ticks to the next latch, the role (loadout index), team scores and `modeData`.
   Filled since v0.31, with the meaning `docs/bot-abi.md` §3 gives them and no layout change:
-  `self.reservedRole` (the match's loadout index until roles exist).
+  `self.reservedRole` (the match's loadout index until roles exist) and `match.reservedModeData`.
+  Filled since v0.32: `players[i].reservedTeam` and `self.reservedTeam` (the slot's
+  `MatchConfig::teams` entry; slot i in a free-for-all, so the fields are never "absent"),
+  relation Ally in `players[i].relation` and `bananas[i].ownerRelation` (through
+  `MatchContent::relation`), `match.reservedTeamScores[t]` (`teamScore`, which in a
+  free-for-all equals `scores[t]`) and `self.reservedRole` per slot in a team mode with roles.
+  `ObsModeKind` gains `TeamRounds` (3) and `TeamDeathmatch` (4), the tags bit 8 FriendlyFire,
+  and a modifier's `ticksLeft` 0xFFFF means a mode's permanent baseline. A banana has no team
+  field of its own in the v1 layout: its team is its owner's, reached through `owner` and
+  `ownerRelation`. The reference bot targets enemies only (it did
+  since v0.30) and, from v0.32, does not track a teammate's banana as a threat unless its own
+  monkey holds `FriendlyFire`; it does not yet keep its throws off a teammate's line when
+  friendly fire is on (follow-up).
 - **Contest knobs** are content and host settings, never code: team size, `vision` and its
   radii, call range, cooldown and alphabet (a mask over the 256 symbols), memory on respawn,
   fuel per instance, `turnTicks`, the catcher's cooldown. Tournaments pick rows; the engine
@@ -2665,6 +2812,51 @@ Follow-ups (later M5b steps): the per-role loadout lookup and `MatchConfig::team
 first kinds that use the new hooks (`hill`, `capture`, step 3), and `--powerups` on
 `kfm_netsim` and the render probe (open since M4; both now take `--loadout`).
 
+Progress: M5b step 2 (teams) landed in v0.32. `MatchConfig::teams` through `MatchContent`
+(`relation`, `teamScore`, `loadoutIndexFor`), replay format 5 and protocol 5, filled by every
+host from the mode (§5.4, §6.6); `InteractionRule::relationB` with seven Ally twins behind
+`Tag::FriendlyFire` (§5.6); `ModeDef::teams`, `baseline` (a permanent modifier, §5.8) and
+`roles`; `ArenaDef::spawnGroups` and `ContentDB::compatible` (§5.10); the kinds `team_rounds`
+and `team_deathmatch` and the `standoff` arena (§5.3); the lobby's read-only Teams row, team
+tags on the lobby cards and the scoreboard, team scores under it and "Team N" banners (§7);
+Observation v1's team fields and a reference bot that ignores a teammate's banana (§8).
+Decisions recorded on the way: twins for the parry, slam-grounding and shield rows too, with
+the tag on the receiving monkey (§5.6); the baseline as a permanent `ModifierList` entry applied
+in full at the spawn, durations capped at 65534 (§5.8); `team_rounds` credits a round to the
+winning team's lowest survivor and `team_deathmatch` keeps a leaver's score and scores no ally
+kill (§5.3); `dojo` keeps one spawn group and the team modes play on a new arena, because two
+groups would move free-for-all slots and change the dojo's checksums (§5.10); a command line
+with no arena takes the first compatible one, a named incompatible arena is refused, and the
+client's saved arena gives way to a mode flag (§5.10); no friendly-fire power-up ships, since a
+new power-up would join the `dojo_powerups` spawner draws (§5.8). Replay checksums: unchanged.
+The content hash (new `ModeDef`/`ArenaDef` fields, two modes, one arena) and the replay format
+changed, so the corpus was re-recorded and every existing `.checksums` file is byte-identical;
+two entries are new, `scripted_4p_team_rounds_1800t` and `scripted_4p_team_deathmatch_3600t` on
+`standoff` (16 replays). Spawn groups and the §12 slot bias, 4 hard reference bots, fixed
+slots, `kfm_arena` Release: `dojo`/`rounds` over 200 matches wins 28/77/64/31 by slot, the
+known bias, untouched (`dojo` keeps one group); `standoff`/`rounds` 68/84/19/17 (12 capped):
+in a free-for-all the groups alternate by slot, which trades the arc bias for a
+same-side one, so spawn groups do not fix free-for-all bias and `standoff` is a team arena;
+`standoff`/`team_rounds` over 200 matches the west team (slots 0, 2) won 94 and the east team
+(1, 3) 100 (6 capped), and 3v3 over 100 matches 56 to 43 (1 capped): no side bias between
+teams within the noise. Verified locally on GCC 15: the headless Debug build, the dev preset
+(every ctest target incl. the 16-entry corpus, both soak gates and the real-socket tests), the
+Release build, clang-format 23.1.3 and clang-tidy 23.1.4 over the whole tree with zero
+findings, the no-float check, `kfm_client --no-settings --autostart --bots 3 --mode team_rounds`
+120 frames with a screenshot (two teams spawned on their sides, team bars on the cards, team
+scores) and the lobby with its Teams row, `kfm_netsim --clients 6 --mode team_deathmatch` at
+100 ms ± 10 / 2 % for 20 s (701 checksums compared, 0 mismatches) and `kfm_arena --bots 4
+--mode team_rounds --matches 3`; MSVC, Apple Clang, Clang, ASan+UBSan and Emscripten are left
+to CI. Bench (`kfm_replay bench --ticks 36000 --players 10`, Release, `step()` alone, the
+shared WSL2 machine): 1.23–1.25 µs/tick on `dojo`/`rounds` (the relation check costs nothing
+measurable), 1.21 µs on `standoff`/`rounds`, 1.86 µs on `standoff`/`team_rounds`, 2.55 µs on
+`standoff`/`team_deathmatch` against 2.20 µs for `deathmatch` on the same arena (teammates'
+bananas fly through instead of ending in a hit, so more stay in the air). Follow-ups: a
+non-spawnable power-up flag so a friendly-fire baseline can ship; the reference bot keeping its
+throws off a teammate's line under friendly fire; `kfm_arena` places and result lines per team
+(with `--team`, step 5); a fairer free-for-all spawn (a per-round shuffle of slots onto ranks,
+§12) for arenas with several groups.
+
 Progress: M3 landed in v0.17. `engine/net` holds the `ITransport` seam, the loopback
 transport with its deterministic emulator and the transport contract suite, the bit-packed
 message layer, `NetServer`, `NetClient` (prediction, a 32-state rollback ring plus an anchor,
@@ -2892,7 +3084,17 @@ baseline moved to C++23 (§9).
   (slots 1 and 2 face each other, 0 and 3 sit 36° apart on odd offsets), and equal-time,
   equal-press Player × Player contacts resolve by pool index. A per-round shuffle of present
   slots onto spawn ranks from the world Rng, or spawn groups (M5b), would fix the first;
-  tournaments rotate slots meanwhile.
+  tournaments rotate slots meanwhile. Measured after spawn groups landed (v0.32, 4 hard bots,
+  fixed slots, 200 matches): `dojo` keeps one group and its bias (wins 28/77/64/31 by slot);
+  on `standoff` the two teams of `team_rounds` win 94 and 100, so groups remove the side bias
+  between teams, but its free-for-all goes 68/84/19/17: groups alternate free-for-all slots
+  between the sides, a same-side bias in place of the arc bias. Spawn groups therefore fix
+  team play only; the per-round shuffle stays the candidate for free-for-all and remains open
+  (it regenerates the corpus).
+- Open (M5b step 2 follow-ups, v0.32): a non-spawnable power-up flag (or a set the spawners
+  never draw from) so a friendly-fire baseline can ship without changing `dojo_powerups`'
+  draws; the reference bot holding fire when a teammate is on the line under friendly fire;
+  per-team places and result lines in `kfm_arena` (step 5's `--team`).
 - Decided (v0.29): a mode is content along five axes, each with its own seam (§5.3); teams ride
   in `MatchConfig` and reach the rules table as a relation mask, friendly fire being a tag the
   mode's baseline grants (§5.6); loadouts are their own match axis (§5.10); the grid is a
@@ -3052,7 +3254,10 @@ struct InteractionRule {
   EntityKind kindB; Tags requireB; Tags forbidB;
   uint8_t    phaseMaskB;                   // BoomerangPhase bits when B is a boomerang (0 = any)
   Ownership  ownership;                    // Any, Own, NotOwn: A vs. the owner of B
-  RelationMask relationB;                  // Self/Ally/Enemy bits of A vs. the owner of B (v0.29)
+  uint8_t    relationB;                    // relationBit(Self/Ally/Enemy) of B (or B's owner)
+                                           // to A, via MatchContent::relation (v0.29; v0.32:
+                                           // kRelationAny by default, the Ally twins need
+                                           // FriendlyFire)
   // false = did not apply, keep scanning (a mistimed catch falls through to damage)
   bool     (*resolve)(WorldState&, const ContentDB&, EntityId a, EntityId b, const Contact&,
                       EventSink&);
