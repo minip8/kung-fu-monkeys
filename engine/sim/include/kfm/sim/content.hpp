@@ -63,6 +63,11 @@ enum class AbilityKind : uint8_t {
 };
 enum class AbilityPhase : uint8_t { Idle = 0, Startup, Active, Recovery };
 
+// AbilityDef::rootPhases bit of a phase (v0.34).
+[[nodiscard]] constexpr uint8_t phaseBit(AbilityPhase phase) {
+  return static_cast<uint8_t>(1u << static_cast<uint8_t>(phase));
+}
+
 struct AbilityDef {
   ContentName name{};  // the loadout and other defs refer to it by name in TOML
   AbilityKind kind{AbilityKind::None};
@@ -77,6 +82,10 @@ struct AbilityDef {
   Tags tagsStartup{};  // tags granted during each phase
   Tags tagsActive{};
   Tags tagsRecovery{};
+  // v0.34, rooting (§5.10): the phases (phaseBit) during which the monkey's
+  // movement intent is ignored (continuous) or it takes no new cell
+  // commitment at a latch (grid). 0 = never rooted.
+  uint8_t rootPhases{0};
 };
 
 struct BoomerangDef {

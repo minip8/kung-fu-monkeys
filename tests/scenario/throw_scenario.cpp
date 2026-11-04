@@ -148,3 +148,51 @@ TEST_CASE("identical scripted runs give identical per-tick checksums", "[scenari
   // The run actually did something: state changed along the way.
   CHECK(a.front() != a.back());
 }
+
+// v0.34, rooting (§5.10): a throw whose def roots its recovery ignores the
+// stick while the recovery runs, then the monkey walks again; the startup
+// and active phases (not rooted) walk as usual.
+TEST_CASE("a rooted recovery ignores movement intent in the continuous space",
+          "[scenario][throw][root]") {
+  ContentDB content = defaultContent();
+  AbilityDef& thr = content.abilities[content.player.abilities[kAbilitySlotThrow]];
+  thr.rootPhases = phaseBit(AbilityPhase::Recovery);
+  REQUIRE(thr.recoveryTicks > 0);
+  WorldState s = makePlayingWorld(3, 0b1, content);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-4), Fixed::zero()});
+  const PlayerInput walkRight{0, 255, 0, 0, 0};
+  const Fixed step = content.player.moveSpeed;
+
+  Fixed x = playerAt(s, kP0).transform.pos.x;
+  (void)stepWith(s, PlayerInput{0, 255, 0, kThrow, 0}, content);  // press: Startup walks
+  CHECK(playerAt(s, kP0).transform.pos.x == x + step);
+  for (int k = 1; k < int{thr.startupTicks} + int{thr.activeTicks}; ++k) {
+    x = playerAt(s, kP0).transform.pos.x;
+    (void)stepWith(s, walkRight, content);
+    CHECK(playerAt(s, kP0).transform.pos.x == x + step);
+  }
+  for (int k = 0; k < int{thr.recoveryTicks}; ++k) {
+    INFO("recovery tick " << k);
+    REQUIRE(playerAt(s, kP0).abilities[kAbilitySlotThrow].phase != AbilityPhase::Idle);
+    x = playerAt(s, kP0).transform.pos.x;
+    (void)stepWith(s, walkRight, content);
+    REQUIRE(playerAt(s, kP0).abilities[kAbilitySlotThrow].phase == AbilityPhase::Recovery);
+    CHECK(playerAt(s, kP0).transform.pos.x == x);
+  }
+  // The tick the recovery ends on is Idle again: it walks.
+  x = playerAt(s, kP0).transform.pos.x;
+  (void)stepWith(s, walkRight, content);
+  REQUIRE(playerAt(s, kP0).abilities[kAbilitySlotThrow].phase == AbilityPhase::Idle);
+  CHECK(playerAt(s, kP0).transform.pos.x == x + step);
+
+  // The same throw without rootPhases walks through its recovery.
+  thr.rootPhases = 0;
+  WorldState free = makePlayingWorld(3, 0b1, content);
+  placePlayer(free, kP0, Vec2{Fixed::fromInt(-4), Fixed::zero()});
+  const Fixed x0 = playerAt(free, kP0).transform.pos.x;
+  (void)stepWith(free, PlayerInput{0, 255, 0, kThrow, 0}, content);
+  const int ticks = int{thr.startupTicks} + int{thr.activeTicks} + int{thr.recoveryTicks};
+  for (int k = 1; k < ticks; ++k)
+    (void)stepWith(free, walkRight, content);
+  CHECK(playerAt(free, kP0).transform.pos.x == x0 + (step * ticks));
+}

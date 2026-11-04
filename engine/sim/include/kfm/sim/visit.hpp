@@ -195,6 +195,7 @@ void visit(V& v, AbilityDef& d) {
   visit(v, d.tagsStartup);
   visit(v, d.tagsActive);
   visit(v, d.tagsRecovery);
+  v.u8(d.rootPhases);  // v0.34
 }
 template <class V>
 void visit(V& v, BoomerangDef& d) {

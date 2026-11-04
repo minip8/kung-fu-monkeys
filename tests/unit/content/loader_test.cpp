@@ -549,6 +549,26 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
   CHECK(contains(loadErrors(replaced(kMinimal, "kind = \"dash\"",
                                      "kind = \"dash\"\ntags_active = [\"flying\"]")),
                  "unknown tag in 'tags_active'"));
+  // v0.34: root_phases is a list of phase names.
+  CHECK(contains(loadErrors(replaced(kMinimal, "kind = \"throw\"",
+                                     "kind = \"throw\"\nroot_phases = [\"flying\"]")),
+                 "'root_phases' entries must be startup, active or recovery"));
+  {
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(parseContent(replaced(kMinimal, "kind = \"throw\"",
+                                  "kind = \"throw\"\nroot_phases = [\"recovery\", \"startup\"]"),
+                         "test.toml", db, diag));
+    const std::optional<uint8_t> thr = [&]() -> std::optional<uint8_t> {
+      for (uint8_t i = 0; i < db.abilityCount; ++i) {
+        if (db.abilities[i].name.view() == "throw") return i;
+      }
+      return std::nullopt;
+    }();
+    REQUIRE(thr);
+    CHECK(db.abilities[thr.value_or(0)].rootPhases ==
+          (sim::phaseBit(sim::AbilityPhase::Recovery) | sim::phaseBit(sim::AbilityPhase::Startup)));
+  }
   CHECK(contains(
       loadErrors(replaced(kMinimal, "spawn_points = [[-2, 0], [2, 0]]",
                           "spawn_points = [[-2, 0], [2, 0]]\nspawn_ellipse = { radii = [1, 1], "

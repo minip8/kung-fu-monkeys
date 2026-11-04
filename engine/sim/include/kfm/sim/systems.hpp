@@ -31,6 +31,10 @@ void abilitySystem(WorldState& s, const MatchContent& content, EventSink& sink);
 // the dash whose press time the catch rule and the tie-break read (§5.11).
 [[nodiscard]] const AbilityState* slotGranting(const Player& p, const MatchContent& content,
                                                Tag tag);
+// Whether any of the player's ability slots runs a phase its def roots
+// (AbilityDef::rootPhases, v0.34): movement intent is ignored (continuous)
+// and no commitment is taken at a latch (grid).
+[[nodiscard]] bool rooted(const Player& p, const MatchContent& content);
 // 4. The space's move: intent x stats -> velocity, integrate, arena clamp
 //    (continuous), or the slide to the committed cell (grid)
 //    (systems/movement.cpp, spaces/).

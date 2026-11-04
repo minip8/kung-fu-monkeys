@@ -7,7 +7,8 @@
 //
 // move, per player: prevPos = pos (the swept-collision start); velocity is
 // zero outside MatchPhase::Playing, left as AbilitySystem set it while
-// Dashing, and intent.move * stats.moveSpeed otherwise; HitStun overrides
+// Dashing, zero while an ability phase roots the monkey (v0.34,
+// AbilityDef::rootPhases), and intent.move * stats.moveSpeed otherwise; HitStun overrides
 // everything with zero. Then the player moves by vel through
 // statics::moveCircle (Slide): interior walls stop the normal component and
 // keep the tangential one, for stick movement and dash displacement alike (a
@@ -16,6 +17,7 @@
 // component that was clamped. Without walls this is the M1
 // integrate-and-clamp, bit for bit. A pending knockback (v0.21, a slam's
 // push) is added to the velocity, stun or not, while it lasts.
+#include "kfm/sim/systems.hpp"
 #include "spaces/spaces.hpp"
 #include "systems/statics.hpp"
 
@@ -35,7 +37,7 @@ void continuousMove(WorldState& s, const MatchContent& content) {
     if (!playing) {
       t.vel = Vec2::zero();
     } else if (!p.tags.has(Tag::Dashing)) {
-      t.vel = p.intent.move * p.stats.moveSpeed;
+      t.vel = rooted(p, content) ? Vec2::zero() : p.intent.move * p.stats.moveSpeed;
     }
     if (p.tags.has(Tag::HitStun)) t.vel = Vec2::zero();
     if (playing && p.knockbackTicks > 0) {  // a slam's push (v0.21) adds on top of anything

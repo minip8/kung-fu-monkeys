@@ -10,7 +10,10 @@
 # Keys: name, kind (dash | throw | blink | slam | parry), cooldown_ticks, startup_ticks,
 # active_ticks, recovery_ticks, perfect_window_ticks, speed, param0, param1,
 # tags_startup, tags_active, tags_recovery (lists of tag names: dashing,
-# perfect_dash, hit_stun, shielded, invulnerable, eliminated, slamming, parrying).
+# perfect_dash, hit_stun, shielded, invulnerable, eliminated, slamming, parrying),
+# root_phases (v0.34: a list of startup, active, recovery: while one of them
+# runs the stick does not move the monkey, and on the grid it takes no cell
+# at a turn's latch; none by default).
 
 [[ability]]
 name = "dash"

@@ -157,6 +157,14 @@ Tags abilityPhaseTags(const Player& p, const MatchContent& content) {
   return granted;
 }
 
+bool rooted(const Player& p, const MatchContent& content) {
+  for (const AbilityState& st : p.abilities) {
+    if (st.phase == AbilityPhase::Idle) continue;
+    if ((defFor(content, st).rootPhases & phaseBit(st.phase)) != 0) return true;
+  }
+  return false;
+}
+
 const AbilityState* slotGranting(const Player& p, const MatchContent& content, Tag tag) {
   for (const AbilityState& st : p.abilities) {
     if (slotPhaseTags(st, content).has(tag)) return &st;

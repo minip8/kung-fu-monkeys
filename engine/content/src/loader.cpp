@@ -25,6 +25,7 @@ namespace kfm::content {
 
 using sim::AbilityDef;
 using sim::AbilityKind;
+using sim::AbilityPhase;
 using sim::ArenaDef;
 using sim::ContentDB;
 using sim::ContentName;
@@ -682,6 +683,32 @@ class Builder {
     s.flag("consumes_ammo", d.consumesAmmo);
   }
 
+  // v0.34: root_phases = ["startup", "active", "recovery"], a subset.
+  static void rootPhases(Section& s, uint8_t& out) {
+    const toml::node* n = s.take("root_phases");
+    if (n == nullptr) return;
+    const toml::array* arr = n->as_array();
+    if (arr == nullptr) {
+      s.error(*n, "'root_phases' must be a list of phase names (startup, active, recovery)");
+      return;
+    }
+    uint8_t mask = 0;
+    for (const toml::node& el : *arr) {
+      const toml::value<std::string>* str = el.as_string();
+      const std::string_view name = str != nullptr ? std::string_view(str->get()) : "";
+      if (name == "startup") {
+        mask |= sim::phaseBit(AbilityPhase::Startup);
+      } else if (name == "active") {
+        mask |= sim::phaseBit(AbilityPhase::Active);
+      } else if (name == "recovery") {
+        mask |= sim::phaseBit(AbilityPhase::Recovery);
+      } else {
+        s.error(el, "'root_phases' entries must be startup, active or recovery");
+      }
+    }
+    out = mask;
+  }
+
   void parseAbility(Section& s) {
     AbilityDef d;
     const std::optional<std::string> name = s.name(d.name);
@@ -705,6 +732,7 @@ class Builder {
     s.tags("tags_startup", d.tagsStartup);
     s.tags("tags_active", d.tagsActive);
     s.tags("tags_recovery", d.tagsRecovery);
+    rootPhases(s, d.rootPhases);  // v0.34
     if (!name) return;
     if (*name == kNoneAbility) {
       s.error(inQuotes(kNoneAbility) + " is the built-in inert ability; pick another name");
