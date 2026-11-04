@@ -92,6 +92,10 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       std::snprintf(line, sizeof line, "Team deathmatch  (first team to %u)",
                     static_cast<unsigned>(hud.scoreToWin));
       break;
+    case sim::ModeKind::Hill:
+      std::snprintf(line, sizeof line, "Hill  (first team to %u points)",
+                    static_cast<unsigned>(hud.scoreToWin));
+      break;
     case sim::ModeKind::TeamRounds:
       std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
                     static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
@@ -172,8 +176,7 @@ void drawCardFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, uint8_t slot, int alp
 void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::RenderState& state,
                     float viewW) {
   const presentation::RenderHud& hud = state.hud;
-  const bool frags =
-      hud.mode == sim::ModeKind::Deathmatch || hud.mode == sim::ModeKind::TeamDeathmatch;
+  const bool frags = sim::scoresPoints(hud.mode);
   int entries = 0;
   uint8_t timers = 0;
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
@@ -343,6 +346,8 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         std::snprintf(text, sizeof text, "Deathmatch");
       } else if (hud.mode == sim::ModeKind::TeamDeathmatch) {
         std::snprintf(text, sizeof text, "Team deathmatch");
+      } else if (hud.mode == sim::ModeKind::Hill) {
+        std::snprintf(text, sizeof text, "King of the hill");
       } else {
         std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
       }

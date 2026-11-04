@@ -5,6 +5,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -248,4 +249,58 @@ zones = [{ min = [-1, -1], max = [1, 1] }, { min = [5, 2], max = [6, 5] }])";
     nine += "{ min = [0, 0], max = [1, 1] },";
   nine += "]";
   CHECK(arenaErrors(nine).contains("'zones' must list at most 8"));
+}
+
+TEST_CASE("content/ ships hill on the hilltop tilemap (v0.33)", "[content][tilemap][modes]") {
+  ContentDB loaded{};
+  Diagnostics diag;
+  const bool ok = loadContentDir(KFM_CONTENT_DIR, loaded, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  const uint8_t hill = loaded.findMode("hill").value_or(0);
+  const uint8_t hilltop = loaded.findArena("hilltop").value_or(0);
+  REQUIRE(hill != 0);
+  REQUIRE(hilltop != 0);
+  const sim::ModeDef& m = loaded.modeAt(hill);
+  CHECK(m.kind == sim::ModeKind::Hill);
+  CHECK(m.teams == 2);
+  CHECK(m.hillTicks == 300);
+  CHECK(m.scoreToWin == 5);
+  const sim::ArenaDef& a = loaded.arenaAt(hilltop);
+  CHECK(a.cellSize == Fixed::one());
+  CHECK(a.halfExtents == v(16, 9));
+  CHECK(a.spawnGroups == 2);
+  CHECK(a.spawnPointCount == 10);
+  REQUIRE(a.zoneCount == 1);
+  CHECK(a.zones[0].min == v(-2, -2));
+  CHECK(a.zones[0].max == v(2, 2));
+  CHECK(loaded.firstCompatibleArena(hill) == std::optional<uint8_t>{hilltop});
+  CHECK(hilltop == 6);  // appended after the v0.32 arenas
+}
+
+TEST_CASE("hill: mode keys and validation (v0.33)", "[content][modes][hill]") {
+  const std::string arena = "name = \"z\"\ncell = 1\nspawn_groups = 2\nmap = [\"0aa1\"]";
+  const auto mode = [&](std::string_view m) {
+    return withArena(arena) + "\n[[mode]]\nname = \"h\"\nkind = \"hill\"\n" + std::string(m);
+  };
+  {
+    ContentDB db{};
+    Diagnostics diag;
+    const bool ok = parseContent(mode("teams = 2\nhill_ticks = 90\n"), "m.toml", db, diag);
+    INFO(diag.format());
+    REQUIRE(ok);
+    CHECK(db.modes[1].kind == sim::ModeKind::Hill);
+    CHECK(db.modes[1].hillTicks == 90);
+    CHECK(db.compatible(0, 1));
+  }
+  const auto errors = [](const std::string& text) {
+    ContentDB db{};
+    Diagnostics diag;
+    CHECK_FALSE(parseContent(text, "m.toml", db, diag));
+    return diag.format();
+  };
+  CHECK(errors(mode("")).contains("a team kind needs teams of 2 or more"));
+  CHECK(errors(mode("teams = 2\nhill_ticks = 0\n")).contains("'hill_ticks'"));
+  CHECK(errors(mode("teams = 2\nscore_to_win = 0\n"))
+            .contains("score_to_win must be at least 1 in hill"));
 }

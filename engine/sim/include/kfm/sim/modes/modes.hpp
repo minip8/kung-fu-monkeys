@@ -38,6 +38,12 @@ void teamDeathmatchOnPlaying(WorldState& s, const MatchContent& content, EventSi
 void teamDeathmatchOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
                                 PlayerId killer, EventSink& sink);
 
+// Hill (modes/hill.cpp, v0.33): a team scores for holding zone 0 alone.
+void hillOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
+void hillOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim, PlayerId killer,
+                      EventSink& sink);
+void hillOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
+
 [[nodiscard]] constexpr ModeBehavior roundsBehavior() {
   return ModeBehavior{&modeNoRoundStart, &roundsOnPlaying, &roundsOnEliminated, &modeNoPickupTaken};
 }
@@ -56,6 +62,10 @@ void teamDeathmatchOnEliminated(WorldState& s, const MatchContent& content, Play
 [[nodiscard]] constexpr ModeBehavior teamDeathmatchBehavior() {
   return ModeBehavior{&modeNoRoundStart, &teamDeathmatchOnPlaying, &teamDeathmatchOnEliminated,
                       &modeNoPickupTaken};
+}
+
+[[nodiscard]] constexpr ModeBehavior hillBehavior() {
+  return ModeBehavior{&hillOnRoundStart, &hillOnPlaying, &hillOnEliminated, &modeNoPickupTaken};
 }
 
 }  // namespace kfm::sim

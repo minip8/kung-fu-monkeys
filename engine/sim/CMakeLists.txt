@@ -20,6 +20,7 @@ add_library(kfm_sim STATIC
   src/modes/survival.cpp
   src/modes/team_rounds.cpp
   src/modes/team_deathmatch.cpp
+  src/modes/hill.cpp
   src/rules/table.cpp
   src/rules/catch.cpp
   src/rules/damage.cpp

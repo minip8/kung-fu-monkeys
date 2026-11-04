@@ -201,6 +201,13 @@ PlayerId teamScoreLeader(const WorldState& s, const MatchContent& content, uint1
   return leader;
 }
 
+void countDeath(WorldState& s, const MatchContent& content, PlayerId victim) {
+  if (!victim.isValid() || victim.value >= kMaxPlayers) return;
+  MatchRules& r = s.rules;
+  if (r.deaths[victim.value] < UINT8_MAX) ++r.deaths[victim.value];
+  r.respawnTicks[victim.value] = respawnDelay(content.mode);
+}
+
 uint16_t respawnDelay(const ModeDef& mode) {
   return std::max<uint16_t>(mode.respawnTicks, 1);
 }

@@ -5,8 +5,8 @@
 #
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
-#   kind                 rounds (default), deathmatch, survival, team_rounds or
-#                        team_deathmatch
+#   kind                 rounds (default), deathmatch, survival, team_rounds,
+#                        team_deathmatch or hill
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      all kinds: pause after a round before the next one
 #   rounds_to_win        rounds, survival: round wins that take the match
@@ -25,6 +25,11 @@
 #   roles                team modes: up to 10 loadout names handed out by a
 #                        slot's position within its team, round-robin
 #                        (none: every slot plays the match's loadout)
+#   hill_ticks           hill: ticks a team must hold the zone alone for a
+#                        point (>= 1); a contested or empty zone holds the
+#                        clock. Plays only on an arena with a zone; respawns
+#                        and the clock as deathmatch, score_to_win counts
+#                        points
 # The team kinds score per slot like their free-for-all twins; a team's
 # score is the sum of its slots' (team_rounds: round wins; team_deathmatch:
 # eliminations of enemies, ally kills score nothing).
@@ -71,6 +76,19 @@ name = "team_deathmatch"    # a team's eliminations to score_to_win
 kind = "team_deathmatch"
 teams = 2
 score_to_win = 20           # the first team to twenty eliminations wins
+time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
+respawn_ticks = 120
+respawn_invuln_ticks = 90
+round_start_ticks = 60
+round_end_ticks = 120
+
+# v0.33: objective modes (architecture §5.3), on arenas with zones.
+[[mode]]
+name = "hill"               # hold the zone alone: a point per hill_ticks
+kind = "hill"
+teams = 2
+hill_ticks = 300            # 5 s alone on the hill scores a point
+score_to_win = 5            # the first team to five points wins
 time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
 respawn_ticks = 120
 respawn_invuln_ticks = 90

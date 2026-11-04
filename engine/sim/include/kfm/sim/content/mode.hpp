@@ -38,8 +38,21 @@ enum class ModeKind : uint8_t {
   // when timeLimitTicks runs out (a tied lead is a draw). Eliminating an
   // ally scores nothing.
   TeamDeathmatch,
+  // v0.33, the objective kinds (team modes on an arena with zones). Hill:
+  // one long round on a clock with deathmatch's respawns; a team scores a
+  // point for every hillTicks it holds zone 0 alone (a contested or empty
+  // zone holds every clock, nothing resets), the first team to scoreToWin
+  // wins, else the leading team when timeLimitTicks runs out.
+  Hill,
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
+
+// Whether a kind plays one long round on a clock with respawns, its
+// MatchRules::scores counting points (eliminations, hill points, captures)
+// rather than round wins (v0.33; the hosts' HUD and tools read it).
+[[nodiscard]] constexpr bool scoresPoints(ModeKind k) {
+  return k == ModeKind::Deathmatch || k == ModeKind::TeamDeathmatch || k == ModeKind::Hill;
+}
 
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
@@ -77,6 +90,8 @@ struct ModeDef {
   // roles[0..roleCount). None: every slot plays the match's loadout.
   std::array<uint8_t, kMaxPlayers> roles{};
   uint8_t roleCount{0};
+  // v0.33, hill: ticks of holding the zone alone that score a point (>= 1).
+  uint16_t hillTicks{300};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
 };

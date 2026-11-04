@@ -81,6 +81,7 @@ enum class ObsModeKind : uint8_t {
   Survival = 2,
   TeamRounds = 3,      // v0.32
   TeamDeathmatch = 4,  // v0.32
+  Hill = 5,            // architecture v0.33
 };
 enum class ObsAbilityKind : uint8_t {
   None = 0,

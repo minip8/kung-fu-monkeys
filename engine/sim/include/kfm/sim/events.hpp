@@ -42,6 +42,9 @@ enum class EventKind : uint8_t {
   PlayerSlammed,       // player = pushed monkey, entity = slammer's player, a = slammer slot
   PlayerParryStarted,  // player, entity = player (a parry pressed: the stance)
   BoomerangParried,    // player = parrier (the new owner), entity = boomerang, a = thrower slot
+  // v0.33 (objectives, §5.3):
+  HillHolderChanged,  // a = the team now holding the zone alone, or 0xFF (contested or
+                      // empty), b = the zone
 };
 
 // BoomerangCaught payload `a`.

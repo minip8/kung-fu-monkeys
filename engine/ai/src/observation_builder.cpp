@@ -37,7 +37,9 @@ static_assert(static_cast<uint8_t>(sim::ModeKind::Survival) ==
                   static_cast<uint8_t>(ObsModeKind::TeamRounds) &&
               static_cast<uint8_t>(sim::ModeKind::TeamDeathmatch) ==
                   static_cast<uint8_t>(ObsModeKind::TeamDeathmatch) &&
-              static_cast<uint8_t>(sim::ModeKind::kCount) == 5);
+              static_cast<uint8_t>(sim::ModeKind::Hill) ==
+                  static_cast<uint8_t>(ObsModeKind::Hill) &&
+              static_cast<uint8_t>(sim::ModeKind::kCount) == 6);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::kCount) == 6);

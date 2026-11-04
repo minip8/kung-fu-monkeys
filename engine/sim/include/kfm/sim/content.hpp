@@ -213,6 +213,7 @@ struct ContentDB {
     const ModeDef& m = modeAt(mode);
     const ArenaDef& a = arenaAt(arena);
     if (m.teams != 0 && a.spawnGroups < m.teams) return false;
+    if (m.kind == ModeKind::Hill && a.zoneCount < 1) return false;
     return true;
   }
   // The first arena compatible with the mode, if any.

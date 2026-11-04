@@ -335,6 +335,14 @@ std::string modeSummary(const sim::ModeDef& mode) {
       }
       return buf;
     }
+    case sim::ModeKind::Hill: {
+      const std::string clock =
+          mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      std::snprintf(buf, sizeof buf,
+                    "first team to %u points, a point per %.1f s alone on the hill, %s",
+                    static_cast<unsigned>(mode.scoreToWin), secs(mode.hillTicks), clock.c_str());
+      return buf;
+    }
     case sim::ModeKind::TeamRounds:
       std::snprintf(buf, sizeof buf, "first team to %u rounds, last team standing",
                     static_cast<unsigned>(mode.roundsToWin));

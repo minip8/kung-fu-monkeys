@@ -66,6 +66,10 @@ void endMatch(WorldState& s, PlayerId winner, EventSink& sink);
 // scheduled like a respawn; a dead slot that left loses its pending timers
 // and, when forfeitScore, its score and deaths.
 void deathmatchRoster(WorldState& s, const MatchContent& content, bool forfeitScore);
+// The respawning kinds' bookkeeping of an elimination (v0.33, hill and
+// capture): one more death for `victim` and its respawn due in
+// respawnDelay(); nobody scores.
+void countDeath(WorldState& s, const MatchContent& content, PlayerId victim);
 // Deathmatch respawn delay (validation keeps respawnTicks >= 1).
 [[nodiscard]] uint16_t respawnDelay(const ModeDef& mode);
 

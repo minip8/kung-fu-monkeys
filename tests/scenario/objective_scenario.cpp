@@ -5,8 +5,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 using namespace kfm;
 using namespace kfm::sim;
@@ -14,7 +17,10 @@ using namespace kfm::sim::test;
 
 namespace {
 
-constexpr uint8_t kZoned = 1;  // the dojo with two spawn groups and three zones
+constexpr uint8_t kZoned = 1;      // the dojo with two spawn groups and three zones
+constexpr uint8_t kHill = 1;       // hill: 30 ticks a point, first team to 2
+constexpr uint8_t kHillClock = 2;  // hill on a 100-tick clock, first team to 9
+constexpr uint16_t kHillTicks = 30;
 constexpr PlayerId kP0{0};
 constexpr PlayerId kP1{1};
 constexpr PlayerId kP2{2};
@@ -35,12 +41,63 @@ ContentDB objectiveContent() {
   zoned.zones[2] = Zone{at(11, -2), at(15, 2)};    // east
   zoned.zoneCount = 3;
   c.arenaCount = 2;
+  ModeDef& hill = c.modes[kHill];
+  hill.name = ContentName::of("hill");
+  hill.kind = ModeKind::Hill;
+  hill.teams = 2;
+  hill.hillTicks = kHillTicks;
+  hill.scoreToWin = 2;
+  hill.timeLimitTicks = 6000;
+  hill.roundStartTicks = 10;
+  hill.respawnTicks = 20;
+  hill.respawnInvulnTicks = 0;
+  c.modes[kHillClock] = hill;
+  c.modes[kHillClock].name = ContentName::of("hill_clock");
+  c.modes[kHillClock].scoreToWin = 9;
+  c.modes[kHillClock].timeLimitTicks = 100;
+  c.modeCount = 3;
   return c;
 }
 
 const ContentDB& content() {
   static const ContentDB c = objectiveContent();
   return c;
+}
+
+MatchConfig objectiveConfig(uint8_t mode, PlayerMask players = 0b1111, uint64_t seed = 0x0B1E,
+                            uint8_t arena = kZoned) {
+  return MatchConfig{.seed = seed,
+                     .players = players,
+                     .arena = arena,
+                     .mode = mode,
+                     .teams = teamsFor(content().modeAt(mode), players)};
+}
+
+WorldState playing(const MatchConfig& config, EventLog& log) {
+  WorldState s = initialWorld(config);
+  const MatchContent m = matchContent(content(), config);
+  for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::Playing; ++i) {
+    runTicks(s, frameFor(s), 1, m, log);
+  }
+  REQUIRE(s.rules.phase == MatchPhase::Playing);
+  return s;
+}
+
+// Every monkey on its own spot outside every zone.
+void parkEveryone(WorldState& s) {
+  const std::array<Vec2, 4> spots = {at(-8, 6), at(8, 6), at(-8, -6), at(8, -6)};
+  for (uint8_t i = 0; i < 4; ++i) {
+    if (s.playerBySlot(PlayerId{i}) != nullptr) placePlayer(s, PlayerId{i}, spots[i]);
+  }
+}
+
+// The ScoreChanged events in the log from `from` on.
+std::vector<SimEvent> scoresSince(const EventLog& log, size_t from) {
+  std::vector<SimEvent> out;
+  for (size_t i = from; i < log.size(); ++i) {
+    if (log[i].kind == EventKind::ScoreChanged) out.push_back(log[i]);
+  }
+  return out;
 }
 
 }  // namespace
@@ -70,4 +127,135 @@ TEST_CASE("zones: occupants are the live monkeys whose centre is inside", "[scen
   f.inputs[0].moveMag = 255;
   runTicks(s, f, 90, m, log);
   CHECK(playerAt(s, kP0).transform.pos.x > Fixed::fromInt(2));
+}
+
+TEST_CASE("hill: a sole holder scores every hillTicks", "[scenario][hill]") {
+  const MatchConfig config = objectiveConfig(kHill);
+  const MatchContent m = matchContent(content(), config);
+  EventLog log;
+  WorldState s = playing(config, log);
+  parkEveryone(s);
+  log.clear();
+  placePlayer(s, kP2, at(1, 0));  // team 0 (slots 0 and 2), alone on the hill
+  runTicks(s, frameFor(s), kHillTicks - 1, m, log);
+  CHECK(scoresSince(log, 0).empty());
+  const SimEvent& holder = firstEvent(log, EventKind::HillHolderChanged);
+  CHECK(holder.a == 0);
+  CHECK(holder.b == 0);
+  CHECK(countEvents(log, EventKind::HillHolderChanged) == 1);
+  runTicks(s, frameFor(s), 1, m, log);
+  std::vector<SimEvent> scores = scoresSince(log, 0);
+  REQUIRE(scores.size() == 1);
+  CHECK(scores[0].player == kP2);
+  CHECK(scores[0].a == 1);
+  // Two of a team on the hill: the lowest slot in the zone gets the point.
+  placePlayer(s, kP0, at(-1, 0));
+  const size_t before = log.size();
+  runTicks(s, frameFor(s), kHillTicks, m, log);
+  scores = scoresSince(log, before);
+  REQUIRE(scores.size() == 1);
+  CHECK(scores[0].player == kP0);
+  // Two points: team 0 takes the match, named by its top scorer (the lowest on a tie).
+  CHECK(s.rules.phase == MatchPhase::MatchEnded);
+  CHECK(firstEvent(log, EventKind::MatchEnded).player == kP0);
+  CHECK(m.teamScore(s.rules.scores, 0) == 2);
+  CHECK(m.teamScore(s.rules.scores, 1) == 0);
+}
+
+TEST_CASE("hill: a contested or empty zone holds every clock", "[scenario][hill]") {
+  const MatchConfig config = objectiveConfig(kHill);
+  const MatchContent m = matchContent(content(), config);
+  EventLog log;
+  WorldState s = playing(config, log);
+  parkEveryone(s);
+  log.clear();
+  placePlayer(s, kP0, at(0, 0));
+  runTicks(s, frameFor(s), 20, m, log);  // team 0's clock at 20
+  placePlayer(s, kP1, at(1, 1));         // team 1 contests
+  runTicks(s, frameFor(s), 200, m, log);
+  CHECK(scoresSince(log, 0).empty());
+  int changes = 0;
+  for (const SimEvent& e : log) {
+    if (e.kind != EventKind::HillHolderChanged) continue;
+    ++changes;
+    if (changes == 2) CHECK(e.a == 0xFF);
+  }
+  CHECK(changes == 2);
+  placePlayer(s, kP1, at(8, 6));  // team 1 leaves: team 0 resumes at 20
+  runTicks(s, frameFor(s), 9, m, log);
+  CHECK(scoresSince(log, 0).empty());
+  runTicks(s, frameFor(s), 1, m, log);
+  REQUIRE(scoresSince(log, 0).size() == 1);
+  CHECK(scoresSince(log, 0)[0].player == kP0);
+  // Team 1 holds alone for 15, then the zone is empty for a while: its
+  // clock waits at 15 and only team 0's restarted.
+  placePlayer(s, kP0, at(-8, 6));
+  placePlayer(s, kP3, at(0, 0));
+  runTicks(s, frameFor(s), 15, m, log);
+  placePlayer(s, kP3, at(8, -6));
+  runTicks(s, frameFor(s), 300, m, log);
+  placePlayer(s, kP3, at(0, 0));
+  const size_t before = log.size();
+  runTicks(s, frameFor(s), kHillTicks - 15, m, log);
+  const std::vector<SimEvent> scores = scoresSince(log, before);
+  REQUIRE(scores.size() == 1);
+  CHECK(scores[0].player == kP3);
+  CHECK(s.rules.phase == MatchPhase::Playing);  // one point each
+}
+
+TEST_CASE("hill: eliminations score nothing, the eliminated respawn", "[scenario][hill]") {
+  const MatchConfig config = objectiveConfig(kHill);
+  const MatchContent m = matchContent(content(), config);
+  EventLog log;
+  WorldState s = playing(config, log);
+  parkEveryone(s);
+  log.clear();
+  const Vec2 victim = playerAt(s, kP1).transform.pos;
+  spawnBanana(s, kP0, victim - Vec2{Fixed::one(), Fixed::zero()},
+              Vec2{Fixed::fromRatio(1, 2), Fixed::zero()}, BoomerangPhase::Outbound, m.db);
+  runTicks(s, frameFor(s), 5, m, log);
+  CHECK(firstEvent(log, EventKind::PlayerEliminated).player == kP1);
+  CHECK(scoresSince(log, 0).empty());
+  CHECK(s.rules.deaths[kP1.value] == 1);
+  runTicks(s, frameFor(s), 20, m, log);
+  CHECK(countEvents(log, EventKind::PlayerRespawned) == 1);
+  CHECK(s.playerBySlot(kP1) != nullptr);
+}
+
+TEST_CASE("hill: the clock ends the match with the leading team, a tie is a draw",
+          "[scenario][hill]") {
+  const MatchConfig config = objectiveConfig(kHillClock);
+  const MatchContent m = matchContent(content(), config);
+  {
+    EventLog log;
+    WorldState s = playing(config, log);
+    parkEveryone(s);
+    placePlayer(s, kP1, at(0, 0));
+    runTicks(s, frameFor(s), 100, m, log);
+    CHECK(s.rules.phase == MatchPhase::MatchEnded);
+    CHECK(firstEvent(log, EventKind::MatchEnded).player == kP1);
+  }
+  {
+    EventLog log;
+    WorldState s = playing(config, log);
+    parkEveryone(s);
+    runTicks(s, frameFor(s), 100, m, log);
+    CHECK(s.rules.phase == MatchPhase::MatchEnded);
+    CHECK_FALSE(firstEvent(log, EventKind::MatchEnded).player.isValid());
+  }
+}
+
+TEST_CASE("compatible: objective modes need their zones", "[scenario][zones][hill]") {
+  const ContentDB& c = content();
+  CHECK_FALSE(c.compatible(0, kHill));  // the dojo: no zone, one spawn group
+  CHECK(c.compatible(kZoned, kHill));
+  CHECK(c.compatible(0, 0));
+  CHECK(c.firstCompatibleArena(kHill) == std::optional<uint8_t>{kZoned});
+  ContentDB oneGroup = c;
+  oneGroup.arenas[kZoned].spawnGroups = 1;
+  CHECK_FALSE(oneGroup.compatible(kZoned, kHill));
+  ContentDB noZone = c;
+  noZone.arenas[kZoned].zoneCount = 0;
+  CHECK_FALSE(noZone.compatible(kZoned, kHill));
+  CHECK_FALSE(noZone.firstCompatibleArena(kHill).has_value());
 }

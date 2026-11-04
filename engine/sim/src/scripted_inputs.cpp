@@ -76,6 +76,21 @@ namespace {
   return found;
 }
 
+// The objective kinds (v0.33): a target to walk to instead of wandering,
+// read from the state alone (no Rng draw, so every other mode is unchanged).
+// Hill: zone 0 while outside it.
+[[nodiscard]] bool objectiveTarget(const WorldState& /*s*/, const MatchContent& content,
+                                   const Player& p, Vec2& target) {
+  const ArenaDef& arena = content.arena;
+  if (content.mode.kind == ModeKind::Hill && arena.zoneCount > 0) {
+    const Zone& hill = arena.zones[0];
+    if (boxContains(hill.min, hill.max, p.transform.pos)) return false;
+    target = hill.centre();
+    return true;
+  }
+  return false;
+}
+
 // The third slot (v0.21): only when the loadout or a power-up put an ability
 // there, so a base-kit match draws nothing extra from the Rng.
 void useExtraAbility(Rng& rng, const WorldState& s, const MatchContent& content, const Player& p,
@@ -152,7 +167,11 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
       found = true;
     }
   });
-  if (found && target != pos) in.moveDir = directionTo(pos, target);
+  if (found && target != pos) {
+    in.moveDir = directionTo(pos, target);
+  } else if (!wantBanana && objectiveTarget(s, content, p, target) && target != pos) {
+    in.moveDir = directionTo(pos, target);
+  }
 
   // Aim at the nearest other alive player, with a little jitter.
   uint64_t nearest = std::numeric_limits<uint64_t>::max();  // stays max with nobody else alive

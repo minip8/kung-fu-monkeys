@@ -308,6 +308,7 @@ void visit(V& v, ModeDef& d) {
   for (uint8_t& r : d.roles)
     v.u8(r);
   v.u8(d.roleCount);
+  v.u16(d.hillTicks);  // v0.33
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {

@@ -1022,7 +1022,9 @@ TEST_CASE("content/ ships team_rounds and team_deathmatch on standoff (v0.32)",
   CHECK(loaded.arenaAt(standoff).spawnGroups == 2);
   CHECK(loaded.firstCompatibleArena(tr) == std::optional<uint8_t>{standoff});
   // The free-for-all arenas keep one group: their checksums never moved.
-  for (uint8_t a = 0; a < loaded.arenaCount; ++a) {
-    if (a != standoff) CHECK(loaded.arenas[a].spawnGroups == 1);
+  // Arenas made for team modes (standoff, v0.33's objective arenas) have two.
+  for (const std::string_view name : {"dojo", "pillars", "corridors", "island", "dojo_powerups"}) {
+    INFO(name);
+    CHECK(loaded.arenaAt(loaded.findArena(name).value_or(0)).spawnGroups == 1);
   }
 }
