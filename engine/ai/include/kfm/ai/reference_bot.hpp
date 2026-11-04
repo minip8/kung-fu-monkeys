@@ -136,7 +136,8 @@ class ReferenceBot final : public IAgent {
   void learn(const Observation& obs, int target);
   // v0.35: the grid's free cells (for the own circle), once per match, and
   // the walking distance in cells from every cell to `goal` (BFS over the
-  // eight neighbours without corner cutting, as the grid steps).
+  // eight neighbours without corner cutting, as the grid steps; a pit is
+  // never free: the sim lets a walk into one, the bot does not).
   void prepareGrid(const Observation& obs);
   void distancesTo(Vec2 goal);
   [[nodiscard]] int32_t cellIndexOf(Vec2 at) const;

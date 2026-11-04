@@ -149,6 +149,20 @@ struct TieBreak {
   return from;
 }
 
+// Whether a centre lies in one of the arena's pits (a grid walk may step
+// into one, and the monkey falls).
+[[nodiscard]] bool inPit(const Observation& obs, Vec2 c) {
+  for (uint32_t i = 0; i < obs.arena.hazardCount && i < kObsMaxHazards; ++i) {
+    const ObsHazard& h = obs.arena.hazards[i];
+    if (h.kind != static_cast<uint8_t>(ObsHazardKind::Pit)) continue;
+    if (c.x >= Fixed::fromRaw(h.box.minX) && c.x <= Fixed::fromRaw(h.box.maxX) &&
+        c.y >= Fixed::fromRaw(h.box.minY) && c.y <= Fixed::fromRaw(h.box.maxY)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Whether a banana of radius r flies from `from` to `to` clear of the
 // interior walls (the line sampled every half unit).
 [[nodiscard]] bool lineClear(const Observation& obs, Vec2 from, Vec2 to, Fixed r) {
@@ -252,7 +266,7 @@ void ReferenceBot::prepareGrid(const Observation& obs) {
   for (int32_t row = 0; row < gridRows_; ++row) {
     for (int32_t col = 0; col < gridCols_; ++col) {
       const Vec2 at{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
-      bool free = abs(at.x) <= hx - r && abs(at.y) <= hy - r;
+      bool free = abs(at.x) <= hx - r && abs(at.y) <= hy - r && !inPit(obs, at);
       for (uint32_t w = 0; free && w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
         if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) free = false;
       }
@@ -327,7 +341,7 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
     return Vec2{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
   };
   const auto free = [&](Vec2 at) {
-    if (abs(at.x) > hx - r || abs(at.y) > hy - r) return false;
+    if (abs(at.x) > hx - r || abs(at.y) > hy - r || inPit(obs, at)) return false;
     for (uint32_t w = 0; w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
       if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) return false;
     }
