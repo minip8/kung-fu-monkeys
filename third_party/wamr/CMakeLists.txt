@@ -222,6 +222,16 @@ else()
     # configuration excludes the same check.
     target_compile_options(kfm_wamr PRIVATE -fno-sanitize=alignment)
   endif()
+  if(KFM_SANITIZE MATCHES "address")
+    # WAMR guards the native stack by comparing a local's address with the
+    # thread's stack bounds; ASan's use-after-return fake stacks put that
+    # local on the heap and every call fails with "native stack overflow".
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+      target_compile_options(kfm_wamr PRIVATE -fsanitize-address-use-after-return=never)
+    else()
+      target_compile_options(kfm_wamr PRIVATE --param=asan-use-after-return=0)
+    endif()
+  endif()
 endif()
 if(WIN32)
   target_link_libraries(kfm_wamr PUBLIC ntdll ws2_32)
