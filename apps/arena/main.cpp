@@ -3,10 +3,11 @@
 // played at full speed; a .kfmr replay (playable by kfm_replay and the
 // client) and a result line per match plus a summary line out.
 //
-//   kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--ticks N]
-//             [--arena NAME] [--mode NAME] [--powerups LIST] [--content DIR]
-//             [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
-//             [--result out.txt] [--json] [--quiet] [--log]
+//   kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--rotate]
+//             [--ticks N] [--arena NAME] [--mode NAME] [--powerups LIST]
+//             [--content DIR] [--fuel N] [--delay T]
+//             [--replay out.kfmr | --replay-dir DIR] [--result out.txt]
+//             [--json] [--quiet] [--log]
 //
 //   --bot SPEC     repeatable, fills slots in order from slot 0: ref,
 //                  ref:easy|medium|hard or a path to a .wasm module (BotSpec)
@@ -15,6 +16,10 @@
 //   --seed S       world seed of match 0; match k uses S + k (default 1);
 //                  slot i is init()ed with slotSeed(S + k, i), arena_core.hpp
 //   --matches M    a tournament of M matches (default 1)
+//   --rotate       match k rotates the bots by k slots (bot b plays slot
+//                  (b + k) mod n), so over n matches every bot plays every
+//                  slot; the summary then adds the totals per bot (by index
+//                  in the --bot order, the padding last) after those per slot
 //   --ticks N      tick cap per match (default 36000, 10 minutes)
 //   --fuel N       wasm instructions per tick for every module (default 100000)
 //   --delay T      per-slot input delay in ticks (default 0: bot versus bot)
@@ -64,11 +69,13 @@ constexpr uint32_t kMaxMatches = 1'000'000;
 constexpr uint32_t kMaxTicks = 1'000'000;
 
 constexpr const char* kUsage =
-    "usage: kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--ticks N]\n"
-    "                 [--arena NAME] [--mode NAME] [--powerups LIST] [--content DIR]\n"
-    "                 [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]\n"
-    "                 [--result out.txt] [--json] [--quiet] [--log]\n"
-    "  SPEC: ref | ref:easy | ref:medium | ref:hard | path/to/bot.wasm\n";
+    "usage: kfm_arena [--bot SPEC]... [--bots N] [--seed S] [--matches M] [--rotate]\n"
+    "                 [--ticks N] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
+    "                 [--content DIR] [--fuel N] [--delay T]\n"
+    "                 [--replay out.kfmr | --replay-dir DIR] [--result out.txt]\n"
+    "                 [--json] [--quiet] [--log]\n"
+    "  SPEC: ref | ref:easy | ref:medium | ref:hard | path/to/bot.wasm\n"
+    "  --rotate: match k moves bot b to slot (b + k) mod n; the summary adds per-bot totals\n";
 
 struct Args {
   std::vector<std::string> bots;
@@ -85,6 +92,7 @@ struct Args {
   std::string replay;
   std::string replayDir;
   std::string result;
+  bool rotate{false};
   bool json{false};
   bool quiet{false};
   bool log{false};
@@ -154,6 +162,8 @@ bool parseArgs(int argc, const char* const* argv, Args& a) {
       } else if (arg == "--result") {
         a.result = v;
       }
+    } else if (arg == "--rotate") {
+      a.rotate = true;
     } else if (arg == "--json") {
       a.json = true;
     } else if (arg == "--quiet") {
@@ -266,6 +276,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   std::vector<std::string> logs;
   for (uint32_t k = 0; k < a.matches; ++k) {
     setup.config.seed = a.seed + k;
+    setup.rotation = a.rotate ? k : 0;
     std::filesystem::path replayPath;
     if (!a.replayDir.empty()) {
       replayPath = std::filesystem::path(a.replayDir) / std::format("match_{}.kfmr", k);

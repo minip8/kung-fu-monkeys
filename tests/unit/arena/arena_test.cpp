@@ -1,8 +1,9 @@
 // kfm_arena's core (apps/arena/arena_core.hpp, architecture §8, §9): a match
 // is deterministic (result line and replay bytes), reference bots finish a
 // match with a winner, the placement rule and its ties, the result line and
-// JSON formats, the summary, the replay runMatch writes plays back to the same
-// final state, and, with KFM_WASM_BOTS, the module path over the fixtures in
+// JSON formats, the summary, rotation (every bot through every slot, totals
+// per bot), the replay runMatch writes plays back to the same final state,
+// and, with KFM_WASM_BOTS, the module path over the fixtures in
 // tests/fixtures/bots (fuel, traps, over-budget, load errors).
 #include "arena_core.hpp"
 #include "kfm/ai/bot_spec.hpp"
@@ -66,6 +67,7 @@ MatchResult play(const MatchSetup& setup, BotFactory& factory, uint32_t index = 
 SlotResult slotWith(uint8_t slot, uint32_t score, uint32_t deaths) {
   SlotResult s;
   s.slot = slot;
+  s.botIndex = slot;
   s.bot = "ref:hard";
   s.score = score;
   s.deaths = deaths;
@@ -181,13 +183,14 @@ TEST_CASE("the result line and its JSON", "[arena]") {
 
   CHECK(formatResultLine(r) ==
         "match 4 seed 7 ticks 5432 checksum 00c0ffee result ended winner 1"
-        " | slot 0 ref:hard place 2 score 1 kills 3 deaths 2 acts 5432 subs 0"
-        R"( | slot 1 bots\x "y".wasm place 1 score 3 kills 5 deaths 1 acts 5432 subs 3)"
+        " | slot 0 bot 0 ref:hard place 2 score 1 kills 3 deaths 2 acts 5432 subs 0"
+        R"( | slot 1 bot 1 bots\x "y".wasm place 1 score 3 kills 5 deaths 1 acts 5432 subs 3)"
         " traps 1 over 2 bad 0 fuel_mean 61234 fuel_max 62731 fuel_init 13 log 0 dead no");
   CHECK(formatResultJson(r) ==
         R"({"match":4,"seed":7,"ticks":5432,"checksum":"00c0ffee","result":"ended","winner":1,)"
-        R"("slots":[{"slot":0,"bot":"ref:hard","module":false,"place":2,"score":1,"kills":3,)"
-        R"("deaths":2,"acts":5432,"subs":0},{"slot":1,"bot":"bots\\x \"y\".wasm","module":true,)"
+        R"("slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":2,"score":1,)"
+        R"("kills":3,"deaths":2,"acts":5432,"subs":0},{"slot":1,"bot":1,)"
+        R"("spec":"bots\\x \"y\".wasm","module":true,)"
         R"("place":1,"score":3,"kills":5,"deaths":1,"acts":5432,"subs":3,"traps":1,"over":2,)"
         R"("bad":0,"fuel_mean":61234,"fuel_max":62731,"fuel_init":13,"log":0,"dead":null}]})");
 
@@ -221,8 +224,73 @@ TEST_CASE("the summary totals a tournament", "[arena]") {
   CHECK(contains(line, " | slot 0 ref:hard wins "));
   CHECK(contains(line, " | slot 1 ref:easy wins "));
   CHECK(contains(line, " mean_place "));
+  CHECK(!sum.rotated);
+  CHECK(!contains(line, " | bot "));  // without rotation the bots are the slots
   const std::string json = formatSummaryJson(sum);
   CHECK(json.starts_with(R"({"summary":true,"matches":2,)"));
+  CHECK(contains(json, R"("slots":[{"slot":0,"spec":"ref:hard",)"));
+  CHECK(!contains(json, R"("bots":)"));
+  CHECK(json.ends_with("}]}"));
+}
+
+TEST_CASE("rotation moves bot b to slot (b + rotation) mod n", "[arena]") {
+  BotFactory factory;
+  MatchSetup setup = setupOf({"ref:hard", "ref:medium", "ref:easy"}, 9, 600);
+  const MatchResult plain = play(setup, factory);
+  setup.rotation = 1;
+  const MatchResult r = play(setup, factory);
+  REQUIRE(r.slots.size() == 3);
+  CHECK(r.slots[0].botIndex == 2);
+  CHECK(r.slots[0].bot == "ref:easy");
+  CHECK(r.slots[1].botIndex == 0);
+  CHECK(r.slots[1].bot == "ref:hard");
+  CHECK(r.slots[2].botIndex == 1);
+  CHECK(r.slots[2].bot == "ref:medium");
+  CHECK(contains(formatResultLine(r), " | slot 0 bot 2 ref:easy place "));
+  CHECK(contains(formatResultJson(r), R"({"slot":1,"bot":0,"spec":"ref:hard",)"));
+  // A full turn is no rotation.
+  setup.rotation = 3;
+  CHECK(formatResultLine(play(setup, factory)) == formatResultLine(plain));
+}
+
+TEST_CASE("a rotated tournament totals per slot and per bot", "[arena]") {
+  BotFactory factory;
+  const MatchSetup base = setupOf({"ref:hard", "ref:easy"}, 30, 36'000);
+  Summary sum;
+  for (uint32_t k = 0; k < 4; ++k) {
+    MatchSetup s = base;
+    s.config.seed += k;
+    s.rotation = k;
+    sum.add(play(s, factory, k));
+  }
+  CHECK(sum.rotated);
+  REQUIRE(sum.slots.size() == 2);
+  REQUIRE(sum.bots.size() == 2);
+  for (uint8_t i = 0; i < 2; ++i) {
+    INFO("index " << int{i});
+    CHECK(sum.slots[i].index == i);
+    CHECK(sum.slots[i].bot == "mixed");
+    CHECK(sum.bots[i].index == i);
+  }
+  CHECK(sum.bots[0].bot == "ref:hard");
+  CHECK(sum.bots[1].bot == "ref:easy");
+  // The same matches counted two ways.
+  CHECK(sum.bots[0].wins + sum.bots[1].wins == sum.slots[0].wins + sum.slots[1].wins);
+  CHECK(sum.bots[0].placeSum + sum.bots[1].placeSum == 4 * (1 + 2));
+  CHECK(sum.bots[0].acts == sum.slots[0].acts);  // both slots play every tick
+  CHECK(sum.bots[0].kills + sum.bots[1].kills == sum.slots[0].kills + sum.slots[1].kills);
+  CHECK(sum.bots[0].wins > sum.bots[1].wins);  // hard beats easy from either slot
+
+  const std::string line = formatSummaryLine(sum);
+  CHECK(contains(line, " | slot 0 mixed wins "));
+  CHECK(contains(line, " | slot 1 mixed wins "));
+  CHECK(contains(line, " | bot 0 ref:hard wins "));
+  CHECK(contains(line, " | bot 1 ref:easy wins "));
+  CHECK(line.find(" | bot 0 ") > line.find(" | slot 1 "));  // slots first, then bots
+  const std::string json = formatSummaryJson(sum);
+  CHECK(contains(json, R"("slots":[{"slot":0,"spec":"mixed",)"));
+  CHECK(contains(json, R"(],"bots":[{"bot":0,"spec":"ref:hard",)"));
+  CHECK(contains(json, R"({"bot":1,"spec":"ref:easy",)"));
   CHECK(json.ends_with("}]}"));
 }
 
@@ -297,7 +365,7 @@ TEST_CASE("an echo module plays a match through the factory", "[arena][wasm]") {
   }
   CHECK(!r.slots[1].module);
   const std::string line = formatResultLine(r);
-  CHECK(contains(line, " | slot 0 " + fixture("echo") + " place "));
+  CHECK(contains(line, " | slot 0 bot 0 " + fixture("echo") + " place "));
   CHECK(contains(line, " dead no"));
 
   // Two factories (two module caches, fresh instances) replay the same match.
