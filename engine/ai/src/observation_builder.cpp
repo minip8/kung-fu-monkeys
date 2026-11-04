@@ -42,7 +42,9 @@ static_assert(
     static_cast<uint8_t>(sim::ModeKind::kCount) == 7);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
-              static_cast<uint8_t>(sim::AbilityKind::kCount) == 6);
+              static_cast<uint8_t>(sim::AbilityKind::Call) ==
+                  static_cast<uint8_t>(ObsAbilityKind::Call) &&
+              static_cast<uint8_t>(sim::AbilityKind::kCount) == 7);
 static_assert(static_cast<uint8_t>(sim::AbilityPhase::Recovery) ==
               static_cast<uint8_t>(ObsAbilityPhase::Recovery));
 static_assert(static_cast<uint8_t>(sim::BoomerangPhase::Grounded) ==

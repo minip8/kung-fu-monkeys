@@ -59,6 +59,7 @@ enum class AbilityKind : uint8_t {
   Blink,   // v0.21: teleport dash (abilities/blink.cpp)
   Slam,    // v0.21: radial impulse (abilities/slam.cpp, rules/slam.cpp)
   Parry,   // v0.21: timed banana reflection (abilities/parry.cpp, rules/parry.cpp)
+  Call,    // v0.35: a shout of the aim byte (abilities/call.cpp), heard by the bots' hosts
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 enum class AbilityPhase : uint8_t { Idle = 0, Startup, Active, Recovery };
@@ -76,9 +77,12 @@ struct AbilityDef {
   uint16_t activeTicks{0};
   uint16_t recoveryTicks{0};
   uint16_t perfectWindowTicks{0};  // Dash: first N active ticks grant Tag::PerfectDash
-  Fixed speed{};   // Dash: dash speed; Blink: distance per active tick (units/tick). Throw: unused
-  Fixed param0{};  // kind-specific numeric params. Slam: reach (radius from its centre)
-  Fixed param1{};  // Slam: push distance, spread over activeTicks
+  Fixed speed{};  // Dash: dash speed; Blink: distance per active tick (units/tick). Throw: unused
+  // kind-specific numeric params. Slam: reach (radius from its centre). Call
+  // (v0.35): range in units (TOML `range`), the Chebyshev distance between
+  // centres within which a monkey hears it
+  Fixed param0{};
+  Fixed param1{};      // Slam: push distance, spread over activeTicks
   Tags tagsStartup{};  // tags granted during each phase
   Tags tagsActive{};
   Tags tagsRecovery{};

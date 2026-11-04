@@ -19,6 +19,7 @@ kfm_add_test_exe(kfm_scenario_tests
   blink_scenario.cpp
   slam_scenario.cpp
   parry_scenario.cpp
+  call_scenario.cpp
   ability_bots_scenario.cpp
   team_scenario.cpp
   objective_scenario.cpp

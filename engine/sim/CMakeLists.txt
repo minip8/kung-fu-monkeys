@@ -13,6 +13,7 @@ add_library(kfm_sim STATIC
   src/abilities/blink.cpp
   src/abilities/slam.cpp
   src/abilities/parry.cpp
+  src/abilities/call.cpp
   src/modes/mode_flow.cpp
   src/modes/registry.cpp
   src/modes/rounds.cpp

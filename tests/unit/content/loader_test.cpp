@@ -1078,6 +1078,26 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
                  "a slam needs"));
   CHECK(contains(loadErrors(withAbility("kind = \"parry\"\nactive_ticks = 8\n")),
                  "a parry needs active_ticks >= 1 and recovery_ticks >= 1"));
+  // v0.35: a call's range is its param0, in units.
+  {
+    ContentDB db{};
+    Diagnostics d;
+    const bool ok = parseContent(withAbility("kind = \"call\"\ncooldown_ticks = 15\nrange = 4.5\n"),
+                                 "test.toml", db, d);
+    INFO(d.format());
+    REQUIRE(ok);
+    const sim::AbilityDef& call = db.abilities[db.abilityCount - 1];
+    CHECK(call.name.view() == "extra");
+    CHECK(call.kind == sim::AbilityKind::Call);
+    CHECK(call.param0 == Fixed::fromRatio(9, 2));
+  }
+  CHECK(loads(withAbility("kind = \"call\"\nparam0 = 4\n")));
+  CHECK(contains(loadErrors(withAbility("kind = \"call\"\n")), "a call needs a range in (0, 128]"));
+  CHECK(
+      contains(loadErrors(withAbility("kind = \"call\"\nrange = 129\n")), "a call needs a range"));
+  CHECK(contains(loadErrors(withAbility("kind = \"call\"\nrange = 4\nparam0 = 4\n")), "not both"));
+  CHECK(contains(loadErrors(withAbility("kind = \"slam\"\nactive_ticks = 12\nrange = 3\n")),
+                 "'range' belongs to a call"));
   // A third slot through the loadout.
   CHECK(loads(replaced(withAbility("kind = \"blink\"\nactive_ticks = 10\nspeed = 30\n"),
                        "[\"dash\", \"throw\"]", "[\"dash\", \"throw\", \"extra\"]")));

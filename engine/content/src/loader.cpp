@@ -74,12 +74,13 @@ struct AbilityKindName {
   std::string_view name;
   AbilityKind kind;
 };
-constexpr std::array<AbilityKindName, 5> kAbilityKinds = {{
+constexpr std::array<AbilityKindName, 6> kAbilityKinds = {{
     {"dash", AbilityKind::Dash},
     {"throw", AbilityKind::Throw},
     {"blink", AbilityKind::Blink},
     {"slam", AbilityKind::Slam},
     {"parry", AbilityKind::Parry},
+    {"call", AbilityKind::Call},  // v0.35
 }};
 static_assert(kAbilityKinds.size() + 1 == static_cast<size_t>(AbilityKind::kCount),
               "every AbilityKind but None needs a TOML name in kAbilityKinds");
@@ -278,6 +279,9 @@ class Section {
   void error(const std::string& message) {
     diag_.error(file_.name, line(), where_ + ": " + message);
   }
+
+  // Whether the table holds `key` (without marking it used).
+  [[nodiscard]] bool has(std::string_view key) const { return table_.contains(key); }
 
   // The node for `key`, marking it used; nullptr when absent (an error when
   // required).
@@ -729,6 +733,16 @@ class Builder {
     s.speed("speed", d.speed);
     s.fixed("param0", d.param0);
     s.fixed("param1", d.param1);
+    // v0.35: a call's range, in units, is its param0 under a readable name.
+    if (const toml::node* range = s.take("range")) {
+      if (d.kind != AbilityKind::Call) {
+        s.error(*range, "'range' belongs to a call (kind = \"call\")");
+      } else if (s.has("param0")) {
+        s.error(*range, "give a call's range as 'range' or 'param0', not both");
+      } else {
+        s.fixed("range", d.param0);
+      }
+    }
     s.tags("tags_startup", d.tagsStartup);
     s.tags("tags_active", d.tagsActive);
     s.tags("tags_recovery", d.tagsRecovery);
@@ -1777,6 +1791,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     // sub-tick tail (v0.21).
     if (d.kind == AbilityKind::Parry && (d.activeTicks < 1 || d.recoveryTicks < 1)) {
       fail(where + ": a parry needs active_ticks >= 1 and recovery_ticks >= 1");
+    }
+    // A call is heard within its range (v0.35): positive, at most 128 units.
+    if (d.kind == AbilityKind::Call &&
+        (d.param0 <= Fixed::zero() || d.param0 > Fixed::fromInt(128))) {
+      fail(where + ": a call needs a range in (0, 128] units");
     }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");

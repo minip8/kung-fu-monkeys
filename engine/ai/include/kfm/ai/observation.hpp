@@ -90,7 +90,8 @@ enum class ObsAbilityKind : uint8_t {
   Throw = 2,
   Blink = 3,
   Slam = 4,
-  Parry = 5
+  Parry = 5,
+  Call = 6,  // architecture v0.35
 };
 enum class ObsAbilityPhase : uint8_t { Idle = 0, Startup = 1, Active = 2, Recovery = 3 };
 enum class ObsBananaPhase : uint8_t { Outbound = 0, Returning = 1, Grounded = 2 };

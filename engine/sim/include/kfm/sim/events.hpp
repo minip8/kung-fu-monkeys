@@ -45,6 +45,9 @@ enum class EventKind : uint8_t {
   // v0.33 (objectives, §5.3):
   HillHolderChanged,  // a = the team now holding the zone alone, or 0xFF (contested or
                       // empty), b = the zone
+  // v0.35 (the squad contest, §8):
+  MonkeyCalled,  // player = caller, entity = caller's player, a = symbol (the aim byte),
+                 // b = the call's range (raw Q16.16 bits)
 };
 
 // BoomerangCaught payload `a`.

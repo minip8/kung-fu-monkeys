@@ -149,6 +149,7 @@ void useExtraAbility(Rng& rng, const WorldState& s, const MatchContent& content,
       break;
     case AbilityKind::Dash:
     case AbilityKind::Throw:
+    case AbilityKind::Call:  // v0.35: now and then, the symbol being the aim
       if (oneIn(rng, config.abilityOneIn)) in.buttons |= bit;
       break;
     case AbilityKind::None:

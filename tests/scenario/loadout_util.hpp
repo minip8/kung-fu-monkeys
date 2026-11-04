@@ -51,6 +51,17 @@ namespace kfm::sim::test {
   return d;
 }
 
+// v0.35: a call heard within 4 units, once a quarter second.
+[[nodiscard]] inline AbilityDef callDef() {
+  AbilityDef d;
+  d.name = ContentName::of("call");
+  d.kind = AbilityKind::Call;
+  d.cooldownTicks = 15;
+  d.activeTicks = 1;
+  d.param0 = Fixed::fromInt(4);  // range
+  return d;
+}
+
 // Appends `def` to a copy of `base`; returns its index through `index`.
 [[nodiscard]] inline ContentDB withAbility(const AbilityDef& def, uint8_t& index,
                                            const ContentDB& base = defaultContent()) {

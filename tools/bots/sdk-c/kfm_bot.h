@@ -111,7 +111,8 @@ enum {
   KFM_ABILITY_THROW = 2,
   KFM_ABILITY_BLINK = 3,
   KFM_ABILITY_SLAM = 4,
-  KFM_ABILITY_PARRY = 5
+  KFM_ABILITY_PARRY = 5,
+  KFM_ABILITY_CALL = 6 /* architecture v0.35 */
 };
 enum {
   KFM_ABILITY_IDLE = 0,

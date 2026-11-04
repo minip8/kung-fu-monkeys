@@ -103,6 +103,7 @@ static_assert(KFM_MODE_SURVIVAL == static_cast<int>(ObsModeKind::Survival));
 static_assert(KFM_MODE_TEAM_ROUNDS == static_cast<int>(ObsModeKind::TeamRounds));
 static_assert(KFM_MODE_TEAM_DEATHMATCH == static_cast<int>(ObsModeKind::TeamDeathmatch));
 static_assert(KFM_ABILITY_PARRY == static_cast<int>(ObsAbilityKind::Parry));
+static_assert(KFM_ABILITY_CALL == static_cast<int>(ObsAbilityKind::Call));
 static_assert(KFM_ABILITY_RECOVERY == static_cast<int>(ObsAbilityPhase::Recovery));
 static_assert(KFM_BANANA_GROUNDED == static_cast<int>(ObsBananaPhase::Grounded));
 static_assert(KFM_PICKUP_POWERUP == static_cast<int>(ObsPickupKind::PowerUp));
