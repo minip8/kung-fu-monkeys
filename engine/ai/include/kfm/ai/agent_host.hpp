@@ -15,6 +15,10 @@
 //     the server's rule for a late network input (§6.1);
 //   - counters for kfm_arena's result line: acts and substitutions.
 //
+// A new match: reinit() calls the agent's init() again with a fresh seed and
+// empties the delay line (idle until the first answer is due), keeping the
+// delay and the counters, which are per attach.
+//
 // Ownership: the host owns its agents (std::unique_ptr); attach() hands one
 // over and detach() hands it back. Allocation happens only in attach/detach;
 // fill() allocates nothing and never writes the world.
@@ -54,6 +58,15 @@ class AgentHost {
   void attach(PlayerId slot, std::unique_ptr<IAgent> agent, uint64_t seed, uint8_t delayTicks = 0);
   // Removes the agent from `slot` and returns it (null when there was none).
   std::unique_ptr<IAgent> detach(PlayerId slot);
+  // Destroys every agent.
+  void clear();
+  // Calls init(seed, slot) on the agent in `slot` again and empties its delay
+  // line and last input; the delay and the counters stay. No-op without an
+  // agent.
+  void reinit(PlayerId slot, uint64_t seed);
+  // Changes the slot's input delay (clamped to kMaxAgentDelayTicks) from the
+  // next fill() on; see the header comment. No-op without an agent.
+  void setDelay(PlayerId slot, uint8_t delayTicks);
 
   [[nodiscard]] bool has(PlayerId slot) const { return agent(slot) != nullptr; }
   [[nodiscard]] IAgent* agent(PlayerId slot) const;
@@ -79,13 +92,17 @@ class AgentHost {
   struct Slot {
     std::unique_ptr<IAgent> agent;
     uint8_t delay{0};
-    uint32_t fills{0};  // act() calls since attach: the delay line's clock
+    uint32_t fills{0};  // act() calls since attach or reinit: the delay line's clock
+    uint32_t next{0};   // the index of the first answer not applied (or skipped) yet
     sim::PlayerInput last{};
     AgentSlotStats stats{};
-    // ring[n % (delay + 1)] holds the answer of the n-th act().
+    // ring[n % ring.size()] holds the answer of the n-th act(): the last
+    // kMaxAgentDelayTicks + 1 answers, whatever the delay, so a delay change
+    // never loses one that is still due.
     std::array<std::optional<sim::PlayerInput>, kMaxAgentDelayTicks + 1> ring{};
   };
   [[nodiscard]] const Slot* slotAt(PlayerId slot) const;
+  [[nodiscard]] Slot* slotAt(PlayerId slot);
 
   std::array<Slot, sim::kMaxPlayers> slots_{};
   Observation obs_{};

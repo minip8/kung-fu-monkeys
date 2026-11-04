@@ -77,10 +77,16 @@ TEST_CASE("ServerHost over WebRtcTransport: two clients converge on a real socke
   std::vector<std::string> lines;
   server::HostConfig hc;
   hc.server.match.seed = 0x50CE7;
-  hc.bots = 1;
+  hc.bots = server::referenceBots(1);
   hc.log = [&](std::string_view l) { lines.emplace_back(l); };
   const uint64_t start = nowNs();
-  server::ServerHost host(**serverTransport, sim::defaultContent(), std::move(hc), start);
+  auto created =
+      server::ServerHost::create(**serverTransport, sim::defaultContent(), std::move(hc), start);
+  if (!created) {
+    FAIL(created.error());
+    return;
+  }
+  server::ServerHost& host = **created;
 
   std::array<Player, 2> players;
   for (size_t i = 0; i < players.size(); ++i) {

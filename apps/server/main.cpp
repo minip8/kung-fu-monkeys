@@ -2,8 +2,9 @@
 // One match at a time over WebRtcTransport; clients signal on a plain
 // ws:// WebSocket at --bind:--port and then talk WebRTC data channels.
 //
-//   kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bots N]
-//              [--bots-seed S] [--max-players N] [--token T]... [--restart-delay S]
+//   kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bot SPEC]...
+//              [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]
+//              [--max-players N] [--token T]... [--restart-delay S]
 //              [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]
 //              [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]
 //              [--verbose]
@@ -12,14 +13,28 @@
 // --bind ADDR          signaling bind address (default all interfaces)
 // --stun URL           "stun:host:port" for the server's ICE (default none)
 // --seed S             first match seed (default: from the clock, printed)
-// --bots N             server-side bots in the lowest free slots (default 0)
-// --bots-seed S        seed of the bots' input generator (default 0xB07B07)
+// --bot SPEC           a server-side bot (repeatable, in slot order): ref,
+//                      ref:easy|medium|hard or a bot module path.wasm; a
+//                      module that fails to load is a startup error
+// --bots N             at least N bots: the --bot list padded with ref:hard
+//                      (default 0); bots take the lowest free slots
+// --bots-seed S        the first match's bot seed (default 0xB07B07); the
+//                      agent in slot s gets S ^ (0x9E3779B97F4A7C15 * (s + 1)),
+//                      kfm_arena's formula; each next match's seed is
+//                      splitmix64(S)
+// --bot-delay auto|N   the bots' input delay in ticks: auto (default) follows
+//                      the median lead of the human clients, 0 with none;
+//                      N fixes it (0..120)
+// --fuel N             a bot module's instruction budget per tick (default
+//                      100000); over it the tick repeats the last input
 // --max-players N      slots open to clients and bots, 1..10 (default 10)
 // --token T            accept only these connection tokens (repeatable;
 //                      none = accept every client)
 // --restart-delay S    seconds between a match's end and the next (default 3)
 // --exit-after-seconds N, --exit-after-matches N   stop cleanly (0 = never)
-// --stats-every S      one line of server stat deltas every S seconds
+// --stats-every S      one line of server stat deltas every S seconds, with
+//                      per-bot acts and substitutions (modules: traps,
+//                      over-budget ticks, mean fuel per act)
 // --content DIR        content directory (default: content/ next to the
 //                      executable, else the copy built into it)
 // --arena NAME, --mode NAME   the matches' arena and mode (default: the first
@@ -33,6 +48,8 @@
 // listening ws://ADDR:PORT" once the socket is bound. A client must match
 // the content hash and the build id 0 (Reject otherwise). SIGINT/SIGTERM disconnect every peer with
 // ServerShuttingDown and exit 0.
+#include "kfm/ai/agent_host.hpp"
+#include "kfm/ai/bot_spec.hpp"
 #include "kfm/content/app_content.hpp"
 #include "kfm/net/net_server.hpp"
 #include "kfm/net/webrtc_transport.hpp"
@@ -47,6 +64,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -65,8 +83,11 @@ struct Options {
   std::string stun;
   uint64_t seed{0};
   bool seedSet{false};
+  std::vector<ai::BotSpec> botSpecs;  // --bot, in order
   uint32_t bots{0};
   uint64_t botsSeed{0xB07B07};
+  std::optional<uint8_t> botDelay;  // nullopt = auto
+  uint32_t fuel{0};                 // 0 = the runtime default
   uint32_t maxPlayers{sim::kMaxPlayers};
   std::vector<std::string> tokens;
   uint32_t restartDelaySeconds{3};
@@ -81,12 +102,17 @@ struct Options {
 };
 
 constexpr const char* kUsage =
-    "usage: kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bots N]\n"
-    "                  [--bots-seed S] [--max-players N] [--token T]... [--restart-delay S]\n"
+    "usage: kfm_server [--port P] [--bind ADDR] [--stun URL] [--seed S] [--bot SPEC]...\n"
+    "                  [--bots N] [--bots-seed S] [--bot-delay auto|N] [--fuel N]\n"
+    "                  [--max-players N] [--token T]... [--restart-delay S]\n"
     "                  [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]\n"
     "                  [--content DIR] [--arena NAME] [--mode NAME] [--powerups LIST]\n"
     "                  [--verbose]\n"
-    "  --powerups LIST  all (default), none or comma-separated power-up names\n";
+    "  --bot SPEC        ref, ref:easy|medium|hard or path.wasm (repeatable, slot order)\n"
+    "  --bots N          at least N bots: the --bot list padded with ref:hard\n"
+    "  --bot-delay V     auto (default: the human clients' lead, 0 without one) or ticks\n"
+    "  --fuel N          a bot module's wasm instructions per tick (default 100000)\n"
+    "  --powerups LIST   all (default), none or comma-separated power-up names\n";
 
 // How long peers get to receive Disconnect{ServerShuttingDown} before the
 // connections are closed.
@@ -139,10 +165,24 @@ template <typename T>
     } else if (arg == "--seed") {
       ok = parseNumber(v, o.seed);
       o.seedSet = true;
+    } else if (arg == "--bot") {
+      const std::optional<ai::BotSpec> spec = ai::parseBotSpec(v);
+      ok = spec.has_value() && o.botSpecs.size() < sim::kMaxPlayers;
+      if (spec) o.botSpecs.push_back(*spec);
     } else if (arg == "--bots") {
       ok = parseNumber(v, o.bots) && o.bots <= sim::kMaxPlayers;
     } else if (arg == "--bots-seed") {
       ok = parseNumber(v, o.botsSeed);
+    } else if (arg == "--bot-delay") {
+      uint32_t d = 0;
+      if (v == "auto") {
+        o.botDelay.reset();
+      } else {
+        ok = parseNumber(v, d) && d <= ai::kMaxAgentDelayTicks;
+        o.botDelay = static_cast<uint8_t>(d);
+      }
+    } else if (arg == "--fuel") {
+      ok = parseNumber(v, o.fuel) && o.fuel > 0;
     } else if (arg == "--max-players") {
       ok = parseNumber(v, o.maxPlayers) && o.maxPlayers >= 1 && o.maxPlayers <= sim::kMaxPlayers;
     } else if (arg == "--token") {
@@ -197,7 +237,11 @@ extern "C" void onSignal(int /*signal*/) {
       return std::ranges::any_of(tokens, same);
     };
   }
-  c.bots = static_cast<uint8_t>(o.bots);
+  c.bots = o.botSpecs;
+  while (c.bots.size() < o.bots)
+    c.bots.push_back(ai::BotSpec{});  // ref:hard
+  c.botDelayTicks = o.botDelay;
+  c.botFuelPerTick = o.fuel;
   c.restartDelayTicks = o.restartDelaySeconds * sim::kTickHz;
   c.exitAfterMatches = o.exitAfterMatches;
   c.statsEveryNs = uint64_t{o.statsEverySeconds} * 1'000'000'000ull;
@@ -251,8 +295,12 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   (void)std::signal(SIGTERM, onSignal);
 
   const uint64_t start = nowNs();
-  auto host =
-      std::make_unique<server::ServerHost>(**transport, loaded.db, hostConfig(o, match), start);
+  auto created = server::ServerHost::create(**transport, loaded.db, hostConfig(o, match), start);
+  if (!created) {
+    std::fprintf(stderr, "error: %s\n", created.error().c_str());
+    return EXIT_FAILURE;
+  }
+  std::unique_ptr<server::ServerHost> host = std::move(*created);
   const uint64_t limit = uint64_t{o.exitAfterSeconds} * 1'000'000'000ull;
   while (gStop == 0 && !host->done() && (limit == 0 || nowNs() - start < limit)) {
     host->frame(nowNs());
