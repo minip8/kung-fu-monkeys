@@ -102,6 +102,7 @@ struct Stats {
   uint64_t slams{0};
   uint64_t slammed{0};
   uint64_t parryPresses{0};
+  uint64_t calls{0};  // v0.35: MonkeyCalled
   uint64_t parries{0};
   // Banana supply: ammo held + bananas in flight + pickups. With ammoMax = 1
   // a destroyed banana is gone for the round; at 0 with two or more players

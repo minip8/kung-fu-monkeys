@@ -234,6 +234,7 @@ void Stats::merge(const Stats& o) {
   slams += o.slams;
   slammed += o.slammed;
   parryPresses += o.parryPresses;
+  calls += o.calls;
   parries += o.parries;
 }
 
@@ -435,6 +436,9 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
         break;
       case EventKind::PlayerSlammed:
         ++stats_.slammed;
+        break;
+      case EventKind::MonkeyCalled:
+        ++stats_.calls;
         break;
       case EventKind::PlayerParryStarted:
         ++stats_.parryPresses;
@@ -664,8 +668,8 @@ void printSummary(const Stats& st, uint32_t players) {
               u(st.powerUpsSpawned), u(st.powerUpsTaken), u(st.shieldsBroken));
   std::printf(
       "abilities (v0.21): blinks %llu, slams %llu (monkeys pushed %llu), parries %llu of %llu "
-      "presses\n",
-      u(st.blinks), u(st.slams), u(st.slammed), u(st.parries), u(st.parryPresses));
+      "presses, calls %llu\n",
+      u(st.blinks), u(st.slams), u(st.slammed), u(st.parries), u(st.parryPresses), u(st.calls));
 }
 
 }  // namespace kfm::replay

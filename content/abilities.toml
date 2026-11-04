@@ -7,8 +7,9 @@
 # second (the loader divides by 60 and truncates toward zero, like
 # Fixed::fromRatio). Every key but name and kind is optional (0 / empty).
 #
-# Keys: name, kind (dash | throw | blink | slam | parry), cooldown_ticks, startup_ticks,
+# Keys: name, kind (dash | throw | blink | slam | parry | call), cooldown_ticks, startup_ticks,
 # active_ticks, recovery_ticks, perfect_window_ticks, speed, param0, param1,
+# range (v0.35, a call's only: param0 under its own name, in units),
 # tags_startup, tags_active, tags_recovery (lists of tag names: dashing,
 # perfect_dash, hit_stun, shielded, invulnerable, eliminated, slamming, parrying),
 # root_phases (v0.34: a list of startup, active, recovery: while one of them
@@ -156,3 +157,22 @@ cooldown_ticks = 1
 active_ticks = 1            # no startup: the banana leaves on the press tick
 recovery_ticks = 1          # = turn_ticks
 root_phases = ["recovery"]
+
+# v0.35, the squad contest (architecture §8): a call shouts the press tick's
+# aim byte, one of 256 symbols, to every monkey (ally or enemy) whose centre
+# is within `range` units, Chebyshev (the larger of |dx| and |dy|). On a grid
+# arena the range in cells is the author's arithmetic: cells x the arena's
+# cell size (courtyard: 1.0, so 4 units = 4 cells, the grid modes' cone).
+# The sim only emits MonkeyCalled; the bots' hosts fold what each monkey
+# heard into its observation (docs/bot-abi.md). One call per turn.
+[[ability]]
+name = "grid_call"
+kind = "call"
+cooldown_ticks = 15         # 1 turn
+range = 4
+
+[[ability]]
+name = "grid_call_1t"
+kind = "call"
+cooldown_ticks = 1          # 1 turn
+range = 4

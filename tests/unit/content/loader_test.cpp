@@ -841,6 +841,20 @@ TEST_CASE("content/ ships the grid modes, their kits and the courtyard",
     CHECK(catchDash.cooldownTicks == 4 * m.turnTicks);  // four turns
     CHECK(thr.recoveryTicks == m.turnTicks);
     CHECK(thr.rootPhases == sim::phaseBit(sim::AbilityPhase::Recovery));
+    // v0.35: every grid kit calls once a turn, as far as the cone reaches,
+    // and the bots see under `own` fog.
+    for (const sim::LoadoutDef* kit : {&catcher, &base}) {
+      const sim::AbilityDef& call = db.abilities[kit->abilities[sim::kAbilitySlotExtra]];
+      CHECK(call.kind == sim::AbilityKind::Call);
+      CHECK(call.cooldownTicks == m.turnTicks);
+      CHECK(call.param0 == Fixed::fromInt(m.vision.cone) * a.cellSize);
+    }
+    CHECK(m.vision.kind == sim::VisionKind::Own);
+    CHECK(m.vision.peripheral == 1);
+    CHECK(m.vision.cone == 4);
+    CHECK(m.vision.focus == 1);
+    CHECK(m.vision.hearing == 3);
+    CHECK(m.vision.bananaSight == 1);
     // The baseline: monkeys of 0.35, bananas of 0.15, HP 2.
     const sim::PowerUpDef& baseline = db.powerUps[m.baseline];
     Fixed radiusMul = Fixed::one();
