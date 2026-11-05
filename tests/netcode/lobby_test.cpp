@@ -279,17 +279,21 @@ TEST_CASE("lobby: peers leave both ways", "[lobby][webrtc]") {
   REQUIRE(w.server->host->server().peers().size() == 2);
 
   // A client closing its lobby socket becomes peer_gone; the server drops it.
+  // Its data channels close at the same time, so the server may notice the
+  // loss first and report it to the lobby itself (at most once; the lobby
+  // ignores a peer_gone for a peer it has already forgotten).
   w.clients[0].reset();
   REQUIRE(w.runUntil([&] { return w.server->host->server().peers().size() == 1; }));
   CHECK(w.server->link->peerCount() == 1);
-  CHECK(w.lobby.peerGoneFromServer() == 0);
+  CHECK(w.lobby.peerGoneFromServer() <= 1);
+  const int reportedSoFar = w.lobby.peerGoneFromServer();
 
   // The server dropping a peer is peer_gone to the lobby, which closes the
   // client with `kicked`.
   const PeerId peer = w.server->host->server().peers().front().peer;
   w.server->transport->disconnect(peer);
   REQUIRE(w.runUntil([&] { return d.client->state() == ClientState::Disconnected; }));
-  CHECK(w.lobby.peerGoneFromServer() == 1);
+  CHECK(w.lobby.peerGoneFromServer() == reportedSoFar + 1);
   CHECK(w.server->link->peerCount() == 0);
   // (The client may see its data channels close before the lobby's
   // `kicked` frame arrives, so its lastError() is not checked here.)
