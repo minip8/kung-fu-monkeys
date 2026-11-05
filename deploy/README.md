@@ -5,7 +5,7 @@ format is `docs/lobby-protocol.md`. Three parts:
 
 | Part | What | Where |
 |---|---|---|
-| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js` | GitHub Pages (`https://<owner>.github.io/<repo>/`), published by `.github/workflows/deploy.yml` on a `v*` tag |
+| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js`, `_headers` | Cloudflare Pages (`play.<domain>`), published by `.github/workflows/deploy.yml` on a `v*` tag |
 | Lobby | `kfm-lobby` (Rust) behind Caddy, the only public TCP endpoint | the EU VM, `ghcr.io/<owner>/kfm-lobby` |
 | Game servers | a pool of `kfm_server` processes, one match each, dialling the lobby | one VM per region, `ghcr.io/<owner>/kfm-server` |
 
@@ -21,18 +21,22 @@ Files:
 
 ## Day one
 
-1. **Names.** The page needs no domain: it is the repository's GitHub Pages site,
-   `https://<owner>.github.io/<repo>/` (free for a public repository). The lobby needs a
-   hostname that resolves to the EU VM and that Let's Encrypt will certify (the page is
-   `https://`, so the browser only accepts `wss://`): either a name on a domain you own
-   (`lobby.example.com`, an A record to the VM's IP) or a free dynamic-DNS name such as
-   `kfm.duckdns.org` (DuckDNS is on the public suffix list, so Let's Encrypt's rate limits are
-   per name, not shared with every other DuckDNS user). `sslip.io`-style names (the IP in the
-   name) work with Caddy too but share one rate limit with everyone. Pick the lobby name now:
-   it goes into `KFM_LOBBY_DOMAIN`, `KFM_LOBBY_URL` and the DNS record.
-2. **GitHub Pages and the repository settings.** In the repository's Settings → Pages set
-   *Source* to *GitHub Actions* (once; `deploy.yml` then owns the site). Then:
+1. **Names.** A domain whose DNS is on Cloudflare, with two names: the page
+   (`play.example.com`, the Cloudflare Pages project's custom domain, which the dashboard
+   wires into DNS itself) and the lobby (`lobby.example.com`, an A record to the EU VM, set to
+   *DNS only*, grey cloud, so Caddy obtains the certificate and the WebSocket reaches the VM
+   directly). The lobby name goes into `KFM_LOBBY_DOMAIN`, `KFM_LOBBY_URL` and the DNS record.
+   Without a domain, a free dynamic-DNS name such as `kfm.duckdns.org` serves the lobby.
+2. **Cloudflare Pages and the repository settings.** In the Cloudflare dashboard, Workers &
+   Pages → Create → Pages → *Upload assets* (a direct-upload project; do not connect it to the
+   repository, `deploy.yml` uploads the built site), name it, then in the project's *Custom
+   domains* tab add `play.example.com`. Create an API token (My Profile → API Tokens) with the
+   permission *Cloudflare Pages: Edit* on the account, and read the account id from the
+   dashboard's sidebar. Then, in the GitHub repository:
    ```sh
+   gh secret set CLOUDFLARE_API_TOKEN
+   gh secret set CLOUDFLARE_ACCOUNT_ID
+   gh variable set CF_PAGES_PROJECT --body kfm
    gh variable set KFM_LOBBY_URL --body wss://lobby.example.com
    gh variable set KFM_SENTRY_DSN --body '<browser DSN>'   # optional
    ```
@@ -63,7 +67,7 @@ Files:
    retries until the name resolves.
 8. **Check.** `curl https://lobby.example.com/healthz` →
    `{"servers":4,"rooms":0,"regions":["eu"]}`. Then open
-   `https://<owner>.github.io/<repo>/`, create a room and join it from a second browser with
+   `https://play.example.com/`, create a room and join it from a second browser with
    `?room=CODE`.
 
 ## The ICE port range
@@ -130,5 +134,5 @@ creation and the firewall differ, and the lobby's A record moves.
 Per region on GCP, without credits, at list prices (check the current ones): an `e2-small`
 running all month (about 13 USD), its in-use static external IPv4 (about 3.6 USD), a 20 GB
 balanced disk (about 2 USD), and internet egress at roughly 0.08-0.12 USD per GB, which is
-about 3-4 US cents per match-hour. GitHub Pages and the Sentry free tier cost nothing. No
+about 3-4 US cents per match-hour. Cloudflare Pages and the Sentry free tier cost nothing. No
 spot or preemptible VMs: they are stopped mid-match.
