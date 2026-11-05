@@ -331,6 +331,47 @@ TEST_CASE("lobby: peers leave both ways", "[lobby][webrtc]") {
   CHECK(w.lobby.clientsInRoom() == 0);
 }
 
+TEST_CASE("lobby: a dropped client rejoins with its token and reclaims its slot (v1.2)",
+          "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  LobbyClient& c = w.startRoom();
+  const sim::PlayerMask slots = c.client->localSlots();
+  REQUIRE(slots != 0);
+  const std::span<const std::byte> t = c.transport->connectionToken();
+  const std::string token(reinterpret_cast<const char*>(t.data()), t.size());
+  REQUIRE(token.size() == 32);
+
+  // The client vanishes (its lobby socket and data channels close): the
+  // server keeps its slots reserved for the reconnect grace.
+  w.clients[0].reset();
+  REQUIRE(w.runUntil([&] { return w.server->host->server().peers().empty(); }));
+  CHECK(w.server->host->server().humanSlots() == slots);
+
+  // Reconnect from the UI: a rejoin through the lobby with the same token.
+  LobbyRequest r;
+  r.kind = LobbyRequest::Kind::Join;
+  r.code = "ABCDE";
+  r.token = token;
+  w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), r));
+  LobbyClient& again = *w.clients.back();
+  REQUIRE(w.runUntil([&] { return again.client->running(); }));
+  const std::span<const std::byte> t2 = again.transport->connectionToken();
+  CHECK(std::string(reinterpret_cast<const char*>(t2.data()), t2.size()) == token);
+  CHECK(again.client->localSlots() == slots);
+  CHECK(w.server->host->server().stats().reconnects == 1);
+  CHECK(w.server->host->server().stats().joins == 1);
+  CHECK(w.lobby.joins() == 2);
+
+  // A token the room never issued is refused.
+  LobbyRequest bad = r;
+  bad.token = "ffffffffffffffffffffffffffffffff";
+  w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), bad));
+  LobbyClient& refused = *w.clients.back();
+  REQUIRE(w.runUntil([&] { return refused.client->state() == ClientState::Disconnected; }));
+  CHECK(refused.transport->lastError() == "lobby refused: bad_token");
+}
+
 TEST_CASE("lobby: a new room after room_closed restarts the match", "[lobby][webrtc]") {
   WebRtcTransport::initLogging(WebRtcLogLevel::Error);
   World w;

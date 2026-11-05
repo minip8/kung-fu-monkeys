@@ -37,9 +37,10 @@
 //   client, lobby request       WebRtcClientConfig::lobby set and
 //           signalingUrl the lobby's base URL (ws[s]://host[:port]; "/client" is
 //           appended when it has no path).
-//           On open the transport sends the create or join request; the
-//           reply must be `joined` (connectionToken() becomes the room's
-//           token, lobbyRoom() the code and region, and only then the peer
+//           On open the transport sends the create or join request (a
+//           join with LobbyRequest::token is a rejoin, lobby protocol v1.2,
+//           and the reply carries the same token); the reply must be `joined` (connectionToken()
+//           becomes the room's token, lobbyRoom() the code and region, and only then the peer
 //           connection is created and the offer sent) or `refused`
 //           (Disconnected, lastError() "lobby refused: <reason>"). After
 //           `joined` the socket carries plain signaling; a `closed` frame
@@ -120,6 +121,11 @@ struct LobbyRequest {
   Kind kind{Kind::Create};
   std::string region;  // Create: e.g. "eu"
   std::string code;    // Join: 5 characters, any case
+  // Join (lobby protocol v1.2): rejoin the room as the player this token was
+  // issued to (32 lower-case hex digits; empty: a new player). The lobby
+  // answers with the same token, so the server's reconnect reclaims the
+  // player's slots.
+  std::string token;
   uint32_t buildId{0};
   uint32_t contentHash{0};
 };

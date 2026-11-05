@@ -511,10 +511,17 @@ struct WebRtcTransport::Impl {
           signaling::Field{"type", "create"}, signaling::Field{"region", req.region},
           signaling::Field{"build", build}, signaling::Field{"content", content}};
       text = signaling::encodeObject(f);
-    } else {
+    } else if (req.token.empty()) {
       const std::array<signaling::Field, 4> f = {
           signaling::Field{"type", "join"}, signaling::Field{"code", req.code},
           signaling::Field{"build", build}, signaling::Field{"content", content}};
+      text = signaling::encodeObject(f);
+    } else {
+      // v1.2: a rejoin under the token the room issued before.
+      const std::array<signaling::Field, 5> f = {
+          signaling::Field{"type", "join"}, signaling::Field{"code", req.code},
+          signaling::Field{"token", req.token}, signaling::Field{"build", build},
+          signaling::Field{"content", content}};
       text = signaling::encodeObject(f);
     }
     peer.ws->send(text);

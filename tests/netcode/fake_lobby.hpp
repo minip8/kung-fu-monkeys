@@ -2,7 +2,8 @@
 // on 127.0.0.1, enough of both sides for the engine's lobby tests: one
 // server socket (/server: register with a secret, room, peer, signal relay,
 // peer_gone both ways, capacity) and client sockets (/client: regions (v1.1),
-// create/join, joined/refused, signaling relay, closed). One room at a time, code
+// create/join, joined/refused, signaling relay, closed; v1.2: a join with a
+// token the room issued rejoins under it). One room at a time, code
 // "ABCDE", or "FGHJK" for the second, and so on. Test code only: it runs on
 // libdatachannel's callback threads under one recursive mutex and uses
 // exceptions freely.
@@ -93,6 +94,9 @@ class FakeLobby {
   [[nodiscard]] std::optional<std::string> room() const {
     return locked([&] { return room_; });
   }
+  [[nodiscard]] int joins() const {
+    return locked([&] { return joins_; });
+  }
   [[nodiscard]] size_t clientsInRoom() const {
     return locked([&] { return clients_.size(); });
   }
@@ -108,6 +112,7 @@ class FakeLobby {
     const std::string code = room_.value_or("");
     sendServer({{"type", "room_closed"}, {"code", code}});
     room_.reset();
+    tokens_.clear();
   }
   // The next regions replies carry these keys instead of the state's ("eu"
   // listed once a server registered, free while it has no room); no `free`
@@ -127,6 +132,7 @@ class FakeLobby {
   struct Client {
     std::shared_ptr<rtc::WebSocket> ws;
     std::string peer;
+    std::string token;
   };
 
   static void send(const std::shared_ptr<rtc::WebSocket>& ws,
@@ -152,6 +158,7 @@ class FakeLobby {
       closeClient(c, "server_gone");
     clients_.clear();
     room_.reset();
+    tokens_.clear();
   }
 
   [[nodiscard]] static bool hex8(std::string_view s) {
@@ -282,10 +289,25 @@ class FakeLobby {
     }
     const std::string code = room_.value_or("");
     const std::string peer = std::to_string(nextPeer_++);
-    // 32 lower-case hex characters, distinct per join.
-    std::string token = "0123456789abcdef0123456789abcd";
-    token += peer.size() == 1 ? "0" + peer : peer.substr(peer.size() - 2);
-    clients_[peer] = Client{ws, peer};
+    // 32 lower-case hex characters, distinct per join; v1.2: a rejoin keeps
+    // its token and replaces a socket still seated under it.
+    std::string token(
+        signaling::decodeObject(text).value_or(signaling::FlatObject{}).get("token").value_or(""));
+    if (token.empty()) {
+      token = "0123456789abcdef0123456789abcd";
+      token += peer.size() == 1 ? "0" + peer : peer.substr(peer.size() - 2);
+    }
+    for (auto it = clients_.begin(); it != clients_.end(); ++it) {
+      if (it->second.token != token) continue;
+      Client old = it->second;
+      clients_.erase(it);
+      closeClient(old, "replaced");
+      sendServer({{"type", "peer_gone"}, {"peer", old.peer}});
+      break;
+    }
+    tokens_.push_back(token);
+    ++joins_;
+    clients_[peer] = Client{ws, peer, token};
     sendServer({{"type", "peer"}, {"peer", peer}, {"token", token}});
     send(ws, {{"type", "joined"}, {"code", code}, {"token", token}, {"region", "eu"}});
   }
@@ -311,6 +333,10 @@ class FakeLobby {
     if (type == "join") {
       if (!room_ || o.get("code") != std::optional<std::string_view>(*room_)) return "unknown_code";
       if (!match) return "mismatch";
+      if (const std::optional<std::string_view> t = o.get("token");
+          t && std::ranges::find(tokens_, *t) == tokens_.end()) {
+        return "bad_token";  // v1.2: a rejoin with a token the room never issued
+      }
       return std::nullopt;
     }
     return "bad_request";
@@ -334,6 +360,8 @@ class FakeLobby {
   uint32_t roomsCreated_{0};
   uint32_t nextPeer_{1};
   std::map<std::string, Client> clients_;
+  std::vector<std::string> tokens_;  // issued in this room (a rejoin may present one)
+  int joins_{0};
 };
 
 }  // namespace kfm::net::test
