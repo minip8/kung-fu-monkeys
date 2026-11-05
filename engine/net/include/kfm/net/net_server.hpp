@@ -68,6 +68,19 @@
 // snapshot of the new match (they describe a world it cannot have
 // predicted), so a restart announced a few ticks ahead costs no resync.
 //
+// The room (v0.42, protocol 6, §6.6): NetServer keeps no room policy. It
+// keeps each slot's nickname (from the Hello of the peer that took it; a
+// reconnect with the same token keeps the slot's name, a released slot
+// forgets it), reports a peer's RoomSettings and Start as ServerEvents
+// (RoomSettingsRequested with the settings, StartRequested) for the host to
+// judge, and sends the RoomState the host sets (setRoomState()) to every
+// active peer at once and to each joiner right after its Welcome and
+// Snapshot. Both requests share a per-peer token bucket (roomMsgsPerSecond);
+// excess ones are dropped. A host that keeps the room waiting simply stops
+// calling tick(): pump() still answers pings, handshakes and inputs (which
+// wait in the assembler's window), and releaseReservations() frees the slots
+// of dropped peers at once, since no tick will expire them.
+//
 // Shutdown: shutdown() sends Disconnect{ServerShuttingDown} to every peer
 // and rejects later Hellos with RejectReason::ServerShuttingDown; the host
 // keeps pumping briefly so the messages leave, then closeAll() (or
@@ -132,17 +145,21 @@ struct ServerConfig {
   BotInputSource botInputs;
   // Player slots open to peers and bots: the lowest maxPlayers (1..kMaxPlayers).
   uint8_t maxPlayers{sim::kMaxPlayers};
+  // RoomSettings and Start messages per second per peer (v0.42).
+  uint32_t roomMsgsPerSecond{20};
 };
 
 enum class ServerEventKind : uint8_t {
-  PeerJoined = 0,   // handshake accepted; slots assigned (empty for a spectator)
-  PeerReconnected,  // a token reclaimed reserved slots
-  PeerRejected,     // Hello refused; reason = RejectReason
-  PeerLeft,         // closed or timed out; slots reserved or released
-  PeerKicked,       // reason = DisconnectReason
-  SlotsReleased,    // slots left the roster (quit, grace expired, kick)
-  ResyncServed,     // a ResyncRequest was answered with a snapshot
-  MatchRestarted,   // restartMatch() took effect at this tick; snapshots sent
+  PeerJoined = 0,         // handshake accepted; slots assigned (empty for a spectator)
+  PeerReconnected,        // a token reclaimed reserved slots
+  PeerRejected,           // Hello refused; reason = RejectReason
+  PeerLeft,               // closed or timed out; slots reserved or released
+  PeerKicked,             // reason = DisconnectReason
+  SlotsReleased,          // slots left the roster (quit, grace expired, kick)
+  ResyncServed,           // a ResyncRequest was answered with a snapshot
+  MatchRestarted,         // restartMatch() took effect at this tick; snapshots sent
+  RoomSettingsRequested,  // v0.42: a peer sent RoomSettings (settings)
+  StartRequested,         // v0.42: a peer sent Start
 };
 
 struct ServerEvent {
@@ -151,6 +168,7 @@ struct ServerEvent {
   sim::PlayerMask slots{0};
   Tick tick{};
   uint8_t reason{0};
+  RoomSettings settings{};  // RoomSettingsRequested
 };
 
 struct ServerStats {
@@ -159,10 +177,11 @@ struct ServerStats {
   uint32_t substitutedLastTick{0};
   uint64_t resyncsServed{0};
   uint64_t snapshotsSent{0};
-  uint64_t inputsAccepted{0};  // slot-ticks stored for a future tick
-  uint64_t inputsLate{0};      // redundant copies of ticks already assembled
-  uint64_t rejectedInputs{0};  // messages or slot-ticks refused (§6.7)
-  uint64_t rateLimited{0};     // Input messages over the rate limit
+  uint64_t inputsAccepted{0};   // slot-ticks stored for a future tick
+  uint64_t inputsLate{0};       // redundant copies of ticks already assembled
+  uint64_t rejectedInputs{0};   // messages or slot-ticks refused (§6.7)
+  uint64_t rateLimited{0};      // Input messages over the rate limit
+  uint64_t roomRateLimited{0};  // RoomSettings / Start messages over their limit
   uint64_t protocolErrors{0};
   uint64_t kicks{0};
   uint64_t joins{0};
@@ -263,6 +282,22 @@ class NetServer {
   [[nodiscard]] std::vector<ServerPeerInfo> peers() const;
   // The peer that owns a slot (invalid for a bot, a reservation or a free slot).
   [[nodiscard]] PeerId ownerOf(PlayerId slot) const;
+  // Slots open to a joiner or a bot now (within maxPlayers, not present).
+  [[nodiscard]] sim::PlayerMask freeSlots() const;
+  // Present slots that are not bots: peers' and reserved ones.
+  [[nodiscard]] sim::PlayerMask humanSlots() const {
+    return static_cast<sim::PlayerMask>(present_ & ~bots_);
+  }
+
+  // --- the room (v0.42) ---------------------------------------------------------
+  // The nickname of a human slot (empty for a bot, a free slot or no name).
+  [[nodiscard]] const Nickname& nickname(PlayerId slot) const;
+  // Sends `state` to every active peer now and to every later joiner after
+  // its Welcome and Snapshot.
+  void setRoomState(const RoomStateMsg& state);
+  [[nodiscard]] const std::optional<RoomStateMsg>& roomState() const { return roomState_; }
+  // Releases every reserved slot of a dropped peer now (no reconnect grace).
+  void releaseReservations();
 
  private:
   struct Peer {
@@ -278,6 +313,9 @@ class NetServer {
     std::optional<int8_t> marginSinceSend;  // min since the last AuthInputs
     std::array<std::byte, kMaxTokenBytes> token{};
     uint8_t tokenLength{0};
+    Nickname nickname{};
+    uint64_t roomBucketNs{0};  // token bucket of room messages, in ns × messages
+    uint64_t roomBucketAtNs{0};
   };
   struct Reservation {
     bool used{false};
@@ -296,9 +334,9 @@ class NetServer {
   void onInput(Peer& p, const Packet& packet);
   void onJoinMatch(Peer& p, const Packet& packet);
   void onResync(Peer& p, const Packet& packet);
+  void onRoomMessage(Peer& p, const Packet& packet, MessageType type);
   void protocolError(Peer& p, uint64_t nowNs);
   void reject(Peer& p, RejectReason reason);
-  [[nodiscard]] sim::PlayerMask freeSlots() const;
   [[nodiscard]] sim::PlayerMask reservedSlots() const;
   void assignSlots(Peer& p, sim::PlayerMask slots);
   void releaseSlots(sim::PlayerMask slots, PeerId peer);
@@ -310,7 +348,8 @@ class NetServer {
   void sendUnreliable(Peer& p, std::span<const std::byte> bytes);
   template <class M>
   void sendReliableMsg(Peer& p, const M& m);
-  void emit(ServerEventKind kind, PeerId peer, sim::PlayerMask slots, uint8_t reason = 0);
+  void emit(ServerEventKind kind, PeerId peer, sim::PlayerMask slots, uint8_t reason = 0,
+            const RoomSettings& settings = {});
 
   ITransport* transport_;
   const sim::ContentDB* content_;
@@ -327,6 +366,8 @@ class NetServer {
   uint64_t nowNs_{0};
   std::vector<Peer> peers_;  // capacity kMaxPeers, reserved at construction
   std::array<Reservation, sim::kMaxPlayers> reservations_{};
+  std::array<Nickname, sim::kMaxPlayers> nicknames_{};
+  std::optional<RoomStateMsg> roomState_;
   std::vector<ServerEvent> events_;
   ServerStats stats_{};
   std::vector<std::byte> buf_;  // encode scratch, kMaxReliableBytes

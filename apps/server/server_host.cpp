@@ -471,6 +471,14 @@ void ServerHost::logServerEvents() {
         log("match {} starts seed=0x{:x} players={}", server_->matchIndex() + 1,
             server_->matchConfig().seed, slotList(e.slots));
         break;
+      case net::ServerEventKind::RoomSettingsRequested:
+      case net::ServerEventKind::StartRequested:
+        if (config_.verbose) {
+          log("{} peer={} slots={}",
+              e.kind == net::ServerEventKind::StartRequested ? "start request" : "settings request",
+              peer, slotList(e.slots));
+        }
+        break;
     }
   }
 }

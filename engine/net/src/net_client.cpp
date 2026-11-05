@@ -54,6 +54,11 @@ void NetClient::resetSession() {
   marginFrom_ = Tick{};
   awaitingResync_ = false;
   restartTick_.reset();
+  room_.reset();
+  roomUpdates_ = 0;
+  resumePending_ = false;
+  resumeSnapshot_ = false;
+  resumeIsRestart_ = false;
   resyncSentNs_ = 0;
   nextPingNs_ = 0;
   firstAuthTick_.reset();
@@ -93,6 +98,7 @@ void NetClient::sendHello(uint64_t nowNs) {
   h.tokenLength = config_.tokenLength;
   h.token = config_.token;
   h.requestedSlots = std::min<uint8_t>(config_.requestedSlots, sim::kMaxPlayers);
+  h.nickname = validNickname(config_.nickname.view()) ? config_.nickname : Nickname{};
   sendMsg(Lane::Reliable, h);
   helloSent_ = true;
   sendPing(nowNs);
@@ -100,6 +106,16 @@ void NetClient::sendHello(uint64_t nowNs) {
 
 void NetClient::setToken(std::span<const std::byte> token) {
   config_.setToken(token);
+}
+
+void NetClient::sendRoomSettings(const RoomSettings& settings) {
+  if (state_ != ClientState::Running) return;
+  sendMsg(Lane::Reliable, RoomSettingsMsg{settings});
+}
+
+void NetClient::sendStart() {
+  if (state_ != ClientState::Running) return;
+  sendMsg(Lane::Reliable, StartMsg{});
 }
 
 void NetClient::disconnect() {
@@ -166,6 +182,7 @@ void NetClient::pump(uint64_t nowNs) {
   }
   if (helloSent_ && nowNs >= nextPingNs_) sendPing(nowNs);
   if (state_ == ClientState::Syncing) tryStart(nowNs);
+  if (state_ == ClientState::Running && resumePending_) tryResume(nowNs);
   if (awaitingResync_ && nowNs - resyncSentNs_ > config_.resyncRetryNs) {
     awaitingResync_ = false;  // lost or ignored: ask again at the next mismatch
   }
@@ -252,6 +269,18 @@ void NetClient::onPacket(const Packet& packet) {
       state_ = ClientState::Disconnected;
       return;
     }
+    case MessageType::RoomState: {
+      RoomStateMsg r;
+      if (!decode(packet.data, r)) break;
+      const bool wasHeld = roomHeld();
+      room_ = r;
+      ++roomUpdates_;
+      if (wasHeld && !roomHeld() && state_ == ClientState::Running) {
+        resumePending_ = true;
+        resumeSnapshot_ = false;
+      }
+      return;
+    }
     default:
       return;  // client-to-server types are ignored
   }
@@ -325,8 +354,15 @@ void NetClient::onSnapshot(const Packet& packet) {
     matchConfig_ = snapshot_.config;
     simConfig_ = snapshot_.config;
     ++stats_.matchRestarts;
-    report_.matchRestarted = true;
   }
+  if (resumePending_) {
+    // Loaded by tryResume() once the server is seen ticking past it.
+    resumeSnapshot_ = true;
+    resumeIsRestart_ = resumeIsRestart_ || restart;
+    awaitingResync_ = false;
+    return;
+  }
+  if (restart) report_.matchRestarted = true;
   // Resync or restart: hard load, then predict forward to where we were.
   const Tick runTo = spectator() ? snapTick : std::max(world_.tick, snapTick);
   loadSnapshot(runTo);
@@ -346,6 +382,28 @@ void NetClient::tryStart(uint64_t nowNs) {
     if (target > runTo) runTo = target;
   }
   state_ = ClientState::Running;
+  loadSnapshot(runTo);
+  marginFrom_ = world_.tick.plus(static_cast<int32_t>(inputDelay()));
+  lead_.reset();
+  clock_.start(nowNs);
+}
+
+void NetClient::tryResume(uint64_t nowNs) {
+  // The snapshot of the resumed match, and a Pong sent after the server
+  // stepped past it, so the server tick estimate is a live one.
+  if (!resumeSnapshot_ || !pong_.valid || !(pong_.tick > snapshot_.world.tick)) return;
+  Tick runTo = std::max(world_.tick, snapshot_.world.tick);
+  if (spectator()) {
+    runTo = snapshot_.world.tick;
+  } else {
+    const Tick server = estimatedServerTick(nowNs).value_or(snapshot_.world.tick);
+    const Tick target = server.plus(targetLeadTicks(rtt_) - static_cast<int32_t>(inputDelay()));
+    if (target > runTo) runTo = target;
+  }
+  resumePending_ = false;
+  resumeSnapshot_ = false;
+  if (resumeIsRestart_) report_.matchRestarted = true;
+  resumeIsRestart_ = false;
   loadSnapshot(runTo);
   marginFrom_ = world_.tick.plus(static_cast<int32_t>(inputDelay()));
   lead_.reset();
@@ -620,6 +678,11 @@ uint32_t NetClient::ticksDue(uint64_t nowNs) {
     recordBatch(nowNs, 0, kRateOnePpm);
     return 0;
   }
+  if (holding()) {
+    clock_.start(nowNs);  // the room is not playing: no backlog builds up
+    recordBatch(nowNs, 0, kRateOnePpm);
+    return 0;
+  }
   if (spectator()) {
     const uint32_t rate = spectatorRatePpm();
     const uint32_t n = clock_.advance(nowNs, rate, config_.maxTicksPerCall);
@@ -664,7 +727,7 @@ uint64_t NetClient::tickStartNs(uint32_t i) const {
 }
 
 void NetClient::tick(std::span<const sim::PlayerInput> inputs) {
-  if (state_ != ClientState::Running) return;
+  if (state_ != ClientState::Running || holding()) return;
   if (spectator()) {
     if (auth_.get(world_.tick) == nullptr) return;  // a spectator never predicts
     stepOne();
@@ -749,8 +812,9 @@ void NetClient::sendInputs() {
 
 void NetClient::sendPing(uint64_t nowNs) {
   sendMsg(Lane::Unreliable, PingMsg{nowNs, world_.tick});
-  nextPingNs_ = nowNs + (state_ == ClientState::Running ? config_.pingIntervalNs
-                                                        : config_.syncPingIntervalNs);
+  nextPingNs_ =
+      nowNs + (state_ == ClientState::Running && !resumePending_ ? config_.pingIntervalNs
+                                                                 : config_.syncPingIntervalNs);
 }
 
 }  // namespace kfm::net

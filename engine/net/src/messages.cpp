@@ -13,7 +13,8 @@
 //               previous frame when it was present there, else idle
 //   Snapshot    MatchConfig, worldChecksum u32, WorldState (visitor)
 //   Hello       version u16 (frozen), contentHash u32, buildId u32,
-//               tokenLength u8, token bytes, requestedSlots u8
+//               tokenLength u8, token bytes, requestedSlots u8,
+//               nicknameLength u8, nickname bytes (since version 6)
 //   Welcome     assignedSlots u10, MatchConfig, serverTick u32
 //   Reject      reason u8
 //   JoinMatch   requestedSlots u8
@@ -29,6 +30,16 @@
 //   Ping        sendNs u64, tick u32
 //   Pong        echoSendNs u64, tick u32, holdNs u32
 //   ResyncRequest tick u32, checksum u32
+//   (version 6, the room:)
+//   RoomSettings RoomSettings
+//   RoomState   phase u2, hasHost u1 [host u4], RoomSettings, humans u10,
+//               bots u10, hasWinner u1 [winner u4], then for each human slot
+//               ascending: nicknameLength u5, nickname bytes
+//   Start       (nothing)
+//   (RoomSettings = arena u8, mode u8, loadout u8, powerUps u16, bots u4;
+//   arena, mode and loadout below their capacities, bots at most
+//   kMaxPlayers)
+//   (a nickname: at most kMaxNicknameBytes bytes, validNickname())
 #include "kfm/net/messages.hpp"
 
 #include "kfm/core/bitstream.hpp"
@@ -44,7 +55,8 @@ namespace {
 constexpr int kMaskBits = sim::kMaxPlayers;
 constexpr int kCountBits = 4;
 static_assert((1u << kCountBits) == kMaxInputRedundancy);
-static_assert(kMessageTypeCount == static_cast<uint8_t>(MessageType::ResyncRequest));
+static_assert(kMessageTypeCount == static_cast<uint8_t>(MessageType::Start));
+static_assert(kRoomPhaseCount == static_cast<uint8_t>(RoomPhase::Over) + 1);
 static_assert(kRejectReasonCount == static_cast<uint8_t>(RejectReason::ServerShuttingDown) + 1);
 static_assert(kDisconnectReasonCount ==
               static_cast<uint8_t>(DisconnectReason::ServerShuttingDown) + 1);
@@ -148,7 +160,120 @@ static_assert(sim::kMaxPlayers <= (1u << kTeamBits));
          teamsOk;
 }
 
+constexpr int kSlotBits = 4;
+static_assert(sim::kMaxPlayers <= (1u << kSlotBits));
+constexpr int kNicknameLengthBits = 5;
+static_assert(kMaxNicknameBytes < (1u << kNicknameLengthBits));
+constexpr int kBotCountBits = 4;
+
+[[nodiscard]] bool validSettings(const RoomSettings& s) {
+  return s.arena < sim::kMaxArenas && s.mode < sim::kMaxModes && s.loadout < sim::kMaxLoadouts &&
+         s.bots <= sim::kMaxPlayers;
+}
+void writeSettings(BitWriter& w, const RoomSettings& s) {
+  w.writeU8(s.arena);
+  w.writeU8(s.mode);
+  w.writeU8(s.loadout);
+  w.writeU16(s.powerUps);
+  w.writeBits(s.bots, kBotCountBits);
+}
+void readSettings(BitReader& r, RoomSettings& s) {
+  s.arena = r.readU8();
+  s.mode = r.readU8();
+  s.loadout = r.readU8();
+  s.powerUps = r.readU16();
+  s.bots = static_cast<uint8_t>(r.readBits(kBotCountBits));
+}
+
+void writeNickname(BitWriter& w, const Nickname& n, int lengthBits) {
+  w.writeBits(n.length, lengthBits);
+  for (uint8_t i = 0; i < n.length; ++i)
+    w.writeU8(static_cast<uint8_t>(n.bytes[i]));
+}
+// False for a nickname the wire does not accept.
+[[nodiscard]] bool readNickname(BitReader& r, Nickname& n, int lengthBits) {
+  n = Nickname{};
+  const uint32_t len = r.readBits(lengthBits);
+  if (len > kMaxNicknameBytes) return false;
+  n.length = static_cast<uint8_t>(len);
+  for (uint8_t i = 0; i < n.length; ++i)
+    n.bytes[i] = static_cast<char>(r.readU8());
+  return r.ok() ? validNickname(n.view()) : true;  // a truncated read fails as Truncated
+}
+
+// The length in bytes of the well-formed UTF-8 character at the start of
+// `s` that is not a control character, or 0.
+[[nodiscard]] size_t nicknameCharLength(std::string_view s) {
+  const auto b0 = static_cast<uint8_t>(s[0]);
+  if (b0 < 0x20 || b0 == 0x7F) return 0;  // C0 controls, DEL
+  if (b0 < 0x80) return 1;
+  size_t len = 0;
+  uint32_t cp = 0;
+  uint32_t min = 0;
+  if ((b0 & 0xE0) == 0xC0) {
+    len = 2;
+    cp = b0 & 0x1Fu;
+    min = 0x80;
+  } else if ((b0 & 0xF0) == 0xE0) {
+    len = 3;
+    cp = b0 & 0x0Fu;
+    min = 0x800;
+  } else if ((b0 & 0xF8) == 0xF0) {
+    len = 4;
+    cp = b0 & 0x07u;
+    min = 0x10000;
+  } else {
+    return 0;  // a continuation byte or 0xF8..0xFF
+  }
+  if (s.size() < len) return 0;
+  for (size_t i = 1; i < len; ++i) {
+    const auto b = static_cast<uint8_t>(s[i]);
+    if ((b & 0xC0) != 0x80) return 0;
+    cp = (cp << 6) | (b & 0x3Fu);
+  }
+  if (cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) return 0;  // overlong, surrogate
+  if (cp >= 0x80 && cp <= 0x9F) return 0;                                     // C1 controls
+  return len;
+}
+
 }  // namespace
+
+// --- nicknames --------------------------------------------------------------------
+
+bool validNickname(std::string_view text) {
+  if (text.size() > kMaxNicknameBytes) return false;
+  while (!text.empty()) {
+    const size_t n = nicknameCharLength(text);
+    if (n == 0) return false;
+    text.remove_prefix(n);
+  }
+  return true;
+}
+
+Nickname Nickname::from(std::string_view text) {
+  Nickname out;
+  bool pendingSpace = false;  // spaces are kept only between other characters
+  while (!text.empty()) {
+    const size_t n = nicknameCharLength(text);
+    if (n == 0) {
+      text.remove_prefix(1);  // a control byte or malformed UTF-8: dropped
+      continue;
+    }
+    if (n == 1 && text[0] == ' ') {
+      pendingSpace = out.length > 0;
+      text.remove_prefix(1);
+      continue;
+    }
+    const size_t need = n + (pendingSpace ? 1 : 0);
+    if (out.length + need > kMaxNicknameBytes) break;
+    if (pendingSpace) out.bytes[out.length++] = ' ';
+    pendingSpace = false;
+    for (size_t i = 0; i < n; ++i)
+      out.bytes[out.length++] = text[i];
+    text.remove_prefix(n);
+  }
+  return out;
+}
 
 // --- input delta coding ---------------------------------------------------------
 
@@ -216,6 +341,17 @@ bool HelloMsg::operator==(const HelloMsg& o) const {
   }
   for (uint8_t i = 0; i < tokenLength && i < kMaxTokenBytes; ++i) {
     if (token[i] != o.token[i]) return false;
+  }
+  return nickname == o.nickname;
+}
+
+bool RoomStateMsg::operator==(const RoomStateMsg& o) const {
+  if (phase != o.phase || host != o.host || settings != o.settings || humans != o.humans ||
+      bots != o.bots || winner != o.winner) {
+    return false;
+  }
+  for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
+    if (hasSlot(humans, s) && !(names[s] == o.names[s])) return false;
   }
   return true;
 }
@@ -427,13 +563,17 @@ DecodeResult decode(std::span<const std::byte> bytes, SnapshotMsg& out) {
 
 size_t encode(const HelloMsg& m, std::span<std::byte> out) {
   return encodeWith(out, MessageType::Hello, [&](BitWriter& w) {
-    if (m.tokenLength > kMaxTokenBytes || m.requestedSlots > sim::kMaxPlayers) return false;
+    if (m.tokenLength > kMaxTokenBytes || m.requestedSlots > sim::kMaxPlayers ||
+        m.nickname.length > kMaxNicknameBytes || !validNickname(m.nickname.view())) {
+      return false;
+    }
     w.writeU16(m.protocolVersion);
     w.writeU32(m.contentHash);
     w.writeU32(m.buildId);
     w.writeU8(m.tokenLength);
     w.writeBytes(m.tokenBytes());
     w.writeU8(m.requestedSlots);
+    writeNickname(w, m.nickname, 8);
     return true;
   });
 }
@@ -449,6 +589,7 @@ DecodeResult decode(std::span<const std::byte> bytes, HelloMsg& out) {
     r.readBytes(std::span<std::byte>(out.token.data(), out.tokenLength));
     out.requestedSlots = r.readU8();
     if (out.requestedSlots > sim::kMaxPlayers) return unexpected(DecodeError::OutOfRange);
+    if (!readNickname(r, out.nickname, 8)) return unexpected(DecodeError::OutOfRange);
     return {};
   });
 }
@@ -592,6 +733,89 @@ DecodeResult decode(std::span<const std::byte> bytes, ResyncRequestMsg& out) {
     out.checksum = r.readU32();
     return {};
   });
+}
+
+// --- the room (v6) -----------------------------------------------------------------
+
+size_t encode(const RoomSettingsMsg& m, std::span<std::byte> out) {
+  return encodeWith(out, MessageType::RoomSettings, [&](BitWriter& w) {
+    if (!validSettings(m.settings)) return false;
+    writeSettings(w, m.settings);
+    return true;
+  });
+}
+
+DecodeResult decode(std::span<const std::byte> bytes, RoomSettingsMsg& out) {
+  return decodeWith(bytes, MessageType::RoomSettings, [&](BitReader& r) -> DecodeResult {
+    readSettings(r, out.settings);
+    if (!validSettings(out.settings)) return unexpected(DecodeError::OutOfRange);
+    return {};
+  });
+}
+
+size_t encode(const RoomStateMsg& m, std::span<std::byte> out) {
+  return encodeWith(out, MessageType::RoomState, [&](BitWriter& w) {
+    const auto phase = static_cast<uint8_t>(m.phase);
+    const bool hasHost = m.host.isValid();
+    const bool hasWinner = m.winner.isValid();
+    if (phase >= kRoomPhaseCount || !validSettings(m.settings) || !validMask(m.humans) ||
+        !validMask(m.bots) || (m.humans & m.bots) != 0 ||
+        (hasHost && (m.host.value >= sim::kMaxPlayers || !hasSlot(m.humans, m.host.value))) ||
+        (hasWinner && m.winner.value >= sim::kMaxPlayers)) {
+      return false;
+    }
+    w.writeBits(phase, 2);
+    w.writeBool(hasHost);
+    if (hasHost) w.writeBits(m.host.value, kSlotBits);
+    writeSettings(w, m.settings);
+    writeMask(w, m.humans);
+    writeMask(w, m.bots);
+    w.writeBool(hasWinner);
+    if (hasWinner) w.writeBits(m.winner.value, kSlotBits);
+    for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
+      if (!hasSlot(m.humans, s)) continue;
+      const Nickname& n = m.names[s];
+      if (n.length > kMaxNicknameBytes || !validNickname(n.view())) return false;
+      writeNickname(w, n, kNicknameLengthBits);
+    }
+    return true;
+  });
+}
+
+DecodeResult decode(std::span<const std::byte> bytes, RoomStateMsg& out) {
+  return decodeWith(bytes, MessageType::RoomState, [&](BitReader& r) -> DecodeResult {
+    const uint32_t phase = r.readBits(2);
+    out.phase = static_cast<RoomPhase>(phase < kRoomPhaseCount ? phase : 0);
+    out.host = PlayerId::invalid();
+    if (r.readBool()) out.host = PlayerId{static_cast<PlayerId::rep>(r.readBits(kSlotBits))};
+    readSettings(r, out.settings);
+    out.humans = readMask(r);
+    out.bots = readMask(r);
+    out.winner = PlayerId::invalid();
+    if (r.readBool()) out.winner = PlayerId{static_cast<PlayerId::rep>(r.readBits(kSlotBits))};
+    if (phase >= kRoomPhaseCount || !validSettings(out.settings) || (out.humans & out.bots) != 0 ||
+        (out.host.isValid() &&
+         (out.host.value >= sim::kMaxPlayers || !hasSlot(out.humans, out.host.value))) ||
+        (out.winner.isValid() && out.winner.value >= sim::kMaxPlayers)) {
+      return unexpected(DecodeError::OutOfRange);
+    }
+    for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
+      out.names[s] = Nickname{};
+      if (!hasSlot(out.humans, s)) continue;
+      if (!readNickname(r, out.names[s], kNicknameLengthBits)) {
+        return unexpected(DecodeError::OutOfRange);
+      }
+    }
+    return {};
+  });
+}
+
+size_t encode(const StartMsg& /*m*/, std::span<std::byte> out) {
+  return encodeWith(out, MessageType::Start, [](BitWriter& /*w*/) { return true; });
+}
+
+DecodeResult decode(std::span<const std::byte> bytes, StartMsg& /*out*/) {
+  return decodeWith(bytes, MessageType::Start, [](BitReader& /*r*/) -> DecodeResult { return {}; });
 }
 
 }  // namespace kfm::net

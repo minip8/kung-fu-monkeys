@@ -1,7 +1,8 @@
 // NetServer driven by hand-written messages over a zero-latency loopback
 // (architecture §6.6, §6.7): handshake checks, input validation and rate
 // limits, reconnect reservations, spectators, resync, ping, the bot input
-// source and the human lead estimate.
+// source, the human lead estimate and the room's pieces (v0.42: nicknames,
+// RoomSettings / Start events, RoomState to joiners, releaseReservations).
 #include "kfm/net/net_server.hpp"
 
 #include "kfm/core/rng.hpp"
@@ -17,6 +18,7 @@
 #include <ranges>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -685,4 +687,134 @@ TEST_CASE("humanLeadTicks is the median lead of the peers that hold slots", "[ne
     rig.tick();
   }
   CHECK(rig.server->humanLeadTicks() == 0);
+}
+
+// --- the room (v0.42, protocol 6) ----------------------------------------------------
+
+namespace {
+
+HelloMsg named(uint8_t slots, std::string_view name, const std::string& token = {}) {
+  HelloMsg h = Rig::hello(slots, token);
+  h.nickname = Nickname::from(name);
+  return h;
+}
+
+// A pointer, not a reference: GCC's -Wdangling-reference flags a reference
+// returned from a function taking temporaries.
+Raw* joinNamed(Rig& rig, uint8_t slots, std::string_view name, const std::string& token = {}) {
+  Raw& r = rig.client();
+  r.reliable(named(slots, name, token));
+  rig.pump();
+  REQUIRE(r.count(MessageType::Welcome) == 1);
+  return &r;
+}
+
+}  // namespace
+
+TEST_CASE("each slot keeps its peer's nickname; a reconnect keeps it, a release forgets it",
+          "[net][server][room]") {
+  ServerConfig cfg;
+  cfg.reconnectGraceTicks = 30;
+  Rig rig(cfg);
+  const Raw& a = *joinNamed(rig, 2, "Bonobo", "tok");
+  joinNamed(rig, 1, "Gibbon");
+  CHECK(rig.server->nickname(PlayerId{0}).view() == "Bonobo");
+  CHECK(rig.server->nickname(PlayerId{1}).view() == "Bonobo");
+  CHECK(rig.server->nickname(PlayerId{2}).view() == "Gibbon");
+  CHECK(rig.server->nickname(PlayerId{3}).empty());
+  CHECK(rig.server->humanSlots() == 0b111);
+
+  // Dropped and back with the same token (and another name): the name stays.
+  rig.net.cut(a.t_->self());
+  rig.pump();
+  CHECK(rig.server->nickname(PlayerId{0}).view() == "Bonobo");
+  const Raw& again = *joinNamed(rig, 2, "Imposter", "tok");
+  CHECK(again.last<WelcomeMsg>(MessageType::Welcome).assignedSlots == 0b011);
+  CHECK(rig.server->nickname(PlayerId{1}).view() == "Bonobo");
+
+  // A deliberate quit releases the slots and their names.
+  rig.raws.back()->reliable(DisconnectMsg{DisconnectReason::Quit});
+  rig.pump();
+  CHECK(rig.server->present() == 0b100);
+  CHECK(rig.server->nickname(PlayerId{0}).empty());
+}
+
+TEST_CASE("releaseReservations frees a dropped peer's slots without a tick",
+          "[net][server][room]") {
+  Rig rig;
+  const Raw& a = rig.join(1, "tok");
+  const Tick frozen = rig.server->nextTick();
+  rig.net.cut(a.t_->self());
+  rig.pump();
+  CHECK(rig.server->present() == 0b1);  // reserved
+  rig.server->clearEvents();
+  rig.server->releaseReservations();
+  CHECK(rig.server->present() == 0);
+  CHECK(rig.server->nextTick() == frozen);
+  REQUIRE(rig.server->events().size() == 1);
+  CHECK(rig.server->events()[0].kind == ServerEventKind::SlotsReleased);
+  // The token no longer reclaims anything: a fresh join.
+  const Raw& b = rig.join(1, "tok");
+  CHECK(b.last<WelcomeMsg>(MessageType::Welcome).assignedSlots == 0b1);
+  CHECK(rig.server->stats().reconnects == 0);
+}
+
+TEST_CASE("RoomSettings and Start become events; RoomState reaches everyone and every joiner",
+          "[net][server][room]") {
+  Rig rig;
+  Raw& a = *joinNamed(rig, 1, "Host");
+  CHECK(a.count(MessageType::RoomState) == 0);  // no room set: the M3 flow sends none
+
+  RoomStateMsg state;
+  state.host = PlayerId{0};
+  state.humans = 0b1;
+  state.names[0] = Nickname::from("Host");
+  rig.server->setRoomState(state);
+  rig.pump();
+  CHECK(a.count(MessageType::RoomState) == 1);
+  CHECK(a.last<RoomStateMsg>(MessageType::RoomState) == state);
+
+  // A joiner gets the room right after its Welcome and Snapshot.
+  const Raw& b = rig.join(1);
+  REQUIRE(b.inbox.size() >= 3);
+  CHECK(b.inbox[0].type == MessageType::Welcome);
+  CHECK(b.inbox[1].type == MessageType::Snapshot);
+  CHECK(b.inbox[2].type == MessageType::RoomState);
+
+  rig.server->clearEvents();
+  const RoomSettings wanted{.arena = 0, .mode = 0, .loadout = 0, .powerUps = 3, .bots = 2};
+  a.reliable(RoomSettingsMsg{wanted});
+  a.reliable(StartMsg{});
+  rig.pump();
+  std::vector<ServerEvent> room;
+  for (const ServerEvent& e : rig.server->events())
+    if (e.kind == ServerEventKind::RoomSettingsRequested ||
+        e.kind == ServerEventKind::StartRequested)
+      room.push_back(e);
+  REQUIRE(room.size() == 2);
+  CHECK(room[0].kind == ServerEventKind::RoomSettingsRequested);
+  CHECK(room[0].settings == wanted);
+  CHECK(room[0].peer == a.t_->self());
+  CHECK(room[0].slots == 0b1);
+  CHECK(room[1].kind == ServerEventKind::StartRequested);
+  CHECK(rig.server->stats().protocolErrors == 0);
+}
+
+TEST_CASE("room messages are rate-limited and refused before the handshake",
+          "[net][server][room]") {
+  ServerConfig cfg;
+  cfg.roomMsgsPerSecond = 5;
+  Rig rig(cfg);
+  Raw& a = rig.join(1);
+  rig.server->clearEvents();
+  for (int i = 0; i < 20; ++i)
+    a.reliable(StartMsg{});
+  rig.pump();
+  CHECK(rig.server->events().size() == 5);
+  CHECK(rig.server->stats().roomRateLimited == 15);
+
+  Raw& early = rig.client();
+  early.reliable(StartMsg{});
+  rig.pump();
+  CHECK(rig.server->stats().protocolErrors == 1);
 }

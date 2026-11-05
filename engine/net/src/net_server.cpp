@@ -119,6 +119,7 @@ void NetServer::assignSlots(Peer& p, sim::PlayerMask slots) {
   for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
     if (!has(slots, s)) continue;
     const PlayerId id{static_cast<PlayerId::rep>(s)};
+    nicknames_[s] = p.nickname;
     assembler_.clearSlot(id);  // the previous owner's inputs must not repeat
     for (Peer& q : peers_) {
       if (!q.used || q.info.state != PeerState::Active) continue;
@@ -135,12 +136,34 @@ void NetServer::releaseSlots(sim::PlayerMask slots, PeerId peer) {
     if (!has(slots, s)) continue;
     const PlayerId id{static_cast<PlayerId::rep>(s)};
     assembler_.clearSlot(id);
+    nicknames_[s] = Nickname{};
     for (Peer& q : peers_) {
       if (!q.used || q.info.state != PeerState::Active) continue;
       sendReliableMsg(q, PlayerLeftMsg{id, nextTick()});
     }
   }
   emit(ServerEventKind::SlotsReleased, peer, slots);
+}
+
+void NetServer::releaseReservations() {
+  for (Reservation& r : reservations_) {
+    if (!r.used) continue;
+    r.used = false;
+    releaseSlots(r.slots, PeerId::invalid());
+  }
+}
+
+const Nickname& NetServer::nickname(PlayerId slot) const {
+  static constexpr Nickname kNone{};
+  if (!slot.isValid() || slot.value >= sim::kMaxPlayers) return kNone;
+  return nicknames_[slot.value];
+}
+
+void NetServer::setRoomState(const RoomStateMsg& state) {
+  roomState_ = state;
+  for (Peer& q : peers_) {
+    if (q.used && q.info.state == PeerState::Active) sendReliableMsg(q, state);
+  }
 }
 
 void NetServer::expireReservations() {
@@ -175,6 +198,8 @@ NetServer::Peer* NetServer::addPeer(PeerId id, uint64_t nowNs) {
     p.bucketNs = uint64_t{config_.inputMsgsPerSecond} * kNsPerSecond;
     p.bucketAtNs = nowNs;
     p.errorWindowStartNs = nowNs;
+    p.roomBucketNs = uint64_t{config_.roomMsgsPerSecond} * kNsPerSecond;
+    p.roomBucketAtNs = nowNs;
     return &p;
   }
   return nullptr;
@@ -313,8 +338,9 @@ void NetServer::protocolError(Peer& p, uint64_t nowNs) {
   }
 }
 
-void NetServer::emit(ServerEventKind kind, PeerId peer, sim::PlayerMask slots, uint8_t reason) {
-  events_.push_back(ServerEvent{kind, peer, slots, nextTick(), reason});
+void NetServer::emit(ServerEventKind kind, PeerId peer, sim::PlayerMask slots, uint8_t reason,
+                     const RoomSettings& settings) {
+  events_.push_back(ServerEvent{kind, peer, slots, nextTick(), reason, settings});
 }
 
 // --- sending ----------------------------------------------------------------------
@@ -352,6 +378,7 @@ void NetServer::welcome(Peer& p) {
   if (restart_) {
     sendReliableMsg(p, MatchConfigMsg{announced(restart_->config), restart_->startTick});
   }
+  if (roomState_) sendReliableMsg(p, *roomState_);
 }
 
 // --- receiving --------------------------------------------------------------------
@@ -448,6 +475,10 @@ void NetServer::onPacket(Peer& p, const Packet& packet) {
     case MessageType::ResyncRequest:
       onResync(p, packet);
       return;
+    case MessageType::RoomSettings:
+    case MessageType::Start:
+      onRoomMessage(p, packet, *type);
+      return;
     default:
       protocolError(p, nowNs_);  // a server-to-client message
       return;
@@ -483,6 +514,7 @@ void NetServer::onHello(Peer& p, const Packet& packet) {
   }
   p.token = h.token;
   p.tokenLength = h.tokenLength;
+  p.nickname = h.nickname;
   const std::span<const std::byte> token = h.tokenBytes();
 
   // Reconnect: a reservation or a still-connected peer with the same token.
@@ -532,6 +564,8 @@ void NetServer::onHello(Peer& p, const Packet& packet) {
   // Welcome and the snapshot first, so the joiner holds the world before
   // its own PlayerJoined arrives.
   p.info.slots = slots;
+  for (uint16_t s = 0; s < sim::kMaxPlayers; ++s)
+    if (has(slots, s)) nicknames_[s] = p.nickname;
   present_ = static_cast<sim::PlayerMask>(present_ | slots);
   welcome(p);
   p.info.slots = 0;
@@ -651,6 +685,34 @@ void NetServer::onResync(Peer& p, const Packet& packet) {
   ++stats_.resyncsServed;
   ++p.info.resyncsServed;
   emit(ServerEventKind::ResyncServed, p.info.peer, p.info.slots);
+}
+
+void NetServer::onRoomMessage(Peer& p, const Packet& packet, MessageType type) {
+  const uint64_t now = std::max(packet.receivedNs, p.roomBucketAtNs);
+  const uint64_t cap = uint64_t{config_.roomMsgsPerSecond} * kNsPerSecond;
+  p.roomBucketNs =
+      std::min(cap, p.roomBucketNs + (now - p.roomBucketAtNs) * config_.roomMsgsPerSecond);
+  p.roomBucketAtNs = now;
+  if (p.roomBucketNs < kNsPerSecond) {
+    ++stats_.roomRateLimited;
+    return;
+  }
+  p.roomBucketNs -= kNsPerSecond;
+  if (type == MessageType::Start) {
+    StartMsg m;
+    if (!decode(packet.data, m)) {
+      protocolError(p, nowNs_);
+      return;
+    }
+    emit(ServerEventKind::StartRequested, p.info.peer, p.info.slots);
+    return;
+  }
+  RoomSettingsMsg m;
+  if (!decode(packet.data, m)) {
+    protocolError(p, nowNs_);
+    return;
+  }
+  emit(ServerEventKind::RoomSettingsRequested, p.info.peer, p.info.slots, 0, m.settings);
 }
 
 // --- ticking ----------------------------------------------------------------------

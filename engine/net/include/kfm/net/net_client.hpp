@@ -41,6 +41,19 @@
 // server sends at startTick, then predicts forward as after a resync
 // (FrameReport::matchRestarted, snapshotLoaded and rolledBack are set).
 //
+// The room (v0.42, protocol 6, §6.6): the client keeps the newest RoomState
+// (roomState()) and sends the host's RoomSettings and Start. While the room
+// is not Playing (Waiting or Over) the server does not tick, so the client
+// holds too: ticksDue() returns 0 and its clock restarts on every call (no
+// backlog builds up), while pings keep the link and the RTT estimate alive
+// and no input is sent. Without any RoomState (a server on the M3 flow,
+// kfm_netsim) nothing is ever held. When the room turns Playing again the
+// client keeps holding until the new match's snapshot has arrived and a Pong
+// shows the server ticking past it, then loads it and runs forward to
+// estimated server tick + target lead, exactly as the initial sync does
+// (lead controller reset, clock restarted), so the stale lead of before the
+// pause never carries over.
+//
 // Events (§5.9) pass through an EventJournal: re-emitted events of a
 // re-simulation are deduplicated, abandoned undelivered ones dropped, events
 // of verified ticks are final.
@@ -77,6 +90,7 @@ struct ClientConfig {
   std::array<std::byte, kMaxTokenBytes> token{};
   uint8_t tokenLength{0};
   uint8_t requestedSlots{1};  // 0 = spectate
+  Nickname nickname{};        // v0.42: sent in Hello
   // Fixed input delay, 0..kMaxInputDelayTicks (§6.2).
   uint8_t inputDelayTicks{0};
   // Inputs per Input message at most (the unacknowledged ones are resent).
@@ -220,6 +234,18 @@ class NetClient {
   // Start tick of an announced match restart whose snapshot has not loaded yet.
   [[nodiscard]] std::optional<Tick> pendingRestart() const { return restartTick_; }
 
+  // --- the room (v0.42) ---------------------------------------------------------
+  // The newest RoomState (nullopt: none received, the server runs the M3 flow).
+  [[nodiscard]] const std::optional<RoomStateMsg>& roomState() const { return room_; }
+  // RoomStates received this session (a host's UI waits for the answer to
+  // its RoomSettings before it shows the server's settings again).
+  [[nodiscard]] uint32_t roomUpdates() const { return roomUpdates_; }
+  // Whether the client is holding its timeline (see the header comment).
+  [[nodiscard]] bool holding() const { return roomHeld() || resumePending_; }
+  // The host's requests; the server ignores anyone else's (Running only).
+  void sendRoomSettings(const RoomSettings& settings);
+  void sendStart();
+
   // L: the tick world() will step next.
   [[nodiscard]] Tick localTick() const { return world_.tick; }
   // Newest tick T with every authoritative frame from the session base to T.
@@ -274,6 +300,8 @@ class NetClient {
   void onAuthInputs(const Packet& packet);
   void onSnapshot(const Packet& packet);
   void tryStart(uint64_t nowNs);
+  void tryResume(uint64_t nowNs);
+  [[nodiscard]] bool roomHeld() const { return room_ && room_->phase != RoomPhase::Playing; }
   void loadSnapshot(Tick runTo);
   void advanceConfirmed();
   void checkChecksums();
@@ -319,6 +347,11 @@ class NetClient {
   Tick marginFrom_{};  // margins of inputs before this tick are ignored
   bool awaitingResync_{false};
   std::optional<Tick> restartTick_;  // announced, snapshot not loaded yet
+  std::optional<RoomStateMsg> room_;
+  uint32_t roomUpdates_{0};
+  bool resumePending_{false};    // the room turned Playing; waiting to reload
+  bool resumeSnapshot_{false};   // snapshot_ holds the snapshot to resume from
+  bool resumeIsRestart_{false};  // ... and it starts an announced new match
   uint64_t resyncSentNs_{0};
   uint64_t lastRecvNs_{0};
   uint64_t nextPingNs_{0};
