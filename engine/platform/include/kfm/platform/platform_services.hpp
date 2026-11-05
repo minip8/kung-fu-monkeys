@@ -10,8 +10,16 @@
 //                          options as the session directory.
 //
 // The guest id is 32 lower-case hex digits (128 bits). It is not sent
-// anywhere yet: it exists so the bot ladder (M6b) can bind accounts to it.
+// anywhere yet: it exists so the bot ladder (M7) can bind accounts to it.
 // Storage is injected (GuestIdStore) so this stays SDL-free and headless.
+//
+// Sharing (v0.43, M6b): copyText() puts text on the system clipboard
+// (natively SDL's, in the browser navigator.clipboard.writeText) and
+// share() hands a link to the device's share sheet (the Web Share API,
+// navigator.share), offered only where canShare() says so: in a browser
+// that has navigator.share on a touch device. The app injects both
+// (ShareHooks) so this target stays SDL- and Emscripten-free; Null has
+// neither, and tests inject recording fakes.
 #pragma once
 
 #include <cstdint>
@@ -34,12 +42,26 @@ class IPlatformServices {
   [[nodiscard]] virtual std::string guestId() = 0;
   // The session directory: the lobby's base URL, or empty (no rooms).
   [[nodiscard]] virtual std::string lobbyUrl() = 0;
+  // v0.43: the clipboard. False when the platform has none or refused.
+  virtual bool copyText(std::string_view text) = 0;
+  // v0.43: whether share() opens a share sheet here (a browser with the
+  // Web Share API on a touch device).
+  [[nodiscard]] virtual bool canShare() = 0;
+  // v0.43: offers `url` (titled `title`, described by `text`) to the share
+  // sheet. False when canShare() is false or the platform refused.
+  virtual bool share(std::string_view title, std::string_view text, std::string_view url) = 0;
 };
 
 class NullPlatformServices final : public IPlatformServices {
  public:
   [[nodiscard]] std::string guestId() override { return {}; }
   [[nodiscard]] std::string lobbyUrl() override { return {}; }
+  bool copyText(std::string_view /*text*/) override { return false; }
+  [[nodiscard]] bool canShare() override { return false; }
+  bool share(std::string_view /*title*/, std::string_view /*text*/,
+             std::string_view /*url*/) override {
+    return false;
+  }
 };
 
 // Where LocalPlatformServices keeps the guest id. load() returns the stored
@@ -48,6 +70,15 @@ class NullPlatformServices final : public IPlatformServices {
 struct GuestIdStore {
   std::function<std::string()> load;
   std::function<void(std::string_view)> save;
+};
+
+// How LocalPlatformServices reaches the clipboard and the share sheet
+// (v0.43). A missing function means the platform has none: copyText() and
+// share() return false, canShare() false.
+struct ShareHooks {
+  std::function<bool(std::string_view)> copy;
+  std::function<bool()> canShare;
+  std::function<bool(std::string_view, std::string_view, std::string_view)> share;
 };
 
 // Whether `id` is a guest id (32 lower-case hex digits).
@@ -60,14 +91,18 @@ class LocalPlatformServices final : public IPlatformServices {
   // `entropyA`/`entropyB` seed a new id when the store has none (the app
   // passes std::random_device and the clock).
   LocalPlatformServices(GuestIdStore store, std::string lobbyUrl, uint64_t entropyA,
-                        uint64_t entropyB);
+                        uint64_t entropyB, ShareHooks share = {});
 
   // The stored id; the first call without a valid one makes and saves one.
   [[nodiscard]] std::string guestId() override;
   [[nodiscard]] std::string lobbyUrl() override { return lobbyUrl_; }
+  bool copyText(std::string_view text) override;
+  [[nodiscard]] bool canShare() override;
+  bool share(std::string_view title, std::string_view text, std::string_view url) override;
 
  private:
   GuestIdStore store_;
+  ShareHooks share_;
   std::string lobbyUrl_;
   uint64_t entropyA_;
   uint64_t entropyB_;

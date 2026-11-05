@@ -89,3 +89,43 @@ TEST_CASE("without storage the guest id lives for the run only", "[platform][ser
   CHECK(isGuestId(id));
   CHECK(services.guestId() == id);
 }
+
+TEST_CASE("clipboard and share: null has neither, local goes through its hooks (v0.43)",
+          "[platform][services][share]") {
+  NullPlatformServices null;
+  CHECK_FALSE(null.copyText("https://kfm.example/?room=ABCDE"));
+  CHECK_FALSE(null.canShare());
+  CHECK_FALSE(null.share("Kung Fu Monkeys", "Join my room", "https://kfm.example/?room=ABCDE"));
+
+  // No hooks: a platform without a clipboard or a share sheet.
+  LocalPlatformServices bare({}, {}, 1, 2);
+  CHECK_FALSE(bare.copyText("x"));
+  CHECK_FALSE(bare.canShare());
+  CHECK_FALSE(bare.share("t", "x", "u"));
+
+  // Recording fakes: what the app's SDL / navigator hooks would receive.
+  std::string copied;
+  std::string shared;
+  bool touch = false;
+  kfm::platform::ShareHooks hooks;
+  hooks.copy = [&](std::string_view t) {
+    copied = t;
+    return true;
+  };
+  hooks.canShare = [&] { return touch; };
+  hooks.share = [&](std::string_view title, std::string_view text, std::string_view url) {
+    shared = std::string(title) + "|" + std::string(text) + "|" + std::string(url);
+    return true;
+  };
+  LocalPlatformServices local({}, {}, 1, 2, hooks);
+  CHECK(local.copyText("https://kfm.example/?room=ABCDE"));
+  CHECK(copied == "https://kfm.example/?room=ABCDE");
+  // A desktop browser (no touch): no share sheet, nothing shared.
+  CHECK_FALSE(local.canShare());
+  CHECK_FALSE(local.share("Kung Fu Monkeys", "Join my room", "u"));
+  CHECK(shared.empty());
+  touch = true;
+  CHECK(local.canShare());
+  CHECK(local.share("Kung Fu Monkeys", "Join my room", "https://kfm.example/?room=ABCDE"));
+  CHECK(shared == "Kung Fu Monkeys|Join my room|https://kfm.example/?room=ABCDE");
+}
