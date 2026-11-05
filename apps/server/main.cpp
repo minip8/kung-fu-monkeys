@@ -116,6 +116,24 @@
 
 namespace {
 
+// An environment variable, or empty when unset. MSVC deprecates getenv
+// (C4996, fatal under /WX) in favour of _dupenv_s; everywhere else getenv is
+// fine here because nothing has started a thread yet.
+[[nodiscard]] std::string readEnv(const char* name) {
+#ifdef _MSC_VER
+  char* value = nullptr;
+  size_t size = 0;
+  if (_dupenv_s(&value, &size, name) != 0 || value == nullptr) return {};
+  std::string out(value);
+  std::free(value);
+  return out;
+#else
+  // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded at this point
+  const char* value = std::getenv(name);
+  return value != nullptr ? std::string(value) : std::string();
+#endif
+}
+
 using namespace kfm;
 
 struct Options {
@@ -303,10 +321,7 @@ template <typename T>
     std::fprintf(stderr, "error: --lobby excludes --port, --bind and --token\n");
     return false;
   }
-  if (o.lobbySecret.empty()) {
-    // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded at this point
-    if (const char* env = std::getenv("KFM_LOBBY_SECRET")) o.lobbySecret = env;
-  }
+  if (o.lobbySecret.empty()) o.lobbySecret = readEnv("KFM_LOBBY_SECRET");
   if (o.lobbySecret.empty()) {
     std::fprintf(stderr, "error: --lobby needs --lobby-secret or KFM_LOBBY_SECRET\n");
     return false;
@@ -322,8 +337,7 @@ template <typename T>
 [[nodiscard]] std::string defaultName() {
   std::string host;
 #ifdef _WIN32
-  // NOLINTNEXTLINE(concurrency-mt-unsafe): single-threaded at this point
-  if (const char* env = std::getenv("COMPUTERNAME")) host = env;
+  host = readEnv("COMPUTERNAME");
   const int pid = _getpid();
 #else
   std::array<char, 256> buf{};
@@ -451,7 +465,10 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
   std::unique_ptr<server::ServerHost> host = std::move(*created);
   std::unique_ptr<server::LobbyAdapter> lobby;
-  if (link) lobby = std::make_unique<server::LobbyAdapter>(*host, *link, o.maxPlayers);
+  if (link) {
+    lobby =
+        std::make_unique<server::LobbyAdapter>(*host, *link, static_cast<uint8_t>(o.maxPlayers));
+  }
   const uint64_t limit = uint64_t{o.exitAfterSeconds} * 1'000'000'000ull;
   while (gStop == 0 && !host->done() && (limit == 0 || nowNs() - start < limit)) {
     host->frame(nowNs());
