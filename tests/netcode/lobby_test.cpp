@@ -265,7 +265,8 @@ TEST_CASE("lobby: a regions query lists the lobby's regions", "[lobby][webrtc]")
   LobbyClient& some = *w.clients.back();
   REQUIRE(w.runUntil([&] { return some.client->state() == ClientState::Disconnected; }));
   REQUIRE(some.transport->lobbyRegions().has_value());
-  CHECK(some.transport->lobbyRegions().value_or({}) == std::vector<std::string>{"eu"});
+  CHECK(some.transport->lobbyRegions().value_or(std::vector<std::string>{}) ==
+        std::vector<std::string>{"eu"});
   CHECK(some.transport->lastError().empty());
 }
 
