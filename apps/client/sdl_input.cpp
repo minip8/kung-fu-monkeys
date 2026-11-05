@@ -7,6 +7,12 @@ namespace kfm::client {
 
 namespace {
 
+// SDL_TOUCH_MOUSEID and SDL_PEN_MOUSEID spelled without the headers' C-style
+// casts (-Werror=old-style-cast): the mouse events SDL synthesises from touch
+// and pen input.
+constexpr SDL_MouseID kTouchMouseId = static_cast<SDL_MouseID>(-1);
+constexpr SDL_MouseID kPenMouseId = static_cast<SDL_MouseID>(-2);
+
 using platform::InputEvent;
 using platform::InputEventKind;
 using platform::Key;
@@ -133,6 +139,45 @@ std::optional<InputEvent> translateSdlEvent(const SDL_Event& ev) {
       out.value = std::clamp(static_cast<float>(ev.gaxis.value) / 32767.0f, -1.0f, 1.0f);
       return out;
     }
+    case SDL_EVENT_MOUSE_MOTION: {
+      if (ev.motion.which == kTouchMouseId || ev.motion.which == kPenMouseId) {
+        return std::nullopt;  // touch and pen stay out of mouse aim
+      }
+      out.kind = InputEventKind::MouseMotion;
+      out.deviceId = platform::kKeyboardDevice;
+      out.x = ev.motion.x;
+      out.y = ev.motion.y;
+      return out;
+    }
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP: {
+      if (ev.button.which == kTouchMouseId || ev.button.which == kPenMouseId) {
+        return std::nullopt;
+      }
+      switch (ev.button.button) {
+        case SDL_BUTTON_LEFT:
+          out.key = Key::MouseLeft;
+          break;
+        case SDL_BUTTON_MIDDLE:
+          out.key = Key::MouseMiddle;
+          break;
+        case SDL_BUTTON_RIGHT:
+          out.key = Key::MouseRight;
+          break;
+        default:
+          return std::nullopt;
+      }
+      out.kind = ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? InputEventKind::MouseButtonDown
+                                                        : InputEventKind::MouseButtonUp;
+      out.deviceId = platform::kKeyboardDevice;
+      out.x = ev.button.x;
+      out.y = ev.button.y;
+      return out;
+    }
+    case SDL_EVENT_WINDOW_MOUSE_LEAVE:
+      out.kind = InputEventKind::MouseLeave;
+      out.deviceId = platform::kKeyboardDevice;
+      return out;
     case SDL_EVENT_GAMEPAD_ADDED:
     case SDL_EVENT_GAMEPAD_REMOVED: {
       out.kind = ev.type == SDL_EVENT_GAMEPAD_ADDED ? InputEventKind::PadAdded

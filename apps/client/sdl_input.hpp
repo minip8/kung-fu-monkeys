@@ -21,7 +21,10 @@ namespace kfm::client {
 
 // The InputEvent for an SDL event, or nothing for events the sampler does not
 // consume (key repeats, unmapped keys, out-of-range pad buttons or axes,
-// everything that is not keyboard or gamepad).
+// mouse buttons other than left/middle/right, mouse events synthesized from
+// touch or pen, everything that is not keyboard, mouse or gamepad). v0.45:
+// mouse motion and buttons carry SDL's window coordinates; leaving the
+// window is MouseLeave.
 [[nodiscard]] std::optional<platform::InputEvent> translateSdlEvent(const SDL_Event& event);
 
 // Opens gamepads as SDL announces them (SDL_EVENT_GAMEPAD_ADDED) and closes

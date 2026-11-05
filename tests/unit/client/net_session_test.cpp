@@ -14,7 +14,9 @@
 #include "kfm/platform/input_event.hpp"
 #include "kfm/platform/input_sampler.hpp"
 #include "kfm/presentation/builder.hpp"
+#include "kfm/presentation/camera.hpp"
 #include "kfm/presentation/render_state.hpp"
+#include "kfm/presentation/world_basis.hpp"
 #include "kfm/sim/content.hpp"
 #include "kfm/sim/events.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
@@ -627,6 +629,69 @@ TEST_CASE("the nickname rides in Hello; the room view follows RoomState (v0.42)"
   REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Over; }, kSec));
   CHECK(s.client().holding());
   CHECK(s.statusText().find("match over") != std::string::npos);
+}
+
+TEST_CASE("mouse aim online follows the predicted monkey, not the confirmed one (v0.45)",
+          "[client][net][mouse]") {
+  Rig rig;
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  // 100 ms each way: the confirmed world trails the predicted one by well
+  // over a unit at full speed.
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), {}, 100 * kMs);
+  NetSession& s = *r.s;
+  constexpr float kW = 1280.0f;
+  constexpr float kH = 720.0f;
+  s.setAimViewport({.width = kW, .height = kH, .pixelDensity = 1.0f});
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  const PlayerId me = s.slotOfDevice(0);
+  REQUIRE(rig.runUntil(
+      [&] {
+        return rig.playing(me) && s.curr().rules.phase == sim::MatchPhase::Playing &&
+               s.curr().playerBySlot(me) != nullptr;
+      },
+      8 * kSec));
+  rig.runFor(200 * kMs);  // the round's countdown has passed on the predicted side too
+
+  // The cursor 2.5 units right of the predicted monkey, on the ground.
+  const sim::Player* p = s.curr().playerBySlot(me);
+  REQUIRE(p != nullptr);
+  const presentation::Vec2f start = presentation::toFloat(p->transform.pos);
+  const float cx = start.x + 2.5f;
+  const presentation::Camera cam = presentation::makeArenaCamera(s.matchContent().arena, kW, kH);
+  const presentation::ScreenPoint px =
+      presentation::worldToScreen(cam, presentation::simToWorld(presentation::Vec2f{cx, start.y}));
+  REQUIRE(px.inFront);
+  InputEvent motion{};
+  motion.kind = InputEventKind::MouseMotion;
+  motion.x = px.x;
+  motion.y = px.y;
+  motion.timestampNs = rig.now;
+  s.push(motion);
+  rig.runFor(100 * kMs);
+  const auto aimOf = [&](const sim::WorldState& w) {
+    const sim::Player* q = w.playerBySlot(me);
+    return q != nullptr ? q->intent.aim.bam >> 8 : -1;
+  };
+  CHECK(aimOf(s.curr()) == 0);  // toward +x
+
+  // Walk right past the cursor. The first frame the predicted monkey is
+  // clearly past it, the predicted world already aims back (-x) while the
+  // confirmed monkey is still short of the cursor.
+  bool checked = false;
+  r.afterFrame = [&] {
+    if (checked) return;
+    const sim::Player* q = s.curr().playerBySlot(me);
+    if (q == nullptr || q->transform.pos.x.toFloat() < cx + 0.4f) return;
+    checked = true;
+    CHECK(aimOf(s.curr()) == 128);
+    CHECK(rig.serverX(me) < static_cast<double>(cx));
+  };
+  rig.push(s, Key::D, true);
+  REQUIRE(rig.runUntil([&] { return checked; }, 2 * kSec));
+  rig.push(s, Key::D, false);
+  rig.runFor(600 * kMs);
+  CHECK(aimOf(rig.server->world()) == 128);  // the server got the same aim
+  r.afterFrame = nullptr;
 }
 
 TEST_CASE("the pause menu online: the session advances, its monkey idles (v0.46)",

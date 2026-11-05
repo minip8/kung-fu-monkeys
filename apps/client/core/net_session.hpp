@@ -78,6 +78,7 @@
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/world_state.hpp"
 #include "match_session.hpp"
+#include "mouse_aim.hpp"
 
 #include <array>
 #include <cstdint>
@@ -301,6 +302,10 @@ class NetSession {
   [[nodiscard]] const NetRates& rates() const { return rates_; }
   [[nodiscard]] uint64_t nowNs() const { return nowNs_; }
 
+  // v0.45: the drawable mouse aim maps the cursor over (feedMouseAim);
+  // set every frame before advance().
+  void setAimViewport(const AimViewport& viewport) { aimViewport_ = viewport; }
+
   [[nodiscard]] platform::InputSampler& sampler() { return sampler_; }
   [[nodiscard]] const platform::InputSampler& sampler() const { return sampler_; }
   // The sampler to hand back to the local lobby: current key/pad state with
@@ -338,6 +343,7 @@ class NetSession {
 
   std::vector<LobbyDevice> devices_;
   platform::InputSampler sampler_{};
+  AimViewport aimViewport_{};
   sim::PlayerMask boundLocal_{0};  // server slots bound to a device
   sim::PlayerMask boundFor_{0};    // localSlots() when the devices were bound
   std::array<sim::PlayerInput, sim::kMaxPlayers> lastInputs_{};

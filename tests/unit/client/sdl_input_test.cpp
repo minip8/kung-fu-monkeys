@@ -105,6 +105,52 @@ TEST_CASE("sdl input: gamepad events", "[client][sdl]") {
   CHECK(must(ev).kind == InputEventKind::PadRemoved);
 
   ev = SDL_Event{};
-  ev.type = SDL_EVENT_MOUSE_MOTION;
+  ev.type = SDL_EVENT_SENSOR_UPDATE;  // not an input the game reads
   CHECK_FALSE(translateSdlEvent(ev));
+}
+
+TEST_CASE("sdl input: mouse motion, buttons and leave (v0.45)", "[client][sdl][mouse]") {
+  SDL_Event ev{};
+  ev.type = SDL_EVENT_MOUSE_MOTION;
+  ev.motion.which = 1;
+  ev.motion.x = 320.5f;
+  ev.motion.y = 200.0f;
+  auto e = must(ev);
+  CHECK(e.kind == InputEventKind::MouseMotion);
+  CHECK(e.deviceId == kfm::platform::kKeyboardDevice);
+  CHECK(e.x == 320.5f);
+  CHECK(e.y == 200.0f);
+  ev.motion.which = static_cast<SDL_MouseID>(-1);  // SDL_TOUCH_MOUSEID: a finger stays out
+  CHECK_FALSE(translateSdlEvent(ev));
+
+  ev = SDL_Event{};
+  ev.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  ev.common.timestamp = 987654321;
+  ev.button.which = 1;
+  ev.button.button = SDL_BUTTON_LEFT;
+  ev.button.x = 12.0f;
+  ev.button.y = 34.0f;
+  e = must(ev);
+  CHECK(e.kind == InputEventKind::MouseButtonDown);
+  CHECK(e.key == Key::MouseLeft);
+  CHECK(e.deviceId == kfm::platform::kKeyboardDevice);
+  CHECK(e.timestampNs == 987654321);  // the press's own stamp: perfect-dash timing
+  CHECK(e.x == 12.0f);
+  CHECK(e.y == 34.0f);
+  ev.type = SDL_EVENT_MOUSE_BUTTON_UP;
+  ev.button.button = SDL_BUTTON_RIGHT;
+  e = must(ev);
+  CHECK(e.kind == InputEventKind::MouseButtonUp);
+  CHECK(e.key == Key::MouseRight);
+  ev.button.button = SDL_BUTTON_MIDDLE;
+  CHECK(must(ev).key == Key::MouseMiddle);
+  ev.button.button = SDL_BUTTON_X1;  // side buttons bind nothing
+  CHECK_FALSE(translateSdlEvent(ev));
+  ev.button.button = SDL_BUTTON_LEFT;
+  ev.button.which = static_cast<SDL_MouseID>(-1);  // SDL_TOUCH_MOUSEID
+  CHECK_FALSE(translateSdlEvent(ev));
+
+  ev = SDL_Event{};
+  ev.type = SDL_EVENT_WINDOW_MOUSE_LEAVE;
+  CHECK(must(ev).kind == InputEventKind::MouseLeave);
 }

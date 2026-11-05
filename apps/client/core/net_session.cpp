@@ -263,6 +263,9 @@ void NetSession::stepTicks(uint32_t ticks) {
     // last one ends at nowNs and takes everything still pending.
     const uint64_t start = c.tickStartNs(i);
     sim::InputFrame frame{};
+    // v0.45: aim from the predicted world (the one this tick steps), never
+    // the confirmed one, or the aim would lag the monkey by the lead.
+    feedMouseAim(sampler_, c.world(), c.matchContent().arena, aimViewport_);
     const sim::PlayerMask bound = sampler_.sampleFrame(
         frame, start, wall, i + 1 < ticks ? start + wall : platform::kNoCutoff);
     std::size_t k = 0;

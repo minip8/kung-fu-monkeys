@@ -492,3 +492,131 @@ TEST_CASE("the ability button (v0.21): bindings, edge stamp, join and consume", 
     CHECK(tick(s, kP0, 3).has(Button::Ability1));
   }
 }
+
+// --- v0.45: keyboard + mouse ---------------------------------------------------------
+
+namespace {
+
+using kfm::platform::AimPoint;
+
+InputEvent mouseButton(Key k, bool down, uint64_t ts = kT0, float x = 10.0f, float y = 20.0f) {
+  InputEvent e;
+  e.kind = down ? InputEventKind::MouseButtonDown : InputEventKind::MouseButtonUp;
+  e.key = k;
+  e.x = x;
+  e.y = y;
+  e.timestampNs = ts;
+  return e;
+}
+
+InputEvent mouseMotion(float x, float y) {
+  InputEvent e;
+  e.kind = InputEventKind::MouseMotion;
+  e.x = x;
+  e.y = y;
+  return e;
+}
+
+}  // namespace
+
+TEST_CASE("mouse aim: the cursor's ground point from the aim origin", "[input][mouse]") {
+  InputSampler s;
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  CHECK_FALSE(s.usesMouseAim(kP0));  // no mouse event yet
+  CHECK_FALSE(s.cursor().has_value());
+  s.push(mouseMotion(320.0f, 240.0f));
+  REQUIRE(s.cursor().has_value());
+  CHECK(s.cursor().value_or(kfm::platform::CursorPos{}).x == 320.0f);
+  CHECK(s.usesMouseAim(kP0));
+
+  s.setAimOrigin(kP0, AimPoint{.x = 1.0f, .y = 1.0f});
+  s.setCursorGround(AimPoint{.x = 1.0f, .y = 3.0f});  // straight up (+y)
+  CHECK(tick(s, kP0, 0).aimDir == 64);
+  s.setCursorGround(AimPoint{.x = -2.0f, .y = 1.0f});  // -x
+  CHECK(tick(s, kP0, 1).aimDir == 128);
+  s.setCursorGround(AimPoint{.x = 3.0f, .y = -1.0f});  // +x -y diagonal
+  CHECK(tick(s, kP0, 2).aimDir == 224);
+
+  // The move direction never aims while the mouse does.
+  s.push(key(Key::A, true, tickStart(3)));
+  const PlayerInput moving = tick(s, kP0, 3);
+  CHECK(moving.moveDir == 128);
+  CHECK(moving.aimDir == 224);
+}
+
+TEST_CASE("mouse aim: the cursor on the monkey keeps the previous aim", "[input][mouse]") {
+  InputSampler s;
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  s.push(mouseMotion(1.0f, 1.0f));
+  s.setAimOrigin(kP0, AimPoint{.x = 0.0f, .y = 0.0f});
+  s.setCursorGround(AimPoint{.x = 0.0f, .y = 2.0f});
+  CHECK(tick(s, kP0, 0).aimDir == 64);
+  s.setCursorGround(AimPoint{.x = 0.01f, .y = 0.0f});  // inside kMinMouseAimDistance
+  CHECK(tick(s, kP0, 1).aimDir == 64);
+  s.setCursorGround(AimPoint{.x = 0.0f, .y = 0.0f});  // exactly on it: no snap to 0
+  CHECK(tick(s, kP0, 2).aimDir == 64);
+  s.setCursorGround(std::nullopt);  // the ray missed the ground
+  CHECK(tick(s, kP0, 3).aimDir == 64);
+  s.setCursorGround(AimPoint{.x = 0.0f, .y = -1.0f});
+  s.setAimOrigin(kP0, std::nullopt);  // no monkey
+  CHECK(tick(s, kP0, 4).aimDir == 64);
+}
+
+TEST_CASE("mouse aim: leaving the window hands aim back to the keys", "[input][mouse]") {
+  InputSampler s;
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  REQUIRE(s.bind(kP1, DeviceBinding::keyboard(1)));
+  s.push(mouseMotion(1.0f, 1.0f));
+  CHECK(s.usesMouseAim(kP0));
+  CHECK_FALSE(s.usesMouseAim(kP1));  // the right side has no mouse
+  InputEvent leave;
+  leave.kind = InputEventKind::MouseLeave;
+  s.push(leave);
+  CHECK_FALSE(s.usesMouseAim(kP0));
+  CHECK_FALSE(s.cursor().has_value());
+  s.setAimOrigin(kP0, AimPoint{.x = 0.0f, .y = 0.0f});
+  s.setCursorGround(AimPoint{.x = 2.0f, .y = 0.0f});
+  s.push(key(Key::W, true));
+  CHECK(tick(s, kP0, 0).aimDir == 64);  // the move direction again, not the cursor (0)
+}
+
+TEST_CASE("mouse buttons: left throws, right dashes, edges stamp subTick", "[input][mouse]") {
+  InputSampler s;
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  s.push(mouseButton(Key::MouseLeft, true, tickStart(0) + (kDur / 4)));
+  PlayerInput in = tick(s, kP0, 0);
+  CHECK(in.buttons == kfm::sim::buttonBit(Button::Throw));
+  CHECK(in.subTick == 64);
+  CHECK(s.usesMouseAim(kP0));  // a click turns mouse aim on too
+  s.push(mouseButton(Key::MouseLeft, false, tickStart(1)));
+  s.push(mouseButton(Key::MouseRight, true, tickStart(1) + (kDur / 2)));
+  in = tick(s, kP0, 1);
+  CHECK(in.buttons == kfm::sim::buttonBit(Button::Dash));
+  CHECK(in.subTick == 128);
+  // Held: the bit stays, no new stamp.
+  in = tick(s, kP0, 2);
+  CHECK(in.buttons == kfm::sim::buttonBit(Button::Dash));
+  CHECK(in.subTick == 0);
+  // The middle button binds nothing by default.
+  s.push(mouseButton(Key::MouseRight, false, tickStart(3)));
+  s.push(mouseButton(Key::MouseMiddle, true, tickStart(3)));
+  CHECK(tick(s, kP0, 3).buttons == 0);
+}
+
+TEST_CASE("mouse buttons: a click joins the keyboard + mouse side", "[input][mouse]") {
+  InputSampler s;
+  s.push(mouseButton(Key::MouseRight, true));
+  const auto dev = s.pollJoin();
+  REQUIRE(dev.has_value());
+  CHECK(dev.value_or(DeviceBinding{}) == DeviceBinding::keyboard(0));
+  s.endTick();
+  // A button already held when consumed (the join press) never fires.
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  s.consumeButtons(kP0);
+  CHECK(tick(s, kP0, 0).buttons == 0);
+  // A release with no press before it (the press went to the UI) is ignored.
+  InputSampler t;
+  REQUIRE(t.bind(kP0, DeviceBinding::keyboard(0)));
+  t.push(mouseButton(Key::MouseLeft, false));
+  CHECK(tick(t, kP0, 0).buttons == 0);
+}

@@ -73,7 +73,10 @@ compiled in by `cmake/EmbedFile.cmake`; one palette and ImGui theme in `apps/cli
 a main menu with Play online / Play local / Settings; the Play online screen that replaced the
 lobby panel's Online section; the room's waiting screen with the code large, Copy link and Share
 through `IPlatformServices`; a scoreboard view model shown between rounds and on a match-over
-screen with Play again), landed in v0.43.
+screen with Play again), landed in v0.43. Keyboard-and-mouse controls landed in v0.45 (§5.4: the
+primary keyboard profile is keyboard + mouse; the cursor aims from the local monkey, the
+predicted one online, through `feedMouseAim` in `apps/client/core/mouse_aim.hpp`; left click
+throws, right click dashes; clicks over UI windows stay the UI's).
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -134,7 +137,9 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   mouse; Enter/Space or a pad's South/Start selects, Esc or a pad's East/Back goes back (the menu quits natively).
 #   Settings: name (--nick, ?nick=, saved `nick`), volume, sound, bot difficulty. Play online: region (with "(no
 #   server)"), Create room, room code + Join. Esc from the lobby or any online screen returns to the menu
-#   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, Esc menu
+#   lobby: Enter/Start begins; press throw/dash (or click) on a free device to join; -/= bots. F1 overlay, Esc menu
+#   keys: left side = keyboard + mouse (WASD move, the mouse aims once it moves, left click/J/Space throw, right
+#   click/K/LShift dash, L/E ability; v0.45), right side = arrows ./RCtrl throw //RShift dash ;/' ability
 #   v0.46 pause menu: Esc (or a bound pad's Start) in a running match: locally the match pauses (Resume, Back to
 #   lobby, Main menu); online it runs on and your slots send idle input (Resume, Leave room: one Esc never leaves);
 #   Esc / a pad's East, Back or Start resumes. P pause and O single step stay developer keys (no menu)

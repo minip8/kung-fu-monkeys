@@ -96,6 +96,13 @@ class MenuInput {
 [[nodiscard]] bool eventDeviceBound(const platform::InputSampler& sampler,
                                     const platform::InputEvent& event);
 
+// Whether the UI keeps `event` from the game: a key press while a text field
+// has the keyboard, or (v0.45) a mouse click while the pointer is over a
+// window (ImGui's WantCaptureKeyboard / WantCaptureMouse). Releases, motion
+// and pads always go through, so nothing is left held.
+[[nodiscard]] bool uiCapturesEvent(const platform::InputEvent& event, bool uiWantsKeyboard,
+                                   bool uiWantsMouse);
+
 class LobbyMenu {
  public:
   static constexpr std::size_t kMaxRows = 8 + sim::kMaxPowerUps;

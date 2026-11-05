@@ -131,6 +131,13 @@ Move digitalMove(bool up, bool down, bool left, bool right) {
   return Move{.dir = kDirs[static_cast<std::size_t>(i)], .mag = 255};
 }
 
+// The 1/256-turn angle of (x, y), sim axes (0 = +x, 64 = +y).
+uint8_t angleByte(float x, float y) {
+  const float turns = std::atan2(y, x) / (2.0f * std::numbers::pi_v<float>);
+  const long dir = ((std::lround(turns * 256.0f) % 256) + 256) % 256;
+  return static_cast<uint8_t>(dir);
+}
+
 // Radial deadzone rescaled to 0..1; x right, ySdl down (flipped to sim +y up).
 Move analogMove(float x, float ySdl, float deadzone) {
   const float dz = std::clamp(deadzone, 0.0f, 0.99f);
@@ -139,9 +146,7 @@ Move analogMove(float x, float ySdl, float deadzone) {
   if (!(r > dz)) return {};  // also rejects NaN
   const float m = (std::min(r, 1.0f) - dz) / (1.0f - dz);
   const long mag = std::clamp(std::lround(m * 255.0f), 1L, 255L);
-  const float turns = std::atan2(y, x) / (2.0f * std::numbers::pi_v<float>);
-  const long dir = ((std::lround(turns * 256.0f) % 256) + 256) % 256;
-  return Move{.dir = static_cast<uint8_t>(dir), .mag = static_cast<uint8_t>(mag)};
+  return Move{.dir = angleByte(x, y), .mag = static_cast<uint8_t>(mag)};
 }
 
 bool validSlot(PlayerId slot) {
@@ -156,9 +161,10 @@ KeyboardProfile defaultKeyboardProfile1() {
   p[Action::Down] = {Key::S, Key::Unknown, Key::Unknown};
   p[Action::Left] = {Key::A, Key::Unknown, Key::Unknown};
   p[Action::Right] = {Key::D, Key::Unknown, Key::Unknown};
-  p[Action::Throw] = {Key::J, Key::Space, Key::Unknown};
-  p[Action::Dash] = {Key::K, Key::LeftShift, Key::Unknown};
+  p[Action::Throw] = {Key::J, Key::Space, Key::MouseLeft};
+  p[Action::Dash] = {Key::K, Key::LeftShift, Key::MouseRight};
   p[Action::Ability] = {Key::L, Key::E, Key::Unknown};
+  p.mouseAim = true;
   return p;
 }
 
@@ -218,7 +224,11 @@ bool InputSampler::bind(PlayerId slot, DeviceBinding device, uint8_t initialAim)
   }
   if (device.kind == DeviceKind::Gamepad && device.padId == kKeyboardDevice) return false;
   if (const auto other = slotOf(device); other && *other != slot) unbind(*other);
-  slots_[slot.value] = Slot{.device = device, .aim = initialAim};
+  slots_[slot.value] = Slot{.device = device,
+                            .aim = initialAim,
+                            .consumed = {},
+                            .consumedFrom = 0,
+                            .aimOrigin = std::nullopt};
   dropped_ = static_cast<sim::PlayerMask>(dropped_ & ~(1u << slot.value));
   return true;
 }
@@ -285,10 +295,24 @@ std::optional<PlayerId> InputSampler::slotOf(DeviceBinding device) const {
 
 void InputSampler::push(const InputEvent& e) {
   switch (e.kind) {
+    case InputEventKind::MouseMotion:
+      cursor_ = CursorPos{.x = e.x, .y = e.y};
+      mouseActive_ = true;
+      return;
+    case InputEventKind::MouseLeave:
+      mouseActive_ = false;
+      return;
+    case InputEventKind::MouseButtonDown:
+    case InputEventKind::MouseButtonUp:
+      if (e.key < Key::MouseLeft || e.key > Key::MouseRight) return;
+      cursor_ = CursorPos{.x = e.x, .y = e.y};
+      mouseActive_ = true;
+      [[fallthrough]];
     case InputEventKind::KeyDown:
     case InputEventKind::KeyUp: {
       if (e.key == Key::Unknown || e.key >= Key::kCount) return;
-      const bool down = e.kind == InputEventKind::KeyDown;
+      const bool down =
+          e.kind == InputEventKind::KeyDown || e.kind == InputEventKind::MouseButtonDown;
       auto& state = keyDown_[static_cast<std::size_t>(e.key)];
       if (state == down) return;  // key repeat or unmatched release
       state = down;
@@ -397,7 +421,14 @@ sim::PlayerInput InputSampler::sampleSlot(PlayerId slot, uint64_t tickStartNs,
                        act.held[idx(Action::Left)], act.held[idx(Action::Right)]);
   }
 
-  if (stickAim) {
+  if (usesMouseAim(slot)) {
+    // v0.45: the cursor aims; the move direction never does.
+    if (cursorGround_ && s.aimOrigin) {
+      const float dx = cursorGround_->x - s.aimOrigin->x;
+      const float dy = cursorGround_->y - s.aimOrigin->y;
+      if (std::hypot(dx, dy) >= kMinMouseAimDistance) s.aim = angleByte(dx, dy);
+    }
+  } else if (stickAim) {
     s.aim = *stickAim;
   } else if (move.mag != 0) {
     s.aim = move.dir;
@@ -468,6 +499,21 @@ void InputSampler::endTickAfter(std::size_t count) {
                      transitions_.begin() + static_cast<std::ptrdiff_t>(count));
   for (auto& s : slots_)
     s.consumedFrom = s.consumedFrom > count ? s.consumedFrom - count : 0;
+}
+
+std::optional<CursorPos> InputSampler::cursor() const {
+  if (!mouseActive_) return std::nullopt;
+  return cursor_;
+}
+
+bool InputSampler::usesMouseAim(PlayerId slot) const {
+  if (!mouseActive_ || !validSlot(slot)) return false;
+  const DeviceBinding& d = slots_[slot.value].device;
+  return d.kind == DeviceKind::Keyboard && keyProfiles_[d.keyboardProfile].mouseAim;
+}
+
+void InputSampler::setAimOrigin(PlayerId slot, std::optional<AimPoint> origin) {
+  if (validSlot(slot)) slots_[slot.value].aimOrigin = origin;
 }
 
 void InputSampler::consumeButtons(PlayerId slot) {
