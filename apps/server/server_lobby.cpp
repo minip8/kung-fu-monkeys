@@ -55,10 +55,11 @@ void LobbyAdapter::frame(uint64_t nowNs) {
         const bool empty = host_.server().peers().empty();
         host_.logLine(std::format("lobby room {} opened{}", e.text,
                                   empty ? "" : " (peers still connected: match continues)"));
-        // A new group starts a fresh match with the server's bots (§6.5).
+        // A new group starts a fresh match with the server's bots (§6.5),
+        // or (v0.42, the room flow) a fresh waiting room with its defaults.
         if (empty) {
           ++restarts_;
-          host_.startNewMatch(std::format("room {}", e.text));
+          host_.openRoom(std::format("room {}", e.text));
         }
         break;
       }

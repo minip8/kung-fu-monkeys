@@ -16,8 +16,17 @@
 //              [--memory-on-respawn keep|wipe] [--max-players N] [--token T]... [--restart-delay S]
 //              [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]
 //              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
-//              [--powerups LIST] [--verbose]
+//              [--powerups LIST] [--auto-start] [--verbose]
 //              [--lobby URL --lobby-secret S --region R [--name N]]
+//
+// The room (v0.42, architecture §6.6): by default, in either mode, the
+// process hosts an online room that waits (no ticks) until its host, the
+// first client to hold a slot, picks the settings and starts; a match end
+// shows the match over until the host plays again. --arena, --mode,
+// --loadout, --powerups and --bots are the room's defaults, --bot the specs
+// its bot count draws from. --auto-start keeps the M3 policy instead: a
+// match runs from the start with every bot, and the next one starts
+// --restart-delay after each match end; --exit-after-matches implies it.
 //
 // --port P             signaling port (default 9000; 0 = ephemeral, printed)
 // --bind ADDR          signaling bind address (default all interfaces)
@@ -35,8 +44,9 @@
 // --region R           the region this process serves (eu, us, ...);
 //                      required with --lobby
 // --name N             a name for the lobby's logs (default hostname:pid)
-// In lobby mode a room assigned while no peer is connected restarts the
-// match (fresh seeds, bots re-seeded), the process offers max players minus
+// In lobby mode a room assigned while no peer is connected resets the room to
+// Waiting with the defaults (--auto-start: restarts the match, fresh seeds,
+// bots re-seeded), the process offers max players minus
 // bots human slots (its `capacity`), the stats line ends with the lobby
 // state, and a lost lobby link is retried every 1 s doubling to 30 s.
 // --seed S             first match seed (default: from the clock, printed)
@@ -60,7 +70,9 @@
 // --max-players N      slots open to clients and bots, 1..10 (default 10)
 // --token T            accept only these connection tokens (repeatable;
 //                      none = accept every client)
-// --restart-delay S    seconds between a match's end and the next (default 3)
+// --restart-delay S    --auto-start: seconds between a match's end and the
+//                      next (default 3)
+// --auto-start         the M3 policy instead of the room (see above)
 // --exit-after-seconds N, --exit-after-matches N   stop cleanly (0 = never)
 // --stats-every S      one line of server stat deltas every S seconds, with
 //                      per-bot acts and substitutions (modules: traps,
@@ -165,7 +177,8 @@ struct Options {
   std::string arena;       // names; empty = the first one
   std::string mode;
   std::string loadout;
-  std::string powerUps;  // --powerups list; empty = all
+  std::string powerUps;   // --powerups list; empty = all
+  bool autoStart{false};  // v0.42: the M3 policy instead of the room
   bool verbose{false};
 };
 
@@ -176,7 +189,7 @@ constexpr const char* kUsage =
     "[--restart-delay S]\n"
     "                  [--exit-after-seconds N] [--exit-after-matches N] [--stats-every S]\n"
     "                  [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
-    "                  [--powerups LIST] [--verbose] [--ice-ports A-B]\n"
+    "                  [--powerups LIST] [--auto-start] [--verbose] [--ice-ports A-B]\n"
     "                  [--lobby URL --lobby-secret S --region R [--name N]]\n"
     "  --bot SPEC        ref, ref:easy|medium|hard or path.wasm (repeatable, slot order)\n"
     "  --bots N          at least N bots: the --bot list padded with ref:hard\n"
@@ -184,6 +197,8 @@ constexpr const char* kUsage =
     "  --fuel N          a bot module's wasm instructions per tick (default 100000)\n"
     "  --powerups LIST   all (default), none or comma-separated power-up names\n"
     "  --ice-ports A-B   UDP ports ICE may use (default any)\n"
+    "  --auto-start      run matches back to back (the M3 policy) instead of a room that\n"
+    "                    waits for its host's Start; implied by --exit-after-matches\n"
     "  --lobby URL       lobby mode: dial URL/server (ws://host:port, wss://host); no\n"
     "                    --port/--bind/--token; --lobby-secret (or env KFM_LOBBY_SECRET)\n"
     "                    and --region required, --name defaults to hostname:pid\n";
@@ -219,6 +234,10 @@ template <typename T>
     bool ok = true;
     if (arg == "--verbose") {
       o.verbose = true;
+      continue;
+    }
+    if (arg == "--auto-start") {
+      o.autoStart = true;
       continue;
     }
     if (arg == "--help" || arg == "-h") {
@@ -377,6 +396,8 @@ extern "C" void onSignal(int /*signal*/) {
   c.botMemory = o.memory;
   c.restartDelayTicks = o.restartDelaySeconds * sim::kTickHz;
   c.exitAfterMatches = o.exitAfterMatches;
+  // v0.42: the room unless --auto-start (or a soak that counts matches).
+  c.room = !o.autoStart && o.exitAfterMatches == 0;
   c.statsEveryNs = uint64_t{o.statsEverySeconds} * 1'000'000'000ull;
   c.verbose = o.verbose;
   return c;
@@ -437,8 +458,10 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     lc.name = o.name.empty() ? defaultName() : o.name;
     lc.buildId = hc.server.buildId;
     lc.contentHash = sim::contentHash(loaded.db);
-    lc.capacity = server::lobbyCapacity(hc.server.maxPlayers,
-                                        std::min<size_t>(hc.bots.size(), hc.server.maxPlayers));
+    // A waiting room places no bots: every slot is open to humans.
+    lc.capacity = server::lobbyCapacity(
+        hc.server.maxPlayers,
+        hc.room ? size_t{0} : std::min<size_t>(hc.bots.size(), hc.server.maxPlayers));
     auto created = net::LobbyLink::create(**transport, lc, start);
     if (!created) {
       std::fprintf(stderr, "error: %s\n", created.error().c_str());
