@@ -1,0 +1,25 @@
+# The lobby service (architecture §13.5, docs/lobby-protocol.md), on the VM
+# that also runs Caddy. Listens on loopback only; Caddy terminates TLS for
+# KFM_LOBBY_DOMAIN and proxies to it. The secret reaches the container through
+# the environment (KFM_LOBBY_SECRET), never the command line.
+[Unit]
+Description=Kung Fu Monkeys lobby
+Documentation=https://github.com/minip8/kung-fu-monkeys/blob/main/deploy/README.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/kfm/kfm.env
+ExecStartPre=-/usr/bin/docker rm -f kfm-lobby
+ExecStart=/usr/bin/docker run --rm --name kfm-lobby --network host \
+    --log-opt max-size=10m --log-opt max-file=3 \
+    -e KFM_LOBBY_SECRET -e SENTRY_DSN \
+    ${KFM_IMAGE_REPO}/kfm-lobby:${KFM_IMAGE_TAG} --listen 127.0.0.1:8080
+ExecStop=/usr/bin/docker stop -t 10 kfm-lobby
+Restart=always
+RestartSec=2
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

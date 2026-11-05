@@ -1,0 +1,12 @@
+# Build context for deploy/Dockerfile.server and deploy/Dockerfile.lobby
+# (both are built from the repository root).
+.git
+.github
+.claude
+build
+out
+cmake-build-*
+vcpkg_installed
+.vcpkg
+services/lobby/target
+**/__pycache__
