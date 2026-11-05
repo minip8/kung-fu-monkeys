@@ -212,7 +212,7 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 #   --exit-after-frames in the thousands: headless without vsync the client runs hundreds of frames a second
 deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
 #   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images, then update.sh on every VM in the KFM_VMS
-#   variable over IAP with a drain (v0.47; deploy/gcp/setup_deploy_identity.sh once), then Cloudflare Pages);
+#   variable over IAP, restarting at once (v0.47; deploy/gcp/setup_deploy_identity.sh once), then Cloudflare Pages);
 #   docker compose -f deploy/docker-compose.yml
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)

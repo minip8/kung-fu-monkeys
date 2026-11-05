@@ -465,9 +465,10 @@ leave it and the next would open the menu. `--screen paused` opens a local match
 v0.47 changes: releases update the VMs from the deploy workflow (§13.5). A `vms` job between
 the images and the page ships `deploy/vm/` to every VM in `KFM_VMS` over an IAP SSH tunnel
 (Workload Identity Federation, no stored key; `deploy/gcp/setup_deploy_identity.sh`) and runs
-`update.sh`, which now drains (waits up to 15 min for the lobby to report no live room) and
-refreshes the units; the page is published only after the servers answer the new build, since
-a client of another build id is refused. v0.45 (mouse controls) is the client branch in
+`update.sh`, which refreshes the units and restarts the pool at once (a running match ends;
+`--drain SECONDS` waits for the lobby to report no live room, for by-hand updates); the page
+is published only after the servers answer the new build, since a client of another build id
+is refused. v0.45 (mouse controls) is the client branch in
 flight.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
@@ -3482,8 +3483,8 @@ lives in the bots repository (above) and uses this repository through a pinned r
   Caddyfile, `install.sh`/`update.sh`, the `gcloud` scripts and the Hetzner equivalent;
   `deploy/README.md` is the runbook. Since v0.47 a tagged release also updates the VMs
   from the workflow: `vms` runs between the images and the page, ships `deploy/vm/` to each VM
-  named in `KFM_VMS` over an IAP tunnel and runs `update.sh TAG` (drain, then a rolling
-  restart), authenticated through Workload Identity Federation rather than a stored key, so
+  named in `KFM_VMS` over an IAP tunnel and runs `update.sh TAG` (a rolling restart at
+  once; `--drain` is opt-in), authenticated through Workload Identity Federation rather than a stored key, so
   the page never serves a build the servers refuse; a manual run skips the VMs.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose

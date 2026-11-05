@@ -1,30 +1,28 @@
 #!/usr/bin/env bash
 # Moves a VM to a new release (deploy/README.md "Updating"): pulls the images
-# at TAG, waits until the lobby reports no live room (the drain), refreshes
-# the systemd units and the Caddyfile from this directory, records TAG in
-# /etc/kfm/kfm.env, restarts the lobby (if this VM runs one) and then the
-# server pool one instance at a time, so the rest of the pool stays
-# registered while each process comes back.
+# at TAG, refreshes the systemd units and the Caddyfile from this directory,
+# records TAG in /etc/kfm/kfm.env, restarts the lobby (if this VM runs one)
+# and then the server pool one instance at a time, so the rest of the pool
+# stays registered while each process comes back.
 #
-#   sudo deploy/vm/update.sh v0.2.0                  # drain up to 15 min, then update
-#   sudo deploy/vm/update.sh v0.2.0 --drain 60       # wait at most a minute
-#   sudo deploy/vm/update.sh v0.2.0 --no-drain       # restart at once
+#   sudo deploy/vm/update.sh v0.2.0                  # restart at once
+#   sudo deploy/vm/update.sh v0.2.0 --drain 900      # first wait up to 15 min for no live room
 #
 # Restarting a server ends the match it hosts; restarting the lobby closes
-# every room (servers re-register when they reconnect or restart). The drain
-# polls the lobby's /healthz (locally on a lobby VM, else KFM_LOBBY_URL's
-# host over https) every 10 s until "rooms":0 or the timeout, then proceeds
-# regardless: a release never waits forever on one long evening. The deploy
-# workflow runs this on every tagged release (deploy/README.md).
+# every room (servers re-register when they reconnect or restart). With
+# --drain the script polls the lobby's /healthz (locally on a lobby VM, else
+# KFM_LOBBY_URL's host over https) every 10 s until "rooms":0 or the timeout,
+# then proceeds regardless. The deploy workflow runs this on every tagged
+# release (deploy/README.md), without a drain.
 set -euo pipefail
 
 usage() {
-  echo "usage: $0 TAG [--drain SECONDS] [--no-drain]" >&2
+  echo "usage: $0 TAG [--drain SECONDS]" >&2
   exit 2
 }
 
 tag=""
-drain=900
+drain=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --drain)
@@ -32,7 +30,6 @@ while [[ $# -gt 0 ]]; do
       drain="$2"
       shift
       ;;
-    --no-drain) drain=0 ;;
     -*) usage ;;
     *)
       [[ -z "$tag" ]] || usage
@@ -65,8 +62,8 @@ systemctl is-enabled --quiet kfm-lobby.service 2> /dev/null && lobby=1
 docker pull "$repo/kfm-server:$tag"
 [[ $lobby -eq 0 ]] || docker pull "$repo/kfm-lobby:$tag"
 
-# The drain: the lobby's room count, local on a lobby VM, else through the
-# lobby's public name (KFM_LOBBY_URL=wss://host or ws://host:port).
+# The drain (--drain): the lobby's room count, local on a lobby VM, else
+# through the lobby's public name (KFM_LOBBY_URL=wss://host or ws://host:port).
 healthz=""
 if [[ $lobby -eq 1 ]]; then
   healthz="http://127.0.0.1:8080/healthz"

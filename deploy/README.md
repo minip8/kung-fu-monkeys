@@ -103,10 +103,10 @@ Tag a release (`v0.2.0`) and the deploy workflow does the rest: it pushes the im
 its `vms` job ships `deploy/vm/` to every VM in the repository variable `KFM_VMS` over an IAP
 SSH tunnel and runs `update.sh v0.2.0` on each (in the listed order: lobby VM last), and only
 then publishes the page, so a browser never meets a server of another build. `update.sh`
-pulls the tag, drains (polls the lobby's `/healthz` until `"rooms":0`, up to 15 minutes, then
-goes ahead regardless), refreshes the units and the Caddyfile from the shipped copy, writes
-the tag into `kfm.env`, restarts the lobby (closing every room) and then the servers one at a
-time. Watch it under Actions → Deploy; the job's log shows the drain and every restart.
+pulls the tag, refreshes the units and the Caddyfile from the shipped copy, writes the tag
+into `kfm.env`, restarts the lobby (closing every room) and then the servers one at a time,
+at once: a match in progress ends. Watch it under Actions → Deploy; the job's log shows every
+restart.
 
 One-time setup (architecture §13.5): `deploy/gcp/setup_deploy_identity.sh --project my-proj
 --repo owner/name` creates the service account, the Workload Identity Federation pool and
@@ -121,12 +121,13 @@ By hand, for one VM or when the workflow cannot reach it:
 
 ```sh
 gcloud compute ssh kfm-eu-1 --zone europe-west1-b --tunnel-through-iap -- \
-  sudo /opt/kfm-deploy/vm/update.sh v0.2.0 [--drain SECONDS | --no-drain]
+  sudo /opt/kfm-deploy/vm/update.sh v0.2.0 [--drain SECONDS]
 ```
 
 A restarted server ends its match and a client whose build id or content hash differs from
-the server's is refused (`mismatch`), so the drain matters: the default waits for an evening's
-last room to close. To change the pool size, re-run `sudo /opt/kfm-deploy/vm/install.sh
+the server's is refused (`mismatch`). `--drain SECONDS` first polls the lobby's `/healthz`
+until `"rooms":0` (or the timeout, then goes ahead regardless) for an update that should wait
+for an evening's last room to close. To change the pool size, re-run `sudo /opt/kfm-deploy/vm/install.sh
 [--lobby] --servers N`. The VM's startup script re-extracts the `deploy/vm/` embedded at
 creation on every boot, so units or a Caddyfile changed by a release hold until the next
 reboot; to make them permanent, recreate the VM (or update its startup-script metadata).

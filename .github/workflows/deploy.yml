@@ -10,9 +10,10 @@ name: Deploy
 # job): a client is refused when its build id differs from the server's, so
 # the servers must answer the new build before the page serves it. The job
 # ships deploy/vm to each VM over an IAP SSH tunnel and runs update.sh TAG,
-# which drains (waits for the lobby to report no live room, up to 15 min)
-# and restarts the pool one process at a time; VMs are taken in the order of
-# KFM_VMS, so list the lobby VM last. It authenticates with Workload Identity
+# which restarts the pool one process at a time at once (a running match
+# ends; update.sh --drain exists for a by-hand update that waits for the
+# rooms to close); VMs are taken in the order of KFM_VMS, so list the lobby
+# VM last. It authenticates with Workload Identity
 # Federation (no key in the repository; deploy/gcp/setup_deploy_identity.sh
 # creates the pool, provider and service account and prints the variables).
 # Without KFM_VMS the job is skipped and the VMs are updated by hand.
