@@ -1,0 +1,47 @@
+# Local development stack (architecture §13.5, v0.37): one lobby and two game
+# servers in lobby mode, each with three bots, built from this checkout.
+#
+#   docker compose -f deploy/docker-compose.yml up --build
+#   curl http://127.0.0.1:8080/healthz      # {"servers":2,"rooms":0,"regions":["eu"]}
+#
+# network_mode: host everywhere, so the servers' WebRTC host candidates are the
+# machine's real interfaces and no UDP ports need mapping (Linux; Docker
+# Desktop needs host networking turned on in its settings).
+#
+# Point a native client at it: the lobby URL is ws://127.0.0.1:8080 (plain ws,
+# no Caddy in development), e.g.
+#   build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE
+# (`--room CODE [--lobby URL]`, architecture §13.5; the client's lobby mode is
+# the client side of M6a). The direct path still works without the lobby:
+# `kfm_server --port 9000` and `kfm_client --connect ws://127.0.0.1:9000`.
+
+name: kfm
+
+x-server: &server
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile.server
+  image: kfm-server:dev
+  network_mode: host
+  depends_on: [lobby]
+  restart: unless-stopped
+
+services:
+  lobby:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.lobby
+    image: kfm-lobby:dev
+    network_mode: host
+    command: ["--listen", "0.0.0.0:8080", "--secret", "dev"]
+    restart: unless-stopped
+
+  server-1:
+    <<: *server
+    command: ["--lobby", "ws://127.0.0.1:8080", "--lobby-secret", "dev",
+              "--region", "eu", "--name", "dev:1", "--bots", "3"]
+
+  server-2:
+    <<: *server
+    command: ["--lobby", "ws://127.0.0.1:8080", "--lobby-secret", "dev",
+              "--region", "eu", "--name", "dev:2", "--bots", "3"]

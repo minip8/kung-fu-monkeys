@@ -9,12 +9,15 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <exception>
 #include <expected>
+#include <format>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -22,6 +25,7 @@
 #include <rtc/rtc.hpp>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -90,7 +94,10 @@ struct CallbackQueue {
   std::vector<CallbackEvent> events;
   size_t queuedMessages{0};
   uint64_t droppedMessages{0};
-  uint16_t nextPeerId{1};  // server: PeerIds handed out by onClient
+  uint16_t nextPeerId{1};  // server: PeerIds handed out by onClient / acceptExternalPeer
+  // External-signaling server: answers and candidates from onLocalDescription
+  // / onLocalCandidate, in order, for takeOutgoingSignaling().
+  std::vector<OutgoingSignal> outgoing;
 
   void push(CallbackEvent&& e) {
     const std::scoped_lock lock(mutex);
@@ -118,6 +125,15 @@ void postSimple(const WeakQueue& weak, CallbackKind kind, PeerId peer,
   e.peer = peer;
   e.lane = lane;
   post(weak, std::move(e));
+}
+
+// External signaling: the host relays it, so the callback only queues it.
+void postOutgoing(const WeakQueue& weak, PeerId peer, const signaling::Message& m) {
+  const auto q = weak.lock();
+  if (!q) return;
+  OutgoingSignal out{peer, signaling::encode(m)};
+  const std::scoped_lock lock(q->mutex);
+  q->outgoing.push_back(std::move(out));
 }
 
 void sendSignal(const std::weak_ptr<rtc::WebSocket>& weakWs, const signaling::Message& m) {
@@ -181,6 +197,7 @@ struct Received {
 
 struct Peer {
   PeerId id{PeerId::invalid()};
+  bool external{false};  // server: signaling relayed by the host, no ws
   std::shared_ptr<rtc::WebSocket> ws;
   std::shared_ptr<rtc::PeerConnection> pc;
   std::array<std::shared_ptr<rtc::DataChannel>, 2> lanes{};
@@ -200,8 +217,13 @@ constexpr size_t kMaxEarlyCandidates = 64;
 
 std::once_flag gLoggerOnce;
 
+// Set once the log level is Debug or finer: the transport then also prints
+// its own decisions (a dropped peer and why) to stderr.
+std::atomic<bool> gVerbose{false};
+
 void initLoggerOnce(WebRtcLogLevel level) {
   std::call_once(gLoggerOnce, [level] {
+    if (level >= WebRtcLogLevel::Debug) gVerbose = true;
 #ifndef __EMSCRIPTEN__
     try {
       rtc::InitLogger(static_cast<rtc::LogLevel>(level));
@@ -225,6 +247,19 @@ struct WebRtcTransport::Impl {
   uint64_t connectTimeoutNs{kDefaultWebRtcConnectTimeoutMs * kNsPerMs};
   std::vector<std::byte> token;
   uint16_t listenPort{0};
+  bool externalSignaling{false};        // server: the host relays signaling
+  std::vector<PeerId> droppedExternal;  // for takeDroppedExternalPeers()
+
+  // Client lobby mode (docs/lobby-protocol.md §3).
+  enum class LobbyPhase : uint8_t {
+    Off = 0,    // no lobby request: offer as soon as the socket opens
+    Opening,    // waiting for the socket
+    Requested,  // request sent, waiting for joined/refused
+    Joined,     // signaling flows; a `closed` frame ends it
+  };
+  LobbyPhase lobbyPhase{LobbyPhase::Off};
+  std::optional<LobbyRequest> lobbyRequest;
+  std::optional<LobbyRoom> lobbyRoom;
 
   std::shared_ptr<CallbackQueue> queue = std::make_shared<CallbackQueue>();
 #ifndef __EMSCRIPTEN__
@@ -260,6 +295,7 @@ struct WebRtcTransport::Impl {
     // caller's thread, never on a libdatachannel thread.
     const std::scoped_lock lock(queue->mutex);
     queue->events.clear();
+    queue->outgoing.clear();
   }
 
   void fail(const char* where, const std::exception* e) {
@@ -306,10 +342,17 @@ struct WebRtcTransport::Impl {
 
   // Removes the peer; reports Disconnected if it was ever announced (or, on
   // a client, always: the caller is waiting for its one peer either way).
-  void dropPeer(uint16_t id, uint64_t nowNs, ConnectionEvents* events) {
+  // An external peer is also queued for takeDroppedExternalPeers() unless
+  // the lobby itself closed it (fromLobby).
+  void dropPeer(uint16_t id, uint64_t nowNs, ConnectionEvents* events, bool fromLobby = false) {
     const auto it = peers.find(id);
     if (it == peers.end()) return;
+    if (gVerbose) {
+      std::fprintf(stderr, "kfm_net_webrtc: drop peer %u (connected=%d fromLobby=%d) error='%s'\n",
+                   unsigned{id}, int{it->second.connected}, int{fromLobby}, lastError.c_str());
+    }
     const bool announce = it->second.connected || !server;
+    if (it->second.external && !fromLobby) droppedExternal.push_back(PeerId{id});
     closePeer(it->second);
     peers.erase(it);
     if (!announce) return;
@@ -326,18 +369,28 @@ struct WebRtcTransport::Impl {
     const WeakQueue weak = queue;
     const PeerId id = peer.id;
     const std::weak_ptr<rtc::WebSocket> weakWs = peer.ws;
-    peer.pc->onLocalDescription([weakWs](const rtc::Description& d) {
+    const bool external = peer.external;
+    // A socket peer's messages go straight out on its socket (as built in
+    // M3); an external peer's are queued for takeOutgoingSignaling().
+    const auto emit = [weak, weakWs, id, external](const signaling::Message& m) {
+      if (external) {
+        postOutgoing(weak, id, m);
+      } else {
+        sendSignal(weakWs, m);
+      }
+    };
+    peer.pc->onLocalDescription([emit](const rtc::Description& d) {
       signaling::Message m;
       m.type = d.typeString() == "answer" ? signaling::Type::Answer : signaling::Type::Offer;
       m.sdp = std::string(d);
-      sendSignal(weakWs, m);
+      emit(m);
     });
-    peer.pc->onLocalCandidate([weakWs](const rtc::Candidate& c) {
+    peer.pc->onLocalCandidate([emit](const rtc::Candidate& c) {
       signaling::Message m;
       m.type = signaling::Type::Candidate;
       m.candidate = c.candidate();
       m.mid = c.mid();
-      sendSignal(weakWs, m);
+      emit(m);
     });
     peer.pc->onStateChange([weak, id](rtc::PeerConnection::State state) {
       CallbackEvent e;
@@ -400,20 +453,21 @@ struct WebRtcTransport::Impl {
     peer.earlyCandidates.clear();
   }
 
-  void handleSignal(Peer& peer, const std::string& text) {
+  // false: not a signaling message (ignored, lastError says so).
+  bool handleSignal(Peer& peer, std::string_view text) {
     const auto m = signaling::decode(text);
     if (!m) {
       lastError = "malformed signaling message";
-      return;
+      return false;
     }
     switch (m->type) {
       case signaling::Type::Offer:
-        if (!server || peer.pc) return;  // one offer per peer, no renegotiation
+        if (!server || peer.pc) break;  // one offer per peer, no renegotiation
         createPeerConnection(peer);
         setRemoteDescription(peer, m->sdp, "offer");
         break;
       case signaling::Type::Answer:
-        if (server || !peer.pc || peer.remoteDescriptionSet) return;
+        if (server || !peer.pc || peer.remoteDescriptionSet) break;
         setRemoteDescription(peer, m->sdp, "answer");
         break;
       case signaling::Type::Candidate:
@@ -424,6 +478,72 @@ struct WebRtcTransport::Impl {
         }
         break;
     }
+    return true;
+  }
+
+  // Client lobby mode: the socket is open, send the one request.
+  void sendLobbyRequest(Peer& peer) {
+    if (!lobbyRequest) return;
+    const LobbyRequest& req = *lobbyRequest;
+    const std::string build = std::format("{:08x}", req.buildId);
+    const std::string content = std::format("{:08x}", req.contentHash);
+    std::string text;
+    if (req.kind == LobbyRequest::Kind::Create) {
+      const std::array<signaling::Field, 4> f = {
+          signaling::Field{"type", "create"}, signaling::Field{"region", req.region},
+          signaling::Field{"build", build}, signaling::Field{"content", content}};
+      text = signaling::encodeObject(f);
+    } else {
+      const std::array<signaling::Field, 4> f = {
+          signaling::Field{"type", "join"}, signaling::Field{"code", req.code},
+          signaling::Field{"build", build}, signaling::Field{"content", content}};
+      text = signaling::encodeObject(f);
+    }
+    peer.ws->send(text);
+    lobbyPhase = LobbyPhase::Requested;
+  }
+
+  [[nodiscard]] static bool isLowerHex(std::string_view s) {
+    return std::ranges::all_of(
+        s, [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); });
+  }
+
+  // Client lobby mode: one text frame from the lobby.
+  void handleLobbyText(Peer& peer, const std::string& text, uint64_t nowNs,
+                       ConnectionEvents& events) {
+    if (lobbyPhase == LobbyPhase::Joined) {
+      // Plain signaling, or the lobby's `closed` notice.
+      const auto o = signaling::decodeObject(text);
+      if (o && o->get("type") == std::optional<std::string_view>("closed")) {
+        lastError = "lobby closed: " + std::string(o->get("reason").value_or("unknown"));
+        dropPeer(peer.id.value, nowNs, &events);
+        return;
+      }
+      handleSignal(peer, text);
+      return;
+    }
+    if (lobbyPhase != LobbyPhase::Requested) return;  // nothing may precede our request
+    // Not a flat object: no type, so an unexpected reply.
+    const signaling::FlatObject o = signaling::decodeObject(text).value_or(signaling::FlatObject{});
+    const std::string_view type = o.get("type").value_or("");
+    if (type == "joined") {
+      const std::string_view tok = o.get("token").value_or("");
+      const std::string_view code = o.get("code").value_or("");
+      if (tok.size() == 32 && isLowerHex(tok) && !code.empty()) {
+        const auto* p = reinterpret_cast<const std::byte*>(tok.data());
+        token.assign(p, p + tok.size());
+        lobbyRoom = LobbyRoom{std::string(code), std::string(o.get("region").value_or(""))};
+        lobbyPhase = LobbyPhase::Joined;
+        startClientOffer(peer);
+        return;
+      }
+      lastError = "lobby protocol error: bad joined reply";
+    } else if (type == "refused") {
+      lastError = "lobby refused: " + std::string(o.get("reason").value_or("unknown"));
+    } else {
+      lastError = "lobby protocol error: unexpected reply";
+    }
+    dropPeer(peer.id.value, nowNs, &events);
   }
 
   void accept(Received&& r) {
@@ -466,15 +586,31 @@ struct WebRtcTransport::Impl {
       case CallbackKind::NewClient:
         break;
       case CallbackKind::SignalOpen:
-        if (!server && !peer.pc) startClientOffer(peer);
+        if (server || peer.pc) break;
+        if (lobbyPhase == LobbyPhase::Opening) {
+          sendLobbyRequest(peer);
+        } else if (lobbyPhase == LobbyPhase::Off) {
+          startClientOffer(peer);
+        }
         break;
       case CallbackKind::SignalClosed:
         // After Connected the socket has done its job; before it, the
-        // handshake cannot finish.
-        if (!peer.connected) dropPeer(e.peer.value, nowNs, &events);
+        // handshake cannot finish. A lobby socket is the room membership
+        // (docs/lobby-protocol.md §3): its close always ends the session.
+        if (lobbyPhase != LobbyPhase::Off) {
+          if (lastError.empty() || !lastError.starts_with("lobby"))
+            lastError = "lobby connection closed";
+          dropPeer(e.peer.value, nowNs, &events);
+        } else if (!peer.connected) {
+          dropPeer(e.peer.value, nowNs, &events);
+        }
         break;
       case CallbackKind::SignalText:
-        handleSignal(peer, e.text);
+        if (lobbyPhase != LobbyPhase::Off) {
+          handleLobbyText(peer, e.text, nowNs, events);
+        } else {
+          handleSignal(peer, e.text);
+        }
         break;
       case CallbackKind::ChannelArrived: {
         auto& slot = peer.lanes[laneIndex(e.lane)];
@@ -611,6 +747,8 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
     impl->iceUdpMux = config.iceUdpMux;
     impl->maxPeers = std::min(config.maxPeers, kMaxPeers);
     impl->connectTimeoutNs = uint64_t{config.connectTimeoutMs} * kNsPerMs;
+    impl->externalSignaling = config.externalSignaling;
+    if (config.externalSignaling) return std::make_unique<WebRtcTransport>(std::move(impl));
 
     rtc::WebSocketServer::Configuration wsConfig;
     wsConfig.port = config.signalingPort;
@@ -650,19 +788,42 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
 
 std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::createClient(
     const WebRtcClientConfig& config) {
-  if (!config.signalingUrl.starts_with("ws://") && !config.signalingUrl.starts_with("wss://"))
+  if (config.externalSignaling && config.lobby)
+    return std::unexpected(
+        std::string("WebRtcTransport client: externalSignaling and a lobby request exclude "
+                    "each other"));
+  if (!config.externalSignaling && !config.signalingUrl.starts_with("ws://") &&
+      !config.signalingUrl.starts_with("wss://"))
     return std::unexpected("WebRtcTransport client: signalingUrl must be ws://host:port, got '" +
                            config.signalingUrl + "'");
+  if (config.lobby) {
+    const LobbyRequest& r = *config.lobby;
+    if (r.kind == LobbyRequest::Kind::Create && r.region.empty())
+      return std::unexpected(std::string("WebRtcTransport client: a lobby create needs a region"));
+    if (r.kind == LobbyRequest::Kind::Join && r.code.empty())
+      return std::unexpected(std::string("WebRtcTransport client: a lobby join needs a code"));
+  }
   try {
     initLoggerOnce(WebRtcLogLevel::Warning);
     auto impl = std::make_unique<Impl>();
     impl->server = false;
     impl->stunServer = config.stunServer;
-    impl->token = config.connectionToken;
     impl->connectTimeoutNs = uint64_t{config.connectTimeoutMs} * kNsPerMs;
+    if (config.lobby) {
+      impl->lobbyRequest = config.lobby;
+      impl->lobbyPhase = Impl::LobbyPhase::Opening;
+    } else {
+      impl->token = config.connectionToken;
+    }
 
     Peer& peer = impl->peers[kServerPeer.value];
     peer.id = kServerPeer;
+    if (config.externalSignaling) {
+      impl->externalSignaling = true;
+      peer.external = true;
+      impl->startClientOffer(peer);  // callbacks only queue; nothing runs here
+      return std::make_unique<WebRtcTransport>(std::move(impl));
+    }
 #ifdef __EMSCRIPTEN__
     peer.ws = std::make_shared<rtc::WebSocket>();
 #else
@@ -671,7 +832,9 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
     peer.ws = std::make_shared<rtc::WebSocket>(wsConfig);
 #endif
     wireSignalingSocket(*peer.ws, impl->queue, kServerPeer);
-    peer.ws->open(config.signalingUrl);
+    // A base lobby URL gets the /client path (docs/lobby-protocol.md §1).
+    peer.ws->open(config.lobby ? signaling::withDefaultPath(config.signalingUrl, "/client")
+                               : config.signalingUrl);
     return std::make_unique<WebRtcTransport>(std::move(impl));
   } catch (const std::exception& e) {
     return std::unexpected(std::string("WebRtcTransport client: ") + e.what());
@@ -756,6 +919,93 @@ std::span<const std::byte> WebRtcTransport::connectionToken() const {
 
 std::string WebRtcTransport::lastError() const {
   return impl_->lastError;
+}
+
+std::optional<PeerId> WebRtcTransport::acceptExternalPeer() {
+  Impl& impl = *impl_;
+  if (!impl.server || !impl.externalSignaling || impl.peers.size() >= impl.maxPeers)
+    return std::nullopt;
+  PeerId id = PeerId::invalid();
+  {
+    const std::scoped_lock lock(impl.queue->mutex);
+    if (impl.queue->nextPeerId != PeerId::kInvalidValue) id = PeerId{impl.queue->nextPeerId++};
+  }
+  if (!id.isValid()) return std::nullopt;
+  try {
+    Peer& peer = impl.peers[id.value];
+    peer.id = id;
+    peer.external = true;
+  } catch (const std::exception& e) {
+    impl.fail("acceptExternalPeer", &e);
+    return std::nullopt;
+  } catch (...) {
+    impl.fail("acceptExternalPeer", nullptr);
+    return std::nullopt;
+  }
+  return id;
+}
+
+bool WebRtcTransport::deliverSignaling(PeerId peer, std::string_view jsonText) {
+  Impl& impl = *impl_;
+  const auto it = impl.peers.find(peer.value);
+  if (it == impl.peers.end() || !it->second.external) return false;
+  if (jsonText.size() > signaling::kMaxMessageBytes) {
+    impl.lastError = "signaling message too large";
+    return false;
+  }
+  try {
+    return impl.handleSignal(it->second, jsonText);
+  } catch (const std::exception& e) {
+    impl.fail("deliverSignaling", &e);
+  } catch (...) {
+    impl.fail("deliverSignaling", nullptr);
+  }
+  // A peer the rtc:: API refused cannot finish its handshake.
+  try {
+    impl.dropPeer(peer.value, impl.lastPollNs, nullptr);
+  } catch (...) {  // NOLINT(bugprone-empty-catch): closing what already failed
+  }
+  return false;
+}
+
+void WebRtcTransport::closeExternalPeer(PeerId peer) {
+  const auto it = impl_->peers.find(peer.value);
+  if (it == impl_->peers.end() || !it->second.external) return;
+  try {
+    impl_->dropPeer(peer.value, impl_->lastPollNs, nullptr, /*fromLobby=*/true);
+  } catch (const std::exception& e) {
+    impl_->fail("closeExternalPeer", &e);
+  } catch (...) {
+    impl_->fail("closeExternalPeer", nullptr);
+  }
+}
+
+std::vector<OutgoingSignal> WebRtcTransport::takeOutgoingSignaling() {
+  std::vector<OutgoingSignal> out;
+  try {
+    {
+      const std::scoped_lock lock(impl_->queue->mutex);
+      out.swap(impl_->queue->outgoing);
+    }
+    // A peer dropped meanwhile gets nothing more (its PeerId is never reused).
+    std::erase_if(out,
+                  [&](const OutgoingSignal& s) { return !impl_->peers.contains(s.peer.value); });
+  } catch (const std::exception& e) {
+    impl_->fail("takeOutgoingSignaling", &e);
+  } catch (...) {
+    impl_->fail("takeOutgoingSignaling", nullptr);
+  }
+  return out;
+}
+
+std::vector<PeerId> WebRtcTransport::takeDroppedExternalPeers() {
+  std::vector<PeerId> out;
+  out.swap(impl_->droppedExternal);
+  return out;
+}
+
+std::optional<LobbyRoom> WebRtcTransport::lobbyRoom() const {
+  return impl_->lobbyRoom;
 }
 
 }  // namespace kfm::net

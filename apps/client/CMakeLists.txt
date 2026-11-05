@@ -24,6 +24,10 @@ target_link_libraries(kfm_client_core
   PUBLIC kfm::sim kfm::ai kfm::net kfm::presentation kfm::platform_input
   PRIVATE kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client_core)
+# M6a: the lobby a build points at by default (--lobby, the browser page's
+# config.js wins); empty: rooms need --lobby or ?lobby=.
+set(KFM_LOBBY_URL "" CACHE STRING "Default lobby base URL of kfm_client (ws[s]://host[:port])")
+target_compile_definitions(kfm_client_core PRIVATE "KFM_DEFAULT_LOBBY_URL=\"${KFM_LOBBY_URL}\"")
 # Bot modules as local players (§8) natively, over the same WAMR runtime as
 # the server and kfm_arena. Without it (the browser) a module spec falls back
 # to the reference bot. PUBLIC so the tests know which build they test.
@@ -44,7 +48,8 @@ set_target_properties(kfm_client_sdl PROPERTIES FOLDER apps)
 
 add_executable(kfm_client main.cpp hud.cpp debug_overlay.cpp client_audio.cpp)
 target_link_libraries(kfm_client PRIVATE
-  kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform kfm::warnings)
+  kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
+  kfm::platform_services kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client)
 set_target_properties(kfm_client PROPERTIES FOLDER apps)
 # The rigged test model next to the executable (embedded under Emscripten).
@@ -65,6 +70,10 @@ if(EMSCRIPTEN)
     -sMAX_WEBGL_VERSION=2
     -sENVIRONMENT=web)
   set_property(TARGET kfm_client APPEND PROPERTY LINK_DEPENDS "${kfm_client_shell}")
+  # The page loads config.js (M6a): a default one beside the build output so
+  # tools/web/serve.py serves no 404; the deploy workflow writes its own.
+  file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/config.js"
+    CONTENT "window.KFM_CONFIG = { lobbyUrl: \"${KFM_LOBBY_URL}\", sentryDsn: \"\" };\n")
 endif()
 
 # Network mode (--connect) runs NetSession over WebRtcTransport, natively and

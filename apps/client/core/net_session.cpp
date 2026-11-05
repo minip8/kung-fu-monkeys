@@ -91,6 +91,34 @@ const char* disconnectReasonText(net::DisconnectReason reason) {
   return "unknown reason";
 }
 
+std::string lobbyErrorText(std::string_view error, const LobbyTarget& target) {
+  constexpr std::string_view kRefused = "lobby refused: ";
+  constexpr std::string_view kClosed = "lobby closed: ";
+  const std::string room = target.create ? std::string("The room") : "Room " + target.code;
+  if (error.starts_with(kRefused)) {
+    const std::string_view reason = error.substr(kRefused.size());
+    if (reason == "unknown_code") return room + " not found (check the code)";
+    if (reason == "full") return room + " is full";
+    if (reason == "no_server") {
+      return target.create ? "No server available in " + target.region
+                           : std::string("No server available for this room");
+    }
+    if (reason == "mismatch") return "Version mismatch: reload the page or update the client";
+    if (reason == "bad_request") return "The lobby did not understand the request";
+    if (reason == "server_gone") return room + "'s server went away";
+    return "The lobby refused: " + std::string(reason);
+  }
+  if (error.starts_with(kClosed)) {
+    const std::string_view reason = error.substr(kClosed.size());
+    if (reason == "server_gone") return room + "'s server went away";
+    if (reason == "kicked") return "Removed from the room by its server";
+    if (reason == "room_closed") return room + " closed";
+    return "The lobby closed the room: " + std::string(reason);
+  }
+  if (error == "lobby connection closed") return "Lost the connection to the lobby";
+  return {};
+}
+
 NetSession::NetSession(NetSessionConfig config, platform::InputSampler lobbySampler,
                        net::ITransport* transport, uint64_t nowNs,
                        std::unique_ptr<net::ITransport> owned, std::string failure)
@@ -138,6 +166,7 @@ NetSession::NetSession(NetSessionConfig config, platform::InputSampler lobbySamp
 NetSession::~NetSession() {
   // The client may still send on the transport it holds: tear it down first.
   client_.reset();
+  lobby_.reset();  // may look at the transport
   ownedTransport_.reset();
 }
 
@@ -158,6 +187,12 @@ void NetSession::advance(uint64_t nowNs) {
   }
 
   net::NetClient& c = *client_;
+  // Lobby mode: the room's token goes in before the Hello (the transport
+  // reports Connected only after the lobby's `joined`).
+  if (lobby_ && !room_) {
+    room_ = lobby_->room();
+    if (room_) c.setToken(lobby_->token());
+  }
   c.beginFrame();
   c.pump(nowNs);
   c.reconcile();
@@ -302,11 +337,42 @@ NetPhase NetSession::phase() const {
   return NetPhase::Disconnected;
 }
 
+std::string NetSession::lobbyErrorText() const {
+  if (!lobby_ || !config_.lobby) return {};
+  LobbyTarget target = *config_.lobby;
+  if (room_) {  // a created room has its code now
+    target.create = false;
+    target.code = room_->code;
+  }
+  return client::lobbyErrorText(lobby_->error(), target);
+}
+
 std::string NetSession::statusText() const {
   char buf[256];
-  const char* server = config_.serverLabel.empty() ? "the server" : config_.serverLabel.c_str();
-  switch (phase()) {
+  std::string label = config_.serverLabel.empty() ? "the server" : config_.serverLabel;
+  if (room_) label = "room " + room_->code + " (" + room_->region + ")";
+  const char* server = label.c_str();
+  const NetPhase ph = phase();
+  if (config_.lobby && (ph == NetPhase::Disconnected || ph == NetPhase::Rejected)) {
+    std::string why = lobbyErrorText();
+    if (!why.empty()) return why;
+    const std::optional<net::DisconnectReason> r = client_->disconnectReason();
+    if (!room_ && ph == NetPhase::Disconnected && r != net::DisconnectReason::Quit) {
+      return "Could not reach the lobby at " +
+             (config_.serverLabel.empty() ? std::string("its URL") : config_.serverLabel);
+    }
+  }
+  switch (ph) {
     case NetPhase::Connecting:
+      if (config_.lobby && !room_) {
+        if (config_.lobby->create) {
+          std::snprintf(buf, sizeof buf, "Creating a room in %s ...",
+                        config_.lobby->region.c_str());
+        } else {
+          std::snprintf(buf, sizeof buf, "Joining room %s ...", config_.lobby->code.c_str());
+        }
+        break;
+      }
       std::snprintf(buf, sizeof buf, "Connecting to %s ...", server);
       break;
     case NetPhase::Syncing:

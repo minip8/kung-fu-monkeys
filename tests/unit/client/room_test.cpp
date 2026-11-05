@@ -1,0 +1,497 @@
+// The client's room join flow (M6a, architecture §13.5, docs/lobby-protocol.md
+// §3): the --lobby / --room / --create / --region flags, the lobby panel's
+// Online section, the invite text, the status wording of every lobby
+// refusal, and the NetSession's lobby pattern (the room's token reaches the
+// Hello) over the loopback emulator with a fake lobby-mode transport.
+#include "core/client_options.hpp"
+#include "core/lobby_menu.hpp"
+#include "core/lobby_settings.hpp"
+#include "core/net_session.hpp"
+#include "kfm/net/loopback.hpp"
+#include "kfm/net/net_server.hpp"
+#include "kfm/platform/input_event.hpp"
+#include "kfm/platform/input_sampler.hpp"
+#include "kfm/sim/content.hpp"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+using namespace kfm;
+using client::ClientOptions;
+using client::LobbyCommand;
+using client::LobbyMenu;
+using client::LobbyRowKind;
+using client::LobbyTarget;
+using client::NetPhase;
+using client::NetSession;
+using client::NetSessionConfig;
+
+namespace {
+
+[[nodiscard]] bool parse(std::vector<const char*> argv, ClientOptions& o, std::string& error) {
+  argv.insert(argv.begin(), "kfm_client");
+  return client::parseClientOptions(std::span<const char* const>(argv.data(), argv.size()), o,
+                                    error);
+}
+
+[[nodiscard]] bool hasRow(const LobbyMenu& m, LobbyRowKind kind) {
+  const auto rows = m.rows();
+  return std::ranges::any_of(rows, [&](const client::LobbyRow& r) { return r.kind == kind; });
+}
+
+[[nodiscard]] std::size_t rowIndex(const LobbyMenu& m, LobbyRowKind kind) {
+  const auto rows = m.rows();
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    if (rows[i].kind == kind) return i;
+  }
+  return rows.size();
+}
+
+[[nodiscard]] std::vector<std::byte> bytes(std::string_view s) {
+  std::vector<std::byte> b;
+  for (const char c : s)
+    b.push_back(static_cast<std::byte>(c));
+  return b;
+}
+
+}  // namespace
+
+// --- flags -----------------------------------------------------------------------
+
+TEST_CASE("room flags: defaults, --room, --create, --region, --lobby", "[client][room][options]") {
+  ClientOptions o;
+  CHECK(o.lobby == client::defaultLobbyUrl());
+  CHECK(o.room.empty());
+  CHECK_FALSE(o.create);
+  CHECK(o.region == "eu");
+  CHECK_FALSE(o.lobbyMode());
+  CHECK_FALSE(o.networkMode());
+  CHECK_FALSE(client::lobbyTarget(o).has_value());
+
+  std::string error;
+  SECTION("--room joins, normalised to upper case; network mode") {
+    REQUIRE(parse({"--lobby", "ws://127.0.0.1:8080", "--room", "abcde"}, o, error));
+    CHECK(o.lobby == "ws://127.0.0.1:8080");
+    CHECK(o.room == "ABCDE");
+    CHECK(o.lobbyMode());
+    CHECK(o.networkMode());
+    const std::optional<LobbyTarget> t = client::lobbyTarget(o);
+    CHECK(t == LobbyTarget{.create = false, .region = "eu", .code = "ABCDE"});
+    const NetSessionConfig c = client::netSessionConfig(o, true);
+    CHECK(c.serverLabel == "ws://127.0.0.1:8080");
+    CHECK(c.lobby == t);
+    CHECK(c.requestedSlots == 1);
+  }
+  SECTION("--create with a region; the browser's ?create&region=us") {
+    REQUIRE(parse({"--lobby", "wss://lobby.example", "--create", "--region", "us"}, o, error));
+    CHECK(o.create);
+    CHECK(o.networkMode());
+    CHECK(client::lobbyTarget(o) == LobbyTarget{.create = true, .region = "us", .code = ""});
+  }
+  SECTION("--token, --spectate, --players and --stun still apply in lobby mode") {
+    REQUIRE(parse({"--lobby", "ws://h:1", "--room", "QRSTU", "--spectate", "--players", "2",
+                   "--stun", "stun:s:3478", "--token", "t"},
+                  o, error));
+    const NetSessionConfig c = client::netSessionConfig(o, true);
+    CHECK(c.spectate);
+    CHECK(c.requestedSlots == 2);
+    CHECK(o.stun == "stun:s:3478");
+  }
+  SECTION("--connect alone stays the direct path") {
+    REQUIRE(parse({"--connect", "ws://127.0.0.1:9000"}, o, error));
+    CHECK(o.networkMode());
+    CHECK_FALSE(o.lobbyMode());
+    const NetSessionConfig c = client::netSessionConfig(o, true);
+    CHECK(c.serverLabel == "ws://127.0.0.1:9000");
+    CHECK_FALSE(c.lobby.has_value());
+  }
+  SECTION("a lobby URL alone is not network mode (the panel offers rooms)") {
+    REQUIRE(parse({"--lobby", "ws://127.0.0.1:8080"}, o, error));
+    CHECK_FALSE(o.networkMode());
+  }
+}
+
+TEST_CASE("room flags: mutual exclusion and bad values", "[client][room][options]") {
+  ClientOptions o;
+  std::string error;
+  CHECK_FALSE(parse({"--lobby", "ws://h:1", "--room", "ABCDE", "--create"}, o, error));
+  CHECK(error == "--room and --create exclude each other");
+  o = {};
+  CHECK_FALSE(parse({"--lobby", "ws://h:1", "--room", "ABCDE", "--connect", "ws://h:2"}, o, error));
+  CHECK(error.find("excludes --connect") != std::string::npos);
+  o = {};
+  CHECK_FALSE(parse({"--create", "--lobby", "ws://h:1", "--connect", "ws://h:2"}, o, error));
+  CHECK(error.find("--create") != std::string::npos);
+  o = {};
+  o.lobby.clear();  // a build without KFM_LOBBY_URL
+  CHECK_FALSE(parse({"--create"}, o, error));
+  CHECK(error.find("needs a lobby") != std::string::npos);
+  o = {};
+  CHECK_FALSE(parse({"--lobby", "http://h:1"}, o, error));
+  CHECK(error.find("ws://") != std::string::npos);
+  CHECK_FALSE(parse({"--room", "ABCD"}, o, error));  // too short
+  CHECK(error.find("5-character") != std::string::npos);
+  CHECK_FALSE(parse({"--room", "ABCD0"}, o, error));  // 0 is not in the alphabet
+  CHECK_FALSE(parse({"--room"}, o, error));
+  CHECK(error == "--room needs a value");
+  CHECK_FALSE(parse({"--region", "EU"}, o, error));
+  CHECK(error.find("--region") != std::string::npos);
+  CHECK_FALSE(parse({"--region", ""}, o, error));
+}
+
+TEST_CASE("room codes: the lobby's alphabet, any case in, upper case out", "[client][room]") {
+  CHECK(client::normalizeRoomCode("abcde") == "ABCDE");
+  CHECK(client::normalizeRoomCode("Z2345") == "Z2345");
+  CHECK_FALSE(client::normalizeRoomCode("ABCDI").has_value());  // I
+  CHECK_FALSE(client::normalizeRoomCode("ABCDO").has_value());  // O
+  CHECK_FALSE(client::normalizeRoomCode("ABCD1").has_value());  // 1
+  CHECK_FALSE(client::normalizeRoomCode("ABC-E").has_value());
+  CHECK_FALSE(client::normalizeRoomCode("ABCDEF").has_value());
+  CHECK_FALSE(client::normalizeRoomCode("").has_value());
+  CHECK(client::isRegionLabel("eu"));
+  CHECK(client::isRegionLabel("us-west"));
+  CHECK_FALSE(client::isRegionLabel("Eu"));
+}
+
+TEST_CASE("the invite: the page link in the browser, the flags natively", "[client][room]") {
+  const client::LobbyRoomInfo room{.code = "ABCDE", .region = "eu"};
+  CHECK(client::roomShareText(room, "", "wss://lobby.example") ==
+        "--lobby wss://lobby.example --room ABCDE");
+  CHECK(client::roomShareText(room, "", "") == "--room ABCDE");
+  CHECK(client::roomShareText(room, "https://kfm.example/", "wss://lobby.example") ==
+        "https://kfm.example/?room=ABCDE");
+  // The creator's own flags stay behind; a development ?lobby= goes along.
+  CHECK(client::roomShareText(
+            room, "http://127.0.0.1:8000/kfm_client.html?lobby=ws://127.0.0.1:8080&create&overlay",
+            "ws://127.0.0.1:8080") ==
+        "http://127.0.0.1:8000/kfm_client.html?room=ABCDE&lobby=ws://127.0.0.1:8080");
+  CHECK(client::roomShareText(room, "https://kfm.example/?create&region=us#x", "") ==
+        "https://kfm.example/?room=ABCDE");
+}
+
+// --- the lobby panel's Online section -----------------------------------------------
+
+TEST_CASE("lobby menu: the Online section only with a lobby URL", "[client][room][lobby]") {
+  LobbyMenu m;
+  const std::size_t rows = m.rows().size();
+  CHECK_FALSE(hasRow(m, LobbyRowKind::CreateRoom));
+  CHECK_FALSE(m.activate());  // nothing to activate: Enter is the match's Start
+  CHECK_FALSE(m.requestJoin("ABCDE"));
+  CHECK_FALSE(m.takeCommand().has_value());
+
+  m.setLobbyAvailable(true);
+  REQUIRE(hasRow(m, LobbyRowKind::CreateRoom));
+  CHECK(m.rows().size() == rows + 1);
+  CHECK(rowIndex(m, LobbyRowKind::CreateRoom) == rows);  // last
+  m.setLobbyAvailable(false);
+  CHECK_FALSE(hasRow(m, LobbyRowKind::CreateRoom));
+}
+
+TEST_CASE("lobby menu: Create room cycles the region and activates", "[client][room][lobby]") {
+  LobbyMenu m;
+  m.setLobbyAvailable(true);
+  const std::size_t row = rowIndex(m, LobbyRowKind::CreateRoom);
+  REQUIRE(row < m.rows().size());
+  CHECK(m.rowLabel(m.rows()[row]) == "Create room");
+  CHECK(m.rowValue(m.rows()[row]) == "eu");
+
+  // Focus it the generic way (Up from the first row wraps to the last).
+  m.setFocus(0);
+  CHECK_FALSE(m.apply(client::MenuAction::Up));
+  REQUIRE(m.focus() == row);
+  CHECK(m.apply(client::MenuAction::Right));
+  CHECK(m.rowValue(m.focusedRow()) == "us");
+  CHECK(m.apply(client::MenuAction::Right));
+  CHECK(m.rowValue(m.focusedRow()) == "asia");
+  CHECK(m.apply(client::MenuAction::Right));  // wraps
+  CHECK(m.rowValue(m.focusedRow()) == "eu");
+  CHECK(m.apply(client::MenuAction::Left));  // wraps back
+  CHECK(m.settings().region == 2);
+
+  // Enter on the row: a CreateRoom command, once.
+  CHECK(m.activate());
+  CHECK(m.takeCommand() ==
+        LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = "asia", .code = ""});
+  CHECK_FALSE(m.takeCommand().has_value());
+  // Another row: Enter stays the match's Start.
+  m.setFocus(0);
+  CHECK_FALSE(m.activate());
+  CHECK_FALSE(m.takeCommand().has_value());
+
+  // The panel's code field: only a valid code joins.
+  CHECK_FALSE(m.requestJoin("ABC"));
+  CHECK(m.requestJoin("hjkmn"));
+  CHECK(m.takeCommand() ==
+        LobbyCommand{.kind = LobbyCommand::Kind::JoinRoom, .region = "", .code = "HJKMN"});
+}
+
+TEST_CASE("activation presses: Enter and a bound pad's Start, never other keys",
+          "[client][room][lobby]") {
+  platform::InputEvent e;
+  e.kind = platform::InputEventKind::KeyDown;
+  e.key = platform::Key::Enter;
+  CHECK(client::isActivateEvent(e, true));
+  e.key = platform::Key::KpEnter;
+  CHECK(client::isActivateEvent(e, true));
+  e.key = platform::Key::J;
+  CHECK_FALSE(client::isActivateEvent(e, true));
+  e.kind = platform::InputEventKind::PadButtonDown;
+  e.button = platform::PadButton::Start;
+  CHECK(client::isActivateEvent(e, true));
+  CHECK_FALSE(client::isActivateEvent(e, false));  // an unbound pad's press is its join
+}
+
+TEST_CASE("the region persists with the settings", "[client][room][settings]") {
+  const sim::ContentDB& db = sim::defaultContent();
+  ClientOptions o;
+  std::vector<std::string> warnings;
+  client::applySettingsText("region=asia\n", db, o, warnings);
+  CHECK(warnings.empty());
+  CHECK(o.region == "asia");
+  client::LobbySettings ls;
+  std::string error;
+  REQUIRE(client::lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.region == 2);
+  ls.region = 1;
+  client::storeLobbySettings(ls, db, o);
+  CHECK(o.region == "us");
+  CHECK(client::settingsText(o).find("region=us\n") != std::string::npos);
+
+  // A server region outside the panel's list (--region eu-2) shows as the
+  // first and survives other changes; the panel picking one replaces it.
+  o.region = "eu-2";
+  REQUIRE(client::lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.region == 0);
+  ls.volume = 10;
+  client::storeLobbySettings(ls, db, o);
+  CHECK(o.region == "eu-2");
+  ls.region = 2;
+  client::storeLobbySettings(ls, db, o);
+  CHECK(o.region == "asia");
+
+  warnings.clear();
+  client::applySettingsText("region=Mars!\n", db, o, warnings);
+  CHECK(warnings.size() == 1);
+  CHECK(o.region == "asia");
+}
+
+// --- status wording -----------------------------------------------------------------
+
+TEST_CASE("lobby refusals and closes in plain words", "[client][room][status]") {
+  const LobbyTarget join{.create = false, .region = "", .code = "ABCDE"};
+  const LobbyTarget create{.create = true, .region = "eu", .code = ""};
+  using client::lobbyErrorText;
+  CHECK(lobbyErrorText("lobby refused: unknown_code", join) ==
+        "Room ABCDE not found (check the code)");
+  CHECK(lobbyErrorText("lobby refused: full", join) == "Room ABCDE is full");
+  CHECK(lobbyErrorText("lobby refused: no_server", create) == "No server available in eu");
+  CHECK(lobbyErrorText("lobby refused: no_server", join) == "No server available for this room");
+  CHECK(lobbyErrorText("lobby refused: mismatch", join) ==
+        "Version mismatch: reload the page or update the client");
+  CHECK(lobbyErrorText("lobby refused: bad_request", create) ==
+        "The lobby did not understand the request");
+  CHECK(lobbyErrorText("lobby refused: server_gone", join) == "Room ABCDE's server went away");
+  CHECK(lobbyErrorText("lobby refused: something_new", join) == "The lobby refused: something_new");
+  CHECK(lobbyErrorText("lobby closed: server_gone", join) == "Room ABCDE's server went away");
+  CHECK(lobbyErrorText("lobby closed: kicked", join) == "Removed from the room by its server");
+  CHECK(lobbyErrorText("lobby closed: room_closed", join) == "Room ABCDE closed");
+  CHECK(lobbyErrorText("lobby connection closed", join) == "Lost the connection to the lobby");
+  CHECK(lobbyErrorText("", join).empty());
+  CHECK(lobbyErrorText("ICE failed", join).empty());
+}
+
+// --- the NetSession's lobby pattern over the loopback -------------------------------
+
+namespace {
+
+constexpr uint64_t kMs = 1'000'000;
+constexpr uint64_t kSec = 1'000 * kMs;
+
+// A lobby-mode transport stand-in over a loopback endpoint: invisible
+// (nothing connected, nothing received) until the test says the lobby
+// answered `joined` (then Connected, as WebRtcTransport reports it once the
+// peer connection opens after `joined`) or `refused` (Disconnected, with the
+// transport's error string).
+class FakeLobbyTransport final : public net::ITransport, public client::ILobbyJoin {
+ public:
+  explicit FakeLobbyTransport(net::LoopbackTransport& inner) : inner_(inner) {}
+
+  void join(client::LobbyRoomInfo room, std::vector<std::byte> token) {
+    room_ = std::move(room);
+    token_ = std::move(token);
+  }
+  void refuse(const std::string& reason) {
+    error_ = "lobby refused: " + reason;
+    refused_ = true;
+  }
+
+  // ITransport
+  void sendUnreliable(net::PeerId peer, std::span<const std::byte> data) override {
+    if (open()) inner_.sendUnreliable(peer, data);
+  }
+  void sendReliable(net::PeerId peer, std::span<const std::byte> data) override {
+    if (open()) inner_.sendReliable(peer, data);
+  }
+  [[nodiscard]] bool recv(net::Packet& out) override { return open() && inner_.recv(out); }
+  void poll(uint64_t nowNs, net::ConnectionEvents& events) override {
+    net::ConnectionEvents inner;
+    inner_.poll(nowNs, inner);
+    if (refused_ && !reported_) {
+      reported_ = true;
+      events.push({net::ConnectionEventKind::Disconnected, net::kServerPeer, nowNs});
+      return;
+    }
+    if (!room_) return;
+    if (!announced_ && inner_.isConnected(net::kServerPeer)) {
+      announced_ = true;
+      events.push({net::ConnectionEventKind::Connected, net::kServerPeer, nowNs});
+    }
+    for (const net::ConnectionEvent& e : inner.span()) {
+      if (e.kind == net::ConnectionEventKind::Disconnected) events.push(e);
+    }
+  }
+  void disconnect(net::PeerId peer) override { inner_.disconnect(peer); }
+  [[nodiscard]] bool isConnected(net::PeerId peer) const override {
+    return open() && inner_.isConnected(peer);
+  }
+  [[nodiscard]] net::TransportStats stats() const override { return inner_.stats(); }
+
+  // ILobbyJoin
+  [[nodiscard]] std::optional<client::LobbyRoomInfo> room() const override { return room_; }
+  [[nodiscard]] std::vector<std::byte> token() const override { return token_; }
+  [[nodiscard]] std::string error() const override { return error_; }
+
+ private:
+  [[nodiscard]] bool open() const { return room_.has_value() && !refused_ && announced_; }
+
+  net::LoopbackTransport& inner_;
+  std::optional<client::LobbyRoomInfo> room_;
+  std::vector<std::byte> token_;
+  std::string error_;
+  bool refused_{false};
+  bool reported_{false};
+  bool announced_{false};
+};
+
+// The lobby view the session owns, forwarding to the test's transport.
+class LobbyView final : public client::ILobbyJoin {
+ public:
+  explicit LobbyView(const FakeLobbyTransport& t) : t_(t) {}
+  [[nodiscard]] std::optional<client::LobbyRoomInfo> room() const override { return t_.room(); }
+  [[nodiscard]] std::vector<std::byte> token() const override { return t_.token(); }
+  [[nodiscard]] std::string error() const override { return t_.error(); }
+
+ private:
+  const FakeLobbyTransport& t_;
+};
+
+struct LobbyRig {
+  net::LoopbackNetwork net{5};
+  std::unique_ptr<net::NetServer> server;
+  std::unique_ptr<FakeLobbyTransport> transport;
+  std::unique_ptr<NetSession> session;
+  uint64_t now{0};
+  uint64_t serverTicks{0};
+  std::vector<std::vector<std::byte>> tokensSeen;
+
+  explicit LobbyRig(const LobbyTarget& target) {
+    net::ServerConfig sc;
+    sc.acceptToken = [this](std::span<const std::byte> t) {
+      tokensSeen.emplace_back(t.begin(), t.end());
+      return std::vector<std::byte>(t.begin(), t.end()) == bytes("room-token");
+    };
+    server = std::make_unique<net::NetServer>(net.server(), sim::defaultContent(), sc);
+    net::LoopbackTransport& inner = net.connectClient(now, net::LinkConditions::uniform(kMs),
+                                                      net::LinkConditions::uniform(kMs));
+    transport = std::make_unique<FakeLobbyTransport>(inner);
+    NetSessionConfig config;
+    config.serverLabel = "ws://lobby";
+    config.lobby = target;
+    platform::InputSampler sampler;
+    REQUIRE(sampler.bind(PlayerId{0}, platform::DeviceBinding::keyboard(0)));
+    session = std::make_unique<NetSession>(config, sampler, transport.get(), now);
+    session->attachLobby(std::make_unique<LobbyView>(*transport));
+  }
+
+  void step() {
+    now += kMs;
+    server->pump(now);
+    while (now >= serverTicks * kSec / sim::kTickHz) {
+      server->tick(now);
+      ++serverTicks;
+    }
+    server->clearEvents();
+    if (now % (16 * kMs) == 0) session->advance(now);
+  }
+  template <class Pred>
+  bool runUntil(Pred pred, uint64_t maxNs) {
+    const uint64_t end = now + maxNs;
+    while (now < end) {
+      if (pred()) return true;
+      step();
+    }
+    return pred();
+  }
+};
+
+}  // namespace
+
+TEST_CASE("a lobby session hands the room's token to its Hello and names the room",
+          "[client][room][net]") {
+  LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""});
+  NetSession& s = *rig.session;
+  // Before the lobby answers: creating, nothing reaches the server.
+  for (int i = 0; i < 200; ++i)
+    rig.step();
+  CHECK(s.phase() == NetPhase::Connecting);
+  CHECK(s.statusText() == "Creating a room in eu ...");
+  CHECK_FALSE(s.room().has_value());
+  CHECK(rig.tokensSeen.empty());
+
+  rig.transport->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  REQUIRE(rig.tokensSeen.size() == 1);
+  CHECK(rig.tokensSeen[0] == bytes("room-token"));  // the lobby's, in the first Hello
+  REQUIRE(s.room().has_value());
+  CHECK(s.room() == client::LobbyRoomInfo{.code = "ABCDE", .region = "eu"});
+  CHECK(s.statusText().find("Online on room ABCDE (eu)") != std::string::npos);
+  CHECK(s.lobbyErrorText().empty());
+}
+
+TEST_CASE("a refused lobby join shows the reason and never says hello", "[client][room][net]") {
+  struct Case {
+    const char* reason{nullptr};
+    LobbyTarget target{};
+    const char* text{nullptr};
+  };
+  const LobbyTarget join{.create = false, .region = "", .code = "ABCDE"};
+  const Case cases[] = {
+      {"unknown_code", join, "Room ABCDE not found (check the code)"},
+      {"full", join, "Room ABCDE is full"},
+      {"no_server", LobbyTarget{.create = true, .region = "asia", .code = ""},
+       "No server available in asia"},
+      {"mismatch", join, "Version mismatch: reload the page or update the client"},
+  };
+  for (const Case& c : cases) {
+    INFO(c.reason);
+    LobbyRig rig(c.target);
+    NetSession& s = *rig.session;
+    if (!c.target.create) CHECK(s.statusText() == "Joining room ABCDE ...");
+    rig.transport->refuse(c.reason);
+    REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, kSec));
+    CHECK(s.statusText() == c.text);
+    CHECK(s.lobbyErrorText() == c.text);
+    CHECK(rig.tokensSeen.empty());
+    CHECK_FALSE(s.everRan());
+  }
+}

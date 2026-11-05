@@ -98,6 +98,10 @@ void NetClient::sendHello(uint64_t nowNs) {
   sendPing(nowNs);
 }
 
+void NetClient::setToken(std::span<const std::byte> token) {
+  config_.setToken(token);
+}
+
 void NetClient::disconnect() {
   if (transport_ == nullptr) return;
   if (transport_->isConnected(kServerPeer)) {

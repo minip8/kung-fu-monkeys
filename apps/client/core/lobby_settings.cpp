@@ -29,6 +29,15 @@ namespace {
   return true;
 }
 
+// The panel's index of a region; one outside the list (--region xx) shows as
+// the first, while --create at startup still uses the flag's.
+[[nodiscard]] uint8_t regionIndex(std::string_view region) {
+  for (std::size_t i = 0; i < kRegions.size(); ++i) {
+    if (region == kRegions[i]) return static_cast<uint8_t>(i);
+  }
+  return 0;
+}
+
 }  // namespace
 
 bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& content,
@@ -53,6 +62,7 @@ bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& conte
   out.botTier = options.botDifficulty;
   out.volume = options.volume;
   out.mute = options.mute;
+  out.region = regionIndex(options.region);
   return true;
 }
 
@@ -66,6 +76,10 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
   options.botDifficulty = settings.botTier;
   options.volume = settings.volume;
   options.mute = settings.mute;
+  // A region outside the list (--region xx) stays until the panel picks one.
+  if (settings.region < kRegions.size() && settings.region != regionIndex(options.region)) {
+    options.region = kRegions[settings.region];
+  }
 }
 
 std::string settingsText(const ClientOptions& options) {
@@ -78,6 +92,7 @@ std::string settingsText(const ClientOptions& options) {
   s += "bot_difficulty=" + std::string(ai::toString(options.botDifficulty)) + "\n";
   s += "volume=" + std::to_string(options.volume) + "\n";
   s += std::string("mute=") + (options.mute ? "1" : "0") + "\n";
+  s += "region=" + options.region + "\n";
   return s;
 }
 
@@ -144,6 +159,12 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
         options.mute = m != 0;
       } else {
         warn("mute must be 0 or 1");
+      }
+    } else if (key == "region") {
+      if (isRegionLabel(value)) {
+        options.region = value;
+      } else {
+        warn("region must be a label such as eu, us or asia");
       }
     } else {
       warn("unknown key '" + std::string(key) + "'");

@@ -439,10 +439,11 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   saved.botDifficulty = ai::ReferenceTier::Hard;
   saved.volume = 30;
   saved.mute = true;
+  saved.region = "us";
   const std::string text = client::settingsText(saved);
   CHECK(text ==
         "arena=island\nmode=survival\nloadout=parry\npowerups=none\nbots=4\nbot_difficulty=hard\n"
-        "volume=30\nmute=1\n");
+        "volume=30\nmute=1\nregion=us\n");
 
   ClientOptions loaded;
   std::vector<std::string> warnings;

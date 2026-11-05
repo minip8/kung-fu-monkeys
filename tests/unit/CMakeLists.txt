@@ -133,8 +133,9 @@ endif()
 if(NOT KFM_HEADLESS)
   kfm_add_test_exe(kfm_platform_tests
     platform/input_sampler_test.cpp
+    platform/platform_services_test.cpp
   )
-  target_link_libraries(kfm_platform_tests PRIVATE kfm::platform_input)
+  target_link_libraries(kfm_platform_tests PRIVATE kfm::platform_input kfm::platform_services)
 endif()
 
 if(NOT KFM_HEADLESS)
@@ -149,6 +150,7 @@ if(NOT KFM_HEADLESS)
     client/event_fx_rollback_test.cpp
     client/lobby_test.cpp
     client/bot_session_test.cpp
+    client/room_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
   if(KFM_WASM_BOTS)
@@ -177,6 +179,7 @@ if(KFM_WEBRTC AND NOT EMSCRIPTEN)
     net/webrtc_api_test.cpp
     net/webrtc_transport_test.cpp
     net/webrtc_contract_test.cpp
+    net/webrtc_external_test.cpp
   )
   target_include_directories(kfm_net_webrtc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc kfm::transport_contract)

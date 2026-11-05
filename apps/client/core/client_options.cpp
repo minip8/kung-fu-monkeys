@@ -3,6 +3,7 @@
 #include "kfm/net/messages.hpp"
 #include "kfm/sim/constants.hpp"
 
+#include <algorithm>
 #include <charconv>
 #include <optional>
 #include <string_view>
@@ -23,7 +24,82 @@ namespace {
   return ec == std::errc{} && end == v.data() + v.size();
 }
 
+constexpr std::string_view kRoomAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+constexpr std::size_t kRoomCodeLength = 5;
+constexpr std::size_t kMaxRegionLength = 16;
+
+[[nodiscard]] bool isWsUrl(std::string_view v) {
+  return v.starts_with("ws://") || v.starts_with("wss://");
+}
+
+[[nodiscard]] char upper(char c) {
+  return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
+}
+
 }  // namespace
+
+#ifndef KFM_DEFAULT_LOBBY_URL
+#define KFM_DEFAULT_LOBBY_URL ""
+#endif
+
+const char* defaultLobbyUrl() {
+  return KFM_DEFAULT_LOBBY_URL;
+}
+
+bool isRoomCodeChar(char c) {
+  return kRoomAlphabet.contains(upper(c));
+}
+
+std::optional<std::string> normalizeRoomCode(std::string_view code) {
+  if (code.size() != kRoomCodeLength) return std::nullopt;
+  std::string out;
+  for (const char c : code) {
+    if (!isRoomCodeChar(c)) return std::nullopt;
+    out.push_back(upper(c));
+  }
+  return out;
+}
+
+bool isRegionLabel(std::string_view region) {
+  if (region.empty() || region.size() > kMaxRegionLength) return false;
+  return std::ranges::all_of(
+      region, [](char c) { return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-'; });
+}
+
+std::optional<LobbyTarget> lobbyTarget(const ClientOptions& options) {
+  if (!options.lobbyMode()) return std::nullopt;
+  LobbyTarget t;
+  t.create = options.room.empty();
+  t.region = options.region;
+  t.code = options.room;
+  return t;
+}
+
+std::string roomShareText(const LobbyRoomInfo& room, std::string_view pageUrl,
+                          std::string_view lobbyUrl) {
+  if (pageUrl.empty()) {
+    std::string s;
+    if (!lobbyUrl.empty()) s += "--lobby " + std::string(lobbyUrl) + " ";
+    return s + "--room " + room.code;
+  }
+  // The page without its query and fragment, then ?room=CODE; a ?lobby=
+  // the page was opened with goes along (a development lobby), anything
+  // else (create, region, bots, ...) stays behind.
+  const std::size_t cut = pageUrl.find_first_of("?#");
+  std::string link(pageUrl.substr(0, cut));
+  link += "?room=" + room.code;
+  if (cut != std::string_view::npos && pageUrl[cut] == '?') {
+    std::string_view query = pageUrl.substr(cut + 1);
+    query = query.substr(0, query.find('#'));
+    while (!query.empty()) {
+      const std::size_t amp = query.find('&');
+      const std::string_view param = query.substr(0, amp);
+      if (param.starts_with("lobby=")) link += "&" + std::string(param);
+      query.remove_prefix(amp == std::string_view::npos ? query.size() : amp + 1);
+    }
+  }
+  return link;
+}
 
 ai::BotSpec botSpec(const ClientOptions& options) {
   ai::BotSpec spec{.kind = ai::BotKind::Reference, .tier = options.botDifficulty, .path = {}};
@@ -36,7 +112,8 @@ ai::BotSpec botSpec(const ClientOptions& options) {
 
 NetSessionConfig netSessionConfig(const ClientOptions& options, bool atStartup) {
   NetSessionConfig c;
-  c.serverLabel = options.connect;
+  c.serverLabel = options.lobbyMode() ? options.lobby : options.connect;
+  c.lobby = lobbyTarget(options);
   for (const char ch : options.token)
     c.token.push_back(static_cast<std::byte>(ch));
   c.spectate = options.spectate;
@@ -85,6 +162,8 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.capsules = true;
     } else if (arg == "--mute") {
       out.mute = true;
+    } else if (arg == "--verbose") {
+      out.verbose = true;
     } else if (arg == "--volume") {
       uint64_t n = 0;
       if (!value(i, n)) return false;
@@ -183,6 +262,38 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       } else {
         out.stun = v;
       }
+    } else if (arg == "--lobby" || arg == "--room" || arg == "--region") {
+      if (i + 1 >= args.size()) {
+        error = std::string(arg) + " needs a value";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      if (arg == "--lobby") {
+        if (!isWsUrl(v)) {
+          error = "--lobby needs a ws:// or wss:// URL, got '" + std::string(v) + "'";
+          return false;
+        }
+        out.lobby = v;
+      } else if (arg == "--room") {
+        const std::optional<std::string> code = normalizeRoomCode(v);
+        if (!code) {
+          error =
+              "--room needs a 5-character room code (letters and digits, no I, O, 0 or 1), "
+              "got '" +
+              std::string(v) + "'";
+          return false;
+        }
+        out.room = *code;
+      } else {
+        if (!isRegionLabel(v)) {
+          error =
+              "--region needs a region label such as eu, us or asia, got '" + std::string(v) + "'";
+          return false;
+        }
+        out.region = v;
+      }
+    } else if (arg == "--create") {
+      out.create = true;
     } else if (arg == "--spectate") {
       out.spectate = true;
     } else if (arg == "--players") {
@@ -197,6 +308,20 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       error = "unknown argument '" + std::string(arg) + "'";
       return false;
     }
+  }
+  if (!out.room.empty() && out.create) {
+    error = "--room and --create exclude each other";
+    return false;
+  }
+  if (out.lobbyMode() && !out.connect.empty()) {
+    error = std::string(out.create ? "--create" : "--room") +
+            " joins through the lobby: it excludes --connect";
+    return false;
+  }
+  if (out.lobbyMode() && out.lobby.empty()) {
+    error = std::string(out.create ? "--create" : "--room") +
+            " needs a lobby: pass --lobby ws://host:port (this build has no default)";
+    return false;
   }
   return true;
 }

@@ -47,10 +47,13 @@ lifecycle in `AgentHost`, the filled Observation v1 fields, `kfm_arena --team` a
 v0.36 into M6a (ship on the web: hosting, the lobby service, regional servers) and M6b (the bot
 ladder: accounts and teams, source-only C++ submissions built in a sandbox, ratings, replays, a
 Rust CLI; the service lives in the bots repository, architecture §8 "The ladder"). M6a's shape
-is decided in v0.37 (§13.5): a Rust lobby service in `services/lobby/` that owns rooms, tokens,
-signaling and the server registry, servers that dial it, one `kfm_server` per match under
-systemd, `deploy/` for images and units, Google Cloud Compute Engine then Hetzner, Cloudflare
-Pages, Caddy, Sentry.
+was decided in v0.37 and its code landed in v0.38 (§13.5, `docs/lobby-protocol.md`): the Rust
+lobby service in `services/lobby/` owns rooms, tokens, signaling and the server registry;
+servers dial it (`kfm_server --lobby`, `LobbyLink`, external signaling on `WebRtcTransport`);
+clients create or join rooms (`--lobby/--room/--create`, `?room=`); one `kfm_server` per match
+under systemd; `deploy/` holds the images, units and VM scripts; Google Cloud Compute Engine
+then Hetzner, GitHub Pages for the page, Caddy, Sentry. The accounts, the first VM and the
+playtest over a real link are pending.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -156,6 +159,18 @@ cmake --preset dev -DKFM_WASM_BOTS=OFF         # build without WAMR (reference b
 cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
 build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL]   # join a server
 #   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves; pause/step/time scale/tuning are off online
+cargo run --manifest-path services/lobby/Cargo.toml -- --listen 127.0.0.1:8080 --secret dev   # the lobby service (M6a,
+#   docs/lobby-protocol.md); cargo test/fmt/clippy there; curl 127.0.0.1:8080/healthz
+build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev --region eu --bots 3 [--ice-ports 40000-40099]
+#   lobby mode: dials URL/server, no --port/--bind/--token (secret also from env KFM_LOBBY_SECRET); one room per process
+build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
+build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE              # join it (any case); -DKFM_LOBBY_URL=...
+#   bakes a default; browser: kfm_client.html?lobby=ws://127.0.0.1:8080&create or ?room=CODE (config.js next to the page
+#   supplies lobbyUrl and sentryDsn in production); the lobby panel's Online rows do the same; Esc leaves;
+#   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). A real-link check needs
+#   --exit-after-frames in the thousands: headless without vsync the client runs hundreds of frames a second
+deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
+#   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images + GitHub Pages); docker compose -f deploy/docker-compose.yml
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
 build/dev/apps/net-probe/kfm_net_probe --connect ws://127.0.0.1:9123 --messages 300   # native end-to-end check
@@ -306,7 +321,14 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Third-party sources fetched into `build/<preset>/_deps` may ship their own `.clang-tidy`;
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
-- Next milestone: M6a (ship on the web) and M6b (the bot ladder), architecture §11; M6b's
+- Lobby protocol changes go to `docs/lobby-protocol.md` first; the Rust suite, `kfm_lobby_tests`
+  (label `network`, a fake lobby in-process) and the client's session test all pin it. Every
+  envelope is a flat JSON object of strings (nested signaling rides as a string in `msg`) so
+  the engine's hand-written decoder reads it. `ServerHost` must stay lobby-agnostic: the wiring
+  is `LobbyAdapter` in apps/server. GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>`
+  as a null dereference (`-Werror` on the Release legs): move instead.
+- Next milestone: M6a's deployment (accounts, the first VM, the playtest) and M6b (the bot
+  ladder), architecture §11; M6b's
   first steps in this repo are the `contest` mode, the append-only `kfm_arena` JSON result and a
   tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one
   architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)

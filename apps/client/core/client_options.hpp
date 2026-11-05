@@ -7,17 +7,34 @@
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
+//              [--lobby URL] [--room CODE | --create [--region R]]
+//
+// M6a (architecture §13.5, docs/lobby-protocol.md §3): --room / --create join
+// or create a room through the lobby at --lobby (default: the build's
+// KFM_LOBBY_URL, empty unless the build sets it) and are network mode like
+// --connect, which they exclude; --token is then the lobby's, not the flag's.
 #pragma once
 
 #include "kfm/ai/bot_spec.hpp"
 #include "match_session.hpp"
 #include "net_session.hpp"
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 
 namespace kfm::client {
+
+// The regions the lobby panel cycles through (docs/lobby-protocol.md §2:
+// operator labels; --region takes any other too).
+inline constexpr std::array<const char*, 3> kRegions{"eu", "us", "asia"};
+
+// The build's default lobby URL (the KFM_LOBBY_URL CMake cache variable);
+// empty when the build sets none.
+[[nodiscard]] const char* defaultLobbyUrl();
 
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
@@ -28,6 +45,7 @@ inline constexpr const char* kUsage =
     "                  [--mute] [--volume 0..100]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
+    "                  [--lobby URL] [--room CODE | --create [--region R]]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
@@ -55,6 +73,7 @@ inline constexpr const char* kUsage =
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
+    "  --verbose              online: the transport's own log (ICE, DTLS, the lobby socket)\n"
     "  --volume N             master volume in percent, 0-100 (default 80)\n"
     "network mode:\n"
     "  --connect ws://h:p     play on a server: connects at startup; Esc goes to the\n"
@@ -63,7 +82,15 @@ inline constexpr const char* kUsage =
     "  --spectate             watch without a slot\n"
     "  --stun URL             STUN server (stun:host:port) for ICE\n"
     "  --players N            local slots to request (default: 1 at startup, then\n"
-    "                         the devices bound in the lobby when connecting)\n";
+    "                         the devices bound in the lobby when connecting)\n"
+    "rooms (through the lobby service; not with --connect):\n"
+    "  --lobby URL            the lobby's base URL, ws:// or wss:// (default: the\n"
+    "                         build's KFM_LOBBY_URL, if any); the lobby panel then\n"
+    "                         offers Create room and Join\n"
+    "  --room CODE            join room CODE (5 characters) at startup\n"
+    "  --create               create a room at startup and join it\n"
+    "  --region R             the region of --create and of the panel's Create\n"
+    "                         room: eu (default), us, asia or any server region\n";
 
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
@@ -85,16 +112,43 @@ struct ClientOptions {
   bool settings{true};  // read and save the lobby settings (lobby_settings.hpp)
   // Audio (§7): the mixer's starting settings; the overlay can change them.
   bool mute{false};
-  uint8_t volume{80};  // percent, = presentation::kDefaultMasterVolume
+  bool verbose{false};  // network mode: libdatachannel's log at Debug on stderr
+  uint8_t volume{80};   // percent, = presentation::kDefaultMasterVolume
   // Network mode (empty connect: local play).
   std::string connect;  // signaling URL, "ws://host:port"
   std::string token;
   std::string stun;  // "stun:host:port"
   bool spectate{false};
   uint8_t players{0};  // local slots to request; 0 = the bound devices
+  // Rooms (M6a): the lobby's base URL, a room to join or a room to create.
+  std::string lobby{defaultLobbyUrl()};
+  std::string room;  // --room, normalised upper case; empty = none
+  bool create{false};
+  std::string region{kRegions[0]};  // --region: --create's and the panel's region
 
-  [[nodiscard]] bool networkMode() const { return !connect.empty(); }
+  // --connect, --room or --create: the client plays online from startup and
+  // the lobby's Start (re)connects.
+  [[nodiscard]] bool networkMode() const { return !connect.empty() || lobbyMode(); }
+  // --room or --create (with a lobby URL, which parsing ensures).
+  [[nodiscard]] bool lobbyMode() const { return !room.empty() || create; }
 };
+
+// The room the options name (--room or --create), or none.
+[[nodiscard]] std::optional<LobbyTarget> lobbyTarget(const ClientOptions& options);
+
+// A room code as the lobby sends it: 5 characters of
+// ABCDEFGHJKLMNPQRSTUVWXYZ23456789, any case in, upper case out
+// (docs/lobby-protocol.md §2). Anything else is nullopt.
+[[nodiscard]] std::optional<std::string> normalizeRoomCode(std::string_view code);
+[[nodiscard]] bool isRoomCodeChar(char c);
+// A region label: 1-16 characters of a-z, 0-9, '-'.
+[[nodiscard]] bool isRegionLabel(std::string_view region);
+// What a player should send a friend to join `room`: in the browser
+// (`pageUrl` = window.location.href) the page's link with ?room=CODE (and
+// the page's own ?lobby= when it had one), natively the flags
+// "--lobby URL --room CODE".
+[[nodiscard]] std::string roomShareText(const LobbyRoomInfo& room, std::string_view pageUrl,
+                                        std::string_view lobbyUrl);
 
 // The bots of local play: the module when one is given (falling back to
 // the reference bot at botDifficulty), else the reference bot at it.

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.37 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.38 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -315,6 +315,17 @@ Cloud Compute Engine first (credits), Hetzner Cloud after, Cloudflare Pages for 
 Caddy for TLS, Sentry's free tier for errors; everything deployed as container images and
 systemd units under `deploy/` with no provider-specific service, so the switch is a day. No
 code change.
+v0.38 changes: M6a as built in this repository (§6.4, §6.5, §9, §11, §13.5): the lobby
+protocol pinned in `docs/lobby-protocol.md`; the Rust lobby service in `services/lobby/`;
+external signaling and the lobby client mode on `WebRtcTransport`, `LobbyLink` and
+`kfm_server --lobby`; the client's `--lobby`/`--room`/`--create` flow, the Online rows and
+`config.js`; `deploy/` and the tag-triggered release workflow. Corrections to v0.37: the lobby
+wiring is an adapter beside `ServerHost`, not inside it; the VMs run Ubuntu with containers,
+not Debian; `capacity` is the total of human slots, never net of joined humans; the page's
+`.js`/`.wasm` are published under a content-hashed directory because their names never change;
+the client page is on GitHub Pages, not Cloudflare Pages (the repository is public, so the site
+is free and needs no second account or domain; only the lobby needs a hostname).
+The deployment itself (accounts, the first VM, the playtest over a real link) is pending.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2041,6 +2052,26 @@ As built (v0.17), `kfm::net::WebRtcTransport` (`engine/net`, target `kfm_net_web
   the browser) and catches at every entry point; its header includes nothing from `rtc::`, and
   `kfm_net` stays exception-free. The connection token rides in the client config for the message
   layer to send; the transport never validates it (§6.7).
+- Lobby modes (v0.38, `docs/lobby-protocol.md`): `WebRtcServerConfig::externalSignaling`
+  creates no WebSocket server; the host relays signaling through `acceptExternalPeer()`,
+  `deliverSignaling()`, `takeOutgoingSignaling()`, `takeDroppedExternalPeers()` and
+  `closeExternalPeer()`, with the same PeerId numbering, `maxPeers` and connect timeout as
+  socket peers (callbacks still only enqueue; outgoing answers and candidates are queued and
+  drained on the caller's thread). `WebRtcClientConfig::lobby` (`LobbyRequest`: create in a
+  region or join a code, build id and content hash as 8 hex digits) makes `signalingUrl` the
+  lobby's base URL (`/client` appended): the first frame is the request, the reply must be
+  `joined` (the token becomes `connectionToken()`, `lobbyRoom()` the code and region, and only
+  then the offer goes out) or `refused` (Disconnected, `lastError()` "lobby refused: reason");
+  the socket stays open for the transport's lifetime and its close is always Disconnected. The
+  envelopes are flat JSON objects of strings, read by the same hand-written decoder
+  (`signaling::decodeObject`/`encodeObject`). `NetClient::setToken()` hands the lobby token
+  over before the first `pump()` after `joined`. `LobbyLink` (`kfm/net/lobby_link.hpp`, native,
+  in `kfm_net_webrtc`) is the server's socket to `<lobby>/server`: register, peers and tokens
+  (`acceptsToken()` is `ServerConfig::acceptToken`), relay both ways, `peer_gone` for peers the
+  transport dropped itself, `capacity`, and a reconnect with backoff (1 s doubling to 30 s,
+  reset once registered; a `refused` registration is retried the same way, the process stays
+  up). Tested in `kfm_lobby_tests` (label `network`) against an in-process fake lobby and in
+  `kfm_net_webrtc_tests` by relaying between two transports by hand with no socket at all.
 
 Why WebRTC everywhere rather than GNS natively plus WebRTC for the browser: with the browser as
 the primary client there is exactly one transport in production, one code path to harden, and
@@ -2068,7 +2099,16 @@ C++ server library is mature. The seam makes that swap a contained change.
   client; a different rule set is a mode in the content, chosen with `--mode` (v0.18). The
   multi-match host below is the target shape; M6a ships one process per match under a
   systemd pool and only builds `MatchHost` if a VM runs out of processes before it runs out
-  of CPU (§13.5, v0.37).
+  of CPU (§13.5, v0.37). As built (v0.38): `kfm_server --lobby URL --lobby-secret S --region R
+  [--name N]` (the secret also from `KFM_LOBBY_SECRET`, the name defaults to hostname:pid,
+  exclusive with `--port`/`--bind`/`--token`, no TCP port bound) runs the same `ServerHost`
+  with a `LobbyAdapter` (`apps/server/server_lobby.hpp`) beside it: the token check is the
+  link's token set, the stats line ends with the lobby state, a room assigned while no peer is
+  connected restarts the match through `ServerHost::startNewMatch` (the bots are re-seeded),
+  and the capacity sent is max players minus bots, updated only when that total changes.
+  `--ice-ports A-B` and `--stun` apply in both modes (the VM firewall opens the range; GCP's
+  1:1 NAT needs the STUN-derived server-reflexive candidate). `ServerHost` itself still knows
+  nothing about the lobby and its loopback tests are unchanged.
 - Server (target): `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
   matches on a thread pool (the sim is cheap). One socket I/O thread timestamps arrivals and
   pushes to a single-producer single-consumer queue per match.
@@ -3146,6 +3186,18 @@ lives in the bots repository (above) and uses this repository through a pinned r
   `kfm_net_webrtc`'s interface link options; the setting is last-wins, so an executable that
   sets its own list must keep both). Linking the transport into `kfm_client.html` costs about
   4 KB gzipped (23 KB once referenced) and nothing in frame pacing.
+- Lobby and deployment (v0.38): the Rust service has 4 unit and 18 integration tests
+  (tokio-tungstenite clients against the lobby in-process on port 0, covering every refusal
+  reason, the relay in both directions, expiry, capacity, the rate and size limits and the
+  first-message timeout) and a `lobby` CI job (fmt, clippy with `-D warnings`, test, all
+  `--locked`). `.github/workflows/deploy.yml` runs on `v*` tags and by hand: it pushes the
+  `kfm-server` (the `server-headless` preset in an Ubuntu 26.04 builder, `kfm_server` and
+  `kfm_arena` with `content/` in a non-root runtime image) and `kfm-lobby` images to GHCR and
+  publishes the wasm client to the repository's GitHub Pages site with `config.js` generated
+  from repository variables. `deploy/` holds the compose file for local development, the systemd
+  units (`kfm-lobby.service`, `kfm-server@.service` over Docker with host networking), the
+  Caddyfile, `install.sh`/`update.sh`, the `gcloud` scripts and the Hetzner equivalent;
+  `deploy/README.md` is the runbook.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
   hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
@@ -3246,7 +3298,7 @@ lives in the bots repository (above) and uses this repository through a pinned r
 | Message layer, prediction/rollback, clock sync, network emulator | libdatachannel + datachannel-wasm (transport); GameNetworkingSockets only for a Steam build |
 | Bots, observation builder, the bot ABI and SDKs, match runner | LZ4, xxHash, toml++ or nlohmann-json |
 | Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, WAMR 2.4.5 (the wasm bot runtime: classic interpreter with instruction metering, §8), cgltf, Blender (asset pipeline) |
-| The lobby service (Rust: Tokio, axum, tokio-tungstenite; rooms, tokens, signaling relay, server registry, §13.5) | Caddy (TLS), Cloudflare Pages (client CDN), Google Cloud Compute Engine then Hetzner Cloud (VMs), Sentry free tier (browser and lobby errors), systemd and journald (process pool and logs) |
+| The lobby service (Rust: Tokio, axum, tokio-tungstenite; rooms, tokens, signaling relay, server registry, §13.5) | Caddy (TLS), GitHub Pages (the client page), Google Cloud Compute Engine then Hetzner Cloud (VMs), Sentry free tier (browser and lobby errors), systemd and journald (process pool and logs) |
 
 Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `server-headless`, `wasm` (Emscripten).
 M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
@@ -3319,7 +3371,7 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M4 Content | Power-ups, modifiers, more abilities, arenas, modes, lobby UI, audio/VFX | Content added without touching system code |
 | M5 Agent platform | `IAgent` and the versioned `Observation`, bot ABI v1 and `WasmAgent` over the wasm runtime, the reference bot in lobbies and on the server, `kfm_arena`, SDK v1 and example bots published from the bots repository (§8) | A bot built outside this repository against SDK v1 beats the reference bot in a `kfm_arena` tournament run |
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
-| M6a Ship on the web | The client on Cloudflare Pages; the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
+| M6a Ship on the web | The client on GitHub Pages (v0.38; Cloudflare Pages in v0.37); the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
 | M6b The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, replays served with their season's content, the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
@@ -3354,6 +3406,29 @@ calls, `Observation` fields, `kfm_arena --team`, per-instance lifecycle (no sim 
 change beyond the `call` ability's event). Steps 1 to 3 are worth doing even if the grid is
 dropped; step 4 is the only one with design risk and is prototyped behind the table before the
 contest layer goes on top.
+
+Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
+step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
+`kfm_server --lobby`, the client's room flow natively and in the browser, `deploy/` and the
+release workflow. Verified locally: the Rust suite, the headless and `dev` builds with every
+non-soak test, the real-socket lobby tests, a native lobby + server + two clients on one
+machine, and the browser page creating a room through a local lobby in headless Chromium
+(§13.5 as built). Then a test deployment on Google Cloud (`kfm-asia-1`, an `e2-small` in
+asia-south1 created by `deploy/gcp/create_vm.sh`, the images loaded from a local build, a
+`<ip>.sslip.io` name for Caddy's certificate): `/healthz` over HTTPS, two native clients from a
+home connection in one room on that server at 160 ms RTT for 30 s with 0 checksum mismatches
+and 0 resyncs, and the browser page creating and joining a room from headless Chromium. Two
+things that test taught: a client's `--exit-after-frames` counts frames and a headless client
+without vsync runs hundreds of frames a second, so a real-link check needs a budget of
+thousands (the first runs ended before the handshake and looked like a network fault); and a
+room holds its server process for the ten-minute expiry after its last peer leaves, so a pool
+of N processes serves at most N rooms created in any ten minutes, abandoned ones included
+(size the pool for that, or shorten `--room-ttl-seconds`). Open: `late_inputs/s` on the server
+was high at 160 ms RTT while substitutions stayed near 1/s, so the lead control deserves a
+look in the human playtest. Not yet done: the production names and secrets, the GitHub Pages
+site, a tagged release, the playtest with friends over the real link, the second region and a
+Sentry project; the exit criterion ("send a link, friends are in a match within a minute") is
+judged there.
 
 Progress: M5b landed in v0.35. Against the exit criterion: "a 5v5 bot match on a tilemap arena
 with `own` vision and calls replays identically across the determinism gate at one-tick
@@ -3789,7 +3864,7 @@ baseline moved to C++23 (§9).
 - Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP
   endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
   `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
-  Hetzner Cloud after, with the deployment portable by construction; Cloudflare Pages, Caddy,
+  Hetzner Cloud after, with the deployment portable by construction; GitHub Pages (v0.38), Caddy,
   Sentry's free tier (§13.5). Open: whether M6b's accounts and the lobby ever share an identity
   (a guest id is enough to play), and whether the lobby moves to its own host once there is a
   second region.
@@ -4006,6 +4081,58 @@ Scale path: (1) one VM; (2) a VM per region; (3) `MatchHost` and the lobby on it
 (registration is an outbound socket either way, so the protocol does not change); (4) a
 database when accounts arrive. M6b's identity provider is the ladder's; whether the lobby ever
 shares it is open (§12).
+
+**As built (v0.38).** The wire format is `docs/lobby-protocol.md` (normative; the service, the
+transport and the apps follow it, and its resolved ambiguities are recorded there: a missing
+required key on a first message is refused `bad_request` while the same after `registered` or
+`joined` is a protocol error; `create` picks among free servers whose build and content match;
+`capacity` is the total of human slots a process offers and the lobby counts occupancy by open
+client sockets). `services/lobby/` is the Rust binary `kfm-lobby` (Tokio, axum 0.8, serde_json,
+clap, tracing; Sentry behind a default cargo feature, started only with `SENTRY_DSN`): all state
+behind one mutex never held across an await, one task per socket with the token-bucket rate
+limit and the frame size limit, `--listen`, `--secret`/`KFM_LOBBY_SECRET`,
+`--room-ttl-seconds`, `--log-level`, `/healthz`. Servers dial `<lobby>/server` and clients
+`<lobby>/client`; both apps take the base URL. The server side is §6.4 "Lobby modes" and §6.5;
+the wiring lives in `LobbyAdapter` next to `ServerHost`, not inside it (correcting v0.37).
+The client (apps/client, v0.38): `--lobby URL` (default the CMake cache variable
+`KFM_LOBBY_URL`, empty unless the build sets it; the browser page takes it from `config.js`
+next to it, `window.KFM_CONFIG = { lobbyUrl, sentryDsn }`, which the wasm build also writes
+with the configured value so a local `serve.py` has one), `--room CODE` (any case) and
+`--create [--region R]` (default `eu`); the two exclude each other and `--connect`, which stays
+the direct development path; `--token`, `--stun`, `--spectate` and `--players` keep working,
+and in lobby mode the lobby's token replaces `--token`. In the browser `?room=CODE` and
+`?create&region=us` go through the existing query-to-flags conversion, so an invite is the
+page URL with `?room=CODE` (plus `&lobby=` when the page had one); natively it is `--lobby URL
+--room CODE`. `NetSessionConfig::lobby` (a `LobbyTarget`) and an `ILobbyJoin` view of the
+transport (room, token, error) attached with `NetSession::attachLobby()` carry the join: the
+token is applied before the first `pump()` that sees the room, and a refusal never sends a
+Hello; the loopback session test fakes a lobby-mode transport that withholds Connected until
+`joined`. The lobby settings panel gains an Online section when a lobby URL is configured
+(Create room with the region cycled over eu/us/asia and activated by Enter, a pad's Start or
+a button; a Join field as an ImGui upper-case text input over the room alphabet); the region is
+saved with the settings. In a match the HUD shows "Room ABCDE (eu)" and the invite; before it,
+the status window shows the join in progress, then the code with a Copy button, and every
+refusal or close in plain words ("Room ABCDE not found", "Room ABCDE is full", "No server
+available in eu", "Version mismatch: reload the page or update the client", ...); Escape
+returns to the local lobby, whose Start rejoins a room made with `--create`. `shell.html`
+loads `config.js`, adds `--lobby` from it when the query has none and, only with a
+`sentryDsn`, the pinned Sentry browser bundle (subresource integrity, `crossorigin`) wired to
+`window.onerror`, unhandled rejections and Emscripten's `onAbort`. `IPlatformServices`
+(`kfm/platform/platform_services.hpp`, the SDL-free target `kfm_platform_services`) is the
+minimal seam: a guest id generated once and kept in `guest_id.txt` in SDL's pref dir or
+`kfm.guest_id` in localStorage (per run under `--no-settings`), and the lobby URL; `Null`
+serves tests. The guest id is sent nowhere yet; M6b binds it.
+Deployment as built: the VMs run Ubuntu 24.04 LTS and only containers (correcting v0.37's
+Debian), so the host compiler is irrelevant; the units run the GHCR images with host
+networking so ICE sees the real interface; `kfm.env` carries the secret, region, name prefix,
+bot count, image tag and, on a server-only VM, the EU lobby's `wss://` URL; the ICE UDP range
+is 40000-40099 by default and the units pass it with `--ice-ports`; `--stun` defaults to
+Google's public STUN. The release workflow publishes the page as `index.html` with its `.js`
+and `.wasm` under `assets/<sha256>/` (immutable caching; the names alone never change between
+builds) to the repository's GitHub Pages site, `https://<owner>.github.io/<repo>/`, with
+`config.js` beside it; the lobby's hostname is a domain of the operator's or a free
+dynamic-DNS name that Let's Encrypt certifies (the runbook names DuckDNS).
+`deploy/README.md` is the day-one runbook; `deploy/hetzner.md` the provider switch.
 
 ### 13.6 Sequencing
 

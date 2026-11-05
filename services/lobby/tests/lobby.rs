@@ -1,0 +1,760 @@
+//! Integration tests: an in-process lobby on an ephemeral port, driven over
+//! real WebSockets the way game servers and clients use it
+//! (docs/lobby-protocol.md).
+
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::time::Duration;
+
+use futures_util::{SinkExt, StreamExt};
+use kfm_lobby::LobbyConfig;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
+type Fields = HashMap<String, String>;
+
+const SECRET: &str = "test-secret";
+const BUILD: &str = "0badc0de";
+const CONTENT: &str = "12345678";
+const WAIT: Duration = Duration::from_secs(5);
+
+fn config() -> LobbyConfig {
+    LobbyConfig::new(SECRET)
+}
+
+async fn start(config: LobbyConfig) -> SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(kfm_lobby::run(config, listener));
+    addr
+}
+
+async fn connect(addr: SocketAddr, path: &str) -> Ws {
+    let (ws, _) = tokio_tungstenite::connect_async(format!("ws://{addr}{path}"))
+        .await
+        .unwrap();
+    ws
+}
+
+fn json(pairs: &[(&str, &str)]) -> String {
+    let map: serde_json::Map<String, serde_json::Value> = pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), serde_json::Value::String((*v).to_owned())))
+        .collect();
+    serde_json::Value::Object(map).to_string()
+}
+
+async fn send(ws: &mut Ws, text: impl Into<String>) {
+    ws.send(Message::text(text.into())).await.unwrap();
+}
+
+/// The next text frame, raw.
+async fn recv_text(ws: &mut Ws) -> String {
+    loop {
+        let message = tokio::time::timeout(WAIT, ws.next())
+            .await
+            .expect("timed out waiting for a message")
+            .expect("socket ended")
+            .expect("socket error");
+        match message {
+            Message::Text(text) => return text.as_str().to_owned(),
+            Message::Ping(_) | Message::Pong(_) => continue,
+            other => panic!("expected a text frame, got {other:?}"),
+        }
+    }
+}
+
+async fn recv(ws: &mut Ws) -> Fields {
+    let text = recv_text(ws).await;
+    serde_json::from_str(&text).unwrap_or_else(|e| panic!("not a flat object {text}: {e}"))
+}
+
+/// Reads until the close frame and returns its code; `None` if the stream
+/// ended without one. Panics on a text frame.
+async fn expect_close(ws: &mut Ws) -> Option<u16> {
+    loop {
+        let next = tokio::time::timeout(WAIT, ws.next())
+            .await
+            .expect("timed out waiting for the close");
+        match next {
+            None | Some(Err(_)) => return None,
+            Some(Ok(Message::Close(frame))) => return frame.map(|f| u16::from(f.code)),
+            Some(Ok(Message::Text(text))) => panic!("expected a close, got {text}"),
+            Some(Ok(_)) => continue,
+        }
+    }
+}
+
+/// Asserts nothing arrives for a while.
+async fn expect_silence(ws: &mut Ws, for_: Duration) {
+    if let Ok(message) = tokio::time::timeout(for_, ws.next()).await {
+        panic!("expected silence, got {message:?}");
+    }
+}
+
+/// A `refused` with this reason, then close 1000.
+async fn expect_refused(ws: &mut Ws, reason: &str) {
+    let msg = recv(ws).await;
+    assert_eq!(msg["type"], "refused", "{msg:?}");
+    assert_eq!(msg["reason"], reason, "{msg:?}");
+    assert_eq!(expect_close(ws).await, Some(1000));
+}
+
+fn register_msg(name: &str, region: &str, capacity: &str) -> String {
+    json(&[
+        ("type", "register"),
+        ("secret", SECRET),
+        ("region", region),
+        ("name", name),
+        ("build", BUILD),
+        ("content", CONTENT),
+        ("capacity", capacity),
+    ])
+}
+
+async fn register(addr: SocketAddr, name: &str, region: &str, capacity: &str) -> Ws {
+    let mut ws = connect(addr, "/server").await;
+    send(&mut ws, register_msg(name, region, capacity)).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(reply["type"], "registered", "{reply:?}");
+    ws
+}
+
+async fn request(addr: SocketAddr, pairs: &[(&str, &str)]) -> (Ws, Fields) {
+    let mut ws = connect(addr, "/client").await;
+    send(&mut ws, json(pairs)).await;
+    let reply = recv(&mut ws).await;
+    (ws, reply)
+}
+
+async fn create(addr: SocketAddr, region: &str) -> (Ws, Fields) {
+    request(
+        addr,
+        &[
+            ("type", "create"),
+            ("region", region),
+            ("build", BUILD),
+            ("content", CONTENT),
+        ],
+    )
+    .await
+}
+
+async fn join(addr: SocketAddr, code: &str) -> (Ws, Fields) {
+    request(
+        addr,
+        &[
+            ("type", "join"),
+            ("code", code),
+            ("build", BUILD),
+            ("content", CONTENT),
+        ],
+    )
+    .await
+}
+
+/// The server side of a `create`: `room` then `peer`. Returns (code, peer, token).
+async fn expect_room(server: &mut Ws) -> (String, String, String) {
+    let room = recv(server).await;
+    assert_eq!(room["type"], "room", "{room:?}");
+    let (peer, token) = expect_peer(server).await;
+    (room["code"].clone(), peer, token)
+}
+
+async fn expect_peer(server: &mut Ws) -> (String, String) {
+    let peer = recv(server).await;
+    assert_eq!(peer["type"], "peer", "{peer:?}");
+    (peer["peer"].clone(), peer["token"].clone())
+}
+
+async fn regions(addr: SocketAddr) -> String {
+    let (mut ws, reply) = request(addr, &[("type", "regions")]).await;
+    assert_eq!(reply["type"], "regions");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+    reply["list"].clone()
+}
+
+async fn healthz(addr: SocketAddr) -> serde_json::Value {
+    let mut stream = TcpStream::connect(addr).await.unwrap();
+    stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nHost: lobby\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+    let body = response.split("\r\n\r\n").nth(1).unwrap();
+    serde_json::from_str(body).unwrap()
+}
+
+/// Polls `/healthz` until `check` holds (state changes after a close are
+/// asynchronous).
+async fn wait_health(addr: SocketAddr, check: impl Fn(&serde_json::Value) -> bool) {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        let health = healthz(addr).await;
+        if check(&health) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "health never matched: {health}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+// --- registration ---------------------------------------------------------
+
+#[tokio::test]
+async fn register_with_good_and_bad_secret() {
+    let addr = start(config()).await;
+
+    let mut bad = connect(addr, "/server").await;
+    send(
+        &mut bad,
+        register_msg("eu-1", "eu", "4").replace(SECRET, "wrong-secret"),
+    )
+    .await;
+    expect_refused(&mut bad, "bad_secret").await;
+
+    let mut missing = connect(addr, "/server").await;
+    send(
+        &mut missing,
+        json(&[("type", "register"), ("secret", SECRET), ("region", "eu")]),
+    )
+    .await;
+    expect_refused(&mut missing, "bad_request").await;
+
+    let mut not_register = connect(addr, "/server").await;
+    send(
+        &mut not_register,
+        json(&[("type", "capacity"), ("capacity", "3")]),
+    )
+    .await;
+    expect_refused(&mut not_register, "bad_request").await;
+
+    let mut bad_capacity = connect(addr, "/server").await;
+    send(&mut bad_capacity, register_msg("eu-1", "eu", "lots")).await;
+    expect_refused(&mut bad_capacity, "bad_request").await;
+
+    let _good = register(addr, "eu-1", "eu", "4").await;
+    let health = healthz(addr).await;
+    assert_eq!(health["servers"], 1);
+}
+
+#[tokio::test]
+async fn regions_lists_regions_with_a_free_server() {
+    let addr = start(config()).await;
+    assert_eq!(regions(addr).await, "");
+
+    let mut eu = register(addr, "eu-1", "eu", "4").await;
+    let _us = register(addr, "us-1", "us", "4").await;
+    let _asia_full = register(addr, "asia-1", "asia", "0").await;
+    assert_eq!(regions(addr).await, "eu,us");
+
+    // The only eu server now hosts a room: eu is no longer offered.
+    let (_client, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut eu).await;
+    assert_eq!(regions(addr).await, "us");
+}
+
+// --- create, join, relay --------------------------------------------------
+
+#[tokio::test]
+async fn create_join_and_relay_signaling_both_ways() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+
+    let (mut a, joined) = create(addr, "eu").await;
+    let (code, peer_a, token_a) = expect_room(&mut server).await;
+    assert_eq!(joined["type"], "joined");
+    assert_eq!(joined["code"], code);
+    assert_eq!(joined["token"], token_a);
+    assert_eq!(joined["region"], "eu");
+    assert_eq!(code.len(), 5);
+    assert!(code
+        .bytes()
+        .all(|b| b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789".contains(&b)));
+    assert_eq!(token_a.len(), 32);
+    assert!(token_a
+        .bytes()
+        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
+
+    // Client → server: the exact original text inside a signal envelope.
+    let offer = r#"{"type":"offer","sdp":"v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n\"quoted\" é"}"#;
+    send(&mut a, offer).await;
+    let signal = recv(&mut server).await;
+    assert_eq!(signal["type"], "signal");
+    assert_eq!(signal["peer"], peer_a);
+    assert_eq!(signal["msg"], offer);
+
+    // Server → client: unwrapped, unchanged.
+    let answer = r#"{"type":"answer","sdp":"v=0\r\na=x\r\n"}"#;
+    send(
+        &mut server,
+        json(&[("type", "signal"), ("peer", &peer_a), ("msg", answer)]),
+    )
+    .await;
+    assert_eq!(recv_text(&mut a).await, answer);
+
+    // A second client joins with a lower-case code.
+    let (mut b, joined_b) = join(addr, &code.to_lowercase()).await;
+    let (peer_b, token_b) = expect_peer(&mut server).await;
+    assert_eq!(joined_b["type"], "joined");
+    assert_eq!(joined_b["code"], code);
+    assert_eq!(joined_b["token"], token_b);
+    assert_ne!(peer_a, peer_b);
+    assert_ne!(token_a, token_b);
+
+    let candidate =
+        r#"{"type":"candidate","candidate":"candidate:1 1 UDP 1 10.0.0.1 9 typ host","mid":"0"}"#;
+    send(&mut b, candidate).await;
+    let signal = recv(&mut server).await;
+    assert_eq!(signal["peer"], peer_b);
+    assert_eq!(signal["msg"], candidate);
+
+    // Server candidates go to the addressed peer only.
+    send(
+        &mut server,
+        json(&[("type", "signal"), ("peer", &peer_b), ("msg", candidate)]),
+    )
+    .await;
+    assert_eq!(recv_text(&mut b).await, candidate);
+    expect_silence(&mut a, Duration::from_millis(200)).await;
+
+    let health = healthz(addr).await;
+    assert_eq!(health["servers"], 1);
+    assert_eq!(health["rooms"], 1);
+    assert_eq!(health["regions"], serde_json::json!([]));
+}
+
+#[tokio::test]
+async fn create_picks_the_lowest_name_among_free_servers() {
+    let addr = start(config()).await;
+    let mut eu2 = register(addr, "eu-2", "eu", "4").await;
+    let mut eu1 = register(addr, "eu-1", "eu", "4").await;
+    let mut busy = register(addr, "eu-0", "eu", "0").await;
+
+    let (_a, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut eu1).await;
+
+    let (_b, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut eu2).await;
+    expect_silence(&mut busy, Duration::from_millis(100)).await;
+}
+
+// --- refusals -------------------------------------------------------------
+
+#[tokio::test]
+async fn refusal_reasons() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "1").await;
+
+    // unknown_code
+    let (mut ws, reply) = join(addr, "ZZZZZ").await;
+    assert_eq!(reply["reason"], "unknown_code");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+
+    // no_server: an unknown region.
+    let (mut ws, reply) = create(addr, "mars").await;
+    assert_eq!(reply["reason"], "no_server");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+
+    // mismatch on create: the only free server has another build.
+    let (mut ws, reply) = request(
+        addr,
+        &[("type", "create"), ("region", "eu"), ("build", "ffffffff")],
+    )
+    .await;
+    assert_eq!(reply["reason"], "mismatch");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+
+    let (_owner, joined) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut server).await;
+    assert_eq!(joined["type"], "joined");
+
+    // no_server: the region's only server is busy.
+    let (mut ws, reply) = create(addr, "eu").await;
+    assert_eq!(reply["reason"], "no_server");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+
+    // full: capacity 1 and one client in the room.
+    let (mut ws, reply) = join(addr, &code).await;
+    assert_eq!(reply["reason"], "full");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+
+    // mismatch on join (after making room for one more).
+    send(
+        &mut server,
+        json(&[("type", "capacity"), ("capacity", "4")]),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (mut ws, reply) = request(
+        addr,
+        &[
+            ("type", "join"),
+            ("code", &code),
+            ("build", BUILD),
+            ("content", "deadbeef"),
+        ],
+    )
+    .await;
+    assert_eq!(reply["reason"], "mismatch");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+
+    // bad_request: unknown type, missing keys.
+    for pairs in [
+        &[("type", "hello")][..],
+        &[("type", "create")][..],
+        &[("type", "join")][..],
+        &[("region", "eu")][..],
+        &[("type", "offer"), ("sdp", "v=0")][..],
+    ] {
+        let (mut ws, reply) = request(addr, pairs).await;
+        assert_eq!(reply["type"], "refused", "{pairs:?}");
+        assert_eq!(reply["reason"], "bad_request", "{pairs:?}");
+        assert_eq!(expect_close(&mut ws).await, Some(1000));
+    }
+
+    // bad_request: a second request on a joined socket; the server hears
+    // peer_gone.
+    let (mut second, joined) = join(addr, &code).await;
+    assert_eq!(joined["type"], "joined");
+    let (peer, _) = expect_peer(&mut server).await;
+    send(&mut second, json(&[("type", "join"), ("code", &code)])).await;
+    expect_refused(&mut second, "bad_request").await;
+    let gone = recv(&mut server).await;
+    assert_eq!(gone["type"], "peer_gone");
+    assert_eq!(gone["peer"], peer);
+}
+
+#[tokio::test]
+async fn frames_that_are_not_flat_objects_of_strings_close_with_1002() {
+    let addr = start(config()).await;
+    for frame in [
+        r#"{"type":"create","region":{"name":"eu"}}"#,
+        r#"{"type":"create","region":7}"#,
+        r#"{"type":"regions","x":null}"#,
+        r#"["regions"]"#,
+        "not json",
+    ] {
+        let mut ws = connect(addr, "/client").await;
+        send(&mut ws, frame).await;
+        assert_eq!(expect_close(&mut ws).await, Some(1002), "{frame}");
+    }
+
+    let mut ws = connect(addr, "/client").await;
+    ws.send(Message::binary(b"{}".to_vec())).await.unwrap();
+    assert_eq!(expect_close(&mut ws).await, Some(1002));
+
+    let mut ws = connect(addr, "/server").await;
+    send(&mut ws, r#"{"type":"register","capacity":4}"#).await;
+    assert_eq!(expect_close(&mut ws).await, Some(1002));
+
+    // After registration too, and the server's unknown messages.
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    send(&mut server, r#"{"type":"capacity","capacity":5}"#).await;
+    assert_eq!(expect_close(&mut server).await, Some(1002));
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    send(&mut server, json(&[("type", "register")])).await;
+    assert_eq!(expect_close(&mut server).await, Some(1002));
+
+    // A joined client's frame that is not flat.
+    let mut server = register(addr, "eu-2", "eu", "4").await;
+    let (mut client, _) = create(addr, "eu").await;
+    expect_room(&mut server).await;
+    send(&mut client, r#"{"type":"offer","sdp":["v=0"]}"#).await;
+    assert_eq!(expect_close(&mut client).await, Some(1002));
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+}
+
+// --- lifecycle ------------------------------------------------------------
+
+#[tokio::test]
+async fn client_close_sends_peer_gone() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut a, _) = create(addr, "eu").await;
+    let (_, peer, _) = expect_room(&mut server).await;
+    a.close(None).await.unwrap();
+    let gone = recv(&mut server).await;
+    assert_eq!(gone["type"], "peer_gone");
+    assert_eq!(gone["peer"], peer);
+    // The room lives on (no expiry yet).
+    assert_eq!(healthz(addr).await["rooms"], 1);
+}
+
+#[tokio::test]
+async fn server_close_sends_closed_server_gone() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut a, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut server).await;
+    let (mut b, _) = join(addr, &code).await;
+    expect_peer(&mut server).await;
+
+    drop(server);
+    for client in [&mut a, &mut b] {
+        let closed = recv(client).await;
+        assert_eq!(closed["type"], "closed");
+        assert_eq!(closed["reason"], "server_gone");
+        assert_eq!(expect_close(client).await, Some(1000));
+    }
+    let health = healthz(addr).await;
+    assert_eq!(health["servers"], 0);
+    assert_eq!(health["rooms"], 0);
+    let (_, reply) = join(addr, &code).await;
+    assert_eq!(reply["reason"], "unknown_code");
+}
+
+#[tokio::test]
+async fn server_peer_gone_kicks_the_client() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut a, _) = create(addr, "eu").await;
+    let (_, peer, _) = expect_room(&mut server).await;
+    send(&mut server, json(&[("type", "peer_gone"), ("peer", &peer)])).await;
+    let closed = recv(&mut a).await;
+    assert_eq!(closed["type"], "closed");
+    assert_eq!(closed["reason"], "kicked");
+    assert_eq!(expect_close(&mut a).await, Some(1000));
+    // The server dropped it itself: no peer_gone echoed back.
+    expect_silence(&mut server, Duration::from_millis(200)).await;
+}
+
+#[tokio::test]
+async fn empty_room_expires_and_frees_the_server() {
+    let ttl = Duration::from_millis(300);
+    let addr = start(config().with_room_ttl(ttl)).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+
+    let (mut a, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut server).await;
+
+    // A second create cannot reuse the server while its room lives.
+    let (_, reply) = create(addr, "eu").await;
+    assert_eq!(reply["reason"], "no_server");
+
+    a.close(None).await.unwrap();
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+    let closed = recv(&mut server).await;
+    assert_eq!(closed["type"], "room_closed");
+    assert_eq!(closed["code"], code);
+    assert_eq!(healthz(addr).await["rooms"], 0);
+
+    let (_, reply) = join(addr, &code).await;
+    assert_eq!(reply["reason"], "unknown_code");
+
+    // Now the server is free for a new room.
+    let (_b, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    let (new_code, _, _) = expect_room(&mut server).await;
+    assert_eq!(joined["code"], new_code);
+}
+
+#[tokio::test]
+async fn a_join_resets_the_expiry_timer() {
+    let ttl = Duration::from_millis(400);
+    let addr = start(config().with_room_ttl(ttl)).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut a, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut server).await;
+    a.close(None).await.unwrap();
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+
+    tokio::time::sleep(ttl / 4).await;
+    let (_b, joined) = join(addr, &code).await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut server).await;
+    // Well past the first timer: still no room_closed.
+    expect_silence(&mut server, ttl * 2).await;
+    assert_eq!(healthz(addr).await["rooms"], 1);
+}
+
+#[tokio::test]
+async fn capacity_update_changes_full() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "2").await;
+    let (_a, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut server).await;
+
+    send(
+        &mut server,
+        json(&[("type", "capacity"), ("capacity", "1")]),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_, reply) = join(addr, &code).await;
+    assert_eq!(reply["reason"], "full");
+
+    send(
+        &mut server,
+        json(&[("type", "capacity"), ("capacity", "3")]),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_b, reply) = join(addr, &code).await;
+    assert_eq!(reply["type"], "joined");
+    let (_c, reply) = join(addr, &code).await;
+    assert_eq!(reply["type"], "joined");
+    let (_, reply) = join(addr, &code).await;
+    assert_eq!(reply["reason"], "full");
+}
+
+// --- limits ---------------------------------------------------------------
+
+#[tokio::test]
+async fn rate_limit_closes_the_socket() {
+    let addr = start(config()).await;
+
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    for _ in 0..200 {
+        if server
+            .send(Message::text(json(&[
+                ("type", "capacity"),
+                ("capacity", "4"),
+            ])))
+            .await
+            .is_err()
+        {
+            break;
+        }
+    }
+    assert_eq!(expect_close(&mut server).await, Some(1002));
+
+    let mut server = register(addr, "eu-2", "eu", "4").await;
+    let (mut client, _) = create(addr, "eu").await;
+    expect_room(&mut server).await;
+    let candidate = json(&[("type", "candidate"), ("candidate", "c"), ("mid", "0")]);
+    for _ in 0..200 {
+        if client.send(Message::text(candidate.clone())).await.is_err() {
+            break;
+        }
+    }
+    assert_eq!(expect_close(&mut client).await, Some(1002));
+    // The burst (minus the create) got through, then the client was dropped.
+    let mut signals = 0;
+    loop {
+        let msg = recv(&mut server).await;
+        if msg["type"] == "peer_gone" {
+            break;
+        }
+        assert_eq!(msg["type"], "signal");
+        signals += 1;
+    }
+    assert!((119..=125).contains(&signals), "{signals} signals relayed");
+}
+
+#[tokio::test]
+async fn sustained_traffic_under_the_rate_is_fine() {
+    let addr = start(config().with_rate_limit(60.0, 5.0)).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    for _ in 0..20 {
+        send(
+            &mut server,
+            json(&[("type", "capacity"), ("capacity", "4")]),
+        )
+        .await;
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    expect_silence(&mut server, Duration::from_millis(100)).await;
+    assert_eq!(healthz(addr).await["servers"], 1);
+}
+
+#[tokio::test]
+async fn frame_size_limit() {
+    let addr = start(config()).await;
+
+    // Exactly 64 KiB is accepted (unknown keys are ignored).
+    let base = json(&[("type", "regions"), ("pad", "")]);
+    let pad = "x".repeat(64 * 1024 - base.len());
+    let frame = json(&[("type", "regions"), ("pad", &pad)]);
+    assert_eq!(frame.len(), 64 * 1024);
+    let mut ws = connect(addr, "/client").await;
+    send(&mut ws, frame).await;
+    assert_eq!(recv(&mut ws).await["type"], "regions");
+
+    // One byte more closes the socket.
+    let frame = json(&[("type", "regions"), ("pad", &format!("{pad}x"))]);
+    let mut ws = connect(addr, "/client").await;
+    send(&mut ws, frame).await;
+    assert_eq!(expect_close(&mut ws).await, Some(1002));
+
+    // A joined client's oversized signaling too.
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut client, _) = create(addr, "eu").await;
+    expect_room(&mut server).await;
+    let big = json(&[("type", "offer"), ("sdp", &"v".repeat(70 * 1024))]);
+    send(&mut client, big).await;
+    assert_eq!(expect_close(&mut client).await, Some(1002));
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+}
+
+#[tokio::test]
+async fn first_message_timeout() {
+    let timeout = Duration::from_millis(200);
+    let addr = start(config().with_first_message_timeout(timeout)).await;
+    for path in ["/client", "/server"] {
+        let mut ws = connect(addr, path).await;
+        let started = tokio::time::Instant::now();
+        assert_eq!(expect_close(&mut ws).await, Some(1002), "{path}");
+        assert!(started.elapsed() >= timeout - Duration::from_millis(20));
+    }
+
+    // A joined client is not subject to it.
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut client, _) = create(addr, "eu").await;
+    expect_room(&mut server).await;
+    expect_silence(&mut client, timeout * 2).await;
+    expect_silence(&mut server, Duration::from_millis(10)).await;
+}
+
+#[tokio::test]
+async fn healthz_counts() {
+    let addr = start(config()).await;
+    assert_eq!(
+        healthz(addr).await,
+        serde_json::json!({"servers": 0, "rooms": 0, "regions": []})
+    );
+    let mut eu = register(addr, "eu-1", "eu", "4").await;
+    let us = register(addr, "us-1", "us", "4").await;
+    assert_eq!(
+        healthz(addr).await,
+        serde_json::json!({"servers": 2, "rooms": 0, "regions": ["eu", "us"]})
+    );
+    let (_a, _) = create(addr, "eu").await;
+    expect_room(&mut eu).await;
+    assert_eq!(
+        healthz(addr).await,
+        serde_json::json!({"servers": 2, "rooms": 1, "regions": ["us"]})
+    );
+    drop(us);
+    wait_health(addr, |h| h["servers"] == 1).await;
+    assert_eq!(
+        healthz(addr).await,
+        serde_json::json!({"servers": 1, "rooms": 1, "regions": []})
+    );
+    drop(eu);
+    wait_health(addr, |h| h["servers"] == 0 && h["rooms"] == 0).await;
+}
+
+#[test]
+fn close_codes_are_the_documented_ones() {
+    assert_eq!(
+        u16::from(CloseCode::Normal),
+        kfm_lobby::protocol::CLOSE_NORMAL
+    );
+    assert_eq!(
+        u16::from(CloseCode::Protocol),
+        kfm_lobby::protocol::CLOSE_PROTOCOL_ERROR
+    );
+}

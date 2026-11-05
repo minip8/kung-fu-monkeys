@@ -37,3 +37,6 @@ compile_commands.json
 
 # Python
 __pycache__/
+
+# Rust (services/)
+/services/lobby/target/

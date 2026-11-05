@@ -421,12 +421,17 @@ void drawNotices(ImDrawList* dl, const HudView& view, ImVec2 view2) {
     centredText(dl, 28.0f, ImVec2(view2.x * 0.5f, view2.y * 0.2f), kWhite,
                 "PAUSED  (P: resume, O: step)");
   }
-  if (!view.statusLine.empty()) {
-    ImFont* font = ImGui::GetFont();
-    const ImVec2 pos{12.0f, view2.y - 22.0f};
-    dl->AddText(font, 15.0f, ImVec2(pos.x + 1.0f, pos.y + 1.0f), kShadow, view.statusLine.c_str());
-    dl->AddText(font, 15.0f, pos, IM_COL32(200, 220, 255, 230), view.statusLine.c_str());
-  }
+  ImFont* font = ImGui::GetFont();
+  const auto line = [&](float size, float top, ImU32 color, const std::string& text) {
+    if (text.empty()) return;
+    const ImVec2 pos{12.0f, top};
+    dl->AddText(font, size, ImVec2(pos.x + 1.0f, pos.y + 1.0f), kShadow, text.c_str());
+    dl->AddText(font, size, pos, color, text.c_str());
+  };
+  line(15.0f, view2.y - 22.0f, IM_COL32(200, 220, 255, 230), view.statusLine);
+  // M6a: the room, large, and how to invite someone into it.
+  line(15.0f, view2.y - 42.0f, IM_COL32(200, 220, 255, 230), view.shareLine);
+  line(24.0f, view2.y - (view.shareLine.empty() ? 50.0f : 70.0f), kBananaYellow, view.roomLine);
 }
 
 // Short device names for the lobby cards.
@@ -606,6 +611,8 @@ HudView hudView(const NetSession& session) {
   v.dropped = session.droppedMask();
   v.network = true;
   v.statusLine = session.statusText();
+  if (session.room())
+    v.roomLine = "Room " + session.room()->code + " (" + session.room()->region + ")";
   if (session.configKnown()) {
     const sim::MatchConfig& next = session.client().matchConfig();
     const sim::ContentDB& db = session.content();
@@ -629,7 +636,7 @@ void drawMatchHud(const HudView& view, const HudInput& in) {
   drawNotices(dl, view, display);
 }
 
-void drawNetStatus(const NetSession& session) {
+void drawNetStatus(const NetSession& session, const std::string& invite) {
   const ImVec2 view = ImGui::GetIO().DisplaySize;
   ImGui::SetNextWindowPos(ImVec2(view.x * 0.5f, view.y * 0.5f), ImGuiCond_Always,
                           ImVec2(0.5f, 0.5f));
@@ -652,6 +659,21 @@ void drawNetStatus(const NetSession& session) {
       constexpr const char* kSpin = "|/-\\";
       const auto spin = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % 4;
       ImGui::Text("%c %s", kSpin[spin], status.c_str());
+    }
+    // M6a: the room the lobby gave, large, and the invite to copy.
+    if (session.room()) {
+      const std::string room =
+          "Room " + session.room()->code + "  (" + session.room()->region + ")";
+      ImGui::SetWindowFontScale(2.0f);
+      ImGui::TextColored(ImVec4(0.98f, 0.84f, 0.16f, 1.0f), "%s", room.c_str());
+      ImGui::SetWindowFontScale(1.0f);
+      if (!invite.empty()) {
+        ImGui::TextUnformatted("Invite friends: send");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.75f, 0.85f, 1.0f, 1.0f), "%s", invite.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(invite.c_str());
+      }
     }
     ImGui::Separator();
     if (session.config().spectate) {
@@ -708,6 +730,7 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     if (row.kind == LobbyRowKind::PowerUp && row.powerUp == 0) {
       ImGui::TextDisabled("Power-ups");
     }
+    if (row.kind == LobbyRowKind::CreateRoom) ImGui::TextDisabled("Online");
     ImGui::PushID(static_cast<int>(i));
     const float x0 = ImGui::GetCursorPosX();
     if (ImGui::Selectable("##row", i == menu.focus(), ImGuiSelectableFlags_AllowOverlap,
@@ -739,15 +762,47 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
       menu.setFocus(i);
       changed = menu.change(i, +1) || changed;
     }
+    if (row.kind == LobbyRowKind::CreateRoom) {
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Create")) {
+        menu.setFocus(i);
+        (void)menu.activate(i);
+      }
+    }
     ImGui::PopID();
   }
   return changed;
 }
 
+// M6a: the Online section's room code field and Join button (the menu has
+// no text input). The field keeps its text across frames.
+void drawRoomJoin(LobbyMenu& menu) {
+  static std::array<char, 8> code{};  // 5 characters + NUL, with room to spare
+  const auto filter = [](ImGuiInputTextCallbackData* data) -> int {
+    if (data->EventChar >= 0x80 || !isRoomCodeChar(static_cast<char>(data->EventChar))) return 1;
+    return 0;
+  };
+  ImGui::AlignTextToFramePadding();
+  ImGui::TextUnformatted("Join room");
+  ImGui::SameLine(150.0f);
+  ImGui::SetNextItemWidth(110.0f);
+  const bool enter = ImGui::InputTextWithHint("##room_code", "ABCDE", code.data(), 6,
+                                              ImGuiInputTextFlags_CharsUppercase |
+                                                  ImGuiInputTextFlags_CallbackCharFilter |
+                                                  ImGuiInputTextFlags_EnterReturnsTrue,
+                                              filter);
+  ImGui::SameLine();
+  const bool valid = normalizeRoomCode(code.data()).has_value();
+  if (!valid) ImGui::BeginDisabled();
+  const bool join = ImGui::Button("Join");
+  if (!valid) ImGui::EndDisabled();
+  if ((join || enter) && valid) (void)menu.requestJoin(code.data());
+}
+
 }  // namespace
 
-LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string& connectUrl) {
-  const bool online = !connectUrl.empty();
+LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string& onlineLabel) {
+  const bool online = !onlineLabel.empty();
   LobbyOutcome out;
   const ImVec2 view = ImGui::GetIO().DisplaySize;
   ImGui::SetNextWindowPos(ImVec2(view.x * 0.5f, view.y * 0.5f), ImGuiCond_Always,
@@ -796,7 +851,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
 
     ImGui::Spacing();
     if (online) {
-      ImGui::Text("Server %s", connectUrl.c_str());
+      ImGui::Text("Online: %s", onlineLabel.c_str());
       ImGui::TextDisabled(
           "Each joined device gets its own slot; the server picks the slots, the arena, the "
           "mode, the loadout and the power-ups (shown once connected).");
@@ -808,6 +863,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
         ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 1.0f);
         ImGui::TableNextColumn();
         out.changed = drawSettingsRows(menu, db);
+        if (menu.lobbyAvailable()) drawRoomJoin(menu);
         ImGui::TableNextColumn();
         const sim::MatchConfig preview{.seed = session.seed(),
                                        .arena = ls.arena,
@@ -823,6 +879,11 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
       ImGui::TextDisabled(
           "Up/Down (W/S, d-pad, stick): choose a setting. Left/Right: change it. "
           "- / =: bots.");
+      if (menu.lobbyAvailable()) {
+        ImGui::TextDisabled(
+            "Online: Enter on Create room makes a room in that region; type a friend's code "
+            "and Join to play in theirs.");
+      }
     }
 
     ImGui::Spacing();

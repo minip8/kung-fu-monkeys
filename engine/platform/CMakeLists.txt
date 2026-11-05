@@ -18,6 +18,19 @@ target_link_libraries(kfm_platform_input
   PRIVATE kfm::warnings)
 set_target_properties(kfm_platform_input PROPERTIES FOLDER engine)
 
+# kfm_platform_services  IPlatformServices (§13.4; M6a: a guest id and the
+#                        lobby as session directory), SDL-free: the app
+#                        injects the storage; unit-tested headlessly.
+add_library(kfm_platform_services STATIC
+  src/platform_services.cpp
+)
+add_library(kfm::platform_services ALIAS kfm_platform_services)
+target_include_directories(kfm_platform_services
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+target_link_libraries(kfm_platform_services PRIVATE kfm::warnings)
+kfm_no_exceptions_rtti(kfm_platform_services)
+set_target_properties(kfm_platform_services PROPERTIES FOLDER engine)
+
 
 # ---------------------------------------------------------------------------
 # kfm_platform (SDL3 + sokol_gfx + Dear ImGui) is defined below this line.

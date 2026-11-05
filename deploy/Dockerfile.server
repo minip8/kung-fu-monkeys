@@ -1,0 +1,62 @@
+# syntax=docker/dockerfile:1
+#
+# The dedicated server image (architecture §13.5, v0.37): kfm_server and
+# kfm_arena from the server-headless preset (Release, KFM_HEADLESS=ON: no SDL,
+# GL or ImGui), dependencies from FetchContent at their pinned versions with
+# the system OpenSSL, as CI's server-headless job builds them.
+#
+#   docker build -f deploy/Dockerfile.server -t kfm-server .
+#   docker run --rm --network host kfm-server --help
+#
+# Built from the repository root (see /.dockerignore).
+
+# --- builder -----------------------------------------------------------------
+# Ubuntu 26.04, as CI: the C++23 baseline needs GCC >= 14 (architecture §9),
+# which Ubuntu 24.04 does not ship; 26.04's default g++ and cmake qualify.
+FROM ubuntu:26.04 AS builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+# git: FetchContent clones Catch2 (tests stay configured, as in CI; only the
+# two executables below are built). python3: configure-time helpers.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential g++ cmake ninja-build git ca-certificates libssl-dev python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+# Build parallelism; empty = Ninja's default. Lower it on a small builder.
+ARG KFM_BUILD_JOBS=
+RUN cmake --preset server-headless -DKFM_USE_VCPKG=OFF \
+ && cmake --build --preset server-headless --target kfm_server kfm_arena \
+      ${KFM_BUILD_JOBS:+--parallel ${KFM_BUILD_JOBS}} \
+ && build/server-headless/apps/server/kfm_server --help \
+ && mkdir -p /out \
+ && cp build/server-headless/apps/server/kfm_server build/server-headless/apps/arena/kfm_arena /out/ \
+ && strip /out/kfm_server /out/kfm_arena \
+ && cp -r build/server-headless/apps/server/content /out/content
+
+# --- runtime -----------------------------------------------------------------
+# The same release as the builder, so glibc and libstdc++ match.
+FROM ubuntu:26.04 AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+# libdatachannel links the system OpenSSL; `openssl` pulls in the libssl
+# runtime under whatever name this release gives it (libssl3t64 on 24.04).
+# ca-certificates for STUN and wss:// lobby URLs.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates openssl \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --uid 10001 --home-dir /opt/kfm --shell /usr/sbin/nologin kfm
+
+# kfm_server looks for content/ next to its executable, which it resolves from
+# argv[0]: invoked through PATH as `kfm_server` that is the working directory,
+# so the binaries, content/ and WORKDIR are all /opt/kfm. (kfm_arena uses the
+# content compiled into it unless given --content.)
+COPY --from=builder /out/ /opt/kfm/
+WORKDIR /opt/kfm
+ENV PATH="/opt/kfm:${PATH}"
+USER kfm
+
+ENTRYPOINT ["kfm_server"]

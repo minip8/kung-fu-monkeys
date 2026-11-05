@@ -8,6 +8,7 @@
 //              [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
+//              [--lobby URL] [--room CODE | --create [--region R]]
 //
 // Frame: pollEvents (ImGui first, then SDL -> InputEvent into the session)
 // -> MatchSession::advance (0..4 fixed 60 Hz ticks, inputs sampled right
@@ -22,6 +23,18 @@
 // --players N); Escape disconnects and returns to the local lobby, which binds
 // devices as usual and whose Start connects again, one slot per bound device.
 // The session runs over a WebRtcTransport, natively and in the browser alike.
+//
+// Rooms (M6a, architecture §13.5): --room CODE / --create join or create a
+// room through the lobby (--lobby, else the build's KFM_LOBBY_URL; in the
+// browser ?room=CODE, ?create&region=us and config.js's lobbyUrl). The
+// transport runs in lobby mode, the session takes the room's token before
+// its Hello, and the HUD names the room with an invite (the page's link with
+// ?room=CODE in the browser, the flags natively). A created room becomes
+// the one Start rejoins after Escape. With a lobby URL but no room flag the
+// local lobby shows an Online section: Create room (region on Left/Right,
+// Enter while focused) and a room code field with Join; Escape from such a
+// room returns to the local lobby. IPlatformServices (LocalPlatformServices)
+// keeps a guest id beside the settings; nothing sends it yet (M6b).
 //
 // Content (§5.10): loaded at startup from --content, else content/ next to
 // the executable, else the copy built into it (always, in the browser); its
@@ -61,6 +74,7 @@
 #include "kfm/platform/debug_ui.hpp"
 #include "kfm/platform/gfx.hpp"
 #include "kfm/platform/main_loop.hpp"
+#include "kfm/platform/platform_services.hpp"
 #include "kfm/platform/window.hpp"
 #include "kfm/presentation/builder.hpp"
 #include "kfm/presentation/camera.hpp"
@@ -82,6 +96,7 @@
 #include <SDL3/SDL_stdinc.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -89,9 +104,12 @@
 #include <fstream>
 #include <ios>
 #include <memory>
+#include <optional>
+#include <random>
 #include <span>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -114,7 +132,11 @@ struct App {
   std::unique_ptr<MatchSession> session;
   std::unique_ptr<client::NetSession> net;  // network mode, while connected or showing why not
   client::NetPhase lastNetPhase = client::NetPhase::Connecting;
-  bool connectRequested = false;  // the lobby's Start, online: connect next frame
+  bool connectRequested = false;                   // the lobby's Start, online: connect next frame
+  std::optional<client::LobbyTarget> pendingRoom;  // the Online section's Create / Join
+  bool roomAnnounced = false;                      // the session's room was printed
+  std::unique_ptr<platform::IPlatformServices> services;
+  std::string pageUrl;  // the browser's window.location.href; empty natively
   client::GamepadSet pads;
   client::DebugOverlay overlay;
   client::ClientAudio audio;
@@ -139,40 +161,57 @@ EM_JS_DEPS(kfm_settings, "$stringToNewUTF8,$UTF8ToString");
 // settings are then simply not remembered. (JavaScript: clang-format would
 // break its operators.)
 // clang-format off
-EM_JS(char*, kfmLoadSettingsJs, (), {
+EM_JS(char*, kfmLoadPrefJs, (const char* key), {
   try {
-    const s = window.localStorage.getItem("kfm.settings");
+    const s = window.localStorage.getItem(UTF8ToString(key));
     return s === null ? 0 : stringToNewUTF8(s);
   } catch (e) {
     return 0;
   }
 });
-EM_JS(void, kfmSaveSettingsJs, (const char* text), {
+EM_JS(void, kfmSavePrefJs, (const char* key, const char* text), {
   try {
-    window.localStorage.setItem("kfm.settings", UTF8ToString(text));
+    window.localStorage.setItem(UTF8ToString(key), UTF8ToString(text));
   } catch (e) {
   }
 });
+// The page's address, for a room's invite link.
+EM_JS(char*, kfmPageUrlJs, (), {
+  try {
+    return stringToNewUTF8(String(window.location.href));
+  } catch (e) {
+    return 0;
+  }
+});
 // clang-format on
+
+// localStorage keys: "kfm.settings", "kfm.guest_id".
+[[nodiscard]] std::string prefKey(const char* name) {
+  return std::string("kfm.") + name;
+}
+
+[[nodiscard]] std::string takeJsString(char* text) {
+  if (text == nullptr) return {};
+  std::string s(text);
+  std::free(text);  // NOLINT(cppcoreguidelines-no-malloc): allocated by stringToNewUTF8
+  return s;
+}
 #else
-[[nodiscard]] std::filesystem::path settingsPath() {
+// Files in SDL's preference directory: "settings.txt", "guest_id.txt".
+[[nodiscard]] std::filesystem::path prefPath(const char* name) {
   char* dir = SDL_GetPrefPath("kfm", "kung-fu-monkeys");  // created if missing
   if (dir == nullptr) return {};
-  std::filesystem::path p = std::filesystem::path(dir) / "settings.txt";
+  std::filesystem::path p = std::filesystem::path(dir) / (std::string(name) + ".txt");
   SDL_free(dir);
   return p;
 }
 #endif
 
-[[nodiscard]] std::string loadSettingsText() {
+[[nodiscard]] std::string loadPrefText(const char* name) {
 #ifdef __EMSCRIPTEN__
-  char* text = kfmLoadSettingsJs();
-  if (text == nullptr) return {};
-  std::string s(text);
-  std::free(text);  // NOLINT(cppcoreguidelines-no-malloc): allocated by stringToNewUTF8
-  return s;
+  return takeJsString(kfmLoadPrefJs(prefKey(name).c_str()));
 #else
-  const std::filesystem::path path = settingsPath();
+  const std::filesystem::path path = prefPath(name);
   if (path.empty()) return {};
   const std::ifstream in(path, std::ios::binary);
   if (!in) return {};
@@ -182,17 +221,52 @@ EM_JS(void, kfmSaveSettingsJs, (const char* text), {
 #endif
 }
 
-void saveSettingsText(const std::string& text) {
+void savePrefText(const char* name, std::string_view text) {
 #ifdef __EMSCRIPTEN__
-  kfmSaveSettingsJs(text.c_str());
+  kfmSavePrefJs(prefKey(name).c_str(), std::string(text).c_str());
 #else
-  const std::filesystem::path path = settingsPath();
+  const std::filesystem::path path = prefPath(name);
   if (path.empty()) return;
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   out << text;
-  if (!out)
-    std::fprintf(stderr, "warning: cannot save the settings to %s\n", path.string().c_str());
+  if (!out) std::fprintf(stderr, "warning: cannot save %s\n", path.string().c_str());
 #endif
+}
+
+[[nodiscard]] std::string loadSettingsText() {
+  return loadPrefText("settings");
+}
+
+void saveSettingsText(const std::string& text) {
+  savePrefText("settings", text);
+}
+
+// IPlatformServices (M6a): the guest id kept beside the settings (made per
+// run under --no-settings, which stores nothing), the options' lobby as the
+// session directory.
+[[nodiscard]] std::unique_ptr<platform::IPlatformServices> makePlatformServices(
+    const client::ClientOptions& options) {
+  platform::GuestIdStore store;
+  if (options.settings) {
+    store.load = [] { return loadPrefText("guest_id"); };
+    store.save = [](std::string_view id) { savePrefText("guest_id", id); };
+  }
+  std::random_device device;
+  const auto clock = static_cast<std::uint64_t>(
+      std::chrono::high_resolution_clock::now().time_since_epoch().count());
+  const std::uint64_t a = (std::uint64_t{device()} << 32) | device();
+  return std::make_unique<platform::LocalPlatformServices>(std::move(store), options.lobby, a,
+                                                           clock);
+}
+
+// What the lobby shows as the network target before connecting.
+[[nodiscard]] std::string onlineLabel(const client::ClientOptions& options) {
+  if (!options.lobbyMode()) {
+    return options.connect.empty() ? std::string{} : "server " + options.connect;
+  }
+  const std::string room =
+      options.room.empty() ? "a new room in " + options.region : "room " + options.room;
+  return room + " (lobby " + options.lobby + ")";
 }
 
 // The lobby's settings changed (panel or keys): apply them to the lobby's
@@ -287,20 +361,63 @@ void reloadContent(App& app, std::uint64_t nowNs) {
 // Starts network mode: a WebRtcTransport to --connect and a NetSession over
 // the lobby's bound devices. A transport that cannot be created leaves a
 // failed session that shows why.
-void startNetwork(App& app, bool atStartup, std::uint64_t nowNs) {
+#ifdef KFM_CLIENT_WEBRTC
+// The session's view of a lobby-mode WebRtcTransport.
+class WebRtcLobbyJoin final : public client::ILobbyJoin {
+ public:
+  explicit WebRtcLobbyJoin(const net::WebRtcTransport& transport) : transport_(transport) {}
+  [[nodiscard]] std::optional<client::LobbyRoomInfo> room() const override {
+    const std::optional<net::LobbyRoom> r = transport_.lobbyRoom();
+    if (!r) return std::nullopt;
+    return client::LobbyRoomInfo{.code = r->code, .region = r->region};
+  }
+  [[nodiscard]] std::vector<std::byte> token() const override {
+    const std::span<const std::byte> t = transport_.connectionToken();
+    return {t.begin(), t.end()};
+  }
+  [[nodiscard]] std::string error() const override { return transport_.lastError(); }
+
+ private:
+  const net::WebRtcTransport& transport_;
+};
+#endif
+
+// `room`: the Online section's Create / Join; else the options' --room /
+// --create, else --connect.
+void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
+                  std::optional<client::LobbyTarget> room = std::nullopt) {
   client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  if (app.options.verbose)
+    std::fprintf(stderr, "kfm_client: startNetwork atStartup=%d\n", int{atStartup});
+  if (room) {
+    config.lobby = std::move(room);
+    config.serverLabel = app.options.lobby;
+  }
+  if (config.lobby) config.token.clear();  // the lobby's token replaces --token
   config.content = &app.content.db;
+  app.roomAnnounced = false;
   const platform::InputSampler& lobby = app.session->sampler();
 #ifdef KFM_CLIENT_WEBRTC
+  if (app.options.verbose) net::WebRtcTransport::initLogging(net::WebRtcLogLevel::Debug);
   net::WebRtcClientConfig wc;
-  wc.signalingUrl = app.options.connect;
+  wc.signalingUrl = config.lobby ? app.options.lobby : app.options.connect;
   wc.stunServer = app.options.stun;
   wc.connectionToken = config.token;
+  if (config.lobby) {
+    const client::LobbyTarget& t = *config.lobby;
+    wc.lobby = net::LobbyRequest{
+        .kind = t.create ? net::LobbyRequest::Kind::Create : net::LobbyRequest::Kind::Join,
+        .region = t.region,
+        .code = t.code,
+        .buildId = config.buildId,
+        .contentHash = app.content.hash};
+  }
   auto transport = net::WebRtcTransport::createClient(wc);
   if (transport) {
-    net::ITransport* raw = transport->get();
+    net::WebRtcTransport* raw = transport->get();
     app.net =
         std::make_unique<client::NetSession>(config, lobby, raw, nowNs, std::move(*transport));
+    if (config.lobby) app.net->attachLobby(std::make_unique<WebRtcLobbyJoin>(*raw));
   } else {
     app.net = std::make_unique<client::NetSession>(config, lobby, nullptr, nowNs, nullptr,
                                                    transport.error());
@@ -403,9 +520,12 @@ void onEvent(void* user, const SDL_Event& event) {
   // joined pads (an unbound pad's press is its join). The press still goes
   // to the session, which ignores bound devices' presses in the lobby.
   if (app->session->phase() == SessionPhase::Lobby && !app->options.networkMode()) {
-    const client::MenuAction action =
-        app->menuInput.translate(*input, client::eventDeviceBound(app->session->sampler(), *input));
+    const bool bound = client::eventDeviceBound(app->session->sampler(), *input);
+    const client::MenuAction action = app->menuInput.translate(*input, bound);
     if (action != client::MenuAction::None && app->lobby.apply(action)) app->lobbyChanged = true;
+    // M6a: Enter / Start on the Create room row creates a room; it is not
+    // the match's Start then.
+    if (client::isActivateEvent(*input, bound) && app->lobby.activate()) return;
   }
   app->session->push(*input);
 }
@@ -446,7 +566,14 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   platform::debugUiNewFrame(w, h, dt, density);
   if (s.phase() == SessionPhase::Lobby) {
     if (!app.options.networkMode()) syncLobbySettings(app);
-    const client::LobbyOutcome lobby = client::drawLobby(s, app.lobby, app.options.connect);
+    const client::LobbyOutcome lobby = client::drawLobby(s, app.lobby, onlineLabel(app.options));
+    if (std::optional<client::LobbyCommand> cmd = app.lobby.takeCommand()) {
+      app.audio.click();
+      app.pendingRoom =
+          client::LobbyTarget{.create = cmd->kind == client::LobbyCommand::Kind::CreateRoom,
+                              .region = cmd->region,
+                              .code = cmd->code};
+    }
     if (lobby.changed || app.lobbyChanged) {
       applyLobbySettings(app);
       app.audio.click();
@@ -475,6 +602,18 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
 presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int h, float density) {
   client::NetSession& n = *app.net;
   n.advance(now);
+  if (n.room() && !app.roomAnnounced) {
+    app.roomAnnounced = true;
+    std::printf("kfm_client: in room %s (%s); invite: %s\n", n.room()->code.c_str(),
+                n.room()->region.c_str(),
+                client::roomShareText(*n.room(), app.pageUrl, app.options.lobby).c_str());
+    std::fflush(stdout);
+    // A room made with --create is the one Start rejoins after Escape.
+    if (app.options.create && n.config().lobby && n.config().lobby->create) {
+      app.options.create = false;
+      app.options.room = n.room()->code;
+    }
+  }
   if (n.phase() != app.lastNetPhase) {
     app.lastNetPhase = n.phase();
     std::printf("kfm_client: %s\n", n.statusText().c_str());
@@ -486,12 +625,16 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   (void)syncRenderer(app, n.matchContent(), app.content.hash, n.client().simConfig().arena);
 
   platform::debugUiNewFrame(w, h, dt, density);
+  const std::string invite =
+      n.room() ? client::roomShareText(*n.room(), app.pageUrl, app.options.lobby) : std::string{};
   if (n.everRan()) {
+    client::HudView view = client::hudView(n);
+    if (n.room()) view.shareLine = "Invite: " + invite;
     client::drawMatchHud(
-        client::hudView(n),
+        view,
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
   }
-  if (!n.running()) client::drawNetStatus(n);
+  if (!n.running()) client::drawNetStatus(n, invite);
   app.overlay.draw(n, app.renderer.stats());
   app.audio.frame(app.renderState);
   return camera;
@@ -515,6 +658,8 @@ bool frame(void* user) {
   }
   if (app->connectRequested && !app->net) startNetwork(*app, false, now);
   app->connectRequested = false;
+  if (app->pendingRoom && !app->net) startNetwork(*app, false, now, std::move(app->pendingRoom));
+  app->pendingRoom.reset();
   const presentation::Camera camera =
       app->net ? netFrame(*app, now, dt, w, h, density) : localFrame(*app, now, dt, w, h, density);
   platform::debugUiFlush();
@@ -606,6 +751,16 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
   app.lobby.setContent(app.content.db);
   app.lobby.settings() = lobby;
+  app.services = makePlatformServices(app.options);
+  app.lobby.setLobbyAvailable(!app.services->lobbyUrl().empty());
+#ifdef __EMSCRIPTEN__
+  app.pageUrl = takeJsString(kfmPageUrlJs());
+#endif
+  if (!app.services->lobbyUrl().empty()) {
+    std::printf("kfm_client: lobby %s, guest %.8s\n", app.services->lobbyUrl().c_str(),
+                app.services->guestId().c_str());
+    std::fflush(stdout);
+  }
 #ifndef __EMSCRIPTEN__
   if (app.options.hotReload && !app.content.embedded()) {
     app.contentWatcher = content::ContentWatcher(app.content.dir);

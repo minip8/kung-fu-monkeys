@@ -92,6 +92,9 @@ struct HostConfig {
   bool verbose{false};
   // Receives one line per call, without a trailing newline. Empty: stdout.
   std::function<void(std::string_view)> log;
+  // Appended to every stats line when set (kfm_server --lobby adds
+  // " | lobby registered room=ABCDE ...").
+  std::function<std::string(uint64_t nowNs)> statsSuffix;
 };
 
 struct HostStats {
@@ -136,6 +139,13 @@ class ServerHost {
   // Time until the next tick is due (0 when one is due now).
   [[nodiscard]] uint64_t nsUntilNextTick(uint64_t nowNs) const;
 
+  // Announces a fresh match starting at the next tick through the same path
+  // as a match end (next seeds, bots re-seeded, teams rebalanced), logged
+  // with `reason`. kfm_server --lobby calls it when a new room arrives with
+  // no human connected (docs/lobby-protocol.md §6 point 5). Ignored while
+  // shutting down or done().
+  void startNewMatch(std::string_view reason);
+
   void beginShutdown();
   void finishShutdown();
   [[nodiscard]] bool shuttingDown() const { return server_->shuttingDown(); }
@@ -151,9 +161,13 @@ class ServerHost {
   [[nodiscard]] std::optional<ai::BotSpec> botSpec(PlayerId slot) const;
   // The line format of the periodic stats, for a final summary.
   void logStats(uint64_t nowNs);
+  // One line in the host's log format (time and tick prefix), for adapters.
+  void logLine(std::string_view line) const { emit(line); }
 
  private:
   [[nodiscard]] uint64_t tickDueAt(uint64_t k) const;
+  // restartMatch() with the next match and bot seeds, delayTicks from now.
+  void scheduleNextMatch(uint32_t delayTicks);
   void onTick();
   void logServerEvents();
   void fillBots(const sim::WorldState& world, const sim::MatchContent& content,

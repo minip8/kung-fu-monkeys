@@ -1,0 +1,35 @@
+# One kfm_server process (one match, architecture §6.5) of the VM's pool;
+# instance N registers with the lobby as ${KFM_NAME_PREFIX}:N. Enable
+# kfm-server@1 ... kfm-server@N (install.sh does). --network host: ICE sees the
+# VM's real interface and no port mapping is needed.
+#
+# KFM_LOBBY_URL is ws://127.0.0.1:8080 on the lobby VM and the EU lobby's
+# wss:// URL on a server-only VM. KFM_STUN gives the server a server-reflexive
+# candidate: on Compute Engine the interface holds only the internal address
+# (the external one is 1:1 NAT), so without it browsers are offered an
+# unreachable 10.x host candidate. KFM_ICE_PORTS is the UDP range the
+# firewall opens (deploy/README.md). KFM_SERVER_EXTRA_ARGS is unquoted on
+# purpose (split on whitespace, nothing when empty).
+[Unit]
+Description=Kung Fu Monkeys game server %i
+Documentation=https://github.com/minip8/kung-fu-monkeys/blob/main/deploy/README.md
+Requires=docker.service
+After=docker.service network-online.target kfm-lobby.service
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/kfm/kfm.env
+ExecStartPre=-/usr/bin/docker rm -f kfm-server-%i
+ExecStart=/usr/bin/docker run --rm --name kfm-server-%i --network host \
+    --log-opt max-size=10m --log-opt max-file=3 \
+    ${KFM_IMAGE_REPO}/kfm-server:${KFM_IMAGE_TAG} \
+    --lobby ${KFM_LOBBY_URL} --lobby-secret ${KFM_LOBBY_SECRET} \
+    --region ${KFM_REGION} --name ${KFM_NAME_PREFIX}:%i --bots ${KFM_BOTS} \
+    --stun ${KFM_STUN} --ice-ports ${KFM_ICE_PORTS} --stats-every 60 $KFM_SERVER_EXTRA_ARGS
+ExecStop=/usr/bin/docker stop -t 10 kfm-server-%i
+Restart=always
+RestartSec=2
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target

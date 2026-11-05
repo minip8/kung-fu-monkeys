@@ -14,6 +14,10 @@
 <body>
   <canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
   <div id="status">Loading…</div>
+  <!-- Deployment settings (M6a, architecture §13.5): the deploy workflow writes
+       window.KFM_CONFIG = { lobbyUrl: "wss://...", sentryDsn: "" }; next to the
+       page, the wasm build a default one. A missing file just does not run. -->
+  <script src="config.js"></script>
   <script>
     // WebGL2 context attributes per architecture §6.8. Emscripten's
     // Module.webglContextAttributes is not consulted by SDL3's own
@@ -36,10 +40,32 @@
     // for now); network mode is
     // ?connect=ws://host:port (plus &token=T, &spectate, &stun=stun:host:port,
     // &players=N), the same --connect path as the native client.
+    // Rooms (M6a): ?room=CODE joins a room, ?create (&region=us) creates one,
+    // through the lobby at config.js's lobbyUrl unless the query names one:
+    // for local development (tools/web/serve.py and the Rust lobby on 8080)
+    //   kfm_client.html?lobby=ws://127.0.0.1:8080&create
+    // and the room's invite is the same page with ?room=CODE (&lobby=...).
+    const kfmConfig = window.KFM_CONFIG || {};
+    const kfmQuery = new URLSearchParams(window.location.search);
     const kfmArguments = [];
-    for (const [key, value] of new URLSearchParams(window.location.search)) {
+    if (!kfmQuery.has('lobby') && kfmConfig.lobbyUrl) kfmArguments.push('--lobby', kfmConfig.lobbyUrl);
+    for (const [key, value] of kfmQuery) {
       kfmArguments.push('--' + key);
       if (value !== '') kfmArguments.push(value);
+    }
+    // Error reports (M6a): only with a DSN in config.js; nothing loads without one.
+    // The Sentry browser bundle is pinned (8.55.0, with its SRI hash).
+    let kfmReport = () => {};
+    if (kfmConfig.sentryDsn) {
+      const sentry = document.createElement('script');
+      sentry.src = 'https://browser.sentry-cdn.com/8.55.0/bundle.min.js';
+      sentry.integrity = 'sha384-BlRl+vkcjdIA/AKRb8zWtiqlVVXepUsSv0+vho7ZMUTsNudEyQjGUKo9W86Hc1EC';
+      sentry.crossOrigin = 'anonymous';
+      sentry.onload = () => {
+        window.Sentry.init({ dsn: kfmConfig.sentryDsn });
+        kfmReport = (error) => window.Sentry.captureException(error);
+      };
+      document.head.appendChild(sentry);
     }
     var Module = {
       canvas: canvas,
@@ -49,8 +75,14 @@
       printErr: (text) => console.error(text),
       setStatus: (text) => { statusElement.textContent = text; statusElement.hidden = !text; },
       onRuntimeInitialized: () => { statusElement.hidden = true; canvas.focus(); },
+      onAbort: (what) => { kfmReport(new Error('wasm abort: ' + what)); },
     };
-    window.onerror = () => { statusElement.hidden = false; statusElement.textContent = 'Error: see the browser console.'; };
+    window.onerror = (message, source, line, column, error) => {
+      statusElement.hidden = false;
+      statusElement.textContent = 'Error: see the browser console.';
+      kfmReport(error || new Error(String(message)));
+    };
+    window.addEventListener('unhandledrejection', (event) => { kfmReport(event.reason); });
   </script>
   {{{ SCRIPT }}}
 </body>

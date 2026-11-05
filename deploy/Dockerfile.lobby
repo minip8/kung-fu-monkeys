@@ -1,0 +1,31 @@
+# syntax=docker/dockerfile:1
+#
+# The lobby service image (architecture §13.5, v0.37; docs/lobby-protocol.md).
+#
+#   docker build -f deploy/Dockerfile.lobby -t kfm-lobby .
+#   docker run --rm --network host -e KFM_LOBBY_SECRET=dev kfm-lobby --listen 127.0.0.1:8080
+#
+# Built from the repository root (see /.dockerignore).
+
+# --- builder -----------------------------------------------------------------
+FROM rust:1.90-trixie AS builder
+
+WORKDIR /src
+COPY services/lobby/ .
+RUN cargo build --release \
+ && install -D -m 0755 target/release/kfm-lobby /out/kfm-lobby
+
+# --- runtime -----------------------------------------------------------------
+# The rust image's Debian release, so glibc matches.
+FROM debian:trixie-slim AS runtime
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin kfm
+
+COPY --from=builder /out/kfm-lobby /usr/local/bin/kfm-lobby
+USER kfm
+EXPOSE 8080
+
+ENTRYPOINT ["kfm-lobby"]

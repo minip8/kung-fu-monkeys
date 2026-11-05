@@ -1,0 +1,130 @@
+name: Deploy
+
+# The M6a release (architecture §13.5, v0.37; runbook in deploy/README.md):
+# on a v* tag, the server and lobby images go to GHCR and the browser client
+# to GitHub Pages (the repository's Pages site, served at
+# https://<owner>.github.io/<repo>/; set Pages to "GitHub Actions" as its
+# source, once). A manual run from a branch pushes images tagged sha-<short>
+# (no `latest`) and publishes that branch's client to the same Pages site
+# (Pages has one site per repository, no previews).
+#
+# Repository settings it reads:
+#   variables  KFM_LOBBY_URL     the lobby's wss:// URL, written into config.js
+#              KFM_SENTRY_DSN    the browser's Sentry DSN (may be unset: Sentry off)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  images:
+    name: image ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { image: kfm-server, dockerfile: deploy/Dockerfile.server }
+          - { image: kfm-lobby,  dockerfile: deploy/Dockerfile.lobby }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image name and tags
+        id: meta
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"   # GHCR names are lower case
+          name="ghcr.io/$owner/${{ matrix.image }}"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tags="$name:$GITHUB_REF_NAME,$name:latest"
+          else
+            tags="$name:sha-${GITHUB_SHA::7}"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  web:
+    name: browser client to GitHub Pages
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: latest
+      - name: Configure
+        run: cmake --preset wasm
+      - name: Build kfm_client (html + js + wasm)
+        run: cmake --build --preset wasm --target kfm_client
+      - name: Assemble the site
+        # kfm_client.js and .wasm keep their names from build to build, so they
+        # go under assets/<content hash>/ and only that directory is cached as
+        # immutable; the pages that reference them are revalidated every load.
+        # Emscripten's loader fetches the .wasm next to the .js. The page is
+        # served at the site root (room links are https://<site>/?room=CODE)
+        # and at kfm_client.html; every reference is relative, so the site
+        # works under a repository path. GitHub Pages sets its own cache
+        # headers (a short max-age) and serves .wasm as application/wasm;
+        # the hashed directory keeps a new release from loading an old .wasm.
+        env:
+          KFM_LOBBY_URL: ${{ vars.KFM_LOBBY_URL }}
+          KFM_SENTRY_DSN: ${{ vars.KFM_SENTRY_DSN }}
+        run: |
+          set -euo pipefail
+          src=build/wasm/apps/client
+          hash="$(cat "$src/kfm_client.js" "$src/kfm_client.wasm" | sha256sum | cut -c1-12)"
+          rm -rf site && mkdir -p "site/assets/$hash"
+          cp "$src/kfm_client.js" "$src/kfm_client.wasm" "site/assets/$hash/"
+          # The Release shell is minified: src=kfm_client.js may be unquoted.
+          sed -E "s#src=(\"?)kfm_client\.js#src=\1assets/$hash/kfm_client.js#" \
+            "$src/kfm_client.html" > site/kfm_client.html
+          grep -q "assets/$hash/kfm_client.js" site/kfm_client.html \
+            || { echo "::error::no kfm_client.js script tag in kfm_client.html"; exit 1; }
+          cp site/kfm_client.html site/index.html
+          if [[ -z "$KFM_LOBBY_URL" ]]; then
+            echo "::warning::repository variable KFM_LOBBY_URL is not set"
+          fi
+          printf 'window.KFM_CONFIG = { lobbyUrl: "%s", sentryDsn: "%s" };\n' \
+            "$KFM_LOBBY_URL" "$KFM_SENTRY_DSN" > site/config.js
+          touch site/.nojekyll
+          find site -type f | sort
+          cat site/config.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Publish to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

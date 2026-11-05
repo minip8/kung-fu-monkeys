@@ -2,6 +2,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -65,4 +67,63 @@ TEST_CASE("signaling: the decoder is lenient on layout, strict on content",
   CHECK_FALSE(decode(R"({"type":"offer","sdp":"\q"})").has_value());
   CHECK_FALSE(decode("{\"type\":\"offer\",\"sdp\":\"a\nb\"}").has_value());  // raw control char
   CHECK_FALSE(decode(std::string(kMaxMessageBytes + 1, ' ')).has_value());
+}
+
+TEST_CASE("signaling: flat objects round-trip in order", "[net][webrtc][signaling][lobby]") {
+  const std::array<Field, 4> fields = {
+      Field{"type", "signal"},
+      Field{"peer", "7"},
+      Field{"msg", R"({"type":"offer","sdp":"v=0\r\n"})"},
+      Field{"empty", ""},
+  };
+  const std::string text = encodeObject(fields);
+  CHECK(text.starts_with(R"({"type":"signal","peer":"7","msg":"{\"type\":)"));
+  const auto o = decodeObject(text);
+  if (!o) {
+    FAIL("decodeObject");
+    return;
+  }
+  REQUIRE(o->fields.size() == 4);
+  CHECK(o->fields[0].first == "type");
+  CHECK(o->fields[3].first == "empty");
+  CHECK(o->get("type") == std::optional<std::string_view>("signal"));
+  CHECK(o->get("empty") == std::optional<std::string_view>(""));
+  CHECK_FALSE(o->get("missing").has_value());
+  // The nested signaling message decodes after unwrapping.
+  const Message inner = must(o->get("msg").value_or(""));
+  CHECK(inner.sdp == "v=0\r\n");
+
+  CHECK(encodeObject({}) == "{}");
+  CHECK(decodeObject("{}").has_value());
+  CHECK(decodeObject(" { } ").has_value());
+}
+
+TEST_CASE("signaling: lobby base URLs get their endpoint path", "[net][webrtc][signaling][lobby]") {
+  CHECK(withDefaultPath("ws://127.0.0.1:8080", "/client") == "ws://127.0.0.1:8080/client");
+  CHECK(withDefaultPath("wss://lobby.example.com", "/server") == "wss://lobby.example.com/server");
+  CHECK(withDefaultPath("wss://lobby.example.com/", "/server") == "wss://lobby.example.com/server");
+  CHECK(withDefaultPath("ws://h:1/server", "/server") == "ws://h:1/server");
+  CHECK(withDefaultPath("ws://h:1/custom/client", "/client") == "ws://h:1/custom/client");
+}
+
+TEST_CASE("signaling: the flat-object decoder is strict like decode()",
+          "[net][webrtc][signaling][lobby]") {
+  // A repeated key: get() returns the last one, as decode() always did.
+  const auto dup = decodeObject(R"({"type":"a","type":"b"})");
+  REQUIRE(dup.has_value());
+  CHECK(dup.value_or(FlatObject{}).get("type") == std::optional<std::string_view>("b"));
+
+  CHECK_FALSE(decodeObject("").has_value());
+  CHECK_FALSE(decodeObject("[]").has_value());
+  CHECK_FALSE(decodeObject(R"({"type":"room","n":1})").has_value());  // not a string
+  CHECK_FALSE(decodeObject(R"({"type":{"x":"y"}})").has_value());     // nested object
+  CHECK_FALSE(decodeObject(R"({"type":"room"} x)").has_value());      // trailing text
+  CHECK_FALSE(decodeObject(R"({"type":"room",})").has_value());       // trailing comma
+  CHECK_FALSE(decodeObject(R"({"type" "room"})").has_value());        // no colon
+  CHECK_FALSE(decodeObject(std::string(kMaxMessageBytes + 1, ' ')).has_value());
+  std::string big = R"({"k":")";
+  big += std::string(kMaxMessageBytes - big.size() - 2, 'x');
+  big += "\"}";
+  CHECK(big.size() == kMaxMessageBytes);
+  CHECK(decodeObject(big).has_value());
 }

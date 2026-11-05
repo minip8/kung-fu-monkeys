@@ -180,6 +180,10 @@ class NetClient {
   // session. A running session is discarded (a reconnect passes a new
   // transport and keeps the token); cumulative stats are kept.
   void connect(ITransport& transport, uint64_t nowNs);
+  // Replaces the connection token the next Hello carries (a lobby hands the
+  // token to the transport after the NetClient exists: WebRtcTransport's
+  // lobby mode, M6a). A Hello already sent keeps the old one.
+  void setToken(std::span<const std::byte> token);
   // Sends Disconnect{Quit} and closes the transport.
   void disconnect();
   void setConfig(const ClientConfig& config) { config_ = config; }
