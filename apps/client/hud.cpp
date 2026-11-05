@@ -881,8 +881,8 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
           "- / =: bots.");
       if (menu.lobbyAvailable()) {
         ImGui::TextDisabled(
-            "Online: Enter on Create room makes a room in that region; type a friend's code "
-            "and Join to play in theirs.");
+            "Online: Enter on Create room makes a room in that region (\"no server\": every "
+            "server there is busy right now); type a friend's code and Join to play in theirs.");
       }
     }
 

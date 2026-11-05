@@ -145,17 +145,18 @@ bool eventDeviceBound(const platform::InputSampler& sampler, const platform::Inp
 
 // --- LobbyMenu -------------------------------------------------------------------
 
-LobbyMenu::LobbyMenu() : regions_(kRegions.begin(), kRegions.end()) {
+LobbyMenu::LobbyMenu() {
+  for (const char* r : kRegions)
+    regions_.push_back(RegionChoice{.name = r, .free = true});
   setContent(sim::defaultContent());
 }
 
-void LobbyMenu::setRegions(std::span<const std::string> regions) {
+void LobbyMenu::setRegions(std::span<const RegionChoice> regions) {
   if (regions.empty()) return;
   regions_.assign(regions.begin(), regions.end());
-  bool present = false;
-  for (const std::string& r : regions_)
-    present = present || r == settings_.region;
-  if (!present) settings_.region = regions_.front();
+  if (std::ranges::find(regions_, settings_.region, &RegionChoice::name) != regions_.end()) return;
+  const auto free = std::ranges::find(regions_, true, &RegionChoice::free);
+  settings_.region = (free != regions_.end() ? *free : regions_.front()).name;
 }
 
 const sim::ContentDB& LobbyMenu::content() const {
@@ -285,7 +286,7 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       // By name: a region outside the list (--region xx) steps to the first.
       std::size_t i = regions_.size();
       for (std::size_t k = 0; k < regions_.size(); ++k) {
-        if (regions_[k] == settings_.region) i = k;
+        if (regions_[k].name == settings_.region) i = k;
       }
       if (i == regions_.size()) {
         i = 0;
@@ -294,7 +295,7 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       } else {
         i = (i + regions_.size() - 1) % regions_.size();
       }
-      settings_.region = regions_[i];
+      settings_.region = regions_[i].name;
       break;
     }
   }
@@ -374,8 +375,12 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return std::to_string(settings_.volume) + "%";
     case LobbyRowKind::Mute:
       return settings_.mute ? "muted" : "on";
-    case LobbyRowKind::CreateRoom:
-      return settings_.region;
+    case LobbyRowKind::CreateRoom: {
+      // A region outside the list (--region xx): unknown, shown bare.
+      const auto it = std::ranges::find(regions_, settings_.region, &RegionChoice::name);
+      return it != regions_.end() && !it->free ? settings_.region + " (no server)"
+                                               : settings_.region;
+    }
   }
   return {};
 }

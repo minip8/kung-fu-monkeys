@@ -56,7 +56,9 @@ clients create or join rooms (`--lobby/--room/--create`, `?room=`); one `kfm_ser
 under systemd; `deploy/` holds the images, units and VM scripts; Google Cloud Compute Engine
 then Hetzner, Cloudflare Pages for the page (v0.39), Caddy, Sentry. Deployed: `kfm.minip8.com` (the page) and
 `lobby.kfm.minip8.com` (the VM `kfm-au-1`, australia-southeast1, `v0.1.0`); the playtest with
-friends is pending.
+friends is pending. M6b step 1, lobby protocol v1.1 (the `regions` reply's `list` is every
+registered region and `free` the ones with a free server; the client's Create room row marks a
+busy region "(no server)"), landed in v0.41.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -328,12 +330,14 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   (label `network`, a fake lobby in-process) and the client's session test all pin it. Every
   envelope is a flat JSON object of strings (nested signaling rides as a string in `msg`) so
   the engine's hand-written decoder reads it. `ServerHost` must stay lobby-agnostic: the wiring
-  is `LobbyAdapter` in apps/server. GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>`
+  is `LobbyAdapter` in apps/server. Additions stay backward compatible (v1.1, v0.41: a new key
+  beside the old ones; a reader treats a missing key as the older lobby's meaning, as a missing
+  `free` means "every listed region free"); `/healthz`'s shape is unchanged. GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>`
   as a null dereference (`-Werror` on the Release legs): move instead.
-- Next milestone: M6b "Play with friends" (architecture v0.40, §11 "M6b design"): the online
-  room's Waiting/Playing/Over states beside `ServerHost`, `RoomSettings`/`RoomState`/`Start`
-  and nicknames (protocol 6), lobby protocol v1.1 (`regions` lists every region plus `free`),
-  the main menu, scoreboards and match-over, bots yielding, reconnect from the UI. The bot
+- Next milestone: M6b "Play with friends" (architecture v0.40, §11 "M6b design"); step 1,
+  lobby protocol v1.1 (`regions` lists every region plus `free`), landed in v0.41. Next is
+  step 2: the online room's Waiting/Playing/Over states beside `ServerHost`,
+  `RoomSettings`/`RoomState`/`Start` and nicknames (protocol 6); then the main menu, scoreboards and match-over, bots yielding, reconnect from the UI. The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
   append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one
   architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)

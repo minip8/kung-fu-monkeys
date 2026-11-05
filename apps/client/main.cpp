@@ -437,8 +437,9 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
 
 // The Online section's region list: asked of the lobby once per visit to
 // the local lobby through a short-lived transport in Regions mode. The panel
-// offers kRegions until the lobby answers, and keeps them if it cannot be
-// reached (the create is then refused with the real reason).
+// offers kRegions until the lobby answers, then every registered region with
+// its availability (lobby protocol v1.1), and keeps kRegions if the lobby
+// cannot be reached (the create is then refused with the real reason).
 void pollRegions(App& app, std::uint64_t now) {
 #ifdef KFM_CLIENT_WEBRTC
   if (!app.regionsQueried) {
@@ -459,12 +460,16 @@ void pollRegions(App& app, std::uint64_t now) {
   if (!app.regionsQuery) return;
   net::ConnectionEvents events;
   app.regionsQuery->poll(now, events);
-  if (const std::optional<std::vector<std::string>> regions = app.regionsQuery->lobbyRegions()) {
-    app.lobby.setRegions(*regions);
+  if (const std::optional<std::vector<net::LobbyRegion>> regions =
+          app.regionsQuery->lobbyRegions()) {
+    std::vector<client::RegionChoice> choices;
     std::string list;
-    for (const std::string& r : *regions)
-      list += (list.empty() ? "" : ",") + r;
-    std::printf("kfm_client: lobby regions: %s\n", list.empty() ? "(none free)" : list.c_str());
+    for (const net::LobbyRegion& r : *regions) {
+      choices.push_back(client::RegionChoice{.name = r.name, .free = r.free});
+      list += (list.empty() ? "" : ", ") + r.name + (r.free ? "" : " (no server)");
+    }
+    app.lobby.setRegions(choices);
+    std::printf("kfm_client: lobby regions: %s\n", list.empty() ? "(none)" : list.c_str());
     app.regionsQuery.reset();
     return;
   }

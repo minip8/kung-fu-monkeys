@@ -102,6 +102,15 @@ class MenuInput {
 [[nodiscard]] bool eventDeviceBound(const platform::InputSampler& sampler,
                                     const platform::InputEvent& event);
 
+// One region of the Online section's Create room row: a lobby region and
+// whether the lobby last reported a free server in it ("eu" vs
+// "us (no server)" on the row).
+struct RegionChoice {
+  std::string name;
+  bool free{true};
+  friend bool operator==(const RegionChoice&, const RegionChoice&) = default;
+};
+
 class LobbyMenu {
  public:
   static constexpr std::size_t kMaxRows = 9 + sim::kMaxPowerUps;
@@ -117,11 +126,14 @@ class LobbyMenu {
   // Shows the Online section (a lobby URL is configured) or hides it.
   void setLobbyAvailable(bool available);
   [[nodiscard]] bool lobbyAvailable() const { return lobbyAvailable_; }
-  // The regions Create room cycles through: kRegions until the lobby answers
-  // a regions query (main.cpp), then what it listed. An empty list is
-  // ignored; a current region outside the new list becomes its first.
-  void setRegions(std::span<const std::string> regions);
-  [[nodiscard]] std::span<const std::string> regions() const { return regions_; }
+  // The regions Create room cycles through: kRegions (availability unknown,
+  // shown as free) until the lobby answers a regions query (main.cpp), then
+  // every region it listed with its availability (lobby protocol v1.1). An
+  // empty list is ignored; a current region outside the new list becomes its
+  // first free one, else its first. A busy region stays selectable: the
+  // lobby refuses the create no_server if it is still busy.
+  void setRegions(std::span<const RegionChoice> regions);
+  [[nodiscard]] std::span<const RegionChoice> regions() const { return regions_; }
 
   [[nodiscard]] std::span<const LobbyRow> rows() const { return {rows_.data(), rowCount_}; }
   [[nodiscard]] std::size_t focus() const { return focus_; }
@@ -160,7 +172,7 @@ class LobbyMenu {
 
   const sim::ContentDB* content_{nullptr};
   bool lobbyAvailable_{false};
-  std::vector<std::string> regions_;
+  std::vector<RegionChoice> regions_;
   std::optional<LobbyCommand> command_;
   std::array<LobbyRow, kMaxRows> rows_{};
   std::size_t rowCount_{0};

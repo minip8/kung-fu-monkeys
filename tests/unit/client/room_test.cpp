@@ -35,6 +35,7 @@ using client::LobbyTarget;
 using client::NetPhase;
 using client::NetSession;
 using client::NetSessionConfig;
+using client::RegionChoice;
 
 namespace {
 
@@ -225,13 +226,14 @@ TEST_CASE("lobby menu: Create room cycles the region and activates", "[client][r
   CHECK_FALSE(m.takeCommand().has_value());
   // The lobby's own list replaces the default one; the current region is
   // kept when it is listed, else the first; an empty list changes nothing.
-  const std::vector<std::string> au = {"au", "asia"};
+  const std::vector<RegionChoice> au = {{.name = "au", .free = true},
+                                        {.name = "asia", .free = true}};
   m.setRegions(au);
   CHECK(m.rowValue(m.rows()[row]) == "asia");
-  const std::vector<std::string> onlyAu = {"au"};
+  const std::vector<RegionChoice> onlyAu = {{.name = "au", .free = true}};
   m.setRegions(onlyAu);
   CHECK(m.rowValue(m.rows()[row]) == "au");
-  m.setRegions(std::vector<std::string>{});
+  m.setRegions(std::vector<RegionChoice>{});
   CHECK(m.rowValue(m.rows()[row]) == "au");
   CHECK_FALSE(m.apply(client::MenuAction::Right));  // a one-entry list: nothing changes
   CHECK(m.rowValue(m.rows()[row]) == "au");
@@ -253,6 +255,54 @@ TEST_CASE("lobby menu: Create room cycles the region and activates", "[client][r
   CHECK(m.requestJoin("hjkmn"));
   CHECK(m.takeCommand() ==
         LobbyCommand{.kind = LobbyCommand::Kind::JoinRoom, .region = "", .code = "HJKMN"});
+}
+
+TEST_CASE("lobby menu: every region with its availability (lobby v1.1)", "[client][room][lobby]") {
+  LobbyMenu m;
+  m.setLobbyAvailable(true);
+  const std::size_t row = rowIndex(m, LobbyRowKind::CreateRoom);
+  REQUIRE(row < m.rows().size());
+  // Before the lobby answers: kRegions, availability unknown (shown free).
+  REQUIRE(m.regions().size() == client::kRegions.size());
+  for (const RegionChoice& r : m.regions())
+    CHECK(r.free);
+  CHECK(m.rowValue(m.rows()[row]) == "eu");
+
+  // The lobby lists eu busy and us free: the current region (eu) is listed,
+  // so it stays, marked; the list keeps the lobby's order and availability.
+  const std::vector<RegionChoice> mixed = {
+      {.name = "asia", .free = false}, {.name = "eu", .free = false}, {.name = "us", .free = true}};
+  m.setRegions(mixed);
+  CHECK(std::ranges::equal(m.regions(), mixed));
+  CHECK(m.rowValue(m.rows()[row]) == "eu (no server)");
+  CHECK(m.settings().region == "eu");
+  // Cycling reaches the busy regions too, and Create still asks for them
+  // (the lobby refuses no_server if the region is still busy).
+  CHECK(m.change(row, +1));
+  CHECK(m.rowValue(m.rows()[row]) == "us");
+  CHECK(m.change(row, +1));
+  CHECK(m.rowValue(m.rows()[row]) == "asia (no server)");
+  CHECK(m.activate(row));
+  CHECK(m.takeCommand() ==
+        LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = "asia", .code = ""});
+
+  // A current region the lobby does not list becomes its first free one...
+  m.settings().region = "au";
+  CHECK(m.rowValue(m.rows()[row]) == "au");  // unknown to the list: shown bare
+  m.setRegions(mixed);
+  CHECK(m.settings().region == "us");
+  // ...or its first when none is free.
+  m.settings().region = "au";
+  const std::vector<RegionChoice> busy = {{.name = "eu", .free = false},
+                                          {.name = "us", .free = false}};
+  m.setRegions(busy);
+  CHECK(m.settings().region == "eu");
+  CHECK(m.rowValue(m.rows()[row]) == "eu (no server)");
+  // A later answer updates the availability in place.
+  const std::vector<RegionChoice> euFree = {{.name = "eu", .free = true},
+                                            {.name = "us", .free = false}};
+  m.setRegions(euFree);
+  CHECK(m.rowValue(m.rows()[row]) == "eu");
 }
 
 TEST_CASE("activation presses: Enter and a bound pad's Start, never other keys",
