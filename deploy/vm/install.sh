@@ -117,8 +117,13 @@ done
 if [[ -n "$KFM_GHCR_TOKEN" ]]; then
   echo "$KFM_GHCR_TOKEN" | docker login ghcr.io -u "${KFM_GHCR_USER:?set with KFM_GHCR_TOKEN}" --password-stdin
 fi
-docker pull "$KFM_IMAGE_REPO/kfm-server:$KFM_IMAGE_TAG"
-[[ $lobby -eq 0 ]] || docker pull "$KFM_IMAGE_REPO/kfm-lobby:$KFM_IMAGE_TAG"
+# An image already present (built on this machine, or loaded) is used as is;
+# update.sh is what pulls a newer build of the same tag.
+pull_unless_present() {
+  docker image inspect "$1" > /dev/null 2>&1 || docker pull "$1"
+}
+pull_unless_present "$KFM_IMAGE_REPO/kfm-server:$KFM_IMAGE_TAG"
+[[ $lobby -eq 0 ]] || pull_unless_present "$KFM_IMAGE_REPO/kfm-lobby:$KFM_IMAGE_TAG"
 
 # --- Start ---------------------------------------------------------------------
 if [[ $lobby -eq 1 ]]; then
