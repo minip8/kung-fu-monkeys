@@ -6,10 +6,27 @@ name: Deploy
 # project in the Cloudflare dashboard). A manual run from a branch pushes
 # images tagged sha-<short> (no `latest`) and a Pages preview of that branch.
 #
+# On a tag the VMs are updated between the images and the page (the `vms`
+# job): a client is refused when its build id differs from the server's, so
+# the servers must answer the new build before the page serves it. The job
+# ships deploy/vm to each VM over an IAP SSH tunnel and runs update.sh TAG,
+# which restarts the pool one process at a time at once (a running match
+# ends; update.sh --drain exists for a by-hand update that waits for the
+# rooms to close); VMs are taken in the order of KFM_VMS, so list the lobby
+# VM last. It authenticates with Workload Identity
+# Federation (no key in the repository; deploy/gcp/setup_deploy_identity.sh
+# creates the pool, provider and service account and prints the variables).
+# Without KFM_VMS the job is skipped and the VMs are updated by hand.
+#
 # Repository settings it reads:
 #   variables  CF_PAGES_PROJECT  the Cloudflare Pages project name
 #              KFM_LOBBY_URL     the lobby's wss:// URL, written into config.js
 #              KFM_SENTRY_DSN    the browser's Sentry DSN (may be unset: Sentry off)
+#              KFM_VMS           the VMs to update, "name:zone ..." lobby VM last
+#                                (e.g. "kfm-us-1:us-east1-b kfm-eu-1:europe-west1-b")
+#              GCP_PROJECT_ID    the GCP project of the VMs
+#              GCP_WORKLOAD_IDENTITY_PROVIDER  the provider's full resource name
+#              GCP_DEPLOY_SERVICE_ACCOUNT      the deploy service account's email
 #   secrets    CLOUDFLARE_API_TOKEN (Cloudflare Pages: Edit), CLOUDFLARE_ACCOUNT_ID
 on:
   push:
@@ -66,8 +83,54 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
+  vms:
+    name: update the VMs
+    needs: images
+    if: github.ref_type == 'tag' && vars.KFM_VMS != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write   # the OIDC token Workload Identity Federation exchanges
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Ship deploy/vm and run update.sh on every VM
+        env:
+          KFM_VMS: ${{ vars.KFM_VMS }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # OS Login names the runner's user after the service account; the
+          # key gcloud generates for this run is registered to its profile.
+          ssh=(gcloud compute ssh --quiet --tunnel-through-iap
+               --ssh-flag=-o --ssh-flag=ServerAliveInterval=30)
+          for vm in $KFM_VMS; do
+            name="${vm%%:*}"; zone="${vm#*:}"
+            [[ -n "$name" && -n "$zone" && "$name" != "$zone" ]] \
+              || { echo "::error::KFM_VMS entry '$vm' is not name:zone"; exit 1; }
+            echo "::group::$name ($zone)"
+            tar czf - --owner=0 --group=0 -C deploy vm \
+              | "${ssh[@]}" "$name" --zone "$zone" --command \
+                  'sudo rm -rf /opt/kfm-deploy/vm && sudo tar xzf - -C /opt/kfm-deploy'
+            "${ssh[@]}" "$name" --zone "$zone" --command \
+              "sudo /opt/kfm-deploy/vm/update.sh '$TAG'"
+            echo "::endgroup::"
+          done
+
   web:
     name: browser client to Cloudflare Pages
+    needs: [images, vms]
+    # Runs after the VMs (or at once when the vms job is skipped: a manual
+    # run, or no KFM_VMS), never after a failed one.
+    if: >-
+      !cancelled() && needs.images.result == 'success'
+      && (needs.vms.result == 'success' || needs.vms.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

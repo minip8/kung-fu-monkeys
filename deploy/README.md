@@ -65,7 +65,10 @@ Files:
 7. **DNS.** An A record `lobby.example.com` → the printed IP. If the zone is on Cloudflare,
    make it *DNS only* (grey cloud): Caddy answers the ACME HTTP challenge itself. Caddy
    retries until the name resolves.
-8. **Check.** `curl https://lobby.example.com/healthz` →
+8. **Automatic updates.** `deploy/gcp/setup_deploy_identity.sh --project my-proj --repo
+   owner/name`, then the `gh variable set` lines it prints ("Updating" below). From then on
+   every `v*` tag updates the VMs before the page goes live.
+9. **Check.** `curl https://lobby.example.com/healthz` →
    `{"servers":4,"rooms":0,"regions":["eu"]}`. Then open
    `https://play.example.com/`, create a room and join it from a second browser with
    `?room=CODE`.
@@ -96,19 +99,38 @@ room.
 
 ## Updating
 
-Tag a release (`v0.2.0`), wait for `deploy.yml`, then on each VM, EU last:
+Tag a release (`v0.2.0`) and the deploy workflow does the rest: it pushes the images, then
+its `vms` job ships `deploy/vm/` to every VM in the repository variable `KFM_VMS` over an IAP
+SSH tunnel and runs `update.sh v0.2.0` on each (in the listed order: lobby VM last), and only
+then publishes the page, so a browser never meets a server of another build. `update.sh`
+pulls the tag, refreshes the units and the Caddyfile from the shipped copy, writes the tag
+into `kfm.env`, restarts the lobby (closing every room) and then the servers one at a time,
+at once: a match in progress ends. Watch it under Actions → Deploy; the job's log shows every
+restart.
+
+One-time setup (architecture §13.5): `deploy/gcp/setup_deploy_identity.sh --project my-proj
+--repo owner/name` creates the service account, the Workload Identity Federation pool and
+provider for this repository, turns OS Login on for the project and opens port 22 to IAP's
+range only, then prints the `gh variable set` lines (`GCP_PROJECT_ID`,
+`GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, `KFM_VMS` as
+`"kfm-us-1:us-east1-b kfm-eu-1:europe-west1-b"`). Without `KFM_VMS` the job is skipped and
+the page is published straight after the images. A manual `workflow_dispatch` run never
+touches the VMs (its images are `sha-` tagged).
+
+By hand, for one VM or when the workflow cannot reach it:
 
 ```sh
-gcloud compute ssh kfm-us-1 -- sudo /opt/kfm-deploy/vm/update.sh v0.2.0
-gcloud compute ssh kfm-eu-1 -- sudo /opt/kfm-deploy/vm/update.sh v0.2.0
+gcloud compute ssh kfm-eu-1 --zone europe-west1-b --tunnel-through-iap -- \
+  sudo /opt/kfm-deploy/vm/update.sh v0.2.0 [--drain SECONDS]
 ```
 
-`update.sh` pulls the tag, writes it into `kfm.env`, restarts the lobby (closing every room)
-and then the servers one at a time. A restarted server ends its match, and a client whose
-build id or content hash differs from the server's is refused (`mismatch`), so update when
-nobody is playing; the page and the servers change together. To change the pool size, re-run
-`sudo /opt/kfm-deploy/vm/install.sh [--lobby] --servers N`. To ship changed units or scripts,
-copy `deploy/vm/` to `/opt/kfm-deploy/vm/` and re-run `install.sh` (or recreate the VM).
+A restarted server ends its match and a client whose build id or content hash differs from
+the server's is refused (`mismatch`). `--drain SECONDS` first polls the lobby's `/healthz`
+until `"rooms":0` (or the timeout, then goes ahead regardless) for an update that should wait
+for an evening's last room to close. To change the pool size, re-run `sudo /opt/kfm-deploy/vm/install.sh
+[--lobby] --servers N`. The VM's startup script re-extracts the `deploy/vm/` embedded at
+creation on every boot, so units or a Caddyfile changed by a release hold until the next
+reboot; to make them permanent, recreate the VM (or update its startup-script metadata).
 
 Logs: `journalctl -u kfm-lobby -u 'kfm-server@*' -u caddy`. Each server prints a stats line
 every 60 s (`--stats-every 60`).
