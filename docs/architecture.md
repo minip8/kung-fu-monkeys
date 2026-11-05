@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.44 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.47 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -443,6 +443,13 @@ lobby as a rejoin: lobby protocol v1.2 adds an optional `token` to `join` (the l
 token it issued for a live room, re-admits the same token outside `capacity`, closes a socket
 still seated under it with `closed`/`replaced`, refuses an unknown one `bad_token`). No sim
 change; replay checksums unchanged.
+v0.47 changes: releases update the VMs from the deploy workflow (§13.5). A `vms` job between
+the images and the page ships `deploy/vm/` to every VM in `KFM_VMS` over an IAP SSH tunnel
+(Workload Identity Federation, no stored key; `deploy/gcp/setup_deploy_identity.sh`) and runs
+`update.sh`, which now drains (waits up to 15 min for the lobby to report no live room) and
+refreshes the units; the page is published only after the servers answer the new build, since
+a client of another build id is refused. v0.45 (mouse controls) and v0.46 (the pause menu)
+are the client branches in flight.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3449,7 +3456,11 @@ lives in the bots repository (above) and uses this repository through a pinned r
   repository variables. `deploy/` holds the compose file for local development, the systemd
   units (`kfm-lobby.service`, `kfm-server@.service` over Docker with host networking), the
   Caddyfile, `install.sh`/`update.sh`, the `gcloud` scripts and the Hetzner equivalent;
-  `deploy/README.md` is the runbook.
+  `deploy/README.md` is the runbook. Since v0.47 a tagged release also updates the VMs
+  from the workflow: `vms` runs between the images and the page, ships `deploy/vm/` to each VM
+  named in `KFM_VMS` over an IAP tunnel and runs `update.sh TAG` (drain, then a rolling
+  restart), authenticated through Workload Identity Federation rather than a stored key, so
+  the page never serves a build the servers refuse; a manual run skips the VMs.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
   hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in
