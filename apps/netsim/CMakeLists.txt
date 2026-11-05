@@ -15,12 +15,16 @@ endif()
 
 # The M3 exit criterion as a gate (§11): 10 clients, no checksum mismatch or
 # resync, bounded rollback depth. 30 simulated seconds each; label `soak`.
+# (100 ms / 2 % and 300 ms / 10 % since M3; 500 ms / 5 % with ±30 ms jitter since v0.44.)
 if(KFM_BUILD_TESTS)
   add_test(NAME netsim_10c_100ms_2pct
     COMMAND kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 --quiet)
   add_test(NAME netsim_10c_300ms_10pct
     COMMAND kfm_netsim --clients 10 --rtt 300 --jitter 10 --loss 10 --seconds 30 --quiet)
-  set_tests_properties(netsim_10c_100ms_2pct netsim_10c_300ms_10pct PROPERTIES
+  # v0.44: the high-RTT check (§6.2): 500 ms with ±30 ms jitter and 5% loss.
+  add_test(NAME netsim_10c_500ms_5pct
+    COMMAND kfm_netsim --clients 10 --rtt 500 --jitter 30 --loss 5 --seconds 30 --quiet)
+  set_tests_properties(netsim_10c_100ms_2pct netsim_10c_300ms_10pct netsim_10c_500ms_5pct PROPERTIES
     LABELS soak
     TIMEOUT 300)
 endif()

@@ -432,7 +432,12 @@ granted a tick later, so the sim sees a leave and a join (a deathmatch forfeits 
 score and spawns the joiner after `respawnTicks`, a rounds mode at the next round); a yielded
 bot does not return within the match (`RoomSettings.bots` is "bots when there is room",
 applied at every Start); the room flow's lobby `capacity` is max players. A spectator given a
-slot runs forward to the lead at once (`NetClient`). Reconnect from the UI (§6.6, §13.5): a
+slot runs forward to the lead at once (`NetClient`). The lead control at high RTT (§6.2, §12):
+measured with `kfm_netsim` at 200, 300 and 500 ms with ±20–30 ms jitter and 2–5 % loss, 4 and 10
+clients: no saturation, oscillation or resync, but a ±30 ms link's late tail was substituted
+(2.2 slot-ticks/s per client at any RTT); the margin band is now jitter-aware (a lower envelope
+of the margin reports moves it up), which cuts that to 0.1–0.3 for about 0.6 tick more lead and
+leaves a steady link's band as it was; a 500 ms soak gate joins the two. Reconnect from the UI (§6.6, §13.5): a
 session that lost its link offers Reconnect, which re-dials with the same token, through the
 lobby as a rejoin: lobby protocol v1.2 adds an optional `token` to `join` (the lobby keeps every
 token it issued for a live room, re-admits the same token outside `capacity`, closes a socket
@@ -1996,6 +2001,35 @@ clock forward to the band's middle; the client never jumps backwards. The client
 accumulates ns × `kTickHz` × rate in ppm (one tick = 10^15 units, no drift) and returns at most 8
 ticks per call. The input delay is 0–3 ticks (default 0): inputs passed at local tick L are for
 tick L + delay.
+
+The lead control at high RTT (v0.44, M6b step 4; `kfm_netsim --csv`, 60 s, 10 s warm-up, 10
+clients; 4 clients agree within noise; jitter is ± per direction, uniform). The controller holds:
+the rate never left 99–101 % (nowhere near the 98/102 % clamps; 1–8 % of seconds off 100 %), the
+smoothed margin stays in its band, there are no resyncs, hard jumps or checksum mismatches, and
+the lead follows RTT/2 (it sits 1–2 ticks below the formula's target, which counts 2 × jitter
+that the margin band then trims). What it did not do was keep a jittery link's inputs on time:
+with the fixed +1..+2 band the mean margin sat inside the band while the late tail of a ±30 ms
+link was substituted, about 2.2 slot-ticks a second per client (≈ 4 % of ticks) at any RTT, since
+the band ignores the spread. v0.44 makes the band jitter-aware (`kfm/net/clock_sync.hpp`): a
+floor follows the margin reports half way down at each lower report and creeps back up by 2/256
+of a tick per report (never above the smoothed margin), and the band moves up by how far that
+lower envelope reaches below the mean beyond the band's low edge (at most 4 ticks). A steady
+link keeps the +1..+2 band (100 ms / ±10 ms is unchanged); a ±30 ms link buys about 0.6 tick of
+margin (10 ms of input latency) and its substitutions fall twentyfold. Server substitutions per
+client per second, before → after:
+
+| RTT | ±20 ms, 2 % | ±20 ms, 5 % | ±30 ms, 2 % | ±30 ms, 5 % | lead / target (ticks, ±30 ms, 2 %, after) |
+|---|---|---|---|---|---|
+| 200 ms | 0.20 → 0.16 | 0.50 → 0.38 | 2.25 → 0.12 | 2.62 → 0.31 | 8.0 / 10.0 |
+| 300 ms | 0.20 → 0.16 | 0.50 → 0.40 | 2.19 → 0.10 | 2.73 → 0.34 | 11.0 / 12.9 |
+| 500 ms | 0.18 → 0.13 | 0.50 → 0.36 | 2.15 → 0.11 | 2.61 → 0.31 | 17.0 / 18.9 |
+
+What remains at 5 % loss is loss, not timing (an input lost beyond its redundancy). At 500 ms the
+rollback depth (p99 34–35 ticks) exceeds the 32-tick ring, so most rollbacks re-simulate from the
+verified anchor (about 11 k "rollbacks past the ring" per minute across 10 clients); nothing
+overflows the 128-tick frame history. The soak gates gain a third, `netsim_10c_500ms_5pct`
+(500 ms, ±30 ms, 5 %, 30 s; label `soak`), and `kfm_netcode_tests` pins the jitter case (200 ms,
+±30 ms: under 0.4 substitutions a second, where the fixed band gave 2.2).
 
 Client tick, in order:
 
@@ -4017,6 +4051,13 @@ baseline moved to C++23 (§9).
 
 - **Fixed-point ergonomics.** Mitigate with a complete `Fixed` operator set, LUT trig and unit
   tests against a `double` reference.
+- **Very high RTT (v0.44).** Measured to 500 ms (§6.2): the lead control holds and a jittery link
+  keeps its inputs on time since the jitter-aware band, but past ~480 ms the rollback depth
+  exceeds the 32-tick ring and rollbacks re-simulate from the verified anchor every time, which
+  costs CPU in proportion to the depth (fine natively and for one local player; a browser on a
+  slow phone at 500 ms is untested). Mitigations if it shows: a larger ring for high-RTT links,
+  or the input delay (§6.2) raised automatically above some RTT. The netsim jitter is uniform;
+  real links have spikes, which the floor follows half way per report and forgets in seconds.
 - **Visual noise from predicting 9 remote players.** Mitigate with smoothing, the optional
   1–2 tick input delay, and, if needed, rendering remote players 1–2 ticks behind confirmed.
 - **Catch feel under latency.** Catcher-favouring is inherent; the thrower sees the catch

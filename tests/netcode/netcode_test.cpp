@@ -151,6 +151,18 @@ TEST_CASE("deathmatch: 4 clients at 100 ms RTT and 2% loss stay in sync through 
   CHECK(scores > 5);
 }
 
+TEST_CASE("jitter: 4 clients at 200 ms RTT with ±30 ms jitter keep their inputs on time (v0.44)",
+          "[netcode][lead]") {
+  // The defect the high-RTT check of v0.44 found: with the fixed +1..+2
+  // band the smoothed margin sat inside it while the late tail of a ±30 ms
+  // link was substituted, over 2 slot-ticks a second per client at any RTT.
+  // The jitter-aware band buys the margin instead.
+  const SoakReport r = soak("200ms-30ms-jitter", 4, 100 * kMs, 30 * kMs, 20'000, 40);
+  CHECK(r.serverSubstPerSec < 0.4);
+  CHECK(r.meanLead - r.meanTarget <= 1.0);  // and not by running far ahead
+  CHECK(r.meanLead - r.meanTarget >= -3.0);
+}
+
 TEST_CASE("soak: 10 clients at 300 ms RTT with ±10 ms jitter and 10% loss for 60 s",
           "[netcode][soak]") {
   const SoakReport r = soak("300ms-10%", 10, 150 * kMs, 10 * kMs, 100'000, 60);

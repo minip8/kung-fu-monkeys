@@ -2,6 +2,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <deque>
@@ -96,6 +97,35 @@ TEST_CASE("LeadController converges a delayed plant into the +1..+2 band", "[net
       CHECK(minRate >= 0.98);
     }
   }
+}
+
+TEST_CASE("LeadController moves its band up under arrival jitter (v0.44)", "[net][clock]") {
+  // Steady reports: the floor meets the mean, the band stays +1..+2.
+  LeadController steady;
+  for (int i = 0; i < 600; ++i)
+    steady.onArrivalMargin(1);
+  CHECK(steady.bandShiftQ8() == 0);
+  CHECK(steady.floorQ8() == 256);
+  CHECK(steady.ratePpm() == kRateOnePpm);
+
+  // ±2 ticks of jitter around a mean of +1.5 (inside the fixed band): the
+  // floor holds the low reports, the band moves up and the clock speeds up,
+  // which the fixed band never did (the late tail was substituted).
+  LeadController jittery;
+  constexpr std::array<int8_t, 5> kSpread = {-1, 3, 1, 2, 0};
+  for (int i = 0; i < 600; ++i)
+    jittery.onArrivalMargin(static_cast<int8_t>(kSpread[static_cast<size_t>(i) % kSpread.size()]));
+  INFO("margin " << jittery.smoothedMarginQ8() / 256.0 << " floor " << jittery.floorQ8() / 256.0
+                 << " shift " << jittery.bandShiftQ8() / 256.0);
+  CHECK(jittery.floorQ8() <= -1 * 256 + 32);  // near the low reports
+  CHECK(jittery.bandShiftQ8() >= 192);
+  CHECK(jittery.bandShiftQ8() <= jittery.config().jitterBandMaxQ8);
+  CHECK(jittery.ratePpm() > kRateOnePpm);
+
+  // The jitter stops: the floor creeps back up and the band comes down.
+  for (int i = 0; i < 2000; ++i)
+    jittery.onArrivalMargin(3);
+  CHECK(jittery.bandShiftQ8() == 0);
 }
 
 TEST_CASE("LeadController asks for a forward jump when hopelessly late", "[net][clock]") {
