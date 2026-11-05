@@ -128,15 +128,24 @@ if ! "${gc[@]}" compute firewall-rules describe kfm-allow-iap-ssh > /dev/null 2>
     --description "SSH to every VM through Identity-Aware Proxy (deploy workflow, operators)"
 fi
 
+# The project's running VMs, "name:zone ..." (the lobby VM, tag kfm-lobby, last).
+vms="$("${gc[@]}" compute instances list --filter='status=RUNNING AND name~^kfm-' \
+  --format='csv[no-heading](name,zone.basename(),tags.items)' \
+  | awk -F, '{ line = $1 ":" $2; if ($0 ~ /kfm-lobby/) lobby = lobby " " line; else rest = rest " " line }
+             END { print rest lobby }' | sed 's/^ //')"
+[[ -n "$vms" ]] || vms="kfm-eu-1:europe-west1-b"
+first="${vms%% *}"
+
 cat << EOF
 
-Done. Set the repository variables (KFM_VMS: "name:zone ..." with the lobby VM last):
+Done. Set the repository variables (KFM_VMS: "name:zone ..." with the lobby VM last;
+this is the project's running kfm-* VMs now):
 
   gh variable set GCP_PROJECT_ID --body '$project'
   gh variable set GCP_WORKLOAD_IDENTITY_PROVIDER --body '$provider_name'
   gh variable set GCP_DEPLOY_SERVICE_ACCOUNT --body '$sa'
-  gh variable set KFM_VMS --body 'kfm-eu-1:europe-west1-b'
+  gh variable set KFM_VMS --body '$vms'
 
 Then the next v* tag updates the VMs from the workflow. Check the path first by hand:
-  gcloud compute ssh kfm-eu-1 --zone europe-west1-b --tunnel-through-iap --project $project -- sudo true
+  gcloud compute ssh ${first%%:*} --zone ${first#*:} --tunnel-through-iap --project $project -- sudo true
 EOF
