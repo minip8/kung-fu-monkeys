@@ -28,8 +28,10 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 
 namespace kfm::client {
 
@@ -45,6 +47,16 @@ enum class LobbyRowKind : uint8_t {
   BotDifficulty,
   Volume,
   Mute,
+  CreateRoom,  // M6a: the Online section (a lobby URL is configured)
+};
+
+// What the Online section asks the host to do (LobbyMenu::takeCommand()).
+struct LobbyCommand {
+  enum class Kind : uint8_t { CreateRoom = 0, JoinRoom };
+  Kind kind{Kind::CreateRoom};
+  std::string region;  // CreateRoom
+  std::string code;    // JoinRoom: normalised upper case
+  bool operator==(const LobbyCommand&) const = default;
 };
 
 struct LobbyRow {
@@ -79,6 +91,11 @@ class MenuInput {
   std::array<Stick, kMaxPads> sticks_{};
 };
 
+// Enter, keypad Enter or a bound pad's Start: the press that activates the
+// focused row when it is an action (LobbyMenu::activate()); otherwise it
+// starts the match as before (MatchSession).
+[[nodiscard]] bool isActivateEvent(const platform::InputEvent& event, bool deviceBound);
+
 // The `deviceBound` argument of MenuInput::translate(): the keyboard always,
 // a pad when the sampler has it bound to a slot.
 [[nodiscard]] bool eventDeviceBound(const platform::InputSampler& sampler,
@@ -86,7 +103,7 @@ class MenuInput {
 
 class LobbyMenu {
  public:
-  static constexpr std::size_t kMaxRows = 8 + sim::kMaxPowerUps;
+  static constexpr std::size_t kMaxRows = 9 + sim::kMaxPowerUps;
 
   LobbyMenu();
 
@@ -96,6 +113,9 @@ class LobbyMenu {
   // exists. The menu keeps a pointer: `content` must outlive it or the next
   // setContent(). Before the first call the menu uses sim::defaultContent().
   void setContent(const sim::ContentDB& content);
+  // Shows the Online section (a lobby URL is configured) or hides it.
+  void setLobbyAvailable(bool available);
+  [[nodiscard]] bool lobbyAvailable() const { return lobbyAvailable_; }
 
   [[nodiscard]] std::span<const LobbyRow> rows() const { return {rows_.data(), rowCount_}; }
   [[nodiscard]] std::size_t focus() const { return focus_; }
@@ -111,14 +131,30 @@ class LobbyMenu {
   // Left/Right on a given row (the panel's mouse buttons).
   bool change(std::size_t row, int direction);
 
+  // --- the Online section (M6a) ----------------------------------------------
+  // Activates the focused row: true when it is an action row (Create room),
+  // whose command is then pending; false otherwise (the press is the
+  // match's Start).
+  bool activate();
+  // Activates a given row (the panel's button).
+  bool activate(std::size_t row);
+  // A code typed into the panel: pending JoinRoom when it is a valid room
+  // code (normalizeRoomCode()); false otherwise.
+  bool requestJoin(std::string_view code);
+  // The pending command, once.
+  [[nodiscard]] std::optional<LobbyCommand> takeCommand();
+
   // --- text for the panel (and the tests) -----------------------------------
   [[nodiscard]] std::string rowLabel(const LobbyRow& row) const;
   [[nodiscard]] std::string rowValue(const LobbyRow& row) const;
 
  private:
   [[nodiscard]] const sim::ContentDB& content() const;
+  void rebuildRows();
 
   const sim::ContentDB* content_{nullptr};
+  bool lobbyAvailable_{false};
+  std::optional<LobbyCommand> command_;
   std::array<LobbyRow, kMaxRows> rows_{};
   std::size_t rowCount_{0};
   std::size_t focus_{0};

@@ -29,6 +29,8 @@ struct HudView {
   bool paused{false};
   bool network{false};     // a networked match: no "back to the lobby" by Enter
   std::string statusLine;  // network: a small connection status line
+  std::string roomLine;    // M6a: "Room ABCDE (eu)", drawn large above the status line
+  std::string shareLine;   // M6a: the invite ("Invite: https://.../?room=ABCDE")
   // Network: the server's announced next match (arena, mode, power-ups),
   // shown under the match-over banner.
   std::string nextMatch;
@@ -48,20 +50,26 @@ inline void drawMatchHud(const MatchSession& session, const HudInput& in) {
 // status (connecting, syncing, rejected or disconnected with the reason), the
 // server's match once its Welcome arrived (read-only: slot cards, arena with
 // a preview, mode with its key numbers, power-up set) and how to get back to
-// the local lobby.
-void drawNetStatus(const NetSession& session);
+// the local lobby. M6a: in a room, the room's code and region in large type
+// and `invite` (the link or flags that join it); a lobby refusal shows in
+// plain words (NetSession::statusText()).
+void drawNetStatus(const NetSession& session, const std::string& invite = {});
 
 // The lobby (v0.24): a card per slot (colour, label, device or bot), then
 // locally the settings panel (LobbyMenu rows: arena, mode, power-up toggles,
 // bots, volume, mute; mouse, keyboard or pad) beside an arena preview and
-// the mode's key numbers, the join help and the start button. With a
-// connectUrl (network mode) the settings are hidden: the server owns them
-// and drawNetStatus() shows them once connected.
+// the mode's key numbers, the join help and the start button. With an
+// onlineLabel (network mode: "server ws://...", "room ABCDE (lobby ...)")
+// the settings are hidden: the server owns them and drawNetStatus() shows
+// them once connected. M6a: with a lobby URL (LobbyMenu::lobbyAvailable())
+// the Online section follows the rows: Create room (a button beside the
+// region) and a room code field (upper case, the room alphabet only) with
+// Join, both handed to the menu (activate() / requestJoin()).
 struct LobbyOutcome {
   bool start{false};    // the start (or connect) button was pressed
   bool changed{false};  // a setting changed through the panel's mouse controls
 };
 [[nodiscard]] LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu,
-                                     const std::string& connectUrl = {});
+                                     const std::string& onlineLabel = {});
 
 }  // namespace kfm::client

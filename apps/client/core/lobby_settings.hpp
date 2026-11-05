@@ -16,6 +16,7 @@
 //   bot_difficulty=medium           (easy, medium or hard: the reference bot's tier)
 //   volume=80
 //   mute=0
+//   region=eu                       (M6a: the Online section's Create room region)
 //
 // stored natively in SDL's per-user preference directory and in the
 // browser's localStorage (main.cpp). Precedence at startup: defaults, then
@@ -43,6 +44,7 @@ struct LobbySettings {
   ai::ReferenceTier botTier{kDefaultBotTier};
   uint8_t volume{80};  // percent
   bool mute{false};
+  uint8_t region{0};  // M6a: index into kRegions (the Online section)
   constexpr bool operator==(const LobbySettings&) const = default;
 };
 

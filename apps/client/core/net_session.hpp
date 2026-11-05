@@ -36,6 +36,16 @@
 //
 // Pause, single step, time scale and content tuning do not exist here: the
 // server's clock and content rule a networked match.
+//
+// Rooms (M6a, docs/lobby-protocol.md §3): with NetSessionConfig::lobby set
+// the transport asks the lobby to create or join a room before it connects
+// (WebRtcTransport's lobby mode) and the session gets an ILobbyJoin view of
+// it (attachLobby()). The NetClient starts without a token; on the first
+// advance() that sees the room, before pump(), the lobby's token goes into
+// the NetClient (setToken), which is before the Hello: the transport only
+// reports Connected after the lobby's `joined`. statusText() then names the
+// room, and a refusal or a lobby close becomes plain words
+// (lobbyErrorText()).
 #pragma once
 
 #include "kfm/net/net_client.hpp"
@@ -53,8 +63,10 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace kfm::client {
@@ -73,13 +85,53 @@ enum class NetPhase : uint8_t {
 [[nodiscard]] const char* rejectReasonText(net::RejectReason reason);
 [[nodiscard]] const char* disconnectReasonText(net::DisconnectReason reason);
 
+// A room to create or join through the lobby.
+struct LobbyTarget {
+  bool create{true};   // create a room in `region`; false: join `code`
+  std::string region;  // create: "eu", "us", ...
+  std::string code;    // join: upper case, 5 characters
+  bool operator==(const LobbyTarget&) const = default;
+};
+
+// The room the lobby put the session in.
+struct LobbyRoomInfo {
+  std::string code;  // "ABCDE"
+  std::string region;
+  bool operator==(const LobbyRoomInfo&) const = default;
+};
+
+// What a lobby-mode transport tells the session: the room once the lobby
+// said `joined`, its token, and why it ended (WebRtcTransport's lobbyRoom(),
+// connectionToken() and lastError() in the app; a fake in the tests).
+class ILobbyJoin {
+ public:
+  ILobbyJoin() = default;
+  ILobbyJoin(const ILobbyJoin&) = delete;
+  ILobbyJoin& operator=(const ILobbyJoin&) = delete;
+  ILobbyJoin(ILobbyJoin&&) = delete;
+  ILobbyJoin& operator=(ILobbyJoin&&) = delete;
+  virtual ~ILobbyJoin() = default;
+  [[nodiscard]] virtual std::optional<LobbyRoomInfo> room() const = 0;
+  [[nodiscard]] virtual std::vector<std::byte> token() const = 0;
+  // "lobby refused: <reason>", "lobby closed: <reason>", "lobby connection
+  // closed", another transport error, or empty.
+  [[nodiscard]] virtual std::string error() const = 0;
+};
+
+// A lobby error (ILobbyJoin::error()) in plain words for the status screen:
+// "Room ABCDE not found", "Room ABCDE is full", "No server available in eu",
+// "Version mismatch: reload the page or update the client", ... Empty when
+// `error` is not a lobby error.
+[[nodiscard]] std::string lobbyErrorText(std::string_view error, const LobbyTarget& target);
+
 struct NetSessionConfig {
-  std::string serverLabel;       // shown in the status ("ws://host:port")
-  uint32_t buildId{0};           // must match the server's (ClientConfig::buildId)
-  std::vector<std::byte> token;  // connection token (§6.7), may be empty
-  bool spectate{false};          // request no slots
-  uint8_t requestedSlots{0};     // 0: one per bound lobby device (at least 1)
-  uint8_t inputDelayTicks{0};    // §6.2 fixed input delay
+  std::string serverLabel;           // shown in the status ("ws://host:port", the lobby URL)
+  std::optional<LobbyTarget> lobby;  // set: a room through the lobby at serverLabel
+  uint32_t buildId{0};               // must match the server's (ClientConfig::buildId)
+  std::vector<std::byte> token;      // connection token (§6.7), may be empty
+  bool spectate{false};              // request no slots
+  uint8_t requestedSlots{0};         // 0: one per bound lobby device (at least 1)
+  uint8_t inputDelayTicks{0};        // §6.2 fixed input delay
   // The client's loaded content (its hash must match the server's);
   // nullptr = sim::defaultContent(). Copied. The arena and mode come from
   // the server (Welcome / Snapshot / MatchConfig).
@@ -122,6 +174,15 @@ class NetSession {
 
   // Sends Disconnect{Quit}; the phase becomes Disconnected.
   void disconnect();
+
+  // Lobby mode: the transport's view of the lobby (see the header comment).
+  // Call before the first advance(); destroyed before the owned transport.
+  void attachLobby(std::unique_ptr<ILobbyJoin> lobby) { lobby_ = std::move(lobby); }
+  // The room once the lobby placed the session in one (kept after a
+  // disconnect, so Start can rejoin it).
+  [[nodiscard]] const std::optional<LobbyRoomInfo>& room() const { return room_; }
+  // The lobby's refusal or close in plain words, or empty.
+  [[nodiscard]] std::string lobbyErrorText() const;
 
   // --- status -----------------------------------------------------------------
   [[nodiscard]] NetPhase phase() const;
@@ -197,6 +258,8 @@ class NetSession {
   void updateDisplayRate(uint64_t nowNs);
 
   NetSessionConfig config_;
+  std::unique_ptr<ILobbyJoin> lobby_;
+  std::optional<LobbyRoomInfo> room_;
   uint8_t requested_{1};
   sim::ContentDB content_{};
   std::unique_ptr<net::ITransport> ownedTransport_;
