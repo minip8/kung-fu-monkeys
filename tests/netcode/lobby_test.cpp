@@ -239,6 +239,36 @@ TEST_CASE("lobby: a refused join is Disconnected with the reason", "[lobby][webr
   CHECK(c.transport->connectionToken().empty());
 }
 
+namespace {
+[[nodiscard]] LobbyRequest regionsRequest() {
+  LobbyRequest r;
+  r.kind = LobbyRequest::Kind::Regions;
+  return r;
+}
+}  // namespace
+
+TEST_CASE("lobby: a regions query lists the lobby's regions", "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  // No server yet: the list is empty, and the close is no error.
+  w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), regionsRequest()));
+  LobbyClient& none = *w.clients.back();
+  REQUIRE(w.runUntil([&] { return none.client->state() == ClientState::Disconnected; }));
+  REQUIRE(none.transport->lobbyRegions().has_value());
+  CHECK(none.transport->lobbyRegions().value_or(std::vector<std::string>{"unset"}).empty());
+  CHECK(none.transport->lastError().empty());
+  CHECK_FALSE(none.transport->lobbyRoom().has_value());
+
+  w.server = std::make_unique<LobbyServer>(w.lobby.url(), kSecret);
+  REQUIRE(w.runUntil([&] { return w.server->link->state() == LobbyLinkState::Registered; }));
+  w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), regionsRequest()));
+  LobbyClient& some = *w.clients.back();
+  REQUIRE(w.runUntil([&] { return some.client->state() == ClientState::Disconnected; }));
+  REQUIRE(some.transport->lobbyRegions().has_value());
+  CHECK(some.transport->lobbyRegions().value_or({}) == std::vector<std::string>{"eu"});
+  CHECK(some.transport->lastError().empty());
+}
+
 TEST_CASE("lobby: peers leave both ways", "[lobby][webrtc]") {
   WebRtcTransport::initLogging(WebRtcLogLevel::Error);
   World w;
