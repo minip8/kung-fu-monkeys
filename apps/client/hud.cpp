@@ -526,7 +526,7 @@ void shortDeviceText(const platform::DeviceBinding& d, char (&out)[24]) {
   switch (d.kind) {
     case platform::DeviceKind::Keyboard:
       if (d.keyboardProfile == 0) {
-        std::snprintf(out, sizeof out, "keys left");
+        std::snprintf(out, sizeof out, "Keyboard + mouse");  // v0.45
       } else if (d.keyboardProfile == 1) {
         std::snprintf(out, sizeof out, "keys right");
       } else {
@@ -1069,8 +1069,10 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
     ImGui::Spacing();
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextUnformatted(
-        "Join: press Throw or Dash on a free keyboard side, or any button on a pad");
-    ImGui::BulletText("Keyboard left:  WASD move, J/Space throw, K/LShift dash, L/E ability");
+        "Join: press Throw or Dash (or click) on a free keyboard side, or any button on a pad");
+    ImGui::BulletText(
+        "Keyboard + mouse: WASD move, mouse aims, left click/J/Space throw, right "
+        "click/K/LShift dash, L/E ability");
     ImGui::BulletText("Keyboard right: arrows move, ./RCtrl throw, //RShift dash, ;/' ability");
     ImGui::BulletText(
         "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "

@@ -30,6 +30,18 @@
 //     SDL's +Y-down is flipped to the sim's +y-up.
 //   - Aim: the right stick when outside its deadzone, else the current move
 //     direction, else the previous aim (it never snaps back to 0).
+//   - Mouse aim (v0.45): a slot on a keyboard profile with `mouseAim` (the
+//     primary profile, keyboard + mouse) aims at the cursor once the mouse
+//     has moved or clicked, until it leaves the window (MouseLeave). The
+//     sampler knows no world state: before sampling a tick the host sets
+//     the cursor's ground point (setCursorGround, sim units) and each slot's
+//     aim origin (setAimOrigin, its monkey's position); the aim is the
+//     direction from the origin to the ground point. While mouse aim is on,
+//     the move direction never sets the aim, and with either point unknown
+//     or the cursor within kMinMouseAimDistance of the origin the previous
+//     aim stays.
+//   - The mouse buttons are Keys (Key::MouseLeft...) on the keyboard device:
+//     profiles bind them, they edge, stamp subTick and join like keys.
 //   - Consumed buttons: consumeButtons() marks a slot's Throw/Dash/Ability presses
 //     recorded so far, and the buttons held at that moment, as used up: they
 //     set no bit and no subTick until the action has been released. Used for
@@ -72,6 +84,7 @@ using KeyAliases = std::array<Key, kMaxKeyAliases>;
 
 struct KeyboardProfile {
   std::array<KeyAliases, kActionCount> keys{};  // indexed by Action
+  bool mouseAim{false};                         // v0.45: the cursor aims (see the header comment)
 
   [[nodiscard]] constexpr const KeyAliases& operator[](Action a) const {
     return keys[static_cast<std::size_t>(a)];
@@ -101,8 +114,9 @@ struct GamepadProfile {
   }
 };
 
-// Default keyboard profile 0 (left side of the keyboard): WASD move,
-// throw J or Space, dash K or LeftShift, ability L or E.
+// Default keyboard profile 0 (left side of the keyboard, plus the mouse):
+// WASD move, throw J, Space or the left mouse button, dash K, LeftShift or
+// the right mouse button, ability L or E; the cursor aims (v0.45).
 [[nodiscard]] KeyboardProfile defaultKeyboardProfile1();
 // Default keyboard profile 1 (right side): arrow keys move,
 // throw Period or RightCtrl, dash Slash or RightShift, ability Semicolon or
@@ -122,6 +136,19 @@ inline constexpr std::size_t kMaxPads = 16;
 inline constexpr uint64_t kNoCutoff = std::numeric_limits<uint64_t>::max();
 
 enum class DeviceKind : uint8_t { None, Keyboard, Gamepad };
+
+// v0.45, mouse aim. A sim-space point in float (x right, y up), and the
+// cursor in window coordinates (InputEvent::x/y).
+struct AimPoint {
+  float x{0.0f};
+  float y{0.0f};
+};
+struct CursorPos {
+  float x{0.0f};
+  float y{0.0f};
+};
+// Closer than this (sim units) to its origin, the cursor keeps the previous aim.
+inline constexpr float kMinMouseAimDistance = 0.05f;
 
 // What feeds a local player slot: the keyboard read through one profile, or
 // one pad by SDL joystick instance id.
@@ -202,6 +229,19 @@ class InputSampler {
   // Ends the tick: clears every pending press record.
   void endTick();
 
+  // --- mouse aim (v0.45) ---------------------------------------------------
+  // The cursor while mouse aim is on (the mouse moved or clicked since it
+  // last left the window), else nothing.
+  [[nodiscard]] std::optional<CursorPos> cursor() const;
+  // Whether `slot` aims with the cursor now: bound to a keyboard profile with
+  // mouseAim, and mouse aim on.
+  [[nodiscard]] bool usesMouseAim(PlayerId slot) const;
+  // The cursor's ground point and a slot's aim origin, set by the host
+  // before every sample (nothing = unknown: the slot keeps its aim). Both
+  // persist until set again.
+  void setCursorGround(std::optional<AimPoint> point) { cursorGround_ = point; }
+  void setAimOrigin(PlayerId slot, std::optional<AimPoint> origin);
+
   // Throw/Dash/Ability presses of `slot` recorded so far and the buttons it holds now
   // are consumed: they set no bit and no subTick until the action has been
   // released. Presses after this call sample normally. bind() clears it.
@@ -227,6 +267,7 @@ class InputSampler {
     // Index into transitions_ at which consumption happened: earlier press
     // edges of a consumed action never count.
     std::size_t consumedFrom{0};
+    std::optional<AimPoint> aimOrigin;  // v0.45: setAimOrigin()
   };
 
   // Key/button transitions this tick, in order (repeats filtered out).
@@ -257,6 +298,10 @@ class InputSampler {
   std::array<bool, static_cast<std::size_t>(Key::kCount)> keyDownAtTickStart_{};
   std::array<PadState, kMaxPads> pads_{};
   std::vector<Transition> transitions_;
+  // v0.45, mouse aim.
+  CursorPos cursor_{};
+  bool mouseActive_{false};
+  std::optional<AimPoint> cursorGround_;
 };
 
 }  // namespace kfm::platform

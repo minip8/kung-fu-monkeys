@@ -109,6 +109,7 @@ void MatchSession::advance(uint64_t nowNs) {
 
 void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t tickEndNs) {
   sim::InputFrame frame{};
+  feedMouseAim(sampler_, curr_, matchContent().arena, aimViewport_);  // v0.45
   const sim::PlayerMask bound = sampler_.sampleFrame(frame, tickStartNs, tickWallNs, tickEndNs);
   frame.tick = curr_.tick;
   frame.present = curr_.rules.present;

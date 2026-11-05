@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.44 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.45 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -443,6 +443,17 @@ lobby as a rejoin: lobby protocol v1.2 adds an optional `token` to `join` (the l
 token it issued for a live room, re-admits the same token outside `capacity`, closes a socket
 still seated under it with `closed`/`replaced`, refuses an unknown one `bad_token`). No sim
 change; replay checksums unchanged.
+v0.45 changes: keyboard-and-mouse controls (§5.4, §7). The primary keyboard profile is one
+device, keyboard + mouse: WASD moves, the cursor aims (the direction from the local monkey to the
+cursor's ground point), the left button throws and the right one dashes beside the keys (J/Space,
+K/Left Shift; the ability stays L/E). Mouse buttons are `Key`s on the keyboard device, so they edge,
+stamp `subTick` and join like keys. The sampler stays world-free: before each sampled tick the
+session sets the cursor's ground point (`screenToGround` through the arena camera) and each mouse
+slot's aim origin, its monkey in the world about to be stepped (`NetClient::world()`, the
+predicted one, online). The cursor on the monkey keeps the previous aim; mouse aim starts on a
+mouse move or click and stops when the cursor leaves the window. A click over a UI window is the
+UI's (ImGui `WantCaptureMouse`); releases always reach the game. No sim or wire change; replay
+checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -894,6 +905,29 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   Throw and Dash. Default bindings: L or E (keyboard profile 0), Semicolon or Apostrophe
   (profile 1), North or East (gamepads). `PlayerInput` stays 5 bytes: the bit already existed.
   The in-game controls help lists it; the browser page needs nothing (SDL maps the keys).
+- Keyboard + mouse (v0.45): the mouse belongs to keyboard profile 0 (one device; the lobby card
+  says "Keyboard + mouse"), whose `KeyboardProfile::mouseAim` is set. The mouse buttons are keys
+  (`Key::MouseLeft`/`MouseMiddle`/`MouseRight`, sent as `MouseButtonDown`/`Up` with the OS
+  timestamp), so they alias actions like any key: profile 0 throws with J, Space or the left
+  button and dashes with K, Left Shift or the right button (the middle one binds nothing), and a
+  click on a free keyboard side joins it. Aim: while mouse aim is on, a mouse slot's aim is the
+  direction from its aim origin to the cursor's ground point, both sim-space floats the host sets
+  before every sampled tick (`setAimOrigin`, `setCursorGround`), since the sampler knows no world
+  and platform never sees the camera; the move direction never aims then, and an unknown point
+  or a cursor within 0.05 units of the origin keeps the previous aim (never 0). Mouse aim turns on
+  with a mouse move or click and off when the cursor leaves the window (`MouseLeave`), so a
+  keyboard-only player on profile 0 who never touches the mouse aims with movement as before.
+  The host side is `feedMouseAim` (apps/client): the cursor (window coordinates × the pixel
+  density) through `screenToGround` of the arena camera, and the slot's monkey in the world the
+  tick steps: `MatchSession`'s current world, `NetClient::world()` online (the predicted world,
+  never the confirmed one, which trails it by the lead). Mouse events synthesized from touch or
+  pen are dropped, so touch is unaffected. A mouse button press while ImGui wants the mouse (a
+  menu, the lobby panel, the match-over buttons, the F1 overlay) stays out of the game, like a
+  key press while a text field has the keyboard; releases always go through, and the sampler
+  ignores a release it saw no press for. No pointer lock: the cursor stays visible; the browser
+  page's canvas cancels `contextmenu`, so the right button never opens the page's menu. No
+  mouse-aim setting: the settings model would need a key, a flag, a URL parameter and a row for
+  it, and leaving the window already hands aim back to the keys.
 
 Grid space (v0.29, §5.12): `PlayerInput` is unchanged. In a grid mode `InputSystem` latches the
 frame once per turn, on the Playing tick where `ticksInPhase % turnTicks == 0`: the latched

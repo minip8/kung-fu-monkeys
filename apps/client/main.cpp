@@ -744,8 +744,10 @@ void onEvent(void* user, const SDL_Event& event) {
   const auto input = client::translateSdlEvent(event);
   if (!input) return;
   // While a debug text field has the keyboard, key presses stay out of the
-  // game; releases always go through so no key is left held.
-  if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked()) return;
+  // game; v0.45: a click on a window (the menus, the lobby panel, the
+  // match-over buttons, the F1 overlay) is the UI's. Releases always go
+  // through so nothing is left held.
+  if (client::uiCapturesEvent(*input, gameInputBlocked(), platform::debugUiWantsMouse())) return;
   if (app->net) {
     // v0.43: the room's screens. Every device navigates (nothing joins
     // online); the press still goes to the session, which samples nothing
@@ -913,6 +915,8 @@ void menuFrame(App& app, std::uint64_t now) {
 presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, int h,
                                 float density) {
   MatchSession& s = *app.session;
+  s.setAimViewport(
+      {.width = static_cast<float>(w), .height = static_cast<float>(h), .pixelDensity = density});
   s.advance(now);
   s.presentation().pingSlots = s.localMask();  // v0.35: a local human's call pings
   presentation::buildRenderState(
@@ -1044,6 +1048,8 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
 // predicted match with remote players smoothed (§6.9).
 presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int h, float density) {
   client::NetSession& n = *app.net;
+  n.setAimViewport(
+      {.width = static_cast<float>(w), .height = static_cast<float>(h), .pixelDensity = density});
   n.advance(now);
   if (n.room() && !app.roomAnnounced) {
     app.roomAnnounced = true;

@@ -20,6 +20,7 @@ add_library(kfm_client_core STATIC
   core/online_menu.cpp
   core/scoreboard.cpp
   core/bot_roster.cpp
+  core/mouse_aim.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

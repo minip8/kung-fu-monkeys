@@ -2,6 +2,8 @@
 
 #include "kfm/core/rng.hpp"
 #include "kfm/platform/input_event.hpp"
+#include "kfm/presentation/camera.hpp"
+#include "kfm/presentation/world_basis.hpp"
 #include "kfm/sim/content.hpp"
 #include "kfm/sim/events.hpp"
 #include "kfm/sim/input.hpp"
@@ -797,4 +799,50 @@ TEST_CASE("hostHandlesStart latches the lobby's start key instead of starting a 
   d.push(key(Key::Enter, true));
   d.frame(1);
   CHECK(d.s->phase() == SessionPhase::Match);
+}
+
+TEST_CASE("session: the cursor aims from the local monkey's position (v0.45)",
+          "[client][session][mouse]") {
+  Driver d(SessionConfig{.seed = 3, .bots = 1});
+  constexpr float kW = 1280.0f;
+  constexpr float kH = 720.0f;
+  // A density of 2: the cursor's window coordinates are half the pixels.
+  d.s->setAimViewport({.width = kW, .height = kH, .pixelDensity = 2.0f});
+  d.start();
+  d.frame(1);
+  const sim::Player* p = d.s->curr().playerBySlot(PlayerId{0});
+  REQUIRE(p != nullptr);
+  const presentation::Vec2f at = presentation::toFloat(p->transform.pos);
+  const presentation::Camera cam = presentation::makeArenaCamera(d.s->matchContent().arena, kW, kH);
+  // Each cursor 3 units from the monkey along one axis; aim = that direction.
+  const auto aimAt = [&](float dx, float dy) {
+    const presentation::ScreenPoint px = presentation::worldToScreen(
+        cam, presentation::simToWorld(presentation::Vec2f{at.x + dx, at.y + dy}));
+    InputEvent e{};
+    e.kind = InputEventKind::MouseMotion;
+    e.x = px.x / 2.0f;
+    e.y = px.y / 2.0f;
+    d.push(e);
+    d.frame(1);
+    return static_cast<int>(d.s->lastFrame().inputs[0].aimDir);
+  };
+  CHECK(aimAt(3.0f, 0.0f) == 0);
+  CHECK(aimAt(0.0f, 3.0f) == 64);
+  CHECK(aimAt(-3.0f, 0.0f) == 128);
+  CHECK(aimAt(0.0f, -3.0f) == 192);
+  // A left click throws and a right click dashes, like J and K.
+  InputEvent click{};
+  click.kind = InputEventKind::MouseButtonDown;
+  click.key = Key::MouseLeft;
+  d.push(click);
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].has(sim::Button::Throw));
+  click.kind = InputEventKind::MouseButtonUp;
+  d.push(click);
+  click.kind = InputEventKind::MouseButtonDown;
+  click.key = Key::MouseRight;
+  d.push(click);
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
+  CHECK_FALSE(d.s->lastFrame().inputs[0].has(sim::Button::Throw));
 }

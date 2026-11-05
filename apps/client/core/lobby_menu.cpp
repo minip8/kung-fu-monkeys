@@ -121,6 +121,11 @@ MenuAction MenuInput::translate(const platform::InputEvent& event, bool deviceBo
     case InputEventKind::KeyUp:
     case InputEventKind::PadButtonUp:
     case InputEventKind::PadAdded:
+    // v0.45: the mouse never navigates (the UI takes its clicks itself).
+    case InputEventKind::MouseMotion:
+    case InputEventKind::MouseButtonDown:
+    case InputEventKind::MouseButtonUp:
+    case InputEventKind::MouseLeave:
       break;
   }
   return MenuAction::None;
@@ -140,6 +145,12 @@ bool eventDeviceBound(const platform::InputSampler& sampler, const platform::Inp
     const platform::DeviceBinding b = sampler.binding(PlayerId{i});
     if (b.kind == platform::DeviceKind::Gamepad && b.padId == event.deviceId) return true;
   }
+  return false;
+}
+
+bool uiCapturesEvent(const platform::InputEvent& event, bool uiWantsKeyboard, bool uiWantsMouse) {
+  if (event.kind == InputEventKind::KeyDown) return uiWantsKeyboard;
+  if (event.kind == InputEventKind::MouseButtonDown) return uiWantsMouse;
   return false;
 }
 

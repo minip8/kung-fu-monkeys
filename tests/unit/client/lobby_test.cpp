@@ -382,6 +382,31 @@ TEST_CASE("menu input: only pads bound to a slot count as bound", "[client][lobb
   CHECK_FALSE(client::eventDeviceBound(sampler, padButton(kPad + 1, PadButton::DpadUp)));
 }
 
+TEST_CASE("menu input: the UI keeps presses and clicks it captured (v0.45)",
+          "[client][lobby][input][mouse]") {
+  InputEvent click;
+  click.kind = InputEventKind::MouseButtonDown;
+  click.key = Key::MouseLeft;
+  InputEvent release = click;
+  release.kind = InputEventKind::MouseButtonUp;
+  InputEvent motion;
+  motion.kind = InputEventKind::MouseMotion;
+  CHECK(client::uiCapturesEvent(click, false, true));
+  CHECK_FALSE(client::uiCapturesEvent(click, true, false));
+  CHECK_FALSE(client::uiCapturesEvent(release, true, true));  // releases always reach the game
+  CHECK_FALSE(client::uiCapturesEvent(motion, true, true));
+  CHECK(client::uiCapturesEvent(key(Key::J), true, false));
+  CHECK_FALSE(client::uiCapturesEvent(key(Key::J), false, true));
+  InputEvent keyUp = key(Key::J);
+  keyUp.kind = InputEventKind::KeyUp;
+  CHECK_FALSE(client::uiCapturesEvent(keyUp, true, true));
+  CHECK_FALSE(client::uiCapturesEvent(padButton(5, PadButton::South), true, true));
+  // The mouse never navigates a menu.
+  MenuInput in;
+  CHECK(in.translate(click, true) == MenuAction::None);
+  CHECK(in.translate(motion, true) == MenuAction::None);
+}
+
 TEST_CASE("lobby settings: options names <-> indices", "[client][lobby][settings]") {
   const sim::ContentDB& db = shipped();
   ClientOptions o;

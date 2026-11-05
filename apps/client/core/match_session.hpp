@@ -46,6 +46,7 @@
 #include "kfm/sim/events.hpp"
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/world_state.hpp"
+#include "mouse_aim.hpp"
 
 #include <array>
 #include <cstddef>
@@ -253,6 +254,10 @@ class MatchSession {
   // same seed, or re-creates the lobby world.
   void replaceContent(const sim::ContentDB& content, uint64_t nowNs);
 
+  // v0.45: the drawable mouse aim maps the cursor over (feedMouseAim);
+  // set every frame before advance().
+  void setAimViewport(const AimViewport& viewport) { aimViewport_ = viewport; }
+
   [[nodiscard]] platform::InputSampler& sampler() { return sampler_; }
   [[nodiscard]] const platform::InputSampler& sampler() const { return sampler_; }
 
@@ -309,6 +314,7 @@ class MatchSession {
 
   presentation::PresentationState presentation_{};
   platform::InputSampler sampler_{};
+  AimViewport aimViewport_{};
   FixedStepClock clock_{};
   InterpolationPolicy policy_{InterpolationPolicy::Auto};
 };
