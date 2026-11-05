@@ -7,6 +7,12 @@ namespace kfm::client {
 
 namespace {
 
+// SDL_TOUCH_MOUSEID and SDL_PEN_MOUSEID spelled without the headers' C-style
+// casts (-Werror=old-style-cast): the mouse events SDL synthesises from touch
+// and pen input.
+constexpr SDL_MouseID kTouchMouseId = static_cast<SDL_MouseID>(-1);
+constexpr SDL_MouseID kPenMouseId = static_cast<SDL_MouseID>(-2);
+
 using platform::InputEvent;
 using platform::InputEventKind;
 using platform::Key;
@@ -134,7 +140,7 @@ std::optional<InputEvent> translateSdlEvent(const SDL_Event& ev) {
       return out;
     }
     case SDL_EVENT_MOUSE_MOTION: {
-      if (ev.motion.which == SDL_TOUCH_MOUSEID || ev.motion.which == SDL_PEN_MOUSEID) {
+      if (ev.motion.which == kTouchMouseId || ev.motion.which == kPenMouseId) {
         return std::nullopt;  // touch and pen stay out of mouse aim
       }
       out.kind = InputEventKind::MouseMotion;
@@ -145,7 +151,7 @@ std::optional<InputEvent> translateSdlEvent(const SDL_Event& ev) {
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-      if (ev.button.which == SDL_TOUCH_MOUSEID || ev.button.which == SDL_PEN_MOUSEID) {
+      if (ev.button.which == kTouchMouseId || ev.button.which == kPenMouseId) {
         return std::nullopt;
       }
       switch (ev.button.button) {

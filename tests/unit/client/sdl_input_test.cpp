@@ -120,7 +120,7 @@ TEST_CASE("sdl input: mouse motion, buttons and leave (v0.45)", "[client][sdl][m
   CHECK(e.deviceId == kfm::platform::kKeyboardDevice);
   CHECK(e.x == 320.5f);
   CHECK(e.y == 200.0f);
-  ev.motion.which = SDL_TOUCH_MOUSEID;  // a finger's synthesized mouse stays out
+  ev.motion.which = static_cast<SDL_MouseID>(-1);  // SDL_TOUCH_MOUSEID: a finger stays out
   CHECK_FALSE(translateSdlEvent(ev));
 
   ev = SDL_Event{};
@@ -147,7 +147,7 @@ TEST_CASE("sdl input: mouse motion, buttons and leave (v0.45)", "[client][sdl][m
   ev.button.button = SDL_BUTTON_X1;  // side buttons bind nothing
   CHECK_FALSE(translateSdlEvent(ev));
   ev.button.button = SDL_BUTTON_LEFT;
-  ev.button.which = SDL_TOUCH_MOUSEID;
+  ev.button.which = static_cast<SDL_MouseID>(-1);  // SDL_TOUCH_MOUSEID
   CHECK_FALSE(translateSdlEvent(ev));
 
   ev = SDL_Event{};
