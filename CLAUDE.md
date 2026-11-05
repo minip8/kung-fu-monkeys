@@ -166,7 +166,9 @@ build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev 
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE              # join it (any case); -DKFM_LOBBY_URL=...
 #   bakes a default; browser: kfm_client.html?lobby=ws://127.0.0.1:8080&create or ?room=CODE (config.js next to the page
-#   supplies lobbyUrl and sentryDsn in production); the lobby panel's Online rows do the same; Esc leaves
+#   supplies lobbyUrl and sentryDsn in production); the lobby panel's Online rows do the same; Esc leaves;
+#   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). A real-link check needs
+#   --exit-after-frames in the thousands: headless without vsync the client runs hundreds of frames a second
 deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
 #   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images + GitHub Pages); docker compose -f deploy/docker-compose.yml
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them

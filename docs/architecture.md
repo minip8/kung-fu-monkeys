@@ -3413,9 +3413,22 @@ step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink
 release workflow. Verified locally: the Rust suite, the headless and `dev` builds with every
 non-soak test, the real-socket lobby tests, a native lobby + server + two clients on one
 machine, and the browser page creating a room through a local lobby in headless Chromium
-(§13.5 as built). Not yet done: the accounts and the first VM (the user's side), the DNS and
-secrets, the playtest with friends over a real link, the second region and a Sentry project;
-the exit criterion ("send a link, friends are in a match within a minute") is judged there.
+(§13.5 as built). Then a test deployment on Google Cloud (`kfm-asia-1`, an `e2-small` in
+asia-south1 created by `deploy/gcp/create_vm.sh`, the images loaded from a local build, a
+`<ip>.sslip.io` name for Caddy's certificate): `/healthz` over HTTPS, two native clients from a
+home connection in one room on that server at 160 ms RTT for 30 s with 0 checksum mismatches
+and 0 resyncs, and the browser page creating and joining a room from headless Chromium. Two
+things that test taught: a client's `--exit-after-frames` counts frames and a headless client
+without vsync runs hundreds of frames a second, so a real-link check needs a budget of
+thousands (the first runs ended before the handshake and looked like a network fault); and a
+room holds its server process for the ten-minute expiry after its last peer leaves, so a pool
+of N processes serves at most N rooms created in any ten minutes, abandoned ones included
+(size the pool for that, or shorten `--room-ttl-seconds`). Open: `late_inputs/s` on the server
+was high at 160 ms RTT while substitutions stayed near 1/s, so the lead control deserves a
+look in the human playtest. Not yet done: the production names and secrets, the GitHub Pages
+site, a tagged release, the playtest with friends over the real link, the second region and a
+Sentry project; the exit criterion ("send a link, friends are in a match within a minute") is
+judged there.
 
 Progress: M5b landed in v0.35. Against the exit criterion: "a 5v5 bot match on a tilemap arena
 with `own` vision and calls replays identically across the determinism gate at one-tick
