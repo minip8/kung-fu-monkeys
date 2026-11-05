@@ -4,6 +4,7 @@
 #include "kfm/platform/input_sampler.hpp"
 #include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/palette.hpp"
+#include "ui_style.hpp"
 
 #include <imgui.h>
 
@@ -23,23 +24,14 @@ using presentation::EffectKind;
 using presentation::HudPhase;
 using presentation::kNoSlot;
 
-constexpr ImU32 kWhite = IM_COL32(255, 255, 255, 255);
-constexpr ImU32 kShadow = IM_COL32(0, 0, 0, 200);
-constexpr ImU32 kBananaYellow = IM_COL32(250, 214, 40, 255);
-constexpr ImU32 kEmptyPip = IM_COL32(40, 40, 40, 200);
-
-[[nodiscard]] ImU32 slotColor(uint32_t slot, int alpha = 255) {
-  const presentation::Color c = presentation::playerColor(slot);
-  const auto channel = [](float v) {
-    return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
-  };
-  return IM_COL32(channel(c.r), channel(c.g), channel(c.b), alpha);
-}
-
-[[nodiscard]] ImVec4 slotColorVec(uint32_t slot) {
-  const presentation::Color c = presentation::playerColor(slot);
-  return {c.r, c.g, c.b, 1.0f};
-}
+using ui::centredText;
+using ui::kBanana;
+using ui::kEmptyPip;
+using ui::kShadow;
+using ui::kWhite;
+using ui::slotColor;
+using ui::slotColorVec;
+using ui::textWidth;
 
 // v0.32: a team is drawn in the palette colour of its index (team 1 red,
 // team 2 blue, ...), named "Team 1".. on screen.
@@ -48,27 +40,12 @@ constexpr ImU32 kEmptyPip = IM_COL32(40, 40, 40, 200);
 }
 
 // "P1".."P10" for local players, "BOT3" (slot number) for bots: several bots
-// must stay distinguishable in the score bar and banners.
-void slotLabel(const HudView& view, uint8_t slot, char (&out)[8]) {
-  if (view.owners[slot] == SlotOwner::Bot) {
-    std::snprintf(out, sizeof out, "BOT%u", static_cast<unsigned>(slot) + 1U);
-  } else {
-    std::snprintf(out, sizeof out, "P%u", static_cast<unsigned>(slot) + 1U);
-  }
-}
-
-// Text with a drop shadow; `anchor` is the centre of the text box.
-void centredText(ImDrawList* dl, float size, ImVec2 anchor, ImU32 color, const char* text) {
-  ImFont* font = ImGui::GetFont();
-  const ImVec2 extent = font->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
-  const ImVec2 pos{anchor.x - (extent.x * 0.5f), anchor.y - (extent.y * 0.5f)};
-  const float off = std::max(1.0f, size * 0.06f);
-  dl->AddText(font, size, ImVec2(pos.x + off, pos.y + off), kShadow, text);
-  dl->AddText(font, size, pos, color, text);
-}
-
-[[nodiscard]] float textWidth(float size, const char* text) {
-  return ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, text).x;
+// must stay distinguishable in the score bar and banners. v0.42: online, a
+// slot's nickname when it has one (at most 16 bytes).
+constexpr std::size_t kLabelBytes = 24;
+void slotLabel(const HudView& view, uint8_t slot, char (&out)[kLabelBytes]) {
+  std::snprintf(out, sizeof out, "%s",
+                client::slotLabel(view.names[slot], view.owners[slot], slot).c_str());
 }
 
 // "m:ss" of a clock, rounded up so it reads 0:00 only at the end.
@@ -135,8 +112,8 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
   clockText(hud.clockSeconds, clock);
   const bool urgent = hud.phase == HudPhase::Playing && hud.clockSeconds <= 10.0f;
   const float pop = presentation::bannerScale(state, EffectKind::TimerBanner);
-  centredText(dl, 26.0f * pop, ImVec2(viewW * 0.5f, y + 24.0f),
-              urgent ? IM_COL32(255, 90, 70, 255) : kWhite, clock);
+  centredText(dl, 26.0f * pop, ImVec2(viewW * 0.5f, y + 24.0f), urgent ? ui::kAlarm : kWhite,
+              clock);
 }
 
 // The one power-up timer widget (HUD cards and the over-head row): a pie in
@@ -157,7 +134,7 @@ void drawTimerPie(ImDrawList* dl, ImVec2 c, float r, uint8_t colorIndex, float f
 constexpr float kCardStripe = 4.0f;
 constexpr float kCardRounding = 6.0f;
 void drawCardFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, uint8_t slot, int alpha) {
-  dl->AddRectFilled(min, max, IM_COL32(0, 0, 0, (130 * alpha) / 255), kCardRounding);
+  dl->AddRectFilled(min, max, ui::withAlpha(ui::kJungle, (190 * alpha) / 255), kCardRounding);
   dl->AddRectFilled(min, ImVec2(max.x, min.y + kCardStripe), slotColor(slot, alpha), kCardRounding,
                     ImDrawFlags_RoundCornersTop);
 }
@@ -198,7 +175,12 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
   constexpr float kGap = 8.0f;
   constexpr float kTimerStep = 30.0f;
   constexpr float kPieR = 6.0f;
-  const float labelW = textWidth(kLabel, "BOT10");
+  float labelW = textWidth(kLabel, "BOT10");
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if ((hud.presentMask & (1u << i)) != 0 && !view.names[i].empty()) {
+      labelW = std::max(labelW, textWidth(kLabel, view.names[i].c_str()));
+    }
+  }
   const float scoreW = frags ? textWidth(kLabel, "00 (0)")
                              : static_cast<float>(hud.roundsToWin) * ((kPipR * 2.0f) + 4.0f);
   const float baseW = std::max((kPad * 2.0f) + labelW + 8.0f + scoreW,
@@ -227,7 +209,7 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
                         ImDrawFlags_RoundCornersBottom);
     }
     const float lineY = y + ((kCardStripe + 4.0f) * k);
-    char label[8];
+    char label[kLabelBytes];
     slotLabel(view, i, label);
     dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k) + 1.0f, lineY + 1.0f), kShadow, label);
     dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k), lineY), slotColor(i, alpha), label);
@@ -279,13 +261,13 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
 // The banner title of a round or match winner: "Team 2" in a team mode, the
 // slot's label otherwise, with the colour to draw it in.
 void winnerText(const HudView& session, const presentation::RenderHud& hud, uint8_t winner,
-                char (&out)[16], ImU32& color) {
+                char (&out)[kLabelBytes], ImU32& color) {
   if (hud.teamCount > 0 && winner < sim::kMaxPlayers) {
     std::snprintf(out, sizeof out, "Team %u", static_cast<unsigned>(hud.teams[winner]) + 1U);
     color = teamColor(hud.teams[winner]);
     return;
   }
-  char label[8];
+  char label[kLabelBytes];
   slotLabel(session, winner, label);
   std::snprintf(out, sizeof out, "%s", label);
   color = slotColor(winner);
@@ -316,7 +298,7 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
     if (!sp.inFront) continue;
     const ImVec2 at{sp.x * in.uiScale, sp.y * in.uiScale};
 
-    char label[8];
+    char label[kLabelBytes];
     slotLabel(session, p.slot, label);
     centredText(dl, 15.0f, ImVec2(at.x, at.y - 16.0f), slotColor(p.slot), label);
 
@@ -326,7 +308,7 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
     for (uint8_t a = 0; a < p.ammoMax; ++a) {
       const ImVec2 c{x, at.y};
       if (a < p.ammo) {
-        dl->AddCircleFilled(c, kPipR, kBananaYellow);
+        dl->AddCircleFilled(c, kPipR, kBanana);
       } else {
         dl->AddCircleFilled(c, kPipR, kEmptyPip);
       }
@@ -337,11 +319,116 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
   }
 }
 
-// Banners pop in with their effect (bannerScale, event_fx.hpp).
+void drawCrown(ImDrawList* dl, ImVec2 p, float w);
+
+// The rows the scoreboard marks "you": this client's slots online; none in
+// local play, where several players share the screen.
+[[nodiscard]] sim::PlayerMask onlineLocalMask(const HudView& view) {
+  if (!view.network) return 0;
+  sim::PlayerMask m = 0;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if (view.owners[i] == SlotOwner::Local || view.owners[i] == SlotOwner::Dropped) {
+      m = static_cast<sim::PlayerMask>(m | (1u << i));
+    }
+  }
+  return m;
+}
+
+// v0.43: the scoreboard (core/scoreboard.hpp) as a table at `origin`,
+// `width` wide: a header line, then a row per slot (place, colour, label,
+// score, deaths where the mode counts them), each team's rows under a line
+// with the team's name and score; the winner wears the crown and this
+// client's own rows are outlined. `panel` draws a backing panel (the HUD's
+// between-rounds board). Returns the height used.
+float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboard& b, bool panel) {
+  constexpr float kRowH = 30.0f;
+  constexpr float kPad = 14.0f;
+  constexpr float kText = 20.0f;
+  constexpr float kSmall = 16.0f;
+  const std::size_t teamLines = b.teamCount;
+  const float height =
+      (kPad * 2.0f) + 24.0f + (static_cast<float>(b.rows.size() + teamLines) * kRowH);
+  if (panel) {
+    dl->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + height),
+                      ui::withAlpha(ui::kJungle, 215), 14.0f);
+    dl->AddRect(origin, ImVec2(origin.x + width, origin.y + height), ui::withAlpha(ui::kBark, 220),
+                14.0f, 0, 2.0f);
+  }
+  ImFont* font = ImGui::GetFont();
+  const float left = origin.x + kPad;
+  const float right = origin.x + width - kPad;
+  const float deathsX = right;
+  const float scoreX = b.showDeaths ? right - 90.0f : right;
+  const auto rightText = [&](float size, float xRight, float y, ImU32 color, const char* text) {
+    dl->AddText(font, size, ImVec2(xRight - textWidth(size, text), y), color, text);
+  };
+  float y = origin.y + kPad;
+  dl->AddText(font, kSmall, ImVec2(left, y), ui::kCreamDim, "#");
+  dl->AddText(font, kSmall, ImVec2(left + 52.0f, y), ui::kCreamDim, "Player");
+  rightText(kSmall, scoreX, y, ui::kCreamDim, b.scoreLabel);
+  if (b.showDeaths) rightText(kSmall, deathsX, y, ui::kCreamDim, "Deaths");
+  y += 24.0f;
+  bool firstRow = true;
+  int8_t lastTeam = 0;
+  for (const ScoreRow& r : b.rows) {
+    char text[48];
+    if (b.teamCount > 0 && (firstRow || r.team != lastTeam)) {
+      lastTeam = r.team;
+      const auto team = static_cast<uint32_t>(r.team < 0 ? 0 : static_cast<uint8_t>(r.team));
+      std::snprintf(text, sizeof text, "Team %u", team + 1U);
+      const float ty = y + ((kRowH - kText) * 0.5f);
+      dl->AddRectFilled(ImVec2(left - 4.0f, y + 2.0f), ImVec2(right + 4.0f, y + kRowH - 2.0f),
+                        slotColor(team, 60), 8.0f);
+      ui::shadowText(dl, kText, ImVec2(left, ty), slotColor(team), text);
+      std::snprintf(text, sizeof text, "%u",
+                    static_cast<unsigned>(b.teamScores[team < sim::kMaxPlayers ? team : 0]));
+      rightText(kText, scoreX, ty, slotColor(team), text);
+      y += kRowH;
+    }
+    const float ty = y + ((kRowH - kText) * 0.5f);
+    if (r.local) {
+      dl->AddRect(ImVec2(left - 4.0f, y + 2.0f), ImVec2(right + 4.0f, y + kRowH - 2.0f),
+                  ui::withAlpha(kBanana, 170), 8.0f, 0, 1.5f);
+    }
+    std::snprintf(text, sizeof text, "%u.", static_cast<unsigned>(r.place));
+    dl->AddText(font, kText, ImVec2(left, ty), ui::kCreamDim, text);
+    dl->AddCircleFilled(ImVec2(left + 40.0f, y + (kRowH * 0.5f)), 6.0f, slotColor(r.slot));
+    float nx = left + 52.0f;
+    if (r.winner) {
+      drawCrown(dl, ImVec2(nx, ty + kText - 3.0f), 16.0f);
+      nx += 22.0f;
+    }
+    ui::shadowText(dl, kText, ImVec2(nx, ty), slotColor(r.slot), r.label.c_str());
+    nx += textWidth(kText, r.label.c_str()) + 8.0f;
+    if (r.local) dl->AddText(font, kSmall, ImVec2(nx, ty + 3.0f), ui::kCreamDim, "you");
+    std::snprintf(text, sizeof text, "%u", static_cast<unsigned>(r.score));
+    rightText(kText, scoreX, ty, kWhite, text);
+    if (b.showDeaths) {
+      std::snprintf(text, sizeof text, "%u", static_cast<unsigned>(r.deaths));
+      rightText(kText, deathsX, ty, ui::kCreamDim, text);
+    }
+    firstRow = false;
+    y += kRowH;
+  }
+  return height;
+}
+
+// Banners pop in with their effect (bannerScale, event_fx.hpp). v0.43: with
+// the scoreboard on screen (between rounds, the match's end) the banner
+// moves up and the board sits under it.
 void drawBanners(ImDrawList* dl, const HudView& session, const presentation::RenderState& state,
                  ImVec2 view) {
   const presentation::RenderHud& hud = state.hud;
-  const ImVec2 centre{view.x * 0.5f, view.y * 0.42f};
+  if (hud.phase == HudPhase::MatchEnded && session.overScreen) return;
+  const bool board = showsScoreboard(hud);
+  const ImVec2 centre{view.x * 0.5f, view.y * (board ? 0.24f : 0.42f)};
+  if (board) {
+    const Scoreboard b =
+        buildScoreboard(hud, slotLabels(session), onlineLocalMask(session), session.bots);
+    const float width = std::min(560.0f, view.x - 32.0f);
+    const float top = centre.y + (hud.phase == HudPhase::MatchEnded ? 120.0f : 90.0f);
+    (void)drawScoreTable(dl, ImVec2((view.x - width) * 0.5f, top), width, b, true);
+  }
   char text[64];
   switch (hud.phase) {
     case HudPhase::RoundStarting: {
@@ -360,7 +447,7 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
       centredText(dl, 40.0f * pop, ImVec2(centre.x, centre.y - 50.0f), kWhite, text);
       const int n = std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)));
       std::snprintf(text, sizeof text, "%d", n);
-      centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), kBananaYellow, text);
+      centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), kBanana, text);
       break;
     }
     case HudPhase::RoundEnded: {
@@ -369,7 +456,7 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         centredText(dl, 56.0f * pop, centre, kWhite, "Draw!");
       } else {
         const auto w = static_cast<uint8_t>(hud.lastRoundWinner);
-        char label[16];
+        char label[kLabelBytes];
         ImU32 color = kWhite;
         winnerText(session, hud, w, label, color);
         std::snprintf(text, sizeof text, "Round won by %s", label);
@@ -380,7 +467,7 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
     case HudPhase::MatchEnded: {
       if (hud.matchWinner != kNoSlot) {
         const auto w = static_cast<uint8_t>(hud.matchWinner);
-        char label[16];
+        char label[kLabelBytes];
         ImU32 color = kWhite;
         winnerText(session, hud, w, label, color);
         std::snprintf(text, sizeof text, "%s wins the match!", label);
@@ -394,7 +481,7 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
       centredText(dl, 20.0f, ImVec2(centre.x, centre.y + 60.0f), kWhite,
                   session.network ? "Esc: leave the server" : "Enter / Start: back to the lobby");
       if (!session.nextMatch.empty()) {
-        centredText(dl, 18.0f, ImVec2(centre.x, centre.y + 88.0f), IM_COL32(200, 220, 255, 230),
+        centredText(dl, 18.0f, ImVec2(centre.x, centre.y + 88.0f), ui::kSky,
                     session.nextMatch.c_str());
       }
       break;
@@ -428,10 +515,10 @@ void drawNotices(ImDrawList* dl, const HudView& view, ImVec2 view2) {
     dl->AddText(font, size, ImVec2(pos.x + 1.0f, pos.y + 1.0f), kShadow, text.c_str());
     dl->AddText(font, size, pos, color, text.c_str());
   };
-  line(15.0f, view2.y - 22.0f, IM_COL32(200, 220, 255, 230), view.statusLine);
+  line(15.0f, view2.y - 22.0f, ui::kSky, view.statusLine);
   // M6a: the room, large, and how to invite someone into it.
-  line(15.0f, view2.y - 42.0f, IM_COL32(200, 220, 255, 230), view.shareLine);
-  line(24.0f, view2.y - (view.shareLine.empty() ? 50.0f : 70.0f), kBananaYellow, view.roomLine);
+  line(15.0f, view2.y - 42.0f, ui::kSky, view.shareLine);
+  line(24.0f, view2.y - (view.shareLine.empty() ? 50.0f : 70.0f), kBanana, view.roomLine);
 }
 
 // Short device names for the lobby cards.
@@ -467,15 +554,36 @@ void shortDeviceText(const platform::DeviceBinding& d, char (&out)[24]) {
 // Ten in a row, or two rows of five when the window is narrow.
 struct LobbyCard {
   bool filled{false};
-  char title[8]{};
+  std::string title;  // v0.43: a nickname online
   char sub[24]{};
-  int team{-1};  // v0.32: the slot's team in a team mode, -1 otherwise
+  int team{-1};      // v0.32: the slot's team in a team mode, -1 otherwise
+  bool host{false};  // v0.43: the room's host wears the crown
+  int alpha{255};    // v0.43: < 255 for a bot that only joins at the start
 };
-void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards) {
+
+// v0.43: the room host's mark, a small banana-yellow crown at `p` (its
+// bottom left), `w` wide.
+void drawCrown(ImDrawList* dl, ImVec2 p, float w) {
+  const float h = w * 0.7f;
+  const std::array<ImVec2, 7> pts{ImVec2(p.x, p.y),
+                                  ImVec2(p.x, p.y - h),
+                                  ImVec2(p.x + (w * 0.27f), p.y - (h * 0.45f)),
+                                  ImVec2(p.x + (w * 0.5f), p.y - h),
+                                  ImVec2(p.x + (w * 0.73f), p.y - (h * 0.45f)),
+                                  ImVec2(p.x + w, p.y - h),
+                                  ImVec2(p.x + w, p.y)};
+  dl->AddConcavePolyFilled(pts.data(), static_cast<int>(pts.size()), kBanana);
+  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), kShadow, ImDrawFlags_Closed, 1.0f);
+}
+
+// `perRow`: 0 picks ten in a row, or two rows of five when the window is
+// narrow; the online room asks for five (wider cards for nicknames).
+void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int perRowWanted = 0) {
   constexpr float kGap = 6.0f;
   constexpr float kH = 44.0f;
   const float avail = ImGui::GetContentRegionAvail().x;
-  const int perRow = avail >= (10.0f * 64.0f) + (9.0f * kGap) ? 10 : 5;
+  int perRow = perRowWanted;
+  if (perRow == 0) perRow = avail >= (10.0f * 64.0f) + (9.0f * kGap) ? 10 : 5;
   const float w = (avail - (static_cast<float>(perRow - 1) * kGap)) / static_cast<float>(perRow);
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   const int rows = (static_cast<int>(sim::kMaxPlayers) + perRow - 1) / perRow;
@@ -488,12 +596,18 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards) {
     const int row = i / perRow;
     const float x = origin.x + (static_cast<float>(column) * (w + kGap));
     const float y = origin.y + (static_cast<float>(row) * (kH + kGap));
-    const int alpha = c.filled ? 255 : 70;
+    const int alpha = c.filled ? c.alpha : 70;
     drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + kH), i, alpha);
-    const ImU32 titleColor = c.filled ? slotColor(i) : IM_COL32(150, 150, 150, 160);
-    dl->AddText(font, 17.0f, ImVec2(x + 7.0f, y + kCardStripe + 3.0f), titleColor, c.title);
-    dl->AddText(font, 13.0f, ImVec2(x + 7.0f, y + kCardStripe + 22.0f),
-                c.filled ? IM_COL32(220, 220, 220, 255) : IM_COL32(150, 150, 150, 140), c.sub);
+    const ImU32 titleColor = c.filled ? slotColor(i, alpha) : ui::withAlpha(ui::kCreamDim, 160);
+    dl->PushClipRect(ImVec2(x, y), ImVec2(x + w - 2.0f, y + kH), true);
+    const float crownW = c.host ? 18.0f : 0.0f;
+    if (c.host) drawCrown(dl, ImVec2(x + 7.0f, y + kCardStripe + 18.0f), crownW - 4.0f);
+    dl->AddText(font, 18.0f, ImVec2(x + 7.0f + crownW, y + kCardStripe + 2.0f), titleColor,
+                c.title.c_str());
+    dl->AddText(font, 14.0f, ImVec2(x + 7.0f, y + kCardStripe + 22.0f),
+                c.filled ? ui::withAlpha(ui::kCream, alpha) : ui::withAlpha(ui::kCreamDim, 140),
+                c.sub);
+    dl->PopClipRect();
     if (c.team >= 0) {
       // v0.32: "T1".. at the right of the title and a bar in the team colour.
       const auto team = static_cast<uint32_t>(c.team);
@@ -572,20 +686,35 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   }
 }
 
+// "Label  value" with the values lined up (a proportional font), in a
+// window or a table cell alike.
+void labelled(const char* label, const char* value) {
+  constexpr float kLabelW = 70.0f;
+  const float x = ImGui::GetCursorScreenPos().x;
+  ImGui::TextDisabled("%s", label);
+  ImGui::SameLine();
+  ImGui::SetCursorScreenPos(ImVec2(x + kLabelW, ImGui::GetCursorScreenPos().y));
+  ImGui::TextUnformatted(value);
+}
+
 // The match a config selects, as text: arena, mode with its key numbers,
 // the loadout with its abilities, the power-up set. Shared by the online
 // lobby and the local preview column.
 void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   const sim::ArenaDef& arena = db.arenaAt(config.arena);
   const sim::ModeDef& mode = db.modeAt(config.mode);
-  ImGui::Text("Arena  %s", arena.name.cStr());
-  ImGui::Text("Mode   %s", mode.name.cStr());
+  // v0.43: a proportional font, so the values line up by position.
+  const auto line = [](const char* label, const std::string& value) {
+    labelled(label, value.c_str());
+  };
+  line("Arena", arena.name.cStr());
+  line("Mode", mode.name.cStr());
   if (mode.teams > 0) {
-    ImGui::Text("Teams  %u, balanced as players join", static_cast<unsigned>(mode.teams));
+    line("Teams", std::to_string(mode.teams) + ", balanced as players join");
   }
   ImGui::TextWrapped("%s", modeSummary(mode).c_str());
-  ImGui::Text("Kit    %s (%s)", db.loadoutAt(config.loadout).name.cStr(),
-              loadoutSummary(db, config.loadout).c_str());
+  line("Kit", std::string(db.loadoutAt(config.loadout).name.cStr()) + " (" +
+                  loadoutSummary(db, config.loadout) + ")");
   if (arena.pickupSpawnerCount == 0) {
     ImGui::TextDisabled("No power-up spawners in this arena.");
   } else {
@@ -593,12 +722,153 @@ void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   }
 }
 
+// The local settings rows (LobbyMenu): the focused row behind a banana bar,
+// a click focuses a row, the arrow buttons change it like Left/Right.
+// v0.43: compact (a smaller font and spacing) and the power-up toggles two
+// to a line, a click on one toggling it, so the lobby fits a 720p window in
+// the game font.
+bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
+  bool changed = false;
+  const auto rows = menu.rows();
+  constexpr float kRowFont = 17.0f;
+  ImGui::PushFont(nullptr, kRowFont);
+  ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 3.0f));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
+  const float valueX = 150.0f;
+  const float valueW = 140.0f;
+  const float full = ImGui::GetContentRegionAvail().x;
+  const float frameH = ImGui::GetFrameHeight();
+  int powerUpColumn = 0;
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const LobbyRow& row = rows[i];
+    const bool focused = i == menu.focus();
+    ImGui::PushID(static_cast<int>(i));
+    if (row.kind == LobbyRowKind::PowerUp) {
+      if (powerUpColumn == 0) {
+        ImGui::TextDisabled("Power-ups");
+      } else if (powerUpColumn % 2 == 1) {
+        ImGui::SameLine(0.0f, 8.0f);
+      }
+      ++powerUpColumn;
+      // One toggle: the colour, the name, on/off at the right.
+      const float w = (full - 8.0f) * 0.5f;
+      const ImVec2 min = ImGui::GetCursorScreenPos();
+      if (ImGui::InvisibleButton("##toggle", ImVec2(w, frameH))) {
+        menu.setFocus(i);
+        changed = menu.change(i, +1) || changed;
+      }
+      ImDrawList* dl = ImGui::GetWindowDrawList();
+      const bool on = (menu.settings().powerUps & (1u << row.powerUp)) != 0;
+      const ImVec2 max{min.x + w, min.y + frameH};
+      dl->AddRectFilled(min, max,
+                        ImGui::IsItemHovered() ? ui::withAlpha(ui::kLeaf, 90)
+                                               : ui::withAlpha(ui::kJungleLight, 160),
+                        8.0f);
+      if (focused) ui::focusBar(min, max);
+      const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
+      dl->AddCircleFilled(ImVec2(min.x + 12.0f, min.y + (frameH * 0.5f)), 5.0f, slotColor(color));
+      const float textY = min.y + ((frameH - kRowFont) * 0.5f);
+      dl->AddText(ImGui::GetFont(), kRowFont, ImVec2(min.x + 24.0f, textY),
+                  on ? ui::kCream : ui::kCreamDim, menu.rowLabel(row).c_str());
+      const char* state = on ? "on" : "off";
+      dl->AddText(ImGui::GetFont(), kRowFont,
+                  ImVec2(max.x - textWidth(kRowFont, state) - 10.0f, textY),
+                  on ? ui::kLeafLight : ui::kCreamDim, state);
+      ImGui::PopID();
+      continue;
+    }
+    powerUpColumn = 0;
+    const float x0 = ImGui::GetCursorPosX();
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::withAlpha(ui::kLeaf, 90)));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::withAlpha(ui::kLeaf, 140)));
+    if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
+                          ImVec2(0.0f, frameH))) {
+      menu.setFocus(i);
+    }
+    ImGui::PopStyleColor(3);
+    if (focused) {
+      ui::focusBar(ImVec2(min.x - 2.0f, min.y - 1.0f),
+                   ImVec2(min.x + full + 2.0f, min.y + frameH + 1.0f));
+    }
+    ImGui::SameLine(x0 + 8.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(menu.rowLabel(row).c_str());
+    ImGui::SameLine(x0 + valueX);
+    if (ImGui::ArrowButton("##l", ImGuiDir_Left)) {
+      menu.setFocus(i);
+      changed = menu.change(i, -1) || changed;
+    }
+    ImGui::SameLine();
+    const std::string value = menu.rowValue(row);
+    const float tw = ImGui::CalcTextSize(value.c_str()).x;
+    const float vx = ImGui::GetCursorPosX();
+    ImGui::SetCursorPosX(vx + std::max(0.0f, (valueW - tw) * 0.5f));
+    ImGui::TextUnformatted(value.c_str());
+    ImGui::SameLine(vx + valueW);
+    if (ImGui::ArrowButton("##r", ImGuiDir_Right)) {
+      menu.setFocus(i);
+      changed = menu.change(i, +1) || changed;
+    }
+    ImGui::PopID();
+  }
+  ImGui::PopStyleVar(2);
+  ImGui::PopFont();
+  return changed;
+}
+
+// v0.43: the room's code, large, with Copy link and (touch) Share.
+ShareOutcome drawShare(const ShareView& share) {
+  ShareOutcome out;
+  if (share.code.empty()) return out;
+  ImGui::PushFont(nullptr, ui::kFontUi);
+  ImGui::TextDisabled("Room code (%s)", share.region.c_str());
+  ImGui::PopFont();
+  const ImVec2 at = ImGui::GetCursorScreenPos();
+  ImGui::PushFont(nullptr, ui::kFontTitle);
+  ui::shadowText(ImGui::GetWindowDrawList(), ui::kFontTitle, at, kBanana, share.code.c_str());
+  ImGui::Dummy(ImVec2(textWidth(ui::kFontTitle, share.code.c_str()), ImGui::GetFontSize()));
+  ImGui::PopFont();
+  ImGui::SameLine();
+  ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 18.0f);
+  // Without a page URL (natively, unless the build bakes one) the link is
+  // the code itself: friends type it into Play online.
+  const bool codeOnly = share.link == share.code;
+  ImGui::BeginGroup();
+  if (ui::bigButton(codeOnly ? "Copy code" : "Copy link", false, 0.0f, true, ui::kFontUi + 2.0f)) {
+    out.copy = true;
+  }
+  if (share.canShare) {
+    ImGui::SameLine();
+    if (ui::bigButton("Share", false, 0.0f, true, ui::kFontUi + 2.0f)) out.share = true;
+  }
+  if (share.copied) {
+    ImGui::TextColored(ui::vec4(ui::kLeafLight), "Copied: %s", share.link.c_str());
+  } else if (codeOnly) {
+    ImGui::TextDisabled("Friends enter it in Play online > Room code");
+  } else {
+    ImGui::TextDisabled("%s", share.link.c_str());
+  }
+  ImGui::EndGroup();
+  return out;
+}
+
 }  // namespace
+
+std::array<std::string, sim::kMaxPlayers> slotLabels(const HudView& view) {
+  std::array<std::string, sim::kMaxPlayers> l;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
+    l[i] = client::slotLabel(view.names[i], view.owners[i], i);
+  return l;
+}
 
 HudView hudView(const MatchSession& session) {
   HudView v;
-  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     v.owners[i] = session.owner(PlayerId{i});
+    if (v.owners[i] == SlotOwner::Bot) v.bots = static_cast<sim::PlayerMask>(v.bots | (1u << i));
+  }
   v.dropped = static_cast<sim::PlayerMask>(session.droppedMask() & session.localMask());
   v.paused = session.paused();
   return v;
@@ -613,7 +883,19 @@ HudView hudView(const NetSession& session) {
   v.statusLine = session.statusText();
   if (session.room())
     v.roomLine = "Room " + session.room()->code + " (" + session.room()->region + ")";
-  if (session.configKnown()) {
+  // v0.42: the room's nicknames, v0.43 its bots by name too; a room shows
+  // its own match over (no server-chosen next match).
+  const std::optional<net::RoomStateMsg>& room = session.roomState();
+  if (room) {
+    v.bots = room->bots;
+    for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+      const PlayerId slot{i};
+      if (sim::maskHas(room->humans, slot) || sim::maskHas(room->bots, slot)) {
+        v.names[i] = session.slotName(slot);
+      }
+    }
+  }
+  if (session.configKnown() && !room) {
     const sim::MatchConfig& next = session.client().matchConfig();
     const sim::ContentDB& db = session.content();
     v.nextMatch = std::string("Next match: ") + db.arenaAt(next.arena).name.cStr() + ", " +
@@ -636,44 +918,49 @@ void drawMatchHud(const HudView& view, const HudInput& in) {
   drawNotices(dl, view, display);
 }
 
-void drawNetStatus(const NetSession& session, const std::string& invite) {
-  const ImVec2 view = ImGui::GetIO().DisplaySize;
-  ImGui::SetNextWindowPos(ImVec2(view.x * 0.5f, view.y * 0.5f), ImGuiCond_Always,
-                          ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(std::min(720.0f, view.x - 32.0f), 0.0f), ImGuiCond_Always);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
-                                      ImVec2(FLT_MAX, std::max(120.0f, view.y - 32.0f)));
-  ImGui::SetNextWindowBgAlpha(0.85f);
-  constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                      ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoSavedSettings;
-  if (ImGui::Begin("Kung Fu Monkeys: online", nullptr, kFlags)) {
+NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share,
+                               ButtonMenu& buttons) {
+  NetStatusOutcome out;
+  if (ui::beginScreen("##online_status", 760.0f)) {
     const NetPhase phase = session.phase();
     const bool failed =
         phase == NetPhase::Rejected || phase == NetPhase::Disconnected || phase == NetPhase::Failed;
+    const bool lost = session.canReconnect();
+    const char* title = session.room() ? "Joining the room" : "Connecting";
+    if (session.reconnects() > 0) title = "Reconnecting";
+    if (failed) title = "Could not join";
+    if (lost) title = "Connection lost";
+    ui::heading(title, failed ? ui::kAlarm : kBanana);
     const std::string status = session.statusText();
     if (failed) {
-      ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "%s", status.c_str());
+      ImGui::TextColored(ui::vec4(ui::kAlarm), "%s", status.c_str());
     } else {
       // A small spinner so a slow handshake does not look frozen.
       constexpr const char* kSpin = "|/-\\";
       const auto spin = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % 4;
-      ImGui::Text("%c %s", kSpin[spin], status.c_str());
+      ImGui::Text("%c  %s", kSpin[spin], status.c_str());
+    }
+    // v0.44: back in with the same token: the server keeps the slots of a
+    // match in progress for a few seconds.
+    if (lost) {
+      ImGui::Spacing();
+      ImGui::TextUnformatted("Your place in the match is kept for a few seconds.");
+      static constexpr std::array<const char*, 2> kButtons = {"Reconnect", "Leave"};
+      buttons.setCount(kButtons.size());
+      const float gap = ImGui::GetStyle().ItemSpacing.x;
+      const float bw = (ImGui::GetContentRegionAvail().x - gap) / 2.0f;
+      for (std::size_t i = 0; i < kButtons.size(); ++i) {
+        if (i > 0) ImGui::SameLine();
+        if (ui::bigButton(kButtons[i], i == buttons.focus(), bw)) {
+          buttons.setFocus(i);
+          (i == 0 ? out.reconnect : out.leave) = true;
+        }
+      }
     }
     // M6a: the room the lobby gave, large, and the invite to copy.
     if (session.room()) {
-      const std::string room =
-          "Room " + session.room()->code + "  (" + session.room()->region + ")";
-      ImGui::SetWindowFontScale(2.0f);
-      ImGui::TextColored(ImVec4(0.98f, 0.84f, 0.16f, 1.0f), "%s", room.c_str());
-      ImGui::SetWindowFontScale(1.0f);
-      if (!invite.empty()) {
-        ImGui::TextUnformatted("Invite friends: send");
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.75f, 0.85f, 1.0f, 1.0f), "%s", invite.c_str());
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Copy")) ImGui::SetClipboardText(invite.c_str());
-      }
+      ImGui::Spacing();
+      out.share = drawShare(share);
     }
     ImGui::Separator();
     if (session.config().spectate) {
@@ -683,8 +970,9 @@ void drawNetStatus(const NetSession& session, const std::string& invite) {
                   static_cast<unsigned>(session.deviceCount()),
                   static_cast<unsigned>(session.requestedSlots()));
     }
-    // The server's match (v0.24), read-only: what it runs, and who is in.
-    if (session.configKnown()) {
+    // The server's match (v0.24), read-only: what it runs, and who is in
+    // (a server on the M3 flow, without a room).
+    if (session.configKnown() && !session.roomState()) {
       const sim::MatchConfig& config = session.client().matchConfig();
       ImGui::Spacing();
       ImGui::TextUnformatted("Server match (chosen by the server)");
@@ -694,7 +982,7 @@ void drawNetStatus(const NetSession& session, const std::string& invite) {
         const bool present = (config.players & (1u << i)) != 0;
         const SlotOwner owner = session.owner(PlayerId{i});
         c.filled = present || owner == SlotOwner::Local;
-        std::snprintf(c.title, sizeof c.title, "P%u", static_cast<unsigned>(i) + 1U);
+        c.title = "P" + std::to_string(i + 1);
         const char* who = present ? "online" : "free";
         if (owner == SlotOwner::Local || owner == SlotOwner::Dropped) who = "you";
         std::snprintf(c.sub, sizeof c.sub, "%s", who);
@@ -708,124 +996,32 @@ void drawNetStatus(const NetSession& session, const std::string& invite) {
                          config.powerUps, ImVec2(220.0f, 150.0f));
         ImGui::EndTable();
       }
+      ImGui::TextDisabled("The server runs the match: no pause, step or time scale online.");
     }
-    ImGui::TextDisabled("The server runs the match: no pause, step or time scale online.");
-    ImGui::TextDisabled("Esc: %s and return to the local lobby. F1: debug overlay",
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::TextDisabled("Esc: %s and go back to the menu. F1: debug overlay",
                         failed ? "close" : "disconnect");
+    ImGui::PopFont();
   }
-  ImGui::End();
+  ui::endScreen();
+  return out;
 }
 
-namespace {
-
-// The local settings rows (LobbyMenu): the focused row highlighted, a click
-// focuses a row, the arrow buttons change it like Left/Right.
-bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
-  bool changed = false;
-  const auto rows = menu.rows();
-  const float valueX = 150.0f;
-  const float valueW = 130.0f;
-  for (std::size_t i = 0; i < rows.size(); ++i) {
-    const LobbyRow& row = rows[i];
-    if (row.kind == LobbyRowKind::PowerUp && row.powerUp == 0) {
-      ImGui::TextDisabled("Power-ups");
-    }
-    if (row.kind == LobbyRowKind::CreateRoom) ImGui::TextDisabled("Online");
-    ImGui::PushID(static_cast<int>(i));
-    const float x0 = ImGui::GetCursorPosX();
-    if (ImGui::Selectable("##row", i == menu.focus(), ImGuiSelectableFlags_AllowOverlap,
-                          ImVec2(0.0f, ImGui::GetFrameHeight()))) {
-      menu.setFocus(i);
-    }
-    ImGui::SameLine(x0 + 6.0f);
-    if (row.kind == LobbyRowKind::PowerUp) {
-      const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
-      ImGui::ColorButton("##c", slotColorVec(color), ImGuiColorEditFlags_NoTooltip,
-                         ImVec2(12.0f, 12.0f));
-      ImGui::SameLine();
-    }
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted(menu.rowLabel(row).c_str());
-    ImGui::SameLine(x0 + valueX);
-    if (ImGui::ArrowButton("##l", ImGuiDir_Left)) {
-      menu.setFocus(i);
-      changed = menu.change(i, -1) || changed;
-    }
-    ImGui::SameLine();
-    const std::string value = menu.rowValue(row);
-    const float tw = ImGui::CalcTextSize(value.c_str()).x;
-    const float vx = ImGui::GetCursorPosX();
-    ImGui::SetCursorPosX(vx + std::max(0.0f, (valueW - tw) * 0.5f));
-    ImGui::TextUnformatted(value.c_str());
-    ImGui::SameLine(vx + valueW);
-    if (ImGui::ArrowButton("##r", ImGuiDir_Right)) {
-      menu.setFocus(i);
-      changed = menu.change(i, +1) || changed;
-    }
-    if (row.kind == LobbyRowKind::CreateRoom) {
-      ImGui::SameLine();
-      if (ImGui::SmallButton("Create")) {
-        menu.setFocus(i);
-        (void)menu.activate(i);
-      }
-    }
-    ImGui::PopID();
-  }
-  return changed;
-}
-
-// M6a: the Online section's room code field and Join button (the menu has
-// no text input). The field keeps its text across frames.
-void drawRoomJoin(LobbyMenu& menu) {
-  static std::array<char, 8> code{};  // 5 characters + NUL, with room to spare
-  const auto filter = [](ImGuiInputTextCallbackData* data) -> int {
-    if (data->EventChar >= 0x80 || !isRoomCodeChar(static_cast<char>(data->EventChar))) return 1;
-    return 0;
-  };
-  ImGui::AlignTextToFramePadding();
-  ImGui::TextUnformatted("Join room");
-  ImGui::SameLine(150.0f);
-  ImGui::SetNextItemWidth(110.0f);
-  const bool enter = ImGui::InputTextWithHint("##room_code", "ABCDE", code.data(), 6,
-                                              ImGuiInputTextFlags_CharsUppercase |
-                                                  ImGuiInputTextFlags_CallbackCharFilter |
-                                                  ImGuiInputTextFlags_EnterReturnsTrue,
-                                              filter);
-  ImGui::SameLine();
-  const bool valid = normalizeRoomCode(code.data()).has_value();
-  if (!valid) ImGui::BeginDisabled();
-  const bool join = ImGui::Button("Join");
-  if (!valid) ImGui::EndDisabled();
-  if ((join || enter) && valid) (void)menu.requestJoin(code.data());
-}
-
-}  // namespace
-
-LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string& onlineLabel) {
-  const bool online = !onlineLabel.empty();
+LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
   LobbyOutcome out;
-  const ImVec2 view = ImGui::GetIO().DisplaySize;
-  ImGui::SetNextWindowPos(ImVec2(view.x * 0.5f, view.y * 0.5f), ImGuiCond_Always,
-                          ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(std::min(820.0f, view.x - 32.0f), 0.0f), ImGuiCond_Always);
-  ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f),
-                                      ImVec2(FLT_MAX, std::max(120.0f, view.y - 32.0f)));
-  ImGui::SetNextWindowBgAlpha(0.85f);
-  constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
-                                      ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoSavedSettings;
-  if (ImGui::Begin("Kung Fu Monkeys: lobby", nullptr, kFlags)) {
+  if (ui::beginScreen("##local_lobby", 900.0f, 0.9f)) {
+    ui::heading("Local play");
     // Player cards: who is in each slot.
     std::array<LobbyCard, sim::kMaxPlayers> cards{};
-    const bool teamMode = !online && session.content().modeAt(menu.settings().mode).teams > 0;
+    const bool teamMode = session.content().modeAt(menu.settings().mode).teams > 0;
     const sim::TeamSet teams = session.teams();
     for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
       LobbyCard& c = cards[i];
       const SlotOwner owner = session.owner(PlayerId{i});
       c.filled = owner != SlotOwner::None;
       if (teamMode && c.filled) c.team = teams[i];
+      c.title = client::slotLabel({}, owner, i);
       if (owner == SlotOwner::Bot) {
-        std::snprintf(c.title, sizeof c.title, "BOT%u", static_cast<unsigned>(i) + 1U);
         // "bot medium", or "bot module" for a .wasm bot (its path is in F1 > Bots).
         const BotRoster& roster = session.botRoster();
         std::snprintf(c.sub, sizeof c.sub, "bot %s",
@@ -833,10 +1029,8 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
                           ? "module"
                           : std::string(ai::toString(roster.spec().tier)).c_str());
       } else if (owner == SlotOwner::None) {
-        std::snprintf(c.title, sizeof c.title, "P%u", static_cast<unsigned>(i) + 1U);
         std::snprintf(c.sub, sizeof c.sub, "free");
       } else {
-        std::snprintf(c.title, sizeof c.title, "P%u", static_cast<unsigned>(i) + 1U);
         shortDeviceText(session.sampler().binding(PlayerId{i}), c.sub);
       }
     }
@@ -850,43 +1044,30 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
     }
 
     ImGui::Spacing();
-    if (online) {
-      ImGui::Text("Online: %s", onlineLabel.c_str());
-      ImGui::TextDisabled(
-          "Each joined device gets its own slot; the server picks the slots, the arena, the "
-          "mode, the loadout and the power-ups (shown once connected).");
-    } else {
-      const sim::ContentDB& db = session.content();
-      const LobbySettings& ls = menu.settings();
-      if (ImGui::BeginTable("lobby_settings", 2, ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.15f);
-        ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 1.0f);
-        ImGui::TableNextColumn();
-        out.changed = drawSettingsRows(menu, db);
-        if (menu.lobbyAvailable()) drawRoomJoin(menu);
-        ImGui::TableNextColumn();
-        const sim::MatchConfig preview{.seed = session.seed(),
-                                       .arena = ls.arena,
-                                       .mode = ls.mode,
-                                       .powerUps = ls.powerUps,
-                                       .loadout = ls.loadout};
-        const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
-        drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps, ImVec2(w, w * 0.62f));
-        matchConfigText(db, preview);
-        ImGui::Text("Seed 0x%llX", static_cast<unsigned long long>(session.seed()));
-        ImGui::EndTable();
-      }
-      ImGui::TextDisabled(
-          "Up/Down (W/S, d-pad, stick): choose a setting. Left/Right: change it. "
-          "- / =: bots.");
-      if (menu.lobbyAvailable()) {
-        ImGui::TextDisabled(
-            "Online: Enter on Create room makes a room in that region; type a friend's code "
-            "and Join to play in theirs.");
-      }
+    const sim::ContentDB& db = session.content();
+    const LobbySettings& ls = menu.settings();
+    if (ImGui::BeginTable("lobby_settings", 2, ImGuiTableFlags_SizingStretchProp)) {
+      ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.15f);
+      ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+      ImGui::TableNextColumn();
+      out.changed = drawSettingsRows(menu, db);
+      ImGui::TableNextColumn();
+      const sim::MatchConfig preview{.seed = session.seed(),
+                                     .arena = ls.arena,
+                                     .mode = ls.mode,
+                                     .powerUps = ls.powerUps,
+                                     .loadout = ls.loadout};
+      ImGui::PushFont(nullptr, ui::kFontSmall);
+      const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
+      drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps, ImVec2(w, w * 0.55f));
+      matchConfigText(db, preview);
+      ImGui::TextDisabled("Seed 0x%llX", static_cast<unsigned long long>(session.seed()));
+      ImGui::PopFont();
+      ImGui::EndTable();
     }
 
     ImGui::Spacing();
+    ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextUnformatted(
         "Join: press Throw or Dash on a free keyboard side, or any button on a pad");
     ImGui::BulletText("Keyboard left:  WASD move, J/Space throw, K/LShift dash, L/E ability");
@@ -894,23 +1075,181 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu, const std::string
     ImGui::BulletText(
         "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "
         "ability");
-    ImGui::BulletText("The ability button fires the third slot (loadouts such as slam)");
-    ImGui::TextDisabled("Aim follows the move direction on keyboards. F1: debug overlay");
+    ImGui::TextDisabled(
+        "Up/Down (W/S, d-pad, stick): choose a setting. Left/Right: change it. - / =: bots. "
+        "Esc: menu. F1: debug overlay");
+    ImGui::PopFont();
 
     ImGui::Spacing();
-    const bool canStart = online || session.lobbyPresentMask() != 0;
-    if (!canStart) ImGui::BeginDisabled();
-    if (ImGui::Button(online ? "Connect  (Enter / Start)" : "Start match  (Enter / Start)",
-                      ImVec2(-1.0f, 0.0f))) {
-      out.start = true;
-    }
-    if (!canStart) ImGui::EndDisabled();
-    if (!online && std::popcount(static_cast<uint32_t>(session.lobbyPresentMask())) < 2) {
+    const bool canStart = session.lobbyPresentMask() != 0;
+    if (ui::bigButton("Start match  (Enter / Start)", false, -1.0f, canStart)) out.start = true;
+    if (std::popcount(static_cast<uint32_t>(session.lobbyPresentMask())) < 2) {
       ImGui::TextDisabled("Rounds only end with at least two monkeys: add a player or a bot.");
     }
   }
-  ImGui::End();
+  ui::endScreen();
   return out;
+}
+
+// --- the online room (v0.42, restyled in v0.43) ------------------------------------------
+
+RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const ShareView& share) {
+  RoomOutcome out;
+  const std::optional<net::RoomStateMsg>& room = session.roomState();
+  if (!room) return out;
+  const bool host = session.isHost();
+  const sim::ContentDB& db = session.content();
+  if (ui::beginScreen("##room", 900.0f)) {
+    if (share.code.empty()) {
+      ui::heading("Room");
+    } else {
+      out.share = drawShare(share);
+    }
+    ImGui::Spacing();
+
+    // The roster: the humans by name (the host's crown, you), the bots the
+    // host asked for in the lowest open slots (where the server puts them
+    // at the start), then the open slots.
+    std::array<LobbyCard, sim::kMaxPlayers> cards{};
+    const net::RoomSettings& r = room->settings;
+    uint8_t botsToCome = r.bots;
+    for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+      const PlayerId slot{i};
+      LobbyCard& c = cards[i];
+      const bool human = sim::maskHas(room->humans, slot);
+      const bool bot = sim::maskHas(room->bots, slot);
+      c.filled = human || bot;
+      if (human) {
+        c.title = session.slotName(slot);
+        c.host = room->host == slot;
+        const bool you = sim::maskHas(session.localSlots(), slot);
+        const char* role = c.host ? "host" : "player";
+        if (you) role = c.host ? "you, host" : "you";
+        std::snprintf(c.sub, sizeof c.sub, "%s", role);
+      } else if (bot) {
+        c.title = session.slotName(slot);
+        std::snprintf(c.sub, sizeof c.sub, "bot");
+      } else if (room->bots == 0 && botsToCome > 0) {
+        --botsToCome;
+        c.filled = true;
+        c.alpha = 150;
+        c.title = "BOT" + std::to_string(i + 1);
+        std::snprintf(c.sub, sizeof c.sub, "joins at the start");
+      } else {
+        c.title = "open";
+        std::snprintf(c.sub, sizeof c.sub, "send the link");
+      }
+    }
+    drawLobbyCards(cards, 5);
+    ImGui::Spacing();
+
+    // The match: the host changes it, everyone else sees it.
+    const sim::MatchConfig shown{
+        .arena = r.arena, .mode = r.mode, .powerUps = r.powerUps, .loadout = r.loadout};
+    if (ImGui::BeginTable("room_match", 2, ImGuiTableFlags_SizingStretchProp)) {
+      ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.15f);
+      ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+      ImGui::TableNextColumn();
+      if (host) {
+        out.settingsChanged = drawSettingsRows(menu, db);
+      } else {
+        matchConfigText(db, shown);
+        labelled("Bots", std::to_string(r.bots).c_str());
+      }
+      ImGui::TableNextColumn();
+      ImGui::PushFont(nullptr, ui::kFontSmall);
+      const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
+      drawArenaPreview(db, db.arenaAt(r.arena), r.powerUps, ImVec2(w, w * 0.55f));
+      if (host) matchConfigText(db, shown);
+      ImGui::PopFont();
+      ImGui::EndTable();
+    }
+
+    ImGui::Spacing();
+    const float leaveW = 160.0f;
+    if (host) {
+      if (ui::bigButton(
+              "Start match  (Enter)", true,
+              ImGui::GetContentRegionAvail().x - leaveW - ImGui::GetStyle().ItemSpacing.x)) {
+        out.start = true;
+      }
+    } else {
+      const std::string hostName =
+          room->host.isValid() ? session.slotName(room->host) : std::string("the host");
+      const std::string line = "Waiting for " + hostName + " to start the match";
+      ImGui::PushFont(nullptr, ui::kFontButton);
+      constexpr const char* kDots[] = {"", ".", "..", "..."};
+      const auto dots = static_cast<std::size_t>(ImGui::GetTime() * 2.0) % 4;
+      ImGui::AlignTextToFramePadding();
+      ImGui::TextColored(ui::vec4(kBanana), "%s%s", line.c_str(), kDots[dots]);
+      ImGui::PopFont();
+      ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - leaveW);
+    }
+    if (host) ImGui::SameLine();
+    if (ui::bigButton("Leave", false, leaveW)) out.leave = true;
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::TextDisabled("%s", host ? "Up/Down: choose a setting. Left/Right: change it. Enter: "
+                                     "start. Esc: leave the room. F1: debug overlay"
+                                   : "The host picks the match. Esc: leave the room. F1: debug "
+                                     "overlay");
+    ImGui::PopFont();
+  }
+  ui::endScreen();
+  return out;
+}
+
+MatchOverView matchOverView(const HudView& view, const presentation::RenderState& state) {
+  MatchOverView v;
+  const presentation::RenderHud& hud = state.hud;
+  v.board = buildScoreboard(hud, slotLabels(view), onlineLocalMask(view), view.bots);
+  v.title = "Draw!";
+  v.color = kWhite;
+  if (hud.matchWinner >= 0 && std::cmp_less(hud.matchWinner, sim::kMaxPlayers)) {
+    const auto w = static_cast<uint8_t>(hud.matchWinner);
+    char label[kLabelBytes];
+    ImU32 color = kWhite;
+    winnerText(view, hud, w, label, color);
+    v.title = std::string(label) + " wins the match!";
+    v.color = color;
+  }
+  return v;
+}
+
+std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& menu) {
+  std::optional<std::size_t> clicked;
+  menu.setCount(view.buttons.size());
+  if (ui::beginScreen("##match_over", 640.0f)) {
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::TextDisabled("Match over");
+    ImGui::PopFont();
+    ui::heading(view.title.c_str(), view.color, ui::kFontHeading + 6.0f);
+    ImGui::Spacing();
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const float h = drawScoreTable(ImGui::GetWindowDrawList(), at, width, view.board, false);
+    ImGui::Dummy(ImVec2(width, h));
+    if (!view.waiting.empty()) {
+      ImGui::PushFont(nullptr, ui::kFontButton);
+      ImGui::TextColored(ui::vec4(kBanana), "%s", view.waiting.c_str());
+      ImGui::PopFont();
+    }
+    const std::size_t n = view.buttons.size();
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float bw =
+        n == 0 ? 0.0f : (width - (static_cast<float>(n - 1) * gap)) / static_cast<float>(n);
+    for (std::size_t i = 0; i < n; ++i) {
+      if (i > 0) ImGui::SameLine();
+      if (ui::bigButton(view.buttons[i].c_str(), i == menu.focus(), bw)) {
+        menu.setFocus(i);
+        clicked = i;
+      }
+    }
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::TextDisabled("Left/Right: choose. Enter / A: select.");
+    ImGui::PopFont();
+  }
+  ui::endScreen();
+  return clicked;
 }
 
 }  // namespace kfm::client

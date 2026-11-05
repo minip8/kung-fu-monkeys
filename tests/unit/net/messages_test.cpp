@@ -401,3 +401,149 @@ TEST_CASE("Snapshot round-trips and stays far below the reliable limit", "[net][
   CHECK((bad.error() == DecodeError::ChecksumMismatch || bad.error() == DecodeError::InvalidState));
   CHECK(decode({buf.data(), worst - 1}, *back).error() == DecodeError::Truncated);
 }
+
+// --- protocol 6: the room and nicknames (v0.42) -------------------------------------
+
+namespace {
+
+Nickname nick(std::string_view text) {
+  Nickname n;
+  n.length = static_cast<uint8_t>(text.size());
+  std::ranges::copy(text, n.bytes.begin());
+  return n;
+}
+
+RoomStateMsg fullRoom() {
+  RoomStateMsg m;
+  m.phase = RoomPhase::Over;
+  m.host = PlayerId{3};
+  m.settings = RoomSettings{.arena = 4, .mode = 2, .loadout = 1, .powerUps = 0x0F0F, .bots = 7};
+  m.humans = 0b11'1111'1000;
+  m.bots = 0b111;
+  m.winner = PlayerId{1};
+  for (uint8_t s = 3; s < sim::kMaxPlayers; ++s)
+    m.names[s] = nick("ABCDEFGHIJKLMNOP");  // 16 bytes each: the worst case
+  return m;
+}
+
+}  // namespace
+
+TEST_CASE("Nicknames: validation and sanitising", "[net][messages][room]") {
+  CHECK(validNickname(""));
+  CHECK(validNickname("Bonobo"));
+  CHECK(validNickname("ABCDEFGHIJKLMNOP"));
+  CHECK_FALSE(validNickname("ABCDEFGHIJKLMNOPQ"));  // 17 bytes
+  CHECK(validNickname("\xC3\xA9t\xC3\xA9"));        // "été"
+  CHECK(validNickname("\xF0\x9F\x90\x92"));         // U+1F412 MONKEY
+  CHECK_FALSE(validNickname("a\tb"));               // C0 control
+  CHECK_FALSE(validNickname("a\x7F"));              // DEL
+  CHECK_FALSE(validNickname("\xC2\x85"));           // C1 control (NEL)
+  CHECK_FALSE(validNickname("\xC0\xAF"));           // overlong
+  CHECK_FALSE(validNickname("\xED\xA0\x80"));       // surrogate
+  CHECK_FALSE(validNickname("\xF4\x90\x80\x80"));   // past U+10FFFF
+  CHECK_FALSE(validNickname("\xE2\x82"));           // truncated
+  CHECK_FALSE(validNickname("\x80"));               // lone continuation
+
+  CHECK(Nickname::from("  Bo  no\tbo  ").view() == "Bo nobo");
+  CHECK(Nickname::from("\xC0\xAFok\xFF").view() == "ok");
+  CHECK(Nickname::from("ABCDEFGHIJKLMNOPQRST").view() == "ABCDEFGHIJKLMNOP");
+  // Cut at a character boundary: 15 ASCII bytes and a 2-byte character do not fit.
+  CHECK(Nickname::from("ABCDEFGHIJKLMNO\xC3\xA9").view() == "ABCDEFGHIJKLMNO");
+  CHECK(Nickname::from("").empty());
+  CHECK(validNickname(Nickname::from("\x01\x02 x \xF0\x9F\x90\x92 y").view()));
+}
+
+TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
+  CHECK(kProtocolVersion == 6);
+  HelloMsg h;
+  h.contentHash = 5;
+  h.requestedSlots = 2;
+  h.nickname = nick("\xF0\x9F\x90\x92 Bonobo");
+  CHECK(roundTrip(h).nickname.view() == "\xF0\x9F\x90\x92 Bonobo");
+  roundTrip(HelloMsg{});
+
+  roundTrip(RoomSettingsMsg{});
+  size_t n = 0;
+  roundTrip(RoomSettingsMsg{RoomSettings{.arena = sim::kMaxArenas - 1,
+                                         .mode = sim::kMaxModes - 1,
+                                         .loadout = sim::kMaxLoadouts - 1,
+                                         .powerUps = 0xFFFF,
+                                         .bots = sim::kMaxPlayers}},
+            &n);
+  CHECK(n == kRoomSettingsMsgBytes);
+  roundTrip(StartMsg{}, &n);
+  CHECK(n == kStartMsgBytes);
+
+  roundTrip(RoomStateMsg{});  // Waiting, no host, nobody
+  const RoomStateMsg full = fullRoom();
+  const RoomStateMsg back = roundTrip(full, &n);
+  CHECK(n <= kRoomStateMsgMaxBytes);
+  CHECK(back.names[5].view() == "ABCDEFGHIJKLMNOP");
+  CHECK(back.names[0].empty());  // a bot slot carries no name
+
+  RoomStateMsg playing;
+  playing.phase = RoomPhase::Playing;
+  playing.host = PlayerId{0};
+  playing.humans = 0b1;
+  playing.names[0] = nick("x");
+  roundTrip(playing);
+}
+
+TEST_CASE("Protocol 6 encoders refuse invalid messages", "[net][messages][room]") {
+  std::vector<std::byte> buf(kMaxReliableBytes);
+  HelloMsg h;
+  h.nickname = nick("a\nb");
+  CHECK(encode(h, buf) == 0);
+  CHECK(encode(RoomSettingsMsg{RoomSettings{.bots = sim::kMaxPlayers + 1}}, buf) == 0);
+  CHECK(encode(RoomSettingsMsg{RoomSettings{.arena = sim::kMaxArenas}}, buf) == 0);
+
+  RoomStateMsg m = fullRoom();
+  m.host = PlayerId{0};  // a bot slot: not a human
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.bots = 0b1000;  // overlaps the humans
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.winner = PlayerId{sim::kMaxPlayers};
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.names[4] = nick("\x7F");
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.names[0] = nick("\x7F");  // not a human slot: never sent
+  CHECK(encode(m, buf) > 0);
+}
+
+TEST_CASE("Protocol 6 decoders reject bad nicknames and ranges", "[net][messages][room]") {
+  std::vector<std::byte> buf(kMaxReliableBytes);
+  // A Hello whose nickname byte is patched to a control character.
+  HelloMsg h;
+  h.nickname = nick("abc");
+  size_t n = encode(h, buf);
+  REQUIRE(n > 0);
+  buf[n - 2] = std::byte{0x01};
+  HelloMsg out;
+  CHECK(decode({buf.data(), n}, out).error() == DecodeError::OutOfRange);
+  // ... and one that claims 17 bytes.
+  n = encode(h, buf);
+  buf[n - 4] = std::byte{17};
+  CHECK_FALSE(decode({buf.data(), n}, out).has_value());
+
+  // A RoomSettings with 15 bots (the u4 holds more than kMaxPlayers).
+  BitWriter w(buf);
+  w.writeU8(static_cast<uint8_t>(MessageType::RoomSettings));
+  w.writeU8(0);
+  w.writeU8(0);
+  w.writeU8(0);
+  w.writeU16(0);
+  w.writeBits(15, 4);
+  w.align();
+  RoomSettingsMsg rs;
+  CHECK(decode({buf.data(), w.bytesWritten()}, rs).error() == DecodeError::OutOfRange);
+
+  // A Start with a trailing byte.
+  n = encode(StartMsg{}, buf);
+  buf[n] = std::byte{0};
+  StartMsg st;
+  CHECK(decode({buf.data(), n + 1}, st).error() == DecodeError::TrailingBytes);
+}

@@ -34,8 +34,16 @@ int32_t targetLeadTicks(const RttEstimator& rtt, uint32_t jitterMultiplier) {
 
 void LeadController::reset() {
   marginQ8_ = 0;
+  floorQ8_ = 0;
   last_ = 0;
   samples_ = 0;
+}
+
+int32_t LeadController::bandShiftQ8() const {
+  // How far the late reports reach below the mean, beyond what the band's
+  // low edge already covers.
+  const int32_t depth = marginQ8_ - floorQ8_;
+  return std::clamp(depth - config_.marginLowQ8, 0, config_.jitterBandMaxQ8);
 }
 
 void LeadController::onArrivalMargin(int8_t margin) {
@@ -43,9 +51,20 @@ void LeadController::onArrivalMargin(int8_t margin) {
   const int32_t q8 = int32_t{margin} * 256;
   if (samples_ == 0) {
     marginQ8_ = q8;
+    floorQ8_ = q8;
   } else {
     // The EMA moves 1/2^k of the way (division truncates toward zero).
     marginQ8_ += (q8 - marginQ8_) / (int32_t{1} << config_.smoothingShift);
+    // v0.44: the floor drops half way to every lower report (a lone
+    // outlier counts half, a run of late reports pulls it all the way) and
+    // creeps back up, never above the mean: the lower envelope of the
+    // arrival jitter.
+    if (q8 < floorQ8_) {
+      floorQ8_ += (q8 - floorQ8_) / 2;
+    } else {
+      floorQ8_ += config_.floorRiseQ8;
+    }
+    floorQ8_ = std::min(floorQ8_, marginQ8_);
   }
   ++samples_;
 }
@@ -53,8 +72,11 @@ void LeadController::onArrivalMargin(int8_t margin) {
 uint32_t LeadController::ratePpm() const {
   if (samples_ == 0) return kRateOnePpm;
   int32_t errQ8 = 0;
-  if (marginQ8_ < config_.marginLowQ8) errQ8 = marginQ8_ - config_.marginLowQ8;
-  if (marginQ8_ > config_.marginHighQ8) errQ8 = marginQ8_ - config_.marginHighQ8;
+  const int32_t shift = bandShiftQ8();
+  const int32_t low = config_.marginLowQ8 + shift;
+  const int32_t high = config_.marginHighQ8 + shift;
+  if (marginQ8_ < low) errQ8 = marginQ8_ - low;
+  if (marginQ8_ > high) errQ8 = marginQ8_ - high;
   // Early (positive error) slows the clock down, late speeds it up.
   const int64_t delta = -int64_t{errQ8} * config_.gainPpmPerTick / 256;
   const int64_t maxDev = config_.maxDeviationPpm;
@@ -63,7 +85,7 @@ uint32_t LeadController::ratePpm() const {
 
 int32_t LeadController::takeJumpTicks() {
   if (samples_ == 0 || marginQ8_ >= config_.jumpBelowQ8) return 0;
-  const int32_t mid = (config_.marginLowQ8 + config_.marginHighQ8) / 2;
+  const int32_t mid = ((config_.marginLowQ8 + config_.marginHighQ8) / 2) + bandShiftQ8();
   const int32_t ticks = (mid - marginQ8_ + 255) / 256;
   reset();
   return ticks;

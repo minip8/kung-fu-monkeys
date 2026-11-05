@@ -34,6 +34,7 @@
 #include <expected>
 #include <optional>
 #include <span>
+#include <string_view>
 
 namespace kfm {
 class BitReader;
@@ -45,14 +46,17 @@ namespace kfm::net {
 // Bumped on any change to a message layout. Exchanged in Hello.
 // v2 (M4): MatchConfig in Welcome, Snapshot and MatchConfig carries arena
 // and mode. v3 (M4 lobby): and the per-match power-up set. v4 (v0.31): and
-// the loadout. v5 (v0.32): and the team of every slot.
-inline constexpr uint16_t kProtocolVersion = 5;
+// the loadout. v5 (v0.32): and the team of every slot. v6 (v0.42, M6b):
+// the room (RoomSettings, RoomState, Start) and a nickname in Hello.
+inline constexpr uint16_t kProtocolVersion = 6;
 
 // Inputs per Input / AuthInputs message: the newest tick and up to 15 before
 // it (§6.3: the last 8–16 are resent every packet).
 inline constexpr uint8_t kMaxInputRedundancy = 16;
 // Connection token from the lobby service, opaque to the game server.
 inline constexpr uint8_t kMaxTokenBytes = 64;
+// A player's name (v0.42): at most this many bytes of UTF-8.
+inline constexpr uint8_t kMaxNicknameBytes = 16;
 inline constexpr sim::PlayerMask kAllPlayersMask =
     static_cast<sim::PlayerMask>((1u << sim::kMaxPlayers) - 1u);
 
@@ -71,8 +75,11 @@ enum class MessageType : uint8_t {
   Ping,           // both, unreliable
   Pong,           // both, unreliable
   ResyncRequest,  // C→S reliable
+  RoomSettings,   // C→S reliable (v6: the host's settings)
+  RoomState,      // S→C reliable (v6)
+  Start,          // C→S reliable (v6: the host starts or plays again)
 };
-inline constexpr uint8_t kMessageTypeCount = 14;  // values 1..kMessageTypeCount
+inline constexpr uint8_t kMessageTypeCount = 17;  // values 1..kMessageTypeCount
 
 enum class DecodeError : uint8_t {
   Truncated = 0,     // ran past the end of the buffer
@@ -145,6 +152,24 @@ struct SnapshotMsg {
   sim::WorldState world{};
 };
 
+// A player's name as the wire carries it (v0.42): 0..kMaxNicknameBytes
+// bytes of well-formed UTF-8 without control characters (C0, DEL, C1).
+// Empty means "no name": hosts show the slot label instead.
+struct Nickname {
+  std::array<char, kMaxNicknameBytes> bytes{};
+  uint8_t length{0};
+
+  [[nodiscard]] std::string_view view() const { return {bytes.data(), length}; }
+  [[nodiscard]] bool empty() const { return length == 0; }
+  // `text` made valid: control characters and malformed UTF-8 dropped,
+  // spaces trimmed at both ends and runs of them made one, cut to
+  // kMaxNicknameBytes at a character boundary.
+  [[nodiscard]] static Nickname from(std::string_view text);
+  [[nodiscard]] bool operator==(const Nickname& o) const { return view() == o.view(); }
+};
+// Whether `text` is a nickname the wire accepts as is (see Nickname).
+[[nodiscard]] bool validNickname(std::string_view text);
+
 struct HelloMsg {
   uint16_t protocolVersion{kProtocolVersion};
   uint32_t contentHash{0};
@@ -152,6 +177,7 @@ struct HelloMsg {
   uint8_t tokenLength{0};  // 0..kMaxTokenBytes
   std::array<std::byte, kMaxTokenBytes> token{};
   uint8_t requestedSlots{0};  // local players wanted, 0..kMaxPlayers; 0 = spectate
+  Nickname nickname{};        // v6
 
   [[nodiscard]] std::span<const std::byte> tokenBytes() const {
     return {token.data(), tokenLength};
@@ -237,6 +263,51 @@ struct ResyncRequestMsg {
   constexpr bool operator==(const ResyncRequestMsg&) const = default;
 };
 
+// --- the room (v6, architecture §6.6) ------------------------------------------
+
+// The online room's state on the server (kept beside ServerHost, never in
+// WorldState): Waiting (no match runs; the server does not tick), Playing
+// (as before M6b) and Over (the match ended; the server does not tick).
+enum class RoomPhase : uint8_t { Waiting = 0, Playing, Over };
+inline constexpr uint8_t kRoomPhaseCount = 3;
+
+// What the host picks: the MatchConfig axes (indices into the content both
+// sides hashed) and the number of server-side bots.
+struct RoomSettings {
+  uint8_t arena{0};
+  uint8_t mode{0};
+  uint8_t loadout{0};
+  uint16_t powerUps{sim::kAllPowerUps};
+  uint8_t bots{0};  // 0..kMaxPlayers
+  constexpr bool operator==(const RoomSettings&) const = default;
+};
+
+// Host → server: new settings, in Waiting. The server validates them
+// against its content and answers with RoomState either way.
+struct RoomSettingsMsg {
+  RoomSettings settings{};
+  constexpr bool operator==(const RoomSettingsMsg&) const = default;
+};
+
+// Host → server: Waiting → Playing with the room's settings; Over →
+// Waiting ("play again"). Anyone else's is ignored.
+struct StartMsg {
+  constexpr bool operator==(const StartMsg&) const = default;
+};
+
+// Server → every peer, on every change and after Welcome. `names` holds the
+// nickname of every human slot (the others are empty).
+struct RoomStateMsg {
+  RoomPhase phase{RoomPhase::Waiting};
+  PlayerId host{PlayerId::invalid()};  // a human slot, or invalid: no host
+  RoomSettings settings{};
+  sim::PlayerMask humans{0};             // slots held by peers (reserved ones too)
+  sim::PlayerMask bots{0};               // server-side bot slots, disjoint from humans
+  PlayerId winner{PlayerId::invalid()};  // Over: the match's winner, invalid on a draw
+  std::array<Nickname, sim::kMaxPlayers> names{};
+  [[nodiscard]] bool operator==(const RoomStateMsg& o) const;
+};
+
 // --- sizes --------------------------------------------------------------------
 
 // Upper bounds on the encoded sizes, from the layouts in messages.cpp. Both
@@ -255,6 +326,15 @@ inline constexpr size_t kAuthInputsMsgMaxBytes =
     8;
 inline constexpr size_t kPingMsgBytes = 1 + 8 + 4;
 inline constexpr size_t kPongMsgBytes = 1 + 8 + 4 + 4;
+inline constexpr size_t kRoomSettingsBits = 8 + 8 + 8 + 16 + 4;
+inline constexpr size_t kRoomSettingsMsgBytes = (8 + kRoomSettingsBits + 7) / 8;
+inline constexpr size_t kStartMsgBytes = 1;
+inline constexpr size_t kRoomStateMsgMaxBytes =
+    (8 + 2 + 1 + 4 + kRoomSettingsBits + (2 * size_t{sim::kMaxPlayers}) + 1 + 4 +
+     size_t{sim::kMaxPlayers} * (5 + kMaxNicknameBytes * 8) + 7) /
+    8;
+static_assert(kRoomSettingsMsgBytes <= kMaxUnreliableBytes);
+static_assert(kRoomStateMsgMaxBytes <= kMaxUnreliableBytes);
 static_assert(kInputMsgMaxBytes <= kMaxUnreliableBytes);
 static_assert(kAuthInputsMsgMaxBytes <= kMaxUnreliableBytes);
 
@@ -282,6 +362,9 @@ static_assert(kAuthInputsMsgMaxBytes <= kMaxUnreliableBytes);
 [[nodiscard]] size_t encode(const MatchConfigMsg& m, std::span<std::byte> out);
 [[nodiscard]] size_t encode(const DisconnectMsg& m, std::span<std::byte> out);
 [[nodiscard]] size_t encode(const ResyncRequestMsg& m, std::span<std::byte> out);
+[[nodiscard]] size_t encode(const RoomSettingsMsg& m, std::span<std::byte> out);
+[[nodiscard]] size_t encode(const RoomStateMsg& m, std::span<std::byte> out);
+[[nodiscard]] size_t encode(const StartMsg& m, std::span<std::byte> out);
 
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, InputMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, AuthInputsMsg& out);
@@ -298,6 +381,9 @@ static_assert(kAuthInputsMsgMaxBytes <= kMaxUnreliableBytes);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, MatchConfigMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, DisconnectMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, ResyncRequestMsg& out);
+[[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, RoomSettingsMsg& out);
+[[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, RoomStateMsg& out);
+[[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, StartMsg& out);
 
 // The delta coding of one PlayerInput against `prev` (exposed for tests and
 // for size estimates).

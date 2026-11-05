@@ -151,6 +151,8 @@ if(NOT KFM_HEADLESS)
     client/lobby_test.cpp
     client/bot_session_test.cpp
     client/room_test.cpp
+    client/menus_test.cpp
+    client/scoreboard_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
   if(KFM_WASM_BOTS)
@@ -198,9 +200,12 @@ endif()
 
 if(TARGET kfm::server_host)
   # apps/server's ServerHost over the loopback emulator: match restart,
-  # stats lines, shutdown (every target, wasm included).
+  # stats lines, shutdown, the v0.42 room flow (every target, wasm included);
+  # the Room state machine on its own.
   kfm_add_test_exe(kfm_server_tests
     server/server_host_test.cpp
+    server/room_test.cpp
+    server/room_flow_test.cpp
   )
   target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim)
   if(KFM_WASM_BOTS)

@@ -20,21 +20,30 @@
 // debugUiDraw -> present.
 //
 // Network mode (--connect): connects at startup with one local slot (or
-// --players N); Escape disconnects and returns to the local lobby, which binds
-// devices as usual and whose Start connects again, one slot per bound device.
-// The session runs over a WebRtcTransport, natively and in the browser alike.
+// --players N), else one per device bound in the local lobby when Play
+// online connects later; Escape disconnects and returns to the menu. The
+// session runs over a WebRtcTransport, natively and in the browser alike.
 //
 // Rooms (M6a, architecture §13.5): --room CODE / --create join or create a
 // room through the lobby (--lobby, else the build's KFM_LOBBY_URL; in the
-// browser ?room=CODE, ?create&region=us and config.js's lobbyUrl). The
-// transport runs in lobby mode, the session takes the room's token before
-// its Hello, and the HUD names the room with an invite (the page's link with
-// ?room=CODE in the browser, the flags natively). A created room becomes
-// the one Start rejoins after Escape. With a lobby URL but no room flag the
-// local lobby shows an Online section: Create room (region on Left/Right,
-// Enter while focused) and a room code field with Join; Escape from such a
-// room returns to the local lobby. IPlatformServices (LocalPlatformServices)
-// keeps a guest id beside the settings; nothing sends it yet (M6b).
+// browser ?room=CODE, ?create&region=us and config.js's lobbyUrl), as do
+// the Play online screen's Create room and Join (v0.43; the local lobby's
+// Online section until then). The transport runs in lobby mode, the session
+// takes the room's token before its Hello, and the HUD names the room with
+// an invite (the page's link with ?room=CODE in the browser, the flags
+// natively). Leaving a room keeps its code in the Play online screen's
+// field, so Join rejoins it. IPlatformServices (LocalPlatformServices) keeps
+// a guest id beside the settings (nothing sends it yet) and, v0.43, copies
+// and shares the room's link.
+//
+// The online room (v0.42, architecture §6.6): a server on the room flow
+// sends RoomState; while the room waits or shows its match over, the frame
+// draws roomFrame(): the waiting screen (the roster with nicknames and the
+// host's crown, the host's settings rows, the lobby panel's, sent as
+// RoomSettings on change, read-only for everyone else, Start match, Leave)
+// or the match-over screen (the host's Play again sends Start). The HUD
+// names slots by nickname. --nick (?nick=, saved as `nick`, Settings > Name)
+// is the name in Hello; without one the client picks a monkey name once.
 //
 // Content (§5.10): loaded at startup from --content, else content/ next to
 // the executable, else the copy built into it (always, in the browser); its
@@ -56,17 +65,36 @@
 // --bot-module .wasm (loaded once; one that fails to load is reported and
 // the reference bot plays instead). Online the server owns the bots.
 //
+// The front end (v0.43, architecture §7): without --autostart, --connect,
+// --room or --create the client opens on the main menu (core/menus.hpp,
+// screens.cpp): Play online (the Play online screen: the region with its
+// availability, Create room, a room code and Join; with --connect and no
+// lobby it connects to that server), Play local (the local lobby), Settings
+// (name, volume, sound, bot difficulty) and, natively, Quit. Arrows / WASD,
+// a pad's d-pad or stick and the mouse move between items, Enter / Space or
+// a pad's South / Start selects, Escape or a pad's East / Back goes back.
+// Escape from the local lobby or any online screen returns to the menu.
+// The room's waiting screen shows the code large with Copy link and, on
+// touch devices in the browser, Share (IPlatformServices: SDL's clipboard
+// natively, navigator.clipboard / navigator.share in the browser); the
+// host's settings rows take the keyboard and pads like the local lobby's,
+// Enter starts. A match's end shows the match-over screen (the winner, the
+// final scoreboard, Play again / Back to lobby locally, the host's Play
+// again and Leave online), rounds modes a scoreboard between rounds.
+//
 // Keys outside the game bindings: F1 debug overlay, P pause, O single step,
-// Escape back to the lobby (quits from the lobby, natively; online it
-// disconnects and returns to the local lobby), - / = bot count in the lobby,
-// Enter / pad Start starts the match or connects (and leaves the match-over
-// screen). Pause, step and the bot keys do nothing online.
+// Escape back (a match to its lobby, the lobby or an online screen to the
+// menu, the menu quits natively), - / = bot count in the lobby, Enter / pad
+// Start starts the match (and picks the focused match-over button). Pause,
+// step and the bot keys do nothing online.
 #include "client_audio.hpp"
 #include "core/client_options.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
+#include "core/menus.hpp"
 #include "core/net_session.hpp"
+#include "core/online_menu.hpp"
 #include "debug_overlay.hpp"
 #include "hud.hpp"
 #include "kfm/content/app_content.hpp"
@@ -80,7 +108,9 @@
 #include "kfm/presentation/camera.hpp"
 #include "kfm/presentation/render_state.hpp"
 #include "kfm/presentation/renderer.hpp"
+#include "screens.hpp"
 #include "sdl_input.hpp"
+#include "ui_style.hpp"
 
 #ifdef KFM_CLIENT_WEBRTC
 #include "kfm/net/webrtc_transport.hpp"
@@ -90,6 +120,7 @@
 #include <emscripten/em_js.h>
 #endif
 
+#include <SDL3/SDL_clipboard.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_scancode.h>
@@ -119,6 +150,18 @@ using namespace kfm;
 using client::MatchSession;
 using client::SessionPhase;
 
+// Which front-end screen the local frame draws (v0.43); online, the
+// NetSession's phase decides instead.
+enum class Screen : std::uint8_t { Menu = 0, Settings, Online, Play };
+
+#ifdef __EMSCRIPTEN__
+constexpr bool kQuitItem = false;  // a browser tab is closed by the browser
+#else
+constexpr bool kQuitItem = true;
+#endif
+
+constexpr std::uint64_t kCopiedShowNs = 2'500'000'000;  // "Copied" after Copy link
+
 struct App {
   client::ClientOptions options;
   content::LoadedContent content;
@@ -132,12 +175,33 @@ struct App {
   std::unique_ptr<MatchSession> session;
   std::unique_ptr<client::NetSession> net;  // network mode, while connected or showing why not
   client::NetPhase lastNetPhase = client::NetPhase::Connecting;
-  bool connectRequested = false;                   // the lobby's Start, online: connect next frame
-  std::optional<client::LobbyTarget> pendingRoom;  // the Online section's Create / Join
+  bool connectRequested = false;                   // Play online with --connect: connect next frame
+  std::optional<client::LobbyTarget> pendingRoom;  // the Play online screen's Create / Join
+  bool leaveRequested = false;                     // an online screen's Leave: next frame
+  bool reconnectRequested = false;                 // v0.44: the lost session's Reconnect
+  // v0.42: the online room's settings rows (the host edits them) and the
+  // RoomState count when the host last sent new settings (rows follow the
+  // server again once its answer arrived).
+  client::LobbyMenu roomMenu;
+  std::optional<std::uint32_t> roomSentAt;
+  // v0.43: the front end. The keyboard and pads reach the menus through
+  // onEvent(); what they asked for is acted on in the frame.
+  Screen screen = Screen::Menu;
+  client::MainMenu mainMenu{kQuitItem};
+  client::SettingsMenu settingsMenu;
+  client::OnlineMenu onlineMenu;
+  client::ButtonMenu overMenu;  // the match-over screen's buttons
+  bool editNick = false;        // put the keyboard into the name field
+  bool editCode = false;        // ... into the room code field
+  bool menuActivate = false;    // Enter / Start on a menu screen, this frame
+  bool roomChanged = false;     // the host's rows changed from the keyboard / a pad
+  bool roomStart = false;       // the host's Enter on the waiting screen
+  bool overActivate = false;    // Enter on the match-over screen
+  std::uint64_t copiedAtNs = 0;
 #ifdef KFM_CLIENT_WEBRTC
   std::unique_ptr<net::WebRtcTransport> regionsQuery;  // the lobby's region list, in flight
 #endif
-  bool regionsQueried = false;  // asked once per visit to the local lobby
+  bool regionsQueried = false;  // asked once per visit to the Play online screen
   bool roomAnnounced = false;   // the session's room was printed
   std::unique_ptr<platform::IPlatformServices> services;
   std::string pageUrl;  // the browser's window.location.href; empty natively
@@ -183,6 +247,33 @@ EM_JS(void, kfmSavePrefJs, (const char* key, const char* text), {
 EM_JS(char*, kfmPageUrlJs, (), {
   try {
     return stringToNewUTF8(String(window.location.href));
+  } catch (e) {
+    return 0;
+  }
+});
+// v0.43: Copy link and Share. Both need the page's transient activation,
+// which the click (one frame earlier) gives; a refusal is silent.
+EM_JS(int, kfmCopyTextJs, (const char* text), {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return 0;
+    navigator.clipboard.writeText(UTF8ToString(text)).catch(() => {});
+    return 1;
+  } catch (e) {
+    return 0;
+  }
+});
+EM_JS(int, kfmCanShareJs, (), {
+  try {
+    return typeof navigator.share === 'function' && navigator.maxTouchPoints > 0 ? 1 : 0;
+  } catch (e) {
+    return 0;
+  }
+});
+EM_JS(int, kfmShareJs, (const char* title, const char* text, const char* url), {
+  try {
+    navigator.share({ title: UTF8ToString(title), text: UTF8ToString(text), url: UTF8ToString(url) })
+        .catch(() => {});
+    return 1;
   } catch (e) {
     return 0;
   }
@@ -247,7 +338,8 @@ void saveSettingsText(const std::string& text) {
 
 // IPlatformServices (M6a): the guest id kept beside the settings (made per
 // run under --no-settings, which stores nothing), the options' lobby as the
-// session directory.
+// session directory; v0.43: the clipboard and the share sheet (SDL's
+// clipboard natively, navigator.clipboard / navigator.share in the browser).
 [[nodiscard]] std::unique_ptr<platform::IPlatformServices> makePlatformServices(
     const client::ClientOptions& options) {
   platform::GuestIdStore store;
@@ -259,18 +351,21 @@ void saveSettingsText(const std::string& text) {
   const auto clock = static_cast<std::uint64_t>(
       std::chrono::high_resolution_clock::now().time_since_epoch().count());
   const std::uint64_t a = (std::uint64_t{device()} << 32) | device();
+  platform::ShareHooks share;
+#ifdef __EMSCRIPTEN__
+  share.copy = [](std::string_view text) { return kfmCopyTextJs(std::string(text).c_str()) != 0; };
+  share.canShare = [] { return kfmCanShareJs() != 0; };
+  share.share = [](std::string_view title, std::string_view text, std::string_view url) {
+    return kfmShareJs(std::string(title).c_str(), std::string(text).c_str(),
+                      std::string(url).c_str()) != 0;
+  };
+#else
+  share.copy = [](std::string_view text) {
+    return SDL_SetClipboardText(std::string(text).c_str());
+  };
+#endif
   return std::make_unique<platform::LocalPlatformServices>(std::move(store), options.lobby, a,
-                                                           clock);
-}
-
-// What the lobby shows as the network target before connecting.
-[[nodiscard]] std::string onlineLabel(const client::ClientOptions& options) {
-  if (!options.lobbyMode()) {
-    return options.connect.empty() ? std::string{} : "server " + options.connect;
-  }
-  const std::string room =
-      options.room.empty() ? "a new room in " + options.region : "room " + options.room;
-  return room + " (lobby " + options.lobby + ")";
+                                                           clock, std::move(share));
 }
 
 // The lobby's settings changed (panel or keys): apply them to the lobby's
@@ -386,6 +481,51 @@ class WebRtcLobbyJoin final : public client::ILobbyJoin {
 };
 #endif
 
+// The transport a session config asks for: the lobby (create, join, or
+// v0.44 rejoin with the old token) or --connect's server. Null with the
+// reason when it cannot be created.
+struct ClientTransport {
+  std::unique_ptr<net::ITransport> owned;
+  net::ITransport* raw{nullptr};
+  std::unique_ptr<client::ILobbyJoin> lobby;  // lobby mode: the session's view of it
+  std::string error;
+};
+
+ClientTransport makeTransport(const App& app, const client::NetSessionConfig& config) {
+  ClientTransport out;
+#ifdef KFM_CLIENT_WEBRTC
+  if (app.options.verbose) net::WebRtcTransport::initLogging(net::WebRtcLogLevel::Debug);
+  net::WebRtcClientConfig wc;
+  wc.signalingUrl = config.lobby ? app.options.lobby : app.options.connect;
+  wc.stunServer = app.options.stun;
+  wc.connectionToken = config.token;
+  if (config.lobby) {
+    const client::LobbyTarget& t = *config.lobby;
+    wc.lobby = net::LobbyRequest{
+        .kind = t.create ? net::LobbyRequest::Kind::Create : net::LobbyRequest::Kind::Join,
+        .region = t.region,
+        .code = t.code,
+        .token = config.rejoinToken,
+        .buildId = config.buildId,
+        .contentHash = app.content.hash};
+  }
+  auto transport = net::WebRtcTransport::createClient(wc);
+  if (!transport) {
+    out.error = transport.error();
+    return out;
+  }
+  net::WebRtcTransport* raw = transport->get();
+  out.raw = raw;
+  if (config.lobby) out.lobby = std::make_unique<WebRtcLobbyJoin>(*raw);
+  out.owned = std::move(*transport);
+#else
+  static_cast<void>(app);
+  static_cast<void>(config);
+  out.error = "this build has no WebRTC (KFM_WEBRTC=OFF)";
+#endif
+  return out;
+}
+
 // `room`: the Online section's Create / Join; else the options' --room /
 // --create, else --connect.
 void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
@@ -401,44 +541,35 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
   config.content = &app.content.db;
   app.roomAnnounced = false;
   const platform::InputSampler& lobby = app.session->sampler();
-#ifdef KFM_CLIENT_WEBRTC
-  if (app.options.verbose) net::WebRtcTransport::initLogging(net::WebRtcLogLevel::Debug);
-  net::WebRtcClientConfig wc;
-  wc.signalingUrl = config.lobby ? app.options.lobby : app.options.connect;
-  wc.stunServer = app.options.stun;
-  wc.connectionToken = config.token;
-  if (config.lobby) {
-    const client::LobbyTarget& t = *config.lobby;
-    wc.lobby = net::LobbyRequest{
-        .kind = t.create ? net::LobbyRequest::Kind::Create : net::LobbyRequest::Kind::Join,
-        .region = t.region,
-        .code = t.code,
-        .buildId = config.buildId,
-        .contentHash = app.content.hash};
-  }
-  auto transport = net::WebRtcTransport::createClient(wc);
-  if (transport) {
-    net::WebRtcTransport* raw = transport->get();
-    app.net =
-        std::make_unique<client::NetSession>(config, lobby, raw, nowNs, std::move(*transport));
-    if (config.lobby) app.net->attachLobby(std::make_unique<WebRtcLobbyJoin>(*raw));
-  } else {
-    app.net = std::make_unique<client::NetSession>(config, lobby, nullptr, nowNs, nullptr,
-                                                   transport.error());
-  }
-#else
-  app.net = std::make_unique<client::NetSession>(config, lobby, nullptr, nowNs, nullptr,
-                                                 "this build has no WebRTC (KFM_WEBRTC=OFF)");
-#endif
+  ClientTransport t = makeTransport(app, config);
+  app.net = std::make_unique<client::NetSession>(config, lobby, t.raw, nowNs, std::move(t.owned),
+                                                 std::move(t.error));
+  if (t.lobby) app.net->attachLobby(std::move(t.lobby));
   app.lastNetPhase = app.net->phase();
+  app.roomMenu.setContent(app.net->content());
+  app.roomSentAt.reset();
   std::printf("kfm_client: %s\n", app.net->statusText().c_str());
   std::fflush(stdout);
 }
 
-// The Online section's region list: asked of the lobby once per visit to
-// the local lobby through a short-lived transport in Regions mode. The panel
-// offers kRegions until the lobby answers, and keeps them if it cannot be
-// reached (the create is then refused with the real reason).
+// v0.44: the lost session's Reconnect button: a new transport to the same
+// server, or a lobby rejoin of the same room, with the same token (§6.6).
+void reconnectNetwork(App& app, std::uint64_t nowNs) {
+  client::NetSession& n = *app.net;
+  ClientTransport t = makeTransport(app, n.reconnectConfig());
+  n.reconnect(t.raw, nowNs, std::move(t.owned), std::move(t.error));
+  if (t.lobby) n.attachLobby(std::move(t.lobby));
+  app.lastNetPhase = n.phase();
+  app.reconnectRequested = false;
+  std::printf("kfm_client: reconnecting (%u): %s\n", n.reconnects(), n.statusText().c_str());
+  std::fflush(stdout);
+}
+
+// The Play online screen's region list: asked of the lobby once per visit
+// to the screen through a short-lived transport in Regions mode. The screen
+// offers kRegions until the lobby answers, then every registered region with
+// its availability (lobby protocol v1.1), and keeps kRegions if the lobby
+// cannot be reached (the create is then refused with the real reason).
 void pollRegions(App& app, std::uint64_t now) {
 #ifdef KFM_CLIENT_WEBRTC
   if (!app.regionsQueried) {
@@ -451,6 +582,7 @@ void pollRegions(App& app, std::uint64_t now) {
     wc.lobby = net::LobbyRequest{.kind = net::LobbyRequest::Kind::Regions,
                                  .region = {},
                                  .code = {},
+                                 .token = {},
                                  .buildId = client::netSessionConfig(app.options, false).buildId,
                                  .contentHash = app.content.hash};
     if (auto t = net::WebRtcTransport::createClient(wc)) app.regionsQuery = std::move(*t);
@@ -459,12 +591,17 @@ void pollRegions(App& app, std::uint64_t now) {
   if (!app.regionsQuery) return;
   net::ConnectionEvents events;
   app.regionsQuery->poll(now, events);
-  if (const std::optional<std::vector<std::string>> regions = app.regionsQuery->lobbyRegions()) {
-    app.lobby.setRegions(*regions);
+  if (const std::optional<std::vector<net::LobbyRegion>> regions =
+          app.regionsQuery->lobbyRegions()) {
+    std::vector<client::RegionChoice> choices;
     std::string list;
-    for (const std::string& r : *regions)
-      list += (list.empty() ? "" : ",") + r;
-    std::printf("kfm_client: lobby regions: %s\n", list.empty() ? "(none free)" : list.c_str());
+    for (const net::LobbyRegion& r : *regions) {
+      choices.push_back(client::RegionChoice{.name = r.name, .free = r.free});
+      list += (list.empty() ? "" : ", ") + r.name + (r.free ? "" : " (no server)");
+    }
+    app.onlineMenu.setRegions(choices);
+    app.lobby.settings().region = app.onlineMenu.region();
+    std::printf("kfm_client: lobby regions: %s\n", list.empty() ? "(none)" : list.c_str());
     app.regionsQuery.reset();
     return;
   }
@@ -481,14 +618,58 @@ void pollRegions(App& app, std::uint64_t now) {
 #endif
 }
 
-// Escape online: disconnect and hand the devices back to the local lobby.
+// Escape or Leave online: disconnect, hand the devices back to the local
+// lobby and show the menu. The room's code stays in the Play online
+// screen's field, so Join takes the player back in; --room / --create
+// served their one join.
 void leaveNetwork(App& app) {
-  app.regionsQueried = false;  // the next lobby visit asks the lobby again
+  app.regionsQueried = false;  // the next Play online visit asks the lobby again
+  if (app.net->room()) app.onlineMenu.setCode(app.net->room()->code);
   app.net->disconnect();
   app.session->sampler() = app.net->lobbySampler();
   app.net.reset();
-  std::printf("kfm_client: back to the local lobby\n");
+  app.options.room.clear();
+  app.options.create = false;
+  app.screen = Screen::Menu;
+  app.leaveRequested = false;
+  std::printf("kfm_client: back to the menu\n");
   std::fflush(stdout);
+}
+
+// The main menu's choice.
+void chooseMainItem(App& app, client::MainMenuItem item) {
+  app.audio.click();
+  switch (item) {
+    case client::MainMenuItem::PlayOnline:
+      if (!app.services->lobbyUrl().empty()) {
+        app.screen = Screen::Online;
+        app.regionsQueried = false;
+        app.onlineMenu.setFocus(static_cast<std::size_t>(client::OnlineRow::CreateRoom));
+      } else if (!app.options.connect.empty()) {
+        app.connectRequested = true;  // --connect without a lobby: that server
+      }
+      break;
+    case client::MainMenuItem::PlayLocal:
+      app.screen = Screen::Play;
+      break;
+    case client::MainMenuItem::Settings:
+      app.screen = Screen::Settings;
+      app.settingsMenu.setFocus(0);
+      break;
+    case client::MainMenuItem::Quit:
+      app.quit = true;
+      break;
+  }
+}
+
+// Escape (or a pad's Back) on a menu screen.
+void menuBack(App& app) {
+  if (app.screen == Screen::Menu) {
+    if (kQuitItem) app.quit = true;
+    return;
+  }
+  app.screen = Screen::Menu;
+  app.audio.click();
 }
 
 // App shortcuts that are not game bindings.
@@ -506,14 +687,16 @@ void handleShortcut(App& app, const SDL_Event& event) {
     if (sc == SDL_SCANCODE_ESCAPE) leaveNetwork(app);
     return;
   }
+  if (app.screen != Screen::Play) {
+    if (sc == SDL_SCANCODE_ESCAPE) menuBack(app);
+    return;
+  }
   switch (sc) {
     case SDL_SCANCODE_ESCAPE:
       if (s.phase() == SessionPhase::Match) {
         s.returnToLobby();
       } else {
-#ifndef __EMSCRIPTEN__
-        app.quit = true;  // a browser tab is closed by the browser
-#endif
+        app.screen = Screen::Menu;
       }
       break;
     case SDL_SCANCODE_P:
@@ -564,21 +747,66 @@ void onEvent(void* user, const SDL_Event& event) {
   // game; releases always go through so no key is left held.
   if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked()) return;
   if (app->net) {
-    app->net->push(*input);
+    // v0.43: the room's screens. Every device navigates (nothing joins
+    // online); the press still goes to the session, which samples nothing
+    // while the room waits or shows its match over.
+    client::NetSession& n = *app->net;
+    const client::MenuAction action = app->menuInput.translate(*input, true);
+    if (n.phase() == client::NetPhase::Waiting && n.isHost()) {
+      if (action != client::MenuAction::None && app->roomMenu.apply(action)) {
+        app->roomChanged = true;
+      }
+      if (client::isActivateEvent(*input, true)) app->roomStart = true;
+    } else if (n.phase() == client::NetPhase::Over || n.canReconnect()) {
+      // The match-over buttons, or (v0.44) Reconnect / Leave.
+      app->overMenu.apply(action);
+      if (client::isMenuActivate(*input)) app->overActivate = true;
+    }
+    n.push(*input);
+    return;
+  }
+  // v0.43: the menu screens take every device's navigation and nothing
+  // reaches the session (no joins, no Start there).
+  if (app->screen != Screen::Play) {
+    const client::MenuAction action = app->menuInput.translate(*input, true);
+    switch (app->screen) {
+      case Screen::Menu:
+        app->mainMenu.apply(action);
+        break;
+      case Screen::Settings:
+        if (app->settingsMenu.apply(action, app->lobby.settings())) app->lobbyChanged = true;
+        break;
+      case Screen::Online:
+        if (app->onlineMenu.apply(action)) {
+          app->lobby.settings().region = app->onlineMenu.region();
+          app->lobbyChanged = true;
+        }
+        break;
+      case Screen::Play:
+        break;
+    }
+    if (client::isMenuActivate(*input)) app->menuActivate = true;
+    if (client::isMenuBack(*input)) menuBack(*app);
     return;
   }
   // The local lobby's settings panel: navigation from the keyboard and the
   // joined pads (an unbound pad's press is its join). The press still goes
   // to the session, which ignores bound devices' presses in the lobby.
-  if (app->session->phase() == SessionPhase::Lobby && !app->options.networkMode()) {
-    const bool bound = client::eventDeviceBound(app->session->sampler(), *input);
+  MatchSession& s = *app->session;
+  const bool bound = client::eventDeviceBound(s.sampler(), *input);
+  if (s.phase() == SessionPhase::Lobby) {
     const client::MenuAction action = app->menuInput.translate(*input, bound);
     if (action != client::MenuAction::None && app->lobby.apply(action)) app->lobbyChanged = true;
-    // M6a: Enter / Start on the Create room row creates a room; it is not
-    // the match's Start then.
-    if (client::isActivateEvent(*input, bound) && app->lobby.activate()) return;
+  } else if (s.curr().rules.phase == sim::MatchPhase::MatchEnded) {
+    // v0.43: the match-over screen's buttons. Enter on Play again restarts
+    // here; on Back to lobby it goes to the session, which returns.
+    app->overMenu.apply(app->menuInput.translate(*input, bound));
+    if (client::isActivateEvent(*input, bound) && app->overMenu.focus() == 0) {
+      s.restart(platform::Window::nowNs(), true);
+      return;
+    }
   }
-  app->session->push(*input);
+  s.push(*input);
 }
 
 bool writePpm(const std::string& path, int width, int height) {
@@ -599,13 +827,93 @@ bool writePpm(const std::string& path, int width, int height) {
   return static_cast<bool>(out.flush());
 }
 
-// The local frame: lobby or local match (M2).
+// The small line in the main menu's corner: what this build speaks.
+[[nodiscard]] std::string versionLine(const App& app) {
+  char text[96];
+  std::snprintf(text, sizeof text, "protocol %u  content %08x",
+                static_cast<unsigned>(net::kProtocolVersion), app.content.hash);
+  return text;
+}
+
+// v0.43: the menu screens over the lobby's arena: the main menu, Settings,
+// Play online. A press from onEvent (menuActivate) acts on the focused item
+// here, like a click.
+void menuFrame(App& app, std::uint64_t now) {
+  const bool press = std::exchange(app.menuActivate, false);
+  switch (app.screen) {
+    case Screen::Menu: {
+      std::optional<client::MainMenuItem> item =
+          client::drawMainMenu(app.mainMenu, versionLine(app));
+      if (press && !item) item = app.mainMenu.activate();
+      if (item) chooseMainItem(app, *item);
+      break;
+    }
+    case Screen::Settings: {
+      if (press) {
+        if (app.settingsMenu.focusedRow() == client::SettingsRow::Name) app.editNick = true;
+        if (app.settingsMenu.focusedRow() == client::SettingsRow::Back) {
+          menuBack(app);
+          break;
+        }
+      }
+      const client::SettingsOutcome out = client::drawSettingsScreen(
+          app.settingsMenu, app.lobby.settings(), app.options.nick, app.editNick);
+      if (out.changed) app.lobbyChanged = true;
+      if (out.nickChanged) {
+        app.audio.click();
+        std::printf("kfm_client: name %s\n", app.options.nick.c_str());
+        std::fflush(stdout);
+        if (app.options.settings) saveSettingsText(client::settingsText(app.options));
+      }
+      if (out.back) menuBack(app);
+      break;
+    }
+    case Screen::Online: {
+      pollRegions(app, now);
+      if (press) {
+        switch (app.onlineMenu.activate()) {
+          case client::OnlineMenu::Activation::EditCode:
+            app.editCode = true;
+            break;
+          case client::OnlineMenu::Activation::Back:
+            menuBack(app);
+            return;
+          case client::OnlineMenu::Activation::Command:
+          case client::OnlineMenu::Activation::None:
+            break;
+        }
+      }
+      const client::OnlineOutcome out =
+          client::drawOnlineScreen(app.onlineMenu, app.editCode, app.services->lobbyUrl());
+      if (out.regionChanged) {
+        app.lobby.settings().region = app.onlineMenu.region();
+        app.lobbyChanged = true;
+      }
+      if (std::optional<client::LobbyCommand> cmd = app.onlineMenu.takeCommand()) {
+        app.audio.click();
+        app.pendingRoom =
+            client::LobbyTarget{.create = cmd->kind == client::LobbyCommand::Kind::CreateRoom,
+                                .region = cmd->region,
+                                .code = cmd->code};
+      }
+      if (out.back) menuBack(app);
+      break;
+    }
+    case Screen::Play:
+      break;
+  }
+  if (app.lobbyChanged) {
+    applyLobbySettings(app);
+    app.audio.click();
+    app.lobbyChanged = false;
+  }
+}
+
+// The local frame: the menus, the lobby or a local match (M2).
 presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, int h,
                                 float density) {
   MatchSession& s = *app.session;
   s.advance(now);
-  // Network mode: the lobby's Start connects, from the next frame on.
-  if (s.takeStartRequest()) app.connectRequested = true;
   s.presentation().pingSlots = s.localMask();  // v0.35: a local human's call pings
   presentation::buildRenderState(
       s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(),
@@ -615,17 +923,11 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   (void)syncRenderer(app, s.matchContent(), app.content.hash, s.matchConfig().arena);
 
   platform::debugUiNewFrame(w, h, dt, density);
-  if (s.phase() == SessionPhase::Lobby) {
-    pollRegions(app, now);
-    if (!app.options.networkMode()) syncLobbySettings(app);
-    const client::LobbyOutcome lobby = client::drawLobby(s, app.lobby, onlineLabel(app.options));
-    if (std::optional<client::LobbyCommand> cmd = app.lobby.takeCommand()) {
-      app.audio.click();
-      app.pendingRoom =
-          client::LobbyTarget{.create = cmd->kind == client::LobbyCommand::Kind::CreateRoom,
-                              .region = cmd->region,
-                              .code = cmd->code};
-    }
+  if (s.phase() == SessionPhase::Lobby) syncLobbySettings(app);
+  if (app.screen != Screen::Play) {
+    menuFrame(app, now);
+  } else if (s.phase() == SessionPhase::Lobby) {
+    const client::LobbyOutcome lobby = client::drawLobby(s, app.lobby);
     if (lobby.changed || app.lobbyChanged) {
       applyLobbySettings(app);
       app.audio.click();
@@ -633,20 +935,109 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
     app.lobbyChanged = false;
     if (lobby.start) {
       app.audio.click();
-      if (app.options.networkMode()) {
-        app.connectRequested = true;
-      } else {
-        (void)s.startMatch(now);
-      }
+      (void)s.startMatch(now);
     }
   } else {
+    client::HudView view = client::hudView(s);
+    view.overScreen = s.curr().rules.phase == sim::MatchPhase::MatchEnded;
     client::drawMatchHud(
-        s,
+        view,
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
+    if (view.overScreen) {
+      // v0.43: the match-over screen: Play again (a new seed) or the lobby.
+      client::MatchOverView over = client::matchOverView(view, app.renderState);
+      over.buttons = {"Play again", "Back to lobby"};
+      std::optional<std::size_t> pick = client::drawMatchOver(over, app.overMenu);
+      if (std::exchange(app.overActivate, false) && !pick) pick = app.overMenu.focus();
+      if (pick) {
+        app.audio.click();
+        if (*pick == 0) {
+          s.restart(now, true);
+        } else {
+          s.returnToLobby();
+        }
+        app.overMenu.setFocus(0);
+      }
+    } else {
+      app.overMenu.setFocus(0);
+    }
   }
   app.overlay.draw(s, app.renderer.stats(), now);
   app.audio.frame(app.renderState);
   return camera;
+}
+
+// Copy link / Share from a room screen (v0.43).
+void applyShare(App& app, const client::ShareOutcome& out, const client::ShareView& view,
+                std::uint64_t now) {
+  if (out.copy) {
+    app.audio.click();
+    if (app.services->copyText(view.link)) app.copiedAtNs = now;
+  }
+  if (out.share) {
+    app.audio.click();
+    (void)app.services->share("Kung Fu Monkeys", "Join my room " + view.code + "!", view.link);
+  }
+}
+
+// v0.42: the online room's waiting or match-over screen. The rows show the
+// server's settings, except between the host's change and the server's
+// answer; a change goes out as RoomSettings, the button as Start. v0.43:
+// the waiting screen with Copy link / Share and the match-over screen.
+void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
+               const client::HudView& view, std::uint64_t now) {
+  const std::optional<net::RoomStateMsg>& room = n.roomState();
+  if (!room) return;
+  if (room->phase == net::RoomPhase::Over) {
+    client::MatchOverView over = client::matchOverView(view, app.renderState);
+    if (n.isHost()) {
+      over.buttons = {"Play again", "Leave"};
+    } else {
+      over.buttons = {"Leave"};
+      over.waiting = "Waiting for " +
+                     (room->host.isValid() ? n.slotName(room->host) : std::string("the host")) +
+                     " to play again";
+    }
+    std::optional<std::size_t> pick = client::drawMatchOver(over, app.overMenu);
+    if (std::exchange(app.overActivate, false) && !pick) pick = app.overMenu.focus();
+    if (pick) {
+      app.audio.click();
+      if (over.buttons[*pick] == "Play again") {
+        n.start();
+      } else {
+        app.leaveRequested = true;
+      }
+      app.overMenu.setFocus(0);
+    }
+    return;
+  }
+  app.overMenu.setFocus(0);
+  app.overActivate = false;
+  if (app.roomSentAt && n.client().roomUpdates() != *app.roomSentAt) app.roomSentAt.reset();
+  client::LobbySettings& ls = app.roomMenu.settings();
+  if (!app.roomSentAt) {
+    ls.arena = room->settings.arena;
+    ls.mode = room->settings.mode;
+    ls.loadout = room->settings.loadout;
+    ls.powerUps = room->settings.powerUps;
+    ls.bots = room->settings.bots;
+  }
+  const client::RoomOutcome out = client::drawRoomScreen(n, app.roomMenu, share);
+  applyShare(app, out.share, share, now);
+  if (out.leave) app.leaveRequested = true;
+  if (out.settingsChanged || std::exchange(app.roomChanged, false)) {
+    app.audio.click();
+    n.sendSettings(net::RoomSettings{.arena = ls.arena,
+                                     .mode = ls.mode,
+                                     .loadout = ls.loadout,
+                                     .powerUps = ls.powerUps,
+                                     .bots = ls.bots});
+    app.roomSentAt = n.client().roomUpdates();
+  }
+  if ((out.start || std::exchange(app.roomStart, false)) && n.isHost()) {
+    app.audio.click();
+    n.start();
+  }
 }
 
 // The network frame: connection status until the match runs, then the
@@ -677,16 +1068,38 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   (void)syncRenderer(app, n.matchContent(), app.content.hash, n.client().simConfig().arena);
 
   platform::debugUiNewFrame(w, h, dt, density);
-  const std::string invite =
-      n.room() ? client::roomShareText(*n.room(), app.pageUrl, app.options.lobby) : std::string{};
-  if (n.everRan()) {
-    client::HudView view = client::hudView(n);
-    if (n.room()) view.shareLine = "Invite: " + invite;
+  client::ShareView share;
+  if (n.room()) {
+    share.code = n.room()->code;
+    share.region = n.room()->region;
+    share.link = client::roomInviteLink(*n.room(), app.pageUrl);
+    share.canShare = app.services->canShare();
+    share.copied = app.copiedAtNs != 0 && now - app.copiedAtNs < kCopiedShowNs;
+  }
+  const client::NetPhase phase = n.phase();
+  client::HudView view = client::hudView(n);
+  view.overScreen = phase == client::NetPhase::Over && n.roomState().has_value();
+  if (n.everRan() && phase != client::NetPhase::Waiting) {
+    if (n.room()) view.shareLine = "Invite: " + share.link;
     client::drawMatchHud(
         view,
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
   }
-  if (!n.running()) client::drawNetStatus(n, invite);
+  if (phase == client::NetPhase::Waiting || phase == client::NetPhase::Over) {
+    roomFrame(app, n, share, view, now);
+  } else if (!n.running()) {
+    const client::NetStatusOutcome out = client::drawNetStatus(n, share, app.overMenu);
+    applyShare(app, out.share, share, now);
+    // v0.44: Reconnect / Leave, by click or Enter on the focused one.
+    const bool activate = std::exchange(app.overActivate, false) && n.canReconnect();
+    if (out.reconnect || (activate && app.overMenu.focus() == 0)) {
+      app.audio.click();
+      app.reconnectRequested = true;
+    } else if (out.leave || (activate && app.overMenu.focus() == 1)) {
+      app.audio.click();
+      app.leaveRequested = true;
+    }
+  }
   app.overlay.draw(n, app.renderer.stats());
   app.audio.frame(app.renderState);
   return camera;
@@ -712,11 +1125,15 @@ bool frame(void* user) {
   app->connectRequested = false;
   if (app->pendingRoom && !app->net) startNetwork(*app, false, now, std::move(app->pendingRoom));
   app->pendingRoom.reset();
+  if (app->reconnectRequested && app->net) reconnectNetwork(*app, now);
+  app->reconnectRequested = false;
   const presentation::Camera camera =
       app->net ? netFrame(*app, now, dt, w, h, density) : localFrame(*app, now, dt, w, h, density);
   platform::debugUiFlush();
+  if (app->leaveRequested && app->net) leaveNetwork(*app);
 
-  platform::beginDefaultPass({.r = 0.10F, .g = 0.12F, .b = 0.16F, .a = 1.0F}, w, h);
+  // v0.43: the page and the menus' dark jungle green (ui::kJungle) around the arena.
+  platform::beginDefaultPass({.r = 0.078F, .g = 0.141F, .b = 0.094F, .a = 1.0F}, w, h);
   if (app->rendererReady) app->renderer.draw(app->renderState, camera, w, h);
   platform::debugUiDraw();
   platform::endPass();
@@ -796,6 +1213,12 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
       if (client::parseClientOptions(args, merged, error)) app.options = std::move(merged);
     }
   }
+  // v0.42: a player who never gave a name gets a monkey's, kept from then on.
+  if (app.options.nick.empty()) {
+    app.options.nick = client::randomMonkeyName(
+        static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count()));
+    if (app.options.settings) saveSettingsText(client::settingsText(app.options));
+  }
   client::LobbySettings lobby;
   if (!client::lobbySettingsFrom(app.options, app.content.db, lobby, error)) {
     std::fprintf(stderr, "error: %s\n", error.c_str());
@@ -803,10 +1226,15 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
   app.lobby.setContent(app.content.db);
   app.lobby.settings() = lobby;
+  app.roomMenu.setRoomRows(true);
+  app.onlineMenu.setRegion(lobby.region);
   app.services = makePlatformServices(app.options);
-  app.lobby.setLobbyAvailable(!app.services->lobbyUrl().empty());
+  app.mainMenu.setOnlineAvailable(!app.services->lobbyUrl().empty() ||
+                                  !app.options.connect.empty());
 #ifdef __EMSCRIPTEN__
   app.pageUrl = takeJsString(kfmPageUrlJs());
+#else
+  app.pageUrl = client::defaultPageUrl();  // usually empty: Copy link copies the code
 #endif
   if (!app.services->lobbyUrl().empty()) {
     std::printf("kfm_client: lobby %s, guest %.8s\n", app.services->lobbyUrl().c_str(),
@@ -830,21 +1258,22 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     platform::gfxShutdown();
     return EXIT_FAILURE;
   }
+  client::ui::applyUiStyle();  // v0.43: the game font and palette
 
-  // Network mode: the lobby only binds devices (the server owns bots and the
-  // seed) and its Start connects.
+  // Network mode at startup (--connect, --room, --create): straight online;
+  // the local lobby stays local play (v0.43).
   const bool online = app.options.networkMode();
-  app.session = std::make_unique<MatchSession>(
-      client::SessionConfig{.seed = app.options.seed,
-                            .arena = lobby.arena,
-                            .mode = lobby.mode,
-                            .powerUps = lobby.powerUps,
-                            .loadout = lobby.loadout,
-                            .content = &app.content.db,
-                            .botSeed = app.options.playersSeed,
-                            .bots = online ? std::uint8_t{0} : lobby.bots,
-                            .botSpec = client::botSpec(app.options),
-                            .hostHandlesStart = online});
+  app.session =
+      std::make_unique<MatchSession>(client::SessionConfig{.seed = app.options.seed,
+                                                           .arena = lobby.arena,
+                                                           .mode = lobby.mode,
+                                                           .powerUps = lobby.powerUps,
+                                                           .loadout = lobby.loadout,
+                                                           .content = &app.content.db,
+                                                           .botSeed = app.options.playersSeed,
+                                                           .bots = lobby.bots,
+                                                           .botSpec = client::botSpec(app.options),
+                                                           .hostHandlesStart = false});
   if (!app.session->botSpecError().empty()) {
     std::fprintf(stderr, "error: %s; the bots are the reference bot (%s)\n",
                  app.session->botSpecError().c_str(), app.session->botRoster().describe().c_str());
@@ -866,15 +1295,27 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   app.overlay.open = app.options.overlay;
   app.overlay.audio = &app.audio;
   app.audio.init(lobby.mute, lobby.volume);
-  if (!online) app.lobby.settings().bots = app.session->botCount();
+  app.lobby.settings().bots = app.session->botCount();
   app.lastFrameNs = platform::Window::nowNs();
   if (online) {
     // --connect connects at startup with the devices bound so far (keyboard
-    // left: one slot, unless --players); Escape returns to the local lobby,
-    // where more devices can join and Start connects again with all of them.
+    // left: one slot, unless --players); Escape returns to the menu.
+    app.screen = Screen::Play;
     startNetwork(app, true, app.lastFrameNs);
-  } else if (app.options.autostart && !app.session->startMatch(app.lastFrameNs)) {
-    std::fprintf(stderr, "warning: --autostart with no players; staying in the lobby\n");
+  } else if (app.options.screen != "menu" && !app.options.autostart) {
+    // v0.43: --screen settings|online|local (screenshots, development).
+    if (app.options.screen == "settings") {
+      app.screen = Screen::Settings;
+    } else if (app.options.screen == "local") {
+      app.screen = Screen::Play;
+    } else if (!app.services->lobbyUrl().empty()) {
+      app.screen = Screen::Online;
+    }
+  } else if (app.options.autostart) {
+    app.screen = Screen::Play;  // straight into local play, as before the menu
+    if (!app.session->startMatch(app.lastFrameNs)) {
+      std::fprintf(stderr, "warning: --autostart with no players; staying in the lobby\n");
+    }
   }
   platform::runMainLoop(&app, frame, onExit);
   return app.exitCode;

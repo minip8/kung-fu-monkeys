@@ -220,17 +220,24 @@ pub(crate) async fn client(lobby: Arc<Lobby>, socket: WebSocket) {
         get(&fields, "code"),
     ) {
         (Some("regions"), _, _) => {
-            let list = lobby.regions().join(",");
-            if conn
-                .send(protocol::encode(&[("type", "regions"), ("list", &list)]))
-                .await
-            {
+            let regions = lobby.regions();
+            let list = regions.list.join(",");
+            let free = regions.free.join(",");
+            let reply = [("type", "regions"), ("list", &list), ("free", &free)];
+            if conn.send(protocol::encode(&reply)).await {
                 conn.close(CLOSE_NORMAL).await;
             }
             return;
         }
         (Some("create"), Some(region), _) => lobby.create(conn.tx.clone(), region, build, content),
-        (Some("join"), _, Some(code)) => lobby.join(conn.tx.clone(), code, build, content),
+        (Some("join"), _, Some(code)) => {
+            let token = get(&fields, "token");
+            if token.is_some_and(|t| !protocol::valid_token(t)) {
+                Err(Refusal::BadToken)
+            } else {
+                lobby.join(conn.tx.clone(), code, build, content, token)
+            }
+        }
         _ => Err(Refusal::BadRequest),
     };
     let seat = match result {

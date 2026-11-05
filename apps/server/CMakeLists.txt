@@ -1,7 +1,8 @@
 # Dedicated server (architecture §3, §6, §13.5).
 #
 # kfm_server_host  ServerHost: the 60 Hz loop around one NetServer, its match
-#                  restart policy, its bots (ai::AgentHost), logging and stats. Transport-agnostic and
+#                  policy (the M3 auto flow or the v0.42 room, room.hpp),
+#                  its bots (ai::AgentHost), logging and stats. Transport-agnostic and
 #                  headless, so it is unit-tested over the loopback
 #                  (tests/unit/server) on every target, wasm included.
 # kfm_server       the CLI over WebRtcTransport. Native only (the browser
@@ -10,7 +11,7 @@
 #
 # Both are built without exceptions or RTTI like the other apps: the
 # transport catches at its own boundary.
-add_library(kfm_server_host STATIC server_host.cpp)
+add_library(kfm_server_host STATIC server_host.cpp room.cpp)
 add_library(kfm::server_host ALIAS kfm_server_host)
 target_include_directories(kfm_server_host PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kfm_server_host PUBLIC kfm::net kfm::ai PRIVATE kfm::warnings)

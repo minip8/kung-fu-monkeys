@@ -293,3 +293,62 @@ TEST_CASE("WebRtcTransport: disconnects are reported on both ends", "[net][webrt
   const auto c = join(f);
   CHECK(c.peer == PeerId{3});
 }
+
+// The CI flake of v0.43 (one run in three on the Linux Release legs): the
+// client's signaling WebSocket failed its handshake ("WsTransport::incoming
+// WebSocket handshake failed") and the session waited out its whole connect
+// timeout. A signaling socket that closes before it ever opened is now
+// dialled again (v0.44). Reproduced here by dialling a port with no server
+// behind it yet: the first dials are refused, a later one connects.
+TEST_CASE("WebRtcTransport: a signaling dial that fails before opening is retried",
+          "[net][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  // A free port: a server's ephemeral one, closed again.
+  uint16_t port = 0;
+  {
+    WebRtcServerConfig probe;
+    probe.signalingBindAddress = "127.0.0.1";
+    auto s = WebRtcTransport::createServer(probe);
+    REQUIRE(s.has_value());
+    port = (*s)->listenPort();
+  }
+  REQUIRE(port != 0);
+  WebRtcClientConfig cc;
+  cc.signalingUrl = "ws://127.0.0.1:" + std::to_string(port);
+  auto client = WebRtcTransport::createClient(cc);
+  REQUIRE(client.has_value());
+  WebRtcTransport& c = **client;
+
+  const auto pumpFor = [&](ITransport& t, std::chrono::milliseconds d, Inbox& in) {
+    const auto end = std::chrono::steady_clock::now() + d;
+    while (std::chrono::steady_clock::now() < end) {
+      ConnectionEvents ev;
+      t.poll(WebRtcFixture::nowNs(), ev);
+      for (const ConnectionEvent& e : ev.span())
+        in.events.push_back(e);
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+  };
+  Inbox clientIn;
+  pumpFor(c, std::chrono::milliseconds(150), clientIn);  // refused, redialled, refused
+  CHECK(clientIn.count(ConnectionEventKind::Disconnected) == 0);
+
+  WebRtcServerConfig sc;
+  sc.signalingBindAddress = "127.0.0.1";
+  sc.signalingPort = port;
+  auto server = WebRtcTransport::createServer(sc);
+  REQUIRE(server.has_value());
+  WebRtcTransport& s = **server;
+  Inbox serverIn;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline &&
+         (clientIn.count(ConnectionEventKind::Connected) == 0 ||
+          serverIn.count(ConnectionEventKind::Connected) == 0)) {
+    pumpFor(c, std::chrono::milliseconds(2), clientIn);
+    pumpFor(s, std::chrono::milliseconds(2), serverIn);
+  }
+  INFO("client error: " << c.lastError() << "; server: " << s.lastError());
+  CHECK(clientIn.count(ConnectionEventKind::Connected) == 1);
+  CHECK(serverIn.count(ConnectionEventKind::Connected) == 1);
+  CHECK(clientIn.count(ConnectionEventKind::Disconnected) == 0);
+}

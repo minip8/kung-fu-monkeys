@@ -34,7 +34,11 @@ LobbyAdapter::LobbyAdapter(ServerHost& host, net::LobbyLink& link, uint8_t maxPl
 }
 
 void LobbyAdapter::updateCapacity() {
-  const auto bots = static_cast<size_t>(std::popcount(uint32_t{host_.server().bots()}));
+  // v0.44: the room flow's bots yield to joining humans, so every slot is a
+  // human's to take; the M3 flow's bots keep theirs.
+  const auto bots = host_.room() != nullptr
+                        ? size_t{0}
+                        : static_cast<size_t>(std::popcount(uint32_t{host_.server().bots()}));
   // The link sends `capacity` only when this total changes.
   link_.setCapacity(lobbyCapacity(maxPlayers_, bots));
 }
@@ -55,10 +59,11 @@ void LobbyAdapter::frame(uint64_t nowNs) {
         const bool empty = host_.server().peers().empty();
         host_.logLine(std::format("lobby room {} opened{}", e.text,
                                   empty ? "" : " (peers still connected: match continues)"));
-        // A new group starts a fresh match with the server's bots (§6.5).
+        // A new group starts a fresh match with the server's bots (§6.5),
+        // or (v0.42, the room flow) a fresh waiting room with its defaults.
         if (empty) {
           ++restarts_;
-          host_.startNewMatch(std::format("room {}", e.text));
+          host_.openRoom(std::format("room {}", e.text));
         }
         break;
       }

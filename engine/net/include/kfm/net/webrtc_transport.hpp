@@ -18,7 +18,10 @@
 //           peer connection and both channels, sends the offer and applies
 //           the answer. The server is kServerPeer; Connected follows once
 //           both channels are open, Disconnected if the connection fails,
-//           closes or times out (also when it never connected).
+//           closes or times out (also when it never connected). A
+//           signaling socket that closes before it ever opened (refused, or
+//           a failed WebSocket handshake) is dialled again, up to four dials
+//           100, 200, 300 ms apart, within the connect timeout (v0.44).
 //
 // Signaling protocol: kfm/net/webrtc_signaling.hpp.
 //
@@ -37,9 +40,10 @@
 //   client, lobby request       WebRtcClientConfig::lobby set and
 //           signalingUrl the lobby's base URL (ws[s]://host[:port]; "/client" is
 //           appended when it has no path).
-//           On open the transport sends the create or join request; the
-//           reply must be `joined` (connectionToken() becomes the room's
-//           token, lobbyRoom() the code and region, and only then the peer
+//           On open the transport sends the create or join request (a
+//           join with LobbyRequest::token is a rejoin, lobby protocol v1.2,
+//           and the reply carries the same token); the reply must be `joined` (connectionToken()
+//           becomes the room's token, lobbyRoom() the code and region, and only then the peer
 //           connection is created and the offer sent) or `refused`
 //           (Disconnected, lastError() "lobby refused: <reason>"). After
 //           `joined` the socket carries plain signaling; a `closed` frame
@@ -113,14 +117,29 @@ struct WebRtcServerConfig {
 // in `region`, or join the room `code`. buildId and contentHash are sent as
 // 8 lower-case hex digits each and must match the room's server.
 struct LobbyRequest {
-  // Regions: ask which regions can host a room now; the reply fills
-  // lobbyRegions() and the lobby then closes the socket (Disconnected, no error).
+  // Regions: ask for every registered region and which can host a room now;
+  // the reply fills lobbyRegions() and the lobby then closes the socket
+  // (Disconnected, no error).
   enum class Kind : uint8_t { Create = 0, Join, Regions };
   Kind kind{Kind::Create};
   std::string region;  // Create: e.g. "eu"
   std::string code;    // Join: 5 characters, any case
+  // Join (lobby protocol v1.2): rejoin the room as the player this token was
+  // issued to (32 lower-case hex digits; empty: a new player). The lobby
+  // answers with the same token, so the server's reconnect reclaims the
+  // player's slots.
+  std::string token;
   uint32_t buildId{0};
   uint32_t contentHash{0};
+};
+
+// One region of the lobby's `regions` reply (docs/lobby-protocol.md §2-3, v1.1).
+struct LobbyRegion {
+  std::string name;  // e.g. "eu"
+  // A free server in it at the time of the reply (listed in `free`). Always
+  // true against a v1 lobby, which sends no `free` (availability unknown).
+  bool free{true};
+  friend bool operator==(const LobbyRegion&, const LobbyRegion&) = default;
 };
 
 // The room a lobby client joined (from the lobby's `joined` reply).
@@ -218,8 +237,9 @@ class WebRtcTransport final : public ITransport {
   // and always without a lobby request.
   [[nodiscard]] std::optional<LobbyRoom> lobbyRoom() const;
   // The lobby's answer to a Regions request (docs/lobby-protocol.md §3), once it
-  // arrived: the regions with a free server, possibly none.
-  [[nodiscard]] std::optional<std::vector<std::string>> lobbyRegions() const;
+  // arrived: every registered region in the lobby's order, each with whether
+  // it has a free server; possibly none.
+  [[nodiscard]] std::optional<std::vector<LobbyRegion>> lobbyRegions() const;
 
  private:
   std::unique_ptr<Impl> impl_;

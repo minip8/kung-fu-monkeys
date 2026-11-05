@@ -46,6 +46,25 @@
 // reports Connected after the lobby's `joined`. statusText() then names the
 // room, and a refusal or a lobby close becomes plain words
 // (lobbyErrorText()).
+//
+// The online room (v0.42, protocol 6, §6.6): NetSessionConfig::nickname
+// rides in the Hello; roomState() is the server's newest RoomState (none
+// from a server on the M3 flow); phase() is Waiting or Over while the room
+// is (the NetClient holds its timeline, nothing is sampled or sent), so the
+// app draws the waiting screen or the match-over screen over the last
+// world; isHost(), sendSettings() and start() are the host's controls
+// (anyone may call them: the server ignores a non-host). slotName() is a
+// human slot's nickname, else its label.
+//
+// Reconnect from the UI (v0.44, §6.6): a session that ran and then lost its
+// link (Disconnected by a timeout, a closed transport or the lobby's
+// `kicked`, not a quit, a kick by the server, a shutdown or a closed room)
+// canReconnect(); the app builds a new transport for reconnectConfig() (the
+// same server, or a lobby rejoin of the same room with the same token) and
+// hands it to reconnect(), which starts the NetClient over it with the token
+// it had: within the server's grace (10 s) the slots and the nickname are
+// reclaimed, later (or outside Playing) it joins like anyone. The session
+// keeps its devices, nickname and room code.
 #pragma once
 
 #include "kfm/net/net_client.hpp"
@@ -76,6 +95,8 @@ enum class NetPhase : uint8_t {
   Connecting = 0,  // transport and handshake
   Syncing,         // Welcome received: snapshot and RTT samples
   Running,         // predicting; the match is drawn
+  Waiting,         // v0.42: synced, the room waits for its host's Start
+  Over,            // v0.42: synced, the room's match ended (the host plays again)
   Rejected,        // the server refused the Hello (rejectReason())
   Disconnected,    // transport closed, timed out, kicked or quit
   Failed,          // the transport could not be created (failure())
@@ -129,9 +150,13 @@ struct NetSessionConfig {
   std::optional<LobbyTarget> lobby;  // set: a room through the lobby at serverLabel
   uint32_t buildId{0};               // must match the server's (ClientConfig::buildId)
   std::vector<std::byte> token;      // connection token (§6.7), may be empty
-  bool spectate{false};              // request no slots
-  uint8_t requestedSlots{0};         // 0: one per bound lobby device (at least 1)
-  uint8_t inputDelayTicks{0};        // §6.2 fixed input delay
+  // v0.44, lobby protocol v1.2: join `lobby`'s room as the player this token
+  // was issued to (a reconnect); empty: a new player.
+  std::string rejoinToken;
+  bool spectate{false};        // request no slots
+  std::string nickname;        // v0.42: sent in Hello (Nickname::from)
+  uint8_t requestedSlots{0};   // 0: one per bound lobby device (at least 1)
+  uint8_t inputDelayTicks{0};  // §6.2 fixed input delay
   // The client's loaded content (its hash must match the server's);
   // nullptr = sim::defaultContent(). Copied. The arena and mode come from
   // the server (Welcome / Snapshot / MatchConfig).
@@ -175,6 +200,19 @@ class NetSession {
   // Sends Disconnect{Quit}; the phase becomes Disconnected.
   void disconnect();
 
+  // --- reconnect (v0.44) ---------------------------------------------------------
+  // The link was lost after the session ran, and coming back can help.
+  [[nodiscard]] bool canReconnect() const;
+  // What a new transport must reach: this config with the token the session
+  // used and, in lobby mode, a rejoin of its room under that token.
+  [[nodiscard]] NetSessionConfig reconnectConfig() const;
+  // Starts over on `transport` (see the header comment); `owned` replaces the
+  // owned transport after the client let go of the old one. A null transport
+  // fails with `failure`. Lobby mode: attachLobby() the new transport's view.
+  void reconnect(net::ITransport* transport, uint64_t nowNs,
+                 std::unique_ptr<net::ITransport> owned = nullptr, std::string failure = {});
+  [[nodiscard]] uint32_t reconnects() const { return reconnects_; }
+
   // Lobby mode: the transport's view of the lobby (see the header comment).
   // Call before the first advance(); destroyed before the owned transport.
   void attachLobby(std::unique_ptr<ILobbyJoin> lobby) { lobby_ = std::move(lobby); }
@@ -187,6 +225,8 @@ class NetSession {
   // --- status -----------------------------------------------------------------
   [[nodiscard]] NetPhase phase() const;
   [[nodiscard]] bool running() const { return phase() == NetPhase::Running; }
+  // Synced with a server: Running, Waiting or Over.
+  [[nodiscard]] bool synced() const { return client_->running(); }
   // One line for the HUD and the status screen ("Connecting to ws://...").
   [[nodiscard]] std::string statusText() const;
   [[nodiscard]] const std::string& failure() const { return failure_; }
@@ -197,6 +237,19 @@ class NetSession {
   // Whether the server's Welcome arrived, so client().matchConfig() is the
   // server's (arena, mode, power-up set, roster): the online lobby shows it.
   [[nodiscard]] bool configKnown() const { return configKnown_; }
+
+  // --- the room (v0.42) ---------------------------------------------------------
+  [[nodiscard]] const std::optional<net::RoomStateMsg>& roomState() const {
+    return client_->roomState();
+  }
+  // Whether one of the local slots is the room's host.
+  [[nodiscard]] bool isHost() const;
+  // The host's controls: new settings (Waiting), Start (Waiting: start the
+  // match; Over: back to Waiting).
+  void sendSettings(const net::RoomSettings& settings);
+  void start();
+  // A human slot's nickname, else "P<n>" ("BOT<n>" for a bot slot).
+  [[nodiscard]] std::string slotName(PlayerId slot) const;
 
   // --- slots ------------------------------------------------------------------
   [[nodiscard]] sim::PlayerMask localSlots() const { return client_->localSlots(); }
@@ -266,13 +319,17 @@ class NetSession {
   std::unique_ptr<net::NetClient> client_;
   std::string failure_;
   bool everRan_{false};
+  bool ranBefore_{false};  // everRan_ before any reconnect (v0.44)
   bool configKnown_{false};
   bool slotsBound_{false};
   uint64_t nowNs_{0};
+  std::vector<std::byte> token_;  // the token the Hello carried (lobby or config)
+  uint32_t reconnects_{0};
 
   std::vector<LobbyDevice> devices_;
   platform::InputSampler sampler_{};
   sim::PlayerMask boundLocal_{0};  // server slots bound to a device
+  sim::PlayerMask boundFor_{0};    // localSlots() when the devices were bound
   std::array<sim::PlayerInput, sim::kMaxPlayers> lastInputs_{};
 
   sim::WorldState idleWorld_{};  // drawn until the first snapshot

@@ -190,6 +190,31 @@ TEST_CASE("Control decoders survive arbitrary bytes", "[net][messages][fuzz]") {
             .accepted > 0);
 }
 
+TEST_CASE("Room decoders survive arbitrary bytes", "[net][messages][fuzz][room]") {
+  HelloMsg h;
+  h.contentHash = 1;
+  h.requestedSlots = 1;
+  h.nickname = Nickname::from("\xF0\x9F\x90\x92 Mandrill");
+  CHECK(fuzz(MessageType::Hello, std::vector<HelloMsg>{h}, 10'000, 15).accepted > 0);
+  CHECK(fuzz(MessageType::RoomSettings,
+             std::vector<RoomSettingsMsg>{{}, {RoomSettings{3, 1, 2, 0x00FF, 4}}}, 5'000, 16)
+            .accepted > 0);
+  CHECK(fuzz(MessageType::Start, std::vector<StartMsg>{{}}, 2'000, 17).accepted > 0);
+  RoomStateMsg r;
+  r.phase = RoomPhase::Playing;
+  r.host = PlayerId{2};
+  r.settings = RoomSettings{1, 2, 0, 0xFFFF, 3};
+  r.humans = 0b1100;
+  r.bots = 0b0011;
+  r.winner = PlayerId{3};
+  r.names[2] = Nickname::from("Gibbon");
+  r.names[3] = Nickname::from("\xC3\xA9t\xC3\xA9");
+  const Tally t =
+      fuzz(MessageType::RoomState, std::vector<RoomStateMsg>{r, RoomStateMsg{}}, 20'000, 18);
+  CHECK(t.accepted > 0);
+  CHECK(t.rejected > 0);
+}
+
 TEST_CASE("Snapshot decoder survives arbitrary bytes", "[net][messages][fuzz]") {
   std::vector<SnapshotMsg> seeds(1);
   seeds[0].config = sim::MatchConfig{3, 0b111};
@@ -215,6 +240,9 @@ TEST_CASE("Every decoder rejects every other message type", "[net][messages][fuz
   MatchConfigMsg j;
   DisconnectMsg k;
   ResyncRequestMsg l;
+  RoomSettingsMsg m;
+  RoomStateMsg o;
+  StartMsg q;
   auto snap = std::make_unique<SnapshotMsg>();
   CHECK(decode(ping, a).error() == DecodeError::WrongType);
   CHECK(decode(ping, b).error() == DecodeError::WrongType);
@@ -228,5 +256,8 @@ TEST_CASE("Every decoder rejects every other message type", "[net][messages][fuz
   CHECK(decode(ping, j).error() == DecodeError::WrongType);
   CHECK(decode(ping, k).error() == DecodeError::WrongType);
   CHECK(decode(ping, l).error() == DecodeError::WrongType);
+  CHECK(decode(ping, m).error() == DecodeError::WrongType);
+  CHECK(decode(ping, o).error() == DecodeError::WrongType);
+  CHECK(decode(ping, q).error() == DecodeError::WrongType);
   CHECK(decode(ping, *snap).error() == DecodeError::WrongType);
 }

@@ -47,8 +47,9 @@ std::string makeGuestId(uint64_t entropyA, uint64_t entropyB) {
 }
 
 LocalPlatformServices::LocalPlatformServices(GuestIdStore store, std::string lobbyUrl,
-                                             uint64_t entropyA, uint64_t entropyB)
+                                             uint64_t entropyA, uint64_t entropyB, ShareHooks share)
     : store_(std::move(store)),
+      share_(std::move(share)),
       lobbyUrl_(std::move(lobbyUrl)),
       entropyA_(entropyA),
       entropyB_(entropyB) {}
@@ -63,6 +64,19 @@ std::string LocalPlatformServices::guestId() {
   id_ = makeGuestId(entropyA_, entropyB_);
   if (store_.save) store_.save(id_);
   return id_;
+}
+
+bool LocalPlatformServices::copyText(std::string_view text) {
+  return share_.copy && share_.copy(text);
+}
+
+bool LocalPlatformServices::canShare() {
+  return share_.canShare && share_.share && share_.canShare();
+}
+
+bool LocalPlatformServices::share(std::string_view title, std::string_view text,
+                                  std::string_view url) {
+  return canShare() && share_.share(title, text, url);
 }
 
 }  // namespace kfm::platform

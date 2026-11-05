@@ -5,7 +5,9 @@
 //                  6298 estimator (srtt gain 1/8, rttvar gain 1/4).
 //   LeadController turns the server's arrivalMargin reports into a tick-rate
 //                  multiplier: the smoothed margin is steered into the band
-//                  [+1, +2] ticks by running the client clock at 98–102 %.
+//                  [+1, +2] ticks by running the client clock at 98–102 %;
+//                  v0.44: the band moves up by the depth of the reports'
+//                  lower envelope below the mean (a jittery link's late tail).
 //                  A margin hopelessly late (below jumpBelowQ8) asks for a
 //                  forward jump instead; the client never jumps backwards.
 //   TickClock      the client's fixed-step clock, rate-controlled, with no
@@ -67,6 +69,14 @@ struct LeadControllerConfig {
   uint8_t smoothingShift{3};
   // A smoothed margin below this (Q8) jumps the clock forward to the band.
   int32_t jumpBelowQ8{-8 * 256};
+  // v0.44, the jitter-aware band: a floor moves half way down to every lower
+  // margin report and creeps back up by floorRiseQ8 per report (never above
+  // the smoothed margin), so it holds the lower envelope of the arrival jitter;
+  // the band moves up by how far that envelope reaches below the mean beyond
+  // marginLowQ8, at most jitterBandMaxQ8. A steady link keeps the +1..+2
+  // band; a jittery one buys the margin that keeps its late tail on time.
+  int32_t floorRiseQ8{2};
+  int32_t jitterBandMaxQ8{4 * 256};
 };
 
 class LeadController {
@@ -79,6 +89,10 @@ class LeadController {
 
   [[nodiscard]] bool hasMargin() const { return samples_ > 0; }
   [[nodiscard]] int32_t smoothedMarginQ8() const { return marginQ8_; }
+  // v0.44: the lower envelope of the margin reports, and how far it moves
+  // the band up (both Q8 ticks).
+  [[nodiscard]] int32_t floorQ8() const { return floorQ8_; }
+  [[nodiscard]] int32_t bandShiftQ8() const;
   [[nodiscard]] int8_t lastMargin() const { return last_; }
   // Clock rate for the client's TickClock: 1e6 inside the band, faster when
   // late, slower when early, clamped to 1e6 ± maxDeviationPpm.
@@ -92,6 +106,7 @@ class LeadController {
  private:
   LeadControllerConfig config_;
   int32_t marginQ8_{0};
+  int32_t floorQ8_{0};
   int8_t last_{0};
   uint64_t samples_{0};
 };

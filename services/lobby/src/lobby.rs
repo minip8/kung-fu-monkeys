@@ -33,6 +33,8 @@ pub(crate) enum Refusal {
     BadRequest,
     ServerGone,
     BadSecret,
+    /// v1.2: a rejoin with a token the room never issued.
+    BadToken,
 }
 
 impl Refusal {
@@ -45,6 +47,7 @@ impl Refusal {
             Refusal::BadRequest => "bad_request",
             Refusal::ServerGone => "server_gone",
             Refusal::BadSecret => "bad_secret",
+            Refusal::BadToken => "bad_token",
         }
     }
 }
@@ -78,6 +81,9 @@ struct Server {
 struct Room {
     server: u64,
     clients: BTreeMap<u64, Tx>,
+    /// Every token issued for this room and the peer seated under it now
+    /// (`None`: its socket is gone), so a `join` with the token rejoins (v1.2).
+    tokens: HashMap<String, Option<u64>>,
     /// Generation of the pending expiry timer; any change voids older timers.
     expiry: u64,
 }
@@ -96,15 +102,33 @@ impl State {
         self.next_generation
     }
 
-    fn free_regions(&self) -> Vec<String> {
+    /// The distinct regions of the servers `keep` accepts, sorted.
+    fn regions_where(&self, keep: impl Fn(&Server) -> bool) -> Vec<String> {
         let set: BTreeSet<&str> = self
             .servers
             .values()
-            .filter(|s| s.room.is_none() && s.reg.capacity >= 1)
+            .filter(|s| keep(s))
             .map(|s| s.reg.region.as_str())
             .collect();
         set.into_iter().map(str::to_owned).collect()
     }
+
+    /// The regions with a server that can take a `create` now: no room and
+    /// at least one human slot.
+    fn free_regions(&self) -> Vec<String> {
+        self.regions_where(|s| s.room.is_none() && s.reg.capacity >= 1)
+    }
+
+    /// Every registered region, free or busy (lobby protocol v1.1).
+    fn all_regions(&self) -> Vec<String> {
+        self.regions_where(|_| true)
+    }
+}
+
+/// The `regions` reply: every registered region and the free subset.
+pub(crate) struct Regions {
+    pub list: Vec<String>,
+    pub free: Vec<String>,
 }
 
 /// Counts for `/healthz`.
@@ -146,8 +170,12 @@ impl Lobby {
         }
     }
 
-    pub(crate) fn regions(&self) -> Vec<String> {
-        self.lock().free_regions()
+    pub(crate) fn regions(&self) -> Regions {
+        let state = self.lock();
+        Regions {
+            list: state.all_regions(),
+            free: state.free_regions(),
+        }
     }
 
     /// Adds a server to the registry and returns its id.
@@ -267,11 +295,14 @@ impl Lobby {
         info!(event = "join", code = %code, server = server_id, peer, clients = 1, "client joined");
         let mut clients = BTreeMap::new();
         clients.insert(peer, tx);
+        let mut tokens = HashMap::new();
+        tokens.insert(token.clone(), Some(peer));
         state.rooms.insert(
             code.clone(),
             Room {
                 server: server_id,
                 clients,
+                tokens,
                 expiry: generation,
             },
         );
@@ -284,13 +315,15 @@ impl Lobby {
         })
     }
 
-    /// `join`: seats a client in a live room.
+    /// `join`: seats a client in a live room; with `rejoin`, under a token
+    /// the room issued before (v1.2).
     pub(crate) fn join(
         self: &Arc<Self>,
         tx: Tx,
         code: &str,
         build: Option<&str>,
         content: Option<&str>,
+        rejoin: Option<&str>,
     ) -> Result<Seat, Refusal> {
         let code = code.to_ascii_uppercase();
         let mut state = self.lock();
@@ -302,18 +335,36 @@ impl Lobby {
         let Some(server) = servers.get_mut(&room.server) else {
             return Err(Refusal::ServerGone);
         };
-        let occupancy = room.clients.len();
+        // v1.2: a rejoin is the same player, whose slots the server holds.
+        let seated = match rejoin {
+            Some(token) => match room.tokens.get(token) {
+                Some(seated) => *seated,
+                None => return Err(Refusal::BadToken),
+            },
+            None => None,
+        };
+        let occupancy = room.clients.len() - usize::from(seated.is_some());
         if occupancy >= self.config.max_clients_per_room
-            || occupancy >= server.reg.capacity as usize
+            || (rejoin.is_none() && occupancy >= server.reg.capacity as usize)
         {
             return Err(Refusal::Full);
         }
         if !matches(build, &server.reg.build) || !matches(content, &server.reg.content) {
             return Err(Refusal::Mismatch);
         }
+        if let Some(old) = seated {
+            // Its owner came back on a new socket before this one closed.
+            if let Some(old_tx) = room.clients.remove(&old) {
+                let _ = old_tx.send(Out::Text(protocol::closed("replaced")));
+                let _ = old_tx.send(Out::Close(CLOSE_NORMAL));
+            }
+            let msg = protocol::encode(&[("type", "peer_gone"), ("peer", &old.to_string())]);
+            let _ = server.tx.send(Out::Text(msg));
+            info!(event = "peer_loss", code = %code, server = room.server, peer = old, by = "rejoin", clients = room.clients.len(), "client replaced");
+        }
         server.next_peer += 1;
         let peer = server.next_peer;
-        let token = protocol::random_token();
+        let token = rejoin.map_or_else(protocol::random_token, str::to_owned);
         let peer_msg = protocol::encode(&[
             ("type", "peer"),
             ("peer", &peer.to_string()),
@@ -323,8 +374,9 @@ impl Lobby {
             return Err(Refusal::ServerGone);
         }
         room.clients.insert(peer, tx);
+        room.tokens.insert(token.clone(), Some(peer));
         room.expiry = generation; // voids a pending expiry timer
-        info!(event = "join", code = %code, server = room.server, peer, clients = room.clients.len(), "client joined");
+        info!(event = "join", code = %code, server = room.server, peer, rejoin = rejoin.is_some(), clients = room.clients.len(), "client joined");
         Ok(Seat {
             code,
             server: room.server,
@@ -387,6 +439,11 @@ impl Lobby {
         if room.server != seat.server || room.clients.remove(&seat.peer).is_none() {
             return;
         }
+        if let Some(seated) = room.tokens.get_mut(&seat.token) {
+            if *seated == Some(seat.peer) {
+                *seated = None;
+            }
+        }
         info!(event = "peer_loss", code = %seat.code, server = seat.server, peer = seat.peer, by = "client", clients = room.clients.len(), "client left");
         if let Some(server) = servers.get(&seat.server) {
             let msg = protocol::encode(&[("type", "peer_gone"), ("peer", &seat.peer.to_string())]);
@@ -410,14 +467,20 @@ impl Lobby {
         let Some(room) = rooms.get_mut(&code) else {
             return;
         };
-        let Some(tx) = peer
+        let Some((id, tx)) = peer
             .parse::<u64>()
             .ok()
-            .and_then(|p| room.clients.remove(&p))
+            .and_then(|p| room.clients.remove(&p).map(|tx| (p, tx)))
         else {
             debug!(server = server_id, peer, "peer_gone for an unknown peer");
             return;
         };
+        // The token stays the room's: a kicked or timed-out player may rejoin.
+        for seated in room.tokens.values_mut() {
+            if *seated == Some(id) {
+                *seated = None;
+            }
+        }
         let _ = tx.send(Out::Text(protocol::closed("kicked")));
         let _ = tx.send(Out::Close(CLOSE_NORMAL));
         info!(event = "peer_loss", code = %code, server = server_id, peer, by = "server", clients = room.clients.len(), "client kicked");

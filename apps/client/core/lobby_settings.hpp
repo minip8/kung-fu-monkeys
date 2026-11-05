@@ -17,6 +17,7 @@
 //   volume=80
 //   mute=0
 //   region=eu                       (M6a: the Online section's Create room region)
+//   nick=Bonobo 42                  (v0.42: the name online; absent until there is one)
 //
 // stored natively in SDL's per-user preference directory and in the
 // browser's localStorage (main.cpp). Precedence at startup: defaults, then

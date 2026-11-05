@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.40 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.44 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -339,6 +339,110 @@ code and link to share, every region listed with its availability (lobby protoco
 nicknames and scoreboards, a main menu, bots yielding slots, reconnect from the UI, the lead
 control checked at high RTT. The bot ladder, M6b since v0.36, becomes M7 unchanged, and the
 optional Steam build M8. No code change.
+v0.41 changes: M6b step (1), lobby protocol v1.1 (§13.5, `docs/lobby-protocol.md`). The
+`regions` reply's `list` is now every registered region (busy ones too) and a new `free` key
+names those with a free server; `/healthz`'s `regions` stays the free list, unchanged, so probes
+read the same thing. A v1 client reading only `list` may offer a busy region and gets
+`no_server` as before; a v1.1 client treats a missing `free` (a v1 lobby) as every listed
+region free. `WebRtcTransport::lobbyRegions()` returns `LobbyRegion {name, free}`; the client's
+Create room row cycles over every region and marks a busy one "us (no server)", still
+selectable (a server can come free between the query and the create); a saved region the lobby
+does not list falls back to its first free region, else its first. No sim change.
+v0.42 changes: M6b step (2), the online room (§6.3, §6.5, §6.6, §6.7, §11). Protocol version
+6: `RoomSettings` (host → server: arena, mode, loadout, power-ups, bot count), `RoomState`
+(server → every peer on every change and after each `Welcome`: phase, host slot, settings, the
+human and bot slots, the winner when over, each human slot's nickname) and `Start` (host →
+server), all reliable; `Hello` gains a nickname of at most 16 bytes of well-formed UTF-8 without
+control characters (C0, DEL, C1), checked by encoder and decoder alike (`net::validNickname`;
+`Nickname::from` sanitises: drops controls and malformed bytes, trims and collapses spaces, cuts
+at a character boundary). `NetServer` keeps each slot's nickname (a reconnect keeps it, a
+released slot forgets it), reports `RoomSettings`/`Start` as host events behind a per-peer bucket
+of 20 per second, sends the RoomState the host sets and gains `releaseReservations()`. The room
+lives in `apps/server/room.hpp` beside `ServerHost` (`HostConfig::room`): Waiting (the host pumps
+but never ticks: no sim step at all, the clock rebased every frame, a leaver's slot freed at once),
+Playing (as before; a host Start places the bots, the first N of the server's specs padded with
+`ref:hard` in the lowest free slots, at most the free slots, and restarts the match at the next
+tick with the room's settings and `sim::teamsFor`), Over on `MatchEnded` (no tick, no
+auto-restart; the host's Start goes back to Waiting with the same settings and removes the bots).
+The host is a slot: the first human slot, then the longest-present remaining one; a slot reserved
+for a reconnect stays a member, so a host who drops mid-match keeps the role. A room whose last
+human slot goes returns to Waiting (bots removed, settings kept). Settings are valid when the
+arena, mode and loadout exist, `ContentDB::compatible(arena, mode)` holds and bots ≤ max players
+− 1; anything else (and anything from a non-host, or outside Waiting) is ignored and the RoomState
+re-sent. `NetClient` holds its timeline while the room is not Playing (`ticksDue()` 0, clock
+restarted each call, no input sent, pings continue) and, when Playing resumes, waits for the new
+match's snapshot and a Pong past it, then loads it and runs to estimated server tick + target lead
+as the initial sync does. `kfm_server` runs the room by default in both `--port` and `--lobby`
+modes; `--auto-start` (implied by `--exit-after-matches`) keeps the M3 policy; a lobby room
+assigned with no peer resets the room to the defaults (`ServerHost::openRoom`). The client sends
+`--nick` / `?nick=` / the saved `nick` (else a random monkey name picked once and saved), draws a
+functional waiting / match-over screen and names human slots by nickname on the HUD. Retires the
+M3 follow-up "a server-chosen match config". No sim change; replay checksums unchanged.
+v0.43 changes: M6b step (3), the client's front end (§7, §13.4, §13.5, §11). Dear ImGui stays the
+drawing library; the client gets a game font, a palette and screens. The font is Lilita One (SIL
+Open Font License 1.1, one weight, 28 KB), checked in as the source asset with its licence under
+`assets/fonts/` and compiled into `kfm_client` by `cmake/EmbedFile.cmake` (a byte array, as
+`content/` is: the browser has no filesystem and nothing is read at run time); Dear ImGui 1.92+
+bakes glyphs per size, so one `ImFont` serves the UI (20 px), button (28), heading (36) and title
+(76) sizes, and ImGui's own font stays loaded for the F1 overlay. One palette
+(`apps/client/ui_style.hpp`: banana yellow, cream on dark jungle green, leaf green, bark brown;
+player and team colours stay `presentation::playerColor`) feeds the ImGui theme (rounded) and
+the HUD, whose colour literals moved there. The client opens on a main menu (Play online, Play
+local, Settings, Quit natively) unless `--autostart`, `--connect`, `--room` or `--create` (or
+their query keys) say otherwise, which keep their old paths; `--screen menu|settings|online|local`
+opens another screen (screenshots). The screens are headless models in `apps/client/core`
+(`MainMenu`, `SettingsMenu`, `OnlineMenu`, `ButtonMenu` in `menus.hpp` / `online_menu.hpp`, unit
+tested) driven like the lobby panel: `MenuInput` from every device (nothing joins on a menu),
+Enter / Space / a pad's South or Start selects, Escape / a pad's East or Back goes back, the mouse
+clicks the same items. Settings holds the player's own settings (the nickname, a text field
+sanitised by `Nickname::from`, volume, sound, bot difficulty), saved with the others. Play online
+replaces the local lobby's M6a Online section (moved out of `LobbyMenu`): the region with its
+availability, Create room, a room code field and Join, Back; leaving a room keeps its code in the
+field, so Join rejoins (this replaces "Start rejoins the room made with `--create`"). Without a
+lobby URL Play online is greyed, unless `--connect` names a server, which it then joins. Escape
+from the local lobby or any online screen returns to the menu, and the local lobby is always
+local play now (Start no longer connects in network mode; devices bound there are the slots a
+later Play online requests). `IPlatformServices` gains `copyText`, `canShare` and `share`
+(`ShareHooks` injected into `LocalPlatformServices`: SDL's clipboard natively,
+`navigator.clipboard.writeText` and `navigator.share` in the browser, sharing offered only when
+`navigator.share` exists and `navigator.maxTouchPoints > 0`; `Null` has neither). The waiting
+screen shows the room code in title size with Copy link (the page's `?room=CODE` link; natively
+the build's `KFM_PAGE_URL` when set, else the code, then labelled Copy code) and Share, the roster
+as cards (nicknames, the host's crown, you, the bots that take the lowest open slots at the
+start, open slots), the host's settings (`LobbyMenu::setRoomRows()`: only the rows a
+`RoomSettings` carries, now on the keyboard and pads too, Enter starts) or everyone else's
+read-only view with the arena preview, Start match / "Waiting for <host> to start" and Leave.
+Scoreboards are a view model (`core/scoreboard.hpp`, a pure function of `RenderHud`, the labels
+and the local / bot masks): rows sorted by score, then deaths, then slot (by team first in a team
+mode, places shared on a tie), the score column named by the kind (Rounds, Kills, Points, Flags),
+deaths where the kind counts them, the winner crowned and this client's rows outlined online; it
+shows between rounds in the round kinds (RoundEnded, RoundStarting after round 1) under a
+raised banner, and at every match's end. The match-over screen (the winner in their colour, the
+final scoreboard, a button row) is Play again (a new seed) / Back to lobby locally and the host's
+Play again / Leave online ("Waiting for <host> to play again" for the others). Nicknames label
+every slot online, bots too ("BOT4"); local play keeps P<n> / BOT<n> (several players share one
+screen, so no saved nick for P1). `shell.html` takes the palette (background, loading line);
+`?nick=` already maps to `--nick`. No sim change; replay checksums unchanged.
+v0.44 changes: M6b step (4), bots yielding, reconnect from the UI, the lead control at high RTT
+(§6.2, §6.6, §13.5, §11, §12). Bots yield (§6.6): in the room flow a joiner that only bots'
+slots could fit is welcomed as a spectator and waits (`ServerConfig::queueForBotSlots`,
+`NetServer::grantQueued`); outside Playing the highest bot leaves at once, while Playing a bot
+whose monkey is off the field (eliminated, or any bot at a round end) leaves and its slot is
+granted a tick later, so the sim sees a leave and a join (a deathmatch forfeits the bot's
+score and spawns the joiner after `respawnTicks`, a rounds mode at the next round); a yielded
+bot does not return within the match (`RoomSettings.bots` is "bots when there is room",
+applied at every Start); the room flow's lobby `capacity` is max players. A spectator given a
+slot runs forward to the lead at once (`NetClient`). The lead control at high RTT (§6.2, §12):
+measured with `kfm_netsim` at 200, 300 and 500 ms with ±20–30 ms jitter and 2–5 % loss, 4 and 10
+clients: no saturation, oscillation or resync, but a ±30 ms link's late tail was substituted
+(2.2 slot-ticks/s per client at any RTT); the margin band is now jitter-aware (a lower envelope
+of the margin reports moves it up), which cuts that to 0.1–0.3 for about 0.6 tick more lead and
+leaves a steady link's band as it was; a 500 ms soak gate joins the two. Reconnect from the UI (§6.6, §13.5): a
+session that lost its link offers Reconnect, which re-dials with the same token, through the
+lobby as a rejoin: lobby protocol v1.2 adds an optional `token` to `join` (the lobby keeps every
+token it issued for a live room, re-admits the same token outside `capacity`, closes a socket
+still seated under it with `closed`/`replaced`, refuses an unknown one `bad_token`). No sim
+change; replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -1898,6 +2002,35 @@ accumulates ns × `kTickHz` × rate in ppm (one tick = 10^15 units, no drift) an
 ticks per call. The input delay is 0–3 ticks (default 0): inputs passed at local tick L are for
 tick L + delay.
 
+The lead control at high RTT (v0.44, M6b step 4; `kfm_netsim --csv`, 60 s, 10 s warm-up, 10
+clients; 4 clients agree within noise; jitter is ± per direction, uniform). The controller holds:
+the rate never left 99–101 % (nowhere near the 98/102 % clamps; 1–8 % of seconds off 100 %), the
+smoothed margin stays in its band, there are no resyncs, hard jumps or checksum mismatches, and
+the lead follows RTT/2 (it sits 1–2 ticks below the formula's target, which counts 2 × jitter
+that the margin band then trims). What it did not do was keep a jittery link's inputs on time:
+with the fixed +1..+2 band the mean margin sat inside the band while the late tail of a ±30 ms
+link was substituted, about 2.2 slot-ticks a second per client (≈ 4 % of ticks) at any RTT, since
+the band ignores the spread. v0.44 makes the band jitter-aware (`kfm/net/clock_sync.hpp`): a
+floor follows the margin reports half way down at each lower report and creeps back up by 2/256
+of a tick per report (never above the smoothed margin), and the band moves up by how far that
+lower envelope reaches below the mean beyond the band's low edge (at most 4 ticks). A steady
+link keeps the +1..+2 band (100 ms / ±10 ms is unchanged); a ±30 ms link buys about 0.6 tick of
+margin (10 ms of input latency) and its substitutions fall twentyfold. Server substitutions per
+client per second, before → after:
+
+| RTT | ±20 ms, 2 % | ±20 ms, 5 % | ±30 ms, 2 % | ±30 ms, 5 % | lead / target (ticks, ±30 ms, 2 %, after) |
+|---|---|---|---|---|---|
+| 200 ms | 0.20 → 0.16 | 0.50 → 0.38 | 2.25 → 0.12 | 2.62 → 0.31 | 8.0 / 10.0 |
+| 300 ms | 0.20 → 0.16 | 0.50 → 0.40 | 2.19 → 0.10 | 2.73 → 0.34 | 11.0 / 12.9 |
+| 500 ms | 0.18 → 0.13 | 0.50 → 0.36 | 2.15 → 0.11 | 2.61 → 0.31 | 17.0 / 18.9 |
+
+What remains at 5 % loss is loss, not timing (an input lost beyond its redundancy). At 500 ms the
+rollback depth (p99 34–35 ticks) exceeds the 32-tick ring, so most rollbacks re-simulate from the
+verified anchor (about 11 k "rollbacks past the ring" per minute across 10 clients); nothing
+overflows the 128-tick frame history. The soak gates gain a third, `netsim_10c_500ms_5pct`
+(500 ms, ±30 ms, 5 %, 30 s; label `soak`), and `kfm_netcode_tests` pins the jitter case (200 ms,
+±30 ms: under 0.4 substitutions a second, where the fixed band gave 2.2).
+
 Client tick, in order:
 
 ```
@@ -1941,6 +2074,9 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | Control | both | reliable | Hello/Connect (token), ContentHash/BuildId, JoinMatch, PlayerJoined/Left, MatchConfig, Chat, Disconnect |
 | Ping | both | transport stats plus our own tick-stamped ping | — |
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
+| `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
+| `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, winner, nicknames |
+| `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
 consecutive packets vanish. Unreliable messages stay under 1200 bytes so they never fragment;
@@ -1975,6 +2111,12 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   (protocol, content or build mismatch, bad token, match full, shutting down), `JoinMatch`,
   `PlayerJoined`, `PlayerLeft`, `MatchConfig` (with its start tick), `Disconnect` (quit, kicked,
   timeout, protocol error, shutting down). `Ping{sendNs, tick}` / `Pong{echo, tick, holdNs}`.
+- The room (protocol version 6, v0.42; §6.6): `Hello` ends with a nickname (length u8, at most
+  16 bytes of well-formed UTF-8 without C0, DEL or C1 controls; empty = none). `RoomSettings` is
+  arena u8, mode u8, loadout u8 (below their capacities), power-ups u16 and bots u4 (at most
+  `kMaxPlayers`): 6 B. `RoomState` is phase u2 (Waiting, Playing, Over), an optional host slot
+  (u4, a human slot), the settings, the human and bot masks (disjoint), an optional winner and a
+  nickname (length u5) per human slot: at most 191 B. `Start` is the type byte alone.
 - `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
   with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
   shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
@@ -2117,8 +2259,10 @@ C++ server library is mature. The seam makes that swap a contained change.
   exclusive with `--port`/`--bind`/`--token`, no TCP port bound) runs the same `ServerHost`
   with a `LobbyAdapter` (`apps/server/server_lobby.hpp`) beside it: the token check is the
   link's token set, the stats line ends with the lobby state, a room assigned while no peer is
-  connected restarts the match through `ServerHost::startNewMatch` (the bots are re-seeded),
-  and the capacity sent is max players minus bots, updated only when that total changes.
+  connected restarts the match through `ServerHost::startNewMatch` (the bots are re-seeded;
+  v0.42: `ServerHost::openRoom`, which in the default room flow resets the room to Waiting with
+  the server's defaults instead, §6.6), and the capacity sent is max players minus the bots
+  placed, updated only when that total changes (a waiting room places none, v0.42).
   `--ice-ports A-B` and `--stun` apply in both modes (the VM firewall opens the range; GCP's
   1:1 NAT needs the STUN-derived server-reflexive candidate). `ServerHost` itself still knows
   nothing about the lobby and its loopback tests are unchanged.
@@ -2193,6 +2337,74 @@ C++ server library is mature. The seam makes that swap a contained change.
   `restartMatch(MatchConfig, …)`, and logs the winner's team in a team mode. A deathmatch joiner does not wait for
   a next round that never comes: its slot spawns `respawnTicks` after it appears in the frames
   (§5.3), at the farthest spawn point.
+- The online room (v0.42, M6b; `apps/server/room.hpp`, `ServerHost` with `HostConfig::room`):
+  room state lives in the host beside `ServerHost`, never in `WorldState`, and `NetServer`
+  keeps no policy (it reports `RoomSettings`/`Start` as events and sends the `RoomState` the host
+  sets, to every peer at once and to each joiner after its `Welcome` and `Snapshot`). Three
+  phases. **Waiting**: no match runs. The sim leaves `MatchPhase::Lobby` on its first step, so
+  it cannot idle: the host pumps the `NetServer` but never calls `tick()` (the server tick does
+  not move, the host clock is rebased every frame so the first tick after Start runs no
+  backlog), peers join, see the roster, settings and host, and `releaseReservations()` frees a
+  leaver's slot at once (no tick would expire it). **Playing**: as before M6b; a joiner
+  spectates until the round break or spawns after `respawnTicks`. **Over**: entered on
+  `MatchEnded`; again no tick, the clients show the final world and the winner. Transitions:
+  the host's `Start` in Waiting places the bots and calls `restartMatch(config, nextTick(),
+  botSeed)` with the room's settings (next seeds as after a match end, teams by `teamsFor`);
+  its `Start` in Over removes the bots and returns to Waiting with the same settings ("play
+  again"); the room returns to Waiting when its last human slot is gone, and `openRoom()` (a new
+  lobby room with no peer) resets it to the server's defaults. The host is a slot, not a peer:
+  the first human slot to appear, then the longest-present one left, none without a human; a
+  slot reserved for a reconnect stays a member, so a host who drops mid-match keeps the role,
+  while outside Playing reservations are released and the role passes at once. Settings are
+  validated against the content (indices in range, `ContentDB::compatible`, bots ≤ max players
+  − 1); an invalid set, a non-host's request or a request outside its phase is ignored and the
+  current `RoomState` re-sent; at Start the bots are clamped to the free slots.
+  The client side of a server that does not tick: `NetClient` holds while its `RoomState` says
+  Waiting or Over (`holding()`: `ticksDue()` returns 0 and restarts the clock, `tick()` sends
+  nothing), so no input runs ahead of a frozen assembler and nothing accumulates; pings go on
+  (both 5 s timeouts stay fed, the RTT estimate stays fresh). When the room turns Playing, the
+  client keeps holding until the restart's `Snapshot` has arrived and a `Pong` reports a server
+  tick past it, then hard-loads it and runs forward to estimated server tick + target lead with
+  the lead controller and clock reset, exactly as the initial sync: the lead never carries the
+  pause over. A client of a server that sends no `RoomState` (the M3 policy, `kfm_netsim`, the
+  netcode tests) never holds.
+- Bots yield (v0.44, M6b): in the room flow `ServerConfig::queueForBotSlots` is on, so a `Hello`
+  (or `JoinMatch`) that wants more slots than are free, but no more than are free or held by
+  bots, is answered with a `Welcome` of no slots instead of `Reject{MatchFull}`: the peer
+  spectates and waits (`ServerEventKind::PeerQueued`; a request bigger than that is still
+  `MatchFull`, and without the flag nothing changes: the M3 policy, `kfm_netsim`). The host
+  decides when a bot gives its slot up and hands free slots to the oldest waiting peer with
+  `NetServer::grantQueued()`, which sends `PlayerJoined{yours}` like any join (all of a
+  request or nothing). Outside Playing (Over; Waiting places no bots) the highest bots go at
+  once. While Playing a bot yields when its monkey is off the field: eliminated (waiting for a
+  respawn, or for the next round in a rounds mode), or at a `RoundEnded` (then any bot); the
+  highest such bot is removed (its agent dropped from the `AgentHost`) at that tick and its slot
+  is granted one tick later, so the sim sees a leave and a later join and never an owner change
+  of a live monkey: a respawning mode forfeits the bot's score and deaths and spawns the joiner
+  `respawnTicks` later like any late joiner, a rounds mode spawns it at the next round start,
+  a team mode gives it the bot's team. Any slot that comes free (a human leaves, a reservation
+  expires) goes to the oldest waiting peer as well. A yielded bot does not return within the
+  match: `RoomSettings.bots` means "bots when there is room", applied (clamped to the free
+  slots) at every Start, which keeps the rule to one place. Since every bot can yield, the room
+  flow's lobby `capacity` is max players (`LobbyAdapter`; the M3 flow still offers max players
+  minus its bots). The client: a spectator that receives `PlayerJoined{yours}` while running
+  (`NetClient::waitingForSlot()` before it) runs forward on its next `ticksDue()` from its
+  delayed position to estimated server tick + target lead, predicting, with the lead controller
+  and the clock reset (counted as a hard jump); `NetSession` binds its devices to the new slots.
+- Reconnect from the UI (v0.44, M6b): the token flow above behind a button. A `NetSession`
+  that ran and then lost its link (`Disconnected` by a timeout or a closed transport, or the
+  lobby's `closed`/`kicked`, which is how a server-side timeout reaches a lobby client; not a
+  quit, a kick, a shutdown, a closed room or a gone server) `canReconnect()`, and the network
+  status screen shows "Connection lost" with Reconnect and Leave (keyboard, pad or mouse). The
+  app builds a new transport for `reconnectConfig()`: the `--connect` server with the token
+  the session used, or a lobby rejoin of the same room under the lobby's token (lobby protocol
+  v1.2, §13.5); `NetSession::reconnect()` starts the `NetClient` over it (`connect()` on a new
+  transport with the same token, as §6.6 always intended) and keeps the devices, nickname and
+  room code. Within the grace window the server's reservation hands back the slots, and with
+  them the nickname and, mid-match, the host role; after it, or outside Playing (no
+  reservation is kept there), the client joins like anyone (a free slot, a bot's slot, or the
+  queue). Both sides time a silent link out after 5 s, so of the 10 s grace about 5 s are left
+  for the button; the screen says the place is kept "for a few seconds".
 
 ### 6.7 Authority and abuse resistance
 
@@ -2209,6 +2421,10 @@ C++ server library is mature. The seam makes that swap a contained change.
   a one-second burst; the rest are dropped and counted. Undecodable messages, messages before the
   handshake, foreign slots, bad buttons and too-early ticks are protocol errors; more than 32 in
   10 s get `Disconnect{ProtocolError}` and the slots are released at once.
+- The room (v0.42): `RoomSettings` and `Start` pass a per-peer bucket of 20 per second
+  (`roomMsgsPerSecond`; excess ones dropped and counted); before the handshake they are protocol
+  errors like any other message. Only the host's requests take effect, decided by the host's
+  `Room`, never by `NetServer`.
 
 ### 6.8 Perceived latency budget (local actions)
 
@@ -2415,6 +2631,28 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   zones (translucent, lettered); the hill holder is not drawn yet (`HillHolderChanged` is
   there for it).
 
+- The front end (v0.43, M6b step 3; `apps/client/ui_style.{hpp,cpp}`, `screens.{hpp,cpp}`,
+  `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
+  `core/scoreboard.hpp`). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
+  `assets/fonts/` with its licence), compiled in by `cmake/EmbedFile.cmake`, loaded once by
+  `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
+  1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette
+  (`ui::kBanana`, `kCream`, `kJungle`, `kLeaf`, `kBark`, ...) shared by the theme and the HUD;
+  slot and team colours stay `presentation::playerColor`. Screens: the main menu (title, Play
+  online, Play local, Settings, Quit natively, the focused item's hint, the protocol and content
+  hash in the corner), Settings (name, volume, sound, bot difficulty, Back), Play online (region
+  with availability, Create room, room code and Join, Back), the local lobby (cards, compact
+  settings rows with the power-up toggles two to a line, preview, Start), the network status
+  (connecting, the room code with Copy link / Share, refusals in plain words), the room's waiting
+  screen and the match-over screen; the scoreboard between rounds is drawn on the HUD's
+  background list. Navigation: the models take `MenuAction`s from `MenuInput` (every device on a
+  menu screen, the bound ones in the local lobby), `isMenuActivate()` (Enter, keypad Enter,
+  Space, a pad's South or Start) and `isMenuBack()` (a pad's East or Back; Escape is the app
+  shortcut); hovering with a moving mouse takes the focus, a click acts. Flow: menu → Play local
+  → lobby → match → match-over → Play again or lobby; menu → Play online → a room's status →
+  waiting → match → match-over → Play again (host) → waiting; Escape steps back towards the
+  menu, and the menu quits natively. `--autostart` and the network flags skip the menu as before;
+  `--screen` opens a given screen.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.
@@ -2430,7 +2668,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   device repeats its last input and can be taken over by a free device's press as in M2.
   Status flow: Connecting → Syncing → Running, or Rejected / Disconnected / Failed with a reason
   on a status window that replaces the lobby; Escape disconnects and returns to the local lobby,
-  whose Start then reconnects. Online, pause, step, time scale, bot keys, restart and content
+  whose Start then reconnects (v0.43: Escape returns to the main menu, whose Play online
+  reconnects to a `--connect` server when no lobby is configured). Online, pause, step, time scale, bot keys, restart and content
   tuning do nothing (the server's clock and content rule; a content edit would break the hash)
   and the overlay says so. The F1 overlay gains the §7 net panel: RTT/jitter/loss with a graph,
   lead against target, arrival margin, clock rate, rollback depth graph and histogram,
@@ -3410,11 +3649,16 @@ Reconnect from the UI is the existing token flow behind a button. Lobby protocol
 region is refused `no_server` as before. The client keeps Dear ImGui as the drawing library but
 gets a game font, a palette and a main menu (Play online, Play local, Settings); copy-link uses
 the clipboard natively and in the browser and the Web Share API on touch devices.
-Sequencing, one PR each: (1) lobby protocol v1.1 and the availability indicator; (2) the room
+Sequencing, one PR each: (1) lobby protocol v1.1 and the availability indicator (landed in
+v0.41); (2) the room
 states, `RoomSettings`/`RoomState`/`Start`, nicknames (protocol 6; netcode tests over the
-loopback with a scripted host); (3) the client's main menu, waiting screen, scoreboards and
-match-over; (4) bots yielding, reconnect from the UI and the lead-control check at high RTT;
-(5) a friends playtest against the criterion.
+loopback with a scripted host; landed in v0.42, §6.6, with a functional waiting and match-over
+screen that step 3 restyles); (3) the client's main menu, waiting screen, scoreboards and
+match-over (landed in v0.43, §7: the game font and palette, Settings, Play online with Copy link
+and Share through `IPlatformServices`); (4) bots yielding, reconnect from the UI and the lead-control check at high RTT
+(landed in v0.44, §6.2, §6.6, §13.5: the queue for a bot's slot, lobby protocol v1.2's rejoin
+behind the Reconnect button, the jitter-aware lead band and a 500 ms soak gate);
+(5) a friends playtest against the criterion (pending: the M6b code is complete).
 
 M7 sequencing (v0.36, numbered M6b until v0.40): M6a and M7 share only the hosted client and
 proceed in parallel. M7 depends on `kfm_arena`, static hosting and an identity provider, not on
@@ -3708,7 +3952,7 @@ unchanged. Follow-ups: `wss://` signaling and tokens from a lobby service (M6), 
 round a joiner lands in (a solo player wins it; the server's own first round is drawn because the
 roster reaches the world one tick after start), bots that yield a slot to a human, a shared build
 id constant, retracted events undone on screen, reconnect-with-token from the UI, a server-chosen
-match config, multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
+match config (retired in v0.42: the room's host chooses it, §6.6), multi-match hosting (§6.5), a flush signal on the reliable lane for shutdown, and
 a human playtest over a real link.
 
 Progress: M5 landed in v0.30 (the in-repo half; the SDKs and example bots are published from
@@ -3809,6 +4053,13 @@ baseline moved to C++23 (§9).
 
 - **Fixed-point ergonomics.** Mitigate with a complete `Fixed` operator set, LUT trig and unit
   tests against a `double` reference.
+- **Very high RTT (v0.44).** Measured to 500 ms (§6.2): the lead control holds and a jittery link
+  keeps its inputs on time since the jitter-aware band, but past ~480 ms the rollback depth
+  exceeds the 32-tick ring and rollbacks re-simulate from the verified anchor every time, which
+  costs CPU in proportion to the depth (fine natively and for one local player; a browser on a
+  slow phone at 500 ms is untested). Mitigations if it shows: a larger ring for high-RTT links,
+  or the input delay (§6.2) raised automatically above some RTT. The netsim jitter is uniform;
+  real links have spikes, which the floor follows half way per report and forgets in seconds.
 - **Visual noise from predicting 9 remote players.** Mitigate with smoothing, the optional
   1–2 tick input delay, and, if needed, rendering remote players 1–2 ticks behind confirmed.
 - **Catch feel under latency.** Catcher-favouring is inherent; the thrower sees the catch
@@ -4054,7 +4305,10 @@ game.
 
 Each platform implements `ITransport` (§6.4) and `IPlatformServices` (identity, session
 directory, invites, presence, achievements, cloud). Nothing else knows which platform it is on; a
-`null` implementation serves tests and the headless server.
+`null` implementation serves tests and the headless server. v0.43: `IPlatformServices` also copies
+text to the clipboard (`copyText`) and offers a link to the share sheet (`canShare`, `share`):
+SDL's clipboard natively, `navigator.clipboard` and the Web Share API (touch devices only) in
+the browser, through hooks the app injects so `kfm_platform_services` stays SDL-free.
 
 ### 13.5 Hosting: dedicated servers, decided
 
@@ -4155,7 +4409,7 @@ page URL with `?room=CODE` (plus `&lobby=` when the page had one); natively it i
 transport (room, token, error) attached with `NetSession::attachLobby()` carry the join: the
 token is applied before the first `pump()` that sees the room, and a refusal never sends a
 Hello; the loopback session test fakes a lobby-mode transport that withholds Connected until
-`joined`. The lobby settings panel gains an Online section when a lobby URL is configured
+`joined`. (v0.43 moved this Online section to the main menu's Play online screen, §7.) The lobby settings panel gains an Online section when a lobby URL is configured
 (Create room with the region cycled over the regions the lobby lists, asked through a
 short-lived transport in `LobbyRequest::Kind::Regions` on every visit to the local lobby,
 `eu`/`us`/`asia` until it answers, and activated by Enter, a pad's Start or a button; a Join field as an ImGui upper-case text input over the room alphabet); the region is
@@ -4163,7 +4417,8 @@ saved with the settings. In a match the HUD shows "Room ABCDE (eu)" and the invi
 the status window shows the join in progress, then the code with a Copy button, and every
 refusal or close in plain words ("Room ABCDE not found", "Room ABCDE is full", "No server
 available in eu", "Version mismatch: reload the page or update the client", ...); Escape
-returns to the local lobby, whose Start rejoins a room made with `--create`. `shell.html`
+returns to the local lobby, whose Start rejoins a room made with `--create` (v0.43: Escape returns
+to the main menu and the Play online screen's code field keeps the room for Join). `shell.html`
 loads `config.js`, adds `--lobby` from it when the query has none and, only with a
 `sentryDsn`, the pinned Sentry browser bundle (subresource integrity, `crossorigin`) wired to
 `window.onerror`, unhandled rejections and Emscripten's `onAbort`. `IPlatformServices`
@@ -4182,6 +4437,33 @@ builds) to the Cloudflare Pages project with `config.js` and `_headers` beside i
 page's custom domain is attached in the dashboard); the lobby's hostname is a DNS-only A
 record on the same domain, or a free dynamic-DNS name that Let's Encrypt certifies.
 `deploy/README.md` is the day-one runbook; `deploy/hetzner.md` the provider switch.
+Lobby protocol v1.1 (v0.41, M6b step 1): the `regions` reply carries `list` (every registered
+region, the distinct regions of every registered server, free or busy) and `free` (the subset
+with a server that has no room and a `capacity` of at least 1), both sorted and
+comma-separated; the service derives both from its server registry under the one mutex.
+`/healthz`'s `regions` is unchanged (the free list): a second key there would serve no
+consumer yet, and keeping it is the backward-compatible choice. A v1 client reads only `list`
+and may try a busy region (refused `no_server`, as a creator racing another always could be);
+a v1.1 client against a v1 lobby has no `free` and assumes every listed region free, which is
+right because a v1 `list` is the free list. The transport returns
+`std::vector<LobbyRegion>` (`name`, `free`) in the lobby's order (an item of `free` that `list`
+lacks is ignored); the client's `LobbyMenu` keeps a `RegionChoice` per region (kRegions, all
+shown free, until the lobby answers), the Create room row reads "eu" or "us (no server)" and
+still creates in any region, and a `no_server` refusal is shown as before ("No server
+available in us"). An empty reply keeps the previous list.
+Lobby protocol v1.2 (v0.44, M6b step 4): reconnect from the UI goes through the lobby, since
+the lobby counts a closed client socket as leaving and the server only accepts the tokens the
+lobby announced. The lobby remembers every token it issued for a live room (seated or not);
+`join` gains an optional `token`, and a join with one the room issued is a rejoin: the lobby
+answers `joined` with the same token and announces the client to the server as a new `peer`
+with that token, so the server's `LobbyLink` accepts it again and `NetServer`'s reconnect
+reclaims the reserved slots (§6.6). A rejoin is exempt from `capacity` (the server still holds
+the player's slots, and its `Hello` judges otherwise) but not from the 64-socket cap; a socket
+still seated under the token (its owner noticed the drop first) is closed with
+`closed`/`replaced` and reported `peer_gone` before the new `peer`; an unknown token is
+refused `bad_token`. Re-signaling to the server directly was the alternative and is not
+taken: a server in lobby mode has no public signaling socket, and a second path would bypass
+the lobby's token set. A v1.1 lobby ignores the key and seats the client as a new player.
 
 ### 13.6 Sequencing
 

@@ -6,6 +6,7 @@
 #include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
 #include "kfm/content/loader.hpp"
+#include "kfm/net/messages.hpp"
 #include "kfm/platform/input_event.hpp"
 #include "kfm/sim/content.hpp"
 
@@ -13,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -593,4 +595,41 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   CHECK(client::modeSummary(survival) == "first to 3 rounds of 1:00, last monkey standing");
   CHECK(client::ticksClock(61) == "0:02");
   CHECK(client::ticksClock(0) == "0:00");
+}
+
+TEST_CASE("client flags and settings: the nickname (v0.42)", "[client][lobby][options]") {
+  client::ClientOptions o;
+  std::string error;
+  const std::array<const char*, 3> args{"kfm_client", "--nick", "  Kong\x01 "};
+  REQUIRE(client::parseClientOptions(args, o, error));
+  CHECK(o.nick == "Kong");
+  const std::array<const char*, 3> blank{"kfm_client", "--nick", " \t "};
+  client::ClientOptions b;
+  CHECK_FALSE(client::parseClientOptions(blank, b, error));
+  CHECK(error.find("--nick") != std::string::npos);
+  CHECK(client::netSessionConfig(o, true).nickname == "Kong");
+
+  // Saved as nick=, read back; a bad line is skipped with a warning.
+  const std::string text = client::settingsText(o);
+  CHECK(text.find("nick=Kong\n") != std::string::npos);
+  client::ClientOptions back;
+  std::vector<std::string> warnings;
+  client::applySettingsText(text, sim::defaultContent(), back, warnings);
+  CHECK(warnings.empty());
+  CHECK(back.nick == "Kong");
+  client::applySettingsText("nick=\x02\n", sim::defaultContent(), back, warnings);
+  CHECK(warnings.size() == 1);
+  CHECK(back.nick == "Kong");
+  CHECK(client::settingsText(client::ClientOptions{}).find("nick=") == std::string::npos);
+
+  // A random monkey name: valid, deterministic per seed, varied across seeds.
+  CHECK(client::randomMonkeyName(1) == client::randomMonkeyName(1));
+  std::set<std::string> names;
+  for (uint64_t seed = 0; seed < 64; ++seed) {
+    const std::string n = client::randomMonkeyName(seed);
+    CHECK(net::validNickname(n));
+    CHECK(!n.empty());
+    names.insert(n);
+  }
+  CHECK(names.size() > 32);
 }

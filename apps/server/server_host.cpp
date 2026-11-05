@@ -206,6 +206,7 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
       clockBaseNs_(nowNs),
       botSeed_(config_.server.botSeed) {
   net::ServerConfig sc = config_.server;
+  sc.queueForBotSlots = config_.room;  // v0.44: bots yield in the room flow
   sc.botInputs = [this](const sim::WorldState& world, const sim::MatchContent& match,
                         sim::InputFrame& frame) { fillBots(world, match, frame); };
   server_ = std::make_unique<net::NetServer>(transport, content, std::move(sc));
@@ -215,7 +216,20 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
   uint8_t placed = 0;
   std::string specs;
   uint8_t s = 0;
-  for (const ai::BotSpec& spec : config_.bots) {
+  if (config_.room) {
+    // v0.42: the room starts Waiting; its Start places the bots.
+    roomDefaults_ =
+        roomSettingsOf(config_.server.match,
+                       static_cast<uint8_t>(std::min<size_t>(
+                           config_.bots.size(),
+                           config_.server.maxPlayers > 0 ? config_.server.maxPlayers - 1 : 0)));
+    if (!validRoomSettings(content, roomDefaults_, config_.server.maxPlayers)) {
+      roomDefaults_ = roomSettingsOf(sim::MatchConfig{}, 0);
+    }
+    room_ = std::make_unique<Room>(content, config_.server.maxPlayers, roomDefaults_);
+  }
+  const std::vector<ai::BotSpec> none;
+  for (const ai::BotSpec& spec : config_.room ? none : config_.bots) {
     while (s < sim::kMaxPlayers && !server_->setBot(PlayerId{s}, true))
       ++s;
     if (s == sim::kMaxPlayers) break;
@@ -238,6 +252,10 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
       config_.botDelayTicks ? std::to_string(*config_.botDelayTicks) : std::string("auto"),
       config_.server.botSeed);
   logDeadBots();
+  if (room_) {
+    log("room waiting {}", roomText());
+    broadcastRoom();
+  }
 }
 
 ServerHost::~ServerHost() = default;
@@ -331,9 +349,14 @@ uint64_t ServerHost::nsUntilNextTick(uint64_t nowNs) const {
 void ServerHost::frame(uint64_t nowNs) {
   nowNs_ = std::max(nowNs_, nowNs);
   server_->pump(nowNs_);
-  if (!server_->shuttingDown()) {
+  if (room_) updateRoom();
+  if (room_ && !room_->playing()) {
+    // No match runs: nothing ticks, and the clock resumes from now.
+    clockBaseNs_ = nowNs_;
+    clockTicks_ = 0;
+  } else if (!server_->shuttingDown()) {
     uint32_t ran = 0;
-    while (nowNs_ >= tickDueAt(clockTicks_)) {
+    while (nowNs_ >= tickDueAt(clockTicks_) && (!room_ || room_->playing())) {
       if (ran == config_.maxCatchUpTicks) {
         // A stalled host must not run seconds of ticks at once: drop the
         // backlog (the clients' lead control absorbs the jump) and rebase.
@@ -363,6 +386,7 @@ void ServerHost::frame(uint64_t nowNs) {
 
 void ServerHost::onTick() {
   const sim::WorldState& w = server_->world();
+  bool roundEnded = false;
   // v0.35: the calls each bot hears, from the step that just ran.
   bots_->agents.observe(server_->tickEvents(), w,
                         sim::matchContent(server_->content(), server_->matchConfig()));
@@ -385,6 +409,7 @@ void ServerHost::onTick() {
         break;
       case sim::EventKind::RoundEnded:
         ++stats_.roundsCompleted;
+        roundEnded = true;
         if (e.player.isValid()) {
           log("round {} won by slot {}{}; scores {}", e.a, e.player.value, teamText(e.player),
               scoreList(w));
@@ -409,6 +434,14 @@ void ServerHost::onTick() {
           log("exit after {} matches", stats_.matchesCompleted);
           break;
         }
+        if (room_) {
+          // v0.42: the room shows the match over; the host plays again.
+          if (room_->matchEnded(e.player)) {
+            log("room over {}", roomText());
+            broadcastRoom();
+          }
+          break;
+        }
         scheduleNextMatch(config_.restartDelayTicks);
         break;
       }
@@ -416,6 +449,7 @@ void ServerHost::onTick() {
         break;
     }
   }
+  if (room_ && room_->playing() && serveQueue(true, roundEnded)) broadcastRoom();
 }
 
 void ServerHost::scheduleNextMatch(uint32_t delayTicks) {
@@ -436,6 +470,190 @@ void ServerHost::startNewMatch(std::string_view reason) {
   if (server_->shuttingDown() || done_) return;
   log("new match: {}", reason);
   scheduleNextMatch(0);
+}
+
+void ServerHost::openRoom(std::string_view reason) {
+  if (!room_) {
+    startNewMatch(reason);
+    return;
+  }
+  if (server_->shuttingDown() || done_) return;
+  removeRoomBots();
+  room_->reset(roomDefaults_);
+  log("room reset: {}; waiting {}", reason, roomText());
+  broadcastRoom();
+}
+
+// --- the room (v0.42) -------------------------------------------------------------
+
+std::string ServerHost::roomText() const {
+  const net::RoomSettings& r = room_->settings();
+  const sim::ContentDB& db = server_->content();
+  const PlayerId host = room_->host();
+  return std::format("arena={} mode={} loadout={} power_ups=0x{:04x} bots={} host={} humans={}",
+                     db.arenaAt(r.arena).name.view(), db.modeAt(r.mode).name.view(),
+                     db.loadoutAt(r.loadout).name.view(), r.powerUps, unsigned{r.bots},
+                     host.isValid() ? std::to_string(host.value) : std::string("-"),
+                     slotList(server_->humanSlots()));
+}
+
+void ServerHost::broadcastRoom() {
+  net::RoomStateMsg m;
+  m.phase = room_->phase();
+  m.host = room_->host();
+  m.settings = room_->settings();
+  m.humans = server_->humanSlots();
+  m.bots = server_->bots();
+  m.winner = room_->winner();
+  for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
+    if (sim::maskHas(m.humans, PlayerId{s})) m.names[s] = server_->nickname(PlayerId{s});
+  }
+  if (m.host.isValid() && !sim::maskHas(m.humans, m.host)) m.host = PlayerId::invalid();
+  server_->setRoomState(m);
+}
+
+void ServerHost::placeRoomBots(uint8_t count) {
+  Bots& b = *bots_;
+  for (uint8_t k = 0; k < count; ++k) {
+    const sim::PlayerMask free = server_->freeSlots();
+    if (free == 0) break;
+    const PlayerId slot{static_cast<uint8_t>(std::countr_zero(static_cast<uint32_t>(free)))};
+    if (!server_->setBot(slot, true)) break;
+    const ai::BotSpec spec = k < config_.bots.size() ? config_.bots[k] : ai::BotSpec{};
+    b.specs[slot.value] = spec;
+    b.lastStats[slot.value] = {};
+    b.agents.attach(slot, b.make(spec, slot), agentSeed(botSeed_, slot), b.delay);
+  }
+}
+
+void ServerHost::removeBot(PlayerId slot) {
+  Bots& b = *bots_;
+  static_cast<void>(server_->setBot(slot, false));
+  static_cast<void>(b.agents.detach(slot));
+  b.specs[slot.value].reset();
+#ifdef KFM_SERVER_WASM_BOTS
+  b.wasm[slot.value] = nullptr;
+#endif
+}
+
+bool ServerHost::serveQueue(bool tickEnded, bool roundEnded) {
+  const net::PeerId peer = server_->oldestQueued();
+  if (!peer.isValid()) return false;
+  const int want = server_->queuedSlots(peer);
+  const auto freeCount = [&] { return std::popcount(static_cast<uint32_t>(server_->freeSlots())); };
+  // A yield made free a slot: the sim must step one tick without it first.
+  const bool settled = !yieldedAt_ || !room_->playing() || server_->nextTick() > *yieldedAt_;
+  if (freeCount() >= want && settled) {
+    const net::PeerId p = peer;
+    if (!server_->grantQueued(p)) return false;
+    yieldedAt_.reset();
+    log("room slot granted to peer={}", p.value);
+    return true;
+  }
+  if (freeCount() >= want) return false;  // granted after the next tick
+  bool changed = false;
+  if (!room_->playing()) {
+    // Waiting or Over: no tick runs, the highest bots go now.
+    while (freeCount() < want && server_->bots() != 0) {
+      const auto s = static_cast<uint8_t>(31 - std::countl_zero(uint32_t{server_->bots()}));
+      log("bot {} yields its slot to peer={}", s, peer.value);
+      removeBot(PlayerId{s});
+      changed = true;
+    }
+    if (freeCount() >= want && server_->grantQueued(peer)) {
+      log("room slot granted to peer={}", peer.value);
+    }
+    return changed;
+  }
+  if (!tickEnded) return false;
+  // Playing: one bot whose monkey is off the field, or any at a round end.
+  const sim::WorldState& w = server_->world();
+  for (int s = sim::kMaxPlayers - 1; s >= 0; --s) {
+    const PlayerId slot{static_cast<uint8_t>(s)};
+    if (!sim::maskHas(server_->bots(), slot) || !bots_->specs[slot.value]) continue;
+    if (!roundEnded && w.players.isAliveIndex(slot.value)) continue;
+    log("bot {} yields its slot to peer={}{}", s, peer.value,
+        roundEnded ? " at the round end" : " (eliminated)");
+    removeBot(slot);
+    yieldedAt_ = server_->nextTick();
+    return true;
+  }
+  return false;
+}
+
+void ServerHost::removeRoomBots() {
+  for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
+    if (bots_->specs[s]) removeBot(PlayerId{s});
+  }
+}
+
+void ServerHost::startRoomMatch() {
+  const net::RoomSettings& r = room_->settings();
+  placeRoomBots(r.bots);
+  sim::MatchConfig c = server_->matchConfig();
+  c.seed = nextMatchSeed(c.seed);
+  c.arena = r.arena;
+  c.mode = r.mode;
+  c.loadout = r.loadout;
+  c.powerUps = r.powerUps;
+  c.teams = sim::teamsFor(server_->content().modeAt(c.mode), server_->present());
+  botSeed_ = nextMatchSeed(botSeed_);
+  server_->restartMatch(c, server_->nextTick(), botSeed_);
+  log("room start seed=0x{:x} {}", c.seed, roomText());
+}
+
+void ServerHost::updateRoom() {
+  // Outside a match nobody waits to reconnect: a leaver's slot is free.
+  if (!room_->playing()) server_->releaseReservations();
+  struct Request {
+    net::ServerEventKind kind;
+    sim::PlayerMask slots;
+    net::RoomSettings settings;
+  };
+  std::vector<Request> requests;
+  for (const net::ServerEvent& e : server_->events()) {
+    if (e.kind == net::ServerEventKind::RoomSettingsRequested ||
+        e.kind == net::ServerEventKind::StartRequested) {
+      const sim::PlayerMask slots =
+          server_->peerInfo(e.peer)
+              .transform([](const net::ServerPeerInfo& p) { return p.slots; })
+              .value_or(sim::PlayerMask{0});
+      requests.push_back(Request{e.kind, slots, e.settings});
+    }
+  }
+  const net::RoomPhase before = room_->phase();
+  bool dirty = room_->updateMembers(server_->humanSlots());
+  if (before != net::RoomPhase::Waiting && room_->phase() == net::RoomPhase::Waiting) {
+    removeRoomBots();  // the last human left
+    log("room empty: waiting {}", roomText());
+  }
+  for (const Request& q : requests) {
+    if (q.kind == net::ServerEventKind::RoomSettingsRequested) {
+      const bool ok = room_->requestSettings(q.slots, q.settings);
+      log("room settings {} {}", ok ? "applied" : "refused", roomText());
+      dirty = true;  // answered with the state either way
+      continue;
+    }
+    switch (room_->requestStart(q.slots)) {
+      case Room::StartResult::Ignored:
+        break;
+      case Room::StartResult::Start:
+        startRoomMatch();
+        dirty = true;
+        break;
+      case Room::StartResult::BackToWaiting:
+        removeRoomBots();
+        log("room waiting {}", roomText());
+        dirty = true;
+        break;
+    }
+  }
+  // v0.44: a waiting joiner takes a free slot, or (outside Playing) a bot's.
+  if (serveQueue(false, false)) dirty = true;
+  if (dirty) {
+    static_cast<void>(room_->updateMembers(server_->humanSlots()));
+    broadcastRoom();
+  }
 }
 
 void ServerHost::logServerEvents() {
@@ -470,6 +688,18 @@ void ServerHost::logServerEvents() {
       case net::ServerEventKind::MatchRestarted:
         log("match {} starts seed=0x{:x} players={}", server_->matchIndex() + 1,
             server_->matchConfig().seed, slotList(e.slots));
+        break;
+      case net::ServerEventKind::PeerQueued:
+        log("queue peer={} waits for {} slot{}", peer, unsigned{e.reason},
+            e.reason == 1 ? "" : "s");
+        break;
+      case net::ServerEventKind::RoomSettingsRequested:
+      case net::ServerEventKind::StartRequested:
+        if (config_.verbose) {
+          log("{} peer={} slots={}",
+              e.kind == net::ServerEventKind::StartRequested ? "start request" : "settings request",
+              peer, slotList(e.slots));
+        }
         break;
     }
   }

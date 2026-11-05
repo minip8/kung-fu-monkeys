@@ -2,7 +2,8 @@
 // the loopback emulator (architecture §6.1, §6.2, §6.9, §7, §11 M3): the
 // connect/sync/running flow, local devices mapped onto server slots, inputs
 // from a fake keyboard reaching the authoritative world, rollback smoothing,
-// exactly-once events across rollbacks, reject and disconnect.
+// exactly-once events across rollbacks, reject and disconnect; v0.42: the
+// nickname in Hello and the room view (a scripted host sets RoomState).
 #include "core/net_session.hpp"
 
 #include "kfm/core/rng.hpp"
@@ -107,12 +108,19 @@ struct Rig {
   void step() {
     now += kMs;
     server->pump(now);
-    while (now >= serverTickAt(serverTicks)) {
+    if (!ticking) {
+      // v0.42: a waiting room's server pumps but never ticks.
+      tickBaseNs = now;
+      serverTicks = 0;
+    }
+    while (ticking && now >= tickBaseNs + serverTickAt(serverTicks)) {
       server->tick(now);
       ++serverTicks;
       for (const sim::SimEvent& e : server->tickEvents())
         serverEvents.push_back(e);
     }
+    for (const net::ServerEvent& e : server->events())
+      netEvents.push_back(e);
     server->clearEvents();
     for (Remote& r : remotes)
       stepRemote(r);
@@ -186,7 +194,10 @@ struct Rig {
   net::LoopbackNetwork net;
   std::unique_ptr<net::NetServer> server;
   uint64_t serverTicks{0};
+  uint64_t tickBaseNs{0};
+  bool ticking{true};
   std::vector<sim::SimEvent> serverEvents;
+  std::vector<net::ServerEvent> netEvents;
   std::deque<Session> sessions;
   std::deque<Remote> remotes;
 };
@@ -232,6 +243,49 @@ TEST_CASE("a NetSession connects, syncs and runs; keyboard input moves its monke
   CHECK(s.client().netStats().checksumMismatches == 0);
   CHECK(s.client().netStats().checksumsCompared > 0);
   CHECK(s.client().confirmedTick().has_value());
+}
+
+TEST_CASE("a session queued for a bot's slot plays once the slot is granted (v0.44)",
+          "[client][net][yield]") {
+  net::ServerConfig cfg;
+  cfg.maxPlayers = 2;
+  cfg.queueForBotSlots = true;
+  Rig rig(cfg);
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  REQUIRE(rig.server->setBot(PlayerId{1}, true));
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), {}, 20 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  CHECK(s.localSlots() == 0);
+  CHECK(s.client().waitingForSlot());
+  CHECK(s.statusText().find("until a bot's slot is free") != std::string::npos);
+  rig.runFor(kSec);
+  const uint64_t jumps = s.client().netStats().hardJumps;
+
+  // The host retires the bot in slot 1 and grants it.
+  REQUIRE(rig.server->setBot(PlayerId{1}, false));
+  rig.step();
+  const net::PeerId peer = rig.server->oldestQueued();
+  REQUIRE(peer.isValid());
+  REQUIRE(rig.server->grantQueued(peer));
+  REQUIRE(rig.runUntil([&] { return s.localSlots() == 0b10; }, kSec));
+  rig.runFor(100 * kMs);
+  CHECK(s.slotOfDevice(0) == PlayerId{1});
+  CHECK(s.owner(PlayerId{1}) == SlotOwner::Local);
+  CHECK_FALSE(s.client().waitingForSlot());
+  CHECK(s.client().netStats().hardJumps == jumps + 1);  // ran forward to the lead
+  CHECK(s.client().netStats().leadTicks > 0);
+
+  // Its keyboard moves its monkey on the server.
+  REQUIRE(rig.runUntil([&] { return rig.playing(PlayerId{1}); }, 10 * kSec));
+  const double x0 = rig.serverX(PlayerId{1});
+  rig.push(s, Key::D, true);
+  rig.runFor(300 * kMs);
+  rig.push(s, Key::D, false);
+  rig.runFor(100 * kMs);
+  CHECK(rig.serverX(PlayerId{1}) > x0 + 0.5);
+  CHECK(s.client().netStats().checksumMismatches == 0);
+  CHECK(s.client().netStats().resyncRequests == 0);
 }
 
 TEST_CASE("two local devices request two slots, mapped in ascending order", "[client][net]") {
@@ -379,6 +433,60 @@ TEST_CASE("disconnects: a cut link, a quit, and the lobby bindings come back", "
   CHECK(back.boundSlots() == 0b11);
 }
 
+TEST_CASE("reconnect from the UI: a lost session comes back with its slot and nickname (v0.44)",
+          "[client][net][reconnect]") {
+  Rig rig;
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  NetSessionConfig cfg;
+  cfg.nickname = "Chimp";
+  cfg.token = {std::byte{'t'}, std::byte{'o'}, std::byte{'k'}};
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), cfg, 10 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  const sim::PlayerMask slots = s.localSlots();
+  CHECK(slots == 0b10);
+  CHECK_FALSE(s.canReconnect());
+
+  // The link dies: both sides time out (5 s); the server reserves the slot.
+  rig.net.cut(r.transport->self());
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, 7 * kSec));
+  CHECK(s.canReconnect());
+  const NetSessionConfig again = s.reconnectConfig();
+  CHECK(again.token == cfg.token);
+  CHECK(again.nickname == "Chimp");
+  CHECK_FALSE(again.lobby.has_value());
+  rig.runFor(200 * kMs);  // the server's own timeout has passed: the slot is reserved
+  CHECK(rig.server->peers().empty());
+  CHECK(rig.server->humanSlots() == slots);
+
+  // The button: a new transport, the same token.
+  r.transport = &rig.net.connectClient(rig.now, link(10 * kMs), link(10 * kMs));
+  s.reconnect(r.transport, rig.now);
+  CHECK(s.reconnects() == 1);
+  CHECK(s.phase() == NetPhase::Connecting);
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  CHECK(s.localSlots() == slots);
+  CHECK(rig.server->stats().reconnects == 1);
+  CHECK(rig.server->nickname(PlayerId{1}).view() == "Chimp");
+  CHECK(s.owner(PlayerId{1}) == SlotOwner::Local);
+  CHECK_FALSE(s.canReconnect());
+
+  // Its keyboard drives the reclaimed slot again.
+  REQUIRE(rig.runUntil([&] { return rig.playing(PlayerId{1}); }, 10 * kSec));
+  const double x0 = rig.serverX(PlayerId{1});
+  rig.push(s, Key::D, true);
+  rig.runFor(300 * kMs);
+  rig.push(s, Key::D, false);
+  rig.runFor(100 * kMs);
+  CHECK(rig.serverX(PlayerId{1}) > x0 + 0.5);
+  CHECK(s.client().netStats().checksumMismatches == 0);
+
+  // Quitting on purpose offers no reconnect.
+  s.disconnect();
+  CHECK(s.phase() == NetPhase::Disconnected);
+  CHECK_FALSE(s.canReconnect());
+}
+
 TEST_CASE("a session with no transport fails with the reason; one that never connects says so",
           "[client][net]") {
   const platform::InputSampler sampler = lobby({platform::DeviceBinding::keyboard(0)});
@@ -433,4 +541,89 @@ TEST_CASE("the online lobby learns the server's match config, power-up set inclu
   REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
   CHECK(s.matchContent().powerUps == 0b0101);  // the client simulates with the server's set
   CHECK((s.client().matchConfig().players & 0b11) == 0b11);
+}
+
+TEST_CASE("the nickname rides in Hello; the room view follows RoomState (v0.42)",
+          "[client][net][room]") {
+  Rig rig;
+  rig.ticking = false;  // the room waits: the server never ticks
+  NetSessionConfig cfg;
+  cfg.nickname = "  Chimp\tPanzee  ";
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), cfg, 10 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.synced(); }, 2 * kSec));
+  CHECK(s.localSlots() == 0b1);
+  CHECK(rig.server->nickname(PlayerId{0}).view() == "ChimpPanzee");
+  CHECK(!s.roomState());
+  CHECK(s.phase() == NetPhase::Running);  // no room: the M3 flow
+  CHECK_FALSE(s.isHost());
+  CHECK(s.slotName(PlayerId{0}) == "P1");
+
+  // The scripted host: a waiting room with this session as host and a bot.
+  REQUIRE(rig.server->setBot(PlayerId{1}, true));
+  net::RoomStateMsg room;
+  room.host = PlayerId{0};
+  room.humans = 0b1;
+  room.bots = 0b10;
+  room.settings.bots = 1;
+  room.names[0] = rig.server->nickname(PlayerId{0});
+  rig.server->setRoomState(room);
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Waiting; }, kSec));
+  CHECK(s.isHost());
+  CHECK(s.slotName(PlayerId{0}) == "ChimpPanzee");
+  CHECK(s.slotName(PlayerId{1}) == "BOT2");
+  CHECK(s.statusText().find("you are the host") != std::string::npos);
+  CHECK(std::string(client::netPhaseName(s.phase())) == "waiting");
+
+  // Holding: keys pressed in the waiting room send nothing, no tick runs.
+  const Tick held = s.client().localTick();
+  const uint64_t accepted = rig.server->stats().inputsAccepted;
+  rig.push(s, Key::D, true);
+  rig.runFor(500 * kMs);
+  rig.push(s, Key::D, false);
+  CHECK(s.client().localTick() == held);
+  CHECK(rig.server->stats().inputsAccepted == accepted);
+  CHECK(s.ticksThisFrame() == 0);
+
+  // The host's controls reach the server as events.
+  const net::RoomSettings wanted{.arena = 0, .mode = 0, .loadout = 0, .powerUps = 1, .bots = 2};
+  s.sendSettings(wanted);
+  s.start();
+  rig.runFor(100 * kMs);
+  std::vector<net::ServerEventKind> kinds;
+  for (const net::ServerEvent& e : rig.netEvents) {
+    if (e.kind == net::ServerEventKind::RoomSettingsRequested) CHECK(e.settings == wanted);
+    if (e.kind == net::ServerEventKind::RoomSettingsRequested ||
+        e.kind == net::ServerEventKind::StartRequested)
+      kinds.push_back(e.kind);
+  }
+  CHECK(kinds == std::vector<net::ServerEventKind>{net::ServerEventKind::RoomSettingsRequested,
+                                                   net::ServerEventKind::StartRequested});
+
+  // The host starts: the match restarts at the next tick, the server ticks
+  // again and the session resumes running with inputs reaching the server.
+  sim::MatchConfig next = rig.server->matchConfig();
+  next.seed = 77;
+  rig.server->restartMatch(next, rig.server->nextTick(), 5);
+  room.phase = net::RoomPhase::Playing;
+  rig.server->setRoomState(room);
+  rig.ticking = true;
+  REQUIRE(rig.runUntil([&] { return s.running() && !s.client().holding(); }, 2 * kSec));
+  CHECK(s.client().netStats().matchRestarts == 1);
+  CHECK(s.client().matchConfig().seed == 77);
+  rig.runFor(2 * kSec);
+  CHECK(rig.server->stats().inputsAccepted > accepted + 60);
+  CHECK(s.client().netStats().checksumMismatches == 0);
+  CHECK(s.client().netStats().checksumsCompared > 0);
+  // Lead re-established from a fresh sync: a few ticks, not the paused time.
+  CHECK(s.client().netStats().leadTicks < 15);
+
+  // Over: the session shows the match over and holds again.
+  room.phase = net::RoomPhase::Over;
+  room.winner = PlayerId{0};
+  rig.server->setRoomState(room);
+  rig.ticking = false;
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Over; }, kSec));
+  CHECK(s.client().holding());
+  CHECK(s.statusText().find("match over") != std::string::npos);
 }

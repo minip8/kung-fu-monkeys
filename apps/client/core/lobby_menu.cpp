@@ -145,17 +145,8 @@ bool eventDeviceBound(const platform::InputSampler& sampler, const platform::Inp
 
 // --- LobbyMenu -------------------------------------------------------------------
 
-LobbyMenu::LobbyMenu() : regions_(kRegions.begin(), kRegions.end()) {
+LobbyMenu::LobbyMenu() {
   setContent(sim::defaultContent());
-}
-
-void LobbyMenu::setRegions(std::span<const std::string> regions) {
-  if (regions.empty()) return;
-  regions_.assign(regions.begin(), regions.end());
-  bool present = false;
-  for (const std::string& r : regions_)
-    present = present || r == settings_.region;
-  if (!present) settings_.region = regions_.front();
 }
 
 const sim::ContentDB& LobbyMenu::content() const {
@@ -167,9 +158,9 @@ void LobbyMenu::setContent(const sim::ContentDB& content) {
   rebuildRows();
 }
 
-void LobbyMenu::setLobbyAvailable(bool available) {
-  if (available == lobbyAvailable_) return;
-  lobbyAvailable_ = available;
+void LobbyMenu::setRoomRows(bool room) {
+  if (room == roomRows_) return;
+  roomRows_ = room;
   rebuildRows();
 }
 
@@ -187,10 +178,11 @@ void LobbyMenu::rebuildRows() {
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::PowerUp, i};
   }
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Bots};
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::BotDifficulty};
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
-  if (lobbyAvailable_) rows_[rowCount_++] = LobbyRow{LobbyRowKind::CreateRoom};
+  if (!roomRows_) {
+    rows_[rowCount_++] = LobbyRow{LobbyRowKind::BotDifficulty};
+    rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
+    rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
+  }
   if (settings_.arena >= content.arenaCount) settings_.arena = 0;
   if (settings_.mode >= content.modeCount) settings_.mode = 0;
   if (settings_.loadout >= content.loadoutCount) settings_.loadout = 0;
@@ -281,48 +273,8 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     case LobbyRowKind::Mute:
       settings_.mute = !settings_.mute;
       break;
-    case LobbyRowKind::CreateRoom: {
-      // By name: a region outside the list (--region xx) steps to the first.
-      std::size_t i = regions_.size();
-      for (std::size_t k = 0; k < regions_.size(); ++k) {
-        if (regions_[k] == settings_.region) i = k;
-      }
-      if (i == regions_.size()) {
-        i = 0;
-      } else if (direction > 0) {
-        i = (i + 1) % regions_.size();
-      } else {
-        i = (i + regions_.size() - 1) % regions_.size();
-      }
-      settings_.region = regions_[i];
-      break;
-    }
   }
   return !(settings_ == before);
-}
-
-bool LobbyMenu::activate() {
-  return activate(focus_);
-}
-
-bool LobbyMenu::activate(std::size_t row) {
-  if (row >= rowCount_ || rows_[row].kind != LobbyRowKind::CreateRoom) return false;
-  command_ =
-      LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = settings_.region, .code = {}};
-  return true;
-}
-
-bool LobbyMenu::requestJoin(std::string_view code) {
-  const std::optional<std::string> normal = normalizeRoomCode(code);
-  if (!normal || !lobbyAvailable_) return false;
-  command_ = LobbyCommand{.kind = LobbyCommand::Kind::JoinRoom, .region = {}, .code = *normal};
-  return true;
-}
-
-std::optional<LobbyCommand> LobbyMenu::takeCommand() {
-  std::optional<LobbyCommand> c = std::move(command_);
-  command_.reset();
-  return c;
 }
 
 std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
@@ -345,8 +297,6 @@ std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
       return "Volume";
     case LobbyRowKind::Mute:
       return "Sound";
-    case LobbyRowKind::CreateRoom:
-      return "Create room";
   }
   return {};
 }
@@ -374,8 +324,6 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return std::to_string(settings_.volume) + "%";
     case LobbyRowKind::Mute:
       return settings_.mute ? "muted" : "on";
-    case LobbyRowKind::CreateRoom:
-      return settings_.region;
   }
   return {};
 }

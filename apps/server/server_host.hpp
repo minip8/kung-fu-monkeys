@@ -18,6 +18,38 @@
 // re-seeded. With exitAfterMatches set, the host reports done() instead of
 // restarting once that many matches have ended.
 //
+// Room flow (v0.42, HostConfig::room, §6.6, room.hpp): instead of the M3
+// policy above, the host keeps a Room beside the NetServer. The room starts
+// Waiting with the server's settings (match arena, mode, loadout, power-ups
+// and bots.size() as the bot count) and no bots placed; while it is not
+// Playing the host pumps the NetServer but never ticks it (its clock is
+// rebased every frame, so resuming runs no backlog) and frees the slots of
+// leavers at once (NetServer::releaseReservations). The host's RoomSettings
+// are validated by the Room; the host's Start in Waiting places the bots
+// (the first `bots` specs of HostConfig::bots, padded with ref:hard, in the
+// lowest free slots, at most as many as there are free slots) and restarts
+// the match at the next tick with the room's settings (teams by
+// sim::teamsFor, next seeds as after a match end) → Playing. MatchEnded →
+// Over (no auto-restart, exitAfterMatches still counts); the host's Start in
+// Over removes the bots → Waiting. The room returns to Waiting, removing the
+// bots, when its last human slot is gone. Every change goes out as one
+// RoomState (NetServer::setRoomState) and one "room ..." log line.
+//
+// Bots yield (v0.44, §6.6): in the room flow the NetServer queues a
+// joiner that only bots' slots could fit (ServerConfig::queueForBotSlots)
+// as a spectator. Outside Playing the highest bot gives its slot up at once
+// and the joiner gets it. While Playing a bot yields when its monkey is off
+// the field: eliminated (waiting for its respawn, or for the next round) or
+// at a round end (RoundEnded: every bot qualifies); the highest such bot
+// leaves at that tick and its slot is handed to the waiting peer one tick
+// later, so the sim sees a leave and a join, never an owner change: a
+// respawning mode forfeits the bot's score and spawns the joiner after
+// respawnTicks like any late joiner, a rounds mode spawns it at the next
+// round start. A slot that comes free any other way (a human leaves, a
+// reservation expires) goes to the oldest waiting peer too. A yielded bot
+// does not come back in that match: the room's bot count is "bots when
+// there is room", applied at the next Start.
+//
 // Bots (§8): every bot is an ai::BotSpec (the reference bot at a tier, or a
 // .wasm module) run by the host's ai::AgentHost, which NetServer calls once
 // per tick through ServerConfig::botInputs; the inputs go straight into the
@@ -54,6 +86,7 @@
 #include "kfm/net/transport.hpp"
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/content.hpp"
+#include "room.hpp"
 
 #include <cstdint>
 #include <expected>
@@ -72,8 +105,11 @@ struct HostConfig {
   // Match seed, build id, token check, player cap and the netcode knobs.
   net::ServerConfig server{};
   // Server-side bots, one per spec, in the lowest free slots in order
-  // (capped by server.maxPlayers).
+  // (capped by server.maxPlayers). With `room`: the specs the room's bot
+  // count draws from, and their number the room's default count.
   std::vector<ai::BotSpec> bots;
+  // v0.42: the room flow (see the header comment) instead of the M3 policy.
+  bool room{false};
   // The bots' input delay in ticks; nullopt = auto (the humans' lead).
   std::optional<uint8_t> botDelayTicks;
   // A wasm bot's instruction budget per tick (0 = the runtime default).
@@ -145,6 +181,12 @@ class ServerHost {
   // no human connected (docs/lobby-protocol.md §6 point 5). Ignored while
   // shutting down or done().
   void startNewMatch(std::string_view reason);
+  // A new group arrives (kfm_server --lobby, a room assigned with no peer
+  // connected): the room flow resets the room to Waiting with the server's
+  // default settings (bots removed); the M3 flow calls startNewMatch().
+  void openRoom(std::string_view reason);
+  // The room, with HostConfig::room (null otherwise).
+  [[nodiscard]] const Room* room() const { return room_.get(); }
 
   void beginShutdown();
   void finishShutdown();
@@ -170,6 +212,19 @@ class ServerHost {
   void scheduleNextMatch(uint32_t delayTicks);
   void onTick();
   void logServerEvents();
+  // The room flow's per-frame work after pump(): reservations, members,
+  // requests, the RoomState broadcast.
+  void updateRoom();
+  void placeRoomBots(uint8_t count);
+  void removeRoomBots();
+  // v0.44: drops one host bot (its agent detached, its slot freed).
+  void removeBot(PlayerId slot);
+  // v0.44: the waiting peer's slots, granted or made free by a yield; true
+  // when the roster changed. `tickEnded`: called after a tick (onTick).
+  bool serveQueue(bool tickEnded, bool roundEnded);
+  void startRoomMatch();
+  void broadcastRoom();
+  [[nodiscard]] std::string roomText() const;
   void fillBots(const sim::WorldState& world, const sim::MatchContent& content,
                 sim::InputFrame& frame);
   void updateBotDelay();
@@ -194,6 +249,11 @@ class ServerHost {
   net::ServerStats lastStats_{};
   HostStats lastHostStats_{};
   uint64_t botSeed_{0};
+  std::unique_ptr<Room> room_;
+  net::RoomSettings roomDefaults_{};
+  // v0.44: the tick a bot last yielded at; the waiting peer gets the slot
+  // once a tick has run without it.
+  std::optional<Tick> yieldedAt_;
   bool done_{false};
   HostStats stats_{};
 };
