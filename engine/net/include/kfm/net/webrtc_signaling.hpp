@@ -16,13 +16,21 @@
 // '"', '\\' and control characters; the decoder accepts any flat object whose
 // values are strings (escapes including \uXXXX and surrogate pairs), ignores
 // unknown keys and rejects everything else. It never throws.
+//
+// The same reader and writer serve the lobby's envelopes (docs/lobby-protocol.md
+// §1: every lobby message is a flat object of strings) through FlatObject:
+// decodeObject() keeps every pair in text order, encodeObject() writes pairs
+// with the same escaping. Both apply kMaxMessageBytes to the text.
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace kfm::net::signaling {
 
@@ -42,5 +50,23 @@ struct Message {
 // nullopt for malformed JSON, an unknown type, a missing field or a message
 // over kMaxMessageBytes.
 [[nodiscard]] std::optional<Message> decode(std::string_view text);
+
+// One key/value pair to encode.
+using Field = std::pair<std::string_view, std::string_view>;
+
+// A decoded flat JSON object of strings, its pairs in text order.
+struct FlatObject {
+  std::vector<std::pair<std::string, std::string>> fields;
+
+  // The value of `key` (the last one when the key repeats, like decode()),
+  // or nullopt when absent. The view lives as long as the object.
+  [[nodiscard]] std::optional<std::string_view> get(std::string_view key) const;
+};
+
+// {"k1":"v1","k2":"v2",...} in the given order, escaped like encode().
+[[nodiscard]] std::string encodeObject(std::span<const Field> fields);
+// nullopt unless `text` is one flat object of string values (any keys, none
+// included) within kMaxMessageBytes.
+[[nodiscard]] std::optional<FlatObject> decodeObject(std::string_view text);
 
 }  // namespace kfm::net::signaling

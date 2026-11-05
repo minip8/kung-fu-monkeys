@@ -4,8 +4,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace kfm::net::signaling {
 namespace {
@@ -206,33 +208,58 @@ std::string encode(const Message& message) {
   return out;
 }
 
-std::optional<Message> decode(std::string_view text) {
+std::optional<std::string_view> FlatObject::get(std::string_view key) const {
+  for (auto it = fields.rbegin(); it != fields.rend(); ++it) {
+    if (it->first == key) return std::string_view(it->second);
+  }
+  return std::nullopt;
+}
+
+std::string encodeObject(std::span<const Field> fields) {
+  std::string out = "{";
+  bool first = true;
+  for (const auto& [key, value] : fields) {
+    if (!first) out.push_back(',');
+    first = false;
+    appendEscaped(out, key);
+    out.push_back(':');
+    appendEscaped(out, value);
+  }
+  out.push_back('}');
+  return out;
+}
+
+std::optional<FlatObject> decodeObject(std::string_view text) {
   if (text.size() > kMaxMessageBytes) return std::nullopt;
   Reader r(text);
   if (!r.consume('{')) return std::nullopt;
-  std::optional<std::string> type;
-  std::optional<std::string> sdp;
-  std::optional<std::string> candidate;
-  std::optional<std::string> mid;
+  FlatObject o;
   if (!r.consume('}')) {
     do {
       auto key = r.string();
       if (!key || !r.consume(':')) return std::nullopt;
       auto value = r.string();
       if (!value) return std::nullopt;
-      if (*key == "type") {
-        type = std::move(value);
-      } else if (*key == "sdp") {
-        sdp = std::move(value);
-      } else if (*key == "candidate") {
-        candidate = std::move(value);
-      } else if (*key == "mid") {
-        mid = std::move(value);
-      }
+      o.fields.emplace_back(std::move(*key), std::move(*value));
     } while (r.consume(','));
     if (!r.consume('}')) return std::nullopt;
   }
-  if (!r.atEnd() || !type) return std::nullopt;
+  if (!r.atEnd()) return std::nullopt;
+  return o;
+}
+
+std::optional<Message> decode(std::string_view text) {
+  const std::optional<FlatObject> o = decodeObject(text);
+  if (!o) return std::nullopt;
+  const auto field = [&](std::string_view key) -> std::optional<std::string> {
+    if (const auto v = o->get(key)) return std::string(*v);
+    return std::nullopt;
+  };
+  std::optional<std::string> type = field("type");
+  std::optional<std::string> sdp = field("sdp");
+  std::optional<std::string> candidate = field("candidate");
+  std::optional<std::string> mid = field("mid");
+  if (!type) return std::nullopt;
 
   Message m;
   if (*type == "offer" || *type == "answer") {
