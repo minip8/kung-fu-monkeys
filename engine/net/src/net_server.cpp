@@ -166,6 +166,42 @@ void NetServer::setRoomState(const RoomStateMsg& state) {
   }
 }
 
+bool NetServer::mayQueue(int want) const {
+  return config_.queueForBotSlots && popcount(freeSlots()) + popcount(bots_) >= want;
+}
+
+void NetServer::queue(Peer& p, uint8_t want) {
+  p.queued = want;
+  p.queuedSeq = ++queueSeq_;
+  emit(ServerEventKind::PeerQueued, p.info.peer, 0, want);
+}
+
+PeerId NetServer::oldestQueued() const {
+  const Peer* best = nullptr;
+  for (const Peer& p : peers_) {
+    if (!p.used || p.info.state != PeerState::Active || p.queued == 0) continue;
+    if (best == nullptr || p.queuedSeq < best->queuedSeq) best = &p;
+  }
+  return best != nullptr ? best->info.peer : PeerId::invalid();
+}
+
+uint8_t NetServer::queuedSlots(PeerId peer) const {
+  const Peer* p = findPeer(peer);
+  return p != nullptr ? p->queued : uint8_t{0};
+}
+
+bool NetServer::grantQueued(PeerId peer) {
+  Peer* p = findPeer(peer);
+  if (p == nullptr || p->queued == 0 || p->info.state != PeerState::Active) return false;
+  const sim::PlayerMask free = freeSlots();
+  if (popcount(free) < p->queued) return false;
+  const sim::PlayerMask slots = lowestBits(free, p->queued);
+  p->queued = 0;
+  assignSlots(*p, slots);
+  emit(ServerEventKind::PeerJoined, p->info.peer, slots);
+  return true;
+}
+
 void NetServer::expireReservations() {
   for (Reservation& r : reservations_) {
     if (!r.used || nextTick() < r.expires) continue;
@@ -535,6 +571,8 @@ void NetServer::onHello(Peer& p, const Packet& packet) {
           continue;
         }
         reclaimed = q.info.slots;
+        p.queued = q.queued;  // v0.44: a waiting peer keeps its place
+        p.queuedSeq = q.queuedSeq;
         q.info.slots = 0;  // handed over, not released
         transport_->disconnect(q.info.peer);
         emit(ServerEventKind::PeerLeft, q.info.peer, reclaimed);
@@ -556,6 +594,14 @@ void NetServer::onHello(Peer& p, const Packet& packet) {
   }
   const sim::PlayerMask free = freeSlots();
   if (popcount(free) < h.requestedSlots) {
+    if (mayQueue(h.requestedSlots)) {
+      // v0.44: a spectator until bots give up enough slots (grantQueued()).
+      welcome(p);
+      ++stats_.joins;
+      emit(ServerEventKind::PeerJoined, p.info.peer, 0);
+      queue(p, h.requestedSlots);
+      return;
+    }
     p.info.state = PeerState::AwaitingHello;
     reject(p, RejectReason::MatchFull);
     return;
@@ -661,9 +707,15 @@ void NetServer::onJoinMatch(Peer& p, const Packet& packet) {
   }
   const int have = popcount(p.info.slots);
   const int want = m.requestedSlots;
+  p.queued = 0;  // a new request replaces a waiting one
   if (want > have) {
     const sim::PlayerMask free = freeSlots();
-    if (popcount(free) < want - have) return;  // nothing changes; the client sees no PlayerJoined
+    if (popcount(free) < want - have) {
+      // Nothing changes now; the client sees no PlayerJoined. v0.44: or it
+      // waits for bots' slots.
+      if (mayQueue(want - have)) queue(p, static_cast<uint8_t>(want - have));
+      return;
+    }
     assignSlots(p, lowestBits(free, want - have));
   } else if (want < have) {
     const sim::PlayerMask drop = highestBits(p.info.slots, have - want);

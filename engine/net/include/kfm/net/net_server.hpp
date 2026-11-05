@@ -81,6 +81,17 @@
 // wait in the assembler's window), and releaseReservations() frees the slots
 // of dropped peers at once, since no tick will expire them.
 //
+// Waiting for a slot (v0.44, §6.6 "bots yield"): with
+// ServerConfig::queueForBotSlots, a Hello (or JoinMatch) that wants more
+// slots than are free, but no more than are free or held by bots, is not
+// rejected MatchFull: the peer is welcomed as a spectator whose request
+// waits (ServerEventKind::PeerQueued, reason = the slots it waits for). The
+// host decides when a bot gives its slot up (setBot(slot, false)) and hands
+// the free slots to the oldest waiting peer with grantQueued(), which sends
+// PlayerJoined{yours} as any join does. A waiting peer that leaves simply
+// stops waiting. Off (the default), nothing changes: kfm_netsim, the M3
+// flow and the netcode tests.
+//
 // Shutdown: shutdown() sends Disconnect{ServerShuttingDown} to every peer
 // and rejects later Hellos with RejectReason::ServerShuttingDown; the host
 // keeps pumping briefly so the messages leave, then closeAll() (or
@@ -147,6 +158,9 @@ struct ServerConfig {
   uint8_t maxPlayers{sim::kMaxPlayers};
   // RoomSettings and Start messages per second per peer (v0.42).
   uint32_t roomMsgsPerSecond{20};
+  // v0.44: a joiner that only bots' slots could fit waits as a spectator
+  // instead of being rejected (see "Waiting for a slot" above).
+  bool queueForBotSlots{false};
 };
 
 enum class ServerEventKind : uint8_t {
@@ -160,6 +174,7 @@ enum class ServerEventKind : uint8_t {
   MatchRestarted,         // restartMatch() took effect at this tick; snapshots sent
   RoomSettingsRequested,  // v0.42: a peer sent RoomSettings (settings)
   StartRequested,         // v0.42: a peer sent Start
+  PeerQueued,             // v0.44: a joiner waits for slots; reason = how many
 };
 
 struct ServerEvent {
@@ -299,6 +314,15 @@ class NetServer {
   // Releases every reserved slot of a dropped peer now (no reconnect grace).
   void releaseReservations();
 
+  // --- waiting for a slot (v0.44) ---------------------------------------------
+  // The peer that has waited longest for slots, invalid when none waits.
+  [[nodiscard]] PeerId oldestQueued() const;
+  // The slots a peer waits for (0: it does not wait).
+  [[nodiscard]] uint8_t queuedSlots(PeerId peer) const;
+  // Gives a waiting peer the lowest free slots it waits for, all or none;
+  // false (nothing changes) when fewer are free or the peer does not wait.
+  bool grantQueued(PeerId peer);
+
  private:
   struct Peer {
     ServerPeerInfo info{};
@@ -316,6 +340,8 @@ class NetServer {
     Nickname nickname{};
     uint64_t roomBucketNs{0};  // token bucket of room messages, in ns × messages
     uint64_t roomBucketAtNs{0};
+    uint8_t queued{0};      // v0.44: slots it waits for
+    uint64_t queuedSeq{0};  // ... since this request (lower = older)
   };
   struct Reservation {
     bool used{false};
@@ -340,6 +366,9 @@ class NetServer {
   [[nodiscard]] sim::PlayerMask reservedSlots() const;
   void assignSlots(Peer& p, sim::PlayerMask slots);
   void releaseSlots(sim::PlayerMask slots, PeerId peer);
+  // Whether a request for `want` more slots may wait for a bot's slot.
+  [[nodiscard]] bool mayQueue(int want) const;
+  void queue(Peer& p, uint8_t want);
   void welcome(Peer& p);
   void sendSnapshot(Peer& p);
   void broadcastAuth();
@@ -388,6 +417,7 @@ class NetServer {
   std::optional<PendingRestart> restart_;
   void applyRestart(Tick t, const PendingRestart& r);
   uint32_t matchIndex_{0};
+  uint64_t queueSeq_{0};
   bool shuttingDown_{false};
 };
 

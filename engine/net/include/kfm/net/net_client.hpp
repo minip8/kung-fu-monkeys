@@ -54,6 +54,13 @@
 // (lead controller reset, clock restarted), so the stale lead of before the
 // pause never carries over.
 //
+// A spectator that gets a slot while running (v0.44: a joiner that waited
+// for a bot's slot, PlayerJoined{yours}) becomes a player: on the next
+// ticksDue() it runs forward from its delayed position to estimated server
+// tick + target lead, predicting, as the initial sync does (lead controller
+// reset, clock restarted; counted as a hard jump). While the room holds,
+// the resume sets the lead instead.
+//
 // Events (§5.9) pass through an EventJournal: re-emitted events of a
 // re-simulation are deduplicated, abandoned undelivered ones dropped, events
 // of verified ticks are final.
@@ -222,6 +229,11 @@ class NetClient {
     return disconnectReason_;
   }
   [[nodiscard]] bool spectator() const { return localSlots_ == 0; }
+  // v0.44: synced, asked for slots and holds none yet (the server queued it
+  // until a bot gives one up).
+  [[nodiscard]] bool waitingForSlot() const {
+    return running() && config_.requestedSlots > 0 && localSlots_ == 0;
+  }
   [[nodiscard]] sim::PlayerMask localSlots() const { return localSlots_; }
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return matchConfig_; }
   // The config the local world runs with (its arena and mode select the
@@ -301,6 +313,7 @@ class NetClient {
   void onSnapshot(const Packet& packet);
   void tryStart(uint64_t nowNs);
   void tryResume(uint64_t nowNs);
+  void promote(uint64_t nowNs);
   [[nodiscard]] bool roomHeld() const { return room_ && room_->phase != RoomPhase::Playing; }
   void loadSnapshot(Tick runTo);
   void advanceConfirmed();
@@ -352,6 +365,7 @@ class NetClient {
   bool resumePending_{false};    // the room turned Playing; waiting to reload
   bool resumeSnapshot_{false};   // snapshot_ holds the snapshot to resume from
   bool resumeIsRestart_{false};  // ... and it starts an announced new match
+  bool promotePending_{false};   // v0.44: a spectator got a slot; set the lead
   uint64_t resyncSentNs_{0};
   uint64_t lastRecvNs_{0};
   uint64_t nextPingNs_{0};

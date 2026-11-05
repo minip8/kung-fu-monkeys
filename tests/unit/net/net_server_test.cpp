@@ -13,6 +13,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <ranges>
@@ -525,6 +526,82 @@ TEST_CASE("maxPlayers caps the slots open to peers and bots", "[net][server]") {
   rig.pump();
   rig.pump();
   CHECK(b.last<RejectMsg>(MessageType::Reject).reason == RejectReason::MatchFull);
+}
+
+TEST_CASE("queueForBotSlots: a joiner only bots' slots fit waits as a spectator (v0.44)",
+          "[net][server][queue]") {
+  ServerConfig cfg;
+  cfg.maxPlayers = 3;
+  cfg.queueForBotSlots = true;
+  Rig rig(cfg);
+  REQUIRE(rig.server->setBot(PlayerId{1}, true));
+  REQUIRE(rig.server->setBot(PlayerId{2}, true));
+  const Raw& a = rig.join(1);
+  CHECK(a.last<WelcomeMsg>(MessageType::Welcome).assignedSlots == 0b001);
+
+  // Full of a human and bots: welcomed with no slot, waiting for one.
+  rig.server->clearEvents();
+  const Raw& b = rig.join(1);
+  const PeerId bp = b.t_->self();
+  CHECK(b.last<WelcomeMsg>(MessageType::Welcome).assignedSlots == 0);
+  CHECK(b.count(MessageType::Reject) == 0);
+  CHECK(rig.server->oldestQueued() == bp);
+  CHECK(rig.server->queuedSlots(bp) == 1);
+  CHECK(std::ranges::any_of(rig.server->events(), [](const ServerEvent& e) {
+    return e.kind == ServerEventKind::PeerQueued && e.reason == 1;
+  }));
+  // More than the bots could ever give up is still MatchFull.
+  Raw& c = rig.client();
+  c.reliable(Rig::hello(3));
+  rig.pump();
+  rig.pump();
+  CHECK(c.last<RejectMsg>(MessageType::Reject).reason == RejectReason::MatchFull);
+  // A second waiter queues behind the first.
+  const Raw& d = rig.join(1);
+  const PeerId dp = d.t_->self();
+  CHECK(rig.server->queuedSlots(dp) == 1);
+  CHECK(rig.server->oldestQueued() == bp);
+
+  // Nothing is granted while no slot is free.
+  CHECK_FALSE(rig.server->grantQueued(bp));
+  // The host frees a bot's slot: the oldest waiter gets it, as a join.
+  REQUIRE(rig.server->setBot(PlayerId{2}, false));
+  CHECK_FALSE(rig.server->grantQueued(PeerId{99}));
+  REQUIRE(rig.server->grantQueued(bp));
+  rig.pump();
+  CHECK(rig.server->peerInfo(bp).value_or(ServerPeerInfo{}).slots == 0b100);
+  CHECK(b.last<PlayerJoinedMsg>(MessageType::PlayerJoined).yours);
+  CHECK(b.last<PlayerJoinedMsg>(MessageType::PlayerJoined).slot == PlayerId{2});
+  CHECK(rig.server->queuedSlots(bp) == 0);
+  CHECK(rig.server->oldestQueued() == dp);
+  CHECK(rig.server->present() == 0b111);
+
+  // A waiter that leaves stops waiting; JoinMatch can wait too.
+  rig.net.cut(d.t_->self());
+  for (int i = 0; i < 3; ++i)
+    rig.pump();
+  CHECK(!rig.server->oldestQueued().isValid());
+  Raw& e = rig.join(0);
+  e.reliable(JoinMatchMsg{1});
+  rig.pump();
+  CHECK(rig.server->queuedSlots(e.t_->self()) == 1);
+  e.reliable(JoinMatchMsg{0});  // a new request replaces the waiting one
+  rig.pump();
+  CHECK(rig.server->queuedSlots(e.t_->self()) == 0);
+}
+
+TEST_CASE("without queueForBotSlots a full server still rejects", "[net][server][queue]") {
+  ServerConfig cfg;
+  cfg.maxPlayers = 2;
+  Rig rig(cfg);
+  REQUIRE(rig.server->setBot(PlayerId{1}, true));
+  static_cast<void>(rig.join(1));
+  Raw& b = rig.client();
+  b.reliable(Rig::hello(1));
+  rig.pump();
+  rig.pump();
+  CHECK(b.last<RejectMsg>(MessageType::Reject).reason == RejectReason::MatchFull);
+  CHECK(!rig.server->oldestQueued().isValid());
 }
 
 TEST_CASE("unset, the bot source is the scripted generator over botSeed", "[net][server][bots]") {

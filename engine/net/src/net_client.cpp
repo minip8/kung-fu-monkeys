@@ -59,6 +59,7 @@ void NetClient::resetSession() {
   resumePending_ = false;
   resumeSnapshot_ = false;
   resumeIsRestart_ = false;
+  promotePending_ = false;
   resyncSentNs_ = 0;
   nextPingNs_ = 0;
   firstAuthTick_.reset();
@@ -244,7 +245,12 @@ void NetClient::onPacket(const Packet& packet) {
     case MessageType::PlayerJoined: {
       PlayerJoinedMsg j;
       if (!decode(packet.data, j)) break;
-      if (j.yours) localSlots_ = static_cast<sim::PlayerMask>(localSlots_ | bit(j.slot.value));
+      if (j.yours) {
+        // v0.44: a spectator that waited for a slot becomes a player; the
+        // next ticksDue() runs it forward to the lead (promote()).
+        if (localSlots_ == 0 && state_ == ClientState::Running) promotePending_ = true;
+        localSlots_ = static_cast<sim::PlayerMask>(localSlots_ | bit(j.slot.value));
+      }
       return;
     }
     case MessageType::PlayerLeft: {
@@ -382,6 +388,7 @@ void NetClient::tryStart(uint64_t nowNs) {
     if (target > runTo) runTo = target;
   }
   state_ = ClientState::Running;
+  promotePending_ = false;
   loadSnapshot(runTo);
   marginFrom_ = world_.tick.plus(static_cast<int32_t>(inputDelay()));
   lead_.reset();
@@ -402,6 +409,7 @@ void NetClient::tryResume(uint64_t nowNs) {
   }
   resumePending_ = false;
   resumeSnapshot_ = false;
+  promotePending_ = false;  // the lead is set here
   if (resumeIsRestart_) report_.matchRestarted = true;
   resumeIsRestart_ = false;
   loadSnapshot(runTo);
@@ -698,6 +706,7 @@ uint32_t NetClient::ticksDue(uint64_t nowNs) {
     recordBatch(nowNs, due, rate);
     return due;
   }
+  if (promotePending_) promote(nowNs);
   stats_.ratePpm = lead_.ratePpm();
   const uint32_t n = clock_.advance(nowNs, stats_.ratePpm, config_.maxTicksPerCall);
   stats_.clockDroppedTicks = clock_.droppedTicks();
@@ -713,6 +722,21 @@ uint32_t NetClient::ticksDue(uint64_t nowNs) {
   }
   recordBatch(nowNs, n, stats_.ratePpm);
   return n;
+}
+
+void NetClient::promote(uint64_t nowNs) {
+  // From spectatorDelayTicks behind the newest frame to the lead a player
+  // runs at, as the initial sync sets it: predicted forward at once.
+  promotePending_ = false;
+  const Tick server = estimatedServerTick(nowNs).value_or(world_.tick);
+  const Tick target = server.plus(targetLeadTicks(rtt_) - static_cast<int32_t>(inputDelay()));
+  if (target > world_.tick) {
+    fastForward(target.minus(world_.tick), true);
+    ++stats_.hardJumps;
+  }
+  marginFrom_ = world_.tick.plus(static_cast<int32_t>(inputDelay()));
+  lead_.reset();
+  clock_.start(nowNs);
 }
 
 void NetClient::recordBatch(uint64_t nowNs, uint32_t ticks, uint32_t ratePpm) {
