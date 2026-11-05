@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.38 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.39 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -323,9 +323,13 @@ external signaling and the lobby client mode on `WebRtcTransport`, `LobbyLink` a
 wiring is an adapter beside `ServerHost`, not inside it; the VMs run Ubuntu with containers,
 not Debian; `capacity` is the total of human slots, never net of joined humans; the page's
 `.js`/`.wasm` are published under a content-hashed directory because their names never change;
-the client page is on GitHub Pages, not Cloudflare Pages (the repository is public, so the site
-is free and needs no second account or domain; only the lobby needs a hostname).
+the client page moved to GitHub Pages in v0.38 and back to Cloudflare Pages in v0.39.
 The deployment itself (accounts, the first VM, the playtest over a real link) is pending.
+v0.39 changes: the client page is on Cloudflare Pages after all (§10, §11, §13.5), reversing
+v0.38's GitHub Pages: the domain's DNS is at Cloudflare, so one account holds the domain, the
+DNS and the page, the custom domain is one dashboard step, `_headers` controls caching and
+there is no bandwidth cap. The release workflow's web job is the v0.37 one again. No code
+change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3193,8 +3197,8 @@ lives in the bots repository (above) and uses this repository through a pinned r
   `--locked`). `.github/workflows/deploy.yml` runs on `v*` tags and by hand: it pushes the
   `kfm-server` (the `server-headless` preset in an Ubuntu 26.04 builder, `kfm_server` and
   `kfm_arena` with `content/` in a non-root runtime image) and `kfm-lobby` images to GHCR and
-  publishes the wasm client to the repository's GitHub Pages site with `config.js` generated
-  from repository variables. `deploy/` holds the compose file for local development, the systemd
+  publishes the wasm client to Cloudflare Pages with `config.js` and `_headers` generated from
+  repository variables. `deploy/` holds the compose file for local development, the systemd
   units (`kfm-lobby.service`, `kfm-server@.service` over Docker with host networking), the
   Caddyfile, `install.sh`/`update.sh`, the `gcloud` scripts and the Hetzner equivalent;
   `deploy/README.md` is the runbook.
@@ -3298,7 +3302,7 @@ lives in the bots repository (above) and uses this repository through a pinned r
 | Message layer, prediction/rollback, clock sync, network emulator | libdatachannel + datachannel-wasm (transport); GameNetworkingSockets only for a Steam build |
 | Bots, observation builder, the bot ABI and SDKs, match runner | LZ4, xxHash, toml++ or nlohmann-json |
 | Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, WAMR 2.4.5 (the wasm bot runtime: classic interpreter with instruction metering, §8), cgltf, Blender (asset pipeline) |
-| The lobby service (Rust: Tokio, axum, tokio-tungstenite; rooms, tokens, signaling relay, server registry, §13.5) | Caddy (TLS), GitHub Pages (the client page), Google Cloud Compute Engine then Hetzner Cloud (VMs), Sentry free tier (browser and lobby errors), systemd and journald (process pool and logs) |
+| The lobby service (Rust: Tokio, axum, tokio-tungstenite; rooms, tokens, signaling relay, server registry, §13.5) | Caddy (TLS), Cloudflare Pages (the client page), Google Cloud Compute Engine then Hetzner Cloud (VMs), Sentry free tier (browser and lobby errors), systemd and journald (process pool and logs) |
 
 Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `server-headless`, `wasm` (Emscripten).
 M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
@@ -3371,7 +3375,7 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M4 Content | Power-ups, modifiers, more abilities, arenas, modes, lobby UI, audio/VFX | Content added without touching system code |
 | M5 Agent platform | `IAgent` and the versioned `Observation`, bot ABI v1 and `WasmAgent` over the wasm runtime, the reference bot in lobbies and on the server, `kfm_arena`, SDK v1 and example bots published from the bots repository (§8) | A bot built outside this repository against SDK v1 beats the reference bot in a `kfm_arena` tournament run |
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
-| M6a Ship on the web | The client on GitHub Pages (v0.38; Cloudflare Pages in v0.37); the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
+| M6a Ship on the web | The client on Cloudflare Pages (v0.39); the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
 | M6b The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, replays served with their season's content, the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
@@ -3864,7 +3868,7 @@ baseline moved to C++23 (§9).
 - Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP
   endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
   `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
-  Hetzner Cloud after, with the deployment portable by construction; GitHub Pages (v0.38), Caddy,
+  Hetzner Cloud after, with the deployment portable by construction; Cloudflare Pages, Caddy,
   Sentry's free tier (§13.5). Open: whether M6b's accounts and the lobby ever share an identity
   (a guest id is enough to play), and whether the lobby moves to its own host once there is a
   second region.
@@ -4129,9 +4133,9 @@ bot count, image tag and, on a server-only VM, the EU lobby's `wss://` URL; the 
 is 40000-40099 by default and the units pass it with `--ice-ports`; `--stun` defaults to
 Google's public STUN. The release workflow publishes the page as `index.html` with its `.js`
 and `.wasm` under `assets/<sha256>/` (immutable caching; the names alone never change between
-builds) to the repository's GitHub Pages site, `https://<owner>.github.io/<repo>/`, with
-`config.js` beside it; the lobby's hostname is a domain of the operator's or a free
-dynamic-DNS name that Let's Encrypt certifies (the runbook names DuckDNS).
+builds) to the Cloudflare Pages project with `config.js` and `_headers` beside it (v0.39; the
+page's custom domain is attached in the dashboard); the lobby's hostname is a DNS-only A
+record on the same domain, or a free dynamic-DNS name that Let's Encrypt certifies.
 `deploy/README.md` is the day-one runbook; `deploy/hetzner.md` the provider switch.
 
 ### 13.6 Sequencing

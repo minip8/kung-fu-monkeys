@@ -52,7 +52,7 @@ lobby service in `services/lobby/` owns rooms, tokens, signaling and the server 
 servers dial it (`kfm_server --lobby`, `LobbyLink`, external signaling on `WebRtcTransport`);
 clients create or join rooms (`--lobby/--room/--create`, `?room=`); one `kfm_server` per match
 under systemd; `deploy/` holds the images, units and VM scripts; Google Cloud Compute Engine
-then Hetzner, GitHub Pages for the page, Caddy, Sentry. The accounts, the first VM and the
+then Hetzner, Cloudflare Pages for the page (v0.39), Caddy, Sentry. The accounts, the first VM and the
 playtest over a real link are pending.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
@@ -170,7 +170,7 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 #   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). A real-link check needs
 #   --exit-after-frames in the thousands: headless without vsync the client runs hundreds of frames a second
 deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
-#   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images + GitHub Pages); docker compose -f deploy/docker-compose.yml
+#   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images + Cloudflare Pages); docker compose -f deploy/docker-compose.yml
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
 build/dev/apps/net-probe/kfm_net_probe --connect ws://127.0.0.1:9123 --messages 300   # native end-to-end check
