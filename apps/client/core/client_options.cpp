@@ -162,6 +162,8 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.capsules = true;
     } else if (arg == "--mute") {
       out.mute = true;
+    } else if (arg == "--verbose") {
+      out.verbose = true;
     } else if (arg == "--volume") {
       uint64_t n = 0;
       if (!value(i, n)) return false;

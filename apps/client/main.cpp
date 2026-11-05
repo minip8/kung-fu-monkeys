@@ -387,6 +387,8 @@ class WebRtcLobbyJoin final : public client::ILobbyJoin {
 void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
                   std::optional<client::LobbyTarget> room = std::nullopt) {
   client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  if (app.options.verbose)
+    std::fprintf(stderr, "kfm_client: startNetwork atStartup=%d\n", int{atStartup});
   if (room) {
     config.lobby = std::move(room);
     config.serverLabel = app.options.lobby;
@@ -396,6 +398,7 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
   app.roomAnnounced = false;
   const platform::InputSampler& lobby = app.session->sampler();
 #ifdef KFM_CLIENT_WEBRTC
+  if (app.options.verbose) net::WebRtcTransport::initLogging(net::WebRtcLogLevel::Debug);
   net::WebRtcClientConfig wc;
   wc.signalingUrl = config.lobby ? app.options.lobby : app.options.connect;
   wc.stunServer = app.options.stun;

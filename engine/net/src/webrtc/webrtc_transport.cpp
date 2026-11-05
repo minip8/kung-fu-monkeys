@@ -9,9 +9,11 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <exception>
 #include <expected>
@@ -215,8 +217,13 @@ constexpr size_t kMaxEarlyCandidates = 64;
 
 std::once_flag gLoggerOnce;
 
+// Set once the log level is Debug or finer: the transport then also prints
+// its own decisions (a dropped peer and why) to stderr.
+std::atomic<bool> gVerbose{false};
+
 void initLoggerOnce(WebRtcLogLevel level) {
   std::call_once(gLoggerOnce, [level] {
+    if (level >= WebRtcLogLevel::Debug) gVerbose = true;
 #ifndef __EMSCRIPTEN__
     try {
       rtc::InitLogger(static_cast<rtc::LogLevel>(level));
@@ -340,6 +347,10 @@ struct WebRtcTransport::Impl {
   void dropPeer(uint16_t id, uint64_t nowNs, ConnectionEvents* events, bool fromLobby = false) {
     const auto it = peers.find(id);
     if (it == peers.end()) return;
+    if (gVerbose) {
+      std::fprintf(stderr, "kfm_net_webrtc: drop peer %u (connected=%d fromLobby=%d) error='%s'\n",
+                   unsigned{id}, int{it->second.connected}, int{fromLobby}, lastError.c_str());
+    }
     const bool announce = it->second.connected || !server;
     if (it->second.external && !fromLobby) droppedExternal.push_back(PeerId{id});
     closePeer(it->second);

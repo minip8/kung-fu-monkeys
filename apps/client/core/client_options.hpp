@@ -73,6 +73,7 @@ inline constexpr const char* kUsage =
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
+    "  --verbose              online: the transport's own log (ICE, DTLS, the lobby socket)\n"
     "  --volume N             master volume in percent, 0-100 (default 80)\n"
     "network mode:\n"
     "  --connect ws://h:p     play on a server: connects at startup; Esc goes to the\n"
@@ -111,7 +112,8 @@ struct ClientOptions {
   bool settings{true};  // read and save the lobby settings (lobby_settings.hpp)
   // Audio (§7): the mixer's starting settings; the overlay can change them.
   bool mute{false};
-  uint8_t volume{80};  // percent, = presentation::kDefaultMasterVolume
+  bool verbose{false};  // network mode: libdatachannel's log at Debug on stderr
+  uint8_t volume{80};   // percent, = presentation::kDefaultMasterVolume
   // Network mode (empty connect: local play).
   std::string connect;  // signaling URL, "ws://host:port"
   std::string token;
