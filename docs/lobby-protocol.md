@@ -97,8 +97,9 @@ First message (server → lobby):
  "build":"<8 hex>","content":"<8 hex>","capacity":"7"}
 ```
 
-`capacity` is the number of human slots the process can still take (max players minus its
-bots). `name` is free text for logs and `/healthz`. Reply: `{"type":"registered"}` or
+`capacity` is the total number of human slots the process offers (max players minus its
+bots), never net of connected humans: the lobby counts a room's occupancy itself by its open
+client sockets and refuses `full` once they reach `capacity`. `name` is free text for logs and `/healthz`. Reply: `{"type":"registered"}` or
 `{"type":"refused","reason":"bad_secret"|"bad_request"}` (then the socket closes).
 
 Then, lobby → server:
@@ -117,13 +118,14 @@ Server → lobby:
 |---|---|
 | `{"type":"signal","peer":"7","msg":"<signaling JSON as a string>"}` | A signaling message for that client (`answer`, `candidate`). |
 | `{"type":"peer_gone","peer":"7"}` | The server dropped that peer (kick, protocol error, transport loss). The lobby sends the client `closed`/`kicked` and closes its socket. |
-| `{"type":"capacity","capacity":"5"}` | Optional: the number of human slots still free changed (a bot yielded a slot, a human reconnected into a reserved slot). The lobby uses the latest value for `full`. |
+| `{"type":"capacity","capacity":"5"}` | Optional: the total changed (a bot yielded a slot). Never sent on a human join or leave. The lobby uses the latest value for `full`. |
 
 ## 6. Room lifecycle
 
-1. `create`: the lobby picks a registered server in the region with no room and `capacity` ≥ 1
-   (lowest name first for determinism in tests), sends it `room`, then `peer` for the creator,
-   then `joined` to the creator.
+1. `create`: the lobby picks a registered server in the region with no room, `capacity` ≥ 1
+   and a matching `build`/`content` pair (lowest name first for determinism in tests), sends it
+   `room`, then `peer` for the creator, then `joined` to the creator. Free servers in the
+   region that all mismatch refuse `mismatch`; none at all refuses `no_server`.
 2. `join`: the code must name a live room; the number of open client sockets in the room must
    be below the server's latest `capacity`; `build`/`content` must match the server's. On
    success `peer` to the server, then `joined` to the client.
@@ -145,7 +147,14 @@ Server → lobby:
 - At most 64 open client sockets per room (the server's `capacity` is the real cap), at most
   1024 servers, at most 4096 rooms; beyond those the request is refused `no_server`.
 - Every close initiated by the lobby uses WebSocket close code 1000 after the `refused` or
-  `closed` message; protocol errors use 1002 with no message.
+  `closed` message; protocol errors use 1002 with no message. A frame that is not a flat object
+  of strings, a frame over the size limit, the rate limit and the first-message timeout are
+  protocol errors. A well-formed first message with an unknown `type` or a missing required key
+  is refused `bad_request` (so a wrong client gets a reason); after `registered` or `joined` the
+  same mistake is a protocol error, except a second `create`, `join` or `regions` request on a
+  joined client socket, which is refused `bad_request`. The 4096-room cap refuses `no_server`
+  on create, the 1024-server cap refuses `bad_request` on register, and the 64-sockets-per-room
+  cap refuses `full`. A `build` or `content` key that is absent skips that half of the check.
 - The lobby logs one line per register, unregister, room open, room close, join, refuse and
   peer loss, and exposes counts on `/healthz`. It keeps nothing on disk.
 
