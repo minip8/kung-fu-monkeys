@@ -52,7 +52,8 @@ class FakeLobby {
     {
       const std::scoped_lock lock(mutex_);
       stopped_ = true;
-      all = sockets_;
+      all = std::move(sockets_);  // a move, not a copy: GCC 15 -O3 flags the copy's refcount path
+      sockets_.clear();
     }
     for (const auto& ws : all) {
       try {
