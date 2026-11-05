@@ -3655,8 +3655,10 @@ states, `RoomSettings`/`RoomState`/`Start`, nicknames (protocol 6; netcode tests
 loopback with a scripted host; landed in v0.42, §6.6, with a functional waiting and match-over
 screen that step 3 restyles); (3) the client's main menu, waiting screen, scoreboards and
 match-over (landed in v0.43, §7: the game font and palette, Settings, Play online with Copy link
-and Share through `IPlatformServices`); (4) bots yielding, reconnect from the UI and the lead-control check at high RTT;
-(5) a friends playtest against the criterion.
+and Share through `IPlatformServices`); (4) bots yielding, reconnect from the UI and the lead-control check at high RTT
+(landed in v0.44, §6.2, §6.6, §13.5: the queue for a bot's slot, lobby protocol v1.2's rejoin
+behind the Reconnect button, the jitter-aware lead band and a 500 ms soak gate);
+(5) a friends playtest against the criterion (pending: the M6b code is complete).
 
 M7 sequencing (v0.36, numbered M6b until v0.40): M6a and M7 share only the hosted client and
 proceed in parallel. M7 depends on `kfm_arena`, static hosting and an identity provider, not on

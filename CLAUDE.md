@@ -55,8 +55,12 @@ servers dial it (`kfm_server --lobby`, `LobbyLink`, external signaling on `WebRt
 clients create or join rooms (`--lobby/--room/--create`, `?room=`); one `kfm_server` per match
 under systemd; `deploy/` holds the images, units and VM scripts; Google Cloud Compute Engine
 then Hetzner, Cloudflare Pages for the page (v0.39), Caddy, Sentry. Deployed: `kfm.minip8.com` (the page) and
-`lobby.kfm.minip8.com` (the VM `kfm-au-1`, australia-southeast1, `v0.1.0`); the playtest with
-friends is pending. M6b step 1, lobby protocol v1.1 (the `regions` reply's `list` is every
+`lobby.kfm.minip8.com` (the VM `kfm-au-1`, australia-southeast1, `v0.1.0`). M6b, "Play with
+friends", has its code landed in v0.41-v0.44 (lobby protocol v1.1's region availability; the
+online room's Waiting/Playing/Over with the host's settings, protocol 6 and nicknames; the main
+menu, waiting screen, scoreboards and match-over; bots yielding their slots to joining humans,
+Reconnect from the UI through lobby protocol v1.2's rejoin, the jitter-aware lead band checked to
+500 ms RTT); the friends playtest against its criterion is pending. M6b step 1, lobby protocol v1.1 (the `regions` reply's `list` is every
 registered region and `free` the ones with a free server; the client's Create room row marks a
 busy region "(no server)"), landed in v0.41. M6b step 2, the online room (protocol 6:
 `RoomSettings`/`RoomState`/`Start` and a nickname in `Hello`; `apps/server/room.hpp` beside
@@ -162,7 +166,8 @@ build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players
 #   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
 build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
 build/dev/apps/netsim/kfm_netsim --clients 6 --mode team_deathmatch --rtt 100 --jitter 10 --loss 2 --seconds 20   # a team mode (teams ride in MatchConfig, protocol 5)
-ctest --preset dev -L soak                     # the two netsim gates (10 clients at 100 ms / 2% and 300 ms / 10%)
+ctest --preset dev -L soak                     # the netsim gates (10 clients at 100 ms / 2%, 300 ms / 10%, v0.44 500 ms ±30 ms / 5%)
+#   the high-RTT table of architecture §6.2 (v0.44): kfm_netsim --rtt 200|300|500 --jitter 20|30 --loss 2|5 --seconds 60 --csv
 build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]   # headless bot matches
 #   --rotate moves every bot through every slot across the tournament (the sim's spawn order favours some slots)
 #   [--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
@@ -196,7 +201,9 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 #   supplies lobbyUrl and sentryDsn in production); the menu's Play online screen does the same; Esc leaves;
 #   waiting screen: the code large, Copy link (the page's ?room=CODE link; natively -DKFM_PAGE_URL=... or the code)
 #   and Share on touch browsers; the host's rows take arrows/WASD/pads, Enter starts
-#   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). A real-link check needs
+#   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). v0.44: a lost link offers
+#   Reconnect (the same server with the same token, or a lobby rejoin of the room: lobby protocol v1.2 `join` + `token`);
+#   a full room queues a joiner as a spectator until a bot yields its slot (round end, or a bot off the field). A real-link check needs
 #   --exit-after-frames in the thousands: headless without vsync the client runs hundreds of frames a second
 deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
 #   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images + Cloudflare Pages); docker compose -f deploy/docker-compose.yml
@@ -369,8 +376,10 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   online room (Waiting/Playing/Over beside `ServerHost`, `RoomSettings`/`RoomState`/`Start`,
   nicknames, protocol 6), landed in v0.42; step 3, the client's front end (main menu, Settings,
   Play online, the waiting screen with Copy link / Share, scoreboards, match-over), landed in
-  v0.43. Next is step 4: bots yielding, reconnect from the UI and the lead check at high RTT;
-  then the friends playtest (step 5). The bot
+  v0.43; step 4, bots yielding (`ServerConfig::queueForBotSlots`, the room's yield rule),
+  Reconnect from the UI (lobby protocol v1.2's rejoin) and the high-RTT lead check (the
+  jitter-aware band, a 500 ms soak gate), landed in v0.44. Next is the friends playtest (step 5)
+  against the M6b criterion. The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
   append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one
   architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)
