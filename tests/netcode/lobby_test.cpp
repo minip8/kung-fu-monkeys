@@ -250,24 +250,55 @@ namespace {
 TEST_CASE("lobby: a regions query lists the lobby's regions", "[lobby][webrtc]") {
   WebRtcTransport::initLogging(WebRtcLogLevel::Error);
   World w;
-  // No server yet: the list is empty, and the close is no error.
-  w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), regionsRequest()));
-  LobbyClient& none = *w.clients.back();
-  REQUIRE(w.runUntil([&] { return none.client->state() == ClientState::Disconnected; }));
-  REQUIRE(none.transport->lobbyRegions().has_value());
-  CHECK(none.transport->lobbyRegions().value_or(std::vector<std::string>{"unset"}).empty());
-  CHECK(none.transport->lastError().empty());
-  CHECK_FALSE(none.transport->lobbyRoom().has_value());
+  const auto query = [&] {
+    w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), regionsRequest()));
+    LobbyClient& c = *w.clients.back();
+    REQUIRE(w.runUntil([&] { return c.client->state() == ClientState::Disconnected; }));
+    CHECK(c.transport->lastError().empty());  // the close after the reply is no error
+    CHECK_FALSE(c.transport->lobbyRoom().has_value());
+    return c.transport->lobbyRegions();
+  };
+  using Regions = std::vector<LobbyRegion>;
+  const Regions unset{LobbyRegion{.name = "unset"}};
 
+  // No server yet: the list is empty.
+  CHECK(query().value_or(unset).empty());
+
+  // A registered server with no room: eu listed and free.
   w.server = std::make_unique<LobbyServer>(w.lobby.url(), kSecret);
   REQUIRE(w.runUntil([&] { return w.server->link->state() == LobbyLinkState::Registered; }));
+  CHECK(query().value_or(unset) == Regions{{.name = "eu", .free = true}});
+
+  // v1.1: every listed region, free only when named in `free`; an item of
+  // `free` that is not listed is ignored, empty items are skipped.
+  w.lobby.answerRegions("asia,eu,,us", "us,eu,mars");
+  CHECK(query().value_or(unset) == Regions{{.name = "asia", .free = false},
+                                           {.name = "eu", .free = true},
+                                           {.name = "us", .free = true}});
+  w.lobby.answerRegions("eu,us", "");
+  CHECK(query().value_or(unset) ==
+        Regions{{.name = "eu", .free = false}, {.name = "us", .free = false}});
+
+  // A v1 lobby sends no `free`: availability unknown, every region assumed free.
+  w.lobby.answerRegions("eu,us", std::nullopt);
+  CHECK(query().value_or(unset) ==
+        Regions{{.name = "eu", .free = true}, {.name = "us", .free = true}});
+}
+
+TEST_CASE("lobby: a busy region stays listed and refuses a create", "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  w.startRoom();  // the fake lobby's only server (eu) now hosts a room
   w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), regionsRequest()));
-  LobbyClient& some = *w.clients.back();
-  REQUIRE(w.runUntil([&] { return some.client->state() == ClientState::Disconnected; }));
-  REQUIRE(some.transport->lobbyRegions().has_value());
-  CHECK(some.transport->lobbyRegions().value_or(std::vector<std::string>{}) ==
-        std::vector<std::string>{"eu"});
-  CHECK(some.transport->lastError().empty());
+  LobbyClient& q = *w.clients.back();
+  REQUIRE(w.runUntil([&] { return q.client->state() == ClientState::Disconnected; }));
+  CHECK(q.transport->lobbyRegions().value_or(std::vector<LobbyRegion>{}) ==
+        std::vector<LobbyRegion>{{.name = "eu", .free = false}});
+
+  // A client may still try the busy region: refused no_server, as in v1.
+  LobbyClient& late = w.create();
+  REQUIRE(w.runUntil([&] { return late.client->state() == ClientState::Disconnected; }));
+  CHECK(late.transport->lastError() == "lobby refused: no_server");
 }
 
 TEST_CASE("lobby: peers leave both ways", "[lobby][webrtc]") {

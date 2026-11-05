@@ -113,14 +113,24 @@ struct WebRtcServerConfig {
 // in `region`, or join the room `code`. buildId and contentHash are sent as
 // 8 lower-case hex digits each and must match the room's server.
 struct LobbyRequest {
-  // Regions: ask which regions can host a room now; the reply fills
-  // lobbyRegions() and the lobby then closes the socket (Disconnected, no error).
+  // Regions: ask for every registered region and which can host a room now;
+  // the reply fills lobbyRegions() and the lobby then closes the socket
+  // (Disconnected, no error).
   enum class Kind : uint8_t { Create = 0, Join, Regions };
   Kind kind{Kind::Create};
   std::string region;  // Create: e.g. "eu"
   std::string code;    // Join: 5 characters, any case
   uint32_t buildId{0};
   uint32_t contentHash{0};
+};
+
+// One region of the lobby's `regions` reply (docs/lobby-protocol.md §2-3, v1.1).
+struct LobbyRegion {
+  std::string name;  // e.g. "eu"
+  // A free server in it at the time of the reply (listed in `free`). Always
+  // true against a v1 lobby, which sends no `free` (availability unknown).
+  bool free{true};
+  friend bool operator==(const LobbyRegion&, const LobbyRegion&) = default;
 };
 
 // The room a lobby client joined (from the lobby's `joined` reply).
@@ -218,8 +228,9 @@ class WebRtcTransport final : public ITransport {
   // and always without a lobby request.
   [[nodiscard]] std::optional<LobbyRoom> lobbyRoom() const;
   // The lobby's answer to a Regions request (docs/lobby-protocol.md §3), once it
-  // arrived: the regions with a free server, possibly none.
-  [[nodiscard]] std::optional<std::vector<std::string>> lobbyRegions() const;
+  // arrived: every registered region in the lobby's order, each with whether
+  // it has a free server; possibly none.
+  [[nodiscard]] std::optional<std::vector<LobbyRegion>> lobbyRegions() const;
 
  private:
   std::unique_ptr<Impl> impl_;

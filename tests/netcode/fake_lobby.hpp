@@ -1,8 +1,8 @@
 // FakeLobby: an in-process stand-in for services/lobby (docs/lobby-protocol.md)
 // on 127.0.0.1, enough of both sides for the engine's lobby tests: one
 // server socket (/server: register with a secret, room, peer, signal relay,
-// peer_gone both ways, capacity) and client sockets (/client: create/join,
-// joined/refused, signaling relay, closed). One room at a time, code
+// peer_gone both ways, capacity) and client sockets (/client: regions (v1.1),
+// create/join, joined/refused, signaling relay, closed). One room at a time, code
 // "ABCDE", or "FGHJK" for the second, and so on. Test code only: it runs on
 // libdatachannel's callback threads under one recursive mutex and uses
 // exceptions freely.
@@ -108,6 +108,13 @@ class FakeLobby {
     const std::string code = room_.value_or("");
     sendServer({{"type", "room_closed"}, {"code", code}});
     room_.reset();
+  }
+  // The next regions replies carry these keys instead of the state's ("eu"
+  // listed once a server registered, free while it has no room); no `free`
+  // answers as a v1 lobby does.
+  void answerRegions(std::string list, std::optional<std::string> free) {
+    const std::scoped_lock lock(mutex_);
+    regionsReply_ = std::pair{std::move(list), std::move(free)};
   }
   // The lobby drops the server's socket (as on a lobby restart).
   void dropServer() {
@@ -253,8 +260,17 @@ class FakeLobby {
       const signaling::FlatObject o =
           signaling::decodeObject(text).value_or(signaling::FlatObject{});
       if (o.get("type") == std::optional<std::string_view>("regions")) {
-        const bool free = serverWs_ && registered_ && !room_;
-        send(ws, {{"type", "regions"}, {"list", free ? "eu" : ""}});
+        const bool listed = serverWs_ && registered_;
+        const bool free = listed && !room_;
+        if (regionsReply_ && !regionsReply_->second) {
+          send(ws, {{"type", "regions"}, {"list", regionsReply_->first}});
+        } else if (regionsReply_) {
+          send(ws, {{"type", "regions"},
+                    {"list", regionsReply_->first},
+                    {"free", regionsReply_->second.value_or("")}});
+        } else {
+          send(ws, {{"type", "regions"}, {"list", listed ? "eu" : ""}, {"free", free ? "eu" : ""}});
+        }
         ws->close();
         return;
       }
@@ -314,6 +330,7 @@ class FakeLobby {
   int peerGoneFromServer_{0};
   int signalsFromServer_{0};
   std::optional<std::string> room_;
+  std::optional<std::pair<std::string, std::optional<std::string>>> regionsReply_;
   uint32_t roomsCreated_{0};
   uint32_t nextPeer_{1};
   std::map<std::string, Client> clients_;

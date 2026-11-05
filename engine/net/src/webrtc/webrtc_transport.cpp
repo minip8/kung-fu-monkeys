@@ -212,6 +212,20 @@ struct Peer {
   bool remoteDescriptionSet{false};
 };
 
+// The non-empty items of a comma-separated list ("eu,us", "", lobby §3).
+std::vector<std::string_view> splitCommas(std::string_view list) {
+  std::vector<std::string_view> items;
+  for (size_t start = 0; start <= list.size();) {
+    const size_t comma = list.find(',', start);
+    const std::string_view item = list.substr(
+        start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
+    if (!item.empty()) items.push_back(item);
+    if (comma == std::string_view::npos) break;
+    start = comma + 1;
+  }
+  return items;
+}
+
 // Upper bound on buffered early candidates (a peer gathers a handful).
 constexpr size_t kMaxEarlyCandidates = 64;
 
@@ -260,7 +274,7 @@ struct WebRtcTransport::Impl {
   LobbyPhase lobbyPhase{LobbyPhase::Off};
   std::optional<LobbyRequest> lobbyRequest;
   std::optional<LobbyRoom> lobbyRoom;
-  std::optional<std::vector<std::string>> lobbyRegions;  // a Regions request's answer
+  std::optional<std::vector<LobbyRegion>> lobbyRegions;  // a Regions request's answer
 
   std::shared_ptr<CallbackQueue> queue = std::make_shared<CallbackQueue>();
 #ifndef __EMSCRIPTEN__
@@ -531,18 +545,16 @@ struct WebRtcTransport::Impl {
     const signaling::FlatObject o = signaling::decodeObject(text).value_or(signaling::FlatObject{});
     const std::string_view type = o.get("type").value_or("");
     if (type == "regions" && lobbyRequest && lobbyRequest->kind == LobbyRequest::Kind::Regions) {
-      // "eu,us" or "", comma-separated (§3). The lobby closes the socket next;
-      // dropping now reports Disconnected at once, with no error.
-      std::vector<std::string> regions;
-      const std::string_view list = o.get("list").value_or("");
-      for (size_t start = 0; start <= list.size();) {
-        const size_t comma = list.find(',', start);
-        const std::string_view item = list.substr(
-            start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
-        if (!item.empty()) regions.emplace_back(item);
-        if (comma == std::string_view::npos) break;
-        start = comma + 1;
-      }
+      // `list` every region, `free` the ones with a free server, both "eu,us"
+      // or "" (§3, v1.1). No `free` (a v1 lobby): every listed region counts as
+      // free. The lobby closes the socket next; dropping now reports
+      // Disconnected at once, with no error.
+      const std::vector<std::string_view> free = splitCommas(o.get("free").value_or(""));
+      const bool v1 = !o.get("free").has_value();
+      std::vector<LobbyRegion> regions;
+      for (const std::string_view name : splitCommas(o.get("list").value_or("")))
+        regions.push_back(LobbyRegion{.name = std::string(name),
+                                      .free = v1 || std::ranges::find(free, name) != free.end()});
       lobbyRegions = std::move(regions);
       dropPeer(peer.id.value, nowNs, &events);
       return;
@@ -1029,7 +1041,7 @@ std::optional<LobbyRoom> WebRtcTransport::lobbyRoom() const {
   return impl_->lobbyRoom;
 }
 
-std::optional<std::vector<std::string>> WebRtcTransport::lobbyRegions() const {
+std::optional<std::vector<LobbyRegion>> WebRtcTransport::lobbyRegions() const {
   return impl_->lobbyRegions;
 }
 
