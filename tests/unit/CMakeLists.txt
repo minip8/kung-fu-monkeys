@@ -133,8 +133,9 @@ endif()
 if(NOT KFM_HEADLESS)
   kfm_add_test_exe(kfm_platform_tests
     platform/input_sampler_test.cpp
+    platform/platform_services_test.cpp
   )
-  target_link_libraries(kfm_platform_tests PRIVATE kfm::platform_input)
+  target_link_libraries(kfm_platform_tests PRIVATE kfm::platform_input kfm::platform_services)
 endif()
 
 if(NOT KFM_HEADLESS)
