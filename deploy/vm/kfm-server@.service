@@ -7,9 +7,9 @@
 # wss:// URL on a server-only VM. KFM_STUN gives the server a server-reflexive
 # candidate: on Compute Engine the interface holds only the internal address
 # (the external one is 1:1 NAT), so without it browsers are offered an
-# unreachable 10.x host candidate. KFM_SERVER_EXTRA_ARGS is unquoted on
-# purpose (split on whitespace, nothing when empty): the ICE UDP port range
-# flag goes there once kfm_server has one (deploy/README.md).
+# unreachable 10.x host candidate. KFM_ICE_PORTS is the UDP range the
+# firewall opens (deploy/README.md). KFM_SERVER_EXTRA_ARGS is unquoted on
+# purpose (split on whitespace, nothing when empty).
 [Unit]
 Description=Kung Fu Monkeys game server %i
 Documentation=https://github.com/minip8/kung-fu-monkeys/blob/main/deploy/README.md
@@ -25,7 +25,7 @@ ExecStart=/usr/bin/docker run --rm --name kfm-server-%i --network host \
     ${KFM_IMAGE_REPO}/kfm-server:${KFM_IMAGE_TAG} \
     --lobby ${KFM_LOBBY_URL} --lobby-secret ${KFM_LOBBY_SECRET} \
     --region ${KFM_REGION} --name ${KFM_NAME_PREFIX}:%i --bots ${KFM_BOTS} \
-    --stun ${KFM_STUN} --stats-every 60 $KFM_SERVER_EXTRA_ARGS
+    --stun ${KFM_STUN} --ice-ports ${KFM_ICE_PORTS} --stats-every 60 $KFM_SERVER_EXTRA_ARGS
 ExecStop=/usr/bin/docker stop -t 10 kfm-server-%i
 Restart=always
 RestartSec=2

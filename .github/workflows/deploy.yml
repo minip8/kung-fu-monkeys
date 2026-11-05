@@ -2,14 +2,15 @@ name: Deploy
 
 # The M6a release (architecture §13.5, v0.37; runbook in deploy/README.md):
 # on a v* tag, the server and lobby images go to GHCR and the browser client
-# to Cloudflare Pages. A manual run from a branch pushes images tagged
-# sha-<short> (no `latest`) and a Pages preview of that branch.
+# to GitHub Pages (the repository's Pages site, served at
+# https://<owner>.github.io/<repo>/; set Pages to "GitHub Actions" as its
+# source, once). A manual run from a branch pushes images tagged sha-<short>
+# (no `latest`) and publishes that branch's client to the same Pages site
+# (Pages has one site per repository, no previews).
 #
 # Repository settings it reads:
-#   variables  CF_PAGES_PROJECT  the Cloudflare Pages project name
-#              KFM_LOBBY_URL     the lobby's wss:// URL, written into config.js
+#   variables  KFM_LOBBY_URL     the lobby's wss:// URL, written into config.js
 #              KFM_SENTRY_DSN    the browser's Sentry DSN (may be unset: Sentry off)
-#   secrets    CLOUDFLARE_API_TOKEN (Pages: Edit), CLOUDFLARE_ACCOUNT_ID
 
 on:
   push:
@@ -67,12 +68,16 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
   web:
-    name: browser client to Cloudflare Pages
+    name: browser client to GitHub Pages
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
-      deployments: write
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
@@ -88,8 +93,11 @@ jobs:
         # go under assets/<content hash>/ and only that directory is cached as
         # immutable; the pages that reference them are revalidated every load.
         # Emscripten's loader fetches the .wasm next to the .js. The page is
-        # served at / (room links are https://<host>/?room=CODE) and at
-        # /kfm_client.html.
+        # served at the site root (room links are https://<site>/?room=CODE)
+        # and at kfm_client.html; every reference is relative, so the site
+        # works under a repository path. GitHub Pages sets its own cache
+        # headers (a short max-age) and serves .wasm as application/wasm;
+        # the hashed directory keeps a new release from loading an old .wasm.
         env:
           KFM_LOBBY_URL: ${{ vars.KFM_LOBBY_URL }}
           KFM_SENTRY_DSN: ${{ vars.KFM_SENTRY_DSN }}
@@ -110,30 +118,13 @@ jobs:
           fi
           printf 'window.KFM_CONFIG = { lobbyUrl: "%s", sentryDsn: "%s" };\n' \
             "$KFM_LOBBY_URL" "$KFM_SENTRY_DSN" > site/config.js
-          cat > site/_headers << 'EOF'
-          /assets/*
-            Cache-Control: public, max-age=31536000, immutable
-          /*.wasm
-            Content-Type: application/wasm
-          /
-            Cache-Control: no-cache
-          /*.html
-            Cache-Control: no-cache
-          /kfm_client
-            Cache-Control: no-cache
-          /config.js
-            Cache-Control: no-cache
-          EOF
+          touch site/.nojekyll
           find site -type f | sort
           cat site/config.js
-      - name: Publish to Cloudflare Pages
-        uses: cloudflare/wrangler-action@v3
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: >-
-            pages deploy site
-            --project-name=${{ vars.CF_PAGES_PROJECT }}
-            --branch=${{ github.ref_type == 'tag' && 'main' || github.ref_name }}
-            --commit-hash=${{ github.sha }}
-          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          path: site
+      - name: Publish to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

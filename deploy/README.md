@@ -5,7 +5,7 @@ format is `docs/lobby-protocol.md`. Three parts:
 
 | Part | What | Where |
 |---|---|---|
-| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js`, `_headers` | Cloudflare Pages, published by `.github/workflows/deploy.yml` on a `v*` tag |
+| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js` | GitHub Pages (`https://<owner>.github.io/<repo>/`), published by `.github/workflows/deploy.yml` on a `v*` tag |
 | Lobby | `kfm-lobby` (Rust) behind Caddy, the only public TCP endpoint | the EU VM, `ghcr.io/<owner>/kfm-lobby` |
 | Game servers | a pool of `kfm_server` processes, one match each, dialling the lobby | one VM per region, `ghcr.io/<owner>/kfm-server` |
 
@@ -21,16 +21,18 @@ Files:
 
 ## Day one
 
-1. **Names.** Pick a domain with two names: the page (`play.example.com`, Cloudflare Pages)
-   and the lobby (`lobby.example.com`, an A record to the EU VM).
-2. **Cloudflare Pages.** Create a direct-upload project with `main` as its production branch
-   (`npx wrangler pages project create kfm --production-branch main`) and attach the page's
-   custom domain in the dashboard. Create an API token with *Cloudflare Pages: Edit*. Then, in
-   the GitHub repository:
+1. **Names.** The page needs no domain: it is the repository's GitHub Pages site,
+   `https://<owner>.github.io/<repo>/` (free for a public repository). The lobby needs a
+   hostname that resolves to the EU VM and that Let's Encrypt will certify (the page is
+   `https://`, so the browser only accepts `wss://`): either a name on a domain you own
+   (`lobby.example.com`, an A record to the VM's IP) or a free dynamic-DNS name such as
+   `kfm.duckdns.org` (DuckDNS is on the public suffix list, so Let's Encrypt's rate limits are
+   per name, not shared with every other DuckDNS user). `sslip.io`-style names (the IP in the
+   name) work with Caddy too but share one rate limit with everyone. Pick the lobby name now:
+   it goes into `KFM_LOBBY_DOMAIN`, `KFM_LOBBY_URL` and the DNS record.
+2. **GitHub Pages and the repository settings.** In the repository's Settings → Pages set
+   *Source* to *GitHub Actions* (once; `deploy.yml` then owns the site). Then:
    ```sh
-   gh secret set CLOUDFLARE_API_TOKEN
-   gh secret set CLOUDFLARE_ACCOUNT_ID
-   gh variable set CF_PAGES_PROJECT --body kfm
    gh variable set KFM_LOBBY_URL --body wss://lobby.example.com
    gh variable set KFM_SENTRY_DSN --body '<browser DSN>'   # optional
    ```
@@ -60,19 +62,17 @@ Files:
    make it *DNS only* (grey cloud): Caddy answers the ACME HTTP challenge itself. Caddy
    retries until the name resolves.
 8. **Check.** `curl https://lobby.example.com/healthz` →
-   `{"servers":4,"rooms":0,"regions":["eu"]}`. Then open `https://play.example.com/`, create a
-   room and join it from a second browser with `?room=CODE`.
+   `{"servers":4,"rooms":0,"regions":["eu"]}`. Then open
+   `https://<owner>.github.io/<repo>/`, create a room and join it from a second browser with
+   `?room=CODE`.
 
 ## The ICE port range
 
-The firewall opens UDP 40000-40099 to the servers. `WebRtcTransport` already takes a port
-range (`WebRtcServerConfig::icePortBegin/End`), but `kfm_server` has no flag for it yet, so
-until it does the servers use ephemeral ports and browsers cannot reach them through that rule.
-Either recreate the rule with Linux's ephemeral range
-(`create_vm.sh … --ice-ports 32768-60999`, or `gcloud compute firewall-rules update
-kfm-allow-ice --rules udp:32768-60999`), or, once the flag lands, set it in `kfm.env`:
-`KFM_SERVER_EXTRA_ARGS=<flag> 40000-40099`. Every process gets the same range and libjuice
-binds a free port inside it per peer connection, so 100 ports cover ten processes of ten peers.
+The firewall opens UDP 40000-40099 to the servers and the unit passes the same range to every
+process as `--ice-ports ${KFM_ICE_PORTS}` (`kfm.env`, default `40000-40099`; keep the two in
+step, `create_vm.sh --ice-ports A-B` sets the rule). Every process gets the same range and
+libjuice binds a free port inside it per peer connection, so 100 ports cover ten processes of
+ten peers.
 
 On Compute Engine the VM's interface holds only its internal address (the external one is
 1:1 NAT), so the servers need `KFM_STUN` (default `stun:stun.l.google.com:19302`) to offer
@@ -130,5 +130,5 @@ creation and the firewall differ, and the lobby's A record moves.
 Per region on GCP, without credits, at list prices (check the current ones): an `e2-small`
 running all month (about 13 USD), its in-use static external IPv4 (about 3.6 USD), a 20 GB
 balanced disk (about 2 USD), and internet egress at roughly 0.08-0.12 USD per GB, which is
-about 3-4 US cents per match-hour. Cloudflare Pages and the Sentry free tier cost nothing. No
+about 3-4 US cents per match-hour. GitHub Pages and the Sentry free tier cost nothing. No
 spot or preemptible VMs: they are stopped mid-match.
