@@ -216,13 +216,33 @@ TEST_CASE("lobby menu: Create room cycles the region and activates", "[client][r
   CHECK(m.apply(client::MenuAction::Right));  // wraps
   CHECK(m.rowValue(m.focusedRow()) == "eu");
   CHECK(m.apply(client::MenuAction::Left));  // wraps back
-  CHECK(m.settings().region == 2);
+  CHECK(m.settings().region == "asia");
 
   // Enter on the row: a CreateRoom command, once.
   CHECK(m.activate());
   CHECK(m.takeCommand() ==
         LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = "asia", .code = ""});
   CHECK_FALSE(m.takeCommand().has_value());
+  // The lobby's own list replaces the default one; the current region is
+  // kept when it is listed, else the first; an empty list changes nothing.
+  const std::vector<std::string> au = {"au", "asia"};
+  m.setRegions(au);
+  CHECK(m.rowValue(m.rows()[row]) == "asia");
+  const std::vector<std::string> onlyAu = {"au"};
+  m.setRegions(onlyAu);
+  CHECK(m.rowValue(m.rows()[row]) == "au");
+  m.setRegions(std::vector<std::string>{});
+  CHECK(m.rowValue(m.rows()[row]) == "au");
+  CHECK_FALSE(m.apply(client::MenuAction::Right));  // a one-entry list: nothing changes
+  CHECK(m.rowValue(m.rows()[row]) == "au");
+  // A region outside the list (--region xx) steps to the first.
+  m.settings().region = "eu-2";
+  CHECK(m.rowValue(m.rows()[row]) == "eu-2");
+  CHECK(m.apply(client::MenuAction::Right));
+  CHECK(m.rowValue(m.rows()[row]) == "au");
+  m.activate();
+  CHECK(m.takeCommand() ==
+        LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = "au", .code = ""});
   // Another row: Enter stays the match's Start.
   m.setFocus(0);
   CHECK_FALSE(m.activate());
@@ -261,28 +281,27 @@ TEST_CASE("the region persists with the settings", "[client][room][settings]") {
   client::LobbySettings ls;
   std::string error;
   REQUIRE(client::lobbySettingsFrom(o, db, ls, error));
-  CHECK(ls.region == 2);
-  ls.region = 1;
+  CHECK(ls.region == "asia");
+  ls.region = "us";
   client::storeLobbySettings(ls, db, o);
   CHECK(o.region == "us");
   CHECK(client::settingsText(o).find("region=us\n") != std::string::npos);
 
-  // A server region outside the panel's list (--region eu-2) shows as the
-  // first and survives other changes; the panel picking one replaces it.
+  // Any label round-trips (the lobby decides which regions exist).
   o.region = "eu-2";
   REQUIRE(client::lobbySettingsFrom(o, db, ls, error));
-  CHECK(ls.region == 0);
+  CHECK(ls.region == "eu-2");
   ls.volume = 10;
   client::storeLobbySettings(ls, db, o);
   CHECK(o.region == "eu-2");
-  ls.region = 2;
+  ls.region = "au";
   client::storeLobbySettings(ls, db, o);
-  CHECK(o.region == "asia");
+  CHECK(o.region == "au");
 
   warnings.clear();
   client::applySettingsText("region=Mars!\n", db, o, warnings);
   CHECK(warnings.size() == 1);
-  CHECK(o.region == "asia");
+  CHECK(o.region == "au");
 }
 
 // --- status wording -----------------------------------------------------------------

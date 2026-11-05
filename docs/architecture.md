@@ -4118,8 +4118,9 @@ transport (room, token, error) attached with `NetSession::attachLobby()` carry t
 token is applied before the first `pump()` that sees the room, and a refusal never sends a
 Hello; the loopback session test fakes a lobby-mode transport that withholds Connected until
 `joined`. The lobby settings panel gains an Online section when a lobby URL is configured
-(Create room with the region cycled over eu/us/asia and activated by Enter, a pad's Start or
-a button; a Join field as an ImGui upper-case text input over the room alphabet); the region is
+(Create room with the region cycled over the regions the lobby lists, asked through a
+short-lived transport in `LobbyRequest::Kind::Regions` on every visit to the local lobby,
+`eu`/`us`/`asia` until it answers, and activated by Enter, a pad's Start or a button; a Join field as an ImGui upper-case text input over the room alphabet); the region is
 saved with the settings. In a match the HUD shows "Room ABCDE (eu)" and the invite; before it,
 the status window shows the join in progress, then the code with a Copy button, and every
 refusal or close in plain words ("Room ABCDE not found", "Room ABCDE is full", "No server

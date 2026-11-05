@@ -134,7 +134,11 @@ struct App {
   client::NetPhase lastNetPhase = client::NetPhase::Connecting;
   bool connectRequested = false;                   // the lobby's Start, online: connect next frame
   std::optional<client::LobbyTarget> pendingRoom;  // the Online section's Create / Join
-  bool roomAnnounced = false;                      // the session's room was printed
+#ifdef KFM_CLIENT_WEBRTC
+  std::unique_ptr<net::WebRtcTransport> regionsQuery;  // the lobby's region list, in flight
+#endif
+  bool regionsQueried = false;  // asked once per visit to the local lobby
+  bool roomAnnounced = false;   // the session's room was printed
   std::unique_ptr<platform::IPlatformServices> services;
   std::string pageUrl;  // the browser's window.location.href; empty natively
   client::GamepadSet pads;
@@ -431,8 +435,55 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
   std::fflush(stdout);
 }
 
+// The Online section's region list: asked of the lobby once per visit to
+// the local lobby through a short-lived transport in Regions mode. The panel
+// offers kRegions until the lobby answers, and keeps them if it cannot be
+// reached (the create is then refused with the real reason).
+void pollRegions(App& app, std::uint64_t now) {
+#ifdef KFM_CLIENT_WEBRTC
+  if (!app.regionsQueried) {
+    app.regionsQueried = true;
+    const std::string url = app.services->lobbyUrl();
+    if (url.empty()) return;
+    net::WebRtcClientConfig wc;
+    wc.signalingUrl = url;
+    wc.stunServer = app.options.stun;
+    wc.lobby = net::LobbyRequest{.kind = net::LobbyRequest::Kind::Regions,
+                                 .region = {},
+                                 .code = {},
+                                 .buildId = client::netSessionConfig(app.options, false).buildId,
+                                 .contentHash = app.content.hash};
+    if (auto t = net::WebRtcTransport::createClient(wc)) app.regionsQuery = std::move(*t);
+    return;
+  }
+  if (!app.regionsQuery) return;
+  net::ConnectionEvents events;
+  app.regionsQuery->poll(now, events);
+  if (const std::optional<std::vector<std::string>> regions = app.regionsQuery->lobbyRegions()) {
+    app.lobby.setRegions(*regions);
+    std::string list;
+    for (const std::string& r : *regions)
+      list += (list.empty() ? "" : ",") + r;
+    std::printf("kfm_client: lobby regions: %s\n", list.empty() ? "(none free)" : list.c_str());
+    app.regionsQuery.reset();
+    return;
+  }
+  for (std::size_t i = 0; i < events.count; ++i) {
+    if (events.items[i].kind != net::ConnectionEventKind::Disconnected) continue;
+    std::printf("kfm_client: lobby regions unavailable: %s\n",
+                app.regionsQuery->lastError().c_str());
+    app.regionsQuery.reset();
+    return;
+  }
+#else
+  (void)app;
+  (void)now;
+#endif
+}
+
 // Escape online: disconnect and hand the devices back to the local lobby.
 void leaveNetwork(App& app) {
+  app.regionsQueried = false;  // the next lobby visit asks the lobby again
   app.net->disconnect();
   app.session->sampler() = app.net->lobbySampler();
   app.net.reset();
@@ -565,6 +616,7 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
 
   platform::debugUiNewFrame(w, h, dt, density);
   if (s.phase() == SessionPhase::Lobby) {
+    pollRegions(app, now);
     if (!app.options.networkMode()) syncLobbySettings(app);
     const client::LobbyOutcome lobby = client::drawLobby(s, app.lobby, onlineLabel(app.options));
     if (std::optional<client::LobbyCommand> cmd = app.lobby.takeCommand()) {

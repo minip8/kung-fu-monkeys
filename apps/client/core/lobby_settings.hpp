@@ -44,7 +44,7 @@ struct LobbySettings {
   ai::ReferenceTier botTier{kDefaultBotTier};
   uint8_t volume{80};  // percent
   bool mute{false};
-  uint8_t region{0};  // M6a: index into kRegions (the Online section)
+  std::string region{"eu"};  // M6a: the Online section's region label (the lobby lists them)
   constexpr bool operator==(const LobbySettings&) const = default;
 };
 

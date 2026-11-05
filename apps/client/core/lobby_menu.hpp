@@ -32,6 +32,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace kfm::client {
 
@@ -116,6 +117,11 @@ class LobbyMenu {
   // Shows the Online section (a lobby URL is configured) or hides it.
   void setLobbyAvailable(bool available);
   [[nodiscard]] bool lobbyAvailable() const { return lobbyAvailable_; }
+  // The regions Create room cycles through: kRegions until the lobby answers
+  // a regions query (main.cpp), then what it listed. An empty list is
+  // ignored; a current region outside the new list becomes its first.
+  void setRegions(std::span<const std::string> regions);
+  [[nodiscard]] std::span<const std::string> regions() const { return regions_; }
 
   [[nodiscard]] std::span<const LobbyRow> rows() const { return {rows_.data(), rowCount_}; }
   [[nodiscard]] std::size_t focus() const { return focus_; }
@@ -154,6 +160,7 @@ class LobbyMenu {
 
   const sim::ContentDB* content_{nullptr};
   bool lobbyAvailable_{false};
+  std::vector<std::string> regions_;
   std::optional<LobbyCommand> command_;
   std::array<LobbyRow, kMaxRows> rows_{};
   std::size_t rowCount_{0};

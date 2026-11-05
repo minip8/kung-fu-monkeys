@@ -145,8 +145,17 @@ bool eventDeviceBound(const platform::InputSampler& sampler, const platform::Inp
 
 // --- LobbyMenu -------------------------------------------------------------------
 
-LobbyMenu::LobbyMenu() {
+LobbyMenu::LobbyMenu() : regions_(kRegions.begin(), kRegions.end()) {
   setContent(sim::defaultContent());
+}
+
+void LobbyMenu::setRegions(std::span<const std::string> regions) {
+  if (regions.empty()) return;
+  regions_.assign(regions.begin(), regions.end());
+  bool present = false;
+  for (const std::string& r : regions_)
+    present = present || r == settings_.region;
+  if (!present) settings_.region = regions_.front();
 }
 
 const sim::ContentDB& LobbyMenu::content() const {
@@ -182,7 +191,6 @@ void LobbyMenu::rebuildRows() {
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
   rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
   if (lobbyAvailable_) rows_[rowCount_++] = LobbyRow{LobbyRowKind::CreateRoom};
-  if (settings_.region >= kRegions.size()) settings_.region = 0;
   if (settings_.arena >= content.arenaCount) settings_.arena = 0;
   if (settings_.mode >= content.modeCount) settings_.mode = 0;
   if (settings_.loadout >= content.loadoutCount) settings_.loadout = 0;
@@ -273,9 +281,22 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     case LobbyRowKind::Mute:
       settings_.mute = !settings_.mute;
       break;
-    case LobbyRowKind::CreateRoom:
-      settings_.region = cycle(settings_.region, static_cast<uint8_t>(kRegions.size()));
+    case LobbyRowKind::CreateRoom: {
+      // By name: a region outside the list (--region xx) steps to the first.
+      std::size_t i = regions_.size();
+      for (std::size_t k = 0; k < regions_.size(); ++k) {
+        if (regions_[k] == settings_.region) i = k;
+      }
+      if (i == regions_.size()) {
+        i = 0;
+      } else if (direction > 0) {
+        i = (i + 1) % regions_.size();
+      } else {
+        i = (i + regions_.size() - 1) % regions_.size();
+      }
+      settings_.region = regions_[i];
       break;
+    }
   }
   return !(settings_ == before);
 }
@@ -286,9 +307,8 @@ bool LobbyMenu::activate() {
 
 bool LobbyMenu::activate(std::size_t row) {
   if (row >= rowCount_ || rows_[row].kind != LobbyRowKind::CreateRoom) return false;
-  const uint8_t region = settings_.region < kRegions.size() ? settings_.region : 0;
   command_ =
-      LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = kRegions[region], .code = {}};
+      LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = settings_.region, .code = {}};
   return true;
 }
 
@@ -354,10 +374,8 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return std::to_string(settings_.volume) + "%";
     case LobbyRowKind::Mute:
       return settings_.mute ? "muted" : "on";
-    case LobbyRowKind::CreateRoom: {
-      const uint8_t region = settings_.region < kRegions.size() ? settings_.region : 0;
-      return kRegions[region];
-    }
+    case LobbyRowKind::CreateRoom:
+      return settings_.region;
   }
   return {};
 }

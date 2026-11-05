@@ -260,6 +260,7 @@ struct WebRtcTransport::Impl {
   LobbyPhase lobbyPhase{LobbyPhase::Off};
   std::optional<LobbyRequest> lobbyRequest;
   std::optional<LobbyRoom> lobbyRoom;
+  std::optional<std::vector<std::string>> lobbyRegions;  // a Regions request's answer
 
   std::shared_ptr<CallbackQueue> queue = std::make_shared<CallbackQueue>();
 #ifndef __EMSCRIPTEN__
@@ -488,7 +489,10 @@ struct WebRtcTransport::Impl {
     const std::string build = std::format("{:08x}", req.buildId);
     const std::string content = std::format("{:08x}", req.contentHash);
     std::string text;
-    if (req.kind == LobbyRequest::Kind::Create) {
+    if (req.kind == LobbyRequest::Kind::Regions) {
+      const std::array<signaling::Field, 1> f = {signaling::Field{"type", "regions"}};
+      text = signaling::encodeObject(f);
+    } else if (req.kind == LobbyRequest::Kind::Create) {
       const std::array<signaling::Field, 4> f = {
           signaling::Field{"type", "create"}, signaling::Field{"region", req.region},
           signaling::Field{"build", build}, signaling::Field{"content", content}};
@@ -526,6 +530,23 @@ struct WebRtcTransport::Impl {
     // Not a flat object: no type, so an unexpected reply.
     const signaling::FlatObject o = signaling::decodeObject(text).value_or(signaling::FlatObject{});
     const std::string_view type = o.get("type").value_or("");
+    if (type == "regions" && lobbyRequest && lobbyRequest->kind == LobbyRequest::Kind::Regions) {
+      // "eu,us" or "", comma-separated (§3). The lobby closes the socket next;
+      // dropping now reports Disconnected at once, with no error.
+      std::vector<std::string> regions;
+      const std::string_view list = o.get("list").value_or("");
+      for (size_t start = 0; start <= list.size();) {
+        const size_t comma = list.find(',', start);
+        const std::string_view item = list.substr(
+            start, comma == std::string_view::npos ? std::string_view::npos : comma - start);
+        if (!item.empty()) regions.emplace_back(item);
+        if (comma == std::string_view::npos) break;
+        start = comma + 1;
+      }
+      lobbyRegions = std::move(regions);
+      dropPeer(peer.id.value, nowNs, &events);
+      return;
+    }
     if (type == "joined") {
       const std::string_view tok = o.get("token").value_or("");
       const std::string_view code = o.get("code").value_or("");
@@ -598,7 +619,7 @@ struct WebRtcTransport::Impl {
         // handshake cannot finish. A lobby socket is the room membership
         // (docs/lobby-protocol.md §3): its close always ends the session.
         if (lobbyPhase != LobbyPhase::Off) {
-          if (lastError.empty() || !lastError.starts_with("lobby"))
+          if (!lobbyRegions && (lastError.empty() || !lastError.starts_with("lobby")))
             lastError = "lobby connection closed";
           dropPeer(e.peer.value, nowNs, &events);
         } else if (!peer.connected) {
@@ -1006,6 +1027,10 @@ std::vector<PeerId> WebRtcTransport::takeDroppedExternalPeers() {
 
 std::optional<LobbyRoom> WebRtcTransport::lobbyRoom() const {
   return impl_->lobbyRoom;
+}
+
+std::optional<std::vector<std::string>> WebRtcTransport::lobbyRegions() const {
+  return impl_->lobbyRegions;
 }
 
 }  // namespace kfm::net

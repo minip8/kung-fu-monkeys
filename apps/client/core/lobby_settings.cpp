@@ -29,15 +29,6 @@ namespace {
   return true;
 }
 
-// The panel's index of a region; one outside the list (--region xx) shows as
-// the first, while --create at startup still uses the flag's.
-[[nodiscard]] uint8_t regionIndex(std::string_view region) {
-  for (std::size_t i = 0; i < kRegions.size(); ++i) {
-    if (region == kRegions[i]) return static_cast<uint8_t>(i);
-  }
-  return 0;
-}
-
 }  // namespace
 
 bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& content,
@@ -62,7 +53,7 @@ bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& conte
   out.botTier = options.botDifficulty;
   out.volume = options.volume;
   out.mute = options.mute;
-  out.region = regionIndex(options.region);
+  out.region = options.region;
   return true;
 }
 
@@ -76,10 +67,7 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
   options.botDifficulty = settings.botTier;
   options.volume = settings.volume;
   options.mute = settings.mute;
-  // A region outside the list (--region xx) stays until the panel picks one.
-  if (settings.region < kRegions.size() && settings.region != regionIndex(options.region)) {
-    options.region = kRegions[settings.region];
-  }
+  options.region = settings.region;
 }
 
 std::string settingsText(const ClientOptions& options) {

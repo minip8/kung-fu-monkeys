@@ -249,6 +249,16 @@ class FakeLobby {
         return;
       }
     }
+    {
+      const signaling::FlatObject o =
+          signaling::decodeObject(text).value_or(signaling::FlatObject{});
+      if (o.get("type") == std::optional<std::string_view>("regions")) {
+        const bool free = serverWs_ && registered_ && !room_;
+        send(ws, {{"type", "regions"}, {"list", free ? "eu" : ""}});
+        ws->close();
+        return;
+      }
+    }
     if (const std::optional<std::string_view> reason = admit(text)) {
       send(ws, {{"type", "refused"}, {"reason", *reason}});
       ws->close();
