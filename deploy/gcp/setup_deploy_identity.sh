@@ -70,9 +70,31 @@ if ! "${gc[@]}" iam service-accounts describe "$sa" > /dev/null 2>&1; then
   "${gc[@]}" iam service-accounts create "$sa_name" \
     --display-name "Kung Fu Monkeys deploy (GitHub Actions)"
 fi
+# IAM is eventually consistent: a policy binding right after the creation
+# can fail with "does not exist" for up to a minute. Retry each binding.
+bind_role() {
+  local attempt err
+  err="$(mktemp)"
+  for attempt in $(seq 1 12); do
+    if "${gc[@]}" projects add-iam-policy-binding "$project" \
+      --member "serviceAccount:$sa" --role "$1" --condition None > /dev/null 2> "$err"; then
+      rm -f "$err"
+      return 0
+    fi
+    if ! grep -q "does not exist" "$err"; then
+      cat "$err" >&2
+      rm -f "$err"
+      return 1
+    fi
+    echo "   ($sa not visible to IAM yet; retrying in 5 s)"
+    sleep 5
+  done
+  rm -f "$err"
+  echo "error: $sa still not visible to IAM after a minute" >&2
+  return 1
+}
 for role in roles/compute.osAdminLogin roles/iap.tunnelResourceAccessor roles/compute.viewer; do
-  "${gc[@]}" projects add-iam-policy-binding "$project" \
-    --member "serviceAccount:$sa" --role "$role" --condition None > /dev/null
+  bind_role "$role"
   echo "   $role"
 done
 
