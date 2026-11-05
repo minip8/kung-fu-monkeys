@@ -1,6 +1,8 @@
 #include "menus.hpp"
 
 #include "kfm/net/messages.hpp"
+#include "match_session.hpp"
+#include "net_session.hpp"
 
 #include <algorithm>
 #include <array>
@@ -214,6 +216,82 @@ void ButtonMenu::apply(MenuAction action) {
     case MenuAction::None:
       break;
   }
+}
+
+// --- PauseMenu --------------------------------------------------------------------------
+
+namespace {
+constexpr std::array<PauseItem, 3> kLocalPause{PauseItem::Resume, PauseItem::BackToLobby,
+                                               PauseItem::MainMenu};
+constexpr std::array<PauseItem, 2> kOnlinePause{PauseItem::Resume, PauseItem::LeaveRoom};
+}  // namespace
+
+void PauseMenu::open(bool online) {
+  open_ = true;
+  online_ = online;
+  buttons_.setCount(items().size());
+  buttons_.setFocus(0);
+}
+
+std::span<const PauseItem> PauseMenu::items() const {
+  if (online_) return kOnlinePause;
+  return kLocalPause;
+}
+
+std::optional<PauseItem> PauseMenu::press(const platform::InputEvent& event) const {
+  if (!open_) return std::nullopt;
+  if (event.kind == InputEventKind::KeyDown && event.key == Key::Escape) return PauseItem::Resume;
+  if (event.kind == InputEventKind::PadButtonDown &&
+      (event.button == PadButton::East || event.button == PadButton::Back ||
+       event.button == PadButton::Start)) {
+    return PauseItem::Resume;
+  }
+  if (isMenuActivate(event)) return focusedItem();
+  return std::nullopt;
+}
+
+const char* PauseMenu::label(PauseItem item) {
+  switch (item) {
+    case PauseItem::Resume:
+      return "Resume";
+    case PauseItem::BackToLobby:
+      return "Back to lobby";
+    case PauseItem::MainMenu:
+      return "Main menu";
+    case PauseItem::LeaveRoom:
+      return "Leave room";
+  }
+  return "";
+}
+
+bool isPauseEvent(const platform::InputEvent& event, bool deviceBound) {
+  if (event.kind == InputEventKind::KeyDown) return event.key == Key::Escape;
+  return deviceBound && event.kind == InputEventKind::PadButtonDown &&
+         event.button == PadButton::Start;
+}
+
+void openPauseMenu(PauseMenu& menu, MatchSession& session) {
+  menu.open(false);
+  session.setPaused(true);
+}
+
+void closePauseMenu(PauseMenu& menu, MatchSession& session) {
+  menu.close();
+  // Resumed inside a frame, before its advance(): what is pending or held
+  // now must not fire in the first tick.
+  session.sampler().endTick();
+  session.sampler().consumeAllButtons();
+  session.setPaused(false);
+}
+
+void openPauseMenu(PauseMenu& menu, NetSession& session) {
+  menu.open(true);
+  session.setInputSuspended(true);
+}
+
+void closePauseMenu(PauseMenu& menu, NetSession& session) {
+  menu.close();
+  session.setInputSuspended(false);
 }
 
 }  // namespace kfm::client

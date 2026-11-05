@@ -135,4 +135,10 @@ struct MatchOverView {
 // Returns the index of the button clicked.
 [[nodiscard]] std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& menu);
 
+// v0.46: the pause menu over a running match, the match dimmed behind it:
+// its buttons in a column (`menu` holds the focus) and a line saying what
+// the pause means (locally the match waits; online it goes on). Returns the
+// item clicked.
+[[nodiscard]] std::optional<PauseItem> drawPauseMenu(PauseMenu& menu);
+
 }  // namespace kfm::client

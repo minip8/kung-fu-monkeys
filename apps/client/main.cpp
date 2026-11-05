@@ -23,6 +23,8 @@
 // --players N), else one per device bound in the local lobby when Play
 // online connects later; Escape disconnects and returns to the menu. The
 // session runs over a WebRtcTransport, natively and in the browser alike.
+// v0.46: Escape in a running online match opens the pause menu (Resume,
+// Leave room) over it; only Leave disconnects.
 //
 // Rooms (M6a, architecture §13.5): --room CODE / --create join or create a
 // room through the lobby (--lobby, else the build's KFM_LOBBY_URL; in the
@@ -82,11 +84,22 @@
 // final scoreboard, Play again / Back to lobby locally, the host's Play
 // again and Leave online), rounds modes a scoreboard between rounds.
 //
-// Keys outside the game bindings: F1 debug overlay, P pause, O single step,
-// Escape back (a match to its lobby, the lobby or an online screen to the
-// menu, the menu quits natively), - / = bot count in the lobby, Enter / pad
-// Start starts the match (and picks the focused match-over button). Pause,
-// step and the bot keys do nothing online.
+// Keys outside the game bindings: F1 debug overlay, P pause, O single step
+// (developer keys, no menu), Escape back (the lobby or an online screen to
+// the menu, a local match-over screen to the lobby, the menu quits
+// natively), - / = bot count in the lobby, Enter / pad Start starts the
+// match (and picks the focused match-over button). Pause, step and the bot
+// keys do nothing online.
+//
+// The pause menu (v0.46, core/menus.hpp PauseMenu): Escape or a bound pad's
+// Start over a running match opens it. Locally it pauses the match (Resume,
+// Back to lobby, Main menu); online the match runs on and the local slots
+// send idle input (Resume, Leave room). While it is open every device
+// navigates it, Escape or a pad's East / Back / Start resumes, and no press
+// reaches the session (releases and sticks still do, so nothing stays
+// held). In the browser the page never asks for fullscreen, so Escape
+// reaches SDL as any key; were the canvas fullscreen, the browser would take
+// the first Escape to leave fullscreen and the next one opens the menu.
 #include "client_audio.hpp"
 #include "core/client_options.hpp"
 #include "core/lobby_menu.hpp"
@@ -160,6 +173,7 @@ constexpr bool kQuitItem = false;  // a browser tab is closed by the browser
 constexpr bool kQuitItem = true;
 #endif
 
+constexpr std::uint32_t kPauseSoonTicks = 90;           // --screen paused: the monkeys are out
 constexpr std::uint64_t kCopiedShowNs = 2'500'000'000;  // "Copied" after Copy link
 
 struct App {
@@ -191,6 +205,8 @@ struct App {
   client::SettingsMenu settingsMenu;
   client::OnlineMenu onlineMenu;
   client::ButtonMenu overMenu;  // the match-over screen's buttons
+  client::PauseMenu pauseMenu;  // v0.46: Escape over a running match
+  bool pauseSoon = false;       // --screen paused: open it a moment into the match
   bool editNick = false;        // put the keyboard into the name field
   bool editCode = false;        // ... into the room code field
   bool menuActivate = false;    // Enter / Start on a menu screen, this frame
@@ -672,6 +688,55 @@ void menuBack(App& app) {
   app.audio.click();
 }
 
+// v0.46: whether the pause menu can open: over a running online match, or
+// a local match that has not ended (the match-over screen has its buttons).
+[[nodiscard]] bool pauseApplies(const App& app) {
+  if (app.net) return app.net->running();
+  const MatchSession& s = *app.session;
+  return app.screen == Screen::Play && s.phase() == SessionPhase::Match &&
+         s.curr().rules.phase != sim::MatchPhase::MatchEnded;
+}
+
+// The pause menu's choice (a click or a press).
+void choosePauseItem(App& app, client::PauseItem item) {
+  app.audio.click();
+  if (app.net) {
+    client::closePauseMenu(app.pauseMenu, *app.net);
+    if (item == client::PauseItem::LeaveRoom) app.leaveRequested = true;
+    return;
+  }
+  MatchSession& s = *app.session;
+  client::closePauseMenu(app.pauseMenu, s);
+  if (item == client::PauseItem::BackToLobby || item == client::PauseItem::MainMenu) {
+    s.returnToLobby();
+  }
+  if (item == client::PauseItem::MainMenu) app.screen = Screen::Menu;
+}
+
+// v0.46: an event while the pause menu is open, or the one that opens it.
+// True when the event was the menu's: presses stay out of the session.
+bool pauseMenuEvent(App& app, const platform::InputEvent& input) {
+  const bool press = input.kind == platform::InputEventKind::KeyDown ||
+                     input.kind == platform::InputEventKind::PadButtonDown;
+  if (!app.pauseMenu.isOpen()) {
+    if (!pauseApplies(app)) return false;
+    const platform::InputSampler& sampler = app.net ? app.net->sampler() : app.session->sampler();
+    if (!client::isPauseEvent(input, client::eventDeviceBound(sampler, input))) return false;
+    app.audio.click();
+    if (app.net) {
+      client::openPauseMenu(app.pauseMenu, *app.net);
+    } else {
+      client::openPauseMenu(app.pauseMenu, *app.session);
+    }
+    return true;
+  }
+  app.pauseMenu.apply(app.menuInput.translate(input, true));
+  if (const std::optional<client::PauseItem> item = app.pauseMenu.press(input)) {
+    choosePauseItem(app, *item);
+  }
+  return press;
+}
+
 // App shortcuts that are not game bindings.
 void handleShortcut(App& app, const SDL_Event& event) {
   if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
@@ -682,6 +747,9 @@ void handleShortcut(App& app, const SDL_Event& event) {
     return;
   }
   if (gameInputBlocked()) return;
+  // v0.46: Escape over a running match is the pause menu's (onEvent), and
+  // the developer's P / O wait while it is open.
+  if (app.pauseMenu.isOpen() || (sc == SDL_SCANCODE_ESCAPE && pauseApplies(app))) return;
   if (app.net) {
     // Online the server's clock rules: no pause, step or bot keys.
     if (sc == SDL_SCANCODE_ESCAPE) leaveNetwork(app);
@@ -746,6 +814,7 @@ void onEvent(void* user, const SDL_Event& event) {
   // While a debug text field has the keyboard, key presses stay out of the
   // game; releases always go through so no key is left held.
   if (input->kind == platform::InputEventKind::KeyDown && gameInputBlocked()) return;
+  if (pauseMenuEvent(*app, *input)) return;
   if (app->net) {
     // v0.43: the room's screens. Every device navigates (nothing joins
     // online); the press still goes to the session, which samples nothing
@@ -913,7 +982,20 @@ void menuFrame(App& app, std::uint64_t now) {
 presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, int h,
                                 float density) {
   MatchSession& s = *app.session;
+  // v0.46: the pause menu holds the pause (a hot reload's restart clears it)
+  // and goes away with the match.
+  if (app.pauseMenu.isOpen()) {
+    if (!pauseApplies(app)) {
+      client::closePauseMenu(app.pauseMenu, s);
+    } else if (!s.paused()) {
+      s.setPaused(true);
+    }
+  }
   s.advance(now);
+  if (app.pauseSoon && s.curr().tick.value >= kPauseSoonTicks && pauseApplies(app)) {
+    app.pauseSoon = false;
+    client::openPauseMenu(app.pauseMenu, s);
+  }
   s.presentation().pingSlots = s.localMask();  // v0.35: a local human's call pings
   presentation::buildRenderState(
       s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(),
@@ -940,9 +1022,15 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   } else {
     client::HudView view = client::hudView(s);
     view.overScreen = s.curr().rules.phase == sim::MatchPhase::MatchEnded;
+    view.paused = view.paused && !app.pauseMenu.isOpen();  // the menu says so itself
     client::drawMatchHud(
         view,
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
+    if (app.pauseMenu.isOpen()) {
+      if (const std::optional<client::PauseItem> item = client::drawPauseMenu(app.pauseMenu)) {
+        choosePauseItem(app, *item);
+      }
+    }
     if (view.overScreen) {
       // v0.43: the match-over screen: Play again (a new seed) or the lobby.
       client::MatchOverView over = client::matchOverView(view, app.renderState);
@@ -1045,6 +1133,8 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
 presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int h, float density) {
   client::NetSession& n = *app.net;
   n.advance(now);
+  // v0.46: the pause menu goes away when the match does (over, lost).
+  if (app.pauseMenu.isOpen() && !n.running()) client::closePauseMenu(app.pauseMenu, n);
   if (n.room() && !app.roomAnnounced) {
     app.roomAnnounced = true;
     std::printf("kfm_client: in room %s (%s); invite: %s\n", n.room()->code.c_str(),
@@ -1084,6 +1174,11 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
     client::drawMatchHud(
         view,
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
+  }
+  if (app.pauseMenu.isOpen()) {
+    if (const std::optional<client::PauseItem> item = client::drawPauseMenu(app.pauseMenu)) {
+      choosePauseItem(app, *item);
+    }
   }
   if (phase == client::NetPhase::Waiting || phase == client::NetPhase::Over) {
     roomFrame(app, n, share, view, now);
@@ -1308,6 +1403,10 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
       app.screen = Screen::Settings;
     } else if (app.options.screen == "local") {
       app.screen = Screen::Play;
+    } else if (app.options.screen == "paused") {
+      // v0.46: a local match under its pause menu (screenshots).
+      app.screen = Screen::Play;
+      app.pauseSoon = app.session->startMatch(app.lastFrameNs);
     } else if (!app.services->lobbyUrl().empty()) {
       app.screen = Screen::Online;
     }

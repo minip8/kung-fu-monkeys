@@ -17,6 +17,10 @@
 //                 difficulty, Back: what a player (not a developer) sets
 //                 once; the lobby keeps the match's own settings.
 //   ButtonMenu    a focus over N buttons (Play again / Back to lobby).
+//   PauseMenu     v0.46: Escape (or a bound pad's Start) over a running
+//                 match: Resume, Back to lobby, Main menu locally (the match
+//                 is paused while it is open), Resume, Leave room online (the
+//                 server's match runs on; the local slots send idle input).
 #pragma once
 
 #include "kfm/platform/input_event.hpp"
@@ -32,6 +36,9 @@
 #include <string_view>
 
 namespace kfm::client {
+
+class MatchSession;
+class NetSession;
 
 // Enter, keypad Enter or Space, or any pad's South or Start.
 [[nodiscard]] bool isMenuActivate(const platform::InputEvent& event);
@@ -119,5 +126,53 @@ class ButtonMenu {
   std::size_t count_{1};
   std::size_t focus_{0};
 };
+
+// --- the pause menu (v0.46) ------------------------------------------------------------
+
+enum class PauseItem : uint8_t { Resume = 0, BackToLobby, MainMenu, LeaveRoom };
+
+class PauseMenu {
+ public:
+  // Opens with the local buttons (Resume, Back to lobby, Main menu) or the
+  // online ones (Resume, Leave room), the focus on Resume.
+  void open(bool online);
+  void close() { open_ = false; }
+  [[nodiscard]] bool isOpen() const { return open_; }
+  [[nodiscard]] bool online() const { return online_; }
+
+  [[nodiscard]] std::span<const PauseItem> items() const;
+  [[nodiscard]] std::size_t focus() const { return buttons_.focus(); }
+  [[nodiscard]] PauseItem focusedItem() const { return items()[buttons_.focus()]; }
+  [[nodiscard]] ButtonMenu& buttons() { return buttons_; }
+  void setFocus(std::size_t index) { buttons_.setFocus(index); }
+  // Any direction moves the focus, wrapping (ButtonMenu).
+  void apply(MenuAction action) { buttons_.apply(action); }
+  // What a press asks for while the menu is open: Escape or any pad's East,
+  // Back or Start resume; Enter, keypad Enter, Space or a pad's South pick
+  // the focused item; anything else nothing.
+  [[nodiscard]] std::optional<PauseItem> press(const platform::InputEvent& event) const;
+
+  [[nodiscard]] static const char* label(PauseItem item);
+
+ private:
+  bool open_{false};
+  bool online_{false};
+  ButtonMenu buttons_;
+};
+
+// Whether `event` opens the pause menu over a running match: Escape, or the
+// Start of a pad bound to a slot (`deviceBound`, eventDeviceBound(); an
+// unbound pad's press is a takeover).
+[[nodiscard]] bool isPauseEvent(const platform::InputEvent& event, bool deviceBound);
+
+// The menu with its session. Locally, opening pauses the match and closing
+// resumes it (MatchSession::setPaused: presses made meanwhile are discarded,
+// a held button does not fire on resume). Online, the session keeps
+// advancing; opening suspends its input (NetSession::setInputSuspended:
+// every local slot sends an idle input) and closing restores it.
+void openPauseMenu(PauseMenu& menu, MatchSession& session);
+void closePauseMenu(PauseMenu& menu, MatchSession& session);
+void openPauseMenu(PauseMenu& menu, NetSession& session);
+void closePauseMenu(PauseMenu& menu, NetSession& session);
 
 }  // namespace kfm::client

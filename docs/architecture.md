@@ -443,13 +443,32 @@ lobby as a rejoin: lobby protocol v1.2 adds an optional `token` to `join` (the l
 token it issued for a live room, re-admits the same token outside `capacity`, closes a socket
 still seated under it with `closed`/`replaced`, refuses an unknown one `bad_token`). No sim
 change; replay checksums unchanged.
+v0.46 changes: the pause menu (§7, §6.8). Escape (or the Start of a pad bound to a slot) over a
+running match opens a small centred menu over the dimmed match instead of leaving at once
+(`PauseMenu` in `apps/client/core/menus.hpp`, a `ButtonMenu` column, unit tested). Locally it
+pauses the match (the clock's pause, so presses are discarded and a held button does not fire
+on resume) with Resume, Back to lobby and Main menu. Online a server's match cannot pause for one
+player: the menu (Resume, Leave room) opens over the running match, `NetSession` keeps
+advancing and, while `setInputSuspended(true)`, every local slot sends an idle input (no stick,
+no buttons, its last aim) rather than repeating its last one, so a monkey that was running when
+Escape went down stands still; on resume held buttons count as used until released, a held
+stick moves again. Leave room is the only way out of a running online match: a single Escape no
+longer disconnects. While the menu is open every device navigates it, Escape or a pad's East,
+Back or Start resumes, Enter / Space / South picks, the mouse clicks, and no press reaches the
+session (releases and sticks do, so nothing stays held); it closes itself when the match ends
+or the link drops. Escape keeps its meaning on the waiting room, match-over and status screens,
+which have their own buttons; P (pause) and O (single step) stay the developer's keys, without
+the menu, and wait while it is open. The browser page never requests fullscreen, so Escape
+reaches SDL like any key; were the canvas fullscreen, the browser would take the first Escape to
+leave it and the next would open the menu. `--screen paused` opens a local match under the menu
+(screenshots). No sim change; replay checksums unchanged.
 v0.47 changes: releases update the VMs from the deploy workflow (§13.5). A `vms` job between
 the images and the page ships `deploy/vm/` to every VM in `KFM_VMS` over an IAP SSH tunnel
 (Workload Identity Federation, no stored key; `deploy/gcp/setup_deploy_identity.sh`) and runs
 `update.sh`, which now drains (waits up to 15 min for the lobby to report no live room) and
 refreshes the units; the page is published only after the servers answer the new build, since
-a client of another build id is refused. v0.45 (mouse controls) and v0.46 (the pause menu)
-are the client branches in flight.
+a client of another build id is refused. v0.45 (mouse controls) is the client branch in
+flight.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2456,7 +2475,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   pressed during the pause and still held reads as released until it is let go, so nothing
   fires on resume or on a single step; a new match, a restart or a return to the lobby clears
   the pause and any pending single step, and a return to the lobby also resets the
-  presentation state. Render policy "auto": the newest tick is drawn directly when the
+  presentation state. v0.46: the pause menu (Escape) holds the same pause while it is open;
+  online it pauses nothing and the local slots send idle input instead (§7). Render policy "auto": the newest tick is drawn directly when the
   measured display rate (EMA of frame intervals) is at least 0.95 × `kTickHz` × time scale (the
   tolerance covers 59.94 Hz displays), otherwise frames interpolate with
   `alpha = accumulator / tickCost`; the overlay can force either.
@@ -2658,7 +2678,10 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   shortcut); hovering with a moving mouse takes the focus, a click acts. Flow: menu → Play local
   → lobby → match → match-over → Play again or lobby; menu → Play online → a room's status →
   waiting → match → match-over → Play again (host) → waiting; Escape steps back towards the
-  menu, and the menu quits natively. `--autostart` and the network flags skip the menu as before;
+  menu, and the menu quits natively. v0.46: over a running match Escape (or a bound pad's Start)
+  opens the pause menu instead (`PauseMenu`: Resume, Back to lobby, Main menu locally, the match
+  paused; Resume, Leave room online, the match running on with the local slots idle); Escape, a
+  pad's East, Back or Start resumes; P and O stay the developer's pause and single step. `--autostart` and the network flags skip the menu as before;
   `--screen` opens a given screen.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
@@ -2676,7 +2699,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   Status flow: Connecting → Syncing → Running, or Rejected / Disconnected / Failed with a reason
   on a status window that replaces the lobby; Escape disconnects and returns to the local lobby,
   whose Start then reconnects (v0.43: Escape returns to the main menu, whose Play online
-  reconnects to a `--connect` server when no lobby is configured). Online, pause, step, time scale, bot keys, restart and content
+  reconnects to a `--connect` server when no lobby is configured; v0.46: during a running match
+  Escape opens the pause menu, whose Leave room disconnects). Online, pause, step, time scale, bot keys, restart and content
   tuning do nothing (the server's clock and content rule; a content edit would break the hash)
   and the overlay says so. The F1 overlay gains the §7 net panel: RTT/jitter/loss with a graph,
   lead against target, arrival margin, clock rate, rollback depth graph and histogram,

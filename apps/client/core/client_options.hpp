@@ -8,11 +8,12 @@
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]
-//              [--screen menu|settings|online|local]
+//              [--screen menu|settings|online|local|paused]
 //
 // v0.43: --screen opens the client on that front-end screen instead of the
 // main menu (screenshots and development; --autostart and the network flags
-// still go straight to play).
+// still go straight to play). v0.46: `paused` starts a local match and opens
+// the pause menu over it.
 //
 // v0.42: --nick (the browser's ?nick=) is the name sent in Hello and shown to
 // the room; saved with the lobby settings (`nick=`); with none, the client
@@ -58,7 +59,7 @@ inline constexpr const char* kUsage =
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
-    "                  [--screen menu|settings|online|local]\n"
+    "                  [--screen menu|settings|online|local|paused]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
@@ -107,7 +108,8 @@ inline constexpr const char* kUsage =
     "  --nick NAME            your name online, at most 16 bytes (saved; default: a\n"
     "                         random monkey name picked once)\n"
     "  --screen S             open on this screen instead of the main menu: menu,\n"
-    "                         settings, online (Play online) or local (the lobby)\n";
+    "                         settings, online (Play online), local (the lobby) or\n"
+    "                         paused (a local match under the pause menu)\n";
 
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
