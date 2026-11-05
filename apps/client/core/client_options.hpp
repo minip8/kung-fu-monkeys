@@ -7,7 +7,11 @@
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
-//              [--lobby URL] [--room CODE | --create [--region R]]
+//              [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]
+//
+// v0.42: --nick (the browser's ?nick=) is the name sent in Hello and shown to
+// the room; saved with the lobby settings (`nick=`); with none, the client
+// picks a random monkey name once and saves it (randomMonkeyName()).
 //
 // M6a (architecture §13.5, docs/lobby-protocol.md §3): --room / --create join
 // or create a room through the lobby at --lobby (default: the build's
@@ -45,7 +49,7 @@ inline constexpr const char* kUsage =
     "                  [--mute] [--volume 0..100]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
-    "                  [--lobby URL] [--room CODE | --create [--region R]]\n"
+    "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
@@ -90,7 +94,9 @@ inline constexpr const char* kUsage =
     "  --room CODE            join room CODE (5 characters) at startup\n"
     "  --create               create a room at startup and join it\n"
     "  --region R             the region of --create and of the panel's Create\n"
-    "                         room: eu (default), us, asia or any server region\n";
+    "                         room: eu (default), us, asia or any server region\n"
+    "  --nick NAME            your name online, at most 16 bytes (saved; default: a\n"
+    "                         random monkey name picked once)\n";
 
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
@@ -125,6 +131,7 @@ struct ClientOptions {
   std::string room;  // --room, normalised upper case; empty = none
   bool create{false};
   std::string region{kRegions[0]};  // --region: --create's and the panel's region
+  std::string nick;                 // v0.42: --nick, valid (net::validNickname); empty = none yet
 
   // --connect, --room or --create: the client plays online from startup and
   // the lobby's Start (re)connects.
@@ -149,6 +156,11 @@ struct ClientOptions {
 // "--lobby URL --room CODE".
 [[nodiscard]] std::string roomShareText(const LobbyRoomInfo& room, std::string_view pageUrl,
                                         std::string_view lobbyUrl);
+
+// A monkey name for a player who gave none (v0.42): one of a fixed list of
+// monkey species picked by `seed`, with a number 1..99 ("Bonobo 42"); always
+// a valid nickname.
+[[nodiscard]] std::string randomMonkeyName(uint64_t seed);
 
 // The bots of local play: the module when one is given (falling back to
 // the reference bot at botDifficulty), else the reference bot at it.

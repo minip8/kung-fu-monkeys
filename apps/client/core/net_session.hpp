@@ -46,6 +46,15 @@
 // reports Connected after the lobby's `joined`. statusText() then names the
 // room, and a refusal or a lobby close becomes plain words
 // (lobbyErrorText()).
+//
+// The online room (v0.42, protocol 6, §6.6): NetSessionConfig::nickname
+// rides in the Hello; roomState() is the server's newest RoomState (none
+// from a server on the M3 flow); phase() is Waiting or Over while the room
+// is (the NetClient holds its timeline, nothing is sampled or sent), so the
+// app draws the waiting screen or the match-over screen over the last
+// world; isHost(), sendSettings() and start() are the host's controls
+// (anyone may call them: the server ignores a non-host). slotName() is a
+// human slot's nickname, else its label.
 #pragma once
 
 #include "kfm/net/net_client.hpp"
@@ -76,6 +85,8 @@ enum class NetPhase : uint8_t {
   Connecting = 0,  // transport and handshake
   Syncing,         // Welcome received: snapshot and RTT samples
   Running,         // predicting; the match is drawn
+  Waiting,         // v0.42: synced, the room waits for its host's Start
+  Over,            // v0.42: synced, the room's match ended (the host plays again)
   Rejected,        // the server refused the Hello (rejectReason())
   Disconnected,    // transport closed, timed out, kicked or quit
   Failed,          // the transport could not be created (failure())
@@ -130,6 +141,7 @@ struct NetSessionConfig {
   uint32_t buildId{0};               // must match the server's (ClientConfig::buildId)
   std::vector<std::byte> token;      // connection token (§6.7), may be empty
   bool spectate{false};              // request no slots
+  std::string nickname;              // v0.42: sent in Hello (Nickname::from)
   uint8_t requestedSlots{0};         // 0: one per bound lobby device (at least 1)
   uint8_t inputDelayTicks{0};        // §6.2 fixed input delay
   // The client's loaded content (its hash must match the server's);
@@ -187,6 +199,8 @@ class NetSession {
   // --- status -----------------------------------------------------------------
   [[nodiscard]] NetPhase phase() const;
   [[nodiscard]] bool running() const { return phase() == NetPhase::Running; }
+  // Synced with a server: Running, Waiting or Over.
+  [[nodiscard]] bool synced() const { return client_->running(); }
   // One line for the HUD and the status screen ("Connecting to ws://...").
   [[nodiscard]] std::string statusText() const;
   [[nodiscard]] const std::string& failure() const { return failure_; }
@@ -197,6 +211,19 @@ class NetSession {
   // Whether the server's Welcome arrived, so client().matchConfig() is the
   // server's (arena, mode, power-up set, roster): the online lobby shows it.
   [[nodiscard]] bool configKnown() const { return configKnown_; }
+
+  // --- the room (v0.42) ---------------------------------------------------------
+  [[nodiscard]] const std::optional<net::RoomStateMsg>& roomState() const {
+    return client_->roomState();
+  }
+  // Whether one of the local slots is the room's host.
+  [[nodiscard]] bool isHost() const;
+  // The host's controls: new settings (Waiting), Start (Waiting: start the
+  // match; Over: back to Waiting).
+  void sendSettings(const net::RoomSettings& settings);
+  void start();
+  // A human slot's nickname, else "P<n>" ("BOT<n>" for a bot slot).
+  [[nodiscard]] std::string slotName(PlayerId slot) const;
 
   // --- slots ------------------------------------------------------------------
   [[nodiscard]] sim::PlayerMask localSlots() const { return client_->localSlots(); }

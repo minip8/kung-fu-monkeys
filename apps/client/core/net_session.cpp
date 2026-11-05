@@ -47,6 +47,10 @@ const char* netPhaseName(NetPhase phase) {
       return "syncing";
     case NetPhase::Running:
       return "running";
+    case NetPhase::Waiting:
+      return "waiting";
+    case NetPhase::Over:
+      return "over";
     case NetPhase::Rejected:
       return "rejected";
     case NetPhase::Disconnected:
@@ -152,6 +156,7 @@ NetSession::NetSession(NetSessionConfig config, platform::InputSampler lobbySamp
   cc.buildId = config_.buildId;
   cc.requestedSlots = requested_;
   cc.inputDelayTicks = config_.inputDelayTicks;
+  cc.nickname = net::Nickname::from(config_.nickname);
   cc.setToken(config_.token);
   client_ = std::make_unique<net::NetClient>(content_, cc);
   frameEvents_.resize(kMaxFrameEvents);
@@ -219,7 +224,10 @@ void NetSession::advance(uint64_t nowNs) {
   if (!slotsBound_) bindLocalSlots();
   handleRebinds();
 
-  stepTicks(c.ticksDue(nowNs));
+  const uint32_t due = c.ticksDue(nowNs);
+  // v0.42: the room waits or shows its match over; no presses pile up.
+  if (c.holding()) sampler_.endTick();
+  stepTicks(due);
   if (c.frameReport().rolledBack && !rolledBack) {
     // A hard clock jump inside ticksDue(): the timeline moved forward at once.
     presentation::onRollback(presentation_, renderPrev(), curr(), renderAlpha(), c.localSlots());
@@ -328,6 +336,10 @@ NetPhase NetSession::phase() const {
     case net::ClientState::Syncing:
       return NetPhase::Syncing;
     case net::ClientState::Running:
+      if (const std::optional<net::RoomStateMsg>& room = client_->roomState()) {
+        if (room->phase == net::RoomPhase::Waiting) return NetPhase::Waiting;
+        if (room->phase == net::RoomPhase::Over) return NetPhase::Over;
+      }
       return NetPhase::Running;
     case net::ClientState::Rejected:
       return NetPhase::Rejected;
@@ -378,6 +390,19 @@ std::string NetSession::statusText() const {
     case NetPhase::Syncing:
       std::snprintf(buf, sizeof buf, "Syncing with %s ...", server);
       break;
+    case NetPhase::Waiting:
+    case NetPhase::Over: {
+      const bool host = isHost();
+      const char* what = nullptr;
+      if (ph == NetPhase::Waiting) {
+        what =
+            host ? "you are the host: pick the match and start" : "waiting for the host to start";
+      } else {
+        what = host ? "match over: play again when ready" : "match over: waiting for the host";
+      }
+      std::snprintf(buf, sizeof buf, "In %s, %s", server, what);
+      break;
+    }
     case NetPhase::Running: {
       const auto local = std::popcount(static_cast<uint32_t>(localSlots()));
       if (local == 0) {
@@ -409,6 +434,31 @@ std::string NetSession::statusText() const {
       break;
   }
   return buf;
+}
+
+// --- the room -------------------------------------------------------------------
+
+bool NetSession::isHost() const {
+  const std::optional<net::RoomStateMsg>& room = client_->roomState();
+  return room && room->host.isValid() && sim::maskHas(client_->localSlots(), room->host);
+}
+
+void NetSession::sendSettings(const net::RoomSettings& settings) {
+  if (failure_.empty()) client_->sendRoomSettings(settings);
+}
+
+void NetSession::start() {
+  if (failure_.empty()) client_->sendStart();
+}
+
+std::string NetSession::slotName(PlayerId slot) const {
+  if (!slot.isValid() || slot.value >= sim::kMaxPlayers) return {};
+  const std::optional<net::RoomStateMsg>& room = client_->roomState();
+  if (room && sim::maskHas(room->humans, slot) && !room->names[slot.value].empty()) {
+    return std::string(room->names[slot.value].view());
+  }
+  const bool bot = room && sim::maskHas(room->bots, slot);
+  return (bot ? "BOT" : "P") + std::to_string(slot.value + 1);
 }
 
 // --- slots --------------------------------------------------------------------

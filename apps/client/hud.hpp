@@ -34,6 +34,8 @@ struct HudView {
   // Network: the server's announced next match (arena, mode, power-ups),
   // shown under the match-over banner.
   std::string nextMatch;
+  // v0.42, online: each human slot's nickname (empty: the slot label).
+  std::array<std::string, sim::kMaxPlayers> names{};
 };
 [[nodiscard]] HudView hudView(const MatchSession& session);
 [[nodiscard]] HudView hudView(const NetSession& session);
@@ -69,6 +71,20 @@ struct LobbyOutcome {
   bool start{false};    // the start (or connect) button was pressed
   bool changed{false};  // a setting changed through the panel's mouse controls
 };
+// v0.42: the online room while it waits or shows its match over (the
+// NetSession's Waiting and Over phases). Functional, not final (M6b step 3
+// restyles it): the room code and invite, the roster (nicknames, the host,
+// you, bots); waiting, the match the room will play: the host edits it with
+// the lobby panel's rows (`menu`: arena, mode, teams, loadout, power-ups,
+// bots), everyone else sees it read-only; over, the winner and the scores.
+// The host gets Start match / Play again, the others a waiting line.
+struct RoomOutcome {
+  bool start{false};            // the host pressed Start match / Play again
+  bool settingsChanged{false};  // the host changed a row of `menu`
+};
+[[nodiscard]] RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu,
+                                         const std::string& invite = {});
+
 [[nodiscard]] LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu,
                                      const std::string& onlineLabel = {});
 

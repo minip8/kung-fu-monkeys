@@ -58,7 +58,13 @@ then Hetzner, Cloudflare Pages for the page (v0.39), Caddy, Sentry. Deployed: `k
 `lobby.kfm.minip8.com` (the VM `kfm-au-1`, australia-southeast1, `v0.1.0`); the playtest with
 friends is pending. M6b step 1, lobby protocol v1.1 (the `regions` reply's `list` is every
 registered region and `free` the ones with a free server; the client's Create room row marks a
-busy region "(no server)"), landed in v0.41.
+busy region "(no server)"), landed in v0.41. M6b step 2, the online room (protocol 6:
+`RoomSettings`/`RoomState`/`Start` and a nickname in `Hello`; `apps/server/room.hpp` beside
+`ServerHost`: Waiting and Over never tick the `NetServer`, the host is the first then the
+longest-present human slot, its Start places the bots and restarts the match with its
+settings; `NetClient` holds its timeline outside Playing; a functional waiting / match-over
+screen and nicknames on the HUD; `kfm_server` runs the room unless `--auto-start`), landed in
+v0.42.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -135,6 +141,9 @@ source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/w
 #   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
 python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
 build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
+#   v0.42: a room that waits (no ticks) for its host (the first client) to pick the match and Start; --arena/--mode/
+#   --loadout/--powerups/--bots are its defaults; --auto-start (implied by --exit-after-matches) keeps the M3 back-to-back
+#   matches with every bot from the start
 #   bots: --bot SPEC (repeatable, slot order; SPEC = ref | ref:easy|medium|hard | path.wasm), --bots N pads with
 #   ref:hard, --bot-delay auto|N (auto = the humans' lead, 0 bot vs bot), --fuel N (instructions per tick, default 100000)
 #   also --content DIR --arena NAME --mode NAME --loadout NAME (kfm_netsim and kfm_render_probe take the same four)
@@ -162,7 +171,8 @@ tools/bots/build_example.sh                    # compile tools/bots/examples/*.c
 tools/bots/build_fixtures.sh                   # re-assemble tests/fixtures/bots/*.wat with wat2wasm (the .wasm are checked in)
 cmake --preset dev -DKFM_WASM_BOTS=OFF         # build without WAMR (reference bots only; a module spec exits 3)
 cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
-build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL]   # join a server
+build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL] [--nick NAME]   # join a server
+#   --nick (?nick=, saved as nick=; default a random monkey name picked once): the name the room and the HUD show
 #   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves; pause/step/time scale/tuning are off online
 cargo run --manifest-path services/lobby/Cargo.toml -- --listen 127.0.0.1:8080 --secret dev   # the lobby service (M6a,
 #   docs/lobby-protocol.md); cargo test/fmt/clippy there; curl 127.0.0.1:8080/healthz
@@ -326,6 +336,12 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Third-party sources fetched into `build/<preset>/_deps` may ship their own `.clang-tidy`;
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
+- The room (v0.42): room state never enters `WorldState` or `NetServer` (which only reports
+  `RoomSettings`/`Start` events and sends the `RoomState` the host sets); policy is
+  `apps/server/room.hpp` driven by `ServerHost`. Waiting and Over mean the host does not call
+  `NetServer::tick()` at all (the sim leaves `MatchPhase::Lobby` on its first step); clients
+  hold (`NetClient::holding()`) while their `RoomState` is not Playing. Tests and `kfm_netsim`
+  that drive `NetServer` directly, and `HostConfig{}` (room off), keep the M3 flow.
 - Lobby protocol changes go to `docs/lobby-protocol.md` first; the Rust suite, `kfm_lobby_tests`
   (label `network`, a fake lobby in-process) and the client's session test all pin it. Every
   envelope is a flat JSON object of strings (nested signaling rides as a string in `msg`) so
@@ -335,9 +351,11 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   `free` means "every listed region free"); `/healthz`'s shape is unchanged. GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>`
   as a null dereference (`-Werror` on the Release legs): move instead.
 - Next milestone: M6b "Play with friends" (architecture v0.40, §11 "M6b design"); step 1,
-  lobby protocol v1.1 (`regions` lists every region plus `free`), landed in v0.41. Next is
-  step 2: the online room's Waiting/Playing/Over states beside `ServerHost`,
-  `RoomSettings`/`RoomState`/`Start` and nicknames (protocol 6); then the main menu, scoreboards and match-over, bots yielding, reconnect from the UI. The bot
+  lobby protocol v1.1 (`regions` lists every region plus `free`), landed in v0.41; step 2, the
+  online room (Waiting/Playing/Over beside `ServerHost`, `RoomSettings`/`RoomState`/`Start`,
+  nicknames, protocol 6), landed in v0.42. Next is step 3: the client's main menu, the waiting
+  screen restyled, scoreboards and match-over; then bots yielding, reconnect from the UI and the
+  lead check at high RTT (step 4), and the friends playtest (step 5). The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
   append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one
   architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)

@@ -36,6 +36,14 @@
 // room returns to the local lobby. IPlatformServices (LocalPlatformServices)
 // keeps a guest id beside the settings; nothing sends it yet (M6b).
 //
+// The online room (v0.42, architecture §6.6): a server on the room flow
+// sends RoomState; while the room waits or shows its match over, the frame
+// draws roomFrame(): the roster with nicknames and the host, the host's
+// settings rows (the lobby panel's, sent as RoomSettings on change; read-only
+// for everyone else) and its Start match / Play again button (Start). The
+// HUD names human slots by nickname. --nick (?nick=, saved as `nick`) is the
+// name in Hello; without one the client picks a monkey name once.
+//
 // Content (§5.10): loaded at startup from --content, else content/ next to
 // the executable, else the copy built into it (always, in the browser); its
 // hash must match the server's online. Natively, local play polls the
@@ -134,6 +142,11 @@ struct App {
   client::NetPhase lastNetPhase = client::NetPhase::Connecting;
   bool connectRequested = false;                   // the lobby's Start, online: connect next frame
   std::optional<client::LobbyTarget> pendingRoom;  // the Online section's Create / Join
+  // v0.42: the online room's settings rows (the host edits them) and the
+  // RoomState count when the host last sent new settings (rows follow the
+  // server again once its answer arrived).
+  client::LobbyMenu roomMenu;
+  std::optional<std::uint32_t> roomSentAt;
 #ifdef KFM_CLIENT_WEBRTC
   std::unique_ptr<net::WebRtcTransport> regionsQuery;  // the lobby's region list, in flight
 #endif
@@ -431,6 +444,8 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
                                                  "this build has no WebRTC (KFM_WEBRTC=OFF)");
 #endif
   app.lastNetPhase = app.net->phase();
+  app.roomMenu.setContent(app.net->content());
+  app.roomSentAt.reset();
   std::printf("kfm_client: %s\n", app.net->statusText().c_str());
   std::fflush(stdout);
 }
@@ -654,6 +669,37 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   return camera;
 }
 
+// v0.42: the online room's waiting or match-over screen. The rows show the
+// server's settings, except between the host's change and the server's
+// answer; a change goes out as RoomSettings, the button as Start.
+void roomFrame(App& app, client::NetSession& n, const std::string& invite) {
+  const std::optional<net::RoomStateMsg>& room = n.roomState();
+  if (!room) return;
+  if (app.roomSentAt && n.client().roomUpdates() != *app.roomSentAt) app.roomSentAt.reset();
+  client::LobbySettings& ls = app.roomMenu.settings();
+  if (!app.roomSentAt) {
+    ls.arena = room->settings.arena;
+    ls.mode = room->settings.mode;
+    ls.loadout = room->settings.loadout;
+    ls.powerUps = room->settings.powerUps;
+    ls.bots = room->settings.bots;
+  }
+  const client::RoomOutcome out = client::drawRoomScreen(n, app.roomMenu, invite);
+  if (out.settingsChanged) {
+    app.audio.click();
+    n.sendSettings(net::RoomSettings{.arena = ls.arena,
+                                     .mode = ls.mode,
+                                     .loadout = ls.loadout,
+                                     .powerUps = ls.powerUps,
+                                     .bots = ls.bots});
+    app.roomSentAt = n.client().roomUpdates();
+  }
+  if (out.start) {
+    app.audio.click();
+    n.start();
+  }
+}
+
 // The network frame: connection status until the match runs, then the
 // predicted match with remote players smoothed (§6.9).
 presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int h, float density) {
@@ -684,14 +730,19 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   platform::debugUiNewFrame(w, h, dt, density);
   const std::string invite =
       n.room() ? client::roomShareText(*n.room(), app.pageUrl, app.options.lobby) : std::string{};
-  if (n.everRan()) {
+  const client::NetPhase phase = n.phase();
+  if (n.everRan() && phase != client::NetPhase::Waiting) {
     client::HudView view = client::hudView(n);
     if (n.room()) view.shareLine = "Invite: " + invite;
     client::drawMatchHud(
         view,
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
   }
-  if (!n.running()) client::drawNetStatus(n, invite);
+  if (phase == client::NetPhase::Waiting || phase == client::NetPhase::Over) {
+    roomFrame(app, n, invite);
+  } else if (!n.running()) {
+    client::drawNetStatus(n, invite);
+  }
   app.overlay.draw(n, app.renderer.stats());
   app.audio.frame(app.renderState);
   return camera;
@@ -800,6 +851,12 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
         std::fprintf(stderr, "warning: %s\n", w.c_str());
       if (client::parseClientOptions(args, merged, error)) app.options = std::move(merged);
     }
+  }
+  // v0.42: a player who never gave a name gets a monkey's, kept from then on.
+  if (app.options.nick.empty()) {
+    app.options.nick = client::randomMonkeyName(
+        static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count()));
+    if (app.options.settings) saveSettingsText(client::settingsText(app.options));
   }
   client::LobbySettings lobby;
   if (!client::lobbySettingsFrom(app.options, app.content.db, lobby, error)) {

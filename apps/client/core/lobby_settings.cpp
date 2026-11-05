@@ -1,6 +1,7 @@
 #include "lobby_settings.hpp"
 
 #include "kfm/content/app_content.hpp"
+#include "kfm/net/messages.hpp"
 #include "kfm/sim/constants.hpp"
 
 #include <charconv>
@@ -81,6 +82,7 @@ std::string settingsText(const ClientOptions& options) {
   s += "volume=" + std::to_string(options.volume) + "\n";
   s += std::string("mute=") + (options.mute ? "1" : "0") + "\n";
   s += "region=" + options.region + "\n";
+  if (!options.nick.empty()) s += "nick=" + options.nick + "\n";
   return s;
 }
 
@@ -153,6 +155,13 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
         options.region = value;
       } else {
         warn("region must be a label such as eu, us or asia");
+      }
+    } else if (key == "nick") {
+      const net::Nickname n = net::Nickname::from(value);
+      if (n.empty()) {
+        warn("nick must have at least one printable character");
+      } else {
+        options.nick = n.view();
       }
     } else {
       warn("unknown key '" + std::string(key) + "'");

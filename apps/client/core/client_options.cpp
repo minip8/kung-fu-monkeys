@@ -4,6 +4,7 @@
 #include "kfm/sim/constants.hpp"
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <optional>
 #include <string_view>
@@ -110,8 +111,21 @@ ai::BotSpec botSpec(const ClientOptions& options) {
   return spec;
 }
 
+std::string randomMonkeyName(uint64_t seed) {
+  static constexpr std::array<const char*, 16> kNames{
+      "Bonobo", "Macaque", "Mandrill", "Gibbon", "Tamarin", "Capuchin", "Baboon", "Marmoset",
+      "Langur", "Howler",  "Colobus",  "Gelada", "Vervet",  "Saki",     "Uakari", "Douc"};
+  // splitmix64: neighbouring seeds (clock readings) pick unrelated names.
+  uint64_t z = seed + 0x9E3779B97F4A7C15ull;
+  z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+  z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+  z ^= z >> 31;
+  return std::string(kNames[z % kNames.size()]) + " " + std::to_string(1 + ((z >> 8) % 99));
+}
+
 NetSessionConfig netSessionConfig(const ClientOptions& options, bool atStartup) {
   NetSessionConfig c;
+  c.nickname = options.nick;
   c.serverLabel = options.lobbyMode() ? options.lobby : options.connect;
   c.lobby = lobbyTarget(options);
   for (const char ch : options.token)
@@ -262,6 +276,17 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       } else {
         out.stun = v;
       }
+    } else if (arg == "--nick") {
+      if (i + 1 >= args.size()) {
+        error = "--nick needs a name";
+        return false;
+      }
+      const net::Nickname n = net::Nickname::from(args[++i]);
+      if (n.empty()) {
+        error = "--nick needs a name with at least one printable character";
+        return false;
+      }
+      out.nick = n.view();
     } else if (arg == "--lobby" || arg == "--room" || arg == "--region") {
       if (i + 1 >= args.size()) {
         error = std::string(arg) + " needs a value";
