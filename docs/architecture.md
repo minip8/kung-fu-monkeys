@@ -3432,7 +3432,13 @@ was high at 160 ms RTT while substitutions stayed near 1/s, so the lead control 
 look in the human playtest. Not yet done: the production names and secrets, the GitHub Pages
 site, a tagged release, the playtest with friends over the real link, the second region and a
 Sentry project; the exit criterion ("send a link, friends are in a match within a minute") is
-judged there.
+judged there. Deployed (v0.39): the production VM `kfm-au-1` (an `e2-small` in
+australia-southeast1, four server processes, the `v0.1.0` images from GHCR, region `au`), the
+lobby at `wss://lobby.kfm.minip8.com` behind Caddy with a Let's Encrypt certificate, and the
+page at `https://kfm.minip8.com/` from Cloudflare Pages. Verified from a home connection: a
+native client in a room on that server at 34 ms RTT for 40 s with 0 checksum mismatches, and
+the published page creating a room in headless Chromium with 0 console errors. Only the
+playtest with friends over the link, a second region and a Sentry project remain.
 
 Progress: M5b landed in v0.35. Against the exit criterion: "a 5v5 bot match on a tilemap arena
 with `own` vision and calls replays identically across the determinism gate at one-tick

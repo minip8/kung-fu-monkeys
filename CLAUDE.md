@@ -52,8 +52,9 @@ lobby service in `services/lobby/` owns rooms, tokens, signaling and the server 
 servers dial it (`kfm_server --lobby`, `LobbyLink`, external signaling on `WebRtcTransport`);
 clients create or join rooms (`--lobby/--room/--create`, `?room=`); one `kfm_server` per match
 under systemd; `deploy/` holds the images, units and VM scripts; Google Cloud Compute Engine
-then Hetzner, Cloudflare Pages for the page (v0.39), Caddy, Sentry. The accounts, the first VM and the
-playtest over a real link are pending.
+then Hetzner, Cloudflare Pages for the page (v0.39), Caddy, Sentry. Deployed: `kfm.minip8.com` (the page) and
+`lobby.kfm.minip8.com` (the VM `kfm-au-1`, australia-southeast1, `v0.1.0`); the playtest with
+friends is pending.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
