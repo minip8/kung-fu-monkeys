@@ -13,6 +13,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdio>
+#include <span>
 #include <string>
 #include <utility>
 
@@ -479,7 +480,7 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
                     centre, kWhite, "Draw!");
       }
       centredText(dl, 20.0f, ImVec2(centre.x, centre.y + 60.0f), kWhite,
-                  session.network ? "Esc: leave the server" : "Enter / Start: back to the lobby");
+                  session.network ? "Esc: menu (Leave room)" : "Enter / Start: back to the lobby");
       if (!session.nextMatch.empty()) {
         centredText(dl, 18.0f, ImVec2(centre.x, centre.y + 88.0f), ui::kSky,
                     session.nextMatch.c_str());
@@ -1248,6 +1249,40 @@ std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& 
     }
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextDisabled("Left/Right: choose. Enter / A: select.");
+    ImGui::PopFont();
+  }
+  ui::endScreen();
+  return clicked;
+}
+
+std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {
+  std::optional<PauseItem> clicked;
+  const ImVec2 display = ImGui::GetIO().DisplaySize;
+  // Over the scene and the HUD (both on the background list), under the panel.
+  ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), display,
+                                                IM_COL32(0, 0, 0, 150));
+  if (ui::beginScreen("##pause_menu", 380.0f)) {
+    ui::heading("Paused");
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::TextDisabled("%s", menu.online() ? "The match goes on: your monkey stands still."
+                                            : "The match waits for you.");
+    ImGui::PopFont();
+    ImGui::Spacing();
+    const float width = ImGui::GetContentRegionAvail().x;
+    const std::span<const PauseItem> items = menu.items();
+    // A moving mouse over a button takes the focus (a resting one must not
+    // fight the keyboard or a pad), as on the menu screens.
+    const ImVec2 delta = ImGui::GetIO().MouseDelta;
+    const bool mouseMoved = delta.x != 0.0f || delta.y != 0.0f;
+    for (std::size_t i = 0; i < items.size(); ++i) {
+      if (ui::bigButton(PauseMenu::label(items[i]), i == menu.focus(), width)) {
+        menu.setFocus(i);
+        clicked = items[i];
+      }
+      if (mouseMoved && ImGui::IsItemHovered()) menu.setFocus(i);
+    }
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::TextDisabled("Up/Down: choose. Enter / A: select. Esc / B: resume.");
     ImGui::PopFont();
   }
   ui::endScreen();

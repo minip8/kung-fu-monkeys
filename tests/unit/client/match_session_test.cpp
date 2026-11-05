@@ -1,5 +1,6 @@
 #include "core/match_session.hpp"
 
+#include "core/menus.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/platform/input_event.hpp"
 #include "kfm/presentation/camera.hpp"
@@ -844,5 +845,43 @@ TEST_CASE("session: the cursor aims from the local monkey's position (v0.45)",
   d.push(click);
   d.frame(1);
   CHECK(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
+}
+
+TEST_CASE("the pause menu pauses a local match while open (v0.46)", "[client][session][menu]") {
+  Driver d(SessionConfig{.seed = 4, .bots = 1});
+  d.start();
+  d.frame(2);
+  REQUIRE(d.s->curr().tick.value == 2);
+  client::PauseMenu menu;
+  client::openPauseMenu(menu, *d.s);
+  CHECK(menu.isOpen());
+  CHECK_FALSE(menu.online());
+  CHECK(d.s->paused());
+  d.push(key(Key::K, true));  // Dash held while the menu is open (or pressed just before)
+  d.frame(3);
+  CHECK(d.s->curr().tick.value == 2);  // the match waits
+  CHECK(d.s->ticksThisFrame() == 0);
+
+  // Resume within a frame, before its advance(): the held Dash does not fire.
+  client::closePauseMenu(menu, *d.s);
+  CHECK_FALSE(menu.isOpen());
+  CHECK_FALSE(d.s->paused());
+  d.frame(1);
+  REQUIRE(d.s->ticksThisFrame() == 1);
+  CHECK(d.s->curr().tick.value == 3);
+  CHECK_FALSE(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
+  d.push(key(Key::K, false));
+  d.frame(1);
+  d.push(key(Key::K, true));
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
+
+  // A press that reaches the sampler in the frame the menu closes is dropped too.
+  client::openPauseMenu(menu, *d.s);
+  d.frame(1);
+  d.push(key(Key::K, false));
+  d.push(key(Key::J, true));
+  client::closePauseMenu(menu, *d.s);
+  d.frame(1);
   CHECK_FALSE(d.s->lastFrame().inputs[0].has(sim::Button::Throw));
 }

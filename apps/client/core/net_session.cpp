@@ -249,6 +249,11 @@ void NetSession::advance(uint64_t nowNs) {
   updateRates(nowNs);
 }
 
+void NetSession::setInputSuspended(bool suspended) {
+  if (inputSuspended_ && !suspended) sampler_.consumeAllButtons();
+  inputSuspended_ = suspended;
+}
+
 void NetSession::stepTicks(uint32_t ticks) {
   net::NetClient& c = *client_;
   const uint64_t wall = c.tickWallNs();
@@ -269,6 +274,13 @@ void NetSession::stepTicks(uint32_t ticks) {
       // A slot without a device (pad removed, or more slots than devices)
       // repeats its last input; held buttons cannot re-fire (§5.4).
       if (has(bound, s)) lastInputs_[s] = frame.inputs[s];
+      if (inputSuspended_) {
+        // v0.46: the pause menu is open: idle, facing where it faced.
+        const sim::PlayerInput last = lastInputs_[s];
+        lastInputs_[s] = sim::PlayerInput{};
+        lastInputs_[s].moveDir = last.moveDir;
+        lastInputs_[s].aimDir = last.aimDir;
+      }
       inputs[k++] = lastInputs_[s];
     }
     c.tick(std::span<const sim::PlayerInput>(inputs.data(), k));
