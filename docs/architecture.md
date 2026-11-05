@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.40 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.41 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -339,6 +339,15 @@ code and link to share, every region listed with its availability (lobby protoco
 nicknames and scoreboards, a main menu, bots yielding slots, reconnect from the UI, the lead
 control checked at high RTT. The bot ladder, M6b since v0.36, becomes M7 unchanged, and the
 optional Steam build M8. No code change.
+v0.41 changes: M6b step (1), lobby protocol v1.1 (§13.5, `docs/lobby-protocol.md`). The
+`regions` reply's `list` is now every registered region (busy ones too) and a new `free` key
+names those with a free server; `/healthz`'s `regions` stays the free list, unchanged, so probes
+read the same thing. A v1 client reading only `list` may offer a busy region and gets
+`no_server` as before; a v1.1 client treats a missing `free` (a v1 lobby) as every listed
+region free. `WebRtcTransport::lobbyRegions()` returns `LobbyRegion {name, free}`; the client's
+Create room row cycles over every region and marks a busy one "us (no server)", still
+selectable (a server can come free between the query and the create); a saved region the lobby
+does not list falls back to its first free region, else its first. No sim change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3410,7 +3419,8 @@ Reconnect from the UI is the existing token flow behind a button. Lobby protocol
 region is refused `no_server` as before. The client keeps Dear ImGui as the drawing library but
 gets a game font, a palette and a main menu (Play online, Play local, Settings); copy-link uses
 the clipboard natively and in the browser and the Web Share API on touch devices.
-Sequencing, one PR each: (1) lobby protocol v1.1 and the availability indicator; (2) the room
+Sequencing, one PR each: (1) lobby protocol v1.1 and the availability indicator (landed in
+v0.41); (2) the room
 states, `RoomSettings`/`RoomState`/`Start`, nicknames (protocol 6; netcode tests over the
 loopback with a scripted host); (3) the client's main menu, waiting screen, scoreboards and
 match-over; (4) bots yielding, reconnect from the UI and the lead-control check at high RTT;
@@ -4182,6 +4192,20 @@ builds) to the Cloudflare Pages project with `config.js` and `_headers` beside i
 page's custom domain is attached in the dashboard); the lobby's hostname is a DNS-only A
 record on the same domain, or a free dynamic-DNS name that Let's Encrypt certifies.
 `deploy/README.md` is the day-one runbook; `deploy/hetzner.md` the provider switch.
+Lobby protocol v1.1 (v0.41, M6b step 1): the `regions` reply carries `list` (every registered
+region, the distinct regions of every registered server, free or busy) and `free` (the subset
+with a server that has no room and a `capacity` of at least 1), both sorted and
+comma-separated; the service derives both from its server registry under the one mutex.
+`/healthz`'s `regions` is unchanged (the free list): a second key there would serve no
+consumer yet, and keeping it is the backward-compatible choice. A v1 client reads only `list`
+and may try a busy region (refused `no_server`, as a creator racing another always could be);
+a v1.1 client against a v1 lobby has no `free` and assumes every listed region free, which is
+right because a v1 `list` is the free list. The transport returns
+`std::vector<LobbyRegion>` (`name`, `free`) in the lobby's order (an item of `free` that `list`
+lacks is ignored); the client's `LobbyMenu` keeps a `RegionChoice` per region (kRegions, all
+shown free, until the lobby answers), the Create room row reads "eu" or "us (no server)" and
+still creates in any region, and a `no_server` refusal is shown as before ("No server
+available in us"). An empty reply keeps the previous list.
 
 ### 13.6 Sequencing
 

@@ -96,15 +96,33 @@ impl State {
         self.next_generation
     }
 
-    fn free_regions(&self) -> Vec<String> {
+    /// The distinct regions of the servers `keep` accepts, sorted.
+    fn regions_where(&self, keep: impl Fn(&Server) -> bool) -> Vec<String> {
         let set: BTreeSet<&str> = self
             .servers
             .values()
-            .filter(|s| s.room.is_none() && s.reg.capacity >= 1)
+            .filter(|s| keep(s))
             .map(|s| s.reg.region.as_str())
             .collect();
         set.into_iter().map(str::to_owned).collect()
     }
+
+    /// The regions with a server that can take a `create` now: no room and
+    /// at least one human slot.
+    fn free_regions(&self) -> Vec<String> {
+        self.regions_where(|s| s.room.is_none() && s.reg.capacity >= 1)
+    }
+
+    /// Every registered region, free or busy (lobby protocol v1.1).
+    fn all_regions(&self) -> Vec<String> {
+        self.regions_where(|_| true)
+    }
+}
+
+/// The `regions` reply: every registered region and the free subset.
+pub(crate) struct Regions {
+    pub list: Vec<String>,
+    pub free: Vec<String>,
 }
 
 /// Counts for `/healthz`.
@@ -146,8 +164,12 @@ impl Lobby {
         }
     }
 
-    pub(crate) fn regions(&self) -> Vec<String> {
-        self.lock().free_regions()
+    pub(crate) fn regions(&self) -> Regions {
+        let state = self.lock();
+        Regions {
+            list: state.all_regions(),
+            free: state.free_regions(),
+        }
     }
 
     /// Adds a server to the registry and returns its id.

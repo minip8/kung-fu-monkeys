@@ -171,11 +171,17 @@ async fn expect_peer(server: &mut Ws) -> (String, String) {
     (peer["peer"].clone(), peer["token"].clone())
 }
 
-async fn regions(addr: SocketAddr) -> String {
+/// The `regions` reply as (list, free): every registered region and the
+/// ones with a free server (lobby protocol v1.1).
+async fn regions(addr: SocketAddr) -> (String, String) {
     let (mut ws, reply) = request(addr, &[("type", "regions")]).await;
     assert_eq!(reply["type"], "regions");
     assert_eq!(expect_close(&mut ws).await, Some(1000));
-    reply["list"].clone()
+    (reply["list"].clone(), reply["free"].clone())
+}
+
+fn pair(list: &str, free: &str) -> (String, String) {
+    (list.to_owned(), free.to_owned())
 }
 
 async fn healthz(addr: SocketAddr) -> serde_json::Value {
@@ -248,20 +254,42 @@ async fn register_with_good_and_bad_secret() {
 }
 
 #[tokio::test]
-async fn regions_lists_regions_with_a_free_server() {
+async fn regions_lists_every_region_and_the_free_ones() {
     let addr = start(config()).await;
-    assert_eq!(regions(addr).await, "");
+    assert_eq!(regions(addr).await, pair("", ""));
 
     let mut eu = register(addr, "eu-1", "eu", "4").await;
     let _us = register(addr, "us-1", "us", "4").await;
     let _asia_full = register(addr, "asia-1", "asia", "0").await;
-    assert_eq!(regions(addr).await, "eu,us");
+    // asia has a server but no human slot: listed, not free.
+    assert_eq!(regions(addr).await, pair("asia,eu,us", "eu,us"));
 
-    // The only eu server now hosts a room: eu is no longer offered.
+    // The only eu server now hosts a room: eu stays listed but is busy.
     let (_client, joined) = create(addr, "eu").await;
     assert_eq!(joined["type"], "joined");
     expect_room(&mut eu).await;
-    assert_eq!(regions(addr).await, "us");
+    assert_eq!(regions(addr).await, pair("asia,eu,us", "us"));
+}
+
+#[tokio::test]
+async fn create_in_a_busy_listed_region_is_refused_no_server() {
+    let addr = start(config()).await;
+    let mut eu = register(addr, "eu-1", "eu", "4").await;
+    let _us = register(addr, "us-1", "us", "4").await;
+    let (_host, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut eu).await;
+    // One busy region and one free one.
+    assert_eq!(regions(addr).await, pair("eu,us", "us"));
+
+    let (mut late, reply) = create(addr, "eu").await;
+    assert_eq!(reply["type"], "refused", "{reply:?}");
+    assert_eq!(reply["reason"], "no_server");
+    assert_eq!(expect_close(&mut late).await, Some(1000));
+
+    let (_other, joined) = create(addr, "us").await;
+    assert_eq!(joined["type"], "joined");
+    assert_eq!(regions(addr).await, pair("eu,us", ""));
 }
 
 // --- create, join, relay --------------------------------------------------

@@ -220,11 +220,11 @@ pub(crate) async fn client(lobby: Arc<Lobby>, socket: WebSocket) {
         get(&fields, "code"),
     ) {
         (Some("regions"), _, _) => {
-            let list = lobby.regions().join(",");
-            if conn
-                .send(protocol::encode(&[("type", "regions"), ("list", &list)]))
-                .await
-            {
+            let regions = lobby.regions();
+            let list = regions.list.join(",");
+            let free = regions.free.join(",");
+            let reply = [("type", "regions"), ("list", &list), ("free", &free)];
+            if conn.send(protocol::encode(&reply)).await {
                 conn.close(CLOSE_NORMAL).await;
             }
             return;

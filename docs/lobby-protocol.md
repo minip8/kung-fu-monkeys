@@ -1,4 +1,4 @@
-# Lobby protocol v1 (M6a, architecture v0.37 §13.5)
+# Lobby protocol v1.1 (M6a, architecture v0.37 §13.5; v1.1: M6b, architecture v0.41)
 
 The lobby service is the only public TCP endpoint. Browsers and native clients dial it to
 create or join a room and to exchange WebRTC signaling with the game server that hosts the
@@ -17,7 +17,9 @@ format shared by `services/lobby/` (Rust), `engine/net` (the transport's lobby m
 - `type` names the message. Types are lower case ASCII.
 - Paths on the lobby: `GET /client` (WebSocket, clients), `GET /server` (WebSocket, game
   servers), `GET /healthz` (plain JSON: `{"servers":N,"rooms":N,"regions":["eu","us"]}`,
-  200 always; the only non-WebSocket endpoint).
+  200 always; the only non-WebSocket endpoint). `/healthz`'s `regions` is unchanged in v1.1:
+  it stays the free list (regions with a free process), so existing probes and dashboards
+  read the same thing; the full list is only in the `regions` reply.
 - Production is `wss://` behind Caddy; development is plain `ws://` on `127.0.0.1`.
 
 ## 2. Identifiers
@@ -32,8 +34,10 @@ format shared by `services/lobby/` (Rust), `engine/net` (the transport's lobby m
   the server's socket, never reused on that socket. It is only a routing key between the lobby
   and the server; the transport's own `PeerId` is the server's business.
 - **Region**: a short lower-case ASCII label chosen by the operator per server (`eu`, `us`,
-  `asia`). The lobby's region list is the distinct regions of registered servers with a free
-  process.
+  `asia`). The lobby knows two sets, both sorted: **every registered region** (the distinct
+  regions of every registered server, free or busy) and the **free regions**, the subset with
+  a free process (a server with no room and a `capacity` of at least 1). A region whose every
+  server is busy or has no human slot is listed but not free.
 - **Build and content**: `build` is the client's or server's build id as 8 lower-case hex
   digits, `content` the content hash as 8 lower-case hex digits (the same values the `Hello`
   carries). The lobby refuses a join whose pair differs from the room's server, so a mismatch
@@ -50,7 +54,7 @@ Requests (client → lobby):
 
 | Message | Keys | Meaning |
 |---|---|---|
-| `{"type":"regions"}` | | List the regions that can host a room now. Reply `regions`; the socket closes after it. |
+| `{"type":"regions"}` | | List every registered region and the ones that can host a room now. Reply `regions`; the socket closes after it. |
 | `{"type":"create","region":"eu","build":"…","content":"…"}` | `region` required | Create a room on a free server in `region`; the creator is its first peer. |
 | `{"type":"join","code":"ABCDE","build":"…","content":"…"}` | `code` required | Join a live room. |
 
@@ -58,9 +62,18 @@ Replies (lobby → client), exactly one per request:
 
 | Message | Meaning |
 |---|---|
-| `{"type":"regions","list":"eu,us"}` | Comma-separated, may be empty. |
+| `{"type":"regions","list":"eu,us","free":"us"}` | `list`: every registered region; `free`: the subset with a free server (v1.1). Both comma-separated, sorted, may be empty. |
 | `{"type":"joined","code":"ABCDE","token":"<32 hex>","region":"eu"}` | The room exists and a slot is reserved; signaling may begin. |
 | `{"type":"refused","reason":"<reason>"}` | Then the lobby closes the socket. |
+
+Compatibility (v1 → v1.1): `free` is a new key and unknown keys are ignored, so a v1 client
+still parses the reply. In v1 `list` was the free regions; in v1.1 it is every registered
+region, so a v1 client that reads only `list` may offer a busy region, and a create there is
+refused `no_server` exactly as a race with another creator always could be. A v1.1 client
+against a v1 lobby (no `free` key) treats every listed region as "availability unknown,
+assume free"; since a v1 lobby's `list` is the free list, that is also correct. A create in a
+listed but busy region is refused `no_server`, as before; a client may still try one (a
+server can come free between the query and the create).
 
 Refusal reasons: `unknown_code` (no live room), `full` (the room's server has no free human
 slot), `no_server` (no free server in that region, or the region is unknown), `mismatch`
