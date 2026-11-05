@@ -8,6 +8,11 @@
 //              [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]
+//              [--screen menu|settings|online|local]
+//
+// v0.43: --screen opens the client on that front-end screen instead of the
+// main menu (screenshots and development; --autostart and the network flags
+// still go straight to play).
 //
 // v0.42: --nick (the browser's ?nick=) is the name sent in Hello and shown to
 // the room; saved with the lobby settings (`nick=`); with none, the client
@@ -39,6 +44,9 @@ inline constexpr std::array<const char*, 3> kRegions{"eu", "us", "asia"};
 // The build's default lobby URL (the KFM_LOBBY_URL CMake cache variable);
 // empty when the build sets none.
 [[nodiscard]] const char* defaultLobbyUrl();
+// v0.43: the client's web page as the build knows it (the KFM_PAGE_URL
+// CMake cache variable), for a native client's invite links; usually empty.
+[[nodiscard]] const char* defaultPageUrl();
 
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
@@ -50,6 +58,7 @@ inline constexpr const char* kUsage =
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
+    "                  [--screen menu|settings|online|local]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
@@ -96,7 +105,9 @@ inline constexpr const char* kUsage =
     "  --region R             the region of --create and of the panel's Create\n"
     "                         room: eu (default), us, asia or any server region\n"
     "  --nick NAME            your name online, at most 16 bytes (saved; default: a\n"
-    "                         random monkey name picked once)\n";
+    "                         random monkey name picked once)\n"
+    "  --screen S             open on this screen instead of the main menu: menu,\n"
+    "                         settings, online (Play online) or local (the lobby)\n";
 
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
@@ -132,6 +143,7 @@ struct ClientOptions {
   bool create{false};
   std::string region{kRegions[0]};  // --region: --create's and the panel's region
   std::string nick;                 // v0.42: --nick, valid (net::validNickname); empty = none yet
+  std::string screen{"menu"};       // v0.43: --screen, the first front-end screen
 
   // --connect, --room or --create: the client plays online from startup and
   // the lobby's Start (re)connects.
@@ -156,6 +168,10 @@ struct ClientOptions {
 // "--lobby URL --room CODE".
 [[nodiscard]] std::string roomShareText(const LobbyRoomInfo& room, std::string_view pageUrl,
                                         std::string_view lobbyUrl);
+// What Copy link copies and Share offers (v0.43): with a page URL (the
+// browser's own, natively defaultPageUrl()) the same link as
+// roomShareText(), else the room's code alone.
+[[nodiscard]] std::string roomInviteLink(const LobbyRoomInfo& room, std::string_view pageUrl);
 
 // A monkey name for a player who gave none (v0.42): one of a fixed list of
 // monkey species picked by `seed`, with a number 1..99 ("Bonobo 42"); always

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.42 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.43 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -378,6 +378,51 @@ assigned with no peer resets the room to the defaults (`ServerHost::openRoom`). 
 `--nick` / `?nick=` / the saved `nick` (else a random monkey name picked once and saved), draws a
 functional waiting / match-over screen and names human slots by nickname on the HUD. Retires the
 M3 follow-up "a server-chosen match config". No sim change; replay checksums unchanged.
+v0.43 changes: M6b step (3), the client's front end (§7, §13.4, §13.5, §11). Dear ImGui stays the
+drawing library; the client gets a game font, a palette and screens. The font is Lilita One (SIL
+Open Font License 1.1, one weight, 28 KB), checked in as the source asset with its licence under
+`assets/fonts/` and compiled into `kfm_client` by `cmake/EmbedFile.cmake` (a byte array, as
+`content/` is: the browser has no filesystem and nothing is read at run time); Dear ImGui 1.92+
+bakes glyphs per size, so one `ImFont` serves the UI (20 px), button (28), heading (36) and title
+(76) sizes, and ImGui's own font stays loaded for the F1 overlay. One palette
+(`apps/client/ui_style.hpp`: banana yellow, cream on dark jungle green, leaf green, bark brown;
+player and team colours stay `presentation::playerColor`) feeds the ImGui theme (rounded) and
+the HUD, whose colour literals moved there. The client opens on a main menu (Play online, Play
+local, Settings, Quit natively) unless `--autostart`, `--connect`, `--room` or `--create` (or
+their query keys) say otherwise, which keep their old paths; `--screen menu|settings|online|local`
+opens another screen (screenshots). The screens are headless models in `apps/client/core`
+(`MainMenu`, `SettingsMenu`, `OnlineMenu`, `ButtonMenu` in `menus.hpp` / `online_menu.hpp`, unit
+tested) driven like the lobby panel: `MenuInput` from every device (nothing joins on a menu),
+Enter / Space / a pad's South or Start selects, Escape / a pad's East or Back goes back, the mouse
+clicks the same items. Settings holds the player's own settings (the nickname, a text field
+sanitised by `Nickname::from`, volume, sound, bot difficulty), saved with the others. Play online
+replaces the local lobby's M6a Online section (moved out of `LobbyMenu`): the region with its
+availability, Create room, a room code field and Join, Back; leaving a room keeps its code in the
+field, so Join rejoins (this replaces "Start rejoins the room made with `--create`"). Without a
+lobby URL Play online is greyed, unless `--connect` names a server, which it then joins. Escape
+from the local lobby or any online screen returns to the menu, and the local lobby is always
+local play now (Start no longer connects in network mode; devices bound there are the slots a
+later Play online requests). `IPlatformServices` gains `copyText`, `canShare` and `share`
+(`ShareHooks` injected into `LocalPlatformServices`: SDL's clipboard natively,
+`navigator.clipboard.writeText` and `navigator.share` in the browser, sharing offered only when
+`navigator.share` exists and `navigator.maxTouchPoints > 0`; `Null` has neither). The waiting
+screen shows the room code in title size with Copy link (the page's `?room=CODE` link; natively
+the build's `KFM_PAGE_URL` when set, else the code, then labelled Copy code) and Share, the roster
+as cards (nicknames, the host's crown, you, the bots that take the lowest open slots at the
+start, open slots), the host's settings (`LobbyMenu::setRoomRows()`: only the rows a
+`RoomSettings` carries, now on the keyboard and pads too, Enter starts) or everyone else's
+read-only view with the arena preview, Start match / "Waiting for <host> to start" and Leave.
+Scoreboards are a view model (`core/scoreboard.hpp`, a pure function of `RenderHud`, the labels
+and the local / bot masks): rows sorted by score, then deaths, then slot (by team first in a team
+mode, places shared on a tie), the score column named by the kind (Rounds, Kills, Points, Flags),
+deaths where the kind counts them, the winner crowned and this client's rows outlined online; it
+shows between rounds in the round kinds (RoundEnded, RoundStarting after round 1) under a
+raised banner, and at every match's end. The match-over screen (the winner in their colour, the
+final scoreboard, a button row) is Play again (a new seed) / Back to lobby locally and the host's
+Play again / Leave online ("Waiting for <host> to play again" for the others). Nicknames label
+every slot online, bots too ("BOT4"); local play keeps P<n> / BOT<n> (several players share one
+screen, so no saved nick for P1). `shell.html` takes the palette (background, loading line);
+`?nick=` already maps to `--nick`. No sim change; replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2500,6 +2545,28 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   zones (translucent, lettered); the hill holder is not drawn yet (`HillHolderChanged` is
   there for it).
 
+- The front end (v0.43, M6b step 3; `apps/client/ui_style.{hpp,cpp}`, `screens.{hpp,cpp}`,
+  `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
+  `core/scoreboard.hpp`). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
+  `assets/fonts/` with its licence), compiled in by `cmake/EmbedFile.cmake`, loaded once by
+  `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
+  1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette
+  (`ui::kBanana`, `kCream`, `kJungle`, `kLeaf`, `kBark`, ...) shared by the theme and the HUD;
+  slot and team colours stay `presentation::playerColor`. Screens: the main menu (title, Play
+  online, Play local, Settings, Quit natively, the focused item's hint, the protocol and content
+  hash in the corner), Settings (name, volume, sound, bot difficulty, Back), Play online (region
+  with availability, Create room, room code and Join, Back), the local lobby (cards, compact
+  settings rows with the power-up toggles two to a line, preview, Start), the network status
+  (connecting, the room code with Copy link / Share, refusals in plain words), the room's waiting
+  screen and the match-over screen; the scoreboard between rounds is drawn on the HUD's
+  background list. Navigation: the models take `MenuAction`s from `MenuInput` (every device on a
+  menu screen, the bound ones in the local lobby), `isMenuActivate()` (Enter, keypad Enter,
+  Space, a pad's South or Start) and `isMenuBack()` (a pad's East or Back; Escape is the app
+  shortcut); hovering with a moving mouse takes the focus, a click acts. Flow: menu → Play local
+  → lobby → match → match-over → Play again or lobby; menu → Play online → a room's status →
+  waiting → match → match-over → Play again (host) → waiting; Escape steps back towards the
+  menu, and the menu quits natively. `--autostart` and the network flags skip the menu as before;
+  `--screen` opens a given screen.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.
@@ -2515,7 +2582,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   device repeats its last input and can be taken over by a free device's press as in M2.
   Status flow: Connecting → Syncing → Running, or Rejected / Disconnected / Failed with a reason
   on a status window that replaces the lobby; Escape disconnects and returns to the local lobby,
-  whose Start then reconnects. Online, pause, step, time scale, bot keys, restart and content
+  whose Start then reconnects (v0.43: Escape returns to the main menu, whose Play online
+  reconnects to a `--connect` server when no lobby is configured). Online, pause, step, time scale, bot keys, restart and content
   tuning do nothing (the server's clock and content rule; a content edit would break the hash)
   and the overlay says so. The F1 overlay gains the §7 net panel: RTT/jitter/loss with a graph,
   lead against target, arrival margin, clock rate, rollback depth graph and histogram,
@@ -3500,7 +3568,8 @@ v0.41); (2) the room
 states, `RoomSettings`/`RoomState`/`Start`, nicknames (protocol 6; netcode tests over the
 loopback with a scripted host; landed in v0.42, §6.6, with a functional waiting and match-over
 screen that step 3 restyles); (3) the client's main menu, waiting screen, scoreboards and
-match-over; (4) bots yielding, reconnect from the UI and the lead-control check at high RTT;
+match-over (landed in v0.43, §7: the game font and palette, Settings, Play online with Copy link
+and Share through `IPlatformServices`); (4) bots yielding, reconnect from the UI and the lead-control check at high RTT;
 (5) a friends playtest against the criterion.
 
 M7 sequencing (v0.36, numbered M6b until v0.40): M6a and M7 share only the hosted client and
@@ -4141,7 +4210,10 @@ game.
 
 Each platform implements `ITransport` (§6.4) and `IPlatformServices` (identity, session
 directory, invites, presence, achievements, cloud). Nothing else knows which platform it is on; a
-`null` implementation serves tests and the headless server.
+`null` implementation serves tests and the headless server. v0.43: `IPlatformServices` also copies
+text to the clipboard (`copyText`) and offers a link to the share sheet (`canShare`, `share`):
+SDL's clipboard natively, `navigator.clipboard` and the Web Share API (touch devices only) in
+the browser, through hooks the app injects so `kfm_platform_services` stays SDL-free.
 
 ### 13.5 Hosting: dedicated servers, decided
 
@@ -4242,7 +4314,7 @@ page URL with `?room=CODE` (plus `&lobby=` when the page had one); natively it i
 transport (room, token, error) attached with `NetSession::attachLobby()` carry the join: the
 token is applied before the first `pump()` that sees the room, and a refusal never sends a
 Hello; the loopback session test fakes a lobby-mode transport that withholds Connected until
-`joined`. The lobby settings panel gains an Online section when a lobby URL is configured
+`joined`. (v0.43 moved this Online section to the main menu's Play online screen, §7.) The lobby settings panel gains an Online section when a lobby URL is configured
 (Create room with the region cycled over the regions the lobby lists, asked through a
 short-lived transport in `LobbyRequest::Kind::Regions` on every visit to the local lobby,
 `eu`/`us`/`asia` until it answers, and activated by Enter, a pad's Start or a button; a Join field as an ImGui upper-case text input over the room alphabet); the region is
@@ -4250,7 +4322,8 @@ saved with the settings. In a match the HUD shows "Room ABCDE (eu)" and the invi
 the status window shows the join in progress, then the code with a Copy button, and every
 refusal or close in plain words ("Room ABCDE not found", "Room ABCDE is full", "No server
 available in eu", "Version mismatch: reload the page or update the client", ...); Escape
-returns to the local lobby, whose Start rejoins a room made with `--create`. `shell.html`
+returns to the local lobby, whose Start rejoins a room made with `--create` (v0.43: Escape returns
+to the main menu and the Play online screen's code field keeps the room for Join). `shell.html`
 loads `config.js`, adds `--lobby` from it when the query has none and, only with a
 `sentryDsn`, the pinned Sentry browser bundle (subresource integrity, `crossorigin`) wired to
 `window.onerror`, unhandled rejections and Emscripten's `onAbort`. `IPlatformServices`

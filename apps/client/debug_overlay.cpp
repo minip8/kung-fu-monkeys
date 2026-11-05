@@ -4,6 +4,7 @@
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/content.hpp"
 #include "kfm/sim/tags.hpp"
+#include "ui_style.hpp"
 
 #include <imgui.h>
 
@@ -14,6 +15,9 @@
 namespace kfm::client {
 
 namespace {
+
+// ImGui's own font at its native size: dense numbers stay crisp.
+constexpr float kDebugFontSize = 13.0f;
 
 [[nodiscard]] const char* phaseName(sim::MatchPhase p) {
   switch (p) {
@@ -514,6 +518,7 @@ void DebugOverlay::draw(MatchSession& session, const presentation::RendererStats
   ImGui::SetNextWindowPos(ImVec2(12.0f, 70.0f), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(440.0f, 560.0f), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowBgAlpha(0.9f);
+  ImGui::PushFont(ui::debugFont(), kDebugFontSize);  // v0.43: the developer's font, not the game's
   if (ImGui::Begin("Debug (F1)", &open)) {
     if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
       performanceSection(session, renderer, frameMs_, frameHead_);
@@ -530,6 +535,7 @@ void DebugOverlay::draw(MatchSession& session, const presentation::RendererStats
     if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
   }
   ImGui::End();
+  ImGui::PopFont();
 }
 
 }  // namespace kfm::client
@@ -544,6 +550,7 @@ void DebugOverlay::draw(NetSession& session, const presentation::RendererStats& 
   ImGui::SetNextWindowPos(ImVec2(12.0f, 70.0f), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowSize(ImVec2(470.0f, 640.0f), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowBgAlpha(0.9f);
+  ImGui::PushFont(ui::debugFont(), kDebugFontSize);
   if (ImGui::Begin("Debug (F1)", &open)) {
     if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
       ImGui::PlotLines("frame ms", frameMs_.data(), static_cast<int>(frameMs_.size()),
@@ -557,6 +564,7 @@ void DebugOverlay::draw(NetSession& session, const presentation::RendererStats& 
     if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
   }
   ImGui::End();
+  ImGui::PopFont();
 }
 
 }  // namespace kfm::client

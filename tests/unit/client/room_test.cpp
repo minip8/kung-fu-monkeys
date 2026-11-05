@@ -1,12 +1,13 @@
 // The client's room join flow (M6a, architecture §13.5, docs/lobby-protocol.md
-// §3): the --lobby / --room / --create / --region flags, the lobby panel's
-// Online section, the invite text, the status wording of every lobby
-// refusal, and the NetSession's lobby pattern (the room's token reaches the
-// Hello) over the loopback emulator with a fake lobby-mode transport.
+// §3): the --lobby / --room / --create / --region flags, the Play online
+// screen (v0.43; the lobby panel's Online section until then), the invite text, the status wording
+// of every lobby refusal, and the NetSession's lobby pattern (the room's token reaches the Hello)
+// over the loopback emulator with a fake lobby-mode transport.
 #include "core/client_options.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
 #include "core/net_session.hpp"
+#include "core/online_menu.hpp"
 #include "kfm/net/loopback.hpp"
 #include "kfm/net/net_server.hpp"
 #include "kfm/platform/input_event.hpp"
@@ -29,12 +30,12 @@
 using namespace kfm;
 using client::ClientOptions;
 using client::LobbyCommand;
-using client::LobbyMenu;
-using client::LobbyRowKind;
 using client::LobbyTarget;
 using client::NetPhase;
 using client::NetSession;
 using client::NetSessionConfig;
+using client::OnlineMenu;
+using client::OnlineRow;
 using client::RegionChoice;
 
 namespace {
@@ -43,19 +44,6 @@ namespace {
   argv.insert(argv.begin(), "kfm_client");
   return client::parseClientOptions(std::span<const char* const>(argv.data(), argv.size()), o,
                                     error);
-}
-
-[[nodiscard]] bool hasRow(const LobbyMenu& m, LobbyRowKind kind) {
-  const auto rows = m.rows();
-  return std::ranges::any_of(rows, [&](const client::LobbyRow& r) { return r.kind == kind; });
-}
-
-[[nodiscard]] std::size_t rowIndex(const LobbyMenu& m, LobbyRowKind kind) {
-  const auto rows = m.rows();
-  for (std::size_t i = 0; i < rows.size(); ++i) {
-    if (rows[i].kind == kind) return i;
-  }
-  return rows.size();
 }
 
 [[nodiscard]] std::vector<std::byte> bytes(std::string_view s) {
@@ -178,49 +166,48 @@ TEST_CASE("the invite: the page link in the browser, the flags natively", "[clie
         "http://127.0.0.1:8000/kfm_client.html?room=ABCDE&lobby=ws://127.0.0.1:8080");
   CHECK(client::roomShareText(room, "https://kfm.example/?create&region=us#x", "") ==
         "https://kfm.example/?room=ABCDE");
+  // v0.43, Copy link / Share: the link when the page is known, else the code.
+  CHECK(client::roomInviteLink(room, "https://kfm.example/?create") ==
+        "https://kfm.example/?room=ABCDE");
+  CHECK(client::roomInviteLink(room, "") == "ABCDE");
 }
 
-// --- the lobby panel's Online section -----------------------------------------------
+// --- the Play online screen (v0.43) -------------------------------------------------
 
-TEST_CASE("lobby menu: the Online section only with a lobby URL", "[client][room][lobby]") {
-  LobbyMenu m;
-  const std::size_t rows = m.rows().size();
-  CHECK_FALSE(hasRow(m, LobbyRowKind::CreateRoom));
-  CHECK_FALSE(m.activate());  // nothing to activate: Enter is the match's Start
-  CHECK_FALSE(m.requestJoin("ABCDE"));
+TEST_CASE("online menu: the region cycles, Create room and Join make commands",
+          "[client][room][online]") {
+  OnlineMenu m;
+  using Activation = OnlineMenu::Activation;
+  const auto row = [](OnlineRow r) { return static_cast<std::size_t>(r); };
+  // It opens on Create room, with the first region.
+  CHECK(m.focusedRow() == OnlineRow::CreateRoom);
+  CHECK(m.regionText() == "eu");
   CHECK_FALSE(m.takeCommand().has_value());
 
-  m.setLobbyAvailable(true);
-  REQUIRE(hasRow(m, LobbyRowKind::CreateRoom));
-  CHECK(m.rows().size() == rows + 1);
-  CHECK(rowIndex(m, LobbyRowKind::CreateRoom) == rows);  // last
-  m.setLobbyAvailable(false);
-  CHECK_FALSE(hasRow(m, LobbyRowKind::CreateRoom));
-}
-
-TEST_CASE("lobby menu: Create room cycles the region and activates", "[client][room][lobby]") {
-  LobbyMenu m;
-  m.setLobbyAvailable(true);
-  const std::size_t row = rowIndex(m, LobbyRowKind::CreateRoom);
-  REQUIRE(row < m.rows().size());
-  CHECK(m.rowLabel(m.rows()[row]) == "Create room");
-  CHECK(m.rowValue(m.rows()[row]) == "eu");
-
-  // Focus it the generic way (Up from the first row wraps to the last).
-  m.setFocus(0);
-  CHECK_FALSE(m.apply(client::MenuAction::Up));
-  REQUIRE(m.focus() == row);
+  // Up to the region row; Left/Right cycle (wrapping), also from Create room.
+  m.apply(client::MenuAction::Up);
+  REQUIRE(m.focusedRow() == OnlineRow::Region);
   CHECK(m.apply(client::MenuAction::Right));
-  CHECK(m.rowValue(m.focusedRow()) == "us");
+  CHECK(m.regionText() == "us");
   CHECK(m.apply(client::MenuAction::Right));
-  CHECK(m.rowValue(m.focusedRow()) == "asia");
+  CHECK(m.regionText() == "asia");
   CHECK(m.apply(client::MenuAction::Right));  // wraps
-  CHECK(m.rowValue(m.focusedRow()) == "eu");
+  CHECK(m.regionText() == "eu");
   CHECK(m.apply(client::MenuAction::Left));  // wraps back
-  CHECK(m.settings().region == "asia");
+  CHECK(m.region() == "asia");
+  m.apply(client::MenuAction::Down);
+  REQUIRE(m.focusedRow() == OnlineRow::CreateRoom);
+  CHECK(m.apply(client::MenuAction::Right));
+  CHECK(m.region() == "eu");
+  CHECK(m.apply(client::MenuAction::Left));
+  CHECK(m.region() == "asia");
+  // Left/Right elsewhere change nothing.
+  m.setFocus(row(OnlineRow::Back));
+  CHECK_FALSE(m.apply(client::MenuAction::Right));
+  CHECK(m.region() == "asia");
 
-  // Enter on the row: a CreateRoom command, once.
-  CHECK(m.activate());
+  // Create room: a CreateRoom command, once.
+  CHECK(m.activate(row(OnlineRow::CreateRoom)) == Activation::Command);
   CHECK(m.takeCommand() ==
         LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = "asia", .code = ""});
   CHECK_FALSE(m.takeCommand().has_value());
@@ -229,44 +216,53 @@ TEST_CASE("lobby menu: Create room cycles the region and activates", "[client][r
   const std::vector<RegionChoice> au = {{.name = "au", .free = true},
                                         {.name = "asia", .free = true}};
   m.setRegions(au);
-  CHECK(m.rowValue(m.rows()[row]) == "asia");
+  CHECK(m.regionText() == "asia");
   const std::vector<RegionChoice> onlyAu = {{.name = "au", .free = true}};
   m.setRegions(onlyAu);
-  CHECK(m.rowValue(m.rows()[row]) == "au");
+  CHECK(m.regionText() == "au");
   m.setRegions(std::vector<RegionChoice>{});
-  CHECK(m.rowValue(m.rows()[row]) == "au");
-  CHECK_FALSE(m.apply(client::MenuAction::Right));  // a one-entry list: nothing changes
-  CHECK(m.rowValue(m.rows()[row]) == "au");
-  // A region outside the list (--region xx) steps to the first.
-  m.settings().region = "eu-2";
-  CHECK(m.rowValue(m.rows()[row]) == "eu-2");
-  CHECK(m.apply(client::MenuAction::Right));
-  CHECK(m.rowValue(m.rows()[row]) == "au");
-  m.activate();
-  CHECK(m.takeCommand() ==
-        LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = "au", .code = ""});
-  // Another row: Enter stays the match's Start.
-  m.setFocus(0);
-  CHECK_FALSE(m.activate());
-  CHECK_FALSE(m.takeCommand().has_value());
+  CHECK(m.regionText() == "au");
+  CHECK_FALSE(m.change(row(OnlineRow::Region), +1));  // a one-entry list: nothing changes
+  // A region outside the list (--region xx, a saved one) steps to the first.
+  m.setRegion("eu-2");
+  CHECK(m.regionText() == "eu-2");
+  CHECK(m.change(row(OnlineRow::Region), +1));
+  CHECK(m.regionText() == "au");
 
-  // The panel's code field: only a valid code joins.
-  CHECK_FALSE(m.requestJoin("ABC"));
-  CHECK(m.requestJoin("hjkmn"));
+  // The code field keeps the room alphabet only, upper case, five at most;
+  // Join with a valid code makes a JoinRoom, else asks for the field.
+  CHECK(m.activate(row(OnlineRow::Code)) == Activation::EditCode);
+  m.setCode("hj-k");
+  CHECK(m.code() == "HJK");
+  CHECK_FALSE(m.codeValid());
+  CHECK(m.activate(row(OnlineRow::Join)) == Activation::EditCode);
+  CHECK_FALSE(m.takeCommand().has_value());
+  m.setCode("hjkmn0OI1pq");  // 0, O, I and 1 are not in the alphabet
+  CHECK(m.code() == "HJKMN");
+  CHECK(m.codeValid());
+  CHECK(m.activate(row(OnlineRow::Join)) == Activation::Command);
   CHECK(m.takeCommand() ==
         LobbyCommand{.kind = LobbyCommand::Kind::JoinRoom, .region = "", .code = "HJKMN"});
+  CHECK(m.activate(row(OnlineRow::Back)) == Activation::Back);
+  CHECK(m.activate(row(OnlineRow::Region)) == Activation::None);
+  CHECK_FALSE(m.takeCommand().has_value());
+  // Focus wraps both ways.
+  m.setFocus(0);
+  m.apply(client::MenuAction::Up);
+  CHECK(m.focusedRow() == OnlineRow::Back);
+  m.apply(client::MenuAction::Down);
+  CHECK(m.focusedRow() == OnlineRow::Region);
 }
 
-TEST_CASE("lobby menu: every region with its availability (lobby v1.1)", "[client][room][lobby]") {
-  LobbyMenu m;
-  m.setLobbyAvailable(true);
-  const std::size_t row = rowIndex(m, LobbyRowKind::CreateRoom);
-  REQUIRE(row < m.rows().size());
+TEST_CASE("online menu: every region with its availability (lobby v1.1)",
+          "[client][room][online]") {
+  OnlineMenu m;
+  using Activation = OnlineMenu::Activation;
   // Before the lobby answers: kRegions, availability unknown (shown free).
   REQUIRE(m.regions().size() == client::kRegions.size());
   for (const RegionChoice& r : m.regions())
     CHECK(r.free);
-  CHECK(m.rowValue(m.rows()[row]) == "eu");
+  CHECK(m.regionText() == "eu");
 
   // The lobby lists eu busy and us free: the current region (eu) is listed,
   // so it stays, marked; the list keeps the lobby's order and availability.
@@ -274,35 +270,36 @@ TEST_CASE("lobby menu: every region with its availability (lobby v1.1)", "[clien
       {.name = "asia", .free = false}, {.name = "eu", .free = false}, {.name = "us", .free = true}};
   m.setRegions(mixed);
   CHECK(std::ranges::equal(m.regions(), mixed));
-  CHECK(m.rowValue(m.rows()[row]) == "eu (no server)");
-  CHECK(m.settings().region == "eu");
+  CHECK(m.regionText() == "eu (no server)");
+  CHECK(m.region() == "eu");
   // Cycling reaches the busy regions too, and Create still asks for them
   // (the lobby refuses no_server if the region is still busy).
-  CHECK(m.change(row, +1));
-  CHECK(m.rowValue(m.rows()[row]) == "us");
-  CHECK(m.change(row, +1));
-  CHECK(m.rowValue(m.rows()[row]) == "asia (no server)");
-  CHECK(m.activate(row));
+  const auto region = static_cast<std::size_t>(OnlineRow::Region);
+  CHECK(m.change(region, +1));
+  CHECK(m.regionText() == "us");
+  CHECK(m.change(region, +1));
+  CHECK(m.regionText() == "asia (no server)");
+  CHECK(m.activate(static_cast<std::size_t>(OnlineRow::CreateRoom)) == Activation::Command);
   CHECK(m.takeCommand() ==
         LobbyCommand{.kind = LobbyCommand::Kind::CreateRoom, .region = "asia", .code = ""});
 
   // A current region the lobby does not list becomes its first free one...
-  m.settings().region = "au";
-  CHECK(m.rowValue(m.rows()[row]) == "au");  // unknown to the list: shown bare
+  m.setRegion("au");
+  CHECK(m.regionText() == "au");  // unknown to the list: shown bare
   m.setRegions(mixed);
-  CHECK(m.settings().region == "us");
+  CHECK(m.region() == "us");
   // ...or its first when none is free.
-  m.settings().region = "au";
+  m.setRegion("au");
   const std::vector<RegionChoice> busy = {{.name = "eu", .free = false},
                                           {.name = "us", .free = false}};
   m.setRegions(busy);
-  CHECK(m.settings().region == "eu");
-  CHECK(m.rowValue(m.rows()[row]) == "eu (no server)");
+  CHECK(m.region() == "eu");
+  CHECK(m.regionText() == "eu (no server)");
   // A later answer updates the availability in place.
   const std::vector<RegionChoice> euFree = {{.name = "eu", .free = true},
                                             {.name = "us", .free = false}};
   m.setRegions(euFree);
-  CHECK(m.rowValue(m.rows()[row]) == "eu");
+  CHECK(m.regionText() == "eu");
 }
 
 TEST_CASE("activation presses: Enter and a bound pad's Start, never other keys",

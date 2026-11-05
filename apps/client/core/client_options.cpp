@@ -43,8 +43,16 @@ constexpr std::size_t kMaxRegionLength = 16;
 #define KFM_DEFAULT_LOBBY_URL ""
 #endif
 
+#ifndef KFM_DEFAULT_PAGE_URL
+#define KFM_DEFAULT_PAGE_URL ""
+#endif
+
 const char* defaultLobbyUrl() {
   return KFM_DEFAULT_LOBBY_URL;
+}
+
+const char* defaultPageUrl() {
+  return KFM_DEFAULT_PAGE_URL;
 }
 
 bool isRoomCodeChar(char c) {
@@ -100,6 +108,10 @@ std::string roomShareText(const LobbyRoomInfo& room, std::string_view pageUrl,
     }
   }
   return link;
+}
+
+std::string roomInviteLink(const LobbyRoomInfo& room, std::string_view pageUrl) {
+  return pageUrl.empty() ? room.code : roomShareText(room, pageUrl, {});
 }
 
 ai::BotSpec botSpec(const ClientOptions& options) {
@@ -317,6 +329,17 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         }
         out.region = v;
       }
+    } else if (arg == "--screen") {
+      if (i + 1 >= args.size()) {
+        error = "--screen needs a screen";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      if (v != "menu" && v != "settings" && v != "online" && v != "local") {
+        error = "--screen must be menu, settings, online or local, got '" + std::string(v) + "'";
+        return false;
+      }
+      out.screen = v;
     } else if (arg == "--create") {
       out.create = true;
     } else if (arg == "--spectate") {

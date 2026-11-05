@@ -64,7 +64,12 @@ busy region "(no server)"), landed in v0.41. M6b step 2, the online room (protoc
 longest-present human slot, its Start places the bots and restarts the match with its
 settings; `NetClient` holds its timeline outside Playing; a functional waiting / match-over
 screen and nicknames on the HUD; `kfm_server` runs the room unless `--auto-start`), landed in
-v0.42.
+v0.42. M6b step 3, the client's front end (the game font Lilita One under `assets/fonts/`,
+compiled in by `cmake/EmbedFile.cmake`; one palette and ImGui theme in `apps/client/ui_style.hpp`;
+a main menu with Play online / Play local / Settings; the Play online screen that replaced the
+lobby panel's Online section; the room's waiting screen with the code large, Copy link and Share
+through `IPlatformServices`; a scoreboard view model shown between rounds and on a match-over
+screen with Play again), landed in v0.43.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -119,7 +124,14 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   hazards/spawn_points/zones (format: content/arenas/06-hilltop.toml, architecture §5.10)
 #   loadouts (content/loadouts.toml, --loadout NAME): base (default, [player] abilities), blink, slam, parry;
 #   v0.34 grid, catcher, grid_1t, catcher_1t (the grid modes hand them out by role)
-#   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc lobby
+#   v0.43 front end: the client opens on the main menu (Play online, Play local, Settings, Quit natively) unless
+#   --autostart / --connect / --room / --create (or ?autostart, ?connect=, ?room=, ?create); --screen
+#   menu|settings|online|local opens another screen (screenshots). Menus: arrows/WASD, any pad's d-pad/stick, the
+#   mouse; Enter/Space or a pad's South/Start selects, Esc or a pad's East/Back goes back (the menu quits natively).
+#   Settings: name (--nick, ?nick=, saved `nick`), volume, sound, bot difficulty. Play online: region (with "(no
+#   server)"), Create room, room code + Join. Esc from the lobby or any online screen returns to the menu
+#   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc menu
+#   match over: Play again / Back to lobby (Left/Right + Enter, or the mouse); online the host's Play again / Leave
 #   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
 #   arena (with preview; only arenas that suit the mode), mode, teams (read-only, from the mode), loadout, power-up
 #   toggles, bots, volume, mute; saved between runs (SDL pref dir /
@@ -127,7 +139,7 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   --no-settings ignores the saved file
 #   browser: kfm_client.html?arena=pillars&mode=deathmatch&loadout=slam&powerups=shield,big_banana (?mode=team_rounds)
 #   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
-ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options)
+ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options, menus, scoreboard)
 ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
@@ -181,7 +193,9 @@ build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev 
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE              # join it (any case); -DKFM_LOBBY_URL=...
 #   bakes a default; browser: kfm_client.html?lobby=ws://127.0.0.1:8080&create or ?room=CODE (config.js next to the page
-#   supplies lobbyUrl and sentryDsn in production); the lobby panel's Online rows do the same; Esc leaves;
+#   supplies lobbyUrl and sentryDsn in production); the menu's Play online screen does the same; Esc leaves;
+#   waiting screen: the code large, Copy link (the page's ?room=CODE link; natively -DKFM_PAGE_URL=... or the code)
+#   and Share on touch browsers; the host's rows take arrows/WASD/pads, Enter starts
 #   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). A real-link check needs
 #   --exit-after-frames in the thousands: headless without vsync the client runs hundreds of frames a second
 deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
@@ -353,14 +367,21 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Next milestone: M6b "Play with friends" (architecture v0.40, §11 "M6b design"); step 1,
   lobby protocol v1.1 (`regions` lists every region plus `free`), landed in v0.41; step 2, the
   online room (Waiting/Playing/Over beside `ServerHost`, `RoomSettings`/`RoomState`/`Start`,
-  nicknames, protocol 6), landed in v0.42. Next is step 3: the client's main menu, the waiting
-  screen restyled, scoreboards and match-over; then bots yielding, reconnect from the UI and the
-  lead check at high RTT (step 4), and the friends playtest (step 5). The bot
+  nicknames, protocol 6), landed in v0.42; step 3, the client's front end (main menu, Settings,
+  Play online, the waiting screen with Copy link / Share, scoreboards, match-over), landed in
+  v0.43. Next is step 4: bots yielding, reconnect from the UI and the lead check at high RTT;
+  then the friends playtest (step 5). The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
   append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one
   architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)
   is pending. Spawn groups fixed the side bias between teams only: the free-for-all
   spawn-order slot bias of §12 is still open (tournaments rotate).
+- The client UI (v0.43): Dear ImGui with the game font and the palette of `apps/client/ui_style.hpp`
+  (no colour literals in the HUD or screens); screen state lives in headless models in
+  `apps/client/core` (`menus.hpp`, `online_menu.hpp`, `scoreboard.hpp`), tested without a window;
+  hud.cpp / screens.cpp only draw them. `assets/fonts/` holds source assets with their licence and
+  is compiled in (never read at run time: the browser has no filesystem). Clipboard and sharing
+  go through `IPlatformServices` (`ShareHooks` injected by main.cpp), never SDL or JS directly.
 - Fog lives in `engine/ai`, never in the sim: a `vision` change is content hash only, and the
   `all` vision must stay the pre-fog observation byte for byte (a test pins it). Hosts call
   `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls.

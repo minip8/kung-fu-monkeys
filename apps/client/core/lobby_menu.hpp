@@ -18,6 +18,10 @@
 // (ContentDB::compatible), and a mode the arena does not suit moves the
 // arena to the first one that does; v0.34: a mode that names its own arena
 // (ModeDef::arena) brings it, and a mode's baseline power-up gets no row.
+// v0.42: the online room's host edits the same rows; v0.43 gives that menu
+// only the rows a RoomSettings carries (setRoomRows()). v0.43 moved the M6a
+// Online section (Create room, the region, Join) to the Play online screen
+// (online_menu.hpp).
 #pragma once
 
 #include "kfm/platform/input_event.hpp"
@@ -48,16 +52,6 @@ enum class LobbyRowKind : uint8_t {
   BotDifficulty,
   Volume,
   Mute,
-  CreateRoom,  // M6a: the Online section (a lobby URL is configured)
-};
-
-// What the Online section asks the host to do (LobbyMenu::takeCommand()).
-struct LobbyCommand {
-  enum class Kind : uint8_t { CreateRoom = 0, JoinRoom };
-  Kind kind{Kind::CreateRoom};
-  std::string region;  // CreateRoom
-  std::string code;    // JoinRoom: normalised upper case
-  bool operator==(const LobbyCommand&) const = default;
 };
 
 struct LobbyRow {
@@ -92,9 +86,9 @@ class MenuInput {
   std::array<Stick, kMaxPads> sticks_{};
 };
 
-// Enter, keypad Enter or a bound pad's Start: the press that activates the
-// focused row when it is an action (LobbyMenu::activate()); otherwise it
-// starts the match as before (MatchSession).
+// Enter, keypad Enter or a bound pad's Start: the press that starts the
+// match (MatchSession) or, on the online room's waiting screen, the host's
+// Start.
 [[nodiscard]] bool isActivateEvent(const platform::InputEvent& event, bool deviceBound);
 
 // The `deviceBound` argument of MenuInput::translate(): the keyboard always,
@@ -102,18 +96,9 @@ class MenuInput {
 [[nodiscard]] bool eventDeviceBound(const platform::InputSampler& sampler,
                                     const platform::InputEvent& event);
 
-// One region of the Online section's Create room row: a lobby region and
-// whether the lobby last reported a free server in it ("eu" vs
-// "us (no server)" on the row).
-struct RegionChoice {
-  std::string name;
-  bool free{true};
-  friend bool operator==(const RegionChoice&, const RegionChoice&) = default;
-};
-
 class LobbyMenu {
  public:
-  static constexpr std::size_t kMaxRows = 9 + sim::kMaxPowerUps;
+  static constexpr std::size_t kMaxRows = 8 + sim::kMaxPowerUps;
 
   LobbyMenu();
 
@@ -123,17 +108,9 @@ class LobbyMenu {
   // exists. The menu keeps a pointer: `content` must outlive it or the next
   // setContent(). Before the first call the menu uses sim::defaultContent().
   void setContent(const sim::ContentDB& content);
-  // Shows the Online section (a lobby URL is configured) or hides it.
-  void setLobbyAvailable(bool available);
-  [[nodiscard]] bool lobbyAvailable() const { return lobbyAvailable_; }
-  // The regions Create room cycles through: kRegions (availability unknown,
-  // shown as free) until the lobby answers a regions query (main.cpp), then
-  // every region it listed with its availability (lobby protocol v1.1). An
-  // empty list is ignored; a current region outside the new list becomes its
-  // first free one, else its first. A busy region stays selectable: the
-  // lobby refuses the create no_server if it is still busy.
-  void setRegions(std::span<const RegionChoice> regions);
-  [[nodiscard]] std::span<const RegionChoice> regions() const { return regions_; }
+  // v0.43: only the rows a RoomSettings carries (arena, mode, teams,
+  // loadout, power-ups, bots): the online room host's menu. Off: every row.
+  void setRoomRows(bool room);
 
   [[nodiscard]] std::span<const LobbyRow> rows() const { return {rows_.data(), rowCount_}; }
   [[nodiscard]] std::size_t focus() const { return focus_; }
@@ -149,19 +126,6 @@ class LobbyMenu {
   // Left/Right on a given row (the panel's mouse buttons).
   bool change(std::size_t row, int direction);
 
-  // --- the Online section (M6a) ----------------------------------------------
-  // Activates the focused row: true when it is an action row (Create room),
-  // whose command is then pending; false otherwise (the press is the
-  // match's Start).
-  bool activate();
-  // Activates a given row (the panel's button).
-  bool activate(std::size_t row);
-  // A code typed into the panel: pending JoinRoom when it is a valid room
-  // code (normalizeRoomCode()); false otherwise.
-  bool requestJoin(std::string_view code);
-  // The pending command, once.
-  [[nodiscard]] std::optional<LobbyCommand> takeCommand();
-
   // --- text for the panel (and the tests) -----------------------------------
   [[nodiscard]] std::string rowLabel(const LobbyRow& row) const;
   [[nodiscard]] std::string rowValue(const LobbyRow& row) const;
@@ -171,9 +135,7 @@ class LobbyMenu {
   void rebuildRows();
 
   const sim::ContentDB* content_{nullptr};
-  bool lobbyAvailable_{false};
-  std::vector<RegionChoice> regions_;
-  std::optional<LobbyCommand> command_;
+  bool roomRows_{false};
   std::array<LobbyRow, kMaxRows> rows_{};
   std::size_t rowCount_{0};
   std::size_t focus_{0};

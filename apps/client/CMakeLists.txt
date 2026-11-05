@@ -16,6 +16,9 @@ add_library(kfm_client_core STATIC
   core/net_session.cpp
   core/lobby_settings.cpp
   core/lobby_menu.cpp
+  core/menus.cpp
+  core/online_menu.cpp
+  core/scoreboard.cpp
   core/bot_roster.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
@@ -28,6 +31,10 @@ kfm_no_exceptions_rtti(kfm_client_core)
 # config.js wins); empty: rooms need --lobby or ?lobby=.
 set(KFM_LOBBY_URL "" CACHE STRING "Default lobby base URL of kfm_client (ws[s]://host[:port])")
 target_compile_definitions(kfm_client_core PRIVATE "KFM_DEFAULT_LOBBY_URL=\"${KFM_LOBBY_URL}\"")
+# v0.43: the web page a native build's invite links point at (Copy link
+# copies <page>?room=CODE); empty: the native client copies the code alone.
+set(KFM_PAGE_URL "" CACHE STRING "Web page URL of the client for native invite links (https://...)")
+target_compile_definitions(kfm_client_core PRIVATE "KFM_DEFAULT_PAGE_URL=\"${KFM_PAGE_URL}\"")
 # Bot modules as local players (§8) natively, over the same WAMR runtime as
 # the server and kfm_arena. Without it (the browser) a module spec falls back
 # to the reference bot. PUBLIC so the tests know which build they test.
@@ -46,7 +53,24 @@ target_link_libraries(kfm_client_sdl
 kfm_no_exceptions_rtti(kfm_client_sdl)
 set_target_properties(kfm_client_sdl PROPERTIES FOLDER apps)
 
-add_executable(kfm_client main.cpp hud.cpp debug_overlay.cpp client_audio.cpp)
+# v0.43: the UI font (assets/fonts/, OFL), compiled into the client like
+# content/: the browser has no filesystem, and nothing is read at run time.
+set(kfm_client_font "${PROJECT_SOURCE_DIR}/assets/fonts/LilitaOne-Regular.ttf")
+set(kfm_client_font_cpp "${CMAKE_CURRENT_BINARY_DIR}/ui_font.cpp")
+add_custom_command(
+  OUTPUT "${kfm_client_font_cpp}"
+  COMMAND ${CMAKE_COMMAND}
+    "-DKFM_IN=${kfm_client_font}"
+    "-DKFM_OUT=${kfm_client_font_cpp}"
+    "-DKFM_NAMESPACE=kfm::client::assets"
+    "-DKFM_SYMBOL=kUiFont"
+    -P "${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake"
+  DEPENDS "${kfm_client_font}" "${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake"
+  COMMENT "Embedding the UI font"
+  VERBATIM)
+
+add_executable(kfm_client main.cpp hud.cpp screens.cpp ui_style.cpp debug_overlay.cpp
+  client_audio.cpp "${kfm_client_font_cpp}")
 target_link_libraries(kfm_client PRIVATE
   kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
   kfm::platform_services kfm::warnings)
