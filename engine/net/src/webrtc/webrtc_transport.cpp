@@ -51,6 +51,12 @@ static_assert(kSctpMaxMessageBytes >= kMaxReliableBytes);
 constexpr size_t kMaxUnreliableBuffered = size_t{64} * 1024;
 
 constexpr uint64_t kNsPerMs = 1'000'000;
+// A client's signaling socket that closes before it ever opened (the TCP
+// connect or the WebSocket handshake failed) is dialled again, at most this
+// many times in all, after kRedialDelayNs × the attempts so far; the
+// connect timeout still bounds the whole connect.
+constexpr uint8_t kMaxSignalingDials = 4;
+constexpr uint64_t kRedialDelayNs = 100 * kNsPerMs;
 
 [[nodiscard]] uint64_t steadyNowNs() {
   return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -182,6 +188,14 @@ void wireChannel(rtc::DataChannel& dc, const WeakQueue& weak, PeerId peer, Lane 
   });
 }
 
+// A replaced signaling socket must not report into the queue any more.
+void unwireSignalingSocket(rtc::WebSocket& ws) {
+  ws.onOpen([] {});
+  ws.onClosed([] {});
+  ws.onError([](const std::string&) {});
+  ws.onMessage([](const rtc::message_variant&) {});
+}
+
 [[nodiscard]] std::optional<Lane> laneForLabel(const std::string& label) {
   if (label == kUnreliableLabel) return Lane::Unreliable;
   if (label == kReliableLabel) return Lane::Reliable;
@@ -275,6 +289,12 @@ struct WebRtcTransport::Impl {
   std::optional<LobbyRequest> lobbyRequest;
   std::optional<LobbyRoom> lobbyRoom;
   std::optional<std::vector<LobbyRegion>> lobbyRegions;  // a Regions request's answer
+
+  // Client: the signaling socket's URL and its dials (see kMaxSignalingDials).
+  std::string signalingUrl;
+  uint8_t signalingDials{0};
+  bool signalingOpened{false};
+  std::optional<uint64_t> redialAtNs;
 
   std::shared_ptr<CallbackQueue> queue = std::make_shared<CallbackQueue>();
 #ifndef __EMSCRIPTEN__
@@ -377,6 +397,21 @@ struct WebRtcTransport::Impl {
     } else {
       localEvents.push_back(e);
     }
+  }
+
+  // Client: a new signaling socket to signalingUrl in place of the old one.
+  void dialSignaling(Peer& peer) {
+    if (peer.ws) unwireSignalingSocket(*peer.ws);
+#ifdef __EMSCRIPTEN__
+    peer.ws = std::make_shared<rtc::WebSocket>();
+#else
+    rtc::WebSocket::Configuration wsConfig;
+    wsConfig.maxMessageSize = signaling::kMaxMessageBytes;
+    peer.ws = std::make_shared<rtc::WebSocket>(wsConfig);
+#endif
+    ++signalingDials;
+    wireSignalingSocket(*peer.ws, queue, kServerPeer);
+    peer.ws->open(signalingUrl);
   }
 
   void createPeerConnection(Peer& peer) const {
@@ -626,6 +661,7 @@ struct WebRtcTransport::Impl {
       case CallbackKind::NewClient:
         break;
       case CallbackKind::SignalOpen:
+        if (!server) signalingOpened = true;
         if (server || peer.pc) break;
         if (lobbyPhase == LobbyPhase::Opening) {
           sendLobbyRequest(peer);
@@ -634,6 +670,18 @@ struct WebRtcTransport::Impl {
         }
         break;
       case CallbackKind::SignalClosed:
+        if (!server && redialAtNs) break;  // the failed socket's second report
+        if (!server && !signalingOpened && !peer.external && signalingDials < kMaxSignalingDials &&
+            (lobbyPhase == LobbyPhase::Off || lobbyPhase == LobbyPhase::Opening)) {
+          // Never opened, nothing sent yet: dial again (a handshake that
+          // lost a race with the server's accept, a refused connect).
+          if (gVerbose) {
+            std::fprintf(stderr, "kfm_net_webrtc: signaling dial %u failed; again\n",
+                         unsigned{signalingDials});
+          }
+          redialAtNs = nowNs + (kRedialDelayNs * signalingDials);
+          break;
+        }
         // After Connected the socket has done its job; before it, the
         // handshake cannot finish. A lobby socket is the room membership
         // (docs/lobby-protocol.md §3): its close always ends the session.
@@ -723,6 +771,21 @@ struct WebRtcTransport::Impl {
       }
     }
     drained.clear();  // releases sockets/channels of rejected or stale events here
+
+    if (redialAtNs && nowNs >= *redialAtNs) {
+      redialAtNs.reset();
+      if (const auto it = peers.find(kServerPeer.value); it != peers.end()) {
+        try {
+          dialSignaling(it->second);
+        } catch (const std::exception& ex) {
+          fail("dial", &ex);
+          dropPeer(kServerPeer.value, nowNs, &events);
+        } catch (...) {
+          fail("dial", nullptr);
+          dropPeer(kServerPeer.value, nowNs, &events);
+        }
+      }
+    }
 
     std::vector<uint16_t> expired;
     for (auto& [id, peer] : peers) {
@@ -864,17 +927,10 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
       impl->startClientOffer(peer);  // callbacks only queue; nothing runs here
       return std::make_unique<WebRtcTransport>(std::move(impl));
     }
-#ifdef __EMSCRIPTEN__
-    peer.ws = std::make_shared<rtc::WebSocket>();
-#else
-    rtc::WebSocket::Configuration wsConfig;
-    wsConfig.maxMessageSize = signaling::kMaxMessageBytes;
-    peer.ws = std::make_shared<rtc::WebSocket>(wsConfig);
-#endif
-    wireSignalingSocket(*peer.ws, impl->queue, kServerPeer);
     // A base lobby URL gets the /client path (docs/lobby-protocol.md §1).
-    peer.ws->open(config.lobby ? signaling::withDefaultPath(config.signalingUrl, "/client")
-                               : config.signalingUrl);
+    impl->signalingUrl = config.lobby ? signaling::withDefaultPath(config.signalingUrl, "/client")
+                                      : config.signalingUrl;
+    impl->dialSignaling(peer);
     return std::make_unique<WebRtcTransport>(std::move(impl));
   } catch (const std::exception& e) {
     return std::unexpected(std::string("WebRtcTransport client: ") + e.what());

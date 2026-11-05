@@ -18,7 +18,10 @@
 //           peer connection and both channels, sends the offer and applies
 //           the answer. The server is kServerPeer; Connected follows once
 //           both channels are open, Disconnected if the connection fails,
-//           closes or times out (also when it never connected).
+//           closes or times out (also when it never connected). A
+//           signaling socket that closes before it ever opened (refused, or
+//           a failed WebSocket handshake) is dialled again, up to four dials
+//           100, 200, 300 ms apart, within the connect timeout (v0.44).
 //
 // Signaling protocol: kfm/net/webrtc_signaling.hpp.
 //
