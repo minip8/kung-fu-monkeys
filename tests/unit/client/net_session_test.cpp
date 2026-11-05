@@ -6,6 +6,7 @@
 // nickname in Hello and the room view (a scripted host sets RoomState).
 #include "core/net_session.hpp"
 
+#include "core/menus.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/net/loopback.hpp"
 #include "kfm/net/net_client.hpp"
@@ -626,4 +627,44 @@ TEST_CASE("the nickname rides in Hello; the room view follows RoomState (v0.42)"
   REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Over; }, kSec));
   CHECK(s.client().holding());
   CHECK(s.statusText().find("match over") != std::string::npos);
+}
+
+TEST_CASE("the pause menu online: the session advances, its monkey idles (v0.46)",
+          "[client][net][menu]") {
+  Rig rig;
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), {}, 10 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  const PlayerId me = s.slotOfDevice(0);
+  REQUIRE(rig.runUntil([&] { return rig.playing(me); }, 6 * kSec));
+
+  rig.push(s, Key::D, true);  // running right, and still held under the menu
+  rig.runFor(150 * kMs);
+  const double x0 = rig.serverX(me);
+  client::PauseMenu menu;
+  client::openPauseMenu(menu, s);
+  CHECK(menu.isOpen());
+  CHECK(menu.online());
+  CHECK(s.inputSuspended());
+  const Tick before = s.client().localTick();
+  const uint64_t accepted = rig.server->stats().inputsAccepted;
+  rig.runFor(200 * kMs);  // the idle inputs reach the server
+  const double x1 = rig.serverX(me);
+  rig.runFor(400 * kMs);
+  // The match runs on: ticks are stepped and inputs keep reaching the server.
+  CHECK(s.running());
+  CHECK(s.client().localTick().value > before.value + 30);
+  CHECK(rig.server->stats().inputsAccepted > accepted + 30);
+  CHECK(rig.serverX(me) > x0);
+  CHECK(std::abs(rig.serverX(me) - x1) < 1e-3);  // ... but the monkey stands still
+
+  // Resume: the key still held moves the monkey again.
+  client::closePauseMenu(menu, s);
+  CHECK_FALSE(s.inputSuspended());
+  const double x2 = rig.serverX(me);
+  rig.runFor(300 * kMs);
+  rig.push(s, Key::D, false);
+  CHECK(rig.serverX(me) > x2 + 0.2);
+  CHECK(s.client().netStats().checksumMismatches == 0);
 }

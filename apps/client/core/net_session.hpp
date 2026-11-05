@@ -200,6 +200,15 @@ class NetSession {
   // Sends Disconnect{Quit}; the phase becomes Disconnected.
   void disconnect();
 
+  // v0.46, the pause menu: the server's match cannot pause for one player,
+  // so while suspended the session keeps advancing but every local slot
+  // sends an idle input (no stick, no buttons, its last aim) and what the
+  // sampler saw is discarded. On resume a button still held counts as used
+  // until released (as after a local pause), so the menu's own presses never
+  // fire; a held stick moves again at once.
+  void setInputSuspended(bool suspended);
+  [[nodiscard]] bool inputSuspended() const { return inputSuspended_; }
+
   // --- reconnect (v0.44) ---------------------------------------------------------
   // The link was lost after the session ran, and coming back can help.
   [[nodiscard]] bool canReconnect() const;
@@ -325,6 +334,7 @@ class NetSession {
   uint64_t nowNs_{0};
   std::vector<std::byte> token_;  // the token the Hello carried (lobby or config)
   uint32_t reconnects_{0};
+  bool inputSuspended_{false};  // v0.46: the pause menu is open
 
   std::vector<LobbyDevice> devices_;
   platform::InputSampler sampler_{};

@@ -21,6 +21,7 @@ using client::LobbySettings;
 using client::MainMenu;
 using client::MainMenuItem;
 using client::MenuAction;
+using client::PauseItem;
 using client::SettingsMenu;
 using client::SettingsRow;
 
@@ -192,8 +193,100 @@ TEST_CASE("--screen opens a front-end screen (v0.43)", "[client][menu][options]"
   CHECK(o.screen == "settings");
   REQUIRE(parse({"--screen", "local"}, o, error));
   CHECK(o.screen == "local");
+  REQUIRE(parse({"--screen", "paused"}, o, error));  // v0.46
+  CHECK(o.screen == "paused");
   client::ClientOptions bad;
   CHECK_FALSE(parse({"--screen", "credits"}, bad, error));
   CHECK(error.find("--screen") != std::string::npos);
   CHECK_FALSE(parse({"--screen"}, bad, error));
+}
+
+TEST_CASE("pause menu: the local and online buttons, focus on Resume (v0.46)", "[client][menu]") {
+  client::PauseMenu m;
+  CHECK_FALSE(m.isOpen());
+  m.open(false);
+  REQUIRE(m.isOpen());
+  CHECK_FALSE(m.online());
+  REQUIRE(m.items().size() == 3);
+  CHECK(m.items()[0] == PauseItem::Resume);
+  CHECK(m.items()[1] == PauseItem::BackToLobby);
+  CHECK(m.items()[2] == PauseItem::MainMenu);
+  CHECK(m.focusedItem() == PauseItem::Resume);
+  m.apply(MenuAction::Down);
+  m.apply(MenuAction::Down);
+  CHECK(m.focusedItem() == PauseItem::MainMenu);
+  m.apply(MenuAction::Down);  // wraps
+  CHECK(m.focusedItem() == PauseItem::Resume);
+  m.apply(MenuAction::Up);
+  CHECK(m.focusedItem() == PauseItem::MainMenu);
+  CHECK(std::string(client::PauseMenu::label(PauseItem::BackToLobby)) == "Back to lobby");
+
+  // Reopened online: two buttons, the focus back on Resume (clamped from 2).
+  m.close();
+  CHECK_FALSE(m.isOpen());
+  m.open(true);
+  CHECK(m.online());
+  REQUIRE(m.items().size() == 2);
+  CHECK(m.items()[0] == PauseItem::Resume);
+  CHECK(m.items()[1] == PauseItem::LeaveRoom);
+  CHECK(m.focusedItem() == PauseItem::Resume);
+  m.setFocus(1);
+  CHECK(m.focusedItem() == PauseItem::LeaveRoom);
+  m.setFocus(2);  // out of range: ignored
+  CHECK(m.focusedItem() == PauseItem::LeaveRoom);
+  CHECK(std::string(client::PauseMenu::label(PauseItem::LeaveRoom)) == "Leave room");
+}
+
+TEST_CASE("pause menu: what opens it, what resumes, what picks (v0.46)", "[client][menu][input]") {
+  using platform::InputEvent;
+  using platform::InputEventKind;
+  using platform::Key;
+  using platform::PadButton;
+  const auto keyDown = [](Key k) {
+    InputEvent e;
+    e.kind = InputEventKind::KeyDown;
+    e.key = k;
+    return e;
+  };
+  const auto pad = [](PadButton b, InputEventKind kind = InputEventKind::PadButtonDown) {
+    InputEvent e;
+    e.kind = kind;
+    e.deviceId = 3;
+    e.button = b;
+    return e;
+  };
+
+  // Escape, or a bound pad's Start (an unbound pad's press takes over a slot).
+  CHECK(client::isPauseEvent(keyDown(Key::Escape), true));
+  CHECK_FALSE(client::isPauseEvent(keyDown(Key::Enter), true));
+  CHECK(client::isPauseEvent(pad(PadButton::Start), true));
+  CHECK_FALSE(client::isPauseEvent(pad(PadButton::Start), false));
+  CHECK_FALSE(client::isPauseEvent(pad(PadButton::Start, InputEventKind::PadButtonUp), true));
+  CHECK_FALSE(client::isPauseEvent(pad(PadButton::South), true));
+
+  client::PauseMenu m;
+  CHECK_FALSE(m.press(keyDown(Key::Enter)));  // closed: nothing
+  for (const bool online : {false, true}) {
+    m.open(online);
+    m.apply(MenuAction::Down);  // off Resume
+    REQUIRE(m.focusedItem() != PauseItem::Resume);
+    // Every resume path, whatever the focus.
+    CHECK(m.press(keyDown(Key::Escape)) == PauseItem::Resume);
+    CHECK(m.press(pad(PadButton::East)) == PauseItem::Resume);
+    CHECK(m.press(pad(PadButton::Back)) == PauseItem::Resume);
+    CHECK(m.press(pad(PadButton::Start)) == PauseItem::Resume);
+    // Activation picks the focused item.
+    const PauseItem focused = m.focusedItem();
+    CHECK(m.press(keyDown(Key::Enter)) == focused);
+    CHECK(m.press(keyDown(Key::KpEnter)) == focused);
+    CHECK(m.press(keyDown(Key::Space)) == focused);
+    CHECK(m.press(pad(PadButton::South)) == focused);
+    // Others do nothing: a game key, a release, navigation.
+    CHECK_FALSE(m.press(keyDown(Key::J)));
+    CHECK_FALSE(m.press(pad(PadButton::South, InputEventKind::PadButtonUp)));
+    CHECK_FALSE(m.press(keyDown(Key::Down)));
+    m.setFocus(0);
+    CHECK(m.press(keyDown(Key::Enter)) == PauseItem::Resume);
+  }
+  CHECK(m.focusedItem() == PauseItem::Resume);
 }
