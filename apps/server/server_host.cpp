@@ -409,24 +409,33 @@ void ServerHost::onTick() {
           log("exit after {} matches", stats_.matchesCompleted);
           break;
         }
-        const uint64_t next = nextMatchSeed(seed);
-        botSeed_ = nextMatchSeed(botSeed_);
-        const Tick start =
-            server_->nextTick().plus(static_cast<int32_t>(config_.restartDelayTicks));
-        // v0.32: the next match rebalances a team mode's teams over the
-        // slots present now (later joiners still land on the smallest team).
-        sim::MatchConfig nextConfig = server_->matchConfig();
-        nextConfig.seed = next;
-        nextConfig.teams =
-            sim::teamsFor(server_->content().modeAt(nextConfig.mode), w.rules.present);
-        server_->restartMatch(nextConfig, start, botSeed_);
-        log("next match seed=0x{:x} at tick {}", next, start.value);
+        scheduleNextMatch(config_.restartDelayTicks);
         break;
       }
       default:
         break;
     }
   }
+}
+
+void ServerHost::scheduleNextMatch(uint32_t delayTicks) {
+  const uint64_t next = nextMatchSeed(server_->matchConfig().seed);
+  botSeed_ = nextMatchSeed(botSeed_);
+  const Tick start = server_->nextTick().plus(static_cast<int32_t>(delayTicks));
+  // v0.32: the next match rebalances a team mode's teams over the
+  // slots present now (later joiners still land on the smallest team).
+  sim::MatchConfig nextConfig = server_->matchConfig();
+  nextConfig.seed = next;
+  nextConfig.teams =
+      sim::teamsFor(server_->content().modeAt(nextConfig.mode), server_->world().rules.present);
+  server_->restartMatch(nextConfig, start, botSeed_);
+  log("next match seed=0x{:x} at tick {}", next, start.value);
+}
+
+void ServerHost::startNewMatch(std::string_view reason) {
+  if (server_->shuttingDown() || done_) return;
+  log("new match: {}", reason);
+  scheduleNextMatch(0);
 }
 
 void ServerHost::logServerEvents() {
@@ -475,7 +484,7 @@ void ServerHost::logStats(uint64_t nowNs) {
       std::popcount(uint32_t{server_->present()} & ~uint32_t{server_->bots()}));
   log("stats peers={} players={} bots={} ticks={} subst/s={:.2f} in={:.0f}B/s out={:.0f}B/s "
       "joins=+{} reconnects=+{} rejects=+{} kicks=+{} resyncs=+{} protocol_errors=+{} "
-      "rate_limited=+{} rejected_inputs=+{} late_inputs/s={:.1f} dropped_ticks=+{}{}",
+      "rate_limited=+{} rejected_inputs=+{} late_inputs/s={:.1f} dropped_ticks=+{}{}{}",
       peers.size(), players, std::popcount(static_cast<uint32_t>(server_->bots())),
       s.ticks - l.ticks, perSecond(s.substitutedInputs - l.substitutedInputs, ns),
       perSecond(s.bytesReceived - l.bytesReceived, ns), perSecond(s.bytesSent - l.bytesSent, ns),
@@ -483,7 +492,7 @@ void ServerHost::logStats(uint64_t nowNs) {
       s.resyncsServed - l.resyncsServed, s.protocolErrors - l.protocolErrors,
       s.rateLimited - l.rateLimited, s.rejectedInputs - l.rejectedInputs,
       perSecond(s.inputsLate - l.inputsLate, ns), stats_.droppedTicks - lastHostStats_.droppedTicks,
-      botStats());
+      botStats(), config_.statsSuffix ? config_.statsSuffix(nowNs) : std::string());
   if (config_.verbose) {
     for (const net::ServerPeerInfo& p : peers) {
       log("  peer={} slots={} margin={:.1f} lead={:.1f} subst={} in={} out={} errors={}",

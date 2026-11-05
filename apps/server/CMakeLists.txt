@@ -28,8 +28,20 @@ if(NOT KFM_WEBRTC OR EMSCRIPTEN)
   return()
 endif()
 
+# kfm_server_lobby  LobbyAdapter: --lobby mode, net::LobbyLink wired to a
+#                   ServerHost (tokens, room restarts, capacity, log lines);
+#                   tested in tests/netcode against a fake lobby.
+add_library(kfm_server_lobby STATIC server_lobby.cpp)
+add_library(kfm::server_lobby ALIAS kfm_server_lobby)
+target_include_directories(kfm_server_lobby PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(kfm_server_lobby PUBLIC kfm::server_host kfm::net_webrtc
+  PRIVATE kfm::warnings)
+kfm_no_exceptions_rtti(kfm_server_lobby)
+set_target_properties(kfm_server_lobby PROPERTIES FOLDER apps)
+
 add_executable(kfm_server main.cpp)
-target_link_libraries(kfm_server PRIVATE kfm::server_host kfm::net_webrtc kfm::net kfm::sim
+target_link_libraries(kfm_server PRIVATE kfm::server_host kfm::server_lobby kfm::net_webrtc
+  kfm::net kfm::sim
   kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_server)
 set_target_properties(kfm_server PROPERTIES FOLDER apps)
