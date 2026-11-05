@@ -177,6 +177,7 @@ if(KFM_WEBRTC AND NOT EMSCRIPTEN)
     net/webrtc_api_test.cpp
     net/webrtc_transport_test.cpp
     net/webrtc_contract_test.cpp
+    net/webrtc_external_test.cpp
   )
   target_include_directories(kfm_net_webrtc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc kfm::transport_contract)

@@ -22,6 +22,36 @@
 //
 // Signaling protocol: kfm/net/webrtc_signaling.hpp.
 //
+// Lobby modes (M6a, architecture §13.5, docs/lobby-protocol.md):
+//   server, external signaling  WebRtcServerConfig::externalSignaling: no
+//           WebSocket server; the host relays signaling (kfm_server through
+//           LobbyLink, kfm/net/lobby_link.hpp). acceptExternalPeer() gives a
+//           peer the lobby announced a PeerId (same numbering, maxPeers and
+//           connect timeout as a socket peer), deliverSignaling() feeds it
+//           the client's offer and candidates, takeOutgoingSignaling()
+//           returns the answer and candidates to relay, in order, and
+//           takeDroppedExternalPeers() the external peers the transport
+//           dropped itself (disconnect(), failure, timeout) so the host can
+//           tell the lobby. closeExternalPeer() is the lobby saying the peer
+//           left: the peer is dropped (Disconnected if it was announced).
+//   client, lobby request       WebRtcClientConfig::lobby set and
+//           signalingUrl the lobby's /client URL (ws[s]://host[:port]/client).
+//           On open the transport sends the create or join request; the
+//           reply must be `joined` (connectionToken() becomes the room's
+//           token, lobbyRoom() the code and region, and only then the peer
+//           connection is created and the offer sent) or `refused`
+//           (Disconnected, lastError() "lobby refused: <reason>"). After
+//           `joined` the socket carries plain signaling; a `closed` frame
+//           or the socket closing at any time is Disconnected, lastError()
+//           "lobby closed: <reason>" or "lobby connection closed". The socket
+//           stays open for the transport's lifetime (the lobby counts a
+//           room's occupancy by it). The connect timeout covers the lobby
+//           reply too. The message layer's token: the NetClient's Hello goes
+//           out once the transport is Connected, which is after `joined`, so
+//           a client hands the token over with NetClient::setToken(
+//           transport.connectionToken()) before its first pump() after
+//           lobbyRoom() appears (or builds the NetClient only then).
+//
 // Threading: libdatachannel calls back on its own threads (in the browser on
 // the main thread). Callbacks only append to a mutex-guarded queue; poll()
 // drains it on the caller's thread and does all the work there (peer
@@ -44,8 +74,10 @@
 #include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace kfm::net {
@@ -68,16 +100,54 @@ struct WebRtcServerConfig {
   bool iceUdpMux{false};
   uint16_t maxPeers{kMaxPeers};  // clients beyond it have their WebSocket closed; ≤ kMaxPeers
   // A client that has not opened both channels this long after its
-  // WebSocket arrived is dropped (no event: it was never announced).
+  // WebSocket arrived (or acceptExternalPeer() returned it) is dropped (no
+  // event: it was never announced).
   uint32_t connectTimeoutMs{kDefaultWebRtcConnectTimeoutMs};
+  // The host relays signaling (see "Lobby modes" above): no WebSocket server
+  // is created and signalingPort/signalingBindAddress are ignored.
+  bool externalSignaling{false};
+};
+
+// A client's request to the lobby (docs/lobby-protocol.md §3): create a room
+// in `region`, or join the room `code`. buildId and contentHash are sent as
+// 8 lower-case hex digits each and must match the room's server.
+struct LobbyRequest {
+  enum class Kind : uint8_t { Create = 0, Join };
+  Kind kind{Kind::Create};
+  std::string region;  // Create: e.g. "eu"
+  std::string code;    // Join: 5 characters, any case
+  uint32_t buildId{0};
+  uint32_t contentHash{0};
+};
+
+// The room a lobby client joined (from the lobby's `joined` reply).
+struct LobbyRoom {
+  std::string code;  // upper case, e.g. "ABCDE"
+  std::string region;
 };
 
 struct WebRtcClientConfig {
-  std::string signalingUrl;                // "ws://host:port"
+  // "ws://host:port" (the dedicated server's own socket, any path), or the
+  // lobby's "ws[s]://host[:port]/client" when `lobby` is set.
+  std::string signalingUrl;
   std::string stunServer;                  // "stun:host:port"; empty = host candidates only
   std::vector<std::byte> connectionToken;  // for the message layer, see connectionToken()
   // No Connected within this time of the first poll() -> Disconnected.
   uint32_t connectTimeoutMs{kDefaultWebRtcConnectTimeoutMs};
+  // Set: lobby mode. The token comes from the lobby and replaces
+  // connectionToken.
+  std::optional<LobbyRequest> lobby;
+  // The caller relays signaling (tests, in-process relays): no WebSocket,
+  // signalingUrl is ignored, the offer is made at once; the server peer's
+  // messages go in through deliverSignaling(kServerPeer, ...) and out
+  // through takeOutgoingSignaling(). Not with `lobby`.
+  bool externalSignaling{false};
+};
+
+// A signaling message an external-signaling transport wants relayed to `peer`.
+struct OutgoingSignal {
+  PeerId peer{PeerId::invalid()};
+  std::string text;  // one kfm/net/webrtc_signaling.hpp message (answer, candidate)
 };
 
 class WebRtcTransport final : public ITransport {
@@ -113,10 +183,36 @@ class WebRtcTransport final : public ITransport {
   [[nodiscard]] bool isServer() const;
   // Server: the bound signaling port (resolves signalingPort = 0). Client: 0.
   [[nodiscard]] uint16_t listenPort() const;
-  // Client: the token from the config. Server: empty.
+  // Client: the token from the config, or in lobby mode the lobby's token
+  // (its 32 hex characters as ASCII bytes; empty until `joined`). Server:
+  // empty.
   [[nodiscard]] std::span<const std::byte> connectionToken() const;
   // The last exception caught at the boundary or signaling error, for logs.
   [[nodiscard]] std::string lastError() const;
+
+  // External signaling (a server or client created with externalSignaling;
+  // on any other transport these do nothing and return nothing). All run on
+  // the caller's thread.
+  //
+  // Server: a new peer for a client the lobby announced; nullopt at maxPeers.
+  [[nodiscard]] std::optional<PeerId> acceptExternalPeer();
+  // One signaling message from that peer (a client: kServerPeer), as if it
+  // arrived on its socket. false: unknown peer, or not a signaling message
+  // (ignored).
+  bool deliverSignaling(PeerId peer, std::string_view jsonText);
+  // The lobby says the peer left: dropped now, Disconnected at the next
+  // poll() if it was Connected. Not reported by takeDroppedExternalPeers().
+  void closeExternalPeer(PeerId peer);
+  // The answers and candidates produced since the last call, in order, for
+  // live peers only.
+  [[nodiscard]] std::vector<OutgoingSignal> takeOutgoingSignaling();
+  // External peers the transport dropped on its own since the last call
+  // (disconnect(), connection failure, connect timeout), in order.
+  [[nodiscard]] std::vector<PeerId> takeDroppedExternalPeers();
+
+  // Client in lobby mode: the room once `joined` arrived; nullopt before,
+  // and always without a lobby request.
+  [[nodiscard]] std::optional<LobbyRoom> lobbyRoom() const;
 
  private:
   std::unique_ptr<Impl> impl_;
