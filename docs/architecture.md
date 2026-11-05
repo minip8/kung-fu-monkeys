@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.35 (2026-11-04). Working title taken from the repo name.
+Status: proposal v0.36 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -298,6 +298,14 @@ unchanged; `kfm_arena --team` with team places and `--memory-on-respawn` (also o
 section; the C SDK names the filled fields. The grid modes see under `own` fog and call once a
 turn: their two corpus entries changed checksums (the call slot), every other `.checksums` is
 byte-identical, and `scripted_10p_grid_rounds_1t_1800t` (5v5) is new (21 replays).
+v0.36 changes: M6 split into M6a (ship on the web) and M6b (the bot ladder), and the ladder
+designed (§8 "The ladder", §11, §12). Accounts with per-user tokens, teams as entrants, source
+submissions built on the server in a throwaway container from a pinned C++ recipe (C++ is the
+only ladder language), the five most recent submissions kept with the active one, a `contest`
+mode as the season's row of the contest knobs, ratings per entrant over rotated two-sided
+matches reproducible from seed plus modules, replays served with their season's content, and a
+Rust CLI released through PyPI. The bots repository's contents are named and its relation to
+this repository is a pinned release. No code change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2650,7 +2658,8 @@ which the contract needs.
   The scripted generator is used by no shipping host any more: `kfm_replay`, the render probe
   and netsim keep it as test scaffolding.
 - **Outside this repository.** A separate bots repository holds the SDKs (one copy-in file per
-  language with no dependencies: C, Rust and AssemblyScript to start), starter and example
+  language with no dependencies: C, Rust and AssemblyScript to start; v0.36 narrows the ladder
+  to C++ over the C header, "The ladder" below), starter and example
   bots, the contest rules and, later, the ladder service. The dividing line: anything that
   links into the game binaries lives here, anything that produces a file the game loads lives
   there. The project ships no training tooling: a trained policy is a weight array in a source
@@ -2965,6 +2974,75 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   about 30 k ticks/s with ten bots. A playable baseline, not a strong bot: it does not plan for
   its team, read calls beyond the last sighting, or use the catch on purpose.
 
+**The ladder (v0.36, M6b).** The ladder is the hosted contest: authors submit bots, the service
+plays them against each other with `kfm_arena`, ranks the entrants and serves the replays. It
+lives in the bots repository (above) and uses this repository through a pinned release. Decided:
+
+- **Accounts, tokens and teams.** A user has an account and a personal bearer token, created and
+  revoked on the portal and stored by the CLI after `login`; it is scoped to submit and read. An
+  entrant is a team of users (a solo player is a team of one), and a team's membership is a
+  table, so a member leaves without rotating a shared secret. Submissions, the active bot and
+  the rating belong to the team; the submitting user is recorded on each submission. Identity is
+  a hosted OAuth provider (GitHub to start), never a password the service stores.
+- **Source in, module out.** A submission is a source tree plus a small manifest (the entrant,
+  the language, the build entry), uploaded as a zip through the portal or through the CLI; the two
+  paths hit one HTTP endpoint. The service builds it, never the author: every ranked module then
+  comes from the pinned toolchain, the source is on file for auditing and for publishing after a
+  season, and a module is byte-identical to a local build of the same recipe (`build_example.sh`
+  already shows this for the emsdk clang). The only ladder language is C++ (the C SDK header is
+  C11 that compiles as C++; a C++ convenience layer lives in the SDK). The recipe is the SDK's:
+  emsdk clang++ over every source file in one command with the flags of `docs/bot-abi.md` §5,
+  no third-party packages (the SDK has no dependencies, so an offline build is the rule, not a
+  restriction). Prebuilt modules are not accepted on the ladder.
+- **The build sandbox.** Each build runs in a throwaway container: a fresh container from the
+  pinned per-language image, destroyed when the build ends, with no network, the source mounted
+  read-only, a read-only root with a tmpfs scratch, an unprivileged user, and caps on CPU, memory,
+  process count and wall time (`docker run --rm --network none --memory 2g --cpus 1
+  --pids-limit 256 --read-only --tmpfs /tmp --user builder -v SRC:/src:ro -v OUT:/out IMAGE
+  timeout 120 recipe`, or the podman equivalent). The only result that counts is one `.wasm`
+  in the output directory; a limit hit is a failed submission with its log. A public service runs
+  the containers under gVisor or on a build host that holds nothing else. After the build the
+  service validates the module exactly as `WasmAgent` does (ABI version, the 4 MiB module and
+  16 MiB memory caps, instantiation and `kfm_init` under the 10 M budget) and plays one smoke
+  match against the reference bot; a module that traps or runs over budget in it is rejected.
+- **Submissions and retention.** A submission is immutable: the source archive, the built module
+  and its hash, the build log and the validation result. A team keeps the five most recent
+  submissions plus whichever is active (the active one is never pruned); the CLI and the portal
+  list them and set the active one. Built modules are kept for the whole season regardless, so
+  every ranked match stays reproducible from seed plus modules; a source archive is small and a
+  module is at most 4 MiB, so the cap is about tidiness, not storage.
+- **The `contest` mode.** The season's ruleset is one mode in the content, `contest`, the
+  ladder's row of the contest knobs above (team size, `vision`, call range, `turnTicks`, fuel,
+  memory on respawn) on its arena; today it is `grid_rounds_1t` on `courtyard` under `own` fog
+  with calls, the M5b shape. The ladder points at the name, so a season changes the row, not
+  the service. A season pins a release of this repository, which pins the content hash; the
+  content directory is kept per season because replays carry the hash and a viewer or
+  `kfm_replay verify` needs that exact content.
+- **Matches and ratings.** The service schedules two-sided matches between active submissions
+  with `kfm_arena --mode contest --team A --team B --rotate --json --replay-dir`, deterministic
+  seeds recorded per match, and parses the per-match JSON object (`match`, `seed`, `ticks`,
+  `checksum`, `winner_team`, `teams[]` with `entrant`, `place`, `score`, `kills`, `deaths`,
+  `slots[]` with the module's `traps`, `over`, `bad`, `fuel_*` and `dead`); from v0.36 that
+  object's keys are append-only, like the ABI. The rating is per entrant (switching the active
+  submission keeps the rank), Elo or Glicko-2 over the two-sided pairs, with the submission ids
+  on both sides recorded on every match so a disputed result is re-run bit for bit. The free-
+  for-all slot bias of §12 does not reach the ladder: `--rotate` plays every pair from both sides.
+- **Replays.** A match's `.kfmr` is served with its season's content; the CLI downloads it and
+  prints the viewer URL, and the browser client loads a replay by URL (a client feature of M6b:
+  the client has no replay playback as of v0.35; it needs no bot runtime, since a replay is
+  inputs). Fog is a projection in the observation builder, so a replay shows the whole arena;
+  a fog overlay in the viewer is a follow-up.
+- **The CLI.** One static binary written in Rust, released as platform wheels through PyPI with
+  maturin (`uv tool install kfm`, `uvx kfm`) and on the bots repository's releases page.
+  Commands: `login`, `build` (the recipe in the pinned image, locally), `test` (a match against
+  the reference bot through a released headless `kfm_arena`), `submit`, `bots list` and
+  `bots activate`, `matches list`, `replay get` and `replay open`.
+- **What this repository contributes.** `kfm_arena` as the engine with its append-only JSON
+  result, the `contest` mode in content, the browser client's replay-by-URL viewer, a released
+  headless `kfm_arena` binary per tagged version, and `docs/bot-abi.md` as the normative ABI.
+  The portal, the accounts, the build images, the scheduler, the ratings store and the CLI are
+  the bots repository's.
+
 ---
 
 ## 9. Tooling, testing, quality
@@ -3221,8 +3299,18 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M4 Content | Power-ups, modifiers, more abilities, arenas, modes, lobby UI, audio/VFX | Content added without touching system code |
 | M5 Agent platform | `IAgent` and the versioned `Observation`, bot ABI v1 and `WasmAgent` over the wasm runtime, the reference bot in lobbies and on the server, `kfm_arena`, SDK v1 and example bots published from the bots repository (§8) | A bot built outside this repository against SDK v1 beats the reference bot in a `kfm_arena` tournament run |
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
-| M6 Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting, the bot ladder (`kfm_arena` as a service, rankings, replay viewing) | Send a link, friends are in a match within a minute, no install |
+| M6a Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
+| M6b The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, replays served with their season's content, the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
+
+M6 sequencing (v0.36): M6a and M6b share only the hosted client and proceed in parallel. M6b
+depends on `kfm_arena`, static hosting and an identity provider, not on the lobby service or the
+regional servers. Its order: (1) in this repository, the `contest` mode (content hash only),
+the JSON result pinned append-only, a tagged release that publishes the headless `kfm_arena`;
+(2) the bots repository created with the SDK moved from `tools/bots/`, the C++ layer and the
+build image, `example_bot_test` kept here against the normative header; (3) the service:
+accounts, teams, submissions and the sandboxed build; (4) the scheduler and ratings; (5) the
+CLI on PyPI; (6) the client's replay viewer and the portal's replay links. M7 is unchanged.
 
 M5b sequencing (v0.29): one PR and one architecture version per step, each green on the
 determinism gate before the next starts. (1) Mode foundations: `kMaxModes` 32, the loadout axis,
@@ -3658,6 +3746,13 @@ baseline moved to C++23 (§9).
   4 MiB modules, 16 MiB memory; `Observation` v1 is pinned in `docs/bot-abi.md`; bots are named
   by `BotSpec` and seeded per slot by one formula in every host; the server delays bots by the
   humans' lead (§8, §10, §11).
+- Decided (v0.36, M6b): the ladder is a hosted service in the bots repository over a pinned
+  release of this one; per-user tokens, teams as entrants, source-only C++ submissions built in
+  a throwaway container, five submissions kept plus the active one, a `contest` mode as the
+  season's knob row, ratings per entrant over rotated two-sided matches reproducible from seed
+  plus modules, replays served with their season's content, a Rust CLI on PyPI (§8, §11).
+  Open: the rating formula (Elo or Glicko-2), continuous play against scheduled rounds, how long
+  a season's content and replays are kept, and whether a fog overlay belongs in the viewer.
 - Open (M5 follow-ups): the browser JS shim for bot modules in the client (metering best effort
   there); bots that yield a slot to a joining human; contests at thousands of times real time
   through parallel processes (§8). Two sim-side sources of slot bias found by the bot fairness

@@ -43,8 +43,10 @@ role, `grid_rounds`/`grid_rounds_1t` on the `courtyard` arena), landed in v0.34;
 squad contest (the `call` ability and `MonkeyCalled`, `ModeDef::vision` and fog as a projection
 in `buildObservation` (`kfm/ai/vision.hpp`), the turn window, heard calls and per-instance
 lifecycle in `AgentHost`, the filled Observation v1 fields, `kfm_arena --team` and
-`--memory-on-respawn`, a grid- and fog-aware reference bot), landed in v0.35. Next is M6 (ship
-on the web: hosting, the lobby service, regional servers, the bot ladder).
+`--memory-on-respawn`, a grid- and fog-aware reference bot), landed in v0.35. Next is M6, split in
+v0.36 into M6a (ship on the web: hosting, the lobby service, regional servers) and M6b (the bot
+ladder: accounts and teams, source-only C++ submissions built in a sandbox, ratings, replays, a
+Rust CLI; the service lives in the bots repository, architecture §8 "The ladder").
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -300,7 +302,9 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Third-party sources fetched into `build/<preset>/_deps` may ship their own `.clang-tidy`;
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
-- Next milestone: M6 (ship on the web, architecture §11). M5b landed in v0.35 (five PRs, one
+- Next milestone: M6a (ship on the web) and M6b (the bot ladder), architecture §11; M6b's
+  first steps in this repo are the `contest` mode, the append-only `kfm_arena` JSON result and a
+  tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one
   architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)
   is pending. Spawn groups fixed the side bias between teams only: the free-for-all
   spawn-order slot bias of §12 is still open (tournaments rotate).
