@@ -110,8 +110,9 @@ First message (server → lobby):
  "build":"<8 hex>","content":"<8 hex>","capacity":"7"}
 ```
 
-`capacity` is the total number of human slots the process offers (max players minus its
-bots), never net of connected humans: the lobby counts a room's occupancy itself by its open
+`capacity` is the total number of human slots the process offers (max players minus the bots
+that keep their slots; a server whose bots yield to joining humans, kfm_server's room flow since
+architecture v0.44, offers max players), never net of connected humans: the lobby counts a room's occupancy itself by its open
 client sockets and refuses `full` once they reach `capacity`. `name` is free text for logs and `/healthz`. Reply: `{"type":"registered"}` or
 `{"type":"refused","reason":"bad_secret"|"bad_request"}` (then the socket closes).
 

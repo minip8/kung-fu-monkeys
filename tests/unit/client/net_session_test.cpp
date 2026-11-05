@@ -245,6 +245,49 @@ TEST_CASE("a NetSession connects, syncs and runs; keyboard input moves its monke
   CHECK(s.client().confirmedTick().has_value());
 }
 
+TEST_CASE("a session queued for a bot's slot plays once the slot is granted (v0.44)",
+          "[client][net][yield]") {
+  net::ServerConfig cfg;
+  cfg.maxPlayers = 2;
+  cfg.queueForBotSlots = true;
+  Rig rig(cfg);
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  REQUIRE(rig.server->setBot(PlayerId{1}, true));
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), {}, 20 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  CHECK(s.localSlots() == 0);
+  CHECK(s.client().waitingForSlot());
+  CHECK(s.statusText().find("until a bot's slot is free") != std::string::npos);
+  rig.runFor(kSec);
+  const uint64_t jumps = s.client().netStats().hardJumps;
+
+  // The host retires the bot in slot 1 and grants it.
+  REQUIRE(rig.server->setBot(PlayerId{1}, false));
+  rig.step();
+  const net::PeerId peer = rig.server->oldestQueued();
+  REQUIRE(peer.isValid());
+  REQUIRE(rig.server->grantQueued(peer));
+  REQUIRE(rig.runUntil([&] { return s.localSlots() == 0b10; }, kSec));
+  rig.runFor(100 * kMs);
+  CHECK(s.slotOfDevice(0) == PlayerId{1});
+  CHECK(s.owner(PlayerId{1}) == SlotOwner::Local);
+  CHECK_FALSE(s.client().waitingForSlot());
+  CHECK(s.client().netStats().hardJumps == jumps + 1);  // ran forward to the lead
+  CHECK(s.client().netStats().leadTicks > 0);
+
+  // Its keyboard moves its monkey on the server.
+  REQUIRE(rig.runUntil([&] { return rig.playing(PlayerId{1}); }, 10 * kSec));
+  const double x0 = rig.serverX(PlayerId{1});
+  rig.push(s, Key::D, true);
+  rig.runFor(300 * kMs);
+  rig.push(s, Key::D, false);
+  rig.runFor(100 * kMs);
+  CHECK(rig.serverX(PlayerId{1}) > x0 + 0.5);
+  CHECK(s.client().netStats().checksumMismatches == 0);
+  CHECK(s.client().netStats().resyncRequests == 0);
+}
+
 TEST_CASE("two local devices request two slots, mapped in ascending order", "[client][net]") {
   Rig rig;
   REQUIRE(rig.server->setBot(PlayerId{0}, true));

@@ -47,7 +47,8 @@
 // In lobby mode a room assigned while no peer is connected resets the room to
 // Waiting with the defaults (--auto-start: restarts the match, fresh seeds,
 // bots re-seeded), the process offers max players minus
-// bots human slots (its `capacity`), the stats line ends with the lobby
+// bots human slots (its `capacity`; v0.44: max players in the room flow,
+// whose bots yield), the stats line ends with the lobby
 // state, and a lost lobby link is retried every 1 s doubling to 30 s.
 // --seed S             first match seed (default: from the clock, printed)
 // --bot SPEC           a server-side bot (repeatable, in slot order): ref,

@@ -19,11 +19,13 @@
 #include "server_host.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -48,7 +50,13 @@ sim::ContentDB shortContent() {
   dm.timeLimitTicks = 30 * sim::kTickHz;
   dm.respawnTicks = 60;
   dm.respawnInvulnTicks = 30;
-  db.modeCount = 2;
+  // Mode 2: the same deathmatch played long (the yield tests, v0.44).
+  sim::ModeDef& longDm = db.modes[2];
+  longDm = dm;
+  longDm.name = sim::ContentName::of("deathmatch_long");
+  longDm.scoreToWin = 50;
+  longDm.timeLimitTicks = 600 * sim::kTickHz;
+  db.modeCount = 3;
   return db;
 }
 
@@ -283,4 +291,113 @@ TEST_CASE("The room flow: the last human leaving returns the room to Waiting; op
   rig.host->openRoom("room ABCDE");
   CHECK(rig.room().settings() == server::roomSettingsOf(sim::MatchConfig{}, 2));
   CHECK(rig.linesWith("room reset: room ABCDE") == 1);
+}
+
+// v0.44 (§6.6): bots yield. A room of four slots, one human and three bots:
+// a second human is queued as a spectator, takes the highest bot's slot when
+// that bot is off the field (eliminated, or at the round end) one tick after
+// the bot left, becomes a player (it runs at the lead and its inputs count)
+// and the RoomState shows it; nobody desyncs.
+TEST_CASE("The room flow: a bot yields its slot to a joiner in a full room",
+          "[server][room][flow][yield]") {
+  server::HostConfig cfg;
+  cfg.room = true;
+  cfg.server.maxPlayers = 4;
+  cfg.bots = server::referenceBots(3);
+  RoomRig rig(cfg);
+  NetClient& a = rig.addClient("first", "First");
+  REQUIRE(rig.runUntil([&] { return a.running() && a.roomState(); }, 5 * kSec));
+  const bool deathmatch = GENERATE(false, true);
+  CAPTURE(deathmatch);
+  a.sendRoomSettings(RoomSettings{.mode = static_cast<uint8_t>(deathmatch ? 2 : 0), .bots = 3});
+  REQUIRE(rig.runUntil([&] { return roomOf(a).settings.bots == 3; }, kSec));
+  a.sendStart();
+  REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Playing) && !a.holding(); }, 2 * kSec));
+  CHECK(rig.host->server().bots() == 0b1110);
+  CHECK(rig.host->server().freeSlots() == 0);
+
+  // The room is full: the joiner waits as a spectator, not rejected.
+  NetClient& b = rig.addClient("second", "Second");
+  REQUIRE(rig.runUntil([&] { return b.running(); }, 5 * kSec));
+  CHECK(b.spectator());
+  CHECK(b.waitingForSlot());
+  CHECK(rig.linesWith("queue peer=") == 1);
+  CHECK(rig.host->server().stats().rejects == 0);
+
+  // A bot gives its slot up; the joiner gets it a tick later.
+  REQUIRE(rig.runUntil([&] { return b.localSlots() != 0; }, 90 * kSec));
+  CHECK(rig.linesWith("yields its slot") == 1);
+  CHECK(rig.room().phase() == RoomPhase::Playing);
+  CHECK(rig.linesWith("room slot granted") == 1);
+  CHECK(b.localSlots() == 0b1000);  // the highest bot's slot
+  CHECK_FALSE(b.waitingForSlot());
+  CHECK(rig.host->server().bots() == 0b0110);
+  CHECK(rig.host->botSpec(PlayerId{3}) == std::nullopt);
+  REQUIRE(
+      rig.runUntil([&] { return roomOf(a).humans == 0b1001 && roomOf(b).humans == 0b1001; }, kSec));
+  CHECK(roomOf(b).bots == 0b0110);
+  CHECK(roomOf(b).names[3].view() == "Second");
+  CHECK(roomOf(b).host == PlayerId{0});
+  // The slot left for a tick: a deathmatch forfeits the bot's score and
+  // deaths; the joiner's monkey spawns (after respawnTicks, or at the next
+  // round start).
+  if (deathmatch) {
+    CHECK(rig.host->server().world().rules.scores[3] == 0);
+    CHECK(rig.host->server().world().rules.deaths[3] == 0);
+  }
+  REQUIRE(
+      rig.runUntil([&] { return rig.host->server().world().players.isAliveIndex(3); }, 30 * kSec));
+
+  // It plays: ahead of the server, its inputs accepted, no desync.
+  const uint64_t compared = b.netStats().checksumsCompared;
+  rig.runFor(5 * kSec);
+  CHECK(b.running());
+  CHECK(b.netStats().leadTicks > 0);
+  CHECK(b.netStats().checksumsCompared > compared + 10);
+  CHECK(b.netStats().checksumMismatches == 0);
+  CHECK(a.netStats().checksumMismatches == 0);
+  CHECK(b.netStats().resyncRequests == 0);
+  const ServerPeerInfo info = rig.host->server()
+                                  .peerInfo(rig.host->server().ownerOf(PlayerId{3}))
+                                  .value_or(ServerPeerInfo{});
+  CHECK(info.inputMsgs > 200);
+  CHECK(info.substitutions < 30);
+}
+
+// Outside Playing the swap is immediate: a joiner of a full room that shows
+// its match over gets the highest bot's slot at once. Play again then places
+// only the bots there is room for.
+TEST_CASE("The room flow: in Over a bot yields at once; Start places the bots that fit",
+          "[server][room][flow][yield]") {
+  server::HostConfig cfg;
+  cfg.room = true;
+  cfg.server.maxPlayers = 3;
+  cfg.bots = server::referenceBots(2);
+  RoomRig rig(cfg);
+  NetClient& a = rig.addClient("host", "Host");
+  REQUIRE(rig.runUntil([&] { return a.running() && a.roomState(); }, 5 * kSec));
+  a.sendRoomSettings(RoomSettings{.mode = 1, .bots = 2});
+  REQUIRE(rig.runUntil([&] { return roomOf(a).settings.mode == 1; }, kSec));
+  a.sendStart();
+  REQUIRE(rig.runUntil([&] { return rig.room().phase() == RoomPhase::Over; }, 120 * kSec));
+  CHECK(rig.host->server().bots() == 0b110);
+
+  NetClient& b = rig.addClient("late", "Late");
+  REQUIRE(rig.runUntil([&] { return b.running() && b.localSlots() != 0; }, 5 * kSec));
+  CHECK(b.localSlots() == 0b100);
+  CHECK(rig.host->server().bots() == 0b010);
+  REQUIRE(rig.runUntil([&] { return roomOf(a).humans == 0b101; }, kSec));
+  CHECK(roomOf(a).phase == RoomPhase::Over);
+
+  // Play again, then Start: one bot fits beside the two humans.
+  a.sendStart();
+  REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Waiting); }, kSec));
+  CHECK(rig.host->server().bots() == 0);
+  a.sendStart();
+  REQUIRE(rig.runUntil([&] { return roomIs(b, RoomPhase::Playing) && !b.holding(); }, 2 * kSec));
+  CHECK(rig.host->server().bots() == 0b010);
+  CHECK(roomOf(b).settings.bots == 2);  // kept: bots when there is room
+  rig.runFor(3 * kSec);
+  CHECK(b.netStats().checksumMismatches == 0);
+  CHECK(b.netStats().leadTicks > 0);
 }

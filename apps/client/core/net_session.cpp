@@ -221,7 +221,9 @@ void NetSession::advance(uint64_t nowNs) {
     everRan_ = true;
     presentation_ = presentation::PresentationState{};
   }
-  if (!slotsBound_) bindLocalSlots();
+  // v0.44: a spectator that waited for a bot's slot binds its devices when
+  // the slot arrives.
+  if (!slotsBound_ || c.localSlots() != boundFor_) bindLocalSlots();
   handleRebinds();
 
   const uint32_t due = c.ticksDue(nowNs);
@@ -267,6 +269,10 @@ void NetSession::stepTicks(uint32_t ticks) {
 void NetSession::bindLocalSlots() {
   slotsBound_ = true;
   const sim::PlayerMask slots = client_->localSlots();
+  boundFor_ = slots;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
+    if (has(boundLocal_, i)) sampler_.unbind(PlayerId{i});
+  boundLocal_ = 0;
   for (std::size_t d = 0; d < devices_.size(); ++d) {
     const std::optional<uint8_t> slot = nthSlot(slots, static_cast<uint8_t>(d));
     if (!slot) break;
@@ -405,7 +411,11 @@ std::string NetSession::statusText() const {
     }
     case NetPhase::Running: {
       const auto local = std::popcount(static_cast<uint32_t>(localSlots()));
-      if (local == 0) {
+      if (local == 0 && client_->waitingForSlot()) {
+        // v0.44: queued until a bot gives its slot up.
+        std::snprintf(buf, sizeof buf, "Spectating on %s until a bot's slot is free, RTT %.0f ms",
+                      server, static_cast<double>(client_->netStats().rttNs) * 1e-6);
+      } else if (local == 0) {
         std::snprintf(buf, sizeof buf, "Spectating on %s, RTT %.0f ms", server,
                       static_cast<double>(client_->netStats().rttNs) * 1e-6);
       } else {

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.43 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.44 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -423,6 +423,16 @@ Play again / Leave online ("Waiting for <host> to play again" for the others). N
 every slot online, bots too ("BOT4"); local play keeps P<n> / BOT<n> (several players share one
 screen, so no saved nick for P1). `shell.html` takes the palette (background, loading line);
 `?nick=` already maps to `--nick`. No sim change; replay checksums unchanged.
+v0.44 changes: M6b step (4), bots yielding, reconnect from the UI, the lead control at high RTT
+(§6.2, §6.6, §13.5, §11, §12). Bots yield (§6.6): in the room flow a joiner that only bots'
+slots could fit is welcomed as a spectator and waits (`ServerConfig::queueForBotSlots`,
+`NetServer::grantQueued`); outside Playing the highest bot leaves at once, while Playing a bot
+whose monkey is off the field (eliminated, or any bot at a round end) leaves and its slot is
+granted a tick later, so the sim sees a leave and a join (a deathmatch forfeits the bot's
+score and spawns the joiner after `respawnTicks`, a rounds mode at the next round); a yielded
+bot does not return within the match (`RoomSettings.bots` is "bots when there is room",
+applied at every Start); the room flow's lobby `capacity` is max players. A spectator given a
+slot runs forward to the lead at once (`NetClient`). No sim change; replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2319,6 +2329,29 @@ C++ server library is mature. The seam makes that swap a contained change.
   the lead controller and clock reset, exactly as the initial sync: the lead never carries the
   pause over. A client of a server that sends no `RoomState` (the M3 policy, `kfm_netsim`, the
   netcode tests) never holds.
+- Bots yield (v0.44, M6b): in the room flow `ServerConfig::queueForBotSlots` is on, so a `Hello`
+  (or `JoinMatch`) that wants more slots than are free, but no more than are free or held by
+  bots, is answered with a `Welcome` of no slots instead of `Reject{MatchFull}`: the peer
+  spectates and waits (`ServerEventKind::PeerQueued`; a request bigger than that is still
+  `MatchFull`, and without the flag nothing changes: the M3 policy, `kfm_netsim`). The host
+  decides when a bot gives its slot up and hands free slots to the oldest waiting peer with
+  `NetServer::grantQueued()`, which sends `PlayerJoined{yours}` like any join (all of a
+  request or nothing). Outside Playing (Over; Waiting places no bots) the highest bots go at
+  once. While Playing a bot yields when its monkey is off the field: eliminated (waiting for a
+  respawn, or for the next round in a rounds mode), or at a `RoundEnded` (then any bot); the
+  highest such bot is removed (its agent dropped from the `AgentHost`) at that tick and its slot
+  is granted one tick later, so the sim sees a leave and a later join and never an owner change
+  of a live monkey: a respawning mode forfeits the bot's score and deaths and spawns the joiner
+  `respawnTicks` later like any late joiner, a rounds mode spawns it at the next round start,
+  a team mode gives it the bot's team. Any slot that comes free (a human leaves, a reservation
+  expires) goes to the oldest waiting peer as well. A yielded bot does not return within the
+  match: `RoomSettings.bots` means "bots when there is room", applied (clamped to the free
+  slots) at every Start, which keeps the rule to one place. Since every bot can yield, the room
+  flow's lobby `capacity` is max players (`LobbyAdapter`; the M3 flow still offers max players
+  minus its bots). The client: a spectator that receives `PlayerJoined{yours}` while running
+  (`NetClient::waitingForSlot()` before it) runs forward on its next `ticksDue()` from its
+  delayed position to estimated server tick + target lead, predicting, with the lead controller
+  and the clock reset (counted as a hard jump); `NetSession` binds its devices to the new slots.
 
 ### 6.7 Authority and abuse resistance
 

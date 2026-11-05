@@ -206,6 +206,7 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
       clockBaseNs_(nowNs),
       botSeed_(config_.server.botSeed) {
   net::ServerConfig sc = config_.server;
+  sc.queueForBotSlots = config_.room;  // v0.44: bots yield in the room flow
   sc.botInputs = [this](const sim::WorldState& world, const sim::MatchContent& match,
                         sim::InputFrame& frame) { fillBots(world, match, frame); };
   server_ = std::make_unique<net::NetServer>(transport, content, std::move(sc));
@@ -385,6 +386,7 @@ void ServerHost::frame(uint64_t nowNs) {
 
 void ServerHost::onTick() {
   const sim::WorldState& w = server_->world();
+  bool roundEnded = false;
   // v0.35: the calls each bot hears, from the step that just ran.
   bots_->agents.observe(server_->tickEvents(), w,
                         sim::matchContent(server_->content(), server_->matchConfig()));
@@ -407,6 +409,7 @@ void ServerHost::onTick() {
         break;
       case sim::EventKind::RoundEnded:
         ++stats_.roundsCompleted;
+        roundEnded = true;
         if (e.player.isValid()) {
           log("round {} won by slot {}{}; scores {}", e.a, e.player.value, teamText(e.player),
               scoreList(w));
@@ -446,6 +449,7 @@ void ServerHost::onTick() {
         break;
     }
   }
+  if (room_ && room_->playing() && serveQueue(true, roundEnded)) broadcastRoom();
 }
 
 void ServerHost::scheduleNextMatch(uint32_t delayTicks) {
@@ -522,17 +526,64 @@ void ServerHost::placeRoomBots(uint8_t count) {
   }
 }
 
-void ServerHost::removeRoomBots() {
+void ServerHost::removeBot(PlayerId slot) {
   Bots& b = *bots_;
-  for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
-    const PlayerId slot{s};
-    if (!b.specs[s]) continue;
-    static_cast<void>(server_->setBot(slot, false));
-    static_cast<void>(b.agents.detach(slot));
-    b.specs[s].reset();
+  static_cast<void>(server_->setBot(slot, false));
+  static_cast<void>(b.agents.detach(slot));
+  b.specs[slot.value].reset();
 #ifdef KFM_SERVER_WASM_BOTS
-    b.wasm[s] = nullptr;
+  b.wasm[slot.value] = nullptr;
 #endif
+}
+
+bool ServerHost::serveQueue(bool tickEnded, bool roundEnded) {
+  const net::PeerId peer = server_->oldestQueued();
+  if (!peer.isValid()) return false;
+  const int want = server_->queuedSlots(peer);
+  const auto freeCount = [&] { return std::popcount(static_cast<uint32_t>(server_->freeSlots())); };
+  // A yield made free a slot: the sim must step one tick without it first.
+  const bool settled = !yieldedAt_ || !room_->playing() || server_->nextTick() > *yieldedAt_;
+  if (freeCount() >= want && settled) {
+    const net::PeerId p = peer;
+    if (!server_->grantQueued(p)) return false;
+    yieldedAt_.reset();
+    log("room slot granted to peer={}", p.value);
+    return true;
+  }
+  if (freeCount() >= want) return false;  // granted after the next tick
+  bool changed = false;
+  if (!room_->playing()) {
+    // Waiting or Over: no tick runs, the highest bots go now.
+    while (freeCount() < want && server_->bots() != 0) {
+      const auto s = static_cast<uint8_t>(31 - std::countl_zero(uint32_t{server_->bots()}));
+      log("bot {} yields its slot to peer={}", s, peer.value);
+      removeBot(PlayerId{s});
+      changed = true;
+    }
+    if (freeCount() >= want && server_->grantQueued(peer)) {
+      log("room slot granted to peer={}", peer.value);
+    }
+    return changed;
+  }
+  if (!tickEnded) return false;
+  // Playing: one bot whose monkey is off the field, or any at a round end.
+  const sim::WorldState& w = server_->world();
+  for (int s = sim::kMaxPlayers - 1; s >= 0; --s) {
+    const PlayerId slot{static_cast<uint8_t>(s)};
+    if (!sim::maskHas(server_->bots(), slot) || !bots_->specs[slot.value]) continue;
+    if (!roundEnded && w.players.isAliveIndex(slot.value)) continue;
+    log("bot {} yields its slot to peer={}{}", s, peer.value,
+        roundEnded ? " at the round end" : " (eliminated)");
+    removeBot(slot);
+    yieldedAt_ = server_->nextTick();
+    return true;
+  }
+  return false;
+}
+
+void ServerHost::removeRoomBots() {
+  for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
+    if (bots_->specs[s]) removeBot(PlayerId{s});
   }
 }
 
@@ -597,6 +648,8 @@ void ServerHost::updateRoom() {
         break;
     }
   }
+  // v0.44: a waiting joiner takes a free slot, or (outside Playing) a bot's.
+  if (serveQueue(false, false)) dirty = true;
   if (dirty) {
     static_cast<void>(room_->updateMembers(server_->humanSlots()));
     broadcastRoom();
@@ -635,6 +688,10 @@ void ServerHost::logServerEvents() {
       case net::ServerEventKind::MatchRestarted:
         log("match {} starts seed=0x{:x} players={}", server_->matchIndex() + 1,
             server_->matchConfig().seed, slotList(e.slots));
+        break;
+      case net::ServerEventKind::PeerQueued:
+        log("queue peer={} waits for {} slot{}", peer, unsigned{e.reason},
+            e.reason == 1 ? "" : "s");
         break;
       case net::ServerEventKind::RoomSettingsRequested:
       case net::ServerEventKind::StartRequested:

@@ -300,6 +300,7 @@ class NetSession {
   std::vector<LobbyDevice> devices_;
   platform::InputSampler sampler_{};
   sim::PlayerMask boundLocal_{0};  // server slots bound to a device
+  sim::PlayerMask boundFor_{0};    // localSlots() when the devices were bound
   std::array<sim::PlayerInput, sim::kMaxPlayers> lastInputs_{};
 
   sim::WorldState idleWorld_{};  // drawn until the first snapshot

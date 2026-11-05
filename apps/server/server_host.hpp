@@ -35,6 +35,21 @@
 // bots, when its last human slot is gone. Every change goes out as one
 // RoomState (NetServer::setRoomState) and one "room ..." log line.
 //
+// Bots yield (v0.44, §6.6): in the room flow the NetServer queues a
+// joiner that only bots' slots could fit (ServerConfig::queueForBotSlots)
+// as a spectator. Outside Playing the highest bot gives its slot up at once
+// and the joiner gets it. While Playing a bot yields when its monkey is off
+// the field: eliminated (waiting for its respawn, or for the next round) or
+// at a round end (RoundEnded: every bot qualifies); the highest such bot
+// leaves at that tick and its slot is handed to the waiting peer one tick
+// later, so the sim sees a leave and a join, never an owner change: a
+// respawning mode forfeits the bot's score and spawns the joiner after
+// respawnTicks like any late joiner, a rounds mode spawns it at the next
+// round start. A slot that comes free any other way (a human leaves, a
+// reservation expires) goes to the oldest waiting peer too. A yielded bot
+// does not come back in that match: the room's bot count is "bots when
+// there is room", applied at the next Start.
+//
 // Bots (§8): every bot is an ai::BotSpec (the reference bot at a tier, or a
 // .wasm module) run by the host's ai::AgentHost, which NetServer calls once
 // per tick through ServerConfig::botInputs; the inputs go straight into the
@@ -202,6 +217,11 @@ class ServerHost {
   void updateRoom();
   void placeRoomBots(uint8_t count);
   void removeRoomBots();
+  // v0.44: drops one host bot (its agent detached, its slot freed).
+  void removeBot(PlayerId slot);
+  // v0.44: the waiting peer's slots, granted or made free by a yield; true
+  // when the roster changed. `tickEnded`: called after a tick (onTick).
+  bool serveQueue(bool tickEnded, bool roundEnded);
   void startRoomMatch();
   void broadcastRoom();
   [[nodiscard]] std::string roomText() const;
@@ -231,6 +251,9 @@ class ServerHost {
   uint64_t botSeed_{0};
   std::unique_ptr<Room> room_;
   net::RoomSettings roomDefaults_{};
+  // v0.44: the tick a bot last yielded at; the waiting peer gets the slot
+  // once a tick has run without it.
+  std::optional<Tick> yieldedAt_;
   bool done_{false};
   HostStats stats_{};
 };
