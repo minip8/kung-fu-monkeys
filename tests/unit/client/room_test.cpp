@@ -371,6 +371,10 @@ TEST_CASE("lobby refusals and closes in plain words", "[client][room][status]") 
   CHECK(lobbyErrorText("lobby closed: server_gone", join) == "Room ABCDE's server went away");
   CHECK(lobbyErrorText("lobby closed: kicked", join) == "Removed from the room by its server");
   CHECK(lobbyErrorText("lobby closed: room_closed", join) == "Room ABCDE closed");
+  // v1.2 (v0.44): a rejoin's refusal, and the socket a rejoin replaced.
+  CHECK(lobbyErrorText("lobby refused: bad_token", join) ==
+        "Room ABCDE does not know this player any more");
+  CHECK(lobbyErrorText("lobby closed: replaced", join) == "Joined Room ABCDE again from elsewhere");
   CHECK(lobbyErrorText("lobby connection closed", join) == "Lost the connection to the lobby");
   CHECK(lobbyErrorText("", join).empty());
   CHECK(lobbyErrorText("ICE failed", join).empty());
@@ -560,4 +564,40 @@ TEST_CASE("a refused lobby join shows the reason and never says hello", "[client
     CHECK(rig.tokensSeen.empty());
     CHECK_FALSE(s.everRan());
   }
+}
+
+TEST_CASE("reconnect from the UI in a room: a lobby rejoin with the room's token (v0.44)",
+          "[client][room][net][reconnect]") {
+  LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""});
+  NetSession& s = *rig.session;
+  rig.transport->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  const sim::PlayerMask slots = s.localSlots();
+  CHECK(slots == 0b1);
+  CHECK_FALSE(s.canReconnect());
+
+  // The link dies; both ends time out and the server keeps the slot.
+  rig.net.cut(net::PeerId{1});  // the rig's only client
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, 7 * kSec));
+  REQUIRE(rig.runUntil([&] { return rig.server->peers().empty(); }, kSec));
+  CHECK(s.canReconnect());
+  const NetSessionConfig again = s.reconnectConfig();
+  REQUIRE(again.lobby.has_value());
+  CHECK(again.lobby == LobbyTarget{.create = false, .region = "eu", .code = "ABCDE"});
+  CHECK(again.rejoinToken == "room-token");
+  CHECK(again.token == bytes("room-token"));
+
+  // The button: a new lobby transport that rejoins and gets the same token.
+  net::LoopbackTransport& inner = rig.net.connectClient(rig.now, net::LinkConditions::uniform(kMs),
+                                                        net::LinkConditions::uniform(kMs));
+  auto fresh = std::make_unique<FakeLobbyTransport>(inner);
+  FakeLobbyTransport* raw = fresh.get();
+  s.reconnect(raw, rig.now, std::move(fresh));
+  s.attachLobby(std::make_unique<LobbyView>(*raw));
+  CHECK(s.statusText() == "Joining room ABCDE ...");
+  raw->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  CHECK(s.localSlots() == slots);
+  CHECK(rig.server->stats().reconnects == 1);
+  CHECK(s.room() == client::LobbyRoomInfo{.code = "ABCDE", .region = "eu"});
 }

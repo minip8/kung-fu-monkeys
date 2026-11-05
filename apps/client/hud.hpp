@@ -82,7 +82,16 @@ struct ShareOutcome {
 // arena with a preview, mode with its key numbers, power-up set) and how to
 // get back to the menu. M6a: in a room, its code large with Copy link /
 // Share; a lobby refusal shows in plain words (NetSession::statusText()).
-[[nodiscard]] ShareOutcome drawNetStatus(const NetSession& session, const ShareView& share);
+// v0.44: a lost session that canReconnect() offers Reconnect and Leave
+// (`buttons` holds the keyboard / pad focus); after a Reconnect the screen
+// says it is reconnecting.
+struct NetStatusOutcome {
+  ShareOutcome share;
+  bool reconnect{false};
+  bool leave{false};
+};
+[[nodiscard]] NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share,
+                                             ButtonMenu& buttons);
 
 // The local lobby (v0.24, restyled in v0.43): a card per slot (colour,
 // label, device or bot), the settings panel (LobbyMenu rows: arena, mode,

@@ -55,6 +55,16 @@
 // world; isHost(), sendSettings() and start() are the host's controls
 // (anyone may call them: the server ignores a non-host). slotName() is a
 // human slot's nickname, else its label.
+//
+// Reconnect from the UI (v0.44, §6.6): a session that ran and then lost its
+// link (Disconnected by a timeout, a closed transport or the lobby's
+// `kicked`, not a quit, a kick by the server, a shutdown or a closed room)
+// canReconnect(); the app builds a new transport for reconnectConfig() (the
+// same server, or a lobby rejoin of the same room with the same token) and
+// hands it to reconnect(), which starts the NetClient over it with the token
+// it had: within the server's grace (10 s) the slots and the nickname are
+// reclaimed, later (or outside Playing) it joins like anyone. The session
+// keeps its devices, nickname and room code.
 #pragma once
 
 #include "kfm/net/net_client.hpp"
@@ -140,10 +150,13 @@ struct NetSessionConfig {
   std::optional<LobbyTarget> lobby;  // set: a room through the lobby at serverLabel
   uint32_t buildId{0};               // must match the server's (ClientConfig::buildId)
   std::vector<std::byte> token;      // connection token (§6.7), may be empty
-  bool spectate{false};              // request no slots
-  std::string nickname;              // v0.42: sent in Hello (Nickname::from)
-  uint8_t requestedSlots{0};         // 0: one per bound lobby device (at least 1)
-  uint8_t inputDelayTicks{0};        // §6.2 fixed input delay
+  // v0.44, lobby protocol v1.2: join `lobby`'s room as the player this token
+  // was issued to (a reconnect); empty: a new player.
+  std::string rejoinToken;
+  bool spectate{false};        // request no slots
+  std::string nickname;        // v0.42: sent in Hello (Nickname::from)
+  uint8_t requestedSlots{0};   // 0: one per bound lobby device (at least 1)
+  uint8_t inputDelayTicks{0};  // §6.2 fixed input delay
   // The client's loaded content (its hash must match the server's);
   // nullptr = sim::defaultContent(). Copied. The arena and mode come from
   // the server (Welcome / Snapshot / MatchConfig).
@@ -186,6 +199,19 @@ class NetSession {
 
   // Sends Disconnect{Quit}; the phase becomes Disconnected.
   void disconnect();
+
+  // --- reconnect (v0.44) ---------------------------------------------------------
+  // The link was lost after the session ran, and coming back can help.
+  [[nodiscard]] bool canReconnect() const;
+  // What a new transport must reach: this config with the token the session
+  // used and, in lobby mode, a rejoin of its room under that token.
+  [[nodiscard]] NetSessionConfig reconnectConfig() const;
+  // Starts over on `transport` (see the header comment); `owned` replaces the
+  // owned transport after the client let go of the old one. A null transport
+  // fails with `failure`. Lobby mode: attachLobby() the new transport's view.
+  void reconnect(net::ITransport* transport, uint64_t nowNs,
+                 std::unique_ptr<net::ITransport> owned = nullptr, std::string failure = {});
+  [[nodiscard]] uint32_t reconnects() const { return reconnects_; }
 
   // Lobby mode: the transport's view of the lobby (see the header comment).
   // Call before the first advance(); destroyed before the owned transport.
@@ -293,9 +319,12 @@ class NetSession {
   std::unique_ptr<net::NetClient> client_;
   std::string failure_;
   bool everRan_{false};
+  bool ranBefore_{false};  // everRan_ before any reconnect (v0.44)
   bool configKnown_{false};
   bool slotsBound_{false};
   uint64_t nowNs_{0};
+  std::vector<std::byte> token_;  // the token the Hello carried (lobby or config)
+  uint32_t reconnects_{0};
 
   std::vector<LobbyDevice> devices_;
   platform::InputSampler sampler_{};

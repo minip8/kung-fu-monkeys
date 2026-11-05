@@ -433,6 +433,60 @@ TEST_CASE("disconnects: a cut link, a quit, and the lobby bindings come back", "
   CHECK(back.boundSlots() == 0b11);
 }
 
+TEST_CASE("reconnect from the UI: a lost session comes back with its slot and nickname (v0.44)",
+          "[client][net][reconnect]") {
+  Rig rig;
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  NetSessionConfig cfg;
+  cfg.nickname = "Chimp";
+  cfg.token = {std::byte{'t'}, std::byte{'o'}, std::byte{'k'}};
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), cfg, 10 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  const sim::PlayerMask slots = s.localSlots();
+  CHECK(slots == 0b10);
+  CHECK_FALSE(s.canReconnect());
+
+  // The link dies: both sides time out (5 s); the server reserves the slot.
+  rig.net.cut(r.transport->self());
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, 7 * kSec));
+  CHECK(s.canReconnect());
+  const NetSessionConfig again = s.reconnectConfig();
+  CHECK(again.token == cfg.token);
+  CHECK(again.nickname == "Chimp");
+  CHECK_FALSE(again.lobby.has_value());
+  rig.runFor(200 * kMs);  // the server's own timeout has passed: the slot is reserved
+  CHECK(rig.server->peers().empty());
+  CHECK(rig.server->humanSlots() == slots);
+
+  // The button: a new transport, the same token.
+  r.transport = &rig.net.connectClient(rig.now, link(10 * kMs), link(10 * kMs));
+  s.reconnect(r.transport, rig.now);
+  CHECK(s.reconnects() == 1);
+  CHECK(s.phase() == NetPhase::Connecting);
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  CHECK(s.localSlots() == slots);
+  CHECK(rig.server->stats().reconnects == 1);
+  CHECK(rig.server->nickname(PlayerId{1}).view() == "Chimp");
+  CHECK(s.owner(PlayerId{1}) == SlotOwner::Local);
+  CHECK_FALSE(s.canReconnect());
+
+  // Its keyboard drives the reclaimed slot again.
+  REQUIRE(rig.runUntil([&] { return rig.playing(PlayerId{1}); }, 10 * kSec));
+  const double x0 = rig.serverX(PlayerId{1});
+  rig.push(s, Key::D, true);
+  rig.runFor(300 * kMs);
+  rig.push(s, Key::D, false);
+  rig.runFor(100 * kMs);
+  CHECK(rig.serverX(PlayerId{1}) > x0 + 0.5);
+  CHECK(s.client().netStats().checksumMismatches == 0);
+
+  // Quitting on purpose offers no reconnect.
+  s.disconnect();
+  CHECK(s.phase() == NetPhase::Disconnected);
+  CHECK_FALSE(s.canReconnect());
+}
+
 TEST_CASE("a session with no transport fails with the reason; one that never connects says so",
           "[client][net]") {
   const platform::InputSampler sampler = lobby({platform::DeviceBinding::keyboard(0)});

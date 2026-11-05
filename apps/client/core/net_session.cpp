@@ -110,6 +110,7 @@ std::string lobbyErrorText(std::string_view error, const LobbyTarget& target) {
     if (reason == "mismatch") return "Version mismatch: reload the page or update the client";
     if (reason == "bad_request") return "The lobby did not understand the request";
     if (reason == "server_gone") return room + "'s server went away";
+    if (reason == "bad_token") return room + " does not know this player any more";  // v1.2
     return "The lobby refused: " + std::string(reason);
   }
   if (error.starts_with(kClosed)) {
@@ -117,6 +118,7 @@ std::string lobbyErrorText(std::string_view error, const LobbyTarget& target) {
     if (reason == "server_gone") return room + "'s server went away";
     if (reason == "kicked") return "Removed from the room by its server";
     if (reason == "room_closed") return room + " closed";
+    if (reason == "replaced") return "Joined " + room + " again from elsewhere";  // v1.2
     return "The lobby closed the room: " + std::string(reason);
   }
   if (error == "lobby connection closed") return "Lost the connection to the lobby";
@@ -158,6 +160,7 @@ NetSession::NetSession(NetSessionConfig config, platform::InputSampler lobbySamp
   cc.inputDelayTicks = config_.inputDelayTicks;
   cc.nickname = net::Nickname::from(config_.nickname);
   cc.setToken(config_.token);
+  token_ = config_.token;
   client_ = std::make_unique<net::NetClient>(content_, cc);
   frameEvents_.resize(kMaxFrameEvents);
   if (transport == nullptr) {
@@ -196,7 +199,10 @@ void NetSession::advance(uint64_t nowNs) {
   // reports Connected only after the lobby's `joined`).
   if (lobby_ && !room_) {
     room_ = lobby_->room();
-    if (room_) c.setToken(lobby_->token());
+    if (room_) {
+      token_ = lobby_->token();
+      c.setToken(token_);
+    }
   }
   c.beginFrame();
   c.pump(nowNs);
@@ -219,6 +225,7 @@ void NetSession::advance(uint64_t nowNs) {
   }
   if (!everRan_) {
     everRan_ = true;
+    ranBefore_ = true;
     presentation_ = presentation::PresentationState{};
   }
   // v0.44: a spectator that waited for a bot's slot binds its devices when
@@ -306,6 +313,54 @@ void NetSession::build(float dtSeconds, presentation::RenderState& out) {
 
 void NetSession::disconnect() {
   if (failure_.empty()) client_->disconnect();
+}
+
+bool NetSession::canReconnect() const {
+  if (!failure_.empty() || !ranBefore_ || phase() != NetPhase::Disconnected) return false;
+  const std::optional<net::DisconnectReason> r = client_->disconnectReason();
+  if (r && *r != net::DisconnectReason::Timeout) return false;  // quit, kicked, shut down
+  if (!lobby_) return true;
+  // The lobby dropped the socket or the server dropped the peer (`kicked`
+  // is how a server-side timeout reaches the client); a closed room, a gone
+  // server or a replaced socket has nothing to come back to.
+  const std::string e = lobby_->error();
+  return e.empty() || e == "lobby closed: kicked" || e == "lobby connection closed" ||
+         !e.starts_with("lobby ");
+}
+
+NetSessionConfig NetSession::reconnectConfig() const {
+  NetSessionConfig c = config_;
+  c.token = token_;
+  if (config_.lobby && room_) {
+    std::string hex;
+    for (const std::byte b : token_)
+      hex += static_cast<char>(b);
+    c.lobby = LobbyTarget{.create = false, .region = room_->region, .code = room_->code};
+    c.rejoinToken = std::move(hex);
+  }
+  return c;
+}
+
+void NetSession::reconnect(net::ITransport* transport, uint64_t nowNs,
+                           std::unique_ptr<net::ITransport> owned, std::string failure) {
+  config_ = reconnectConfig();
+  ++reconnects_;
+  // The lobby view looks at the old transport: gone first. The room stays
+  // known (its code labels the status) and is confirmed by the rejoin.
+  lobby_.reset();
+  failure_ = std::move(failure);
+  if (transport == nullptr) {
+    // The client keeps the old (dead) transport; nothing more is sent.
+    if (failure_.empty()) failure_ = "no transport";
+    return;
+  }
+  client_->setToken(token_);
+  client_->connect(*transport, nowNs);  // lets go of the old transport
+  ownedTransport_ = std::move(owned);
+  room_.reset();
+  slotsBound_ = false;
+  everRan_ = false;  // a fresh presentation when it runs again
+  configKnown_ = false;
 }
 
 void NetSession::updateDisplayRate(uint64_t nowNs) {

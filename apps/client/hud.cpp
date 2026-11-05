@@ -918,14 +918,18 @@ void drawMatchHud(const HudView& view, const HudInput& in) {
   drawNotices(dl, view, display);
 }
 
-ShareOutcome drawNetStatus(const NetSession& session, const ShareView& share) {
-  ShareOutcome out;
+NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share,
+                               ButtonMenu& buttons) {
+  NetStatusOutcome out;
   if (ui::beginScreen("##online_status", 760.0f)) {
     const NetPhase phase = session.phase();
     const bool failed =
         phase == NetPhase::Rejected || phase == NetPhase::Disconnected || phase == NetPhase::Failed;
+    const bool lost = session.canReconnect();
     const char* title = session.room() ? "Joining the room" : "Connecting";
+    if (session.reconnects() > 0) title = "Reconnecting";
     if (failed) title = "Could not join";
+    if (lost) title = "Connection lost";
     ui::heading(title, failed ? ui::kAlarm : kBanana);
     const std::string status = session.statusText();
     if (failed) {
@@ -936,10 +940,27 @@ ShareOutcome drawNetStatus(const NetSession& session, const ShareView& share) {
       const auto spin = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % 4;
       ImGui::Text("%c  %s", kSpin[spin], status.c_str());
     }
+    // v0.44: back in with the same token: the server keeps the slots of a
+    // match in progress for a few seconds.
+    if (lost) {
+      ImGui::Spacing();
+      ImGui::TextUnformatted("Your place in the match is kept for a few seconds.");
+      static constexpr std::array<const char*, 2> kButtons = {"Reconnect", "Leave"};
+      buttons.setCount(kButtons.size());
+      const float gap = ImGui::GetStyle().ItemSpacing.x;
+      const float bw = (ImGui::GetContentRegionAvail().x - gap) / 2.0f;
+      for (std::size_t i = 0; i < kButtons.size(); ++i) {
+        if (i > 0) ImGui::SameLine();
+        if (ui::bigButton(kButtons[i], i == buttons.focus(), bw)) {
+          buttons.setFocus(i);
+          (i == 0 ? out.reconnect : out.leave) = true;
+        }
+      }
+    }
     // M6a: the room the lobby gave, large, and the invite to copy.
     if (session.room()) {
       ImGui::Spacing();
-      out = drawShare(share);
+      out.share = drawShare(share);
     }
     ImGui::Separator();
     if (session.config().spectate) {

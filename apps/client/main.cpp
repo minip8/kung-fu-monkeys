@@ -178,6 +178,7 @@ struct App {
   bool connectRequested = false;                   // Play online with --connect: connect next frame
   std::optional<client::LobbyTarget> pendingRoom;  // the Play online screen's Create / Join
   bool leaveRequested = false;                     // an online screen's Leave: next frame
+  bool reconnectRequested = false;                 // v0.44: the lost session's Reconnect
   // v0.42: the online room's settings rows (the host edits them) and the
   // RoomState count when the host last sent new settings (rows follow the
   // server again once its answer arrived).
@@ -480,6 +481,51 @@ class WebRtcLobbyJoin final : public client::ILobbyJoin {
 };
 #endif
 
+// The transport a session config asks for: the lobby (create, join, or
+// v0.44 rejoin with the old token) or --connect's server. Null with the
+// reason when it cannot be created.
+struct ClientTransport {
+  std::unique_ptr<net::ITransport> owned;
+  net::ITransport* raw{nullptr};
+  std::unique_ptr<client::ILobbyJoin> lobby;  // lobby mode: the session's view of it
+  std::string error;
+};
+
+ClientTransport makeTransport(const App& app, const client::NetSessionConfig& config) {
+  ClientTransport out;
+#ifdef KFM_CLIENT_WEBRTC
+  if (app.options.verbose) net::WebRtcTransport::initLogging(net::WebRtcLogLevel::Debug);
+  net::WebRtcClientConfig wc;
+  wc.signalingUrl = config.lobby ? app.options.lobby : app.options.connect;
+  wc.stunServer = app.options.stun;
+  wc.connectionToken = config.token;
+  if (config.lobby) {
+    const client::LobbyTarget& t = *config.lobby;
+    wc.lobby = net::LobbyRequest{
+        .kind = t.create ? net::LobbyRequest::Kind::Create : net::LobbyRequest::Kind::Join,
+        .region = t.region,
+        .code = t.code,
+        .token = config.rejoinToken,
+        .buildId = config.buildId,
+        .contentHash = app.content.hash};
+  }
+  auto transport = net::WebRtcTransport::createClient(wc);
+  if (!transport) {
+    out.error = transport.error();
+    return out;
+  }
+  net::WebRtcTransport* raw = transport->get();
+  out.raw = raw;
+  if (config.lobby) out.lobby = std::make_unique<WebRtcLobbyJoin>(*raw);
+  out.owned = std::move(*transport);
+#else
+  static_cast<void>(app);
+  static_cast<void>(config);
+  out.error = "this build has no WebRTC (KFM_WEBRTC=OFF)";
+#endif
+  return out;
+}
+
 // `room`: the Online section's Create / Join; else the options' --room /
 // --create, else --connect.
 void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
@@ -495,39 +541,27 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
   config.content = &app.content.db;
   app.roomAnnounced = false;
   const platform::InputSampler& lobby = app.session->sampler();
-#ifdef KFM_CLIENT_WEBRTC
-  if (app.options.verbose) net::WebRtcTransport::initLogging(net::WebRtcLogLevel::Debug);
-  net::WebRtcClientConfig wc;
-  wc.signalingUrl = config.lobby ? app.options.lobby : app.options.connect;
-  wc.stunServer = app.options.stun;
-  wc.connectionToken = config.token;
-  if (config.lobby) {
-    const client::LobbyTarget& t = *config.lobby;
-    wc.lobby = net::LobbyRequest{
-        .kind = t.create ? net::LobbyRequest::Kind::Create : net::LobbyRequest::Kind::Join,
-        .region = t.region,
-        .code = t.code,
-        .buildId = config.buildId,
-        .contentHash = app.content.hash};
-  }
-  auto transport = net::WebRtcTransport::createClient(wc);
-  if (transport) {
-    net::WebRtcTransport* raw = transport->get();
-    app.net =
-        std::make_unique<client::NetSession>(config, lobby, raw, nowNs, std::move(*transport));
-    if (config.lobby) app.net->attachLobby(std::make_unique<WebRtcLobbyJoin>(*raw));
-  } else {
-    app.net = std::make_unique<client::NetSession>(config, lobby, nullptr, nowNs, nullptr,
-                                                   transport.error());
-  }
-#else
-  app.net = std::make_unique<client::NetSession>(config, lobby, nullptr, nowNs, nullptr,
-                                                 "this build has no WebRTC (KFM_WEBRTC=OFF)");
-#endif
+  ClientTransport t = makeTransport(app, config);
+  app.net = std::make_unique<client::NetSession>(config, lobby, t.raw, nowNs, std::move(t.owned),
+                                                 std::move(t.error));
+  if (t.lobby) app.net->attachLobby(std::move(t.lobby));
   app.lastNetPhase = app.net->phase();
   app.roomMenu.setContent(app.net->content());
   app.roomSentAt.reset();
   std::printf("kfm_client: %s\n", app.net->statusText().c_str());
+  std::fflush(stdout);
+}
+
+// v0.44: the lost session's Reconnect button: a new transport to the same
+// server, or a lobby rejoin of the same room, with the same token (§6.6).
+void reconnectNetwork(App& app, std::uint64_t nowNs) {
+  client::NetSession& n = *app.net;
+  ClientTransport t = makeTransport(app, n.reconnectConfig());
+  n.reconnect(t.raw, nowNs, std::move(t.owned), std::move(t.error));
+  if (t.lobby) n.attachLobby(std::move(t.lobby));
+  app.lastNetPhase = n.phase();
+  app.reconnectRequested = false;
+  std::printf("kfm_client: reconnecting (%u): %s\n", n.reconnects(), n.statusText().c_str());
   std::fflush(stdout);
 }
 
@@ -548,6 +582,7 @@ void pollRegions(App& app, std::uint64_t now) {
     wc.lobby = net::LobbyRequest{.kind = net::LobbyRequest::Kind::Regions,
                                  .region = {},
                                  .code = {},
+                                 .token = {},
                                  .buildId = client::netSessionConfig(app.options, false).buildId,
                                  .contentHash = app.content.hash};
     if (auto t = net::WebRtcTransport::createClient(wc)) app.regionsQuery = std::move(*t);
@@ -722,7 +757,8 @@ void onEvent(void* user, const SDL_Event& event) {
         app->roomChanged = true;
       }
       if (client::isActivateEvent(*input, true)) app->roomStart = true;
-    } else if (n.phase() == client::NetPhase::Over) {
+    } else if (n.phase() == client::NetPhase::Over || n.canReconnect()) {
+      // The match-over buttons, or (v0.44) Reconnect / Leave.
       app->overMenu.apply(action);
       if (client::isMenuActivate(*input)) app->overActivate = true;
     }
@@ -1052,7 +1088,17 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   if (phase == client::NetPhase::Waiting || phase == client::NetPhase::Over) {
     roomFrame(app, n, share, view, now);
   } else if (!n.running()) {
-    applyShare(app, client::drawNetStatus(n, share), share, now);
+    const client::NetStatusOutcome out = client::drawNetStatus(n, share, app.overMenu);
+    applyShare(app, out.share, share, now);
+    // v0.44: Reconnect / Leave, by click or Enter on the focused one.
+    const bool activate = std::exchange(app.overActivate, false) && n.canReconnect();
+    if (out.reconnect || (activate && app.overMenu.focus() == 0)) {
+      app.audio.click();
+      app.reconnectRequested = true;
+    } else if (out.leave || (activate && app.overMenu.focus() == 1)) {
+      app.audio.click();
+      app.leaveRequested = true;
+    }
   }
   app.overlay.draw(n, app.renderer.stats());
   app.audio.frame(app.renderState);
@@ -1079,6 +1125,8 @@ bool frame(void* user) {
   app->connectRequested = false;
   if (app->pendingRoom && !app->net) startNetwork(*app, false, now, std::move(app->pendingRoom));
   app->pendingRoom.reset();
+  if (app->reconnectRequested && app->net) reconnectNetwork(*app, now);
+  app->reconnectRequested = false;
   const presentation::Camera camera =
       app->net ? netFrame(*app, now, dt, w, h, density) : localFrame(*app, now, dt, w, h, density);
   platform::debugUiFlush();
