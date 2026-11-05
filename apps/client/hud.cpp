@@ -1268,11 +1268,16 @@ std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {
     ImGui::Spacing();
     const float width = ImGui::GetContentRegionAvail().x;
     const std::span<const PauseItem> items = menu.items();
+    // A moving mouse over a button takes the focus (a resting one must not
+    // fight the keyboard or a pad), as on the menu screens.
+    const ImVec2 delta = ImGui::GetIO().MouseDelta;
+    const bool mouseMoved = delta.x != 0.0f || delta.y != 0.0f;
     for (std::size_t i = 0; i < items.size(); ++i) {
       if (ui::bigButton(PauseMenu::label(items[i]), i == menu.focus(), width)) {
         menu.setFocus(i);
         clicked = items[i];
       }
+      if (mouseMoved && ImGui::IsItemHovered()) menu.setFocus(i);
     }
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextDisabled("Up/Down: choose. Enter / A: select. Esc / B: resume.");
