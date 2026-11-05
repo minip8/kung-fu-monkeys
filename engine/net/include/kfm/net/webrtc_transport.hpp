@@ -35,7 +35,8 @@
 //           tell the lobby. closeExternalPeer() is the lobby saying the peer
 //           left: the peer is dropped (Disconnected if it was announced).
 //   client, lobby request       WebRtcClientConfig::lobby set and
-//           signalingUrl the lobby's /client URL (ws[s]://host[:port]/client).
+//           signalingUrl the lobby's base URL (ws[s]://host[:port]; "/client" is
+//           appended when it has no path).
 //           On open the transport sends the create or join request; the
 //           reply must be `joined` (connectionToken() becomes the room's
 //           token, lobbyRoom() the code and region, and only then the peer
@@ -128,7 +129,8 @@ struct LobbyRoom {
 
 struct WebRtcClientConfig {
   // "ws://host:port" (the dedicated server's own socket, any path), or the
-  // lobby's "ws[s]://host[:port]/client" when `lobby` is set.
+  // lobby's base URL "ws[s]://host[:port]" when `lobby` is set ("/client"
+  // is appended unless the URL has a path).
   std::string signalingUrl;
   std::string stunServer;                  // "stun:host:port"; empty = host candidates only
   std::vector<std::byte> connectionToken;  // for the message layer, see connectionToken()

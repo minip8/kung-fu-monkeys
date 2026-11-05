@@ -38,6 +38,12 @@ if(KFM_WEBRTC)
     src/webrtc/signaling.cpp
     src/webrtc/webrtc_transport.cpp
   )
+  # LobbyLink (M6a, docs/lobby-protocol.md): the game server's lobby socket.
+  # Native only (the browser never hosts a room); its header is installed
+  # for every target but only native builds compile and link it.
+  if(NOT EMSCRIPTEN)
+    target_sources(kfm_net_webrtc PRIVATE src/webrtc/lobby_link.cpp)
+  endif()
   add_library(kfm::net_webrtc ALIAS kfm_net_webrtc)
   target_include_directories(kfm_net_webrtc
     PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>

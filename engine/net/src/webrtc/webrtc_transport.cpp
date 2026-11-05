@@ -819,7 +819,9 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
     peer.ws = std::make_shared<rtc::WebSocket>(wsConfig);
 #endif
     wireSignalingSocket(*peer.ws, impl->queue, kServerPeer);
-    peer.ws->open(config.signalingUrl);
+    // A base lobby URL gets the /client path (docs/lobby-protocol.md §1).
+    peer.ws->open(config.lobby ? signaling::withDefaultPath(config.signalingUrl, "/client")
+                               : config.signalingUrl);
     return std::make_unique<WebRtcTransport>(std::move(impl));
   } catch (const std::exception& e) {
     return std::unexpected(std::string("WebRtcTransport client: ") + e.what());

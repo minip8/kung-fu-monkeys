@@ -69,4 +69,10 @@ struct FlatObject {
 // included) within kMaxMessageBytes.
 [[nodiscard]] std::optional<FlatObject> decodeObject(std::string_view text);
 
+// `url` with `path` appended when it names no path after the authority
+// ("ws://h:8080" + "/client" -> "ws://h:8080/client"; "ws://h/x" stays,
+// a trailing "/" becomes the path: "ws://h/" -> "ws://h/client"). The lobby
+// URLs are given as a base and each side appends its endpoint.
+[[nodiscard]] std::string withDefaultPath(std::string_view url, std::string_view path);
+
 }  // namespace kfm::net::signaling

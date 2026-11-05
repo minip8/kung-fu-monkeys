@@ -248,6 +248,19 @@ std::optional<FlatObject> decodeObject(std::string_view text) {
   return o;
 }
 
+std::string withDefaultPath(std::string_view url, std::string_view path) {
+  std::string out(url);
+  const size_t scheme = out.find("://");
+  if (scheme == std::string::npos) return out;
+  const size_t slash = out.find('/', scheme + 3);
+  if (slash == std::string::npos) return out + std::string(path);
+  if (slash + 1 == out.size()) {  // only a trailing "/"
+    out.pop_back();
+    return out + std::string(path);
+  }
+  return out;
+}
+
 std::optional<Message> decode(std::string_view text) {
   const std::optional<FlatObject> o = decodeObject(text);
   if (!o) return std::nullopt;

@@ -98,6 +98,14 @@ TEST_CASE("signaling: flat objects round-trip in order", "[net][webrtc][signalin
   CHECK(decodeObject(" { } ").has_value());
 }
 
+TEST_CASE("signaling: lobby base URLs get their endpoint path", "[net][webrtc][signaling][lobby]") {
+  CHECK(withDefaultPath("ws://127.0.0.1:8080", "/client") == "ws://127.0.0.1:8080/client");
+  CHECK(withDefaultPath("wss://lobby.example.com", "/server") == "wss://lobby.example.com/server");
+  CHECK(withDefaultPath("wss://lobby.example.com/", "/server") == "wss://lobby.example.com/server");
+  CHECK(withDefaultPath("ws://h:1/server", "/server") == "ws://h:1/server");
+  CHECK(withDefaultPath("ws://h:1/custom/client", "/client") == "ws://h:1/custom/client");
+}
+
 TEST_CASE("signaling: the flat-object decoder is strict like decode()",
           "[net][webrtc][signaling][lobby]") {
   // A repeated key: get() returns the last one, as decode() always did.
