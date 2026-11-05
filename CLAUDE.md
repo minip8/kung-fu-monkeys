@@ -130,11 +130,14 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   v0.34 grid, catcher, grid_1t, catcher_1t (the grid modes hand them out by role)
 #   v0.43 front end: the client opens on the main menu (Play online, Play local, Settings, Quit natively) unless
 #   --autostart / --connect / --room / --create (or ?autostart, ?connect=, ?room=, ?create); --screen
-#   menu|settings|online|local opens another screen (screenshots). Menus: arrows/WASD, any pad's d-pad/stick, the
+#   menu|settings|online|local|paused opens another screen (screenshots; paused: a local match under the pause menu). Menus: arrows/WASD, any pad's d-pad/stick, the
 #   mouse; Enter/Space or a pad's South/Start selects, Esc or a pad's East/Back goes back (the menu quits natively).
 #   Settings: name (--nick, ?nick=, saved `nick`), volume, sound, bot difficulty. Play online: region (with "(no
 #   server)"), Create room, room code + Join. Esc from the lobby or any online screen returns to the menu
-#   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, P pause, O step, Esc menu
+#   lobby: Enter/Start begins; press throw/dash on a free device to join; -/= bots. F1 overlay, Esc menu
+#   v0.46 pause menu: Esc (or a bound pad's Start) in a running match: locally the match pauses (Resume, Back to
+#   lobby, Main menu); online it runs on and your slots send idle input (Resume, Leave room: one Esc never leaves);
+#   Esc / a pad's East, Back or Start resumes. P pause and O single step stay developer keys (no menu)
 #   match over: Play again / Back to lobby (Left/Right + Enter, or the mouse); online the host's Play again / Leave
 #   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
 #   arena (with preview; only arenas that suit the mode), mode, teams (read-only, from the mode), loadout, power-up
@@ -190,7 +193,8 @@ cmake --preset dev -DKFM_WASM_BOTS=OFF         # build without WAMR (reference b
 cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
 build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL] [--nick NAME]   # join a server
 #   --nick (?nick=, saved as nick=; default a random monkey name picked once): the name the room and the HUD show
-#   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves; pause/step/time scale/tuning are off online
+#   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves (in a running match: the pause menu's
+#   Leave room); pause/step/time scale/tuning are off online
 cargo run --manifest-path services/lobby/Cargo.toml -- --listen 127.0.0.1:8080 --secret dev   # the lobby service (M6a,
 #   docs/lobby-protocol.md); cargo test/fmt/clippy there; curl 127.0.0.1:8080/healthz
 build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev --region eu --bots 3 [--ice-ports 40000-40099]
@@ -198,7 +202,8 @@ build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev 
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE              # join it (any case); -DKFM_LOBBY_URL=...
 #   bakes a default; browser: kfm_client.html?lobby=ws://127.0.0.1:8080&create or ?room=CODE (config.js next to the page
-#   supplies lobbyUrl and sentryDsn in production); the menu's Play online screen does the same; Esc leaves;
+#   supplies lobbyUrl and sentryDsn in production); the menu's Play online screen does the same; Esc leaves
+#   (in a running match: the pause menu's Leave room);
 #   waiting screen: the code large, Copy link (the page's ?room=CODE link; natively -DKFM_PAGE_URL=... or the code)
 #   and Share on touch browsers; the host's rows take arrows/WASD/pads, Enter starts
 #   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). v0.44: a lost link offers
@@ -378,7 +383,8 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   Play online, the waiting screen with Copy link / Share, scoreboards, match-over), landed in
   v0.43; step 4, bots yielding (`ServerConfig::queueForBotSlots`, the room's yield rule),
   Reconnect from the UI (lobby protocol v1.2's rejoin) and the high-RTT lead check (the
-  jitter-aware band, a 500 ms soak gate), landed in v0.44. Next is the friends playtest (step 5)
+  jitter-aware band, a 500 ms soak gate), landed in v0.44; the pause menu on Escape (local
+  pause, online idle input and Leave room) landed in v0.46. Next is the friends playtest (step 5)
   against the M6b criterion. The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
   append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one

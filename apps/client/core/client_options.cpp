@@ -335,8 +335,9 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         return false;
       }
       const std::string_view v = args[++i];
-      if (v != "menu" && v != "settings" && v != "online" && v != "local") {
-        error = "--screen must be menu, settings, online or local, got '" + std::string(v) + "'";
+      if (v != "menu" && v != "settings" && v != "online" && v != "local" && v != "paused") {
+        error = "--screen must be menu, settings, online, local or paused, got '" + std::string(v) +
+                "'";
         return false;
       }
       out.screen = v;
