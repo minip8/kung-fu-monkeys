@@ -150,6 +150,7 @@ if(NOT KFM_HEADLESS)
     client/event_fx_rollback_test.cpp
     client/lobby_test.cpp
     client/bot_session_test.cpp
+    client/room_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
   if(KFM_WASM_BOTS)
