@@ -7,7 +7,8 @@
 #
 # It enables the IAM Credentials, STS, IAP and OS Login APIs; creates the
 # service account `kfm-deploy` with OS Login admin (sudo over SSH), the IAP
-# tunnel role and Compute viewer; creates the Workload Identity Federation
+# tunnel role, Compute viewer and Service Account User on the VMs' own
+# service accounts (OS Login SSH acts as the VM's account); creates the Workload Identity Federation
 # pool `github` with an OIDC provider for GitHub Actions limited to --repo,
 # and lets that repository's workflows impersonate the service account;
 # turns OS Login on for the project (every VM, your own `gcloud compute ssh`
@@ -96,6 +97,16 @@ bind_role() {
 for role in roles/compute.osAdminLogin roles/iap.tunnelResourceAccessor roles/compute.viewer; do
   bind_role "$role"
   echo "   $role"
+done
+# `gcloud compute ssh` through OS Login also needs iam.serviceAccounts.actAs
+# on the VM's own service account (the default compute account unless the
+# VM was created with another): Service Account User on each one in use.
+echo "== act-as on the VMs' service accounts"
+for vm_sa in $("${gc[@]}" compute instances list --filter='name~^kfm-' \
+  --format='value(serviceAccounts[0].email)' | sort -u); do
+  "${gc[@]}" iam service-accounts add-iam-policy-binding "$vm_sa" \
+    --member "serviceAccount:$sa" --role roles/iam.serviceAccountUser > /dev/null
+  echo "   $vm_sa"
 done
 
 echo "== workload identity pool $pool, provider $provider (repository $repo)"
