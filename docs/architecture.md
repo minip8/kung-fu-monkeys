@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.36 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.37 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -306,6 +306,15 @@ mode as the season's row of the contest knobs, ratings per entrant over rotated 
 matches reproducible from seed plus modules, replays served with their season's content, and a
 Rust CLI released through PyPI. The bots repository's contents are named and its relation to
 this repository is a pinned release. No code change.
+v0.37 changes: M6a's hosting and services decided (§6.4, §6.5, §10, §11, §12, §13.5). A Rust
+lobby service (`services/lobby/`) owns room codes, connection tokens, signaling and the server
+registry; servers dial it, so a game VM opens only its ICE UDP range; the transport's signaling
+source becomes injectable and the built-in `ws://` server stays for development. One
+`kfm_server` process per match under systemd until a `MatchHost` is needed. Providers: Google
+Cloud Compute Engine first (credits), Hetzner Cloud after, Cloudflare Pages for the client,
+Caddy for TLS, Sentry's free tier for errors; everything deployed as container images and
+systemd units under `deploy/` with no provider-specific service, so the switch is a day. No
+code change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -349,6 +358,7 @@ platform seams.
 | Bots | A bot is a wasm module behind a versioned C ABI (observation in, `PlayerInput` out), sandboxed and metered in instructions per tick; `IAgent` wraps modules and the built-in bot alike; SDKs, example bots and any training live in a separate repository, no training stack in the engine | Same action space for humans and every bot; any language; a match is reproducible from seed plus modules; fairness by fuel, not wall clock |
 | Tooling | CMake presets, vcpkg, Catch2, Tracy, sanitizers, clang-format/clang-tidy, CI with a cross-OS determinism gate | Determinism is enforced, not hoped for |
 | Platforms | Web first: the browser is the shipping client, native is the dev/debug/profiling build, Steam is an optional later add. Platform code is confined to `ITransport` and `IPlatformServices` | Join friction decides a party game; everything below the seams is shared, so Steam stays a cheap option |
+| Hosting (v0.37) | A Rust lobby service (rooms, tokens, signaling relay, server registry) as the only public TCP endpoint; dedicated `kfm_server` processes on one small VM per region that dial the lobby; the client on a static CDN. Container images plus systemd units, no provider-specific service; Google Cloud now, Hetzner later | A link puts friends in a match; game VMs need only UDP open; the whole deployment moves between providers unchanged |
 
 ---
 
@@ -409,6 +419,10 @@ kung-fu-monkeys/
     replay/              replay viewer / analyser
     netsim/              N clients + 1 server in one process over an emulated network
     arena/               headless match runner: bot modules in, replay and result line out
+  services/
+    lobby/               the Rust lobby service: room codes, connection tokens, signaling relay,
+                         server registry (§13.5, v0.37)
+  deploy/                container images (server, lobby), systemd units, Caddyfile, VM scripts
   tests/                 unit/ scenario/ determinism/ netcode/ fuzz/ bench/
   tools/                 content validator, replay corpus, CI scripts
 ```
@@ -2008,7 +2022,10 @@ As built (v0.17), `kfm::net::WebRtcTransport` (`engine/net`, target `kfm_net_web
   counted in `sendErrors`; oversize arrivals are dropped as `recvDropped`. libdatachannel
   advertises a 256 KB SCTP max message size (browsers advertise their own 256 KB).
 - Signaling (M3): the dedicated server hosts its own plain `ws://` WebSocket
-  (`rtc::WebSocketServer`, ephemeral port allowed); the lobby service takes it over later.
+  (`rtc::WebSocketServer`, ephemeral port allowed); the lobby service takes it over later
+  (decided in v0.37, §13.5: the server-side transport takes an injectable signaling source,
+  the built-in socket stays for development and tests, and in production the lobby relays
+  the same JSON messages over the server's outbound lobby connection).
   One flat JSON object per text message, `{"type":"offer"|"answer","sdp":...}` or
   `{"type":"candidate","candidate":...,"mid":...}`, hand-written encoder/decoder
   (`kfm/net/webrtc_signaling.hpp`). The client offers, the server answers, both trickle
@@ -2049,7 +2066,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   and on SIGINT/SIGTERM or an exit limit shuts down (300 ms linger for the reliable lane).
   `--rounds-to-win` is deliberately absent: it would change the content hash and reject every
   client; a different rule set is a mode in the content, chosen with `--mode` (v0.18). The
-  multi-match host below is the M6 shape.
+  multi-match host below is the target shape; M6a ships one process per match under a
+  systemd pool and only builds `MatchHost` if a VM runs out of processes before it runs out
+  of CPU (§13.5, v0.37).
 - Server (target): `MatchInstance` = world + `NetServer` + bots. A `MatchHost` process runs many
   matches on a thread pool (the sim is cheap). One socket I/O thread timestamps arrivals and
   pushes to a single-producer single-consumer queue per match.
@@ -3227,6 +3246,7 @@ lives in the bots repository (above) and uses this repository through a pinned r
 | Message layer, prediction/rollback, clock sync, network emulator | libdatachannel + datachannel-wasm (transport); GameNetworkingSockets only for a Steam build |
 | Bots, observation builder, the bot ABI and SDKs, match runner | LZ4, xxHash, toml++ or nlohmann-json |
 | Replay tooling, content validator, glTF export script | Catch2, Google Benchmark, Tracy, libFuzzer, WAMR 2.4.5 (the wasm bot runtime: classic interpreter with instruction metering, §8), cgltf, Blender (asset pipeline) |
+| The lobby service (Rust: Tokio, axum, tokio-tungstenite; rooms, tokens, signaling relay, server registry, §13.5) | Caddy (TLS), Cloudflare Pages (client CDN), Google Cloud Compute Engine then Hetzner Cloud (VMs), Sentry free tier (browser and lobby errors), systemd and journald (process pool and logs) |
 
 Dependencies via vcpkg manifest; CMake presets for `dev`, `release`, `asan`, `server-headless`, `wasm` (Emscripten).
 M2 dependency set (v0.15): SDL3 3.4.18 (vcpkg at the baseline with features `core, wayland,
@@ -3299,7 +3319,7 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M4 Content | Power-ups, modifiers, more abilities, arenas, modes, lobby UI, audio/VFX | Content added without touching system code |
 | M5 Agent platform | `IAgent` and the versioned `Observation`, bot ABI v1 and `WasmAgent` over the wasm runtime, the reference bot in lobbies and on the server, `kfm_arena`, SDK v1 and example bots published from the bots repository (§8) | A bot built outside this repository against SDK v1 beats the reference bot in a `kfm_arena` tournament run |
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
-| M6a Ship on the web | Static hosting + CDN for the client, lobby/signaling service with room codes and connection tokens, dedicated servers in 2–3 regions, telemetry, crash reporting | Send a link, friends are in a match within a minute, no install |
+| M6a Ship on the web | The client on Cloudflare Pages; the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
 | M6b The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, replays served with their season's content, the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
 | M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
@@ -3311,6 +3331,16 @@ the JSON result pinned append-only, a tagged release that publishes the headless
 build image, `example_bot_test` kept here against the normative header; (3) the service:
 accounts, teams, submissions and the sandboxed build; (4) the scheduler and ratings; (5) the
 CLI on PyPI; (6) the client's replay viewer and the portal's replay links. M7 is unchanged.
+
+M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
+test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
+(the `WebRtcTransport` signaling source, `ServerHost --lobby`), checked by `kfm_net_probe`
+and a native `kfm_client` through a local lobby; (3) the client's join flow (`?room=` and
+`--room`, the create and join UI, the `web` `IPlatformServices`), verified by
+`check_browser.py` against a local lobby and server; (4) `deploy/`, the Pages workflow, one
+EU VM and a playtest with friends over the real link (the open M3 follow-up); (5) more
+regions and Sentry. Cheap follow-ups fold in where they fall: bots that yield a slot to a
+joining human, the warm-up round a joiner lands in, reconnect-with-token from the UI.
 
 M5b sequencing (v0.29): one PR and one architecture version per step, each green on the
 determinism gate before the next starts. (1) Mode foundations: `kMaxModes` 32, the loadout axis,
@@ -3663,14 +3693,17 @@ baseline moved to C++23 (§9).
   DashAnticipation ring and flash at the press, §7).
 - **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4. Measured (v0.17): at
   most 4.7 KB uncompressed with every pool full, so LZ4 is deferred until a cap rises (§6.3).
-- **Lobby/matchmaking/NAT** is a service problem, deferred behind the connection-token boundary.
+- **Lobby/matchmaking/NAT** is a service problem behind the connection-token boundary; the
+  service is designed in §13.5 (v0.37). No matchmaking: rooms are created and joined by code,
+  the creator picks the region.
 - **Browser as the primary client.** One to two frames more input latency than a tuned native
   client, Safari quirks (audio gesture, gamepad, WebGL), tab throttling (covered by snapshot
   resync), no threads without COOP/COEP headers (the sim is single-threaded anyway), WebGL2 as
   the floor. Fixed-point determinism holds in WebAssembly for free, which floats would not.
 - **Always-on servers.** The web needs dedicated servers and a signaling service running 24/7.
   The sim is cheap enough that one small VPS per region hosts hundreds of matches, but it is an
-  ongoing cost and an ops duty that a Steam peer-to-peer game would not have.
+  ongoing cost and an ops duty that a Steam peer-to-peer game would not have. At friends scale
+  (v0.37) it is one small VM; egress (~100 KB/s per match) is the one line that grows with play.
 - **Monetisation on the web is weak** (portals, ads, cosmetics). If revenue matters later, the
   Steam build is the lever, and the seams keep it cheap.
 - **3D renderer cost.** A skinned-mesh renderer is weeks of work where a sprite batcher is
@@ -3753,6 +3786,13 @@ baseline moved to C++23 (§9).
   plus modules, replays served with their season's content, a Rust CLI on PyPI (§8, §11).
   Open: the rating formula (Elo or Glicko-2), continuous play against scheduled rounds, how long
   a season's content and replays are kept, and whether a fog overlay belongs in the viewer.
+- Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP
+  endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
+  `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
+  Hetzner Cloud after, with the deployment portable by construction; Cloudflare Pages, Caddy,
+  Sentry's free tier (§13.5). Open: whether M6b's accounts and the lobby ever share an identity
+  (a guest id is enough to play), and whether the lobby moves to its own host once there is a
+  second region.
 - Open (M5 follow-ups): the browser JS shim for bot modules in the client (metering best effort
   there); bots that yield a slot to a joining human; contests at thousands of times real time
   through parallel processes (§8). Two sim-side sources of slot bias found by the bot fairness
@@ -3902,6 +3942,70 @@ non-issue; the server is the authority and the bot host; a match costs ~100 KB/s
 a sliver of a core, so one small VPS per region (EU, NA, Asia to start) hosts hundreds of matches.
 The lobby/signaling service is a small WebSocket endpoint that issues room codes and connection
 tokens and tells the browser which server to dial.
+
+**The M6a deployment (v0.37).** Three parts, each portable, sized for friends and shaped so
+that growing is adding machines rather than changing code.
+
+- **The client page is static.** `kfm_client.html` with its wasm and JS is published by the
+  `wasm` CI job to Cloudflare Pages on a tag (free, a global CDN, TLS and a custom domain; a
+  `_headers` file sets `application/wasm` and immutable caching for hashed files; no COOP/COEP,
+  the client is single-threaded). A room link is `https://<host>/?room=CODE`.
+- **The lobby service** is one Rust binary (Tokio, axum, tokio-tungstenite) in
+  `services/lobby/` of this repository, because its protocol tracks the server's, and the only
+  public TCP endpoint: a single `wss://` socket behind Caddy, which handles Let's Encrypt. It
+  owns room codes, connection tokens, signaling and the server registry, all in memory (a room
+  is a few hundred bytes; a database arrives with accounts, not before).
+  - Servers dial it: each `kfm_server` opens an outbound `wss://` connection with a shared
+    secret and sends `register{region, build_id, content_hash, max_players}`. A game VM
+    therefore needs no inbound TCP, only its ICE UDP range. A server that drops off the socket
+    leaves the registry and its rooms close.
+  - A client dials it to create a room, `create{region}` → `{code, token}` (the lobby picks a
+    free registered server in that region, reserves the room on it and hands the server the
+    token), or to join one, `join{code}` → `{token}` or a refusal (unknown code, full, build or
+    content mismatch), then exchanges signaling over the same socket: the lobby relays the
+    client's `offer` and `candidate` messages to the server and the server's `answer` and
+    `candidate` back, keyed by room and peer. The JSON message set of
+    `kfm/net/webrtc_signaling.hpp` is kept and wrapped in a routing envelope.
+  - A room code is five letters from an unambiguous alphabet, unique while the room lives; a
+    room expires ten minutes after its last peer leaves. A token is 128 random bits bound to
+    one room, issued once per join and valid until the room closes; because the lobby tells
+    the server its tokens at reservation time, `ServerConfig::acceptToken` is a lookup, not a
+    round-trip (§6.7). The region is the room creator's choice from the registered regions, EU
+    by default; there is no latency-based matchmaking.
+- **The game servers** are one small VM per region (Compute Engine `e2-small`, Debian, a
+  reserved static external IP, a firewall rule for the ICE UDP range) running `kfm_server`
+  under systemd, one match per process as built (§6.5): a unit template keeps a pool of idle
+  processes per VM, each registered with its own capacity. `MatchHost` replaces the pool only
+  if a VM runs out of processes before it runs out of CPU. The EU VM also runs Caddy and the
+  lobby. Start with one VM; a region is one more VM running only servers.
+
+Code this needs: `WebRtcTransport`'s server side takes an injectable signaling source (the
+built-in `rtc::WebSocketServer` behind `signalingPort` stays for development, tests and
+`kfm_net_probe`; a `--lobby wss://… --lobby-secret S` mode on `kfm_server` feeds it the
+messages relayed over the lobby connection and registers the process); the client takes a
+lobby URL and a room (`?room=CODE` in the browser, `--room CODE [--lobby URL]` natively; the
+direct `--connect ws://` path stays for development); the `web` `IPlatformServices` (identity:
+a guest id kept in `localStorage`; session directory: the lobby) is the client's seam for it,
+`null` serves tests, and the server talks to the lobby directly from `ServerHost`.
+
+Providers: Google Cloud Compute Engine first (credits), Hetzner Cloud when they end. The rule
+that keeps the switch a day's work: everything is a container image (`deploy/Dockerfile.server`
+from the `server-headless` preset, `deploy/Dockerfile.lobby`) plus systemd units and a
+Caddyfile under `deploy/`, with VM creation scripted (`deploy/gcp/`); no provider-specific
+service (no managed database, cache, load balancer or serverless runtime; Cloud Run has no
+UDP, so it could only ever host the lobby). No spot or preemptible VMs: they are killed
+mid-match. Egress is the one cost that grows with play (~100 KB/s per match).
+
+Telemetry and crash reporting: Sentry's free tier. Its browser SDK in `shell.html` catches
+wasm traps, unhandled exceptions and failed loads; its Rust SDK covers the lobby. `kfm_server`
+keeps its per-event log lines and periodic stats line, collected by journald on the VM, and
+sim events feed nothing external. Monitoring is a lobby `/healthz` reporting registered
+servers. Revisited at scale.
+
+Scale path: (1) one VM; (2) a VM per region; (3) `MatchHost` and the lobby on its own host
+(registration is an outbound socket either way, so the protocol does not change); (4) a
+database when accounts arrive. M6b's identity provider is the ladder's; whether the lobby ever
+shares it is open (§12).
 
 ### 13.6 Sequencing
 

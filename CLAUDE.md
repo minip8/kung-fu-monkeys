@@ -46,7 +46,11 @@ lifecycle in `AgentHost`, the filled Observation v1 fields, `kfm_arena --team` a
 `--memory-on-respawn`, a grid- and fog-aware reference bot), landed in v0.35. Next is M6, split in
 v0.36 into M6a (ship on the web: hosting, the lobby service, regional servers) and M6b (the bot
 ladder: accounts and teams, source-only C++ submissions built in a sandbox, ratings, replays, a
-Rust CLI; the service lives in the bots repository, architecture §8 "The ladder").
+Rust CLI; the service lives in the bots repository, architecture §8 "The ladder"). M6a's shape
+is decided in v0.37 (§13.5): a Rust lobby service in `services/lobby/` that owns rooms, tokens,
+signaling and the server registry, servers that dial it, one `kfm_server` per match under
+systemd, `deploy/` for images and units, Google Cloud Compute Engine then Hetzner, Cloudflare
+Pages, Caddy, Sentry.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
