@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
@@ -209,8 +210,8 @@ std::string encode(const Message& message) {
 }
 
 std::optional<std::string_view> FlatObject::get(std::string_view key) const {
-  for (auto it = fields.rbegin(); it != fields.rend(); ++it) {
-    if (it->first == key) return std::string_view(it->second);
+  for (const auto& [k, v] : std::views::reverse(fields)) {
+    if (k == key) return std::string_view(v);
   }
   return std::nullopt;
 }

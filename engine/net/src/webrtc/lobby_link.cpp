@@ -318,7 +318,7 @@ struct LobbyLink::Impl {
       const std::scoped_lock lock(queue->mutex);
       events.swap(queue->events);
     }
-    for (SocketEvent& e : events) {
+    for (const SocketEvent& e : events) {
       if (e.generation != generation || state == LobbyLinkState::Waiting) continue;
       switch (e.kind) {
         case SocketEventKind::Open:

@@ -472,6 +472,7 @@ struct WebRtcTransport::Impl {
 
   // Client lobby mode: the socket is open, send the one request.
   void sendLobbyRequest(Peer& peer) {
+    if (!lobbyRequest) return;
     const LobbyRequest& req = *lobbyRequest;
     const std::string build = std::format("{:08x}", req.buildId);
     const std::string content = std::format("{:08x}", req.contentHash);
@@ -511,22 +512,23 @@ struct WebRtcTransport::Impl {
       return;
     }
     if (lobbyPhase != LobbyPhase::Requested) return;  // nothing may precede our request
-    const auto o = signaling::decodeObject(text);
-    const std::string_view type = o ? o->get("type").value_or("") : std::string_view{};
+    // Not a flat object: no type, so an unexpected reply.
+    const signaling::FlatObject o = signaling::decodeObject(text).value_or(signaling::FlatObject{});
+    const std::string_view type = o.get("type").value_or("");
     if (type == "joined") {
-      const std::string_view tok = o->get("token").value_or("");
-      const std::string_view code = o->get("code").value_or("");
+      const std::string_view tok = o.get("token").value_or("");
+      const std::string_view code = o.get("code").value_or("");
       if (tok.size() == 32 && isLowerHex(tok) && !code.empty()) {
         const auto* p = reinterpret_cast<const std::byte*>(tok.data());
         token.assign(p, p + tok.size());
-        lobbyRoom = LobbyRoom{std::string(code), std::string(o->get("region").value_or(""))};
+        lobbyRoom = LobbyRoom{std::string(code), std::string(o.get("region").value_or(""))};
         lobbyPhase = LobbyPhase::Joined;
         startClientOffer(peer);
         return;
       }
       lastError = "lobby protocol error: bad joined reply";
     } else if (type == "refused") {
-      lastError = "lobby refused: " + std::string(o->get("reason").value_or("unknown"));
+      lastError = "lobby refused: " + std::string(o.get("reason").value_or("unknown"));
     } else {
       lastError = "lobby protocol error: unexpected reply";
     }
