@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.39 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.40 (2026-11-05). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -330,6 +330,15 @@ v0.38's GitHub Pages: the domain's DNS is at Cloudflare, so one account holds th
 DNS and the page, the custom domain is one dashboard step, `_headers` controls caching and
 there is no bandwidth cap. The release workflow's web job is the v0.37 one again. No code
 change.
+v0.40 changes: the roadmap after M6a (§11). The first production play showed M6a's criterion met
+technically but not pleasantly: a room is a match already running with bots, the server's
+default settings, no waiting room, no names, a lobby panel drawn as a debug dialog, and a region
+list that only names regions with a free server. A new M6b, "Play with friends", closes that:
+the online room with a waiting state, the host's settings over the wire and a host role, the
+code and link to share, every region listed with its availability (lobby protocol v1.1),
+nicknames and scoreboards, a main menu, bots yielding slots, reconnect from the UI, the lead
+control checked at high RTT. The bot ladder, M6b since v0.36, becomes M7 unchanged, and the
+optional Steam build M8. No code change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3037,7 +3046,7 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   about 30 k ticks/s with ten bots. A playable baseline, not a strong bot: it does not plan for
   its team, read calls beyond the last sighting, or use the catch on purpose.
 
-**The ladder (v0.36, M6b).** The ladder is the hosted contest: authors submit bots, the service
+**The ladder (v0.36, M6b then; M7 since v0.40).** The ladder is the hosted contest: authors submit bots, the service
 plays them against each other with `kfm_arena`, ranks the entrants and serves the replays. It
 lives in the bots repository (above) and uses this repository through a pinned release. Decided:
 
@@ -3091,7 +3100,7 @@ lives in the bots repository (above) and uses this repository through a pinned r
   on both sides recorded on every match so a disputed result is re-run bit for bit. The free-
   for-all slot bias of §12 does not reach the ladder: `--rotate` plays every pair from both sides.
 - **Replays.** A match's `.kfmr` is served with its season's content; the CLI downloads it and
-  prints the viewer URL, and the browser client loads a replay by URL (a client feature of M6b:
+  prints the viewer URL, and the browser client loads a replay by URL (a client feature of M7:
   the client has no replay playback as of v0.35; it needs no bot runtime, since a replay is
   inputs). Fog is a projection in the observation builder, so a replay shows the whole arena;
   a fog overlay in the viewer is a follow-up.
@@ -3376,17 +3385,46 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M5 Agent platform | `IAgent` and the versioned `Observation`, bot ABI v1 and `WasmAgent` over the wasm runtime, the reference bot in lobbies and on the server, `kfm_arena`, SDK v1 and example bots published from the bots repository (§8) | A bot built outside this repository against SDK v1 beats the reference bot in a `kfm_arena` tournament run |
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
 | M6a Ship on the web | The client on Cloudflare Pages (v0.39); the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
-| M6b The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, replays served with their season's content, the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
-| M7 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
+| M6b Play with friends | The online room: a waiting state on the server, the host's settings (arena, mode, loadout, power-ups, bots) sent over the wire and a host role that passes on; the code with copy-link and share in the client; every region listed with its availability (lobby protocol v1.1); nicknames on the scoreboard, a between-rounds scoreboard and a match-over screen with play again; a main menu and a game-looking lobby; bots yield slots to joining humans; reconnect from the UI; the lead control checked at high RTT (§6.6, §13.5, "M6b design" below) | A group of friends plays a full evening from one link without help: create, invite, pick the mode, start, play again |
+| M7 The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, replays served with their season's content, the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
+| M8 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
-M6 sequencing (v0.36): M6a and M6b share only the hosted client and proceed in parallel. M6b
-depends on `kfm_arena`, static hosting and an identity provider, not on the lobby service or the
-regional servers. Its order: (1) in this repository, the `contest` mode (content hash only),
+M6b design (v0.40). A room has three states on the server, kept in the host beside
+`ServerHost` as the lobby adapter is, never in `WorldState`: Waiting (the match is not running:
+the server holds the initial world and ticks nothing for the sim; peers occupy slots and see the
+roster, the settings and who is host), Playing (as today: a joiner spectates until the round
+break in a rounds mode or spawns after `respawnTicks` in a deathmatch) and Over (the match-over
+screen; the host's "play again" returns to Waiting with the same settings, a leaver's slot is
+freed). The host is the room's creator, then the longest-present human when the host leaves.
+Protocol version 6 adds three reliable messages: `RoomSettings` (host → server: the
+`MatchConfig` axes and the bot count; the server validates against its content and
+`ContentDB::compatible` and answers with the state), `RoomState` (server → everyone on every
+change: state, host slot, settings, each slot's nickname) and `Start` (host → server, Waiting →
+Playing through `restartMatch` with the host's config, which retires the M3 follow-up "a
+server-chosen match config"); `Hello` carries a nickname of at most 16 bytes of UTF-8, kept per
+slot on the server and shown on the scoreboard and the HUD. Bots yield: a human joining a room
+whose human slots are full but whose bots are not takes a bot's slot at the next round break.
+Reconnect from the UI is the existing token flow behind a button. Lobby protocol v1.1: the
+`regions` reply gains `free` (the regions with a free server, comma-separated) beside `list`
+(every registered region); a client shows the list with the availability and a create in a full
+region is refused `no_server` as before. The client keeps Dear ImGui as the drawing library but
+gets a game font, a palette and a main menu (Play online, Play local, Settings); copy-link uses
+the clipboard natively and in the browser and the Web Share API on touch devices.
+Sequencing, one PR each: (1) lobby protocol v1.1 and the availability indicator; (2) the room
+states, `RoomSettings`/`RoomState`/`Start`, nicknames (protocol 6; netcode tests over the
+loopback with a scripted host); (3) the client's main menu, waiting screen, scoreboards and
+match-over; (4) bots yielding, reconnect from the UI and the lead-control check at high RTT;
+(5) a friends playtest against the criterion.
+
+M7 sequencing (v0.36, numbered M6b until v0.40): M6a and M7 share only the hosted client and
+proceed in parallel. M7 depends on `kfm_arena`, static hosting and an identity provider, not on
+the lobby service or the regional servers. Its order: (1) in this repository, the `contest` mode (content hash only),
 the JSON result pinned append-only, a tagged release that publishes the headless `kfm_arena`;
 (2) the bots repository created with the SDK moved from `tools/bots/`, the C++ layer and the
 build image, `example_bot_test` kept here against the normative header; (3) the service:
 accounts, teams, submissions and the sandboxed build; (4) the scheduler and ratings; (5) the
-CLI on PyPI; (6) the client's replay viewer and the portal's replay links. M7 is unchanged.
+CLI on PyPI; (6) the client's replay viewer and the portal's replay links. M8 (Steam) is
+unchanged.
 
 M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
 test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
@@ -3864,7 +3902,7 @@ baseline moved to C++23 (§9).
   4 MiB modules, 16 MiB memory; `Observation` v1 is pinned in `docs/bot-abi.md`; bots are named
   by `BotSpec` and seeded per slot by one formula in every host; the server delays bots by the
   humans' lead (§8, §10, §11).
-- Decided (v0.36, M6b): the ladder is a hosted service in the bots repository over a pinned
+- Decided (v0.36, M6b then, M7 since v0.40): the ladder is a hosted service in the bots repository over a pinned
   release of this one; per-user tokens, teams as entrants, source-only C++ submissions built in
   a throwaway container, five submissions kept plus the active one, a `contest` mode as the
   season's knob row, ratings per entrant over rotated two-sided matches reproducible from seed
@@ -3875,7 +3913,7 @@ baseline moved to C++23 (§9).
   endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
   `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
   Hetzner Cloud after, with the deployment portable by construction; Cloudflare Pages, Caddy,
-  Sentry's free tier (§13.5). Open: whether M6b's accounts and the lobby ever share an identity
+  Sentry's free tier (§13.5). Open: whether the ladder's (M7) accounts and the lobby ever share an identity
   (a guest id is enough to play), and whether the lobby moves to its own host once there is a
   second region.
 - Open (M5 follow-ups): the browser JS shim for bot modules in the client (metering best effort
@@ -4089,7 +4127,7 @@ servers. Revisited at scale.
 
 Scale path: (1) one VM; (2) a VM per region; (3) `MatchHost` and the lobby on its own host
 (registration is an outbound socket either way, so the protocol does not change); (4) a
-database when accounts arrive. M6b's identity provider is the ladder's; whether the lobby ever
+database when accounts arrive. The ladder's (M7) identity provider is its own; whether the lobby ever
 shares it is open (§12).
 
 **As built (v0.38).** The wire format is `docs/lobby-protocol.md` (normative; the service, the
@@ -4132,7 +4170,7 @@ loads `config.js`, adds `--lobby` from it when the query has none and, only with
 (`kfm/platform/platform_services.hpp`, the SDL-free target `kfm_platform_services`) is the
 minimal seam: a guest id generated once and kept in `guest_id.txt` in SDL's pref dir or
 `kfm.guest_id` in localStorage (per run under `--no-settings`), and the lobby URL; `Null`
-serves tests. The guest id is sent nowhere yet; M6b binds it.
+serves tests. The guest id is sent nowhere yet; M6b's nicknames ride beside it and M7 binds it to an account.
 Deployment as built: the VMs run Ubuntu 24.04 LTS and only containers (correcting v0.37's
 Debian), so the host compiler is irrelevant; the units run the GHCR images with host
 networking so ICE sees the real interface; `kfm.env` carries the secret, region, name prefix,
