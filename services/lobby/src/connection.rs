@@ -230,7 +230,14 @@ pub(crate) async fn client(lobby: Arc<Lobby>, socket: WebSocket) {
             return;
         }
         (Some("create"), Some(region), _) => lobby.create(conn.tx.clone(), region, build, content),
-        (Some("join"), _, Some(code)) => lobby.join(conn.tx.clone(), code, build, content),
+        (Some("join"), _, Some(code)) => {
+            let token = get(&fields, "token");
+            if token.is_some_and(|t| !protocol::valid_token(t)) {
+                Err(Refusal::BadToken)
+            } else {
+                lobby.join(conn.tx.clone(), code, build, content, token)
+            }
+        }
         _ => Err(Refusal::BadRequest),
     };
     let seat = match result {

@@ -1,4 +1,4 @@
-# Lobby protocol v1.1 (M6a, architecture v0.37 §13.5; v1.1: M6b, architecture v0.41)
+# Lobby protocol v1.2 (M6a, architecture v0.37 §13.5; v1.1: M6b, architecture v0.41; v1.2: M6b, architecture v0.44)
 
 The lobby service is the only public TCP endpoint. Browsers and native clients dial it to
 create or join a room and to exchange WebRTC signaling with the game server that hosts the
@@ -29,7 +29,11 @@ format shared by `services/lobby/` (Rust), `engine/net` (the transport's lobby m
   always sent upper case.
 - **Token**: 128 random bits from the lobby, as 32 lower-case hex characters. Bound to one
   room and one join; it is the `connectionToken` of the message layer's `Hello`
-  (`ServerConfig::acceptToken`) and nothing else. Valid until the room closes.
+  (`ServerConfig::acceptToken`) and nothing else. Valid until the room closes. v1.2: the lobby
+  remembers every token it issued for a live room, and a `join` that presents one is a
+  **rejoin**: the same player coming back under the same token (§3), so the game server's
+  reconnect (it keeps a dropped player's slots reserved for its grace window, keyed on the
+  token) recognises it.
 - **Peer id** (lobby-assigned, per server socket): a decimal string, unique for the lifetime of
   the server's socket, never reused on that socket. It is only a routing key between the lobby
   and the server; the transport's own `PeerId` is the server's business.
@@ -56,7 +60,7 @@ Requests (client → lobby):
 |---|---|---|
 | `{"type":"regions"}` | | List every registered region and the ones that can host a room now. Reply `regions`; the socket closes after it. |
 | `{"type":"create","region":"eu","build":"…","content":"…"}` | `region` required | Create a room on a free server in `region`; the creator is its first peer. |
-| `{"type":"join","code":"ABCDE","build":"…","content":"…"}` | `code` required | Join a live room. |
+| `{"type":"join","code":"ABCDE","build":"…","content":"…"}` | `code` required; `token` optional (v1.2) | Join a live room; with `"token":"<32 hex>"`, rejoin it as the player that token was issued to (below). |
 
 Replies (lobby → client), exactly one per request:
 
@@ -75,11 +79,27 @@ assume free"; since a v1 lobby's `list` is the free list, that is also correct. 
 listed but busy region is refused `no_server`, as before; a client may still try one (a
 server can come free between the query and the create).
 
+Rejoin (v1.2, reconnect from the UI): a `join` whose `token` the lobby issued for that room
+(to its creator or any joiner, still seated or gone) re-admits the client under the same token.
+The lobby checks `code`, `build` and `content` as for any join but not `capacity` (the server
+still holds the player's slots, or decides at its `Hello` like any join; the 64-socket cap
+still applies). If a client socket of the room is still seated under that token (its owner
+noticed the drop before the lobby did), that socket gets `{"type":"closed","reason":"replaced"}`
+and is closed, and the server gets `peer_gone` for its peer, before anything else. Then, as for
+any join, `peer` (a new peer id, the same token) goes to the server and `joined` (the same
+token) to the client. A token the room never issued is refused `bad_token`.
+
 Refusal reasons: `unknown_code` (no live room), `full` (the room's server has no free human
 slot), `no_server` (no free server in that region, or the region is unknown), `mismatch`
 (`build`/`content` differ from the server's), `bad_request` (malformed, wrong first message,
 or a second request on the same socket), `server_gone` (the room's server dropped while the
-join was in flight).
+join was in flight), `bad_token` (v1.2: a rejoin with a token this room never issued).
+
+Compatibility (v1.1 → v1.2): `token` is a new optional key of `join` and unknown keys are
+ignored, so a v1.1 lobby treats a rejoin as a plain join: a fresh token and a fresh player
+(the server's reservation for the old token goes unclaimed and expires). A v1.1 client never
+sends `token` and sees no change; it may receive the new refusal `bad_token` or the new close
+reason `replaced` only if it sent a token, which it does not.
 
 After `joined`:
 
@@ -87,8 +107,8 @@ After `joined`:
   (`offer`, `candidate`), unchanged. The lobby forwards each to the room's server inside a
   `signal` envelope (§5).
 - Lobby → client: the server's `answer` and `candidate` messages, unwrapped, unchanged; or
-  `{"type":"closed","reason":"server_gone"|"kicked"|"room_closed"}` followed by the socket
-  closing. (A transport treats the close itself as Disconnected; the message is for the UI.)
+  `{"type":"closed","reason":"server_gone"|"kicked"|"room_closed"|"replaced"}` followed by the
+  socket closing (`replaced`, v1.2: a rejoin under this socket's token took its place). (A transport treats the close itself as Disconnected; the message is for the UI.)
 
 ## 4. Signaling (unchanged from M3)
 
@@ -141,8 +161,9 @@ Server → lobby:
    `room`, then `peer` for the creator, then `joined` to the creator. Free servers in the
    region that all mismatch refuse `mismatch`; none at all refuses `no_server`.
 2. `join`: the code must name a live room; the number of open client sockets in the room must
-   be below the server's latest `capacity`; `build`/`content` must match the server's. On
-   success `peer` to the server, then `joined` to the client.
+   be below the server's latest `capacity` (not for a rejoin, v1.2); `build`/`content` must
+   match the server's. On success `peer` to the server, then `joined` to the client. A rejoin
+   that replaces a seated socket first closes it (`closed`/`replaced`) and sends `peer_gone`.
 3. A client socket closing → `peer_gone` to the server. When the room has no client sockets,
    an expiry timer of ten minutes starts; a join resets it. On expiry → `room_closed` to the
    server and the code is free to reuse.

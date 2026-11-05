@@ -1,4 +1,4 @@
-//! Wire helpers for lobby protocol v1 (docs/lobby-protocol.md §1-§2): every
+//! Wire helpers for lobby protocol v1.2 (docs/lobby-protocol.md §1-§2): every
 //! frame is a flat JSON object whose values are all strings.
 
 use std::collections::HashMap;
@@ -60,6 +60,14 @@ pub fn random_token() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// A token's shape: 32 lower-case hex digits (`random_token`).
+pub fn valid_token(token: &str) -> bool {
+    token.len() == 32
+        && token
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// A region label: short lower-case ASCII (`eu`, `us`, `asia`). Digits, `-`
 /// and `_` are allowed; a comma never is, since the region list is
 /// comma-separated.
@@ -103,6 +111,7 @@ mod tests {
             assert_eq!(code.len(), CODE_LEN);
             assert!(code.bytes().all(|b| CODE_ALPHABET.contains(&b)));
             let token = random_token();
+            assert!(valid_token(&token));
             assert_eq!(token.len(), 32);
             assert!(token
                 .bytes()

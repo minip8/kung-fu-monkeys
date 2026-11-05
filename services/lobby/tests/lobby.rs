@@ -608,6 +608,118 @@ async fn a_join_resets_the_expiry_timer() {
     assert_eq!(healthz(addr).await["rooms"], 1);
 }
 
+// --- rejoin (v1.2) ---------------------------------------------------------
+
+async fn rejoin(addr: SocketAddr, code: &str, token: &str) -> (Ws, Fields) {
+    request(
+        addr,
+        &[
+            ("type", "join"),
+            ("code", code),
+            ("token", token),
+            ("build", BUILD),
+            ("content", CONTENT),
+        ],
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_rejoin_after_leaving_gets_the_same_token() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "2").await;
+    let (mut a, created) = create(addr, "eu").await;
+    let (code, peer, token) = expect_room(&mut server).await;
+    assert_eq!(created["token"], token);
+    let (mut b, joined) = join(addr, &code).await;
+    let (b_peer, b_token) = expect_peer(&mut server).await;
+    assert_eq!(joined["token"], b_token);
+
+    // a's socket closes (its network dropped): the room keeps its token.
+    a.close(None).await.unwrap();
+    let gone = recv(&mut server).await;
+    assert_eq!(
+        (gone["type"].as_str(), gone["peer"].as_str()),
+        ("peer_gone", peer.as_str())
+    );
+
+    // A third player fills the room to capacity: a plain join is full, but
+    // a's rejoin is not counted against the capacity.
+    let (_c, reply) = join(addr, &code).await;
+    assert_eq!(reply["type"], "joined");
+    expect_peer(&mut server).await;
+    let (_, reply) = join(addr, &code).await;
+    assert_eq!(reply["reason"], "full");
+
+    let (_a2, again) = rejoin(addr, &code, &token).await;
+    assert_eq!(again["type"], "joined", "{again:?}");
+    assert_eq!(again["token"], token);
+    assert_eq!(again["code"], code);
+    let (new_peer, same) = expect_peer(&mut server).await;
+    assert_eq!(same, token);
+    assert_ne!(new_peer, peer);
+
+    // A kicked player may rejoin too (the server dropped it on a timeout).
+    send(
+        &mut server,
+        json(&[("type", "peer_gone"), ("peer", &b_peer)]),
+    )
+    .await;
+    assert_eq!(recv(&mut b).await["reason"], "kicked");
+    let (_b2, again) = rejoin(addr, &code, &b_token).await;
+    assert_eq!(again["token"], b_token);
+    assert_eq!(expect_peer(&mut server).await.1, b_token);
+}
+
+#[tokio::test]
+async fn a_rejoin_replaces_a_socket_still_seated_under_the_token() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut a, _) = create(addr, "eu").await;
+    let (code, peer, token) = expect_room(&mut server).await;
+
+    let (_a2, again) = rejoin(addr, &code, &token).await;
+    assert_eq!(again["type"], "joined");
+    // The old socket is told and closed; the server hears it left first.
+    let closed = recv(&mut a).await;
+    assert_eq!(closed["type"], "closed");
+    assert_eq!(closed["reason"], "replaced");
+    assert_eq!(expect_close(&mut a).await, Some(1000));
+    let gone = recv(&mut server).await;
+    assert_eq!(
+        (gone["type"].as_str(), gone["peer"].as_str()),
+        ("peer_gone", peer.as_str())
+    );
+    let (new_peer, same) = expect_peer(&mut server).await;
+    assert_eq!(same, token);
+    assert_ne!(new_peer, peer);
+    // The replaced socket's close sends no second peer_gone.
+    expect_silence(&mut server, Duration::from_millis(200)).await;
+    assert_eq!(healthz(addr).await["rooms"], 1);
+}
+
+#[tokio::test]
+async fn a_rejoin_with_a_foreign_or_malformed_token_is_refused() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (_a, _) = create(addr, "eu").await;
+    let (code, _, token) = expect_room(&mut server).await;
+    let other = "0123456789abcdef0123456789abcdef";
+    assert_ne!(other, token);
+    let (mut ws, reply) = rejoin(addr, &code, other).await;
+    assert_eq!(reply["reason"], "bad_token");
+    assert_eq!(expect_close(&mut ws).await, Some(1000));
+    let (_, reply) = rejoin(addr, &code, "NOT-HEX").await;
+    assert_eq!(reply["reason"], "bad_token");
+    // A token of another room does not open this one.
+    let mut server2 = register(addr, "eu-2", "eu", "4").await;
+    let (_b, _) = create(addr, "eu").await;
+    let (code2, _, _) = expect_room(&mut server2).await;
+    let (_, reply) = rejoin(addr, &code2, &token).await;
+    assert_eq!(reply["reason"], "bad_token");
+    expect_silence(&mut server, Duration::from_millis(100)).await;
+}
+
 #[tokio::test]
 async fn capacity_update_changes_full() {
     let addr = start(config()).await;

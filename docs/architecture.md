@@ -432,7 +432,12 @@ granted a tick later, so the sim sees a leave and a join (a deathmatch forfeits 
 score and spawns the joiner after `respawnTicks`, a rounds mode at the next round); a yielded
 bot does not return within the match (`RoomSettings.bots` is "bots when there is room",
 applied at every Start); the room flow's lobby `capacity` is max players. A spectator given a
-slot runs forward to the lead at once (`NetClient`). No sim change; replay checksums unchanged.
+slot runs forward to the lead at once (`NetClient`). Reconnect from the UI (§6.6, §13.5): a
+session that lost its link offers Reconnect, which re-dials with the same token, through the
+lobby as a rejoin: lobby protocol v1.2 adds an optional `token` to `join` (the lobby keeps every
+token it issued for a live room, re-admits the same token outside `capacity`, closes a socket
+still seated under it with `closed`/`replaced`, refuses an unknown one `bad_token`). No sim
+change; replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2352,6 +2357,20 @@ C++ server library is mature. The seam makes that swap a contained change.
   (`NetClient::waitingForSlot()` before it) runs forward on its next `ticksDue()` from its
   delayed position to estimated server tick + target lead, predicting, with the lead controller
   and the clock reset (counted as a hard jump); `NetSession` binds its devices to the new slots.
+- Reconnect from the UI (v0.44, M6b): the token flow above behind a button. A `NetSession`
+  that ran and then lost its link (`Disconnected` by a timeout or a closed transport, or the
+  lobby's `closed`/`kicked`, which is how a server-side timeout reaches a lobby client; not a
+  quit, a kick, a shutdown, a closed room or a gone server) `canReconnect()`, and the network
+  status screen shows "Connection lost" with Reconnect and Leave (keyboard, pad or mouse). The
+  app builds a new transport for `reconnectConfig()`: the `--connect` server with the token
+  the session used, or a lobby rejoin of the same room under the lobby's token (lobby protocol
+  v1.2, §13.5); `NetSession::reconnect()` starts the `NetClient` over it (`connect()` on a new
+  transport with the same token, as §6.6 always intended) and keeps the devices, nickname and
+  room code. Within the grace window the server's reservation hands back the slots, and with
+  them the nickname and, mid-match, the host role; after it, or outside Playing (no
+  reservation is kept there), the client joins like anyone (a free slot, a bot's slot, or the
+  queue). Both sides time a silent link out after 5 s, so of the 10 s grace about 5 s are left
+  for the button; the screen says the place is kept "for a few seconds".
 
 ### 6.7 Authority and abuse resistance
 
@@ -4389,6 +4408,19 @@ lacks is ignored); the client's `LobbyMenu` keeps a `RegionChoice` per region (k
 shown free, until the lobby answers), the Create room row reads "eu" or "us (no server)" and
 still creates in any region, and a `no_server` refusal is shown as before ("No server
 available in us"). An empty reply keeps the previous list.
+Lobby protocol v1.2 (v0.44, M6b step 4): reconnect from the UI goes through the lobby, since
+the lobby counts a closed client socket as leaving and the server only accepts the tokens the
+lobby announced. The lobby remembers every token it issued for a live room (seated or not);
+`join` gains an optional `token`, and a join with one the room issued is a rejoin: the lobby
+answers `joined` with the same token and announces the client to the server as a new `peer`
+with that token, so the server's `LobbyLink` accepts it again and `NetServer`'s reconnect
+reclaims the reserved slots (§6.6). A rejoin is exempt from `capacity` (the server still holds
+the player's slots, and its `Hello` judges otherwise) but not from the 64-socket cap; a socket
+still seated under the token (its owner noticed the drop first) is closed with
+`closed`/`replaced` and reported `peer_gone` before the new `peer`; an unknown token is
+refused `bad_token`. Re-signaling to the server directly was the alternative and is not
+taken: a server in lobby mode has no public signaling socket, and a second path would bypass
+the lobby's token set. A v1.1 lobby ignores the key and seats the client as a new player.
 
 ### 13.6 Sequencing
 
