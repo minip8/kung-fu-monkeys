@@ -31,6 +31,7 @@
 #include "kfm/platform/window.hpp"
 #include "kfm/presentation/builder.hpp"
 #include "kfm/presentation/camera.hpp"
+#include "kfm/presentation/palette.hpp"
 #include "kfm/presentation/render_state.hpp"
 #include "kfm/presentation/renderer.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
@@ -309,8 +310,9 @@ bool frame(void* user) {
   }
   platform::debugUiFlush();
 
-  platform::beginDefaultPass({.r = 0.10F, .g = 0.13F, .b = 0.16F, .a = 1.0F}, size.width,
-                             size.height);
+  // v0.49: the arena look's canopy around the arena.
+  const presentation::Color bg = presentation::kJungleLook.background;
+  platform::beginDefaultPass({.r = bg.r, .g = bg.g, .b = bg.b, .a = 1.0F}, size.width, size.height);
   app->renderer.draw(app->renderState, camera, size.width, size.height);
   platform::debugUiDraw();
   platform::endPass();

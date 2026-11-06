@@ -13,7 +13,9 @@
 // vec4 arrays (std140-compatible by construction) set with sg_apply_uniforms.
 //
 // Draw order per frame: opaque lit meshes (floor, wall rim, players, aim
-// indicators, held/flying bananas, pickups), then alpha-blended ground decals
+// indicators, held/flying bananas, pickups) with their ink outlines (v0.49:
+// inverted hulls, program `outline`; a skinned body's right after it), then
+// alpha-blended ground decals
 // with depth test on and depth write off (blob shadows, dash trails, catch
 // window rings, effect rings), then additive billboards (flashes, bursts).
 // The per-frame path allocates nothing; every mesh is uploaded once in init()
@@ -83,8 +85,10 @@ class Renderer {
   };
   // capsule, banana, disc, floor, cube, skinned character (empty until loaded)
   static constexpr std::size_t kMeshCount = 7;
-  static constexpr std::size_t kShaderCount = 3;    // lit, decal, skinned
-  static constexpr std::size_t kPipelineCount = 4;  // lit, decal alpha, decal additive, skinned
+  // lit, decal, outline, skinned, skinned outline
+  static constexpr std::size_t kShaderCount = 5;
+  // lit, decal alpha, decal additive, outline, skinned, skinned outline
+  static constexpr std::size_t kPipelineCount = 6;
 
   void destroyResources();
   void destroyCharacterModel();

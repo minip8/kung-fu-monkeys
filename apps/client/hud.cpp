@@ -640,22 +640,25 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   const auto box2 = [&](Vec2 min, Vec2 max) {
     return std::pair{at(min.x.toFloat(), max.y.toFloat()), at(max.x.toFloat(), min.y.toFloat())};
   };
-  dl->AddRectFilled(at(-hx, hy), at(hx, -hy), IM_COL32(72, 64, 54, 255));
+  // v0.49: the arena's look (palette.hpp kJungleLook), as the renderer draws it.
+  const presentation::ArenaLook& look = presentation::kJungleLook;
+  dl->AddRectFilled(at(-hx, hy), at(hx, -hy), toU32(look.floor));
   for (uint8_t i = 0; i < arena.hazardCount; ++i) {
     const sim::Hazard& hz = arena.hazards[i];
     const auto [a, b] = box2(hz.min, hz.max);
     if (hz.kind == sim::HazardKind::Pit) {
-      dl->AddRectFilled(a, b, toU32(presentation::kArenaPitColor));
-      dl->AddRect(a, b, toU32(presentation::kArenaPitRimColor), 0.0f, 0, 2.0f);
+      dl->AddRectFilled(a, b, toU32(look.water));
+      dl->AddRect(a, b, toU32(look.pitBank), 0.0f, 0, 2.0f);
     } else {
-      dl->AddRectFilled(a, b, toU32(presentation::kArenaSlowColor));
+      dl->AddRectFilled(a, b, toU32(look.mud));
     }
   }
   for (uint8_t i = 0; i < arena.wallCount; ++i) {
     const auto [a, b] = box2(arena.walls[i].min, arena.walls[i].max);
-    dl->AddRectFilled(a, b, toU32(presentation::kArenaWallColor));
+    dl->AddRectFilled(a, b, toU32(look.wall));
+    dl->AddRect(a, b, toU32(look.ink), 0.0f, 0, 1.5f);
   }
-  dl->AddRect(at(-hx, hy), at(hx, -hy), toU32(presentation::kArenaWallColor), 0.0f, 0, 3.0f);
+  dl->AddRect(at(-hx, hy), at(hx, -hy), toU32(look.rim), 0.0f, 0, 3.0f);
   // v0.33: objective zones, translucent with a solid rim, lettered a, b, ...
   for (uint8_t i = 0; i < arena.zoneCount && i < sim::kMaxArenaZones; ++i) {
     const auto [a, b] = box2(arena.zones[i].min, arena.zones[i].max);
