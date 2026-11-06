@@ -408,7 +408,11 @@ TEST_CASE("lobby: the link reconnects after the lobby drops it", "[lobby][webrtc
   REQUIRE(w.runUntil([&] {
     return w.lobby.registrations() == 2 && w.server->link->state() == LobbyLinkState::Registered;
   }));
-  CHECK(w.server->link->reconnects() == 1);
+  // reconnects() counts connection attempts after the first: a reconnect
+  // whose handshake fails on a busy machine is retried after the backoff,
+  // so it may be more than one. registrations() == 2 above pins that the
+  // lobby saw exactly one new registration.
+  CHECK(w.server->link->reconnects() >= 1);
   CHECK(w.server->link->peerCount() == 0);
   CHECK_FALSE(w.server->link->room().has_value());
   CHECK(w.server->log().find("lobby link lost") != std::string::npos);
