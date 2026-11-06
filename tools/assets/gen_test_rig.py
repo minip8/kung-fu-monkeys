@@ -3,8 +3,9 @@
 
 This is the M2 stand-in for the Blender -> glTF asset pipeline (architecture
 section 7): a low-poly placeholder built procedurally, skinned to a 7-joint
-skeleton, with the six animation clips the renderer's animation layer plays
-(idle, run, dash, throw, hit, eliminated). It uses the Python 3 standard
+skeleton plus an unweighted hand_r joint (where the held banana sits,
+architecture v0.53), with the seven animation clips the renderer's
+animation layer plays (idle, run, dash, throw, hit, eliminated, charge). It uses the Python 3 standard
 library only, and its output is a pure function of the arguments, so the
 build regenerates it instead of checking exported glTF in (CLAUDE.md).
 
@@ -101,8 +102,11 @@ JOINTS = [
     ("arm_lower_l", 3, (0.1, 1.35, -1.2)),
     ("arm_upper_r", 1, (0.0, 1.85, 0.85)),
     ("arm_lower_r", 5, (0.1, 1.35, 1.2)),
+    # v0.53: the right hand, a leaf no vertex is weighted to; it follows the
+    # forearm, and the renderer puts the held banana there.
+    ("hand_r", 6, (0.3, 0.95, 1.25)),
 ]
-ROOT, SPINE, HEAD, UPPER_L, LOWER_L, UPPER_R, LOWER_R = range(len(JOINTS))
+ROOT, SPINE, HEAD, UPPER_L, LOWER_L, UPPER_R, LOWER_R, HAND_R = range(len(JOINTS))
 HANDS = {UPPER_L: (0.3, 0.95, -1.25), UPPER_R: (0.3, 0.95, 1.25)}
 
 # --- mesh ----------------------------------------------------------------------
@@ -348,6 +352,24 @@ def clips(r, k):
                                                   z=25.0 * ease(u, 0.0, 0.8))},
             UPPER_R: {"rotation": lambda u: euler(x=-15.0 * ease(u, 0.0, 0.6),
                                                   z=25.0 * ease(u, 0.0, 0.8))},
+        }),
+        # v0.53, the charged throw's wind-up. Not played over time: the
+        # renderer samples it at charge x duration, so u is the charge (0 a
+        # tap, 1 full). The banana arm swings back and up until the hand is
+        # above and behind the head, the torso twists the right shoulder back
+        # and leans, the head turns to keep facing the throw and the free arm
+        # reaches forward. The release skips the throw clip's own wind-up in
+        # proportion to the charge.
+        ("charge", 1.0, 9, {
+            SPINE: {"rotation": lambda u: euler(y=-30.0 * ease(u, 0.0, 1.0),
+                                                z=-8.0 * ease(u, 0.2, 1.0))},
+            HEAD: {"rotation": lambda u: euler(y=25.0 * ease(u, 0.0, 1.0),
+                                               z=5.0 * ease(u, 0.3, 1.0))},
+            UPPER_R: {"rotation": lambda u: euler(x=-15.0 * ease(u, 0.2, 1.0),
+                                                  z=-150.0 * ease(u, 0.0, 1.0))},
+            LOWER_R: {"rotation": lambda u: euler(z=-15.0 * ease(u, 0.3, 1.0))},
+            UPPER_L: {"rotation": lambda u: euler(x=20.0 * ease(u, 0.0, 1.0),
+                                                  z=50.0 * ease(u, 0.1, 1.0))},
         }),
     ]
 

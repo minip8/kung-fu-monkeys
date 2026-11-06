@@ -250,6 +250,10 @@ TEST_CASE("clip selection priority", "[presentation][animation]") {
   REQUIRE(selectClip(playerWith(0), true, false) == AnimClip::Run);
   REQUIRE(selectClip(playerWith(0), true, true) == AnimClip::Throw);
   REQUIRE(selectClip(playerWith(f(PlayerFlag::Dashing)), true, true) == AnimClip::Dash);
+  // v0.53: a charging wind-up beats the throw and the run, not a dash.
+  REQUIRE(selectClip(playerWith(f(PlayerFlag::Charging)), true, true) == AnimClip::Charge);
+  REQUIRE(selectClip(playerWith(f(PlayerFlag::Charging) | f(PlayerFlag::Dashing)), true, true) ==
+          AnimClip::Dash);
   REQUIRE(selectClip(playerWith(f(PlayerFlag::Dashing) | f(PlayerFlag::HitStun)), true, true) ==
           AnimClip::Hit);
   REQUIRE(selectClip(playerWith(f(PlayerFlag::HitStun) | f(PlayerFlag::Eliminated)), true, true) ==
@@ -352,6 +356,101 @@ TEST_CASE("throw clip holds after a short Throwing flag", "[presentation][animat
   REQUIRE(s.clip == AnimClip::Throw);
   REQUIRE(s.time == 0.0f);
   REQUIRE(s.fade == 0.0f);
+}
+
+// v0.53: the two-joint model with its child named as the throwing arm and
+// the bend clip as the charge pose.
+SkinnedModel chargeModel() {
+  SkinnedModel m = twoJointModel();
+  m.joints[1].name = "arm_upper_r";
+  m.clips[0].name = "charge";
+  return m;
+}
+
+[[nodiscard]] float childAngle(const Pose& pose) {
+  // The child's rotation about +z: 2 atan2(z, w) for a pure z rotation.
+  const Quat q = pose.joints[1].rotation;
+  return 2.0f * std::atan2(q.z, q.w);
+}
+
+TEST_CASE("the charge pose follows the charge, not the clock", "[presentation][animation]") {
+  constexpr float kDt = 1.0f / 60.0f;
+  const SkinnedModel m = chargeModel();
+  const ClipBinding b = bindClips(m);
+  REQUIRE(b[AnimClip::Charge] == 0);
+  REQUIRE(b.upperArm == 1);
+  REQUIRE(b.hand == -1);
+  AnimState s;
+  RenderPlayer p = playerWith(flagBit(PlayerFlag::Throwing) | flagBit(PlayerFlag::Charging));
+  p.throwCharge = 0.5f;
+  updateAnimState(s, p, kDt);
+  for (int i = 0; i < 30; ++i)
+    updateAnimState(s, p, kDt);  // half a second at half charge: still half the pose
+  REQUIRE(s.clip == AnimClip::Charge);
+  Pose pose;
+  evaluateAnimPose(m, b, s, pose);
+  CHECK(childAngle(pose) == Approx(kPi * 0.25f).margin(1e-3));
+  CHECK(s.strain == 0.0f);
+  p.throwCharge = 0.25f;
+  updateAnimState(s, p, kDt);
+  evaluateAnimPose(m, b, s, pose);
+  CHECK(childAngle(pose) == Approx(kPi * 0.125f).margin(1e-3));
+}
+
+TEST_CASE("a full charge strains; the release throws past the wind-up",
+          "[presentation][animation]") {
+  constexpr float kDt = 1.0f / 60.0f;
+  const SkinnedModel m = chargeModel();
+  const ClipBinding b = bindClips(m);
+  AnimState s;
+  RenderPlayer p = playerWith(flagBit(PlayerFlag::Throwing) | flagBit(PlayerFlag::Charging));
+  p.throwCharge = 1.0f;
+  updateAnimState(s, p, kDt);
+  // The strain fades in over kStrainRampSeconds, then the arm shakes about
+  // the full pose (90°) within the amplitudes.
+  float frames = 0.0f;
+  while (frames * kDt < kStrainRampSeconds + kDt) {
+    updateAnimState(s, p, kDt);
+    frames += 1.0f;
+  }
+  REQUIRE(s.strain == 1.0f);
+  float lo = 10.0f;
+  float hi = -10.0f;
+  Pose pose;
+  for (int i = 0; i < 30; ++i) {
+    updateAnimState(s, p, kDt);
+    evaluateAnimPose(m, b, s, pose);
+    lo = std::min(lo, childAngle(pose));
+    hi = std::max(hi, childAngle(pose));
+  }
+  const float amp = 1.5f * kStrainArmDegrees * (kPi / 180.0f);
+  CHECK(hi - lo > 0.5f * kStrainArmDegrees * (kPi / 180.0f));
+  CHECK(lo >= (kPi * 0.5f) - amp - 1e-3f);
+  CHECK(hi <= (kPi * 0.5f) + amp + 1e-3f);
+
+  // Released (Throwing stays for the active and recovery ticks): the throw
+  // starts past its wind-up and is owed a whole clip; the strain fades out.
+  p.flags = flagBit(PlayerFlag::Throwing);
+  p.throwCharge = 0.0f;
+  updateAnimState(s, p, kDt);
+  CHECK(s.clip == AnimClip::Throw);
+  CHECK(s.fromClip == AnimClip::Charge);
+  CHECK(s.time == Approx(kThrowWindupSeconds));
+  CHECK(s.throwHold == Approx(kThrowAnimSeconds));
+  CHECK(s.charge == 1.0f);  // the fading-out charge pose stays put
+  CHECK(s.strain < 1.0f);
+
+  // A tap (charge 0 throughout) plays the throw from its start.
+  AnimState t;
+  RenderPlayer q = playerWith(0);
+  updateAnimState(t, q, kDt);
+  q.flags = flagBit(PlayerFlag::Throwing) | flagBit(PlayerFlag::Charging);
+  updateAnimState(t, q, kDt);
+  updateAnimState(t, q, kDt);
+  q.flags = flagBit(PlayerFlag::Throwing);
+  updateAnimState(t, q, kDt);
+  CHECK(t.clip == AnimClip::Throw);
+  CHECK(t.time == 0.0f);
 }
 
 TEST_CASE("crossfade weights", "[presentation][animation]") {

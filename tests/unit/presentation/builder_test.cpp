@@ -268,53 +268,42 @@ TEST_CASE("banana arc is zero at the throw and back at the owner", "[presentatio
   CHECK(peak == Approx(kBananaArcPeak).margin(0.05));
 }
 
-// v0.48: a held throw shows how charged it is and where its banana will
-// turn, and the banana does turn there.
-TEST_CASE("a charging throw shows its charge and its reach", "[presentation][builder][charge]") {
+// v0.48: a held throw shows how charged it is (v0.53: the charge pose and
+// the strain read it), rising to 1 and back off on the release.
+TEST_CASE("a charging throw shows its charge", "[presentation][builder][charge]") {
   WorldState s = makePlayingWorld(16, 0b1);
   placePlayer(s, kP0, Vec2{Fixed::fromInt(-12), Fixed::zero()});
   PresentationState ps;
   WorldState prev = s;
   float lastCharge = -1.0f;
-  float lastReach = 0.0f;
-  constexpr int kHeld = 22;  // 20 ticks past the startup: about half charged
-  for (int k = 0; k < kHeld; ++k) {
+  for (int k = 0; k < 60; ++k) {
     prev = s;
     const EventLog log = stepWith(s, PlayerInput{0, 0, 0, kThrowBit, 0});
     const RenderState rs = build(ps, prev, s, 1.0f, log);
     const RenderPlayer& rp = playerIn(rs, 0);
     REQUIRE(rp.has(PlayerFlag::Charging));
     CHECK(rp.throwCharge >= lastCharge);
-    CHECK(rp.throwReach >= lastReach);
     lastCharge = rp.throwCharge;
-    lastReach = rp.throwReach;
+    if (k == 21) {  // 20 ticks past the startup: about half charged
+      CHECK(rp.throwCharge > 0.3f);
+      CHECK(rp.throwCharge < 0.7f);
+    }
   }
-  CHECK(lastCharge > 0.3f);
-  CHECK(lastCharge < 0.7f);
-  // Released: the flag goes, and the banana turns about where the ring was.
+  CHECK(lastCharge == 1.0f);  // 58 ticks past the startup: full
   prev = s;
-  EventLog log = stepWith(s, PlayerInput{});
+  const EventLog log = stepWith(s, PlayerInput{});
   REQUIRE(countEvents(log, EventKind::BoomerangThrown) == 1);
-  CHECK_FALSE(playerIn(build(ps, prev, s, 1.0f, log), 0).has(PlayerFlag::Charging));
-  const float from = playerAt(s, kP0).transform.pos.x.toFloat();
-  float turnedAt = 0.0f;
-  for (int k = 0; k < 120 && turnedAt == 0.0f; ++k) {
-    stepWith(s, PlayerInput{});
-    s.boomerangs.forEachAlive([&](EntityId, const Boomerang& b) {
-      if (b.phase == BoomerangPhase::Returning) turnedAt = b.transform.pos.x.toFloat() - from;
-    });
-  }
-  CHECK(turnedAt == Approx(lastReach).margin(0.6));
+  const RenderState released = build(ps, prev, s, 1.0f, log);
+  CHECK_FALSE(playerIn(released, 0).has(PlayerFlag::Charging));
+  CHECK(playerIn(released, 0).throwCharge == 0.0f);
 
-  // A tap is a short throw: charge 0 and the reach of charge_min.
+  // A tap: charging for its startup at charge 0.
   WorldState t = makePlayingWorld(17, 0b1);
   prev = t;
-  log = stepWith(t, PlayerInput{0, 0, 0, kThrowBit, 0});
-  const RenderState tapState = build(ps, prev, t, 1.0f, log);
-  const RenderPlayer& tap = playerIn(tapState, 0);
-  REQUIRE(tap.has(PlayerFlag::Charging));
-  CHECK(tap.throwCharge == 0.0f);
-  CHECK(tap.throwReach < lastReach);
+  const EventLog tapLog = stepWith(t, PlayerInput{0, 0, 0, kThrowBit, 0});
+  const RenderState tapState = build(ps, prev, t, 1.0f, tapLog);
+  REQUIRE(playerIn(tapState, 0).has(PlayerFlag::Charging));
+  CHECK(playerIn(tapState, 0).throwCharge == 0.0f);
 }
 
 TEST_CASE("body yaw turns at a limited rate; aim yaw follows directly", "[presentation][builder]") {

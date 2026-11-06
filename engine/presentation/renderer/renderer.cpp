@@ -685,6 +685,8 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       skinnedBodies && model_.height() > 0.0f ? bodyHeight / model_.height() : 1.0f;
 
   const float blink = std::fmod(state.time * 8.0f, 1.0f) < 0.5f ? 1.0f : 0.0f;
+  std::array<Vec3, kMaxRenderPlayers> handAt{};  // v0.53: per RenderState player index
+  std::array<bool, kMaxRenderPlayers> hasHand{};
   for (uint16_t i = 0; i < state.playerCount; ++i) {
     const RenderPlayer& p = state.players[i];
     if (!p.visible) continue;
@@ -697,16 +699,24 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const Mat4 placed = translate(p.position) * rotateY(p.bodyYaw) * scale(p.scale);
     if (skinnedBodies && p.slot < anim_.size()) {
       SkinMatrices joints;
-      evaluateAnimState(model_, clips_, anim_[p.slot], joints);
-      d.skinned(placed * scale({modelScale, modelScale, modelScale}), joints, body, flash,
-                emissive);
+      SkinMatrices globals;
+      evaluateAnimState(model_, clips_, anim_[p.slot], joints, &globals);
+      const Mat4 modelToWorld = placed * scale({modelScale, modelScale, modelScale});
+      d.skinned(modelToWorld, joints, body, flash, emissive);
+      // v0.53: the held banana sits in the animated hand (wound up while a
+      // throw charges, shaking with the strain).
+      if (clips_.hand >= 0 && static_cast<std::size_t>(clips_.hand) < globals.size()) {
+        handAt[i] = transformPoint(modelToWorld * globals[static_cast<std::size_t>(clips_.hand)],
+                                   Vec3{0.0f, 0.0f, 0.0f});
+        hasHand[i] = true;
+      }
     } else {
       d.lit(kCapsuleMesh, placed, body, flash, emissive);
     }
   }
 
   // Aim indicators and bananas in hand, after all the bodies so the pipeline
-  // changes once.
+  // changes once. hasHand[i]: player i's hand position from its skinned pose.
   for (uint16_t i = 0; i < state.playerCount; ++i) {
     const RenderPlayer& p = state.players[i];
     if (!p.visible || p.has(PlayerFlag::Eliminated)) continue;
@@ -731,11 +741,13 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
                 rotateX(0.25f * kPi) * scale({s, s, s}),
             kGold, 0.0f, 0.3f);
     }
-    // A banana in hand while the player has ammo.
+    // A banana in hand while the player has ammo: in the skinned hand when
+    // there is one (v0.53), else beside the capsule along the aim.
     if (p.has(PlayerFlag::HasAmmo)) {
-      d.lit(kBananaMesh,
-            translate(aimBase) * rotateY(p.aimYaw) * translate({r * 0.55f, 0.0f, r * 0.85f}) *
-                scale({kHeldBananaScale, kHeldBananaScale, kHeldBananaScale}),
+      const Mat4 at = hasHand[i] ? translate(handAt[i]) * rotateY(p.aimYaw)
+                                 : translate(aimBase) * rotateY(p.aimYaw) *
+                                       translate({r * 0.55f, 0.0f, r * 0.85f});
+      d.lit(kBananaMesh, at * scale({kHeldBananaScale, kHeldBananaScale, kHeldBananaScale}),
             kBananaColor, 0.0f, 0.1f);
     }
   }
@@ -787,13 +799,6 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (p.has(PlayerFlag::Shielded)) {
       d.groundDisc(p.ground, kDecalLift, 0.0f, r * 1.5f, r * 1.5f, kShieldBlue, 0.7f,
                    DecalMode::Ring, 0.8f);
-    }
-    if (p.has(PlayerFlag::Charging)) {
-      // v0.48: where a banana released now turns for home.
-      const Vec3 at = p.ground + (yawDirection(p.aimYaw) * p.throwReach);
-      d.groundDisc(at, kDecalLift, 0.0f, kChargeMarkerRadius, kChargeMarkerRadius,
-                   mix(mix(own, kWhite, 0.3f), kGold, p.throwCharge), kChargeMarkerOpacity,
-                   DecalMode::Ring, kChargeMarkerRingInner);
     }
   }
   // A pulsing ring in the power-up's colour marks a power-up pickup.

@@ -79,11 +79,9 @@ struct RenderPlayer {
   uint8_t hp{0};
   uint8_t maxHp{0};
   float dashCooldown{0.0f};  // 0 = ready, 1 = just used
-  // v0.48, while Charging: the charge so far (0 = a tap, 1 = full) and the
-  // distance from the ground position along aimYaw at which a banana released
-  // now would turn for home (spawn offset + speed x outbound ticks).
+  // v0.48, while Charging: the charge so far (0 = a tap, 1 = full). v0.53:
+  // it drives the charge pose and, at 1, the strain (animation.hpp).
   float throwCharge{0.0f};
-  float throwReach{0.0f};
   std::array<RenderPowerUp, sim::kMaxModifiers> powerUps{};  // in slot (pickup) order
   uint8_t powerUpCount{0};
 
