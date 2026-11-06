@@ -138,10 +138,12 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   --autostart / --connect / --room / --create (or ?autostart, ?connect=, ?room=, ?create); --screen
 #   menu|settings|online|local|paused opens another screen (screenshots; paused: a local match under the pause menu). Menus: arrows/WASD, any pad's d-pad/stick, the
 #   mouse; Enter/Space or a pad's South/Start selects, Esc or a pad's East/Back goes back (the menu quits natively).
-#   Settings: name (--nick, ?nick=, saved `nick`), volume, sound, bot difficulty. Play online: region (with "(no
+#   Settings: name (--nick, ?nick=, saved `nick`), volume, sound, bot difficulty, arena theme, mouse aim
+#   (v0.55: --mouse-aim on|off, ?mouse_aim=, saved `mouse_aim`; off: the movement aims as before v0.45, clicks
+#   still throw/dash). Play online: region (with "(no
 #   server)"), Create room, room code + Join. Esc from the lobby or any online screen returns to the menu
 #   lobby: Enter/Start begins; press throw/dash (or click) on a free device to join; -/= bots. F1 overlay, Esc menu
-#   keys: left side = keyboard + mouse (WASD move, the mouse aims once it moves, left click/J/Space throw, right
+#   keys: left side = keyboard + mouse (WASD move, the mouse aims once it moves unless Settings > Mouse aim is off, left click/J/Space throw, right
 #   click/K/LShift dash, L/E ability; v0.45), right side = arrows ./RCtrl throw //RShift dash ;/' ability
 #   v0.48 charged throw: Throw is hold and release; the hold scales the banana's speed and so its reach (x0.6
 #   for a tap to x1.5 after 40 ticks: abilities.toml charge_min/charge_max/charge_ticks); the aim bar grows,
@@ -411,6 +413,14 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   hud.cpp / screens.cpp only draw them. `assets/fonts/` holds source assets with their licence and
   is compiled in (never read at run time: the browser has no filesystem). Clipboard and sharing
   go through `IPlatformServices` (`ShareHooks` injected by main.cpp), never SDL or JS directly.
+  v0.55: what is highlighted follows the last menu device (`core/menu_highlight.hpp`): mouse mode
+  highlights only the hovered item, keys/pad mode the focus, and the first key press from mouse
+  mode only reveals it. Draw menu buttons and rows through `ui::bigButton` / `ui::showsFocus` /
+  `ui::pointerTakesFocus`, never from `focus()` alone. A frame in which a new ImGui window
+  measures itself is not presented (`debugUiMeasuring()`); a screen's panel card drawn outside
+  its window must not be relied on in that frame. The between-rounds scoreboard shows in
+  RoundEnded and at match end only, never over the next countdown; a round's pause is 180 ticks
+  (`round_end_ticks`).
 - Fog lives in `engine/ai`, never in the sim: a `vision` change is content hash only, and the
   `all` vision must stay the pre-fog observation byte for byte (a test pins it). Hosts call
   `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls.
