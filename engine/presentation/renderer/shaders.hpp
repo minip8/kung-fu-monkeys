@@ -45,16 +45,19 @@ static_assert(kSkinnedOutlineVsVec4s <= 256);
 // --- lit: opaque meshes, two-band cel shading (v0.49) -----------------------------
 // fs_params[0] = base colour (rgb)
 // fs_params[1] = unit direction toward the light (xyz), shade band level (w)
-// fs_params[2] = surface (0 toon, 1 grass floor, 2 water, 3 mud, 4 mossy rock,
-//                5 banana),
+// fs_params[2] = surface (palette.hpp SurfaceKind: 0 toon, 1 grass floor,
+//                2 water, 3 mud, 4 mossy rock, 5 banana; v0.52: 6 paving
+//                floor, 7 sand floor, 8 chasm, 9 planks, 10 lacquer),
 //                flash (0..1 toward white), emissive (adds base colour), the
 //                surface's animation phase (seconds × its speed)
-// fs_params[3] = floor only: arena half extents (xy) in sim units; grass only:
-//                patch scale (z), tuft cells per unit (w)
+// fs_params[3] = floors only: arena half extents (xy) in sim units, which
+//                also turns on the faint unit grid and the darker band along
+//                the walls (zero for everything else); the pattern's scale
+//                (z) and detail cells per unit (w)
 // fs_params[4] = shade tint (rgb), cel band edge on n.l (w)
 // fs_params[5] = the surface's second colour (rgb: grass patches, foam, mud
 //                bubbles, moss, banana tips; toon: a colour to fade toward),
-//                grass: tuft density (w; tufts are the base darkened), toon:
+//                grass and sand: detail density (w; tufts and shells), toon:
 //                how far to fade (w; an eliminated monkey greys out)
 // The vertex colour (v_color, v0.49) is the skinned model's COLOR_0 and white
 // for static meshes: the base is mix(v_color.rgb, fs_params[0].rgb, v_color.a),
@@ -122,8 +125,7 @@ void main() {
     // Toon: the base colour, faded toward the second colour by its w.
     c = mix(base, alt, clamp(fs_params[5].w, 0.0, 1.0));
   } else if (surface < 1.5) {
-    // Grass: flat two-tone blotches, small darker tufts, a faint unit grid on
-    // the sim coordinates (uv) and a darker band along the walls.
+    // Grass: flat two-tone blotches and small darker tufts.
     c = mix(base, alt, edge(0.56, noise(p * fs_params[3].z)));
     vec2 tc = p * fs_params[3].w;
     vec2 cell = floor(tc);
@@ -131,12 +133,6 @@ void main() {
     float tuft = step(1.0 - fs_params[5].w, hash(cell)) *
                  (1.0 - edge(0.09, length(fract(tc) - spot)));
     c = mix(c, base * 0.78, tuft);
-    vec2 dist = abs(fract(v_uv + 0.5) - 0.5);
-    vec2 w = max(fwidth(v_uv), vec2(1e-4));
-    vec2 g = 1.0 - smoothstep(0.5 * w, 1.5 * w, dist);
-    c = mix(c, c * 0.88, 0.5 * max(g.x, g.y));
-    vec2 wall = fs_params[3].xy - abs(v_uv);
-    c *= mix(0.8, 1.0, clamp(min(wall.x, wall.y) / 1.25, 0.0, 1.0));
   } else if (surface < 2.5) {
     // Water: darker deep patches, then thin wavy crest lines that drift and
     // break up (a cartoon river, not a texture).
@@ -163,6 +159,54 @@ void main() {
   } else if (surface < 5.5) {
     // Banana: brown tips (the mesh's u runs from one tip, 0, to the other, 1).
     c = mix(base, alt, edge(0.84, abs(v_uv.x * 2.0 - 1.0)));
+  } else if (surface < 6.5) {
+    // Paving: flagstones in offset rows, each a little lighter or darker,
+    // with mortar lines between them.
+    vec2 q = p * fs_params[3].z;
+    q.x += 0.5 * mod(floor(q.y), 2.0);
+    vec2 cell = floor(q);
+    vec2 f = fract(q);
+    float m = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+    c = base * (0.94 + 0.12 * hash(cell));
+    c = mix(c, alt, 1.0 - edge(0.04, m));
+  } else if (surface < 7.5) {
+    // Sand: wind ripples bent by noise, and the odd pale shell.
+    float r = sin(p.y * fs_params[3].z * 3.0 + 3.0 * noise(p * 0.5));
+    c = mix(base, alt, 0.6 * edge(0.82, r));
+    c = mix(c, base * 1.06, edge(0.55, noise(p * 0.3)) * 0.5);
+    vec2 tc = p * fs_params[3].w;
+    vec2 cell = floor(tc);
+    vec2 spot = vec2(hash(cell + 3.1), hash(cell + 7.7)) * 0.6 + 0.2;
+    float shell = step(1.0 - fs_params[5].w, hash(cell)) *
+                  (1.0 - edge(0.07, length(fract(tc) - spot)));
+    c = mix(c, vec3(0.98, 0.94, 0.88), shell);
+  } else if (surface < 8.5) {
+    // Chasm: a dark drop with mist drifting across it.
+    float t = time;
+    c = mix(base * 0.7, base, edge(0.5, noise(p * 0.35 + 0.05 * t)));
+    c = mix(c, alt, 0.35 * edge(0.68, noise(p * 0.6 + vec2(0.18 * t, 0.05 * t))));
+  } else if (surface < 9.5) {
+    // Planks: crate boards, across the top and stacked up the sides, each a
+    // little lighter or darker, with darker seams.
+    float top = edge(0.7, n.y);
+    float along = mix(v_world.y * 3.0, p.x * 2.5, top);
+    c = mix(base, alt, edge(0.86, abs(fract(along) - 0.5) * 2.0));
+    c *= 0.94 + 0.1 * hash(vec2(floor(along), 0.0));
+  } else if (surface < 10.5) {
+    // Lacquer: red posts under a jade tiled roof on the top faces.
+    float top = edge(0.7, n.y);
+    vec3 roof = mix(alt, alt * 0.78, edge(0.75, fract(p.x * 3.0)));
+    c = mix(base, roof, top);
+  }
+  if (fs_params[3].x > 0.0) {
+    // Floors: a faint grid on the sim coordinates (uv) and a darker band
+    // along the walls.
+    vec2 dist = abs(fract(v_uv + 0.5) - 0.5);
+    vec2 w = max(fwidth(v_uv), vec2(1e-4));
+    vec2 g = 1.0 - smoothstep(0.5 * w, 1.5 * w, dist);
+    c = mix(c, c * 0.88, 0.5 * max(g.x, g.y));
+    vec2 wall = fs_params[3].xy - abs(v_uv);
+    c *= mix(0.8, 1.0, clamp(min(wall.x, wall.y) / 1.25, 0.0, 1.0));
   }
   float lit = edge(bandEdge, dot(n, toLight));
   c = mix(c * shade * tint, c, lit) + base * emissive;

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.51 (2026-11-06). Working title taken from the repo name.
+Status: proposal v0.52 (2026-11-06). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -510,6 +510,21 @@ split draw list); titles, headings, the room code and status lines are gold; ban
 kept for bananas (ammo pips, the host's crown); the dark jungle green stays behind every screen.
 The palette names roles (`kMango`, `kGold`, `kSand`, `kBark`, `kInk`) instead of the old leaf
 greens. Client only; replay checksums unchanged.
+v0.52 changes: the cartoon look, step 4: arena themes the player chooses (§7 "Look",
+`kfm/presentation/theme.hpp`). A theme is an `ArenaLook` (colours plus the surface kind of the
+floor, walls, pits and slow patches): Jungle (grass, mossy rock, river, mud), Temple (flagstones,
+red lacquer walls under jade roofs, misty chasms, rice paddies) and Beach (rippled sand with
+shells, wooden crates, sea, tide pools); `lit` gains the paving, sand, chasm, planks and lacquer
+surfaces, and every floor gets the unit grid and wall band. A theme is cosmetic and local: each
+client draws with its own player's choice, so two players in one match may see different
+themes, and nothing reaches the sim, the content hash or the wire. This reverses the first idea
+of a `theme` key in the arena TOML, which would have made the theme part of the content every
+peer must match. The choice is Auto (each arena's suggested theme, a table in
+`theme.cpp`: dojos and courtyards Temple, island and outposts Beach, the rest and any unknown
+arena Jungle) or one theme everywhere; it is saved (`theme=`), set by `--theme` / `?theme=`, and
+changed in Settings and the local lobby panel (not the room's, which carries only room
+settings). The client clears around the arena with the theme's background; the lobby's arena
+preview draws in the theme. Replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2626,8 +2641,11 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   height) and the top of the head stays at the capsule's height. An eliminated monkey fades 0.8
   toward grey as a whole. Bananas have brown tips. The UI (v0.51) is the style board's Mango
   Sunset menu: bark-brown panels, ink borders, sand buttons that turn mango under focus with a
-  chunky ink drop shadow, gold titles (`apps/client/ui_style.hpp`). Next: one `ArenaLook` per
-  arena theme.
+  chunky ink drop shadow, gold titles (`apps/client/ui_style.hpp`). Arena themes (v0.52,
+  `theme.hpp`): Jungle, Temple and Beach `ArenaLook`s, each naming its floor, wall, pit and
+  slow-patch surfaces; the player picks Auto (the arena's suggested theme) or one theme
+  everywhere, locally, and nothing of it leaves the client. Props (bamboo clumps, stalls,
+  treehouses) would be procedural meshes per theme, a later step.
   `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal

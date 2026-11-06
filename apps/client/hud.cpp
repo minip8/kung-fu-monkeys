@@ -627,6 +627,9 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int pe
 // rim), slow patches, spawn points in the slot colours (spawn order) and the
 // power-up spawners, filled when the match's power-up set leaves them
 // something to spawn and hollow when it switches them off.
+// v0.52: the player's arena theme, which the preview draws in (setHudTheme()).
+presentation::ThemeChoice gTheme = presentation::ThemeChoice::Auto;
+
 void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint16_t powerUps,
                       ImVec2 box) {
   const ImVec2 origin = ImGui::GetCursorScreenPos();
@@ -640,14 +643,15 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   const auto box2 = [&](Vec2 min, Vec2 max) {
     return std::pair{at(min.x.toFloat(), max.y.toFloat()), at(max.x.toFloat(), min.y.toFloat())};
   };
-  // v0.49: the arena's look (palette.hpp kJungleLook), as the renderer draws it.
-  const presentation::ArenaLook& look = presentation::kJungleLook;
+  // The arena's look in the player's theme (theme.hpp), as the renderer draws it.
+  const presentation::ArenaLook& look =
+      presentation::arenaLook(presentation::resolveTheme(gTheme, arena.name.view()));
   dl->AddRectFilled(at(-hx, hy), at(hx, -hy), toU32(look.floor));
   for (uint8_t i = 0; i < arena.hazardCount; ++i) {
     const sim::Hazard& hz = arena.hazards[i];
     const auto [a, b] = box2(hz.min, hz.max);
     if (hz.kind == sim::HazardKind::Pit) {
-      dl->AddRectFilled(a, b, toU32(look.water));
+      dl->AddRectFilled(a, b, toU32(look.pit));
       dl->AddRect(a, b, toU32(look.pitBank), 0.0f, 0, 2.0f);
     } else {
       dl->AddRectFilled(a, b, toU32(look.mud));
@@ -1290,6 +1294,10 @@ std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {
   }
   ui::endScreen();
   return clicked;
+}
+
+void setHudTheme(presentation::ThemeChoice choice) {
+  gTheme = choice;
 }
 
 }  // namespace kfm::client

@@ -52,6 +52,7 @@ enum class LobbyRowKind : uint8_t {
   BotDifficulty,
   Volume,
   Mute,
+  Theme,  // v0.52: the arena theme (cosmetic, local play's panel only)
 };
 
 struct LobbyRow {
@@ -105,7 +106,7 @@ class MenuInput {
 
 class LobbyMenu {
  public:
-  static constexpr std::size_t kMaxRows = 8 + sim::kMaxPowerUps;
+  static constexpr std::size_t kMaxRows = 9 + sim::kMaxPowerUps;
 
   LobbyMenu();
 

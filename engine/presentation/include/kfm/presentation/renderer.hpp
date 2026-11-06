@@ -35,6 +35,7 @@
 #include "kfm/presentation/camera.hpp"
 #include "kfm/presentation/render_state.hpp"
 #include "kfm/presentation/skinned_model.hpp"
+#include "kfm/presentation/theme.hpp"
 #include "kfm/sim/content.hpp"
 
 #include <array>
@@ -75,6 +76,15 @@ class Renderer {
   void setForceCapsules(bool force) { forceCapsules_ = force; }
   [[nodiscard]] bool forceCapsules() const { return forceCapsules_; }
 
+  // The arena theme (v0.52, theme.hpp): Auto draws each arena with its
+  // suggested theme. Takes effect at once; init() resolves it for the new
+  // arena. look() is what the next draw uses (the app clears the frame with
+  // its background).
+  void setThemeChoice(ThemeChoice choice);
+  [[nodiscard]] ThemeChoice themeChoice() const { return themeChoice_; }
+  [[nodiscard]] ArenaTheme theme() const { return theme_; }
+  [[nodiscard]] const ArenaLook& look() const { return arenaLook(theme_); }
+
  private:
   // sokol handles are stored as their raw ids so this header does not need
   // <sokol_gfx.h> (kfm::sokol is a private dependency of kfm_renderer).
@@ -108,6 +118,9 @@ class Renderer {
   bool skinnedLoaded_{false};
   bool forceCapsules_{false};
   std::string modelError_;
+  ThemeChoice themeChoice_{ThemeChoice::Auto};
+  ArenaTheme theme_{ArenaTheme::Jungle};
+  sim::ContentName arenaName_{};  // the arena of the last init(), for Auto
 };
 
 }  // namespace kfm::presentation

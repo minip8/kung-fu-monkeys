@@ -14,6 +14,7 @@ add_library(kfm_presentation STATIC
   src/event_fx.cpp
   src/sound_bank.cpp
   src/mixer.cpp
+  src/theme.cpp
 )
 add_library(kfm::presentation ALIAS kfm_presentation)
 

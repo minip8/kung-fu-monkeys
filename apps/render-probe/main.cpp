@@ -34,6 +34,7 @@
 #include "kfm/presentation/palette.hpp"
 #include "kfm/presentation/render_state.hpp"
 #include "kfm/presentation/renderer.hpp"
+#include "kfm/presentation/theme.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/sim.hpp"
 
@@ -73,6 +74,7 @@ struct Options {
   const char* screenshotPath = nullptr;
   bool hideUi = false;
   bool capsules = false;
+  presentation::ThemeChoice theme = presentation::ThemeChoice::Auto;  // v0.52
   int exitOn = -1;  // -1: none; < kExitOnWindow: an EffectKind; kExitOnWindow: PerfectDash
   std::string_view contentDir;  // empty: next to the executable, else embedded
   std::string_view arena;       // names; empty = the first one
@@ -125,7 +127,8 @@ constexpr const char* kUsage =
     "usage: kfm_render_probe [--players N] [--seed S] [--input-seed I] [--ticks-per-frame K]\n"
     "                        [--width W] [--height H] [--exit-after-frames N]\n"
     "                        [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]\n"
-    "                        [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n";
+    "                        [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
+    "                        [--theme auto|jungle|temple|beach]\n";
 
 template <typename T>
 bool parseNumber(std::string_view v, T& out) {
@@ -142,6 +145,10 @@ bool parseArgs(int argc, const char* const* argv, Options& o) {
       o.hideUi = true;
     } else if (arg == "--capsules") {
       o.capsules = true;
+    } else if (arg == "--theme" && hasValue) {
+      const auto theme = presentation::parseThemeChoice(argv[++i]);
+      if (!theme) return false;
+      o.theme = *theme;
     } else if (arg == "--exit-on" && hasValue) {
       const std::string_view what = argv[++i];
       ok = false;
@@ -311,7 +318,7 @@ bool frame(void* user) {
   platform::debugUiFlush();
 
   // v0.49: the arena look's canopy around the arena.
-  const presentation::Color bg = presentation::kJungleLook.background;
+  const presentation::Color bg = app->renderer.look().background;
   platform::beginDefaultPass({.r = bg.r, .g = bg.g, .b = bg.b, .a = 1.0F}, size.width, size.height);
   app->renderer.draw(app->renderState, camera, size.width, size.height);
   platform::debugUiDraw();
@@ -387,6 +394,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     platform::gfxShutdown();
     return EXIT_FAILURE;
   }
+  app.renderer.setThemeChoice(app.options.theme);
   if (!app.renderer.init(matchContent(app))) {
     std::fprintf(stderr, "error: the renderer failed to initialise\n");
     platform::debugUiShutdown();

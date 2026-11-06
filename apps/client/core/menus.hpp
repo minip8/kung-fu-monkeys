@@ -83,7 +83,7 @@ class MainMenu {
 
 // --- the settings screen --------------------------------------------------------------
 
-enum class SettingsRow : uint8_t { Name = 0, Volume, Sound, BotDifficulty, Back };
+enum class SettingsRow : uint8_t { Name = 0, Volume, Sound, BotDifficulty, Theme, Back };
 
 class SettingsMenu {
  public:

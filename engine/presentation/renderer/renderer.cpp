@@ -59,9 +59,6 @@ constexpr std::size_t kStaticPipelineCount = 4;
 // so capsule fronts are lit and their right sides fall into the half band.
 constexpr Vec3 kToLight{-0.42f, 1.0f, 0.55f};
 
-// The arena look (palette.hpp). One for now; per-arena themes pick another.
-constexpr const ArenaLook& kLook = kJungleLook;
-
 constexpr Color kBananaColor{1.0f, 0.86f, 0.16f};
 constexpr Color kPickupColor{0.98f, 0.80f, 0.12f};
 constexpr Color kEliminatedColor{0.42f, 0.42f, 0.44f};
@@ -163,8 +160,8 @@ static_assert(sizeof(DecalFsParams) == static_cast<std::size_t>(shaders::kDecalF
 
 enum class DecalMode : uint8_t { Shadow = 0, Ring = 1, Burst = 2, Rect = 3 };
 
-// The lit program's surfaces (shaders.hpp kLitFs).
-enum class Surface : uint8_t { Toon = 0, Grass = 1, Water = 2, Mud = 3, Rock = 4, Banana = 5 };
+// The lit program's surfaces (palette.hpp, shaders.hpp kLitFs).
+using Surface = SurfaceKind;
 
 // How an outline hull is pushed out (shaders.hpp kOutlineVs).
 enum class Hull : uint8_t { Smooth = 0, Box = 1 };
@@ -292,7 +289,8 @@ class FrameDrawer {
  public:
   FrameDrawer(std::span<const uint32_t> pipelines, std::span<const uint32_t> vertexBuffers,
               std::span<const uint32_t> indexBuffers, std::span<const uint32_t> indexCounts,
-              const Mat4& viewProj, Vec3 camRight, Vec3 camUp, Vec3 camBack, RendererStats& stats)
+              const Mat4& viewProj, Vec3 camRight, Vec3 camUp, Vec3 camBack, const ArenaLook& look,
+              RendererStats& stats)
       : pipelines_(pipelines),
         vertexBuffers_(vertexBuffers),
         indexBuffers_(indexBuffers),
@@ -301,6 +299,7 @@ class FrameDrawer {
         camRight_(camRight),
         camUp_(camUp),
         camBack_(camBack),
+        look_(look),
         stats_(stats) {}
 
   void usePipeline(std::size_t pipeline) {
@@ -348,16 +347,16 @@ class FrameDrawer {
                                     .model = model,
                                     .joints = joints,
                                     .outline = {width, 0.0f, 0.0f, 0.0f}};
-    const OutlineFsParams fs{.ink = {kLook.ink.r, kLook.ink.g, kLook.ink.b, 1.0f}};
+    const OutlineFsParams fs{.ink = {look_.ink.r, look_.ink.g, look_.ink.b, 1.0f}};
     submit(kSkinnedMesh, rangeOf(vs), rangeOf(fs));
   }
 
   void floor(const Mat4& model, Vec2f halfExtents) {
     usePipeline(kLitPipeline);
     const LitVsParams vs{.mvp = viewProj_ * model, .model = model};
-    LitFsParams fs = litFs(kLook.floor, Surface::Grass, kLook.floorPatch, 0.0f, 0.0f, 0.0f);
-    fs.floor = {halfExtents.x, halfExtents.y, kGrassPatchScale, kGrassTuftCells};
-    fs.alt.w = kGrassTuftDensity;
+    LitFsParams fs = litFs(look_.floor, look_.floorSurface, look_.floorAlt, 0.0f, 0.0f, 0.0f);
+    fs.floor = {halfExtents.x, halfExtents.y, look_.floorScale, look_.floorDetail};
+    fs.alt.w = look_.floorDensity;
     submit(kFloorMesh, rangeOf(vs), rangeOf(fs));
   }
 
@@ -373,7 +372,7 @@ class FrameDrawer {
   void flushOutlines() {
     if (outlineCount_ == 0) return;
     usePipeline(kOutlinePipeline);
-    const OutlineFsParams fs{.ink = {kLook.ink.r, kLook.ink.g, kLook.ink.b, 1.0f}};
+    const OutlineFsParams fs{.ink = {look_.ink.r, look_.ink.g, look_.ink.b, 1.0f}};
     for (const OutlineItem& o : std::span(outlines_).first(outlineCount_)) {
       const OutlineVsParams vs{.viewProj = viewProj_,
                                .model = o.model,
@@ -443,15 +442,15 @@ class FrameDrawer {
     Hull hull{Hull::Smooth};
   };
 
-  [[nodiscard]] static LitFsParams litFs(Color color, Surface kind, Color alt, float phase,
-                                         float flash, float emissive) {
+  [[nodiscard]] LitFsParams litFs(Color color, Surface kind, Color alt, float phase, float flash,
+                                  float emissive) {
     const Vec3 l = normalize(kToLight);
     return LitFsParams{
         .color = {color.r, color.g, color.b, 1.0f},
         .light = {l.x, l.y, l.z, kShadeBand},
         .params = {static_cast<float>(kind), flash, emissive, phase},
         .floor = {},
-        .shade = {kLook.shadeTint.r, kLook.shadeTint.g, kLook.shadeTint.b, kCelBandEdge},
+        .shade = {look_.shadeTint.r, look_.shadeTint.g, look_.shadeTint.b, kCelBandEdge},
         .alt = {alt.r, alt.g, alt.b, 0.0f}};
   }
 
@@ -487,6 +486,7 @@ class FrameDrawer {
   Vec3 camRight_;
   Vec3 camUp_;
   Vec3 camBack_;
+  const ArenaLook& look_;
   RendererStats& stats_;
   std::size_t currentPipeline_{kNone};
   std::size_t currentMesh_{kNone};
@@ -578,6 +578,8 @@ void drawPowerUp(FrameDrawer& d, const RenderPickup& p, float playerRadius, floa
 bool Renderer::init(const sim::MatchContent& match) {
   const sim::ContentDB& content = match.db;
   if (initialised_) shutdown();
+  arenaName_ = match.arena.name;
+  theme_ = resolveTheme(themeChoice_, arenaName_.view());
   if (!sg_isvalid()) return false;
 
   const std::array<MeshData, kStaticMeshCount> data = {
@@ -629,6 +631,11 @@ bool Renderer::init(const sim::MatchContent& match) {
     return false;
   }
   return true;
+}
+
+void Renderer::setThemeChoice(ThemeChoice choice) {
+  themeChoice_ = choice;
+  theme_ = resolveTheme(choice, arenaName_.view());
 }
 
 void Renderer::destroyResources() {
@@ -754,7 +761,8 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     ibufs[i] = meshes_[i].indexBuffer;
     counts[i] = meshes_[i].indexCount;
   }
-  FrameDrawer d(pipelines_, vbufs, ibufs, counts, viewProj, camRight, camUp, camBack, stats_);
+  const ArenaLook& look = arenaLook(theme_);
+  FrameDrawer d(pipelines_, vbufs, ibufs, counts, viewProj, camRight, camUp, camBack, look, stats_);
 
   const float r = state.playerRadius;
   const float bodyHeight = state.playerHeight;
@@ -774,7 +782,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
         translate({-(half.x + (t * 0.5f)), y, 0.0f}) * scale({t, kWallHeight, lenZ}),
         translate({half.x + (t * 0.5f), y, 0.0f}) * scale({t, kWallHeight, lenZ})};
     for (const Mat4& m : rim) {
-      d.lit(kCubeMesh, m, kLook.rim);
+      d.lit(kCubeMesh, m, look.rim);
       d.outline(kCubeMesh, m, kOutlineWall, Hull::Box);
     }
   }
@@ -789,7 +797,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     d.lit(
         kCubeMesh,
         translate({c.x, s.y * 0.2f, c.z}) * scale({s.x + (2.0f * w), s.y * 0.4f, s.z + (2.0f * w)}),
-        kLook.ink);
+        look.ink);
   };
   for (uint16_t i = 0; i < state.arenaPieceCount; ++i) {
     const RenderArenaPiece& piece = state.arenaPieces[i];
@@ -798,22 +806,22 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     switch (piece.kind) {
       case ArenaPieceKind::Wall: {
         const Mat4 m = translate({c.x, s.y * 0.5f, c.z}) * scale(s);
-        d.surface(kCubeMesh, m, kLook.wall, Surface::Rock, kLook.wallTop);
+        d.surface(kCubeMesh, m, look.wall, look.wallSurface, look.wallAlt);
         d.outline(kCubeMesh, m, kOutlineWall, Hull::Box);
         break;
       }
       case ArenaPieceKind::Pit:
         inkSlab(c, s);
         d.surface(kCubeMesh, translate({c.x, s.y * 0.25f, c.z}) * scale({s.x, s.y * 0.5f, s.z}),
-                  kLook.water, Surface::Water, kLook.waterFoam, state.time * kWaterRippleSpeed);
+                  look.pit, look.pitSurface, look.pitAlt, state.time * kWaterRippleSpeed);
         break;
       case ArenaPieceKind::PitRim:
-        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kLook.pitBank);
+        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), look.pitBank);
         break;
       case ArenaPieceKind::Slow:
         inkSlab(c, s);
-        d.surface(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kLook.mud, Surface::Mud,
-                  kLook.mudBubble, state.time * kMudBubbleHz);
+        d.surface(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), look.mud,
+                  look.slowSurface, look.mudAlt, state.time * kMudBubbleHz);
         break;
     }
   }
@@ -918,7 +926,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   }
   for (uint16_t i = 0; i < state.shadowCount; ++i) {
     const RenderShadow& s = state.shadows[i];
-    d.groundDisc(s.ground, kShadowLift, 0.0f, s.radius, s.radius, kLook.shadow,
+    d.groundDisc(s.ground, kShadowLift, 0.0f, s.radius, s.radius, look.shadow,
                  kShadowOpacity * s.opacity, DecalMode::Shadow);
   }
   for (uint16_t i = 0; i < state.playerCount; ++i) {

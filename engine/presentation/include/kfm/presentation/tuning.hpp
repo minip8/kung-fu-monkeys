@@ -76,12 +76,8 @@ inline constexpr float kOutlineSlab = 0.06f;
 // (kShadeBand × ArenaLook::shadeTint). The edge is anti-aliased with fwidth.
 inline constexpr float kCelBandEdge = 0.12f;
 inline constexpr float kShadeBand = 0.62f;
-// Floor grass: the blotch pattern's scale (cycles per unit) and the tufts'
-// grid (cells per unit) and density (fraction of cells with a tuft).
-inline constexpr float kGrassPatchScale = 0.32f;
-inline constexpr float kGrassTuftCells = 1.6f;
-inline constexpr float kGrassTuftDensity = 0.22f;
-// Water ripples and mud bubbles animate with presentation time.
+// The floor patterns' scales live in each ArenaLook (palette.hpp). Water
+// ripples, chasm mist and mud bubbles animate with presentation time.
 inline constexpr float kWaterRippleSpeed = 1.2f;
 inline constexpr float kMudBubbleHz = 0.35f;
 
