@@ -66,7 +66,7 @@ void applyUiStyle() {
   s.GrabRounding = 8.0f;
   s.TabRounding = 8.0f;
   s.ScrollbarRounding = 8.0f;
-  s.WindowBorderSize = 2.0f;
+  s.WindowBorderSize = 3.0f;
   s.FrameBorderSize = 0.0f;
   s.WindowPadding = ImVec2(22.0f, 18.0f);
   s.FramePadding = ImVec2(12.0f, 6.0f);
@@ -77,49 +77,49 @@ void applyUiStyle() {
   ImVec4* c = s.Colors;
   c[ImGuiCol_Text] = vec4(kCream);
   c[ImGuiCol_TextDisabled] = vec4(kCreamDim);
-  c[ImGuiCol_WindowBg] = vec4(withAlpha(kJungle, 240));
-  c[ImGuiCol_ChildBg] = vec4(withAlpha(kJungleLight, 120));
-  c[ImGuiCol_PopupBg] = vec4(withAlpha(kJungle, 245));
-  c[ImGuiCol_Border] = vec4(withAlpha(kBark, 220));
+  c[ImGuiCol_WindowBg] = vec4(withAlpha(kBark, 245));
+  c[ImGuiCol_ChildBg] = vec4(withAlpha(kBarkLight, 110));
+  c[ImGuiCol_PopupBg] = vec4(withAlpha(kBark, 250));
+  c[ImGuiCol_Border] = vec4(kInk);
   c[ImGuiCol_BorderShadow] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-  c[ImGuiCol_FrameBg] = vec4(kJungleLight);
-  c[ImGuiCol_FrameBgHovered] = vec4(withAlpha(kLeaf, 200));
-  c[ImGuiCol_FrameBgActive] = vec4(kLeaf);
-  c[ImGuiCol_TitleBg] = vec4(kBark);
-  c[ImGuiCol_TitleBgActive] = vec4(kBark);
-  c[ImGuiCol_TitleBgCollapsed] = vec4(withAlpha(kBark, 180));
-  c[ImGuiCol_MenuBarBg] = vec4(kJungleLight);
-  c[ImGuiCol_ScrollbarBg] = vec4(withAlpha(kJungle, 120));
-  c[ImGuiCol_ScrollbarGrab] = vec4(kLeaf);
-  c[ImGuiCol_ScrollbarGrabHovered] = vec4(kLeafLight);
-  c[ImGuiCol_ScrollbarGrabActive] = vec4(kBanana);
-  c[ImGuiCol_CheckMark] = vec4(kBanana);
-  c[ImGuiCol_SliderGrab] = vec4(kBanana);
-  c[ImGuiCol_SliderGrabActive] = vec4(kBananaDeep);
-  c[ImGuiCol_Button] = vec4(kLeaf);
-  c[ImGuiCol_ButtonHovered] = vec4(kLeafLight);
-  c[ImGuiCol_ButtonActive] = vec4(kBananaDeep);
-  c[ImGuiCol_Header] = vec4(withAlpha(kLeaf, 170));
-  c[ImGuiCol_HeaderHovered] = vec4(withAlpha(kLeafLight, 170));
-  c[ImGuiCol_HeaderActive] = vec4(kLeaf);
-  c[ImGuiCol_Separator] = vec4(withAlpha(kBark, 200));
-  c[ImGuiCol_SeparatorHovered] = vec4(kBananaDeep);
-  c[ImGuiCol_SeparatorActive] = vec4(kBanana);
-  c[ImGuiCol_ResizeGrip] = vec4(withAlpha(kLeaf, 120));
-  c[ImGuiCol_ResizeGripHovered] = vec4(kLeafLight);
-  c[ImGuiCol_ResizeGripActive] = vec4(kBanana);
-  c[ImGuiCol_Tab] = vec4(kJungleLight);
-  c[ImGuiCol_TabHovered] = vec4(kLeafLight);
-  c[ImGuiCol_TabSelected] = vec4(kLeaf);
-  c[ImGuiCol_PlotLines] = vec4(kBanana);
-  c[ImGuiCol_PlotHistogram] = vec4(kBanana);
-  c[ImGuiCol_TableHeaderBg] = vec4(kJungleLight);
-  c[ImGuiCol_TableBorderStrong] = vec4(withAlpha(kBark, 200));
-  c[ImGuiCol_TableBorderLight] = vec4(withAlpha(kBark, 120));
+  c[ImGuiCol_FrameBg] = vec4(kBarkLight);
+  c[ImGuiCol_FrameBgHovered] = vec4(withAlpha(kMango, 170));
+  c[ImGuiCol_FrameBgActive] = vec4(kMangoDeep);
+  c[ImGuiCol_TitleBg] = vec4(kInk);
+  c[ImGuiCol_TitleBgActive] = vec4(kInk);
+  c[ImGuiCol_TitleBgCollapsed] = vec4(withAlpha(kInk, 180));
+  c[ImGuiCol_MenuBarBg] = vec4(kBarkLight);
+  c[ImGuiCol_ScrollbarBg] = vec4(withAlpha(kBark, 120));
+  c[ImGuiCol_ScrollbarGrab] = vec4(kBarkLight);
+  c[ImGuiCol_ScrollbarGrabHovered] = vec4(kMango);
+  c[ImGuiCol_ScrollbarGrabActive] = vec4(kGold);
+  c[ImGuiCol_CheckMark] = vec4(kGold);
+  c[ImGuiCol_SliderGrab] = vec4(kGold);
+  c[ImGuiCol_SliderGrabActive] = vec4(kMango);
+  c[ImGuiCol_Button] = vec4(kSand);
+  c[ImGuiCol_ButtonHovered] = vec4(kMangoLight);
+  c[ImGuiCol_ButtonActive] = vec4(kMangoDeep);
+  c[ImGuiCol_Header] = vec4(withAlpha(kMango, 150));
+  c[ImGuiCol_HeaderHovered] = vec4(withAlpha(kMango, 110));
+  c[ImGuiCol_HeaderActive] = vec4(kMangoDeep);
+  c[ImGuiCol_Separator] = vec4(withAlpha(kInk, 220));
+  c[ImGuiCol_SeparatorHovered] = vec4(kMango);
+  c[ImGuiCol_SeparatorActive] = vec4(kGold);
+  c[ImGuiCol_ResizeGrip] = vec4(withAlpha(kMango, 120));
+  c[ImGuiCol_ResizeGripHovered] = vec4(kMangoLight);
+  c[ImGuiCol_ResizeGripActive] = vec4(kGold);
+  c[ImGuiCol_Tab] = vec4(kBarkLight);
+  c[ImGuiCol_TabHovered] = vec4(kMangoLight);
+  c[ImGuiCol_TabSelected] = vec4(kMango);
+  c[ImGuiCol_PlotLines] = vec4(kGold);
+  c[ImGuiCol_PlotHistogram] = vec4(kGold);
+  c[ImGuiCol_TableHeaderBg] = vec4(kBarkLight);
+  c[ImGuiCol_TableBorderStrong] = vec4(withAlpha(kInk, 220));
+  c[ImGuiCol_TableBorderLight] = vec4(withAlpha(kInk, 140));
   c[ImGuiCol_TableRowBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
-  c[ImGuiCol_TableRowBgAlt] = vec4(withAlpha(kJungleLight, 80));
-  c[ImGuiCol_TextSelectedBg] = vec4(withAlpha(kBananaDeep, 120));
-  c[ImGuiCol_NavCursor] = vec4(kBanana);
+  c[ImGuiCol_TableRowBgAlt] = vec4(withAlpha(kBarkLight, 80));
+  c[ImGuiCol_TextSelectedBg] = vec4(withAlpha(kMango, 120));
+  c[ImGuiCol_NavCursor] = vec4(kGold);
 }
 
 ImFont* debugFont() {
@@ -173,31 +173,47 @@ bool bigButton(const char* label, bool focused, float width, bool enabled, float
   ImGui::PushFont(nullptr, size);
   ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 14.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(16.0f, 8.0f));
-  const int pushed = 4;
+  ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 3.0f);
+  constexpr int kVars = 3;
+  constexpr int kColors = 5;
+  ImGui::PushStyleColor(ImGuiCol_Border, vec4(kInk));
   if (focused) {
-    ImGui::PushStyleColor(ImGuiCol_Button, vec4(kBanana));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, vec4(kBanana));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, vec4(kBananaDeep));
-    ImGui::PushStyleColor(ImGuiCol_Text, vec4(kJungle));
+    ImGui::PushStyleColor(ImGuiCol_Button, vec4(kMango));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, vec4(kMangoLight));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, vec4(kMangoDeep));
+    ImGui::PushStyleColor(ImGuiCol_Text, vec4(kInk));
   } else {
-    ImGui::PushStyleColor(ImGuiCol_Button, vec4(kLeaf));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, vec4(kLeafLight));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, vec4(kBananaDeep));
-    ImGui::PushStyleColor(ImGuiCol_Text, vec4(kCream));
+    ImGui::PushStyleColor(ImGuiCol_Button, vec4(kSand));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, vec4(kMangoLight));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, vec4(kMangoDeep));
+    ImGui::PushStyleColor(ImGuiCol_Text, vec4(kBark));
   }
+  // The chunky drop shadow: an ink slab under the button, kDrop lower. The
+  // button sets its own size, so the slab is drawn after it into a channel
+  // behind it; ItemSpacing (8 px) leaves room for the drop below.
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->ChannelsSplit(2);
+  dl->ChannelsSetCurrent(1);
   if (!enabled) ImGui::BeginDisabled();
   const bool clicked = ImGui::Button(label, ImVec2(width, 0.0f));
   if (!enabled) ImGui::EndDisabled();
-  ImGui::PopStyleColor(pushed);
-  ImGui::PopStyleVar(2);
+  constexpr float kDrop = 5.0f;
+  const ImVec2 lo = ImGui::GetItemRectMin();
+  const ImVec2 hi = ImGui::GetItemRectMax();
+  dl->ChannelsSetCurrent(0);
+  dl->AddRectFilled(ImVec2(lo.x, lo.y + kDrop), ImVec2(hi.x, hi.y + kDrop),
+                    withAlpha(kInk, enabled ? 255 : 120), 14.0f);
+  dl->ChannelsMerge();
+  ImGui::PopStyleColor(kColors);
+  ImGui::PopStyleVar(kVars);
   ImGui::PopFont();
   return clicked && enabled;
 }
 
 void focusBar(ImVec2 min, ImVec2 max) {
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(min, max, withAlpha(kBanana, 46), 8.0f);
-  dl->AddRect(min, max, withAlpha(kBanana, 200), 8.0f, 0, 2.0f);
+  dl->AddRectFilled(min, max, withAlpha(kMango, 60), 8.0f);
+  dl->AddRect(min, max, withAlpha(kMango, 220), 8.0f, 0, 2.0f);
 }
 
 }  // namespace kfm::client::ui

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.50 (2026-11-06). Working title taken from the repo name.
+Status: proposal v0.51 (2026-11-06). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -502,6 +502,14 @@ colour. `SkinnedVertex` grows to 72 bytes with the colour (white, so all player 
 file has none); `lit` draws `mix(rgb, colour, alpha)` and fades a whole body toward grey for
 an eliminated monkey, fur included. Bananas get brown tips (a `lit` surface over the mesh's u).
 Presentation only; replay checksums unchanged.
+v0.51 changes: the cartoon look, step 3: the Mango Sunset UI (§7 "Look", `apps/client/ui_style.hpp`).
+Panels, HUD cards and the ImGui theme go from dark jungle green with leaf-green buttons to
+bark-brown panels with dark ink borders; big buttons are sand at rest and mango when focused or
+hovered, with a 3 px ink border and a 5 px ink drop shadow (drawn behind the finished button on a
+split draw list); titles, headings, the room code and status lines are gold; banana yellow is
+kept for bananas (ammo pips, the host's crown); the dark jungle green stays behind every screen.
+The palette names roles (`kMango`, `kGold`, `kSand`, `kBark`, `kInk`) instead of the old leaf
+greens. Client only; replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2616,8 +2624,10 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   player-colour mask) give brown fur, a pale face and hands, dark eyes, and the slot's colour on
   the gi and the headband (a torus with two tails); the head is big (0.75 of the 3.2-radius
   height) and the top of the head stays at the capsule's height. An eliminated monkey fades 0.8
-  toward grey as a whole. Bananas have brown tips. Next: the Mango Sunset UI palette, and one
-  `ArenaLook` per arena theme.
+  toward grey as a whole. Bananas have brown tips. The UI (v0.51) is the style board's Mango
+  Sunset menu: bark-brown panels, ink borders, sand buttons that turn mango under focus with a
+  chunky ink drop shadow, gold titles (`apps/client/ui_style.hpp`). Next: one `ArenaLook` per
+  arena theme.
   `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal

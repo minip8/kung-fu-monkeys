@@ -135,7 +135,7 @@ void drawTimerPie(ImDrawList* dl, ImVec2 c, float r, uint8_t colorIndex, float f
 constexpr float kCardStripe = 4.0f;
 constexpr float kCardRounding = 6.0f;
 void drawCardFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, uint8_t slot, int alpha) {
-  dl->AddRectFilled(min, max, ui::withAlpha(ui::kJungle, (190 * alpha) / 255), kCardRounding);
+  dl->AddRectFilled(min, max, ui::withAlpha(ui::kBark, (200 * alpha) / 255), kCardRounding);
   dl->AddRectFilled(min, ImVec2(max.x, min.y + kCardStripe), slotColor(slot, alpha), kCardRounding,
                     ImDrawFlags_RoundCornersTop);
 }
@@ -351,8 +351,8 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
       (kPad * 2.0f) + 24.0f + (static_cast<float>(b.rows.size() + teamLines) * kRowH);
   if (panel) {
     dl->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + height),
-                      ui::withAlpha(ui::kJungle, 215), 14.0f);
-    dl->AddRect(origin, ImVec2(origin.x + width, origin.y + height), ui::withAlpha(ui::kBark, 220),
+                      ui::withAlpha(ui::kBark, 225), 14.0f);
+    dl->AddRect(origin, ImVec2(origin.x + width, origin.y + height), ui::withAlpha(ui::kInk, 220),
                 14.0f, 0, 2.0f);
   }
   ImFont* font = ImGui::GetFont();
@@ -448,7 +448,7 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
       centredText(dl, 40.0f * pop, ImVec2(centre.x, centre.y - 50.0f), kWhite, text);
       const int n = std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)));
       std::snprintf(text, sizeof text, "%d", n);
-      centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), kBanana, text);
+      centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), ui::kGold, text);
       break;
     }
     case HudPhase::RoundEnded: {
@@ -519,7 +519,7 @@ void drawNotices(ImDrawList* dl, const HudView& view, ImVec2 view2) {
   line(15.0f, view2.y - 22.0f, ui::kSky, view.statusLine);
   // M6a: the room, large, and how to invite someone into it.
   line(15.0f, view2.y - 42.0f, ui::kSky, view.shareLine);
-  line(24.0f, view2.y - (view.shareLine.empty() ? 50.0f : 70.0f), kBanana, view.roomLine);
+  line(24.0f, view2.y - (view.shareLine.empty() ? 50.0f : 70.0f), ui::kGold, view.roomLine);
 }
 
 // Short device names for the lobby cards.
@@ -765,8 +765,8 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
       const bool on = (menu.settings().powerUps & (1u << row.powerUp)) != 0;
       const ImVec2 max{min.x + w, min.y + frameH};
       dl->AddRectFilled(min, max,
-                        ImGui::IsItemHovered() ? ui::withAlpha(ui::kLeaf, 90)
-                                               : ui::withAlpha(ui::kJungleLight, 160),
+                        ImGui::IsItemHovered() ? ui::withAlpha(ui::kMango, 90)
+                                               : ui::withAlpha(ui::kBarkLight, 160),
                         8.0f);
       if (focused) ui::focusBar(min, max);
       const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
@@ -777,7 +777,7 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
       const char* state = on ? "on" : "off";
       dl->AddText(ImGui::GetFont(), kRowFont,
                   ImVec2(max.x - textWidth(kRowFont, state) - 10.0f, textY),
-                  on ? ui::kLeafLight : ui::kCreamDim, state);
+                  on ? ui::kMangoLight : ui::kCreamDim, state);
       ImGui::PopID();
       continue;
     }
@@ -785,8 +785,8 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     const float x0 = ImGui::GetCursorPosX();
     const ImVec2 min = ImGui::GetCursorScreenPos();
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::withAlpha(ui::kLeaf, 90)));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::withAlpha(ui::kLeaf, 140)));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::withAlpha(ui::kMango, 90)));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::withAlpha(ui::kMango, 140)));
     if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
                           ImVec2(0.0f, frameH))) {
       menu.setFocus(i);
@@ -831,7 +831,7 @@ ShareOutcome drawShare(const ShareView& share) {
   ImGui::PopFont();
   const ImVec2 at = ImGui::GetCursorScreenPos();
   ImGui::PushFont(nullptr, ui::kFontTitle);
-  ui::shadowText(ImGui::GetWindowDrawList(), ui::kFontTitle, at, kBanana, share.code.c_str());
+  ui::shadowText(ImGui::GetWindowDrawList(), ui::kFontTitle, at, ui::kGold, share.code.c_str());
   ImGui::Dummy(ImVec2(textWidth(ui::kFontTitle, share.code.c_str()), ImGui::GetFontSize()));
   ImGui::PopFont();
   ImGui::SameLine();
@@ -848,7 +848,7 @@ ShareOutcome drawShare(const ShareView& share) {
     if (ui::bigButton("Share", false, 0.0f, true, ui::kFontUi + 2.0f)) out.share = true;
   }
   if (share.copied) {
-    ImGui::TextColored(ui::vec4(ui::kLeafLight), "Copied: %s", share.link.c_str());
+    ImGui::TextColored(ui::vec4(ui::kMangoLight), "Copied: %s", share.link.c_str());
   } else if (codeOnly) {
     ImGui::TextDisabled("Friends enter it in Play online > Room code");
   } else {
@@ -934,7 +934,7 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
     if (session.reconnects() > 0) title = "Reconnecting";
     if (failed) title = "Could not join";
     if (lost) title = "Connection lost";
-    ui::heading(title, failed ? ui::kAlarm : kBanana);
+    ui::heading(title, failed ? ui::kAlarm : ui::kGold);
     const std::string status = session.statusText();
     if (failed) {
       ImGui::TextColored(ui::vec4(ui::kAlarm), "%s", status.c_str());
@@ -1187,7 +1187,7 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
       constexpr const char* kDots[] = {"", ".", "..", "..."};
       const auto dots = static_cast<std::size_t>(ImGui::GetTime() * 2.0) % 4;
       ImGui::AlignTextToFramePadding();
-      ImGui::TextColored(ui::vec4(kBanana), "%s%s", line.c_str(), kDots[dots]);
+      ImGui::TextColored(ui::vec4(ui::kGold), "%s%s", line.c_str(), kDots[dots]);
       ImGui::PopFont();
       ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - leaveW);
     }
@@ -1236,7 +1236,7 @@ std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& 
     ImGui::Dummy(ImVec2(width, h));
     if (!view.waiting.empty()) {
       ImGui::PushFont(nullptr, ui::kFontButton);
-      ImGui::TextColored(ui::vec4(kBanana), "%s", view.waiting.c_str());
+      ImGui::TextColored(ui::vec4(ui::kGold), "%s", view.waiting.c_str());
       ImGui::PopFont();
     }
     const std::size_t n = view.buttons.size();
