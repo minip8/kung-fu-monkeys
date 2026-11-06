@@ -374,6 +374,12 @@ const sim::WorldState& MatchSession::renderPrev() const {
   return rendersNewest() ? curr_ : prev_;
 }
 
+double MatchSession::presentationSeconds(double wallSeconds) const {
+  if (!clock_.paused()) return wallSeconds;
+  // A single step moves it as far as the running match would per tick.
+  return static_cast<double>(ticksThisFrame_) * static_cast<double>(clock_.tickWallNs()) * 1e-9;
+}
+
 float MatchSession::renderAlpha() const {
   return rendersNewest() ? 1.0f : clock_.alpha();
 }

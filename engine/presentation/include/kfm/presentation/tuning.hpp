@@ -215,5 +215,11 @@ inline constexpr float kShakeOnPerfectCatch = 0.08f;
 inline constexpr float kShakeMax = 0.5f;
 inline constexpr float kShakeTau = 0.15f;  // exponential decay time constant
 inline constexpr float kShakeHz = 23.0f;
+// The shake stops being drawn once it moves the arena centre by less than this
+// many framebuffer pixels (visibleShakeOffset, camera.hpp): below a pixel a
+// 23 Hz offset is no longer seen as motion, only as every hard edge (ink
+// lines, the rim, grid lines) toggling between two pixels, which reads as
+// flicker for the second the exponential tail would otherwise last.
+inline constexpr float kShakeMinPixels = 1.0f;
 
 }  // namespace kfm::presentation

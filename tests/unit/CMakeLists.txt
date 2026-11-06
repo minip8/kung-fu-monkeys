@@ -134,6 +134,7 @@ endif()
 
 if(NOT KFM_HEADLESS)
   kfm_add_test_exe(kfm_platform_tests
+    platform/frame_pacer_test.cpp
     platform/input_sampler_test.cpp
     platform/platform_services_test.cpp
   )

@@ -220,6 +220,11 @@ class MatchSession {
   }
   [[nodiscard]] uint64_t droppedEvents() const { return droppedEvents_; }
   [[nodiscard]] uint32_t ticksThisFrame() const { return ticksThisFrame_; }
+  // How far presentation time (the builder's dt) moves this frame, given the
+  // frame's wall time: all of it while the match runs, and while it is paused
+  // only the ticks a single step ran, so a paused match draws a still frame
+  // (no animation, strain tremble, water or fading effect keeps moving).
+  [[nodiscard]] double presentationSeconds(double wallSeconds) const;
 
   // v0.35: the last kRecentCalls calls (MonkeyCalled) of the match, oldest
   // first, for the F1 overlay.

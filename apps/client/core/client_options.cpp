@@ -277,6 +277,8 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       }
     } else if (arg == "--no-hot-reload") {
       out.hotReload = false;
+    } else if (arg == "--no-frame-limit") {
+      out.frameLimit = false;
     } else if (arg == "--no-settings") {
       out.settings = false;
     } else if (arg == "--connect" || arg == "--token" || arg == "--stun") {

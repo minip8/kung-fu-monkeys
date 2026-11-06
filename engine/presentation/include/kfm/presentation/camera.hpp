@@ -69,6 +69,16 @@ struct ScreenPoint {
 
 [[nodiscard]] ScreenPoint worldToScreen(const Camera& camera, Vec3 world);
 
+// Framebuffer pixels per world unit, across the view, at the camera's target
+// (the arena centre).
+[[nodiscard]] float pixelsPerUnitAtTarget(const Camera& camera);
+
+// The camera offset to draw for a shake of `amplitude` world units whose
+// offset this frame is `offset` (RenderState::shakeAmplitude/shakeOffset):
+// `offset`, or none once the amplitude moves the target by less than
+// kShakeMinPixels (tuning.hpp).
+[[nodiscard]] Vec3 visibleShakeOffset(const Camera& camera, float amplitude, Vec3 offset);
+
 // The world point on the horizontal plane at `groundHeight` under a screen
 // pixel, or nothing when the ray through it misses the plane (at or above the
 // horizon). For mouse aim: worldToSim() of the result is the sim position.

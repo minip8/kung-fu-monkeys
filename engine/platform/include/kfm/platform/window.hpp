@@ -10,6 +10,8 @@
 // in the app (or a later platform helper), not here.
 #pragma once
 
+#include "kfm/platform/frame_pacer.hpp"
+
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_video.h>
 
@@ -22,6 +24,10 @@ struct WindowConfig {
   int width = 1280;  // logical (window) size, not pixels
   int height = 720;
   bool vsync = true;  // swap interval 1; Emscripten always follows requestAnimationFrame
+  // Natively, when vsync was asked for but the swap interval cannot be set,
+  // swap() waits out the rest of the display's refresh period (FramePacer) so
+  // the loop runs at the display rate instead of as fast as it can.
+  bool paceWithoutVsync = false;
 };
 
 struct DrawableSize {
@@ -51,6 +57,8 @@ class Window {
   [[nodiscard]] DrawableSize drawableSize() const;
   // Framebuffer pixels per logical window unit (1 on normal displays).
   [[nodiscard]] float pixelDensity() const;
+  // Presents the frame; then, when pacing (WindowConfig::paceWithoutVsync and
+  // no vsync), waits until the next frame is due.
   void swap();
 
   // Monotonic nanoseconds (SDL_GetTicksNS): the clock of SDL event timestamps.
@@ -72,6 +80,7 @@ class Window {
   SDL_GLContext gl_ = nullptr;
   bool sdlInitialised_ = false;
   bool quit_ = false;
+  FramePacer pacer_;
 };
 
 }  // namespace kfm::platform
