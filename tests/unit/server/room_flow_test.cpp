@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -263,7 +264,8 @@ TEST_CASE("The room flow: the last human leaving returns the room to Waiting; op
   RoomRig rig(cfg);
   NetClient& a = rig.addClient("solo", "Solo");
   REQUIRE(rig.runUntil([&] { return a.running() && a.roomState(); }, 5 * kSec));
-  a.sendRoomSettings(RoomSettings{.mode = 1, .bots = 3});
+  // The long deathmatch: the match must still run through the reconnect grace.
+  a.sendRoomSettings(RoomSettings{.mode = 2, .bots = 3});
   REQUIRE(rig.runUntil([&] { return roomOf(a).settings.bots == 3; }, kSec));
   a.sendStart();
   REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Playing) && !a.holding(); }, 2 * kSec));
@@ -329,24 +331,31 @@ TEST_CASE("The room flow: a bot yields its slot to a joiner in a full room",
   CHECK(rig.linesWith("yields its slot") == 1);
   CHECK(rig.room().phase() == RoomPhase::Playing);
   CHECK(rig.linesWith("room slot granted") == 1);
-  CHECK(b.localSlots() == 0b1000);  // the highest bot's slot
+  // The highest bot off the field (eliminated, or every bot at a round end):
+  // which one depends on how the match plays out.
+  const auto got = static_cast<uint32_t>(b.localSlots());
+  REQUIRE(std::popcount(got) == 1);
+  CHECK((got & 0b1110u) == got);
+  const auto y = static_cast<uint8_t>(std::countr_zero(got));
+  const auto bots = static_cast<sim::PlayerMask>(0b1110u & ~got);
+  const auto humans = static_cast<sim::PlayerMask>(0b0001u | got);
   CHECK_FALSE(b.waitingForSlot());
-  CHECK(rig.host->server().bots() == 0b0110);
-  CHECK(rig.host->botSpec(PlayerId{3}) == std::nullopt);
+  CHECK(rig.host->server().bots() == bots);
+  CHECK(rig.host->botSpec(PlayerId{y}) == std::nullopt);
   REQUIRE(
-      rig.runUntil([&] { return roomOf(a).humans == 0b1001 && roomOf(b).humans == 0b1001; }, kSec));
-  CHECK(roomOf(b).bots == 0b0110);
-  CHECK(roomOf(b).names[3].view() == "Second");
+      rig.runUntil([&] { return roomOf(a).humans == humans && roomOf(b).humans == humans; }, kSec));
+  CHECK(roomOf(b).bots == bots);
+  CHECK(roomOf(b).names[y].view() == "Second");
   CHECK(roomOf(b).host == PlayerId{0});
   // The slot left for a tick: a deathmatch forfeits the bot's score and
   // deaths; the joiner's monkey spawns (after respawnTicks, or at the next
   // round start).
   if (deathmatch) {
-    CHECK(rig.host->server().world().rules.scores[3] == 0);
-    CHECK(rig.host->server().world().rules.deaths[3] == 0);
+    CHECK(rig.host->server().world().rules.scores[y] == 0);
+    CHECK(rig.host->server().world().rules.deaths[y] == 0);
   }
   REQUIRE(
-      rig.runUntil([&] { return rig.host->server().world().players.isAliveIndex(3); }, 30 * kSec));
+      rig.runUntil([&] { return rig.host->server().world().players.isAliveIndex(y); }, 30 * kSec));
 
   // It plays: ahead of the server, its inputs accepted, no desync.
   const uint64_t compared = b.netStats().checksumsCompared;
@@ -358,7 +367,7 @@ TEST_CASE("The room flow: a bot yields its slot to a joiner in a full room",
   CHECK(a.netStats().checksumMismatches == 0);
   CHECK(b.netStats().resyncRequests == 0);
   const ServerPeerInfo info = rig.host->server()
-                                  .peerInfo(rig.host->server().ownerOf(PlayerId{3}))
+                                  .peerInfo(rig.host->server().ownerOf(PlayerId{y}))
                                   .value_or(ServerPeerInfo{});
   CHECK(info.inputMsgs > 200);
   CHECK(info.substitutions < 30);

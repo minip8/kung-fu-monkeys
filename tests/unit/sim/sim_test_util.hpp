@@ -22,6 +22,29 @@ namespace kfm::sim::test {
 // Events of several ticks, in emission order.
 using EventLog = std::vector<SimEvent>;
 
+// v0.48: every throw def without its charge (a tap at the boomerang's own
+// speed, the Startup never held), for tests about the ability machine, flight
+// and catch timing rather than charging.
+inline void removeThrowCharge(ContentDB& c) {
+  for (uint8_t i = 0; i < c.abilityCount && i < kMaxAbilityDefs; ++i) {
+    AbilityDef& d = c.abilities[i];
+    if (d.kind != AbilityKind::Throw) continue;
+    d.speed = Fixed{};
+    d.param0 = Fixed{};
+    d.param1 = Fixed{};
+  }
+}
+
+// defaultContent() with removeThrowCharge applied.
+[[nodiscard]] inline const ContentDB& unchargedContent() {
+  static const ContentDB c = [] {
+    ContentDB d = defaultContent();
+    removeThrowCharge(d);
+    return d;
+  }();
+  return c;
+}
+
 // An input frame for the world's current tick with every present player idle.
 [[nodiscard]] inline InputFrame frameFor(const WorldState& s) {
   InputFrame f;

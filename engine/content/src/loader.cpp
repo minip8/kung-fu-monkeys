@@ -743,6 +743,38 @@ class Builder {
         s.fixed("range", d.param0);
       }
     }
+    // v0.48: a throw's charge under readable names. charge_min and charge_max
+    // are the banana speed multipliers of a tap and a full charge (param0,
+    // param1), charge_ticks the ticks held past the startup from one to the
+    // other; the rate per tick lands in speed (truncated, like every decimal).
+    if (s.has("charge_ticks") || s.has("charge_min") || s.has("charge_max")) {
+      std::string_view key = "charge_max";
+      if (s.has("charge_ticks")) {
+        key = "charge_ticks";
+      } else if (s.has("charge_min")) {
+        key = "charge_min";
+      }
+      const toml::node* at = s.take(key);
+      if (d.kind != AbilityKind::Throw) {
+        s.error(*at, "'" + std::string(key) + "' belongs to a throw (kind = \"throw\")");
+      } else if (s.has("speed") || s.has("param0") || s.has("param1")) {
+        s.error(*at,
+                "a charged throw gives charge_min, charge_max and charge_ticks, not "
+                "speed, param0 or param1");
+      } else {
+        uint16_t ticks = 0;
+        // `at` was taken to report on; read the three keys themselves.
+        s.fixed("charge_min", d.param0, Fixed{}, Fixed::fromInt(16), true);
+        s.fixed("charge_max", d.param1, Fixed{}, Fixed::fromInt(16), true);
+        s.integer("charge_ticks", ticks, 1, 65535, true);
+        if (d.param1 <= d.param0) {
+          s.error(*at, "charge_max must be greater than charge_min");
+        } else if (ticks > 0) {
+          d.speed = (d.param1 - d.param0) / int32_t{ticks};
+          if (d.speed <= Fixed{}) s.error(*at, "charge_ticks too long for the charge range");
+        }
+      }
+    }
     s.tags("tags_startup", d.tagsStartup);
     s.tags("tags_active", d.tagsActive);
     s.tags("tags_recovery", d.tagsRecovery);
@@ -1832,6 +1864,12 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (d.kind == AbilityKind::Call &&
         (d.param0 <= Fixed::zero() || d.param0 > Fixed::fromInt(128))) {
       fail(where + ": a call needs a range in (0, 128] units");
+    }
+    // A charged throw (v0.48): a positive rate from a positive tap
+    // multiplier up to a larger cap; an uncharged one leaves all three 0.
+    if (d.kind == AbilityKind::Throw && d.speed > Fixed::zero() &&
+        (d.param0 <= Fixed::zero() || d.param1 <= d.param0)) {
+      fail(where + ": a charged throw needs 0 < charge_min < charge_max");
     }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");

@@ -1074,6 +1074,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextUnformatted(
         "Join: press Throw or Dash (or click) on a free keyboard side, or any button on a pad");
+    ImGui::BulletText("Throw: hold to charge (further and faster), release to throw");
     ImGui::BulletText(
         "Keyboard + mouse: WASD move, mouse aims, left click/J/Space throw, right "
         "click/K/LShift dash, L/E ability");

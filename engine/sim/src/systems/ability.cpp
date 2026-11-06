@@ -10,11 +10,13 @@
 //      phaseTicks 0, onActivate, then settle.
 //   4. phase != Idle      -> onTick (after the phase advanced, so a Startup of 0
 //      makes the activation tick the first Active tick).
-// settle: while the current phase has run for its full duration, move to the
-// next phase (Startup -> Active -> Recovery -> Idle) with phaseTicks 0, calling
-// onPhaseChange for each transition and onEnd on reaching Idle. Zero-length
-// phases are thereby skipped within the same tick. Activation itself (Idle ->
-// Startup) is reported through onActivate, not onPhaseChange.
+// settle: while the current phase has run for its full duration and the
+// behaviour's holdsPhase (v0.48: given whether the slot's button is held)
+// does not keep it going, move to the next phase (Startup -> Active ->
+// Recovery -> Idle) with phaseTicks 0, calling onPhaseChange for each
+// transition and onEnd on reaching Idle. Zero-length phases are thereby
+// skipped within the same tick. Activation itself (Idle -> Startup) is
+// reported through onActivate, not onPhaseChange.
 //
 // Timeline consequences (phase durations S/A/R, press on tick T):
 //   Startup on ticks [T, T+S), Active on [T+S, T+S+A), Recovery on
@@ -35,6 +37,7 @@
 #include "kfm/sim/systems.hpp"
 
 #include <algorithm>
+#include <cstdint>
 
 namespace kfm::sim {
 namespace {
@@ -89,8 +92,10 @@ constexpr Tags kSystemOwnedTags = Tags::of(Tag::HitStun) | Tag::Eliminated;
 // Advances through every phase whose duration has elapsed (a loop, so several
 // zero-length phases are skipped in one tick).
 void settle(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-            const AbilityBehavior& behavior, const MatchContent& content, EventSink& sink) {
-  while (st.phase != AbilityPhase::Idle && st.phaseTicks >= phaseDuration(def, st.phase)) {
+            const AbilityBehavior& behavior, bool buttonHeld, const MatchContent& content,
+            EventSink& sink) {
+  while (st.phase != AbilityPhase::Idle && st.phaseTicks >= phaseDuration(def, st.phase) &&
+         !behavior.holdsPhase(st, def, buttonHeld)) {
     const AbilityPhase from = st.phase;
     const AbilityPhase to = nextPhase(from);
     st.phase = to;
@@ -108,12 +113,14 @@ void tickSlot(WorldState& s, Player& p, uint8_t slot, const MatchContent& conten
 
   if (st.cooldownTicks > 0) --st.cooldownTicks;
 
+  const uint8_t button = slotButton(slot);
+  const bool held = button != 0 && (p.intent.held & button) != 0;
   if (st.phase != AbilityPhase::Idle) {
-    ++st.phaseTicks;
-    settle(s, p, st, def, behavior, content, sink);
+    // Saturates: a phase held for good (v0.48) never wraps back under its duration.
+    if (st.phaseTicks < UINT16_MAX) ++st.phaseTicks;
+    settle(s, p, st, def, behavior, held, content, sink);
   }
 
-  const uint8_t button = slotButton(slot);
   if (st.phase == AbilityPhase::Idle && button != 0 && (p.intent.pressed & button) != 0 &&
       st.cooldownTicks == 0 && s.rules.phase == MatchPhase::Playing &&
       behavior.canActivate(s, p, def)) {
@@ -123,7 +130,7 @@ void tickSlot(WorldState& s, Player& p, uint8_t slot, const MatchContent& conten
     st.phase = AbilityPhase::Startup;
     st.phaseTicks = 0;
     behavior.onActivate(s, p, st, def, content, sink);
-    settle(s, p, st, def, behavior, content, sink);
+    settle(s, p, st, def, behavior, held, content, sink);
   }
 
   if (st.phase != AbilityPhase::Idle) behavior.onTick(s, p, st, def, content, sink);

@@ -90,6 +90,15 @@ inline constexpr float kMudBubbleHz = 0.35f;
 // in 0.25 s); aim yaw follows the aim directly.
 inline constexpr float kBodyTurnRate = 4.0f * kPi;
 
+// --- charged throw (v0.48) -----------------------------------------------------------
+// While a throw charges, the aim bar grows from its resting length to this
+// and warms toward gold, and a ring on the ground marks where a banana
+// released now would turn for home.
+inline constexpr float kChargeAimLength = 1.6f;
+inline constexpr float kChargeMarkerRadius = 0.45f;
+inline constexpr float kChargeMarkerOpacity = 0.85f;
+inline constexpr float kChargeMarkerRingInner = 0.7f;  // inner edge as a fraction of the radius
+
 // --- squash and stretch ------------------------------------------------------------
 inline constexpr float kDashStretch = 0.18f;  // forward stretch while dashing
 inline constexpr float kHitSquash = 0.2f;     // vertical squash at the start of hit-stun

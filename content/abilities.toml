@@ -10,6 +10,8 @@
 # Keys: name, kind (dash | throw | blink | slam | parry | call), cooldown_ticks, startup_ticks,
 # active_ticks, recovery_ticks, perfect_window_ticks, speed, param0, param1,
 # range (v0.35, a call's only: param0 under its own name, in units),
+# charge_min, charge_max, charge_ticks (v0.48, a throw's only, all three or
+# none: hold to charge, below),
 # tags_startup, tags_active, tags_recovery (lists of tag names: dashing,
 # perfect_dash, hit_stun, shielded, invulnerable, eliminated, slamming, parrying),
 # root_phases (v0.34: a list of startup, active, recovery: while one of them
@@ -27,13 +29,22 @@ perfect_window_ticks = 4    # first 4 active ticks catch a banana (plus the pres
 speed = 22                  # units/s while active: 4.4 units per dash
 tags_active = ["dashing"]
 
+# v0.48, the charged throw: the wind-up lasts while the button is held and
+# the banana leaves on the release, along the aim of that tick. Its speed is
+# the boomerang's times charge_min for a tap, rising evenly to charge_max over
+# charge_ticks held past the startup (then it stays there); the outbound time
+# is fixed, so the reach scales with it: at 16 units/s and 36 outbound ticks,
+# a tap flies 5.8 units out and a full charge 14.4.
 [[ability]]
 name = "throw"
 kind = "throw"
-cooldown_ticks = 20         # a third of a second between throws
-startup_ticks = 2           # wind-up before the banana leaves the hand
+cooldown_ticks = 20         # a third of a second between throws (from the press)
+startup_ticks = 2           # wind-up before the banana can leave the hand
 active_ticks = 1            # the banana spawns on the Startup -> Active transition
 recovery_ticks = 6          # follow-through
+charge_min = 0.6            # a tap: 9.6 units/s
+charge_max = 1.5            # full charge: 24 units/s
+charge_ticks = 40           # 2/3 s held past the startup to full charge
 
 # Fast Hands (powerups.toml) runs the throw slot on this def while it lasts.
 [[ability]]
@@ -43,6 +54,9 @@ cooldown_ticks = 8          # a banana every 8 ticks while the hands are fast
 startup_ticks = 1
 active_ticks = 1
 recovery_ticks = 3
+charge_min = 0.6
+charge_max = 1.5
+charge_ticks = 20           # fast hands charge twice as fast
 
 # Blink (v0.21): a teleport dash. After a short telegraph the monkey jumps
 # speed x active_ticks along its stick (or facing), stopped by walls; nothing
