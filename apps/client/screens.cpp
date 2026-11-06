@@ -16,13 +16,6 @@ namespace kfm::client {
 
 namespace {
 
-// The mouse moved this frame: hovering may take the focus (a resting
-// pointer must not fight the keyboard or a pad).
-[[nodiscard]] bool mouseMoved() {
-  const ImVec2 d = ImGui::GetIO().MouseDelta;
-  return d.x != 0.0f || d.y != 0.0f;
-}
-
 // A darker band behind the menus so the title reads over any arena.
 void dimBackground() {
   const ImVec2 view = ImGui::GetIO().DisplaySize;
@@ -32,15 +25,22 @@ void dimBackground() {
   dl->AddRectFilledMultiColor(ImVec2(0.0f, 0.0f), view, top, top, bottom, bottom);
 }
 
-// One menu row: the focus bar when focused, a click on it sets `clicked`.
+// One menu row: the focus bar when highlighted (ui::showsFocus: focused in
+// keyboard / pad mode, under the pointer in pointer mode). `takesFocus` is
+// set by a click on the row and, in pointer mode, by the pointer over it.
 // The cursor is left at the row's content line.
-void menuRow(const char* id, bool focused, float height, bool& clicked) {
+void menuRow(const char* id, bool focused, float height, bool& takesFocus) {
   const ImVec2 min = ImGui::GetCursorScreenPos();
   const float w = ImGui::GetContentRegionAvail().x;
   ImGui::PushID(id);
-  clicked = ImGui::InvisibleButton("##row", ImVec2(w, height), ImGuiButtonFlags_AllowOverlap);
+  const bool clicked =
+      ImGui::InvisibleButton("##row", ImVec2(w, height), ImGuiButtonFlags_AllowOverlap);
   ImGui::PopID();
-  if (focused) ui::focusBar(ImVec2(min.x - 6.0f, min.y), ImVec2(min.x + w + 6.0f, min.y + height));
+  const ImVec2 lo{min.x - 6.0f, min.y};
+  const ImVec2 hi{min.x + w + 6.0f, min.y + height};
+  const bool over = ui::pointerOverRect(lo, hi);
+  takesFocus = ui::pointerTakesFocus(over) || clicked;
+  if (ui::showsFocus(focused, over)) ui::focusBar(lo, hi);
   ImGui::SetCursorScreenPos(ImVec2(min.x, min.y + ((height - ImGui::GetFrameHeight()) * 0.5f)));
 }
 
@@ -114,10 +114,10 @@ std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corn
         menu.setFocus(i);
         chosen = item;
       }
-      if (ImGui::IsItemHovered()) {
-        if (enabled && mouseMoved()) menu.setFocus(i);
-        if (!enabled) pointed = item;
-      }
+      // Pointer mode: the item under the pointer takes the focus (a key press
+      // then starts there); keyboard / pad mode: a resting pointer does not.
+      if (enabled && ui::pointerTakesFocus()) menu.setFocus(i);
+      if (!enabled && ImGui::IsItemHovered()) pointed = item;
     }
     const char* hint = menu.hint(pointed.value_or(menu.focusedItem()));
     ImGui::PushFont(nullptr, ui::kFontSmall);
@@ -156,9 +156,9 @@ SettingsOutcome drawSettingsScreen(SettingsMenu& menu, LobbySettings& settings, 
     for (std::size_t i = 0; i < rows.size(); ++i) {
       const SettingsRow row = rows[i];
       if (row == SettingsRow::Back) continue;
-      bool clicked = false;
-      menuRow(SettingsMenu::rowLabel(row), i == menu.focus(), rowH, clicked);
-      if (clicked) menu.setFocus(i);
+      bool takesFocus = false;
+      menuRow(SettingsMenu::rowLabel(row), i == menu.focus(), rowH, takesFocus);
+      if (takesFocus) menu.setFocus(i);
       const float x0 = ImGui::GetCursorPosX();
       ImGui::SetCursorPosX(x0 + 8.0f);
       ImGui::AlignTextToFramePadding();
@@ -199,6 +199,7 @@ SettingsOutcome drawSettingsScreen(SettingsMenu& menu, LobbySettings& settings, 
     ImGui::Spacing();
     const std::size_t back = rows.size() - 1;
     if (ui::bigButton("Back", menu.focus() == back, -1.0f)) out.back = true;
+    if (ui::pointerTakesFocus()) menu.setFocus(back);
     footer(
         "Up/Down: choose. Left/Right: change. Enter on Name: type a new one (16 bytes at most), "
         "Enter to keep it. Esc: back. Your name is what friends see online.");
@@ -223,9 +224,9 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     ImGui::Spacing();
 
     const float rowH = ImGui::GetFrameHeight() + 14.0f;
-    bool clicked = false;
-    menuRow("region", menu.focusedRow() == OnlineRow::Region, rowH, clicked);
-    if (clicked) menu.setFocus(at(OnlineRow::Region));
+    bool takesFocus = false;
+    menuRow("region", menu.focusedRow() == OnlineRow::Region, rowH, takesFocus);
+    if (takesFocus) menu.setFocus(at(OnlineRow::Region));
     const float x0 = ImGui::GetCursorPosX();
     ImGui::SetCursorPosX(x0 + 8.0f);
     ImGui::AlignTextToFramePadding();
@@ -242,6 +243,7 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
                       ui::kFontButton, ui::Tone::Lead)) {
       (void)menu.activate(at(OnlineRow::CreateRoom));
     }
+    if (ui::pointerTakesFocus()) menu.setFocus(at(OnlineRow::CreateRoom));
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -284,10 +286,13 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     ImGui::PopStyleVar();
     const ImVec2 fieldMax = ImGui::GetItemRectMax();
     ImGui::PopFont();
-    if (ImGui::IsItemActivated()) menu.setFocus(at(OnlineRow::Code));
+    const bool overCode = ui::pointerOverItem();
+    if (ui::pointerTakesFocus(overCode) || ImGui::IsItemActivated()) {
+      menu.setFocus(at(OnlineRow::Code));
+    }
     codeEditing = ImGui::IsItemActive();
     if (ImGui::IsItemEdited()) menu.setCode(codeBuf.data());
-    if (menu.focusedRow() == OnlineRow::Code) {
+    if (ui::showsFocus(menu.focusedRow() == OnlineRow::Code, overCode) || codeEditing) {
       ui::focusRing(fieldMin, fieldMax, ImGui::GetStyle().FrameRounding);
     }
     if (enter) {
@@ -300,9 +305,11 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
                       ui::kFontButton, ui::Tone::Second)) {
       (void)menu.activate(at(OnlineRow::Join));
     }
+    if (ui::pointerTakesFocus()) menu.setFocus(at(OnlineRow::Join));
     ImGui::Spacing();
     ImGui::Spacing();
     if (ui::bigButton("Back", menu.focusedRow() == OnlineRow::Back, -1.0f)) out.back = true;
+    if (ui::pointerTakesFocus()) menu.setFocus(at(OnlineRow::Back));
     const std::string where = "Lobby " + lobby +
                               ". Left/Right: region (\"no server\": every server there is busy "
                               "right now). Enter on Room code: type it. Esc: back.";

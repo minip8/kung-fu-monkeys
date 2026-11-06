@@ -782,14 +782,15 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
         menu.setFocus(i);
         changed = menu.change(i, +1) || changed;
       }
+      if (ui::pointerTakesFocus()) menu.setFocus(i);
       ImDrawList* dl = ImGui::GetWindowDrawList();
       const bool on = (menu.settings().powerUps & (1u << row.powerUp)) != 0;
       const ImVec2 max{min.x + w, min.y + frameH};
-      if (focused) {
+      // v0.55: highlighted by the menu's device (ui::showsFocus).
+      if (ui::showsFocus(focused, ui::pointerOverItem())) {
         ui::focusBar(min, max);
       } else {
-        ui::card(dl, min, max, ImGui::IsItemHovered() ? ui::kBarkLight : ui::kBarkInset, 10.0f,
-                 2.0f, 0.0f);
+        ui::card(dl, min, max, ui::kBarkInset, 10.0f, 2.0f, 0.0f);
       }
       const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
       dl->AddCircleFilled(ImVec2(min.x + 12.0f, min.y + (frameH * 0.5f)), 5.0f, slotColor(color));
@@ -807,17 +808,19 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     const float x0 = ImGui::GetCursorPosX();
     const ImVec2 min = ImGui::GetCursorScreenPos();
     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::withAlpha(ui::kMango, 90)));
+    // v0.55: no hover tint of its own: the focus bar is the highlight.
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::withAlpha(ui::kMango, 140)));
     if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
                           ImVec2(0.0f, frameH))) {
       menu.setFocus(i);
     }
     ImGui::PopStyleColor(3);
-    if (focused) {
-      ui::focusBar(ImVec2(min.x - 2.0f, min.y - 1.0f),
-                   ImVec2(min.x + full + 2.0f, min.y + frameH + 1.0f));
-    }
+    const ImVec2 barMin{min.x - 2.0f, min.y - 1.0f};
+    const ImVec2 barMax{min.x + full + 2.0f, min.y + frameH + 1.0f};
+    const bool over = ui::pointerOverRect(barMin, barMax);
+    if (ui::pointerTakesFocus(over)) menu.setFocus(i);
+    if (ui::showsFocus(focused, over)) ui::focusBar(barMin, barMax);
     ImGui::SameLine(x0 + 8.0f);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(menu.rowLabel(row).c_str());
@@ -983,6 +986,7 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
           buttons.setFocus(i);
           (i == 0 ? out.reconnect : out.leave) = true;
         }
+        if (ui::pointerTakesFocus()) buttons.setFocus(i);
       }
     }
     // M6a: the room the lobby gave, large, and the invite to copy.
@@ -1279,6 +1283,7 @@ std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& 
         menu.setFocus(i);
         clicked = i;
       }
+      if (ui::pointerTakesFocus()) menu.setFocus(i);
     }
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextDisabled("Left/Right: choose. Enter / A: select.");
@@ -1302,17 +1307,15 @@ std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {
     ImGui::Spacing();
     const float width = ImGui::GetContentRegionAvail().x;
     const std::span<const PauseItem> items = menu.items();
-    // A moving mouse over a button takes the focus (a resting one must not
-    // fight the keyboard or a pad), as on the menu screens.
-    const ImVec2 delta = ImGui::GetIO().MouseDelta;
-    const bool mouseMoved = delta.x != 0.0f || delta.y != 0.0f;
     for (std::size_t i = 0; i < items.size(); ++i) {
       if (ui::bigButton(PauseMenu::label(items[i]), i == menu.focus(), width, true, ui::kFontButton,
                         items[i] == PauseItem::Resume ? ui::Tone::Lead : ui::Tone::Plain)) {
         menu.setFocus(i);
         clicked = items[i];
       }
-      if (mouseMoved && ImGui::IsItemHovered()) menu.setFocus(i);
+      // Pointer mode: the button under the pointer takes the focus (v0.55,
+      // ui::pointerTakesFocus), as on the menu screens.
+      if (ui::pointerTakesFocus()) menu.setFocus(i);
     }
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextDisabled("Up/Down: choose. Enter / A: select. Esc / B: resume.");
