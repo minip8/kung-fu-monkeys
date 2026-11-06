@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.53 (2026-11-06). Working title taken from the repo name.
+Status: proposal v0.54 (2026-11-06). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -553,6 +553,49 @@ release starts the throw clip `charge × 0.1 s` in, past as much of its own wind
 charge pose already did, and owes it a whole clip. The rig gains `hand_r`, an unweighted leaf
 under the forearm, and the held banana is drawn there on skinned bodies (the capsule fallback
 keeps its fixed spot). The growing gold aim bar stays.
+v0.54 changes: the cartoon look, step 5: the game checked against the style board (§7 "Look",
+§6.8). The v0.49-v0.52 look kept the board's colours but not its language: noisy surfaces, square
+slabs in a wooden box frame, a lanky monkey, buttons coloured by focus. As built now:
+*The arena* is one `ground` program over a single quad reaching `kGroundMargin` past the arena,
+drawn first: backdrop, pits, land, a dirt cliff under every land edge that faces the camera, slow
+patches, wall shadows and the ground ink, every edge from a signed distance in sim units and
+anti-aliased over a pixel (no stacked slabs, no noise). The land (arena minus pits) is cut into
+rectangles on the CPU (`ground.hpp`); a corner is rounded only where it is free, touching boxes
+join with a fillet capped at `kGroundFillet` so a pit is never drawn smaller than it is; the
+fields are baked per arena and theme into an RGBA16F texture. Surfaces are flat colour with
+sparse marks (ripple arcs, tufts, bubble rings). The wooden frame is gone: the arena edge is a
+rounded ink line and the backdrop (`BackdropKind`: canopy leaves, mountains, sea) dresses the
+outside only. Walls are rounded blocks (`makeRoundedBlock`, `wallRadius`, `kOutlineWall` 0.08)
+with a soft ground shadow. The unit grid is drawn only when the mode's space is grid (reversing
+v0.49's grid on every floor); under paving the flagstones are the cells. `lit` loses its floor
+and pit branches.
+*The monkey*: the rig is rebuilt on the board's proportions: a round head 0.88 of the contact
+radius (about 55% of the height, the top still at `kMonkeyHeightOverRadius`), a squat gi that
+stays inside `Stats::radius` (the head carries the size, never the footprint), short arms at the
+sides, round ears, a curled tail, a headband ring with a knot and ribbon tails. The face is the
+board's front view painted on an open shell just above the head (`FACE_TILT` 16°), not geometry,
+so it takes no ink hull. The charge clip ends with the hand out beside the head. The skinned
+hull is drawn with `kOutlineSkinnedDepthBias`. About 9.4k triangles a monkey (was 2.7k). A
+moving monkey no longer plays the `run` clip: it holds idle and glides, still turning to its
+heading (`kMonkeyRunCycle`, off; the clip stays in the rig, and its bob and lean go with it).
+*The UI*: a button's colour is its role, not its focus: Lead (mango: Play online, Create room,
+Start, Play again, Resume, Reconnect), Second (gold) and Plain (sand); focus is a 2 px lift and a
+3 px cream ring, disabled is flat bark-light. Every screen is a bark panel (4 px ink border, 24
+px corners, 6 px ink drop; buttons 4 / 16 / 5). Panel and HUD text carries an ink outline; names
+on cards and scoreboards are cream with the slot colour on a stripe or dot (four slot colours
+fall under 4.5:1 on bark); `kAlarm` is #ff7a5e. A monkey's tag sits `kTagLift` above its head.
+*Flicker*, three causes found by diffing consecutive frames: a camera shake was drawn down to
+1e-4 units, so for ~0.8 s after every hit each hard edge toggled between two pixels; it is now
+drawn only while it moves the arena centre by at least `kShakeMinPixels` (1 px). A paused local
+match kept animating (clips, water, the strain tremble): presentation time now follows the match
+clock (`MatchSession::presentationSeconds`), standing still while paused and advancing one tick
+on a single step. Where the swap interval cannot be set (X11 under WSLg) the native client ran
+unsynchronised at 200+ fps: it now paces frames at the display's refresh rate
+(`platform/frame_pacer.hpp`, 60 Hz fallback, never under Emscripten; `--no-frame-limit` turns it
+off). Presentation, platform and client only: no sim, content or wire change, replay checksums
+unchanged. Open: the camera stays at 55° where the board is near top-down; the lobby's arena
+preview still draws plain rectangles; `ArenaPieceKind::PitRim` pieces are built but no longer
+drawn; ground-program cost on real GPUs is unmeasured (1.3-1.7x slower under SwiftShader).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2693,6 +2736,12 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   slow-patch surfaces; the player picks Auto (the arena's suggested theme) or one theme
   everywhere, locally, and nothing of it leaves the client. Props (bamboo clumps, stalls,
   treehouses) would be procedural meshes per theme, a later step.
+  v0.54 supersedes parts of the above (changelog v0.54 has the detail): the arena plane is the
+  `ground` program (flat colour, distance-field edges, rounded land with a cliff, no slabs, no
+  wooden frame, a backdrop per theme, the unit grid only in the grid space); walls are rounded
+  blocks; the monkey has the board's proportions (head 0.88 of the radius, body inside the
+  hitbox, a painted face) and glides in idle while moving (`kMonkeyRunCycle`); buttons are
+  coloured by role with a ring for focus.
   `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
