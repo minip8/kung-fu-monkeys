@@ -6,6 +6,7 @@
 #include "core/client_options.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
+#include "core/menu_highlight.hpp"
 #include "kfm/platform/input_event.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -297,4 +298,81 @@ TEST_CASE("pause menu: what opens it, what resumes, what picks (v0.46)", "[clien
     CHECK(m.press(keyDown(Key::Enter)) == PauseItem::Resume);
   }
   CHECK(m.focusedItem() == PauseItem::Resume);
+}
+
+// v0.55: the highlight follows the last menu device. main.cpp feeds every
+// event to onEvent() and asks reveal() before applying a menu press; the
+// widgets draw shows(). This mirrors that wiring over a MainMenu.
+TEST_CASE("menu highlight: the mouse shows only the hovered item, a key reveals the focus",
+          "[client][menu]") {
+  using client::MenuHighlight;
+  using platform::InputEvent;
+  using platform::InputEventKind;
+  MenuHighlight h;
+  MainMenu m;
+  const auto event = [](InputEventKind kind) {
+    InputEvent e;
+    e.kind = kind;
+    return e;
+  };
+  // A press as main.cpp routes it: dropped when it only reveals.
+  bool activated = false;
+  const auto press = [&](MenuAction action, bool select, bool pointerOnFocus) {
+    if (h.reveal(pointerOnFocus)) return;
+    m.apply(action);
+    if (select) activated = m.activate().has_value();
+  };
+
+  // Startup: pointer mode, nothing under the pointer, nothing highlighted
+  // (the focus on Play online is not drawn).
+  CHECK(h.mode() == MenuHighlight::Mode::Pointer);
+  CHECK_FALSE(h.shows(true, false));
+  CHECK(h.shows(false, true));  // the hovered item is
+
+  // Enter with nothing hovered does not activate the invisible focus: it
+  // reveals it.
+  press(MenuAction::None, true, false);
+  CHECK_FALSE(activated);
+  CHECK(h.keys());
+  CHECK(h.shows(true, false));
+  CHECK_FALSE(h.shows(false, true));  // a resting pointer is not a highlight now
+  CHECK(m.focusedItem() == MainMenuItem::PlayOnline);
+
+  // Keys mode: presses act.
+  press(MenuAction::Down, false, false);
+  CHECK(m.focusedItem() == MainMenuItem::PlayLocal);
+
+  // Mouse motion: back to the pointer rule, the focus hidden again.
+  h.onEvent(event(InputEventKind::MouseMotion));
+  CHECK_FALSE(h.keys());
+  CHECK_FALSE(h.shows(true, false));
+
+  // The first arrow reveals without moving.
+  press(MenuAction::Down, false, false);
+  CHECK(h.keys());
+  CHECK(m.focusedItem() == MainMenuItem::PlayLocal);
+
+  // A click is the pointer too; releases, key ups and pads do not change
+  // the mode (only menu presses through reveal() do).
+  h.onEvent(event(InputEventKind::MouseButtonDown));
+  CHECK_FALSE(h.keys());
+  h.onEvent(event(InputEventKind::KeyDown));
+  h.onEvent(event(InputEventKind::PadAxis));
+  h.onEvent(event(InputEventKind::MouseButtonUp));
+  CHECK_FALSE(h.keys());
+
+  // With the pointer over the focused item (it took the focus), the focus
+  // was visible already: Enter activates the hovered item at once.
+  activated = false;
+  press(MenuAction::None, true, true);
+  CHECK(activated);
+  CHECK(h.keys());
+}
+
+TEST_CASE("menu highlight: a touch counts only while the finger is down", "[client][menu]") {
+  using client::MenuHighlight;
+  CHECK(MenuHighlight::pointerOver(true, false, false));  // a mouse at rest over it
+  CHECK_FALSE(MenuHighlight::pointerOver(false, false, true));
+  CHECK(MenuHighlight::pointerOver(true, true, true));         // a finger on it
+  CHECK_FALSE(MenuHighlight::pointerOver(true, true, false));  // where a tap ended
 }

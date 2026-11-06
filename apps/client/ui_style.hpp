@@ -9,7 +9,9 @@
 // sand, each with a 4 px ink border, 16 px corners and a 5 px solid ink
 // drop shadow. Focus (keyboard, pad or mouse) is the same everywhere: the
 // focused button stands 2 px higher on a deeper shadow inside a cream ring,
-// and a focused settings row sits on an inset bar inside the same ring. A
+// and a focused settings row sits on an inset bar inside the same ring
+// (v0.55: the item under the mouse when the mouse was the last menu device,
+// the keyboard / pad focus otherwise; core/menu_highlight.hpp). A
 // disabled button is sunk flat onto its slab in bark-light with dim text.
 // Large text wears an ink outline. Banana yellow only for bananas (ammo
 // pips, the host's crown); the dark jungle green behind every screen. The
@@ -28,6 +30,10 @@
 #include <imgui.h>
 
 #include <cstdint>
+
+namespace kfm::client {
+class MenuHighlight;
+}  // namespace kfm::client
 
 namespace kfm::client::ui {
 
@@ -139,11 +145,35 @@ bool beginScreen(const char* id, float width, float centreY = 0.5f);
 void endScreen();
 // A heading line inside a screen.
 void heading(const char* text, ImU32 color = kTitle, float size = kFontHeading);
-// A large button in its tone's colour (Tone): focused (the keyboard / pad
-// focus) it stands higher in the cream ring, hovered it lightens, pressed it
-// sinks onto its slab, disabled it lies flat in bark-light. `width` > 0 is
-// the width, < 0 the rest of the line, 0 fits the label. True when clicked
-// while enabled.
+// v0.55: which item the menus highlight (core/menu_highlight.hpp): main.cpp
+// points this at its MenuHighlight; without one the pointer rule applies.
+// The widgets below and the screens read it, never change it.
+void setMenuHighlight(const MenuHighlight* highlight);
+// The pointer rule is on (the mouse was the last menu device): the hovered
+// item is the highlighted one and takes its model's focus.
+[[nodiscard]] bool pointerMode();
+// Whether the pointer is over the last item, or over a rectangle of the
+// current window (a touch counts only while the finger is down).
+[[nodiscard]] bool pointerOverItem();
+[[nodiscard]] bool pointerOverRect(ImVec2 min, ImVec2 max);
+// Pointer mode and the pointer over the last item: it takes its model's
+// focus, so a key press then starts there (a resting pointer in keyboard /
+// pad mode does not).
+[[nodiscard]] bool pointerTakesFocus();
+// The same for an item whose hover the caller measured (pointerOverRect).
+[[nodiscard]] bool pointerTakesFocus(bool pointerOver);
+// Whether the last frame drawn had an item take the focus from the pointer:
+// the focused item is the one under the pointer (MenuHighlight::reveal's
+// `pointerOnFocus`; read between frames, from the event handler).
+[[nodiscard]] bool pointerOnFocus();
+// Whether an item is drawn highlighted: `focused` in keyboard / pad mode,
+// `pointerOver` in pointer mode (MenuHighlight::shows).
+[[nodiscard]] bool showsFocus(bool focused, bool pointerOver);
+// A large button in its tone's colour (Tone): highlighted (showsFocus: the
+// keyboard / pad focus, or under the pointer) it stands higher in the cream
+// ring, under the pointer it lightens too, pressed it sinks onto its slab,
+// disabled it lies flat in bark-light. `width` > 0 is the width, < 0 the
+// rest of the line, 0 fits the label. True when clicked while enabled.
 bool bigButton(const char* label, bool focused, float width, bool enabled = true,
                float size = kFontButton, Tone tone = Tone::Plain);
 // The height of a bigButton's face at `size` (without its slab).
