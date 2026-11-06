@@ -36,6 +36,8 @@ TEST_CASE("tuning: contentToCpp prints the tuned fields in content.cpp style", "
   CHECK(def.find("  dash.perfectWindowTicks = 4;\n") != std::string::npos);
   CHECK(def.find("  dash.speed = perSecond(22);\n") != std::string::npos);
   CHECK(def.find("  thr.cooldownTicks = 20;\n") != std::string::npos);
+  CHECK(def.find("  thr.param0 = Fixed::fromRatio(60, 100);\n") != std::string::npos);  // v0.48
+  CHECK(def.find("  thr.param1 = Fixed::fromRatio(150, 100);\n") != std::string::npos);
   CHECK(def.find("  c.boomerang.speed = perSecond(16);\n") != std::string::npos);
   CHECK(def.find("  c.boomerang.turnRateBam = 1200;\n") != std::string::npos);
   CHECK(def.find("  c.boomerang.restitution = Fixed::one();\n") != std::string::npos);

@@ -85,6 +85,9 @@ std::string contentToCpp(const sim::ContentDB& c) {
   appendLine(out, "thr.startupTicks", thr.startupTicks);
   appendLine(out, "thr.activeTicks", thr.activeTicks);
   appendLine(out, "thr.recoveryTicks", thr.recoveryTicks);
+  appendLine(out, "thr.param0", fixedToCpp(thr.param0, false));  // v0.48: charge_min
+  appendLine(out, "thr.param1", fixedToCpp(thr.param1, false));  // charge_max
+  appendLine(out, "thr.speed", fixedToCpp(thr.speed, false));    // per tick held
 
   appendLine(out, "c.boomerang.speed", fixedToCpp(c.boomerang.speed, true));
   appendLine(out, "c.boomerang.outboundTicks", c.boomerang.outboundTicks);

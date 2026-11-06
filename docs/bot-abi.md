@@ -308,9 +308,9 @@ def the slot runs now, so a power-up's ability override shows here.
 | 22 | u16 | `defRecoveryTicks` | ticks of the Recovery phase |
 | 24 | u16 | `defPerfectWindowTicks` | Dash: a banana met within this many ticks of the press is caught |
 | 26 | u16 | `pad3` | |
-| 28 | i32 | `defSpeed` | Q16.16 per tick: Dash speed; Blink distance per active tick |
-| 32 | i32 | `defParam0` | Q16.16: Slam reach |
-| 36 | i32 | `defParam1` | Q16.16: Slam push distance |
+| 28 | i32 | `defSpeed` | Q16.16 per tick: Dash speed; Blink distance per active tick; Throw (architecture v0.48): the charge rate, the speed multiplier gained per tick held past the startup (0: the throw does not charge) |
+| 32 | i32 | `defParam0` | Q16.16: Slam reach; a charging Throw's speed multiplier for a tap |
+| 36 | i32 | `defParam1` | Q16.16: Slam push distance; a charging Throw's speed multiplier at full charge |
 | 40 | i32 | `dirX` | Q16.16 unit vector: direction captured at the last activation |
 | 44 | i32 | `dirY` | Q16.16 |
 
@@ -318,6 +318,14 @@ Timeline of a press on tick T with phase lengths S, A, R: Startup on [T, T+S), A
 [T+S, T+S+A), Recovery on [T+S+A, T+S+A+R); the next press can fire on T + `defCooldownTicks`. A
 dash moves at `defSpeed` along the stick (or the facing when idle) while Active; a throw spawns
 its banana along the aim on the Startup → Active transition.
+
+A charging throw (`defSpeed` > 0, architecture v0.48) is hold and release: its Startup lasts at
+least S ticks and goes on while the Throw button is held, so the banana leaves on the first tick
+of [T+S, …) whose input has the button up, along that tick's `aimDir`. Held H ticks past the
+startup (released on T+S+H), the banana's speed is the base `bananaSpeed` times
+`min(defParam0 + defSpeed × H, defParam1)` times the thrower's power-up multiplier, which
+`bananas[i].speed` reports; it flies Outbound for `bananaOutboundTicks` as always, so the reach
+scales with the speed. A press alone (one tick held) is a tap at `defParam0`.
 
 `modifiers[i]` (4 bytes; absolute offset 440 + 4 i):
 
@@ -381,7 +389,7 @@ its banana along the aim on the Startup → Active transition.
 | 20 | i32 | `posY` | Q16.16 |
 | 24 | i32 | `velX` | Q16.16 per tick |
 | 28 | i32 | `velY` | Q16.16 per tick |
-| 32 | i32 | `speed` | Q16.16 per tick: flight speed (base × the thrower's power-up multiplier) |
+| 32 | i32 | `speed` | Q16.16 per tick: flight speed (base × the thrower's power-up multiplier × the throw's charge, §2.6) |
 | 36 | i32 | `radius` | Q16.16: contact radius (base × the thrower's power-up multiplier) |
 | 40 | i32 | `approachDistance` | Q16.16: centre distance at the closest approach; 0 while self is not alive |
 
