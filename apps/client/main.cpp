@@ -1008,7 +1008,9 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   s.presentation().pingSlots = s.localMask();  // v0.35: a local human's call pings
   presentation::buildRenderState(
       s.presentation(), s.renderPrev(), s.curr(), s.renderAlpha(), s.frameEvents(),
-      s.matchContent(), static_cast<float>(std::min(dt, kMaxBuilderDtSeconds)), app.renderState);
+      s.matchContent(),
+      static_cast<float>(std::min(s.presentationSeconds(dt), kMaxBuilderDtSeconds)),
+      app.renderState);
   const presentation::Camera camera = presentation::makeArenaCamera(
       s.matchContent().arena, static_cast<float>(w), static_cast<float>(h));
   (void)syncRenderer(app, s.matchContent(), app.content.hash, s.matchConfig().arena);
