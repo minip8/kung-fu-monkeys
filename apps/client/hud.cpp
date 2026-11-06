@@ -1103,9 +1103,11 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
     ImGui::TextUnformatted(
         "Join: press Throw or Dash (or click) on a free keyboard side, or any button on a pad");
     ImGui::BulletText("Throw: hold to charge (further and faster), release to throw");
+    // Settings > Mouse aim (v0.55): off, the move direction aims.
     ImGui::BulletText(
-        "Keyboard + mouse: WASD move, mouse aims, left click/J/Space throw, right "
-        "click/K/LShift dash, L/E ability");
+        "Keyboard + mouse: WASD move, %s, left click/J/Space throw, right "
+        "click/K/LShift dash, L/E ability",
+        session.sampler().mouseAimEnabled() ? "mouse aims" : "movement aims (mouse aim is off)");
     ImGui::BulletText("Keyboard right: arrows move, ./RCtrl throw, //RShift dash, ;/' ability");
     ImGui::BulletText(
         "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "
