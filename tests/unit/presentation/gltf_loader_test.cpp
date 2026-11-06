@@ -83,8 +83,11 @@ TEST_CASE("the generated test rig loads", "[presentation][gltf]") {
   INFO(error);
   REQUIRE(validateModel(m, error));
 
-  // Skeleton: 7 joints, parents first, within the uniform budget.
-  REQUIRE(m.joints.size() == 7);
+  // Skeleton: 7 joints plus the unweighted hand_r leaf (v0.53), parents
+  // first, within the uniform budget.
+  REQUIRE(m.joints.size() == 8);
+  REQUIRE(m.joints[7].name == "hand_r");
+  REQUIRE(m.joints[7].parent == 6);
   REQUIRE(m.joints.size() <= kMaxSkinJoints);
   REQUIRE(m.joints[0].name == "root");
   REQUIRE(m.joints[0].parent == -1);
@@ -191,4 +194,25 @@ TEST_CASE("the test rig's clips move the skeleton as intended", "[presentation][
   const AnimationClip& hit = clipOf(AnimClip::Hit);
   sampleClip(m, hit, hit.duration * 0.25f, false, a);
   REQUIRE(jointPosition(m, a, kHead).x < headRest.x - 0.3f);
+
+  // v0.53: the charge pose raises the banana hand up and back, further the
+  // fuller the charge; at 0 it is the rest pose.
+  REQUIRE(b.hand == 7);
+  REQUIRE(b.upperArm == 5);
+  REQUIRE(b.forearm == 6);
+  REQUIRE(b.spine == 1);
+  const AnimationClip& charge = clipOf(AnimClip::Charge);
+  const Vec3 handRest = jointPosition(m, rest, 7);
+  sampleClip(m, charge, 0.0f, false, a);
+  REQUIRE(jointPosition(m, a, 7).y == Approx(handRest.y).margin(1e-3));
+  sampleClip(m, charge, charge.duration * 0.5f, false, a);
+  sampleClip(m, charge, charge.duration, false, c);
+  const Vec3 handHalf = jointPosition(m, a, 7);
+  const Vec3 handFull = jointPosition(m, c, 7);
+  INFO("hand rest " << handRest.x << "," << handRest.y << " half " << handHalf.x << ","
+                    << handHalf.y << " full " << handFull.x << "," << handFull.y);
+  REQUIRE(handHalf.y > handRest.y + 0.3f);
+  REQUIRE(handFull.y > handHalf.y);
+  REQUIRE(handFull.y > headRest.y - 0.5f);  // up by the head
+  REQUIRE(handFull.x < handRest.x - 0.3f);  // and behind
 }

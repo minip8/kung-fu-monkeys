@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iterator>
+#include <utility>
 
 namespace kfm::presentation {
 
@@ -44,17 +45,47 @@ struct KeySpan {
   return slerp(track.values[s.k0], track.values[s.k1], s.u);
 }
 
-constexpr std::array<std::string_view, kAnimClipCount> kClipNames = {"idle",  "run", "dash",
-                                                                     "throw", "hit", "eliminated"};
+constexpr std::array<std::string_view, kAnimClipCount> kClipNames = {
+    "idle", "run", "dash", "throw", "hit", "eliminated", "charge"};
 
+// The charge clip is scrubbed: sampled at charge x its duration, whatever
+// time it has been playing (v0.53).
 void sampleBound(const SkinnedModel& model, const ClipBinding& binding, AnimClip clip, float time,
-                 Pose& out) {
+                 float charge, Pose& out) {
   const int16_t index = binding[clip];
   if (index < 0 || static_cast<std::size_t>(index) >= model.clips.size()) {
     restPose(model, out);
     return;
   }
-  sampleClip(model, model.clips[static_cast<std::size_t>(index)], time, animClipLoops(clip), out);
+  const AnimationClip& c = model.clips[static_cast<std::size_t>(index)];
+  const float t = clip == AnimClip::Charge ? clamp01(charge) * c.duration : time;
+  sampleClip(model, c, t, animClipLoops(clip), out);
+}
+
+[[nodiscard]] int16_t jointNamed(const SkinnedModel& model, std::string_view name) {
+  for (std::size_t j = 0; j < model.joints.size() && j < kMaxSkinJoints; ++j) {
+    if (model.joints[j].name == name) return static_cast<int16_t>(j);
+  }
+  return -1;
+}
+
+// v0.53: the strain, a small shake about the model's z axis (the arm's
+// cocking axis) and, for the spine, its x axis.
+void addTremble(Pose& pose, int16_t joint, Vec3 axis, float degrees) {
+  if (joint < 0 || std::cmp_greater_equal(joint, pose.count)) return;
+  JointPose& jp = pose.joints[static_cast<std::size_t>(joint)];
+  jp.rotation = normalize(jp.rotation * quatFromAxisAngle(axis, degrees * (kPi / 180.0f)));
+}
+
+void applyStrain(const ClipBinding& binding, const AnimState& state, Pose& pose) {
+  if (!(state.strain > 0.0f)) return;
+  const float t = state.strainTime;
+  const float wave =
+      std::sin(kTwoPi * kStrainHz * t) + (0.5f * std::sin((kTwoPi * kStrainHz2 * t) + 1.3f));
+  const float w = state.strain * wave;
+  addTremble(pose, binding.upperArm, Vec3{0.0f, 0.0f, 1.0f}, kStrainArmDegrees * w);
+  addTremble(pose, binding.forearm, Vec3{0.0f, 0.0f, 1.0f}, -kStrainForearmDegrees * w);
+  addTremble(pose, binding.spine, Vec3{1.0f, 0.0f, 0.0f}, kStrainSpineDegrees * w);
 }
 
 // Joints that both the model and the pose provide, capped at the skin budget.
@@ -137,6 +168,10 @@ ClipBinding bindClips(const SkinnedModel& model) {
   ClipBinding b;
   for (std::size_t c = 0; c < kAnimClipCount; ++c)
     b.index[c] = static_cast<int16_t>(model.findClip(kClipNames[c]));
+  b.spine = jointNamed(model, "spine");
+  b.upperArm = jointNamed(model, "arm_upper_r");
+  b.forearm = jointNamed(model, "arm_lower_r");
+  b.hand = jointNamed(model, "hand_r");
   return b;
 }
 
@@ -144,6 +179,7 @@ AnimClip selectClip(const RenderPlayer& player, bool moving, bool throwing) {
   if (player.has(PlayerFlag::Eliminated)) return AnimClip::Eliminated;
   if (player.has(PlayerFlag::HitStun)) return AnimClip::Hit;
   if (player.has(PlayerFlag::Dashing)) return AnimClip::Dash;
+  if (player.has(PlayerFlag::Charging)) return AnimClip::Charge;
   if (throwing) return AnimClip::Throw;
   return moving ? AnimClip::Run : AnimClip::Idle;
 }
@@ -156,6 +192,8 @@ void updateAnimState(AnimState& state, const RenderPlayer& player, float dtSecon
     state.lastGround = player.ground;
     state.wasThrowing = throwFlag;
     state.throwHold = throwFlag ? kThrowAnimSeconds : 0.0f;
+    state.wasCharging = player.has(PlayerFlag::Charging);
+    state.charge = state.wasCharging ? player.throwCharge : 0.0f;
     state.clip = selectClip(player, false, throwFlag);
     state.fromClip = state.clip;
     return;
@@ -172,28 +210,59 @@ void updateAnimState(AnimState& state, const RenderPlayer& player, float dtSecon
   state.wasThrowing = throwFlag;
   state.throwHold = throwStarted ? kThrowAnimSeconds : std::max(state.throwHold - dt, 0.0f);
 
+  // v0.53: while charging the pose follows the charge; the release owes a
+  // whole throw clip (the press's hold may have run out during the charge).
+  const bool charging = player.has(PlayerFlag::Charging);
+  const bool released = state.wasCharging && !charging;
+  state.wasCharging = charging;
+  if (charging) state.charge = clamp01(player.throwCharge);
+  if (released) state.throwHold = kThrowAnimSeconds;
+  const float strainTarget = charging && player.throwCharge >= kStrainFromCharge ? 1.0f : 0.0f;
+  const float ramp = dt / kStrainRampSeconds;
+  state.strain = strainTarget > state.strain ? std::min(state.strain + ramp, strainTarget)
+                                             : std::max(state.strain - ramp, strainTarget);
+  state.strainTime = state.strain > 0.0f ? state.strainTime + dt : 0.0f;
+
   state.time += dt;
   state.fromTime += dt;
   state.fade = std::min(state.fade + (dt / kAnimCrossfadeSeconds), 1.0f);
 
   const AnimClip target = selectClip(player, state.moving, throwFlag || state.throwHold > 0.0f);
   if (target != state.clip || (throwStarted && target == AnimClip::Throw)) {
+    // A release goes into the throw past as much of its wind-up as the
+    // charge pose already did.
+    const bool fromCharge = state.clip == AnimClip::Charge && target == AnimClip::Throw;
     state.fromClip = state.clip;
     state.fromTime = state.time;
     state.clip = target;
-    state.time = 0.0f;
+    state.time = fromCharge ? kThrowWindupSeconds * state.charge : 0.0f;
     state.fade = 0.0f;
   }
 }
 
-void evaluateAnimState(const SkinnedModel& model, const ClipBinding& binding,
-                       const AnimState& state, SkinMatrices& out) {
-  Pose current;
-  sampleBound(model, binding, state.clip, state.time, current);
+void evaluateAnimPose(const SkinnedModel& model, const ClipBinding& binding, const AnimState& state,
+                      Pose& out) {
+  sampleBound(model, binding, state.clip, state.time, state.charge, out);
   if (state.fade < 1.0f) {
     Pose from;
-    sampleBound(model, binding, state.fromClip, state.fromTime, from);
-    blendPoses(from, current, state.fade, current);
+    sampleBound(model, binding, state.fromClip, state.fromTime, state.charge, from);
+    blendPoses(from, out, state.fade, out);
+  }
+  applyStrain(binding, state, out);
+}
+
+void evaluateAnimState(const SkinnedModel& model, const ClipBinding& binding,
+                       const AnimState& state, SkinMatrices& out, SkinMatrices* globals) {
+  Pose current;
+  evaluateAnimPose(model, binding, state, current);
+  if (globals != nullptr) {
+    globalTransforms(model, current, *globals);
+    const std::size_t n = jointCount(model, current);
+    for (std::size_t j = 0; j < n; ++j)
+      out[j] = (*globals)[j] * model.joints[j].inverseBind;
+    for (std::size_t j = n; j < out.size(); ++j)
+      out[j] = Mat4::identity();
+    return;
   }
   skinMatrices(model, current, out);
 }

@@ -12,7 +12,10 @@
 //   state machine     AnimState (one per player slot, kept by the caller next
 //                     to the renderer, never in RenderState) picks the clip
 //                     from RenderPlayer flags and ground motion each frame, by
-//                     priority: eliminated > hit > dash > throw > run > idle.
+//                     priority: eliminated > hit > dash > charge > throw > run
+//                     > idle. v0.53: the charge clip is a pose scrubbed by the
+//                     throw's charge, not played over time, with a procedural
+//                     strain tremble once it is full.
 //
 // The clip set is fixed (AnimClip); a model provides clips by name
 // (bindClips) and a missing one plays the rest pose.
@@ -38,6 +41,20 @@ inline constexpr float kRunSpeedThreshold = 0.5f;
 // The throw clip plays at least this long after the Throwing flag rises, so a
 // short Startup/Active/Recovery still reads.
 inline constexpr float kThrowAnimSeconds = 0.3f;
+// v0.53, the charged throw. The throw clip's own wind-up (its first 30 %):
+// a release starts the clip charge x this far in, since the charge pose has
+// already wound up.
+inline constexpr float kThrowWindupSeconds = 0.1f;
+// The strain at full charge: it fades in over kStrainRampSeconds once the
+// charge reaches kStrainFromCharge, and shakes the spine and the throwing arm
+// by these amplitudes (degrees) at two incommensurate frequencies (Hz).
+inline constexpr float kStrainFromCharge = 0.999f;
+inline constexpr float kStrainRampSeconds = 0.15f;
+inline constexpr float kStrainHz = 23.0f;
+inline constexpr float kStrainHz2 = 37.0f;
+inline constexpr float kStrainArmDegrees = 4.0f;
+inline constexpr float kStrainForearmDegrees = 5.0f;
+inline constexpr float kStrainSpineDegrees = 1.5f;
 
 // --- poses ---------------------------------------------------------------------------
 
@@ -80,27 +97,35 @@ void skinMatrices(const SkinnedModel& model, const Pose& pose, SkinMatrices& out
 
 // --- clips and the state machine ------------------------------------------------------
 
-enum class AnimClip : uint8_t { Idle = 0, Run, Dash, Throw, Hit, Eliminated };
-inline constexpr std::size_t kAnimClipCount = 6;
+enum class AnimClip : uint8_t { Idle = 0, Run, Dash, Throw, Hit, Eliminated, Charge };
+inline constexpr std::size_t kAnimClipCount = 7;
 
-// The glTF animation name of each clip: idle, run, dash, throw, hit, eliminated.
+// The glTF animation name of each clip: idle, run, dash, throw, hit,
+// eliminated, charge (v0.53).
 [[nodiscard]] std::string_view animClipName(AnimClip clip);
 // Idle and run loop; the others play once and hold their last frame.
 [[nodiscard]] constexpr bool animClipLoops(AnimClip clip) {
   return clip == AnimClip::Idle || clip == AnimClip::Run;
 }
 
-// Model clip index per AnimClip (-1: the model has no such clip).
+// Model clip index per AnimClip (-1: the model has no such clip), and
+// (v0.53) the joints the strain shakes and the hand the held banana sits in,
+// found by name (spine, arm_upper_r, arm_lower_r, hand_r; -1 when missing).
 struct ClipBinding {
-  std::array<int16_t, kAnimClipCount> index{-1, -1, -1, -1, -1, -1};
+  std::array<int16_t, kAnimClipCount> index{-1, -1, -1, -1, -1, -1, -1};
+  int16_t spine{-1};
+  int16_t upperArm{-1};
+  int16_t forearm{-1};
+  int16_t hand{-1};
   [[nodiscard]] int16_t operator[](AnimClip clip) const {
     return index[static_cast<std::size_t>(clip)];
   }
 };
 [[nodiscard]] ClipBinding bindClips(const SkinnedModel& model);
 
-// The clip a player should show: Eliminated > HitStun > Dashing > throwing
-// (the Throwing flag or a running throw hold) > moving > idle.
+// The clip a player should show: Eliminated > HitStun > Dashing > Charging
+// (v0.53) > throwing (the Throwing flag or a running throw hold) > moving >
+// idle.
 [[nodiscard]] AnimClip selectClip(const RenderPlayer& player, bool moving, bool throwing);
 
 // Per-player animation state. Value-initialise one per slot; reset it (assign
@@ -116,6 +141,13 @@ struct AnimState {
   bool wasThrowing{false};
   float throwHold{0.0f};  // seconds of throw clip still owed
   Vec3 lastGround{};
+  // v0.53: the charge the charge clip is sampled at (held after the release,
+  // so a fade out of it stays put), the strain's weight and its clock, and
+  // whether the last update was charging.
+  float charge{0.0f};
+  float strain{0.0f};
+  float strainTime{0.0f};
+  bool wasCharging{false};
 };
 
 // Advances `state` by dtSeconds (>= 0) for `player`. The first update snaps to
@@ -126,10 +158,15 @@ struct AnimState {
 // dtSeconds == 0 (a paused frame) keeps the clip, times and motion as they are.
 void updateAnimState(AnimState& state, const RenderPlayer& player, float dtSeconds);
 
-// Skin matrices for `state`: the current clip, blended from the outgoing one
-// while the crossfade runs.
+// The pose for `state`: the current clip, blended from the outgoing one
+// while the crossfade runs, with the strain on top (v0.53).
+void evaluateAnimPose(const SkinnedModel& model, const ClipBinding& binding, const AnimState& state,
+                      Pose& out);
+
+// Skin matrices for `state` (evaluateAnimPose, skinned); `globals`, when
+// given, also receives each joint's model-space transform (v0.53: the hand).
 void evaluateAnimState(const SkinnedModel& model, const ClipBinding& binding,
-                       const AnimState& state, SkinMatrices& out);
+                       const AnimState& state, SkinMatrices& out, SkinMatrices* globals = nullptr);
 
 // One AnimState per player slot, keyed by RenderPlayer::slot.
 using CharacterAnimStates = std::array<AnimState, kMaxRenderPlayers>;

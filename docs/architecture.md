@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.52 (2026-11-06). Working title taken from the repo name.
+Status: proposal v0.53 (2026-11-06). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -543,6 +543,16 @@ arena Jungle) or one theme everywhere; it is saved (`theme=`), set by `--theme` 
 changed in Settings and the local lobby panel (not the room's, which carries only room
 settings). The client clears around the arena with the theme's background; the lobby's arena
 preview draws in the theme. Replay checksums unchanged.
+v0.53 changes: the charge reads on the monkey, not the floor (§7). The v0.48 ground ring at the
+turning point is gone (and `RenderPlayer::throwReach` with it). A new clip, `charge`, is a
+wind-up pose scrubbed by `throwCharge` rather than played over time: the throwing arm swings
+back and up until the banana is above and behind the head, the torso twists the shoulder back,
+the free arm reaches forward. At full charge a procedural strain shakes the throwing arm and
+the spine (two incommensurate sines, fading in over 0.15 s), on top of the sampled pose. The
+release starts the throw clip `charge × 0.1 s` in, past as much of its own wind-up as the
+charge pose already did, and owes it a whole clip. The rig gains `hand_r`, an unweighted leaf
+under the forearm, and the held banana is drawn there on skinned bodies (the capsule fallback
+keeps its fixed spot). The growing gold aim bar stays.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2697,10 +2707,11 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   body always agree. This is the main readability gain over direction-quantised sprites.
   v0.48: while a throw charges (`PlayerFlag::Charging`), the aim bar stretches from its resting
   length to `kChargeAimLength` and warms toward gold with the charge
-  (`RenderPlayer::throwCharge`), and a ground ring sits at `throwReach` along the aim, where a
-  banana released now would turn for home (the builder's estimate from the def, the
-  boomerang and the thrower's projectile power-ups). Every monkey's charge is drawn: it is a
-  tell, as a wind-up should be.
+  (`RenderPlayer::throwCharge`). v0.53: the monkey winds up instead of a ground ring: the
+  `charge` clip is sampled at `throwCharge × duration` (`AnimClip::Charge`, above the throw and
+  below a dash in the clip priority), a full charge adds the strain tremble
+  (`kStrain*` in `animation.hpp`), and the held banana sits in the skinned pose's `hand_r`.
+  Every monkey's charge is drawn: it is a tell, as a wind-up should be.
 - **Asset pipeline.** Characters, bananas and props are modeled, rigged and animated in Blender
   and exported to glTF by a script in the repo (one command regenerates every asset). Low poly
   counts and few joints per character (well under WebGL2 uniform limits for skinning). Per-player

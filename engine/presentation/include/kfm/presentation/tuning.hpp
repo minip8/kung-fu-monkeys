@@ -88,12 +88,9 @@ inline constexpr float kBodyTurnRate = 4.0f * kPi;
 
 // --- charged throw (v0.48) -----------------------------------------------------------
 // While a throw charges, the aim bar grows from its resting length to this
-// and warms toward gold, and a ring on the ground marks where a banana
-// released now would turn for home.
+// and warms toward gold (v0.53: the monkey winds up and, at full charge,
+// strains; animation.hpp holds those numbers).
 inline constexpr float kChargeAimLength = 1.6f;
-inline constexpr float kChargeMarkerRadius = 0.45f;
-inline constexpr float kChargeMarkerOpacity = 0.85f;
-inline constexpr float kChargeMarkerRingInner = 0.7f;  // inner edge as a fraction of the radius
 
 // --- squash and stretch ------------------------------------------------------------
 inline constexpr float kDashStretch = 0.18f;  // forward stretch while dashing

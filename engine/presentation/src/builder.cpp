@@ -109,26 +109,13 @@ void decayOffset(EntityTrack& t, float dt) {
   return sim::throwChargeMul(def, charged);
 }
 
-// Charge fraction and reach of a charging throw (RenderPlayer::throwCharge,
-// throwReach): the thrower's projectile power-ups scale the speed as they
-// will scale the banana's.
+// The charge fraction of a charging throw (RenderPlayer::throwCharge).
 void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
   if (!throwCharging(p, content)) return;
   const sim::AbilityDef& def = content.abilityAt(p.abilities[sim::kAbilitySlotThrow].defIndex);
   const Fixed mul = throwChargeMulNow(p, content);
   const float span = (def.param1 - def.param0).toFloat();
   rp.throwCharge = span > 0.0f ? clamp01((mul - def.param0).toFloat() / span) : 1.0f;
-  float speed = content.boomerang.speed.toFloat() * mul.toFloat();
-  for (uint8_t i = 0; i < p.modifiers.count && i < sim::kMaxModifiers; ++i) {
-    const sim::PowerUpDef& pu = content.powerUpAt(p.modifiers.items[i].powerUp);
-    for (uint8_t g = 0; g < pu.grantCount && g < sim::kMaxPowerUpGrants; ++g) {
-      if (pu.grants[g].kind == sim::GrantKind::Projectile) {
-        speed *= pu.grants[g].projectile.speedMul.toFloat();
-      }
-    }
-  }
-  rp.throwReach = content.boomerang.spawnOffset.toFloat() +
-                  (speed * static_cast<float>(content.boomerang.outboundTicks));
 }
 
 [[nodiscard]] uint16_t playerFlags(const Player& p, const ContentDB& content) {

@@ -141,8 +141,9 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   keys: left side = keyboard + mouse (WASD move, the mouse aims once it moves, left click/J/Space throw, right
 #   click/K/LShift dash, L/E ability; v0.45), right side = arrows ./RCtrl throw //RShift dash ;/' ability
 #   v0.48 charged throw: Throw is hold and release; the hold scales the banana's speed and so its reach (x0.6
-#   for a tap to x1.5 after 40 ticks: abilities.toml charge_min/charge_max/charge_ticks); the aim bar grows
-#   and a ring marks where it turns. Grid throws do not charge
+#   for a tap to x1.5 after 40 ticks: abilities.toml charge_min/charge_max/charge_ticks); the aim bar grows,
+#   the monkey winds up (v0.53: the rig's `charge` clip, scrubbed by the charge) and strains at full charge.
+#   Grid throws do not charge
 #   v0.46 pause menu: Esc (or a bound pad's Start) in a running match: locally the match pauses (Resume, Back to
 #   lobby, Main menu); online it runs on and your slots send idle input (Resume, Leave room: one Esc never leaves);
 #   Esc / a pad's East, Back or Start resumes. P pause and O single step stay developer keys (no menu)
