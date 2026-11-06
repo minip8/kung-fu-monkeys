@@ -54,7 +54,7 @@ struct DashPress {
 // hits on relative tick 25. Player 0 holds `catcherAmmo` bananas (default
 // none: a perfect catch needs room below ammoMax, §5.6 v0.16).
 EventLog duel(DashPress press, WorldState* out = nullptr, uint8_t catcherAmmo = 0) {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = unchargedContent();  // v0.48: taps at full speed
   WorldState s = makePlayingWorld(31, 0b11);
   placePlayer(s, kP0, at(-4, 0)).ammo = catcherAmmo;
   placePlayer(s, kP1, at(4, 0));
@@ -82,7 +82,7 @@ const SimEvent& onlyEvent(const EventLog& log, EventKind kind) {
 }  // namespace
 
 TEST_CASE("a throw at a wall bounces, returns and is auto-caught", "[scenario][pipeline]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = unchargedContent();  // v0.48: taps at full speed
   WorldState s = makePlayingWorld(41, 0b11);
   placePlayer(s, kP0, at(12, 0));    // 3.65 units from where a banana bounces off +x
   placePlayer(s, kP1, at(-12, -6));  // far from the whole flight
@@ -133,7 +133,7 @@ TEST_CASE("a throw at a wall bounces, returns and is auto-caught", "[scenario][p
 
 TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the match",
           "[scenario][pipeline]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = unchargedContent();  // v0.48: taps at full speed
   WorldState s = initialWorld(MatchConfig{42, 0b11});
   EventLog log;
   for (uint8_t round = 1; round <= content.modes[0].roundsToWin; ++round) {
@@ -202,7 +202,7 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
 
 TEST_CASE("a perfect dash catches the incoming banana; mistimed dashes get hit",
           "[scenario][pipeline]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = unchargedContent();  // v0.48: taps at full speed
   REQUIRE(content.player.ammoMax == 1);
 
   SECTION("well timed: caught, no hit, the catcher gains the banana") {
@@ -273,7 +273,7 @@ TEST_CASE("the press sub-tick decides a catch at the window edges", "[scenario][
 }
 
 TEST_CASE("walking over a grounded banana picks it up unless at ammoMax", "[scenario][pipeline]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = unchargedContent();  // v0.48: taps at full speed
   // Ground a banana: player 1 throws it away from everyone, then is
   // eliminated (a hit flies on, so a gone owner is what grounds it), leaving
   // a pickup where the banana was. Player 2 stays, so the round goes on.

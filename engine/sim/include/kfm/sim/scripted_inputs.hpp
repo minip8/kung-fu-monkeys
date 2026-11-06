@@ -56,6 +56,9 @@ struct ScriptedInputConfig {
   uint16_t slamOneIn{8};                 // per-tick chance 1/N of a slam with a target in reach
   uint8_t parryPer256{48};               // per-tick chance of parrying an incoming banana
   Fixed parryRadius{Fixed::fromInt(3)};  // how close that banana must be
+  // v0.48: per-tick chance of holding a charging throw one tick longer (a
+  // geometric hold, ~16 ticks on average), so matches mix taps and charges.
+  uint8_t chargeHoldPer256{240};
 };
 
 // The input for one player this tick. Returns an idle input for a player

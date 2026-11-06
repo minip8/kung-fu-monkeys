@@ -2,6 +2,7 @@
 
 #include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/world_basis.hpp"
+#include "kfm/sim/abilities/throw.hpp"
 
 #include <algorithm>
 #include <array>
@@ -93,6 +94,43 @@ void decayOffset(EntityTrack& t, float dt) {
   return Vec3{s.x * size, s.y * size, s.z * size};
 }
 
+// v0.48: the charging throw's wind-up. The phaseTicks of a Startup are the
+// ticks since the press (the sim measures the same span when it releases).
+[[nodiscard]] bool throwCharging(const Player& p, const ContentDB& content) {
+  const AbilityState& thr = p.abilities[sim::kAbilitySlotThrow];
+  return thr.phase == AbilityPhase::Startup && sim::throwCharges(content.abilityAt(thr.defIndex));
+}
+
+[[nodiscard]] Fixed throwChargeMulNow(const Player& p, const ContentDB& content) {
+  const AbilityState& thr = p.abilities[sim::kAbilitySlotThrow];
+  const sim::AbilityDef& def = content.abilityAt(thr.defIndex);
+  const uint32_t charged =
+      thr.phaseTicks > def.startupTicks ? thr.phaseTicks - def.startupTicks : 0;
+  return sim::throwChargeMul(def, charged);
+}
+
+// Charge fraction and reach of a charging throw (RenderPlayer::throwCharge,
+// throwReach): the thrower's projectile power-ups scale the speed as they
+// will scale the banana's.
+void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
+  if (!throwCharging(p, content)) return;
+  const sim::AbilityDef& def = content.abilityAt(p.abilities[sim::kAbilitySlotThrow].defIndex);
+  const Fixed mul = throwChargeMulNow(p, content);
+  const float span = (def.param1 - def.param0).toFloat();
+  rp.throwCharge = span > 0.0f ? clamp01((mul - def.param0).toFloat() / span) : 1.0f;
+  float speed = content.boomerang.speed.toFloat() * mul.toFloat();
+  for (uint8_t i = 0; i < p.modifiers.count && i < sim::kMaxModifiers; ++i) {
+    const sim::PowerUpDef& pu = content.powerUpAt(p.modifiers.items[i].powerUp);
+    for (uint8_t g = 0; g < pu.grantCount && g < sim::kMaxPowerUpGrants; ++g) {
+      if (pu.grants[g].kind == sim::GrantKind::Projectile) {
+        speed *= pu.grants[g].projectile.speedMul.toFloat();
+      }
+    }
+  }
+  rp.throwReach = content.boomerang.spawnOffset.toFloat() +
+                  (speed * static_cast<float>(content.boomerang.outboundTicks));
+}
+
 [[nodiscard]] uint16_t playerFlags(const Player& p, const ContentDB& content) {
   uint16_t f = 0;
   const auto set = [&](bool on, PlayerFlag flag) {
@@ -109,6 +147,7 @@ void decayOffset(EntityTrack& t, float dt) {
       PlayerFlag::Throwing);
   set(p.ammo > 0, PlayerFlag::HasAmmo);
   set(p.tags.has(Tag::Carrying), PlayerFlag::Carrying);
+  set(throwCharging(p, content), PlayerFlag::Charging);
   return f;
 }
 
@@ -270,6 +309,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.ammoMax = cp.stats.ammoMax;
     rp.hp = cp.hp;
     rp.maxHp = cp.stats.maxHp;
+    chargeView(cp, content, rp);
     for (uint8_t m = 0; m < cp.modifiers.count && m < sim::kMaxModifiers; ++m) {
       const sim::ActiveModifier& am = cp.modifiers.items[m];
       // A mode's baseline (v0.32) is the rules, not a power-up to time.

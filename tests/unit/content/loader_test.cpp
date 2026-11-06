@@ -1112,6 +1112,35 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
   CHECK(contains(loadErrors(withAbility("kind = \"call\"\nrange = 4\nparam0 = 4\n")), "not both"));
   CHECK(contains(loadErrors(withAbility("kind = \"slam\"\nactive_ticks = 12\nrange = 3\n")),
                  "'range' belongs to a call"));
+  // v0.48: a throw's charge under its own names: param0, param1 and the rate
+  // per tick in speed.
+  {
+    ContentDB db{};
+    Diagnostics d;
+    const bool ok = parseContent(withAbility("kind = \"throw\"\ncharge_min = 0.5\n"
+                                             "charge_max = 1.5\ncharge_ticks = 32\n"),
+                                 "test.toml", db, d);
+    INFO(d.format());
+    REQUIRE(ok);
+    const sim::AbilityDef& thr = db.abilities[db.abilityCount - 1];
+    CHECK(thr.kind == sim::AbilityKind::Throw);
+    CHECK(thr.param0 == Fixed::half());
+    CHECK(thr.param1 == Fixed::fromRatio(3, 2));
+    CHECK(thr.speed == Fixed::fromRatio(1, 32));
+  }
+  CHECK(contains(loadErrors(withAbility("kind = \"throw\"\ncharge_min = 0.5\ncharge_max = 1.5\n")),
+                 "missing required key 'charge_ticks'"));
+  CHECK(contains(loadErrors(withAbility("kind = \"throw\"\ncharge_min = 1.5\ncharge_max = 1.5\n"
+                                        "charge_ticks = 10\n")),
+                 "charge_max must be greater than charge_min"));
+  CHECK(contains(loadErrors(withAbility("kind = \"dash\"\ncharge_min = 0.5\ncharge_max = 1\n"
+                                        "charge_ticks = 10\n")),
+                 "belongs to a throw"));
+  CHECK(contains(loadErrors(withAbility("kind = \"throw\"\ncharge_min = 0.5\ncharge_max = 1\n"
+                                        "charge_ticks = 10\nspeed = 3\n")),
+                 "not speed, param0 or param1"));
+  CHECK(contains(loadErrors(withAbility("kind = \"throw\"\nspeed = 3\n")),
+                 "a charged throw needs 0 < charge_min < charge_max"));
   // A third slot through the loadout.
   CHECK(loads(replaced(withAbility("kind = \"blink\"\nactive_ticks = 10\nspeed = 30\n"),
                        "[\"dash\", \"throw\"]", "[\"dash\", \"throw\", \"extra\"]")));

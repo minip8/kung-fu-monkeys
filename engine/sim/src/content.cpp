@@ -60,6 +60,11 @@ constexpr ContentDB makeDefaultContent() {
   thr.startupTicks = 2;
   thr.activeTicks = 1;
   thr.recoveryTicks = 6;
+  // v0.48, the charged throw (abilities.toml charge_min/max/ticks): x0.6 on a
+  // tap up to x1.5 after 40 ticks held past the startup.
+  thr.param0 = Fixed::fromRatio(6, 10);
+  thr.param1 = Fixed::fromRatio(15, 10);
+  thr.speed = (thr.param1 - thr.param0) / 40;
 
   c.abilityCount = 3;  // none, dash, throw
 

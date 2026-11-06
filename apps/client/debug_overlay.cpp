@@ -322,6 +322,18 @@ void tuningSection(MatchSession& s, std::string& printed) {
 
   ImGui::SeparatorText("Throw");
   sliderU16("throw cooldown", thr.cooldownTicks, 0, 120);
+  if (thr.speed > Fixed::zero()) {
+    // v0.48, the charge: the multipliers of a tap and a full charge, and the
+    // ticks between them (the rate per tick is derived, as the loader does).
+    const int32_t span = (thr.param1 - thr.param0).raw;
+    auto ticks = static_cast<uint16_t>(
+        std::clamp<int32_t>((span + (thr.speed.raw / 2)) / thr.speed.raw, 1, 180));
+    sliderFixed("charge min (tap)", thr.param0, 0.1f, 2.0f);
+    sliderFixed("charge max", thr.param1, 0.2f, 3.0f);
+    thr.param1 = std::max(thr.param1, thr.param0 + Fixed::fromRatio(1, 100));
+    sliderU16("charge ticks", ticks, 1, 180);
+    thr.speed = (thr.param1 - thr.param0) / int32_t{ticks};
+  }
 
   ImGui::SeparatorText("Banana");
   sliderPerSecond("banana speed", c.boomerang.speed, 4.0f, 40.0f);

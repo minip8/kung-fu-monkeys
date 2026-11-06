@@ -355,24 +355,33 @@ void NetClient::onSnapshot(const Packet& packet) {
     return;
   }
   if (state_ != ClientState::Running) return;
-  if (restart) {
-    restartTick_.reset();
-    matchConfig_ = snapshot_.config;
-    simConfig_ = snapshot_.config;
-    ++stats_.matchRestarts;
-  }
   if (resumePending_) {
-    // Loaded by tryResume() once the server is seen ticking past it.
+    // Loaded by tryResume() once the server is seen ticking past it. Until
+    // then the timeline is the old match's while the server's frames and
+    // checksums are the new one's, so restartTick_ stays: a checksum of the
+    // new match must not be judged against the old world (adoptRestart).
     resumeSnapshot_ = true;
     resumeIsRestart_ = resumeIsRestart_ || restart;
     awaitingResync_ = false;
     return;
   }
-  if (restart) report_.matchRestarted = true;
+  if (restart) {
+    adoptRestart();
+    report_.matchRestarted = true;
+  }
   // Resync or restart: hard load, then predict forward to where we were.
   const Tick runTo = spectator() ? snapTick : std::max(world_.tick, snapTick);
   loadSnapshot(runTo);
   awaitingResync_ = false;
+}
+
+// The loaded snapshot starts the announced match: its config is the timeline's
+// from now on, and checksums of its ticks can be compared again.
+void NetClient::adoptRestart() {
+  if (restartTick_ && snapshot_.world.tick >= *restartTick_) restartTick_.reset();
+  matchConfig_ = snapshot_.config;
+  simConfig_ = snapshot_.config;
+  ++stats_.matchRestarts;
 }
 
 void NetClient::tryStart(uint64_t nowNs) {
@@ -410,7 +419,10 @@ void NetClient::tryResume(uint64_t nowNs) {
   resumePending_ = false;
   resumeSnapshot_ = false;
   promotePending_ = false;  // the lead is set here
-  if (resumeIsRestart_) report_.matchRestarted = true;
+  if (resumeIsRestart_) {
+    adoptRestart();
+    report_.matchRestarted = true;
+  }
   resumeIsRestart_ = false;
   loadSnapshot(runTo);
   marginFrom_ = world_.tick.plus(static_cast<int32_t>(inputDelay()));
