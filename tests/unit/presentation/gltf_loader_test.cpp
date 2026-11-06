@@ -167,13 +167,15 @@ TEST_CASE("the test rig's clips move the skeleton as intended", "[presentation][
   restPose(m, rest);
   const Vec3 headRest = jointPosition(m, rest, kHead);
 
-  // Run swings the arms: two times a quarter cycle apart differ.
+  // Run swings the arms: two times a quarter cycle apart differ (v0.54: by
+  // over 0.15, about half the short upper arm; the clip stays in the rig
+  // although kMonkeyRunCycle is off).
   Pose a;
   Pose c;
   const AnimationClip& run = clipOf(AnimClip::Run);
   sampleClip(m, run, run.duration * 0.25f, true, a);
   sampleClip(m, run, run.duration * 0.75f, true, c);
-  REQUIRE(std::fabs(jointPosition(m, a, kLowerArmL).x - jointPosition(m, c, kLowerArmL).x) > 0.3f);
+  REQUIRE(std::fabs(jointPosition(m, a, kLowerArmL).x - jointPosition(m, c, kLowerArmL).x) > 0.15f);
   // ... and loops: the end equals the start.
   sampleClip(m, run, 0.0f, true, a);
   sampleClip(m, run, run.duration - 1e-4f, true, c);
@@ -196,7 +198,8 @@ TEST_CASE("the test rig's clips move the skeleton as intended", "[presentation][
   REQUIRE(jointPosition(m, a, kHead).x < headRest.x - 0.3f);
 
   // v0.53: the charge pose raises the banana hand up and back, further the
-  // fuller the charge; at 0 it is the rest pose.
+  // fuller the charge; at 0 it is the rest pose. v0.54: the arm is short and
+  // the head big, so the hand ends beside the head, out to the side of it.
   REQUIRE(b.hand == 7);
   REQUIRE(b.upperArm == 5);
   REQUIRE(b.forearm == 6);
@@ -209,10 +212,12 @@ TEST_CASE("the test rig's clips move the skeleton as intended", "[presentation][
   sampleClip(m, charge, charge.duration, false, c);
   const Vec3 handHalf = jointPosition(m, a, 7);
   const Vec3 handFull = jointPosition(m, c, 7);
-  INFO("hand rest " << handRest.x << "," << handRest.y << " half " << handHalf.x << ","
-                    << handHalf.y << " full " << handFull.x << "," << handFull.y);
-  REQUIRE(handHalf.y > handRest.y + 0.3f);
+  INFO("hand rest " << handRest.x << "," << handRest.y << "," << handRest.z << " half "
+                    << handHalf.x << "," << handHalf.y << " full " << handFull.x << ","
+                    << handFull.y << "," << handFull.z);
+  REQUIRE(handHalf.y > handRest.y + 0.2f);
   REQUIRE(handFull.y > handHalf.y);
-  REQUIRE(handFull.y > headRest.y - 0.5f);  // up by the head
+  REQUIRE(handFull.y > headRest.y);         // up by the head
   REQUIRE(handFull.x < handRest.x - 0.3f);  // and behind
+  REQUIRE(handFull.z > 0.8f);               // out to its side, not inside it
 }
