@@ -7,6 +7,7 @@
 #include "kfm/presentation/math.hpp"
 #include "kfm/presentation/render_state.hpp"
 #include "kfm/presentation/skinned_model.hpp"
+#include "kfm/presentation/tuning.hpp"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -247,7 +248,10 @@ TEST_CASE("clip binding by name", "[presentation][animation]") {
 TEST_CASE("clip selection priority", "[presentation][animation]") {
   const auto f = [](PlayerFlag flag) { return flagBit(flag); };
   REQUIRE(selectClip(playerWith(0), false, false) == AnimClip::Idle);
-  REQUIRE(selectClip(playerWith(0), true, false) == AnimClip::Run);
+  // A moving monkey runs only with the run cycle on (kMonkeyRunCycle); off,
+  // it holds the idle pose and glides.
+  REQUIRE(selectClip(playerWith(0), true, false) ==
+          (kMonkeyRunCycle ? AnimClip::Run : AnimClip::Idle));
   REQUIRE(selectClip(playerWith(0), true, true) == AnimClip::Throw);
   REQUIRE(selectClip(playerWith(f(PlayerFlag::Dashing)), true, true) == AnimClip::Dash);
   // v0.53: a charging wind-up beats the throw and the run, not a dash.
@@ -280,17 +284,26 @@ TEST_CASE("state machine transitions on flags and motion", "[presentation][anima
   REQUIRE(s.clip == AnimClip::Idle);
   REQUIRE(s.time == Approx(kDt));
 
-  // Moving 0.1 units per frame (6 u/s) runs.
+  // Moving 0.1 units per frame (6 u/s) is motion; it runs only with the run
+  // cycle on, otherwise the idle clip plays on uninterrupted.
   p.ground.x += 0.1f;
   updateAnimState(s, p, kDt);
-  REQUIRE(s.clip == AnimClip::Run);
-  REQUIRE(s.fromClip == AnimClip::Idle);
-  REQUIRE(s.time == 0.0f);
-  REQUIRE(s.fade == 0.0f);
+  REQUIRE(s.moving);
+  if constexpr (kMonkeyRunCycle) {
+    REQUIRE(s.clip == AnimClip::Run);
+    REQUIRE(s.fromClip == AnimClip::Idle);
+    REQUIRE(s.time == 0.0f);
+    REQUIRE(s.fade == 0.0f);
+  } else {
+    REQUIRE(s.clip == AnimClip::Idle);
+    REQUIRE(s.time == Approx(2.0f * kDt));
+    REQUIRE(s.fade == 1.0f);
+  }
 
   // Creeping below the threshold is idle again.
   p.ground.x += 0.001f;
   updateAnimState(s, p, kDt);
+  REQUIRE_FALSE(s.moving);
   REQUIRE(s.clip == AnimClip::Idle);
 
   // A teleport (round reset) is not running.

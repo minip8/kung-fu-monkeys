@@ -81,6 +81,13 @@ inline constexpr float kShadeBand = 0.62f;
 inline constexpr float kWaterRippleSpeed = 1.2f;
 inline constexpr float kMudBubbleHz = 0.35f;
 
+// --- locomotion (§7) -----------------------------------------------------------------
+// A moving monkey plays the rig's `run` clip (limb cycle, bob and forward
+// lean) only when this is on. Off, it holds the idle clip and glides while
+// still turning to its heading; dash, charge, throw, hit and eliminated play
+// as before. The clip stays in the rig (tools/assets/gen_test_rig.py).
+inline constexpr bool kMonkeyRunCycle = false;
+
 // --- facing (§7) ---------------------------------------------------------------------
 // Body yaw follows the move direction at most this fast (720°/s: a half turn
 // in 0.25 s); aim yaw follows the aim directly.

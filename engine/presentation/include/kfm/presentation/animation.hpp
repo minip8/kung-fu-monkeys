@@ -13,9 +13,9 @@
 //                     to the renderer, never in RenderState) picks the clip
 //                     from RenderPlayer flags and ground motion each frame, by
 //                     priority: eliminated > hit > dash > charge > throw > run
-//                     > idle. v0.53: the charge clip is a pose scrubbed by the
-//                     throw's charge, not played over time, with a procedural
-//                     strain tremble once it is full.
+//                     > idle (run only with kMonkeyRunCycle, tuning.hpp). v0.53: the charge clip is
+//                     a pose scrubbed by the throw's charge, not played over time, with a
+//                     procedural strain tremble once it is full.
 //
 // The clip set is fixed (AnimClip); a model provides clips by name
 // (bindClips) and a missing one plays the rest pose.
@@ -124,8 +124,8 @@ struct ClipBinding {
 [[nodiscard]] ClipBinding bindClips(const SkinnedModel& model);
 
 // The clip a player should show: Eliminated > HitStun > Dashing > Charging
-// (v0.53) > throwing (the Throwing flag or a running throw hold) > moving >
-// idle.
+// (v0.53) > throwing (the Throwing flag or a running throw hold) > moving
+// (Run, only when kMonkeyRunCycle is on; otherwise Idle) > idle.
 [[nodiscard]] AnimClip selectClip(const RenderPlayer& player, bool moving, bool throwing);
 
 // Per-player animation state. Value-initialise one per slot; reset it (assign
