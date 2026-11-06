@@ -28,7 +28,14 @@
     // Module.webglContextAttributes is not consulted by SDL3's own
     // emscripten_webgl_create_context path, so the same attributes are also
     // merged into every canvas getContext('webgl2') call below.
-    const kfmWebglAttributes = { desynchronized: true, powerPreference: 'high-performance', antialias: false };
+    // preserveDrawingBuffer: a desynchronized canvas can be scanned out by the
+    // display controller directly, and Chrome clears a WebGL drawing buffer
+    // after each frame unless it is preserved, so a scan-out that lands
+    // between that clear and the next frame shows the empty buffer: flicker,
+    // worst while the first frames are slow (Chrome's own guidance for the
+    // desynchronized hint). The client clears and redraws every frame anyway.
+    const kfmWebglAttributes = { desynchronized: true, preserveDrawingBuffer: true,
+                                 powerPreference: 'high-performance', antialias: false };
     const canvas = document.getElementById('canvas');
     const originalGetContext = HTMLCanvasElement.prototype.getContext;
     HTMLCanvasElement.prototype.getContext = function (type, attributes) {
