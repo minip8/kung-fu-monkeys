@@ -27,7 +27,7 @@ namespace {
 constexpr uint64_t kWorldSeed = 0x4B464D10;
 constexpr uint64_t kInputSeed = 0x5C121D;
 constexpr PlayerMask kTenPlayers = (1u << kMaxPlayers) - 1u;
-constexpr int kTicks = 1200;
+constexpr int kTicks = 1800;  // v0.48: 30 s, so the rarer kinds (a dash hit) show up
 
 struct Run {
   std::vector<uint32_t> checksums;  // after each step
