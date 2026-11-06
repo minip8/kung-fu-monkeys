@@ -745,9 +745,10 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   if (!initialised_ || width <= 0 || height <= 0) return;
   sg_apply_viewport(0, 0, width, height, true);
 
-  // Screen shake moves the eye and the target together.
-  const Mat4 view = lookAt(camera.eye + state.shakeOffset, camera.target + state.shakeOffset,
-                           Vec3{0.0f, 1.0f, 0.0f});
+  // Screen shake moves the eye and the target together, until it is below a
+  // pixel (visibleShakeOffset).
+  const Vec3 shake = visibleShakeOffset(camera, state.shakeAmplitude, state.shakeOffset);
+  const Mat4 view = lookAt(camera.eye + shake, camera.target + shake, Vec3{0.0f, 1.0f, 0.0f});
   const Mat4 viewProj = camera.proj * view;
   const Vec3 camRight{view.at(0, 0), view.at(0, 1), view.at(0, 2)};
   const Vec3 camUp{view.at(1, 0), view.at(1, 1), view.at(1, 2)};

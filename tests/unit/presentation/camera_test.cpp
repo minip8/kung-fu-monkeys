@@ -1,7 +1,9 @@
 // The fixed arena camera (presentation/camera.hpp): framing at several aspect
-// ratios, the pinned screen conventions, and the screen/ground round trip.
+// ratios, the pinned screen conventions, the screen/ground round trip, and the
+// pixel scale that ends a screen shake.
 #include "kfm/presentation/camera.hpp"
 
+#include "kfm/presentation/tuning.hpp"
 #include "kfm/presentation/world_basis.hpp"
 
 #include <catch2/catch_approx.hpp>
@@ -167,4 +169,36 @@ TEST_CASE("screenToGround misses above the horizon", "[presentation][camera]") {
   CHECK_FALSE(screenToGround(cam, 640.0f, -72000.0f).has_value());
   CHECK(screenToGround(cam, 640.0f, 0.0f).has_value());  // 55 degrees down: no sky in view
   CHECK(screenToGround(cam, 640.0f, 719.0f).has_value());
+}
+
+TEST_CASE("pixelsPerUnitAtTarget scales with the viewport", "[presentation][camera]") {
+  const Camera small = makeArenaCamera(arena(), 1280.0f, 720.0f);
+  const Camera large = makeArenaCamera(arena(), 2560.0f, 1440.0f);
+  const float ppu = pixelsPerUnitAtTarget(small);
+  // The 32-unit dojo spans most of a 1280-pixel width.
+  CHECK(ppu > 1280.0f / 64.0f);
+  CHECK(ppu < 1280.0f / 32.0f);
+  CHECK(pixelsPerUnitAtTarget(large) == Approx(2.0f * ppu).epsilon(1e-3));
+  // One world unit right of the target projects that many pixels away.
+  const ScreenPoint a = worldToScreen(small, small.target);
+  const ScreenPoint b = worldToScreen(small, small.target + Vec3{1.0f, 0.0f, 0.0f});
+  CHECK(b.x - a.x == Approx(ppu).epsilon(1e-4));
+}
+
+TEST_CASE("a shake below the pixel threshold is not drawn", "[presentation][camera]") {
+  const Camera cam = makeArenaCamera(arena(), 1280.0f, 720.0f);
+  const float ppu = pixelsPerUnitAtTarget(cam);
+  const Vec3 offset{0.3f, -0.2f, 0.0f};
+  const float visible = 1.01f * kShakeMinPixels / ppu;
+  const float subPixel = 0.99f * kShakeMinPixels / ppu;
+  const Vec3 drawn = visibleShakeOffset(cam, visible, offset);
+  CHECK(drawn.x == offset.x);
+  CHECK(drawn.y == offset.y);
+  const Vec3 dropped = visibleShakeOffset(cam, subPixel, offset);
+  CHECK(dropped.x == 0.0f);
+  CHECK(dropped.y == 0.0f);
+  CHECK(dropped.z == 0.0f);
+  // The same amplitude is visible on a framebuffer twice the size.
+  const Camera large = makeArenaCamera(arena(), 2560.0f, 1440.0f);
+  CHECK(visibleShakeOffset(large, subPixel, offset).x == offset.x);
 }

@@ -1,5 +1,6 @@
 #include "kfm/presentation/camera.hpp"
 
+#include "kfm/presentation/tuning.hpp"
 #include "kfm/presentation/world_basis.hpp"
 
 #include <algorithm>
@@ -142,6 +143,19 @@ ScreenPoint worldToScreen(const Camera& camera, Vec3 world) {
   sp.y = (1.0f - ndcY) * 0.5f * camera.viewportHeight;
   sp.depth = clip.z * invW;
   return sp;
+}
+
+float pixelsPerUnitAtTarget(const Camera& camera) {
+  // World +x is the camera's right (the eye sits on the +z side, no roll).
+  const ScreenPoint a = worldToScreen(camera, camera.target);
+  const ScreenPoint b = worldToScreen(camera, camera.target + Vec3{1.0f, 0.0f, 0.0f});
+  if (!a.inFront || !b.inFront) return 0.0f;
+  return std::hypot(b.x - a.x, b.y - a.y);
+}
+
+Vec3 visibleShakeOffset(const Camera& camera, float amplitude, Vec3 offset) {
+  if (amplitude * pixelsPerUnitAtTarget(camera) < kShakeMinPixels) return Vec3{};
+  return offset;
 }
 
 std::optional<Vec3> screenToGround(const Camera& camera, float screenX, float screenY,
