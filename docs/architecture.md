@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.54 (2026-11-06). Working title taken from the repo name.
+Status: proposal v0.55 (2026-11-06). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -416,8 +416,8 @@ Scoreboards are a view model (`core/scoreboard.hpp`, a pure function of `RenderH
 and the local / bot masks): rows sorted by score, then deaths, then slot (by team first in a team
 mode, places shared on a tie), the score column named by the kind (Rounds, Kills, Points, Flags),
 deaths where the kind counts them, the winner crowned and this client's rows outlined online; it
-shows between rounds in the round kinds (RoundEnded, RoundStarting after round 1) under a
-raised banner, and at every match's end. The match-over screen (the winner in their colour, the
+shows after a round in the round kinds (RoundEnded only: the next round's countdown keeps the
+screen to its banner and count, v0.55) under a raised banner, and at every match's end. The match-over screen (the winner in their colour, the
 final scoreboard, a button row) is Play again (a new seed) / Back to lobby locally and the host's
 Play again / Leave online ("Waiting for <host> to play again" for the others). Nicknames label
 every slot online, bots too ("BOT4"); local play keeps P<n> / BOT<n> (several players share one
@@ -596,6 +596,26 @@ off). Presentation, platform and client only: no sim, content or wire change, re
 unchanged. Open: the camera stays at 55° where the board is near top-down; the lobby's arena
 preview still draws plain rectangles; `ArenaPieceKind::PitRim` pieces are built but no longer
 drawn; ground-program cost on real GPUs is unmeasured (1.3-1.7x slower under SwiftShader).
+v0.55 changes: playtest polish (§5.3, §5.4, §5.10, §6.8, §7). The round scoreboard leaves the
+screen when the next countdown starts (RoundEnded and the match's end only), and
+`round_end_ticks` goes 120 → 180 on every mode (3 s to read a round's result; only the round
+kinds enter RoundEnded). Mouse aim is a player setting (Settings > Mouse aim, on by default;
+`--mouse-aim on|off`, `?mouse_aim=`, saved `mouse_aim=on|off`): off, the keyboard + mouse profile
+aims by its move direction as before v0.45 and the clicks still throw and dash
+(`InputSampler::setMouseAimEnabled`). The menu highlight follows the last menu device
+(`apps/client/core/menu_highlight.hpp`): after mouse motion or a click only the item under the
+pointer is highlighted (a touch only while pressed); after a keyboard or pad menu press the
+focused item is, and the first such press from mouse mode only reveals the focus unless the
+pointer is on it. The web client's first-load flicker: `preserveDrawingBuffer` on the
+desynchronized canvas, and a menu screen's measuring frame is not presented
+(`platform::debugUiMeasuring()`, `commitWithoutPresent()`); the first is inferred from Chrome's
+documentation and unconfirmed on a real GPU, the second was measured (the first frame of the
+page and of each screen showed the arena without its panel). Replay checksums: changed, corpus
+regenerated because the pause after a round is now 180 ticks (replays without a round end
+changed their content hash only); servers and the page must deploy together (content hash). The
+reference-bot strength test's elimination bar went 5x → 3x: a sweep of five seed bases put 5x on
+the noise mean (3.4x to 8.5x per base at either pause). The other three changes are client and
+platform only.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -839,7 +859,9 @@ inputs and writes state and events. Nothing else mutates `WorldState`.
 
 Rules dispatch (v0.23). `RulesSystem` owns the phase machine every mode shares: Lobby →
 (`MatchStarted`, round 1) RoundStarting (the present slots spawned at the arena's spawn points,
-`roundStartTicks` of countdown) → Playing → RoundEnded (`roundEndTicks`) → next round, or
+`roundStartTicks` of countdown) → Playing → RoundEnded (`roundEndTicks`: 180 ticks, 3 s, in
+every shipped mode since v0.55, was 120; only the round kinds enter it, a clock kind's `endMatch`
+goes straight to MatchEnded, so their value only feeds the Observation) → next round, or
 MatchEnded (terminal). What ends a round or the match and what an elimination means are the
 mode's: a `ModeBehavior` table indexed by `ModeDef::kind` (`kfm/sim/modes/registry.hpp`, one
 file per mode under `src/modes/`, shared steps in `src/modes/mode_flow.*`), constexpr like the
@@ -1059,6 +1081,12 @@ added/removed, with the OS timestamp on the `SDL_GetTicksNS` clock) and pushes t
   or a cursor within 0.05 units of the origin keeps the previous aim (never 0). Mouse aim turns on
   with a mouse move or click and off when the cursor leaves the window (`MouseLeave`), so a
   keyboard-only player on profile 0 who never touches the mouse aims with movement as before.
+  Mouse aim is also a player setting (v0.55: Settings > Mouse aim, on by default; `--mouse-aim
+  on|off`, `?mouse_aim=`, saved `mouse_aim=on|off`). Off, the profile aims by its move direction
+  exactly as before v0.45 while left and right click still throw and dash; the switch is
+  `InputSampler::setMouseAimEnabled`, and flipping it either way drops the "the mouse has moved"
+  latch, so turned back on the cursor aims only once the mouse moves or clicks again. It is
+  client-side input shaping only: the sim and replays are unchanged.
   The host side is `feedMouseAim` (apps/client): the cursor (window coordinates × the pixel
   density) through `screenToGround` of the arena camera, and the slot's monkey in the world the
   tick steps: `MatchSession`'s current world, `NetClient::world()` online (the predicted world,
@@ -1708,7 +1736,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   tables only; M4 put the TOML loader in front without touching how systems read defs.
 - Modes (v0.23, `content/modes.toml`, `ModeDef` in `kfm/sim/content/mode.hpp`): `kind` =
   `rounds` (the default when the key is absent), `deathmatch` or `survival`; shared
-  `round_start_ticks`, `round_end_ticks`; `rounds_to_win` (rounds, survival);
+  `round_start_ticks`, `round_end_ticks` (read by the round kinds only; 180 since v0.55);
+  `rounds_to_win` (rounds, survival);
   `time_limit_ticks` (deathmatch: the match, survival: each round; 0 = no clock); `score_to_win`,
   `respawn_ticks`, `respawn_invuln_ticks` (deathmatch). A kind ignores the numbers it does not
   read (they keep their struct defaults and are hashed like every field). Validation: a known
@@ -2650,7 +2679,10 @@ C++ server library is mature. The seam makes that swap a contained change.
   tolerance covers 59.94 Hz displays), otherwise frames interpolate with
   `alpha = accumulator / tickCost`; the overlay can force either.
 - Browser specifics: request the WebGL context with `desynchronized: true` (bypasses the
-  compositor queue in Chromium), read input and step the sim at the top of the
+  compositor queue in Chromium) and, since v0.55, `preserveDrawingBuffer: true` (Chrome clears a
+  WebGL drawing buffer after each frame, and a desynchronized canvas can be scanned out between
+  that clear and the next frame, which flickers; the client redraws every frame, so preserving
+  the buffer costs a copy at most), read input and step the sim at the top of the
   `requestAnimationFrame` callback, render the newest predicted tick directly rather than
   interpolating, and keep no other compositing layers over the canvas. Expect the browser to cost
   one to two frames over a tuned native client; the netcode hides network latency, not this.
@@ -2731,7 +2763,19 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   height) and the top of the head stays at the capsule's height. An eliminated monkey fades 0.8
   toward grey as a whole. Bananas have brown tips. The UI (v0.51) is the style board's Mango
   Sunset menu: bark-brown panels, ink borders, sand buttons that turn mango under focus with a
-  chunky ink drop shadow, gold titles (`apps/client/ui_style.hpp`). Arena themes (v0.52,
+  chunky ink drop shadow, gold titles (`apps/client/ui_style.hpp`). Highlight (v0.55): one rule
+  for every menu screen, in the shared widgets (`ui::showsFocus`). In mouse mode (at startup, and
+  after any mouse motion or click) a button or row is highlighted only while the pointer is over
+  it, and the hovered item takes its model's focus; a touch counts only while the finger is down,
+  because ImGui keeps a tap's position. A keyboard or pad menu press switches to keys mode, where
+  the model's focus is highlighted and a resting pointer is not; the press that switches only
+  reveals the focus (no move, no activation) unless the pointer was on the focused item, and
+  Enter as the lobby's or room's labelled Start shortcut is never held back. `MenuHighlight`
+  (`apps/client/core`) holds the mode, `main.cpp` feeds it, the screens only read it. A menu
+  screen is auto-height, so ImGui hides it for the frame it is created in while it measures
+  itself; the client does not present that frame (v0.55: `platform::debugUiMeasuring()`,
+  `commitWithoutPresent()`), so the previous picture stays up for one frame, never two in a row
+  and never on the last frame of `--exit-after-frames`. Arena themes (v0.52,
   `theme.hpp`): Jungle, Temple and Beach `ArenaLook`s, each naming its floor, wall, pit and
   slow-patch surfaces; the player picks Auto (the arena's suggested theme) or one theme
   everywhere, locally, and nothing of it leaves the client. Props (bamboo clumps, stalls,

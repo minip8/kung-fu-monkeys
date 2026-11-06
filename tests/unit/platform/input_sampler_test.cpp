@@ -580,6 +580,40 @@ TEST_CASE("mouse aim: leaving the window hands aim back to the keys", "[input][m
   CHECK(tick(s, kP0, 0).aimDir == 64);  // the move direction again, not the cursor (0)
 }
 
+TEST_CASE("mouse aim switch: off aims by moving, on again waits for the mouse", "[input][mouse]") {
+  InputSampler s;
+  REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));
+  CHECK(s.mouseAimEnabled());  // on by default
+  s.push(mouseMotion(1.0f, 1.0f));
+  s.setAimOrigin(kP0, AimPoint{.x = 0.0f, .y = 0.0f});
+  s.setCursorGround(AimPoint{.x = 2.0f, .y = 0.0f});
+  CHECK(tick(s, kP0, 0).aimDir == 0);  // the cursor (+x)
+
+  s.setMouseAimEnabled(false);
+  CHECK_FALSE(s.mouseAimEnabled());
+  CHECK_FALSE(s.usesMouseAim(kP0));
+  CHECK_FALSE(s.cursor().has_value());
+  s.push(key(Key::W, true, tickStart(1)));
+  CHECK(tick(s, kP0, 1).aimDir == 64);  // the move direction, at once
+  // Moving the mouse while off changes nothing; its buttons still press.
+  s.push(mouseMotion(5.0f, 5.0f));
+  s.push(mouseButton(Key::MouseLeft, true, tickStart(2)));
+  const PlayerInput off = tick(s, kP0, 2);
+  CHECK(off.aimDir == 64);
+  CHECK(off.buttons == kfm::sim::buttonBit(Button::Throw));
+  CHECK_FALSE(s.usesMouseAim(kP0));
+
+  // Back on: like a fresh start, the keys aim until the mouse moves again.
+  s.setMouseAimEnabled(true);
+  CHECK_FALSE(s.usesMouseAim(kP0));
+  s.push(key(Key::W, false, tickStart(3)));
+  s.push(key(Key::A, true, tickStart(3)));
+  CHECK(tick(s, kP0, 3).aimDir == 128);
+  s.push(mouseMotion(6.0f, 6.0f));
+  CHECK(s.usesMouseAim(kP0));
+  CHECK(tick(s, kP0, 4).aimDir == 0);  // the cursor again, not the move (128)
+}
+
 TEST_CASE("mouse buttons: left throws, right dashes, edges stamp subTick", "[input][mouse]") {
   InputSampler s;
   REQUIRE(s.bind(kP0, DeviceBinding::keyboard(0)));

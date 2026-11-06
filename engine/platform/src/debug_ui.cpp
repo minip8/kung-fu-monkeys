@@ -4,9 +4,12 @@
 
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
+#include <imgui_internal.h>
 #include <sokol_gfx.h>
 #include <sokol_log.h>
 #include <util/sokol_imgui.h>
+
+#include <algorithm>
 
 namespace kfm::platform {
 
@@ -56,6 +59,17 @@ void debugUiFlush() {
 
 void debugUiDraw() {
   simgui_draw();
+}
+
+bool debugUiMeasuring() {
+  const ImGuiContext* g = ImGui::GetCurrentContext();
+  if (g == nullptr) return false;
+  // HiddenFramesCannotSkipItems is set to 1 by Begin() on the frame a window
+  // is created without a full size, and counted down by the next Begin().
+  return std::ranges::any_of(g->Windows, [](const ImGuiWindow* w) {
+    return (w->Flags & (ImGuiWindowFlags_Popup | ImGuiWindowFlags_Tooltip)) == 0 && w->Active &&
+           w->Hidden && w->HiddenFramesCannotSkipItems > 0;
+  });
 }
 
 bool debugUiWantsKeyboard() {

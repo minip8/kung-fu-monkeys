@@ -4,10 +4,11 @@
 // the between-rounds scoreboard and the match-over screen are tested
 // headlessly and hud.cpp only draws.
 //
-// Shown between rounds in the round kinds (rounds, survival, team rounds:
-// RoundEnded, and RoundStarting after the first round) and at the match's
-// end in every mode (showsScoreboard()). A row is a present slot: its label
-// (the nickname online, else P<n> / BOT<n>), its team, its score (round
+// Shown after a round in the round kinds (rounds, survival, team rounds:
+// RoundEnded only; the next round's countdown, RoundStarting, shows just its
+// banner and count) and at the match's end in every mode
+// (showsScoreboard()). A row is a present slot: its label (the nickname
+// online, else P<n> / BOT<n>), its team, its score (round
 // wins, eliminations, hill points or captures by mode kind), its deaths
 // where the mode counts them (deathmatch, team deathmatch, hill, capture,
 // survival), whether it is a local player or a bot, and whether it won.

@@ -14,6 +14,7 @@ Checks (each PASS/FAIL, plus INFO lines):
   page        the page loads and the Emscripten runtime initialises
   console     no console errors and no uncaught page errors
   webgl2      the canvas has a WebGL2 context whose attributes include desynchronized: true
+              and preserveDrawingBuffer: true (without it a desynchronized canvas flickers)
   renders     the canvas is not a single flat colour
   animates    two screenshots taken a second apart differ (bots move, timers run)
   frames      requestAnimationFrame deltas over --frame-seconds (INFO only: software
@@ -236,7 +237,8 @@ def run(args) -> int:
             report.check("webgl2", False, ctx["error"])
         else:
             attrs = ctx["attributes"]
-            report.check("webgl2", attrs.get("desynchronized") is True,
+            report.check("webgl2", attrs.get("desynchronized") is True
+                         and attrs.get("preserveDrawingBuffer") is True,
                          f"{ctx['width']}x{ctx['height']} {ctx['version']} on {ctx['renderer']}; "
                          f"attributes {attrs}")
 

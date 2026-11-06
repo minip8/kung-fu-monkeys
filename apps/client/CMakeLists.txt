@@ -17,6 +17,7 @@ add_library(kfm_client_core STATIC
   core/lobby_settings.cpp
   core/lobby_menu.cpp
   core/menus.cpp
+  core/menu_highlight.cpp
   core/online_menu.cpp
   core/scoreboard.cpp
   core/bot_roster.cpp

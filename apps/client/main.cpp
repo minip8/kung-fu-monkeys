@@ -6,7 +6,7 @@
 //              [--powerups LIST] [--no-hot-reload] [--no-settings] [--overlay] [--capsules]
 //              [--exit-after-frames N]
 //              [--screenshot out.ppm]
-//              [--mute] [--volume 0..100]
+//              [--mute] [--volume 0..100] [--mouse-aim on|off]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]]
 //
@@ -72,7 +72,7 @@
 // screens.cpp): Play online (the Play online screen: the region with its
 // availability, Create room, a room code and Join; with --connect and no
 // lobby it connects to that server), Play local (the local lobby), Settings
-// (name, volume, sound, bot difficulty) and, natively, Quit. Arrows / WASD,
+// (name, volume, sound, bot difficulty, theme, mouse aim) and, natively, Quit. Arrows / WASD,
 // a pad's d-pad or stick and the mouse move between items, Enter / Space or
 // a pad's South / Start selects, Escape or a pad's East / Back goes back.
 // Escape from the local lobby or any online screen returns to the menu.
@@ -105,6 +105,7 @@
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
+#include "core/menu_highlight.hpp"
 #include "core/menus.hpp"
 #include "core/net_session.hpp"
 #include "core/online_menu.hpp"
@@ -226,10 +227,14 @@ struct App {
   client::ClientAudio audio;
   client::LobbyMenu lobby;      // the local lobby's settings panel
   client::MenuInput menuInput;  // raw input -> lobby menu actions
-  bool lobbyChanged = false;    // a menu action changed a setting this frame
+  // v0.55: the highlight follows the last menu device (mouse: the hovered
+  // item; keys / pads: the focus); revealOnly() drops the press that shows it.
+  client::MenuHighlight highlight;
+  bool lobbyChanged = false;  // a menu action changed a setting this frame
   presentation::RenderState renderState;
   std::uint64_t frames = 0;
   std::uint64_t lastFrameNs = 0;
+  bool heldLastFrame = false;  // the previous frame was not presented (a screen measuring)
   bool quit = false;
   int exitCode = EXIT_SUCCESS;
 };
@@ -400,6 +405,10 @@ void applyLobbySettings(App& app) {
   app.audio.setVolumePercent(ls.volume);
   app.renderer.setThemeChoice(ls.theme);  // v0.52: cosmetic, this screen only
   client::setHudTheme(ls.theme);
+  // Settings > Mouse aim: at once, in the sampler that feeds the match now
+  // (lobbySampler() copies carry it back when an online session ends).
+  s.sampler().setMouseAimEnabled(ls.mouseAim);
+  if (app.net) app.net->sampler().setMouseAimEnabled(ls.mouseAim);
   client::storeLobbySettings(ls, app.content.db, app.options);
   if (app.options.settings) saveSettingsText(client::settingsText(app.options));
 }
@@ -717,6 +726,14 @@ void choosePauseItem(App& app, client::PauseItem item) {
   if (item == client::PauseItem::MainMenu) app.screen = Screen::Menu;
 }
 
+// v0.55: a menu press from the keyboard or a pad (a navigation `action` or
+// a `select` of the focused item) that only reveals the highlight hidden in
+// mouse mode: the caller drops it (MenuHighlight::reveal).
+[[nodiscard]] bool revealOnly(App& app, client::MenuAction action, bool select) {
+  if (action == client::MenuAction::None && !select) return false;
+  return app.highlight.reveal(client::ui::pointerOnFocus());
+}
+
 // v0.46: an event while the pause menu is open, or the one that opens it.
 // True when the event was the menu's: presses stay out of the session.
 bool pauseMenuEvent(App& app, const platform::InputEvent& input) {
@@ -735,7 +752,13 @@ bool pauseMenuEvent(App& app, const platform::InputEvent& input) {
     }
     return true;
   }
-  app.pauseMenu.apply(app.menuInput.translate(input, true));
+  const client::MenuAction action = app.menuInput.translate(input, true);
+  // A pad's Start resumes like Escape: only Enter, Space or South pick.
+  const bool padStart = input.kind == platform::InputEventKind::PadButtonDown &&
+                        input.button == platform::PadButton::Start;
+  const bool pick = client::isMenuActivate(input) && !padStart;
+  if (revealOnly(app, action, pick)) return press;
+  app.pauseMenu.apply(action);
   if (const std::optional<client::PauseItem> item = app.pauseMenu.press(input)) {
     choosePauseItem(app, *item);
   }
@@ -816,6 +839,7 @@ void onEvent(void* user, const SDL_Event& event) {
   handleShortcut(*app, event);
   const auto input = client::translateSdlEvent(event);
   if (!input) return;
+  app->highlight.onEvent(*input);  // v0.55: mouse motion and clicks: pointer mode
   // While a debug text field has the keyboard, key presses stay out of the
   // game; v0.45: a click on a window (the menus, the lobby panel, the
   // match-over buttons, the F1 overlay) is the UI's. Releases always go
@@ -829,14 +853,19 @@ void onEvent(void* user, const SDL_Event& event) {
     client::NetSession& n = *app->net;
     const client::MenuAction action = app->menuInput.translate(*input, true);
     if (n.phase() == client::NetPhase::Waiting && n.isHost()) {
-      if (action != client::MenuAction::None && app->roomMenu.apply(action)) {
+      // Enter is Start (the button says so), not a pick: never held back.
+      if (!revealOnly(*app, action, false) && action != client::MenuAction::None &&
+          app->roomMenu.apply(action)) {
         app->roomChanged = true;
       }
       if (client::isActivateEvent(*input, true)) app->roomStart = true;
     } else if (n.phase() == client::NetPhase::Over || n.canReconnect()) {
       // The match-over buttons, or (v0.44) Reconnect / Leave.
-      app->overMenu.apply(action);
-      if (client::isMenuActivate(*input)) app->overActivate = true;
+      const bool pick = client::isMenuActivate(*input);
+      if (!revealOnly(*app, action, pick)) {
+        app->overMenu.apply(action);
+        if (pick) app->overActivate = true;
+      }
     }
     n.push(*input);
     return;
@@ -845,6 +874,11 @@ void onEvent(void* user, const SDL_Event& event) {
   // reaches the session (no joins, no Start there).
   if (app->screen != Screen::Play) {
     const client::MenuAction action = app->menuInput.translate(*input, true);
+    if (client::isMenuBack(*input)) {
+      menuBack(*app);
+      return;
+    }
+    if (revealOnly(*app, action, client::isMenuActivate(*input))) return;
     switch (app->screen) {
       case Screen::Menu:
         app->mainMenu.apply(action);
@@ -862,7 +896,6 @@ void onEvent(void* user, const SDL_Event& event) {
         break;
     }
     if (client::isMenuActivate(*input)) app->menuActivate = true;
-    if (client::isMenuBack(*input)) menuBack(*app);
     return;
   }
   // The local lobby's settings panel: navigation from the keyboard and the
@@ -871,12 +904,19 @@ void onEvent(void* user, const SDL_Event& event) {
   MatchSession& s = *app->session;
   const bool bound = client::eventDeviceBound(s.sampler(), *input);
   if (s.phase() == SessionPhase::Lobby) {
+    // Enter / Start starts the match (the button says so): never held back.
     const client::MenuAction action = app->menuInput.translate(*input, bound);
-    if (action != client::MenuAction::None && app->lobby.apply(action)) app->lobbyChanged = true;
+    if (!revealOnly(*app, action, false) && action != client::MenuAction::None &&
+        app->lobby.apply(action)) {
+      app->lobbyChanged = true;
+    }
   } else if (s.curr().rules.phase == sim::MatchPhase::MatchEnded) {
     // v0.43: the match-over screen's buttons. Enter on Play again restarts
-    // here; on Back to lobby it goes to the session, which returns.
-    app->overMenu.apply(app->menuInput.translate(*input, bound));
+    // here; on Back to lobby it goes to the session, which returns. v0.55:
+    // a press that only reveals the highlight reaches neither.
+    const client::MenuAction action = app->menuInput.translate(*input, bound);
+    if (revealOnly(*app, action, client::isActivateEvent(*input, bound))) return;
+    app->overMenu.apply(action);
     if (client::isActivateEvent(*input, bound) && app->overMenu.focus() == 0) {
       s.restart(platform::Window::nowNs(), true);
       return;
@@ -1240,6 +1280,21 @@ bool frame(void* user) {
   platform::debugUiFlush();
   if (app->leaveRequested && app->net) leaveNetwork(*app);
 
+  ++app->frames;
+  const bool lastFrame = app->quit || (app->options.exitAfterFrames != 0 &&
+                                       app->frames >= app->options.exitAfterFrames);
+  // A screen's first frame (the main menu at startup, a menu screen on its
+  // first visit) is drawn by ImGui with the panel hidden while it measures
+  // itself: presented, it shows the arena without the menu (and the card at
+  // a wrong size) for one frame. Keep the previous frame on screen instead;
+  // never twice in a row, so a window that never settles cannot freeze it.
+  const bool hold = !lastFrame && !app->heldLastFrame && platform::debugUiMeasuring();
+  app->heldLastFrame = hold;
+  if (hold) {
+    platform::commitWithoutPresent();
+    return true;
+  }
+
   // Around the arena: the theme's background (v0.52); the jungle's is the
   // page's and the menus' dark green (ui::kJungle).
   const presentation::Color bg = app->renderer.look().background;
@@ -1247,10 +1302,6 @@ bool frame(void* user) {
   if (app->rendererReady) app->renderer.draw(app->renderState, camera, w, h);
   platform::debugUiDraw();
   platform::endPass();
-
-  ++app->frames;
-  const bool lastFrame = app->quit || (app->options.exitAfterFrames != 0 &&
-                                       app->frames >= app->options.exitAfterFrames);
   if (lastFrame && !app->options.screenshotPath.empty() &&
       !writePpm(app->options.screenshotPath, w, h)) {
     app->exitCode = EXIT_FAILURE;
@@ -1372,7 +1423,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     platform::gfxShutdown();
     return EXIT_FAILURE;
   }
-  client::ui::applyUiStyle();  // v0.43: the game font and palette
+  client::ui::applyUiStyle();                    // v0.43: the game font and palette
+  client::ui::setMenuHighlight(&app.highlight);  // v0.55: the widgets read it
 
   // Network mode at startup (--connect, --room, --create): straight online;
   // the local lobby stays local play (v0.43).
@@ -1388,6 +1440,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
                                                            .bots = lobby.bots,
                                                            .botSpec = client::botSpec(app.options),
                                                            .hostHandlesStart = false});
+  app.session->sampler().setMouseAimEnabled(lobby.mouseAim);  // a NetSession copies it
   if (!app.session->botSpecError().empty()) {
     std::fprintf(stderr, "error: %s; the bots are the reference bot (%s)\n",
                  app.session->botSpecError().c_str(), app.session->botRoster().describe().c_str());

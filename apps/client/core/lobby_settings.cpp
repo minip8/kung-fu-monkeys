@@ -56,6 +56,7 @@ bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& conte
   out.mute = options.mute;
   out.region = options.region;
   out.theme = options.theme;
+  out.mouseAim = options.mouseAim;
   return true;
 }
 
@@ -71,6 +72,7 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
   options.mute = settings.mute;
   options.region = settings.region;
   options.theme = settings.theme;
+  options.mouseAim = settings.mouseAim;
 }
 
 std::string settingsText(const ClientOptions& options) {
@@ -85,6 +87,7 @@ std::string settingsText(const ClientOptions& options) {
   s += std::string("mute=") + (options.mute ? "1" : "0") + "\n";
   s += "region=" + options.region + "\n";
   s += "theme=" + std::string(presentation::themeChoiceName(options.theme)) + "\n";
+  s += std::string("mouse_aim=") + (options.mouseAim ? "on" : "off") + "\n";
   if (!options.nick.empty()) s += "nick=" + options.nick + "\n";
   return s;
 }
@@ -159,6 +162,13 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
         options.theme = *theme;
       } else {
         warn("theme must be auto, jungle, temple or beach");
+      }
+    } else if (key == "mouse_aim") {
+      const std::optional<bool> on = parseOnOff(value);
+      if (on) {
+        options.mouseAim = *on;
+      } else {
+        warn("mouse_aim must be on or off");
       }
     } else if (key == "region") {
       if (isRegionLabel(value)) {

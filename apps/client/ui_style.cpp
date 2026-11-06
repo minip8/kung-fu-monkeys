@@ -1,5 +1,6 @@
 #include "ui_style.hpp"
 
+#include "core/menu_highlight.hpp"
 #include "kfm/presentation/palette.hpp"
 
 #include <algorithm>
@@ -19,6 +20,7 @@ namespace kfm::client::ui {
 namespace {
 
 ImFont* gDebugFont = nullptr;
+const MenuHighlight* gHighlight = nullptr;
 
 [[nodiscard]] int channel(float v) {
   return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
@@ -225,6 +227,55 @@ float bigButtonHeight(float size) {
   return std::round(size + (2.0f * (std::round(size * 0.3f) + kButtonBorder)));
 }
 
+void setMenuHighlight(const MenuHighlight* highlight) {
+  gHighlight = highlight;
+}
+
+bool pointerMode() {
+  return gHighlight == nullptr || !gHighlight->keys();
+}
+
+namespace {
+[[nodiscard]] bool touchAware(bool hovered) {
+  const ImGuiIO& io = ImGui::GetIO();
+  return MenuHighlight::pointerOver(hovered, io.MouseSource == ImGuiMouseSource_TouchScreen,
+                                    ImGui::IsMouseDown(ImGuiMouseButton_Left));
+}
+}  // namespace
+
+bool pointerOverItem() {
+  return touchAware(ImGui::IsItemHovered());
+}
+
+bool pointerOverRect(ImVec2 min, ImVec2 max) {
+  const bool hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_ChildWindows |
+                                              ImGuiHoveredFlags_AllowWhenBlockedByActiveItem) &&
+                       ImGui::IsMouseHoveringRect(min, max);
+  return touchAware(hovered);
+}
+
+namespace {
+int gPointerFocusFrame = -1;  // the last frame an item took the focus from the pointer
+}  // namespace
+
+bool pointerTakesFocus() {
+  return pointerTakesFocus(pointerOverItem());
+}
+
+bool pointerTakesFocus(bool pointerOver) {
+  const bool takes = pointerMode() && pointerOver;
+  if (takes) gPointerFocusFrame = ImGui::GetFrameCount();
+  return takes;
+}
+
+bool pointerOnFocus() {
+  return ImGui::GetCurrentContext() != nullptr && gPointerFocusFrame == ImGui::GetFrameCount();
+}
+
+bool showsFocus(bool focused, bool pointerOver) {
+  return gHighlight != nullptr ? gHighlight->shows(focused, pointerOver) : pointerOver;
+}
+
 bool bigButton(const char* label, bool focused, float width, bool enabled, float size, Tone tone) {
   const float padX = std::round(size * 0.6f);
   const ImVec2 extent = ImGui::GetFont()->CalcTextSizeA(size, FLT_MAX, 0.0f, label);
@@ -238,7 +289,9 @@ bool bigButton(const char* label, bool focused, float width, bool enabled, float
   ImGui::PushID(label);
   const bool clicked = ImGui::InvisibleButton("##big", ImVec2(w, h + kButtonDrop));
   ImGui::PopID();
-  const bool hovered = enabled && ImGui::IsItemHovered();
+  const bool over = enabled && pointerOverItem();
+  const bool hot = showsFocus(focused, over);  // the ring and the lift
+  const bool hovered = over && pointerMode();  // the lighter face
   const bool held = enabled && ImGui::IsItemActive();
   const ToneColors colors = enabled ? toneColors(tone) : kToneOff;
 
@@ -247,7 +300,7 @@ bool bigButton(const char* label, bool focused, float width, bool enabled, float
     lift = -kButtonDrop;
   } else if (held) {
     lift = -(kButtonDrop - 1.0f);
-  } else if (focused) {
+  } else if (hot) {
     lift = kFocusLift;
   }
   const ImVec2 lo{at.x, at.y - lift};
@@ -257,7 +310,7 @@ bool bigButton(const char* label, bool focused, float width, bool enabled, float
     dl->AddRectFilled(ImVec2(lo.x, at.y + kButtonDrop), ImVec2(hi.x, at.y + h + kButtonDrop),
                       kOutline, kButtonRounding);
   }
-  if (focused && enabled && !held) {
+  if (hot && enabled && !held) {
     const float r = kFocusRingW;
     dl->AddRectFilled(ImVec2(lo.x - r, lo.y - r), ImVec2(hi.x + r, hi.y + r), kFocusRing,
                       kButtonRounding + r);
@@ -315,7 +368,7 @@ bool arrowButton(const char* id, ImGuiDir dir) {
   const float side = ImGui::GetFrameHeight();
   const ImVec2 at = ImGui::GetCursorScreenPos();
   const bool clicked = ImGui::InvisibleButton(id, ImVec2(side, side));
-  const bool hovered = ImGui::IsItemHovered();
+  const bool hovered = pointerMode() && pointerOverItem();
   const bool held = ImGui::IsItemActive();
   const ToneColors colors = toneColors(Tone::Plain);
   ImDrawList* dl = ImGui::GetWindowDrawList();
