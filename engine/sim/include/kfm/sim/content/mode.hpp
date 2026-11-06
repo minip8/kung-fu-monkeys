@@ -114,9 +114,10 @@ struct ModeDef {
   ModeKind kind{ModeKind::Rounds};
   // Rounds, Survival: round wins needed to take the match.
   uint8_t roundsToWin{3};
-  // Shared: the pause after a round ends before the next starts, and the
-  // countdown at round start (players spawned, inputs ignored).
-  uint16_t roundEndTicks{120};
+  // Shared: the pause after a round ends before the next starts (the round
+  // kinds; a clock kind ends the match with no pause), and the countdown at
+  // round start (players spawned, inputs ignored).
+  uint16_t roundEndTicks{180};
   uint16_t roundStartTicks{60};
   // Deathmatch: length of the match's Playing phase. Survival: length of
   // each round. 0 = no clock. Rounds: unused.

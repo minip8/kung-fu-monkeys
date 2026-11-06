@@ -8,7 +8,10 @@
 #   kind                 rounds (default), deathmatch, survival, team_rounds,
 #                        team_deathmatch, hill or capture
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
-#   round_end_ticks      all kinds: pause after a round before the next one
+#   round_end_ticks      rounds, survival, team_rounds: pause after a round
+#                        before the next one (the round's scoreboard); the
+#                        clock kinds end the match without a pause and
+#                        never read it (kept equal for the Observation)
 #   rounds_to_win        rounds, survival: round wins that take the match
 #   time_limit_ticks     deathmatch: length of the match; survival: of each
 #                        round; 0 = no clock
@@ -69,7 +72,7 @@
 name = "rounds"             # free-for-all rounds: last monkey standing scores
 kind = "rounds"
 rounds_to_win = 3           # first to three round wins takes the match
-round_end_ticks = 120       # 2 s pause after a round before the next one
+round_end_ticks = 180       # 3 s pause after a round before the next one
 round_start_ticks = 60      # 1 s countdown with everyone spawned and frozen
 
 [[mode]]
@@ -80,7 +83,7 @@ time_limit_ticks = 10800    # else the leader after 3 minutes (a tied lead is a 
 respawn_ticks = 120         # back in 2 s after an elimination
 respawn_invuln_ticks = 90   # 1.5 s of spawn protection
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 
 [[mode]]
 name = "survival"           # rounds on a clock: last monkey standing, or the
@@ -88,7 +91,7 @@ kind = "survival"           # healthiest (then fewest deaths) when time runs out
 rounds_to_win = 3
 time_limit_ticks = 3600     # 60 s per round
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 
 # v0.32: team modes (architecture §5.3). No baseline: allies' bananas, dash
 # attacks and slam pushes pass through each other (no friendly fire).
@@ -98,7 +101,7 @@ kind = "team_rounds"
 teams = 2
 rounds_to_win = 3           # the first team to three round wins
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 
 [[mode]]
 name = "team_deathmatch"    # a team's eliminations to score_to_win
@@ -109,7 +112,7 @@ time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a 
 respawn_ticks = 120
 respawn_invuln_ticks = 90
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 
 # v0.33: objective modes (architecture §5.3), on arenas with zones.
 [[mode]]
@@ -122,7 +125,7 @@ time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a 
 respawn_ticks = 120
 respawn_invuln_ticks = 90
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 
 [[mode]]
 name = "capture"            # carry the enemy flag home while your own is home
@@ -134,7 +137,7 @@ time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a 
 respawn_ticks = 120
 respawn_invuln_ticks = 90
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 
 # v0.34: the grid space (architecture §5.12). Team rounds on cells: a turn is
 # 15 ticks (four a second) for human lobbies, a walk one cell per turn, a
@@ -155,7 +158,7 @@ baseline = "grid_base"
 arena = "courtyard"
 rounds_to_win = 3
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 # v0.35, the squad contest (architecture §8): each bot sees its own slice.
 # The cone reaches 4 cells, two turns of banana flight and two thirds of the
 # 6-cell throw; hearing is one turn of warning (2 cells per turn, plus 1).
@@ -176,7 +179,7 @@ baseline = "grid_base_1t"
 arena = "courtyard"
 rounds_to_win = 3
 round_start_ticks = 60
-round_end_ticks = 120
+round_end_ticks = 180
 # The same vision: at about a cell per turn the bananas give hearing three
 # turns of warning here (§12).
 vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banana_sight = 1 }
