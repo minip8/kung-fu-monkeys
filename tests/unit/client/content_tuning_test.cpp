@@ -123,6 +123,16 @@ TEST_CASE("client options: network flags", "[client][options]") {
   CHECK_FALSE(parseClientOptions(noUrl, bad, err));
 }
 
+TEST_CASE("client options: the frame limit is on unless --no-frame-limit", "[client][options]") {
+  std::string err;
+  const ClientOptions defaults;
+  CHECK(defaults.frameLimit);
+  ClientOptions o;
+  const std::array<const char*, 2> args = {"kfm_client", "--no-frame-limit"};
+  REQUIRE(parseClientOptions(args, o, err));
+  CHECK_FALSE(o.frameLimit);
+}
+
 TEST_CASE("client options: audio flags", "[client][options][audio]") {
   std::string err;
   const ClientOptions defaults;

@@ -5,7 +5,7 @@
 //              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
 //              [--powerups LIST] [--no-hot-reload] [--no-settings]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
-//              [--mute] [--volume 0..100]
+//              [--no-frame-limit] [--mute] [--volume 0..100]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]
 //              [--screen menu|settings|online|local|paused]
@@ -56,7 +56,7 @@ inline constexpr const char* kUsage =
     "                  [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
     "                  [--powerups LIST] [--no-hot-reload] [--no-settings]\n"
     "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
-    "                  [--mute] [--volume 0..100]\n"
+    "                  [--no-frame-limit] [--mute] [--volume 0..100]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
@@ -89,6 +89,8 @@ inline constexpr const char* kUsage =
     "                         temple or beach (saved; cosmetic, this screen only)\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
+    "  --no-frame-limit       natively, when vsync is unavailable, run frames as fast\n"
+    "                         as possible instead of at the display's refresh rate\n"
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
     "  --verbose              online: the transport's own log (ICE, DTLS, the lobby socket)\n"
     "  --volume N             master volume in percent, 0-100 (default 80)\n"
@@ -132,7 +134,8 @@ struct ClientOptions {
   std::string loadout;
   std::string powerUps;  // --powerups list; empty = all
   bool hotReload{true};
-  bool settings{true};  // read and save the lobby settings (lobby_settings.hpp)
+  bool frameLimit{true};  // pace frames when vsync is unavailable (WindowConfig::paceWithoutVsync)
+  bool settings{true};    // read and save the lobby settings (lobby_settings.hpp)
   // Audio (§7): the mixer's starting settings; the overlay can change them.
   bool mute{false};
   bool verbose{false};  // network mode: libdatachannel's log at Debug on stderr

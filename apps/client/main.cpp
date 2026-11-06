@@ -1356,7 +1356,11 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     app.contentWatcher = content::ContentWatcher(app.content.dir);
   }
 #endif
-  if (!app.window.init({.title = "Kung Fu Monkeys", .width = 1280, .height = 720, .vsync = true})) {
+  if (!app.window.init({.title = "Kung Fu Monkeys",
+                        .width = 1280,
+                        .height = 720,
+                        .vsync = true,
+                        .paceWithoutVsync = app.options.frameLimit})) {
     return EXIT_FAILURE;
   }
   if (!platform::gfxInit()) {
