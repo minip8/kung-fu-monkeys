@@ -15,6 +15,7 @@ add_library(kfm_presentation STATIC
   src/sound_bank.cpp
   src/mixer.cpp
   src/theme.cpp
+  src/ground.cpp
 )
 add_library(kfm::presentation ALIAS kfm_presentation)
 

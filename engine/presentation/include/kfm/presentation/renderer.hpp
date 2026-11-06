@@ -12,7 +12,9 @@
 // qualifiers (SOKOL_GLES3, WebGL2) prefixed at compile time. Uniforms are
 // vec4 arrays (std140-compatible by construction) set with sg_apply_uniforms.
 //
-// Draw order per frame: opaque lit meshes (floor, wall rim, players, aim
+// Draw order per frame: the ground (v0.54, program `ground`: backdrop, pits,
+// land and its cliffs, slow patches, wall shadows and ink lines in one quad),
+// then opaque lit meshes (wall blocks, players, aim
 // indicators, held/flying bananas, pickups) with their ink outlines (v0.49:
 // inverted hulls, program `outline`; a skinned body's right after it), then
 // alpha-blended ground decals
@@ -93,12 +95,13 @@ class Renderer {
     uint32_t indexBuffer{0};
     uint32_t indexCount{0};
   };
-  // capsule, banana, disc, floor, cube, skinned character (empty until loaded)
-  static constexpr std::size_t kMeshCount = 7;
-  // lit, decal, outline, skinned, skinned outline
-  static constexpr std::size_t kShaderCount = 5;
-  // lit, decal alpha, decal additive, outline, skinned, skinned outline
-  static constexpr std::size_t kPipelineCount = 6;
+  // capsule, banana, disc, ground, cube, quad, the arena's walls in each of
+  // the three themes (v0.54), skinned character (empty until loaded)
+  static constexpr std::size_t kMeshCount = 10;
+  // lit, decal, outline, ground, skinned, skinned outline
+  static constexpr std::size_t kShaderCount = 6;
+  // lit, decal alpha, decal additive, outline, ground, skinned, skinned outline
+  static constexpr std::size_t kPipelineCount = 7;
 
   void destroyResources();
   void destroyCharacterModel();
@@ -108,6 +111,17 @@ class Renderer {
   std::array<GpuMesh, kMeshCount> meshes_{};
   std::array<uint32_t, kShaderCount> shaders_{};
   std::array<uint32_t, kPipelineCount> pipelines_{};
+  // v0.54: the indices of one wall block in each theme's wall mesh (every
+  // block of a theme has as many; block i starts at i times this).
+  std::array<uint32_t, kArenaThemeCount> wallIndexCount_{};
+  // v0.54: the ground program's distance fields (ground.hpp GroundField),
+  // one half-float texture per theme built in init() (the themes round
+  // corners differently), and the sim rectangle they cover.
+  std::array<uint32_t, kArenaThemeCount> groundImages_{};
+  std::array<uint32_t, kArenaThemeCount> groundViews_{};
+  uint32_t groundSampler_{0};
+  Vec2f groundFieldOrigin_{};
+  Vec2f groundFieldSize_{};
 
   // The skinned character: CPU copy (joints and clips drive the animation),
   // clip binding and per-slot animation state.
