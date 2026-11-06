@@ -358,6 +358,8 @@ TEST_CASE("throw clip holds after a short Throwing flag", "[presentation][animat
   REQUIRE(s.fade == 0.0f);
 }
 
+namespace {
+
 // v0.53: the two-joint model with its child named as the throwing arm and
 // the bend clip as the charge pose.
 SkinnedModel chargeModel() {
@@ -372,6 +374,8 @@ SkinnedModel chargeModel() {
   const Quat q = pose.joints[1].rotation;
   return 2.0f * std::atan2(q.z, q.w);
 }
+
+}  // namespace
 
 TEST_CASE("the charge pose follows the charge, not the clock", "[presentation][animation]") {
   constexpr float kDt = 1.0f / 60.0f;

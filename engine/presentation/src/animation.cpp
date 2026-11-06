@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <iterator>
+#include <utility>
 
 namespace kfm::presentation {
 
@@ -71,7 +72,7 @@ void sampleBound(const SkinnedModel& model, const ClipBinding& binding, AnimClip
 // v0.53: the strain, a small shake about the model's z axis (the arm's
 // cocking axis) and, for the spine, its x axis.
 void addTremble(Pose& pose, int16_t joint, Vec3 axis, float degrees) {
-  if (joint < 0 || static_cast<uint32_t>(joint) >= pose.count) return;
+  if (joint < 0 || std::cmp_greater_equal(joint, pose.count)) return;
   JointPose& jp = pose.joints[static_cast<std::size_t>(joint)];
   jp.rotation = normalize(jp.rotation * quatFromAxisAngle(axis, degrees * (kPi / 180.0f)));
 }
