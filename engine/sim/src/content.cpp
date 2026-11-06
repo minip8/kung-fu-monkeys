@@ -98,7 +98,7 @@ constexpr ContentDB makeDefaultContent() {
   ModeDef& rounds = c.modes[0];
   rounds.name = ContentName::of("rounds");
   rounds.roundsToWin = 3;
-  rounds.roundEndTicks = 120;
+  rounds.roundEndTicks = 180;
   rounds.roundStartTicks = 60;
   c.modeCount = 1;
 

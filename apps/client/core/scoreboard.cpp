@@ -50,8 +50,7 @@ bool showsScoreboard(const presentation::RenderHud& hud) {
       return true;
     case HudPhase::RoundEnded:
       return !sim::scoresPoints(hud.mode);
-    case HudPhase::RoundStarting:
-      return !sim::scoresPoints(hud.mode) && hud.round > 1;
+    case HudPhase::RoundStarting:  // the countdown shows only its banner and count
     case HudPhase::Lobby:
     case HudPhase::Playing:
       break;

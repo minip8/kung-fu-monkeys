@@ -38,7 +38,7 @@ TEST_CASE("slot labels: the name, else BOT<n> for a bot, else P<n>", "[client][s
   CHECK(client::slotLabel("", client::SlotOwner::Remote, 9) == "P10");
 }
 
-TEST_CASE("the scoreboard shows between rounds in round kinds and at every match end",
+TEST_CASE("the scoreboard shows after a round in round kinds and at every match end",
           "[client][scoreboard]") {
   RenderHud hud;
   hud.mode = sim::ModeKind::Rounds;
@@ -51,9 +51,16 @@ TEST_CASE("the scoreboard shows between rounds in round kinds and at every match
   CHECK_FALSE(showsScoreboard(hud));
   hud.phase = HudPhase::RoundEnded;
   CHECK(showsScoreboard(hud));
+  // The next round's countdown has the screen to itself (the round banner
+  // and the count): the board is gone once RoundStarting begins.
   hud.round = 2;
   hud.phase = HudPhase::RoundStarting;
+  CHECK_FALSE(showsScoreboard(hud));
+  hud.mode = sim::ModeKind::TeamRounds;
+  CHECK_FALSE(showsScoreboard(hud));
+  hud.phase = HudPhase::RoundEnded;
   CHECK(showsScoreboard(hud));
+  hud.mode = sim::ModeKind::Rounds;
   hud.phase = HudPhase::MatchEnded;
   CHECK(showsScoreboard(hud));
   // Deathmatch plays one long round: only its end.

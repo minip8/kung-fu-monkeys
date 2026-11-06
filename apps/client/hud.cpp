@@ -431,7 +431,7 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
 }
 
 // Banners pop in with their effect (bannerScale, event_fx.hpp). v0.43: with
-// the scoreboard on screen (between rounds, the match's end) the banner
+// the scoreboard on screen (after a round, the match's end) the banner
 // moves up and the board sits under it.
 void drawBanners(ImDrawList* dl, const HudView& session, const presentation::RenderState& state,
                  ImVec2 view) {
