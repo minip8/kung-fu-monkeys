@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -106,7 +107,11 @@ TEST_CASE("WebRtcTransport: one client, both lanes, both directions", "[net][web
            f.inbox(0).count(ConnectionEventKind::Connected) == 1;
   }));
   const PeerId peer = f.inbox(0).lastPeer(ConnectionEventKind::Connected);
-  CHECK(peer == PeerId{1});
+  // The server numbers every WebSocket it accepts, one whose handshake then
+  // fails included, so a client that retried on a loaded runner may not be
+  // peer 1: only a fresh, valid client id is guaranteed.
+  CHECK(peer.isValid());
+  CHECK(peer != kServerPeer);
   CHECK(f.server().isConnected(peer));
   CHECK(f.client(c).isConnected(kServerPeer));
   CHECK_FALSE(f.server().isConnected(PeerId{7}));
@@ -289,9 +294,10 @@ TEST_CASE("WebRtcTransport: disconnects are reported on both ends", "[net][webrt
     CHECK(f.inbox(0).lastPeer(ConnectionEventKind::Disconnected) == a.peer);
   }
 
-  // A new client after a disconnect never reuses an id.
+  // A new client after a disconnect never reuses an id: it gets a later one
+  // (3 unless a handshake was retried, which takes an id of its own).
   const auto c = join(f);
-  CHECK(c.peer == PeerId{3});
+  CHECK(c.peer.value > std::max(a.peer.value, b.peer.value));
 }
 
 // The CI flake of v0.43 (one run in three on the Linux Release legs): the
