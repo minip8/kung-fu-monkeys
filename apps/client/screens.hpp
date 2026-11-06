@@ -14,7 +14,8 @@
 
 namespace kfm::client {
 
-// The title, the menu's items as large buttons (the focused one in banana)
+// The menu panel: the title, the items as large buttons in their tones (Play
+// online the lead, Play local the second, the focused one in the cream ring)
 // with the focused item's hint under them, and `corner` (the version line)
 // small in the bottom right. Returns the item clicked.
 [[nodiscard]] std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corner);

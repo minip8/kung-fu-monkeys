@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <string>
@@ -49,7 +50,7 @@ int valueArrows(const char* id, float x, float width, const std::string& value) 
   int direction = 0;
   ImGui::PushID(id);
   ImGui::SameLine(x);
-  if (ImGui::ArrowButton("##l", ImGuiDir_Left)) direction = -1;
+  if (ui::arrowButton("##l", ImGuiDir_Left)) direction = -1;
   ImGui::SameLine();
   const float vx = ImGui::GetCursorPosX();
   const float tw = ImGui::CalcTextSize(value.c_str()).x;
@@ -57,7 +58,7 @@ int valueArrows(const char* id, float x, float width, const std::string& value) 
   ImGui::AlignTextToFramePadding();
   ImGui::TextUnformatted(value.c_str());
   ImGui::SameLine(vx + width);
-  if (ImGui::ArrowButton("##r", ImGuiDir_Right)) direction = +1;
+  if (ui::arrowButton("##r", ImGuiDir_Right)) direction = +1;
   ImGui::PopID();
   return direction;
 }
@@ -77,34 +78,48 @@ std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corn
   std::optional<MainMenuItem> chosen;
   const ImVec2 view = ImGui::GetIO().DisplaySize;
   dimBackground();
-  ImDrawList* bg = ImGui::GetBackgroundDrawList();
-  const float titleSize = std::min(ui::kFontTitle, view.x / 9.0f);
-  const float titleY = view.y * 0.2f;
-  ui::centredText(bg, titleSize, ImVec2(view.x * 0.5f, titleY), ui::kGold, "Kung Fu Monkeys");
-  ui::centredText(bg, ui::kFontUi + 2.0f, ImVec2(view.x * 0.5f, titleY + (titleSize * 0.75f)),
-                  ui::kCream, "Throw bananas. They come back. Dash to catch them.");
+  // The design's menu panel: the title in gold on the bark panel, the items
+  // under it in their own colours, Play online the loudest.
+  const float panelW = std::min(500.0f, view.x - 32.0f);
+  if (ui::beginScreen("##main_menu", panelW, 0.52f)) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float inner = ImGui::GetContentRegionAvail().x;
+    const float x0 = ImGui::GetCursorScreenPos().x;
+    const auto centredLine = [&](float size, ImU32 color, const char* text) {
+      const float tw = ui::textWidth(size, text);
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      ui::shadowText(dl, size, ImVec2(std::round(x0 + ((inner - tw) * 0.5f)), at.y), color, text);
+      ImGui::Dummy(ImVec2(inner, size + 2.0f));
+    };
+    const float titleSize = std::min(ui::kFontTitle - 12.0f, inner / 6.6f);
+    centredLine(titleSize, ui::kTitle, "Kung Fu Monkeys");
+    centredLine(ui::kFontSmall + 1.0f, ui::kCream,
+                "Throw bananas. They come back. Dash to catch them.");
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
 
-  const float width = std::min(380.0f, view.x - 48.0f);
-  ImGui::SetNextWindowPos(ImVec2(view.x * 0.5f, view.y * 0.6f), ImGuiCond_Always,
-                          ImVec2(0.5f, 0.5f));
-  ImGui::SetNextWindowSize(ImVec2(width + 44.0f, 0.0f), ImGuiCond_Always);
-  constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                                      ImGuiWindowFlags_NoSavedSettings |
-                                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar;
-  if (ImGui::Begin("##main_menu", nullptr, kFlags)) {
     const auto items = menu.items();
+    std::optional<MainMenuItem> pointed;  // a disabled item under the mouse: say why
     for (std::size_t i = 0; i < items.size(); ++i) {
       const MainMenuItem item = items[i];
       const bool enabled = menu.enabled(item);
-      if (ui::bigButton(MainMenu::label(item), i == menu.focus(), width, enabled)) {
+      ui::Tone tone = ui::Tone::Plain;
+      float size = ui::kFontButton;
+      if (item == MainMenuItem::PlayOnline) {
+        tone = ui::Tone::Lead;
+        size = ui::kFontButton + 6.0f;  // the loudest button: larger too
+      } else if (item == MainMenuItem::PlayLocal) {
+        tone = ui::Tone::Second;
+      }
+      if (ui::bigButton(MainMenu::label(item), i == menu.focus(), -1.0f, enabled, size, tone)) {
         menu.setFocus(i);
         chosen = item;
       }
-      if (enabled && mouseMoved() && ImGui::IsItemHovered()) menu.setFocus(i);
-      ImGui::Dummy(ImVec2(0.0f, 4.0f));
+      if (ImGui::IsItemHovered()) {
+        if (enabled && mouseMoved()) menu.setFocus(i);
+        if (!enabled) pointed = item;
+      }
     }
-    const char* hint = menu.hint(menu.focusedItem());
+    const char* hint = menu.hint(pointed.value_or(menu.focusedItem()));
     ImGui::PushFont(nullptr, ui::kFontSmall);
     const float hw = ImGui::CalcTextSize(hint).x;
     ImGui::SetCursorPosX(
@@ -114,7 +129,7 @@ std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corn
     ImGui::PopStyleColor();
     ImGui::PopFont();
   }
-  ImGui::End();
+  ui::endScreen();
 
   ImDrawList* fg = ImGui::GetForegroundDrawList();
   ui::shadowText(fg, ui::kFontSmall, ImVec2(12.0f, view.y - 26.0f), ui::kCreamDim,
@@ -160,9 +175,11 @@ SettingsOutcome drawSettingsScreen(SettingsMenu& menu, LobbySettings& settings, 
           ImGui::SetKeyboardFocusHere();
           editNick = false;
         }
+        ui::pushFieldStyle();
         const bool enter = ImGui::InputText(
             "##nick", nickBuf.data(), nickBuf.size(),
             ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+        ui::popFieldStyle();
         if (ImGui::IsItemActivated()) menu.setFocus(i);
         nickEditing = ImGui::IsItemActive();
         if (enter || ImGui::IsItemDeactivatedAfterEdit()) {
@@ -221,7 +238,8 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.0f);
 
     const std::string create = "Create room (" + menu.region() + ")";
-    if (ui::bigButton(create.c_str(), menu.focusedRow() == OnlineRow::CreateRoom, -1.0f)) {
+    if (ui::bigButton(create.c_str(), menu.focusedRow() == OnlineRow::CreateRoom, -1.0f, true,
+                      ui::kFontButton, ui::Tone::Lead)) {
       (void)menu.activate(at(OnlineRow::CreateRoom));
     }
     ImGui::Spacing();
@@ -237,7 +255,8 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     }
     // The label centred on the field's taller line.
     const float lineY = ImGui::GetCursorPosY();
-    const float bigFrame = ui::kFontButton + (2.0f * ImGui::GetStyle().FramePadding.y);
+    // The field as tall as the Join button's face beside it.
+    const float bigFrame = ui::bigButtonHeight(ui::kFontButton);
     ImGui::SetCursorPosY(lineY + ((bigFrame - ImGui::GetFrameHeight()) * 0.5f));
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Room code");
@@ -245,6 +264,8 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     ImGui::SetCursorPosY(lineY);
     const ImVec2 fieldMin = ImGui::GetCursorScreenPos();
     ImGui::PushFont(nullptr, ui::kFontButton);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                        ImVec2(12.0f, (bigFrame - ui::kFontButton) * 0.5f));
     ImGui::SetNextItemWidth(150.0f);
     if (editCode) {
       ImGui::SetKeyboardFocusHere();
@@ -253,19 +274,21 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     const auto filter = [](ImGuiInputTextCallbackData* data) -> int {
       return data->EventChar >= 0x80 || !isRoomCodeChar(static_cast<char>(data->EventChar)) ? 1 : 0;
     };
+    ui::pushFieldStyle();
     const bool enter = ImGui::InputTextWithHint("##room_code", "ABCDE", codeBuf.data(), 6,
                                                 ImGuiInputTextFlags_CharsUppercase |
                                                     ImGuiInputTextFlags_CallbackCharFilter |
                                                     ImGuiInputTextFlags_EnterReturnsTrue,
                                                 filter);
+    ui::popFieldStyle();
+    ImGui::PopStyleVar();
     const ImVec2 fieldMax = ImGui::GetItemRectMax();
     ImGui::PopFont();
     if (ImGui::IsItemActivated()) menu.setFocus(at(OnlineRow::Code));
     codeEditing = ImGui::IsItemActive();
     if (ImGui::IsItemEdited()) menu.setCode(codeBuf.data());
     if (menu.focusedRow() == OnlineRow::Code) {
-      ui::focusBar(ImVec2(fieldMin.x - 4.0f, fieldMin.y - 4.0f),
-                   ImVec2(fieldMax.x + 4.0f, fieldMax.y + 4.0f));
+      ui::focusRing(fieldMin, fieldMax, ImGui::GetStyle().FrameRounding);
     }
     if (enter) {
       menu.setCode(codeBuf.data());
@@ -273,7 +296,8 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
       if (menu.codeValid()) (void)menu.activate(at(OnlineRow::Join));
     }
     ImGui::SameLine();
-    if (ui::bigButton("Join", menu.focusedRow() == OnlineRow::Join, -1.0f, menu.codeValid())) {
+    if (ui::bigButton("Join", menu.focusedRow() == OnlineRow::Join, -1.0f, menu.codeValid(),
+                      ui::kFontButton, ui::Tone::Second)) {
       (void)menu.activate(at(OnlineRow::Join));
     }
     ImGui::Spacing();
