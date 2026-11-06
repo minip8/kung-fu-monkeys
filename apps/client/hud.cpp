@@ -299,13 +299,18 @@ void drawPowerUpDots(ImDrawList* dl, const presentation::RenderPlayer& p, ImVec2
   }
 }
 
+// World units above the top of the head where a monkey's tag (name, ammo
+// pips) is anchored: clear of the rig's round head (v0.54), whose silhouette
+// rises above its top point under the tilted camera.
+constexpr float kTagLift = 0.85f;
+
 void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) {
   const presentation::RenderState& rs = *in.state;
   for (uint16_t k = 0; k < rs.playerCount; ++k) {
     const presentation::RenderPlayer& p = rs.players[k];
     if (!p.visible) continue;
     const presentation::Vec3 head =
-        p.position + presentation::Vec3{0.0f, rs.playerHeight + 0.45f, 0.0f};
+        p.position + presentation::Vec3{0.0f, rs.playerHeight + kTagLift, 0.0f};
     const presentation::ScreenPoint sp = presentation::worldToScreen(*in.camera, head);
     if (!sp.inFront) continue;
     const ImVec2 at{sp.x * in.uiScale, sp.y * in.uiScale};
