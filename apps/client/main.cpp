@@ -6,7 +6,7 @@
 //              [--powerups LIST] [--no-hot-reload] [--no-settings] [--overlay] [--capsules]
 //              [--exit-after-frames N]
 //              [--screenshot out.ppm]
-//              [--mute] [--volume 0..100]
+//              [--mute] [--volume 0..100] [--mouse-aim on|off]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]]
 //
@@ -72,7 +72,7 @@
 // screens.cpp): Play online (the Play online screen: the region with its
 // availability, Create room, a room code and Join; with --connect and no
 // lobby it connects to that server), Play local (the local lobby), Settings
-// (name, volume, sound, bot difficulty) and, natively, Quit. Arrows / WASD,
+// (name, volume, sound, bot difficulty, theme, mouse aim) and, natively, Quit. Arrows / WASD,
 // a pad's d-pad or stick and the mouse move between items, Enter / Space or
 // a pad's South / Start selects, Escape or a pad's East / Back goes back.
 // Escape from the local lobby or any online screen returns to the menu.
@@ -400,6 +400,10 @@ void applyLobbySettings(App& app) {
   app.audio.setVolumePercent(ls.volume);
   app.renderer.setThemeChoice(ls.theme);  // v0.52: cosmetic, this screen only
   client::setHudTheme(ls.theme);
+  // Settings > Mouse aim: at once, in the sampler that feeds the match now
+  // (lobbySampler() copies carry it back when an online session ends).
+  s.sampler().setMouseAimEnabled(ls.mouseAim);
+  if (app.net) app.net->sampler().setMouseAimEnabled(ls.mouseAim);
   client::storeLobbySettings(ls, app.content.db, app.options);
   if (app.options.settings) saveSettingsText(client::settingsText(app.options));
 }
@@ -1388,6 +1392,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
                                                            .bots = lobby.bots,
                                                            .botSpec = client::botSpec(app.options),
                                                            .hostHandlesStart = false});
+  app.session->sampler().setMouseAimEnabled(lobby.mouseAim);  // a NetSession copies it
   if (!app.session->botSpecError().empty()) {
     std::fprintf(stderr, "error: %s; the bots are the reference bot (%s)\n",
                  app.session->botSpecError().c_str(), app.session->botRoster().describe().c_str());

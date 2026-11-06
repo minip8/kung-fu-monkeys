@@ -69,12 +69,13 @@ TEST_CASE("main menu: without a way online, Play online is greyed and skipped", 
   CHECK(m.activate() == MainMenuItem::PlayOnline);
 }
 
-TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme", "[client][menu][settings]") {
+TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme, mouse aim",
+          "[client][menu][settings]") {
   SettingsMenu m;
   LobbySettings ls;
   ls.volume = 80;
   std::string nick = "Bonobo 42";
-  REQUIRE(SettingsMenu::rows().size() == 6);
+  REQUIRE(SettingsMenu::rows().size() == 7);
   CHECK(m.focusedRow() == SettingsRow::Name);
   CHECK(SettingsMenu::rowValue(SettingsRow::Name, ls, nick) == "Bonobo 42");
   CHECK_FALSE(m.apply(MenuAction::Right, ls));  // the name is typed, not cycled
@@ -107,6 +108,20 @@ TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme", "[client]
   CHECK(m.apply(MenuAction::Left, ls));  // wraps
   CHECK(ls.theme == kfm::presentation::ThemeChoice::Beach);
   CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "beach");
+
+  m.apply(MenuAction::Down, ls);  // mouse aim: on by default, either arrow toggles
+  REQUIRE(m.focusedRow() == SettingsRow::MouseAim);
+  CHECK(SettingsMenu::rowLabel(SettingsRow::MouseAim) == std::string("Mouse aim"));
+  CHECK(ls.mouseAim);
+  CHECK(SettingsMenu::rowValue(SettingsRow::MouseAim, ls, nick) == "on");
+  CHECK(m.apply(MenuAction::Right, ls));
+  CHECK_FALSE(ls.mouseAim);
+  CHECK(SettingsMenu::rowValue(SettingsRow::MouseAim, ls, nick) == "off");
+  CHECK(m.apply(MenuAction::Left, ls));
+  CHECK(ls.mouseAim);
+  // The mouse's value arrows go through change() with the row index.
+  CHECK(SettingsMenu::change(m.focus(), -1, ls));
+  CHECK_FALSE(ls.mouseAim);
 
   m.apply(MenuAction::Down, ls);
   CHECK(m.focusedRow() == SettingsRow::Back);

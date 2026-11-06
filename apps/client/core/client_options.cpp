@@ -55,6 +55,12 @@ const char* defaultPageUrl() {
   return KFM_DEFAULT_PAGE_URL;
 }
 
+std::optional<bool> parseOnOff(std::string_view v) {
+  if (v == "on") return true;
+  if (v == "off") return false;
+  return std::nullopt;
+}
+
 bool isRoomCodeChar(char c) {
   return kRoomAlphabet.contains(upper(c));
 }
@@ -200,6 +206,18 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.theme = *theme;
     } else if (arg == "--mute") {
       out.mute = true;
+    } else if (arg == "--mouse-aim" || arg == "--mouse_aim") {  // the browser's ?mouse_aim=
+      if (i + 1 >= args.size()) {
+        error = "--mouse-aim needs on or off";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      const std::optional<bool> on = parseOnOff(v);
+      if (!on) {
+        error = "--mouse-aim must be on or off, got '" + std::string(v) + "'";
+        return false;
+      }
+      out.mouseAim = *on;
     } else if (arg == "--verbose") {
       out.verbose = true;
     } else if (arg == "--volume") {

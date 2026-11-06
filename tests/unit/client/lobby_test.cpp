@@ -473,7 +473,7 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   const std::string text = client::settingsText(saved);
   CHECK(text ==
         "arena=island\nmode=survival\nloadout=parry\npowerups=none\nbots=4\nbot_difficulty=hard\n"
-        "volume=30\nmute=1\nregion=us\ntheme=temple\n");
+        "volume=30\nmute=1\nregion=us\ntheme=temple\nmouse_aim=on\n");
 
   ClientOptions loaded;
   std::vector<std::string> warnings;
@@ -705,4 +705,47 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   room.setContent(db);
   for (const LobbyRow& r : room.rows())
     CHECK(r.kind != LobbyRowKind::Theme);
+}
+
+TEST_CASE("mouse aim: flag, browser query, settings round trip", "[client][lobby][options]") {
+  const sim::ContentDB& db = shipped();
+  ClientOptions o;
+  std::string error;
+  CHECK(o.mouseAim);  // on by default (v0.45's behaviour)
+  REQUIRE(parse({"--mouse-aim", "off"}, o, error));
+  CHECK_FALSE(o.mouseAim);
+  // The browser page turns ?mouse_aim=on into --mouse_aim on.
+  REQUIRE(parse({"--mouse_aim", "on"}, o, error));
+  CHECK(o.mouseAim);
+  ClientOptions bad;
+  CHECK_FALSE(parse({"--mouse-aim", "yes"}, bad, error));
+  CHECK(error == "--mouse-aim must be on or off, got 'yes'");
+  CHECK_FALSE(parse({"--mouse-aim"}, bad, error));
+  CHECK(error == "--mouse-aim needs on or off");
+
+  // Saved as mouse_aim=on|off and read back; a bad value warns and keeps it.
+  ClientOptions saved;
+  saved.mouseAim = false;
+  const std::string text = client::settingsText(saved);
+  CHECK(text.find("\nmouse_aim=off\n") != std::string::npos);
+  ClientOptions loaded;
+  std::vector<std::string> warnings;
+  client::applySettingsText(text, db, loaded, warnings);
+  CHECK(warnings.empty());
+  CHECK_FALSE(loaded.mouseAim);
+  client::applySettingsText("mouse_aim=1\n", db, loaded, warnings);
+  CHECK(warnings.size() == 1);
+  CHECK_FALSE(loaded.mouseAim);
+
+  // A flag wins over the saved value (main.cpp parses the flags again on top).
+  REQUIRE(parse({"--mouse-aim", "on"}, loaded, error));
+  CHECK(loaded.mouseAim);
+
+  // Into the settings the Settings screen edits, and back into the options.
+  LobbySettings ls;
+  REQUIRE(client::lobbySettingsFrom(saved, db, ls, error));
+  CHECK_FALSE(ls.mouseAim);
+  ls.mouseAim = true;
+  client::storeLobbySettings(ls, db, saved);
+  CHECK(saved.mouseAim);
 }
