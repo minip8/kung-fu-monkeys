@@ -133,7 +133,8 @@ TEST_CASE("speed boost: picked up, multiplies move speed, expires after its dura
 
 TEST_CASE("big banana: wider and slower bananas that hit what a normal one misses",
           "[scenario][powerup]") {
-  const ContentDB content = powerUpContent();
+  ContentDB content = powerUpContent();
+  removeThrowCharge(content);  // v0.48: the power-up's multiplier alone
   for (const bool powered : {false, true}) {
     INFO("powered " << powered);
     WorldState s = makePlayingWorld(42, 0b111, content);

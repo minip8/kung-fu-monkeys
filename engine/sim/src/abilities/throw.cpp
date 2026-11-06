@@ -1,8 +1,11 @@
 // Throw behaviour hooks (architecture §5.5, §5.7). The aim direction is
 // captured at activation; the banana spawns on the Startup -> Active
-// transition (with the default startup of 2, on the second tick after the
-// press), spending one ammo. A full boomerang pool makes the throw fizzle
-// without spending ammo or emitting an event.
+// transition (with a startup of 2, on the second tick after the press),
+// spending one ammo. A full boomerang pool makes the throw fizzle without
+// spending ammo or emitting an event. v0.48: a charging def (throwCharges)
+// holds its Startup while the button is down, takes the aim again on the
+// release and scales the banana's speed by throwChargeMul of the ticks held
+// past the startup.
 #include "kfm/sim/abilities/throw.hpp"
 
 #include "systems/angle_of.hpp"
@@ -28,8 +31,8 @@ void applyProjectileModifiers(Boomerang& b, const Player& p, const ContentDB& db
   b.damage = static_cast<uint8_t>(damage < UINT8_MAX ? damage : UINT8_MAX);
 }
 
-void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const MatchContent& content,
-                 EventSink& sink) {
+void spawnBanana(WorldState& s, Player& p, const AbilityState& st, Fixed chargeMul,
+                 const MatchContent& content, EventSink& sink) {
   const EntityId id = s.boomerangs.spawn();
   if (!id.isValid()) return;  // pool full: the throw fizzles, ammo is kept
   const BoomerangDef& def = content.db.boomerang;
@@ -38,6 +41,7 @@ void spawnBanana(WorldState& s, Player& p, const AbilityState& st, const MatchCo
   b.phase = BoomerangPhase::Outbound;
   b.damage = def.damage;
   applyProjectileModifiers(b, p, content.db);
+  b.speedMul = b.speedMul * chargeMul;
   // The banana travels from the thrower's centre to its spawn point through
   // the interior walls (v0.22), so a throw at a wall bounces off it instead
   // of spawning inside or behind it. The outer box is left to
@@ -77,12 +81,25 @@ void throwOnTick(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const A
                  const MatchContent& /*content*/, EventSink& /*sink*/) {}
 
 // NOLINTNEXTLINE(misc-const-correctness): parameter types fixed by AbilityBehavior
-void throwOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const AbilityDef& /*def*/,
+void throwOnPhaseChange(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
                         AbilityPhase from, AbilityPhase to, const MatchContent& content,
                         EventSink& sink) {
   if (from == AbilityPhase::Startup && to == AbilityPhase::Active) {
-    spawnBanana(s, p, st, content, sink);
+    Fixed chargeMul = Fixed::one();
+    if (throwCharges(def)) {
+      // The Startup ran from the activation tick to this one; settle has
+      // already reset phaseTicks, so the hold is measured from the press.
+      const int64_t ran = s.tick.minus(st.activatedTick);
+      const int64_t charged = ran - int64_t{def.startupTicks};
+      chargeMul = throwChargeMul(def, charged > 0 ? static_cast<uint32_t>(charged) : 0u);
+      st.dir = Vec2::fromAngle(p.intent.aim);  // aimed while charging: the release's aim
+    }
+    spawnBanana(s, p, st, chargeMul, content, sink);
   }
+}
+
+bool throwHoldsPhase(const AbilityState& st, const AbilityDef& def, bool buttonHeld) {
+  return buttonHeld && st.phase == AbilityPhase::Startup && throwCharges(def);
 }
 
 void throwOnEnd(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const AbilityDef& /*def*/,

@@ -10,6 +10,12 @@
 
 namespace kfm::sim {
 
+// A holdsPhase for a kind whose phases always run their def's durations.
+[[nodiscard]] constexpr bool neverHolds(const AbilityState& /*st*/, const AbilityDef& /*def*/,
+                                        bool /*buttonHeld*/) {
+  return false;
+}
+
 // Hooks called by AbilitySystem for one ability slot. `p` is the owning
 // player (an element of s.players) and `st` one of p.abilities. Every
 // pointer is non-null; behaviours that do not need a hook use a no-op.
@@ -34,6 +40,11 @@ struct AbilityBehavior {
   // def's phase tags (Dash: PerfectDash while the perfect window may be open).
   // Pure: AbilitySystem re-derives every tick from the state alone.
   Tags (*kindTags)(const AbilityState& st, const AbilityDef& def);
+  // v0.48: true keeps the current phase going past its def's duration
+  // (AbilitySystem's settle does not advance it this tick). `buttonHeld` is
+  // the slot's button in the player's intent (Throw: a charging wind-up runs
+  // while the button is held). Pure, like kindTags.
+  bool (*holdsPhase)(const AbilityState& st, const AbilityDef& def, bool buttonHeld) = &neverHolds;
 };
 
 // kindTags for a kind that grants nothing beyond its def's phase tags.

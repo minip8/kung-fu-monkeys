@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.47 (2026-11-05). Working title taken from the repo name.
+Status: proposal v0.48 (2026-11-06). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -481,6 +481,24 @@ the images and the page ships `deploy/vm/` to every VM in `KFM_VMS` over an IAP 
 is published only after the servers answer the new build, since a client of another build id
 is refused. v0.45 (mouse controls) is the client branch in
 flight.
+v0.48 changes: the charged throw (§5.5, §5.7, §7). Throw is hold and release: the wind-up
+lasts while the button is held and the banana leaves on the release, along the aim of that
+tick. The hold scales the banana's speed, and the outbound time is fixed, so the reach scales
+with it: from `charge_min` (a tap, ×0.6: 5.8 units) evenly to `charge_max` (×1.5: 14.4 units)
+over `charge_ticks` (40) held past the startup, then it stays there (it was 9.6 units for
+every throw). Speed rather than outbound time, so the flight rule a bot reproduces is unchanged
+and `bananas[i].speed` already carries the charge: Observation v1 is untouched, the throw def's
+numbers reach a bot through `defSpeed`, `defParam0` and `defParam1`. The machine gains one
+generic hook, `AbilityBehavior::holdsPhase` (the slot's button held keeps the current phase
+past its duration; a Throw def with a positive rate holds its Startup), and `phaseTicks`
+saturates. Content: `charge_min`, `charge_max` and `charge_ticks` on the base throw and Fast
+Hands (20 ticks); the grid throws do not charge (the grid replays keep their checksums). The
+scripted generator holds a charging throw with a per-tick chance (`chargeHoldPer256`), the
+reference bot holds for the charge the target's distance needs plus 0.4, and the renderer
+grows the aim bar and rings the turning point while a throw charges. Also a NetClient fix: a
+held client (room not Playing) that receives the restarted match's snapshot keeps the restart
+guard until `tryResume()` loads it, so a checksum of the new match is not judged against the
+old world (the room flow's late joiner saw one mismatch).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -988,7 +1006,10 @@ current tick's, so rotation never costs anything (§5.12).
 - `AbilityBehavior` registry: a table indexed by `AbilityKind` holding function pointers
   `canActivate`, `onActivate`, `onTick`, `onPhaseChange`, `onEnd` and (v0.21) `kindTags`, the
   tags the kind itself grants from the slot's state on top of the def's phase tags (Dash:
-  `PerfectDash`); `AbilitySystem` re-derives every bit in `kAbilityKindTags` each tick. The table is a `constexpr`
+  `PerfectDash`); `AbilitySystem` re-derives every bit in `kAbilityKindTags` each tick. v0.48:
+  `holdsPhase(state, def, buttonHeld)` (default `neverHolds`), pure like `kindTags`: true keeps
+  the current phase going past its duration, `buttonHeld` being the slot's button in this
+  tick's intent; `phaseTicks` saturates at 65535, so a phase held for good never wraps. The table is a `constexpr`
   array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
   a scenario test.
 - Players have N ability slots. Base kit is {Dash, Throw}. Buttons belong to slots, not to
@@ -1007,6 +1028,21 @@ current tick's, so rotation never costs anything (§5.12).
   (the catcher's): the tail tick then falls in the recovery, where no phase grants the tag,
   so the window closes with the active phase. Validation: a dash needs `active_ticks >= 1` and
   `perfect_window_ticks <= active_ticks` (was: strictly less).
+- The charged throw (v0.48, `throw.cpp`): a Throw def with a positive `speed` charges.
+  `param0` is the banana speed multiplier of a tap, `param1` that of a full charge and `speed`
+  the multiplier gained per tick held past the startup (TOML `charge_min`, `charge_max`,
+  `charge_ticks`; the loader stores `(max − min) / ticks`, truncated, and requires
+  `0 < min < max`). Its `holdsPhase` keeps the Startup going while the button is down, so a
+  tap still throws on the second tick after the press and a hold throws on the first tick the
+  button is up. On the Startup → Active transition the hold is measured from the press
+  (`tick − activatedTick − startupTicks`, since `settle` has reset `phaseTicks`), the
+  multiplier `min(param0 + speed × held, param1)` joins the power-ups' `speedMul`, and the
+  direction is the aim of the release tick (an uncharged throw keeps the press's aim). The
+  cooldown still counts from the press. Rejected: scaling `outboundTicks` per banana, which
+  changes the flight rule every bot reproduces and needs a per-banana field in the
+  observation (a new Observation version); a hold that slows or roots the thrower (not asked
+  for; content could add it with `root_phases`). Shipped: ×0.6 to ×1.5 over 40 ticks (5.8 to
+  14.4 units out), Fast Hands over 20; the grid throws do not charge.
 - Kinds beyond the base kit (v0.21), each one behaviour file under `src/abilities/`, a def in
   `content/abilities.toml`, one registry line and a scenario test; they read only `AbilityDef`
   numbers and add no `AbilityState` field:
@@ -1258,8 +1294,9 @@ is a defence only for a player who has thrown.
 
 - State: `owner`, `phase` {Outbound, Returning, Grounded}, `pos`, `vel`, `spin`, `ticksAlive`,
   `damage` (default 1, a one-hit kill against base `maxHp`), and (v0.20) the
-  projectile modifiers `speedMul` and `radiusMul` snapshotted at the throw (§5.8): the banana
-  flies at `BoomerangDef::speed × speedMul` out and back, and its wall limits and contact radius
+  projectile modifiers `speedMul` and `radiusMul` snapshotted at the throw (§5.8; v0.48 also
+  the charge multiplier, §5.5): the banana flies at `BoomerangDef::speed × speedMul` out and
+  back, so a charged throw reaches `spawnOffset + speed × speedMul × outboundTicks`, and its wall limits and contact radius
   use `BoomerangDef::radius × radiusMul`. Bananas already bounce off every wall without limit, so
   an "extra bounces" modifier has nothing to extend and is not built.
 - Flight: outbound for `outboundTicks` or until max range, then steer toward the owner's
@@ -2585,6 +2622,12 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
 - **Facing.** Characters rotate smoothly. Upper body follows the aim angle, lower body the move
   direction, blended in the animation layer; the throw direction, the aim indicator and the
   body always agree. This is the main readability gain over direction-quantised sprites.
+  v0.48: while a throw charges (`PlayerFlag::Charging`), the aim bar stretches from its resting
+  length to `kChargeAimLength` and warms toward gold with the charge
+  (`RenderPlayer::throwCharge`), and a ground ring sits at `throwReach` along the aim, where a
+  banana released now would turn for home (the builder's estimate from the def, the
+  boomerang and the thrower's projectile power-ups). Every monkey's charge is drawn: it is a
+  tell, as a wind-up should be.
 - **Asset pipeline.** Characters, bananas and props are modeled, rigged and animated in Blender
   and exported to glTF by a script in the repo (one command regenerates every asset). Low poly
   counts and few joints per character (well under WebGL2 uniform limits for skinning). Per-player

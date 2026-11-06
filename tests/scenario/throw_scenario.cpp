@@ -66,7 +66,8 @@ TEST_CASE("a throw launches one banana two ticks after the press", "[scenario][t
   CHECK(near(b->transform.prevPos.x, origin.x));
   CHECK(near(b->transform.prevPos.y, origin.y - content.boomerang.spawnOffset));
   CHECK(near(b->transform.vel.x, Fixed::zero()));
-  CHECK(near(b->transform.vel.y, -content.boomerang.speed));
+  // v0.48: a tap flies at the boomerang's speed times the charge minimum.
+  CHECK(near(b->transform.vel.y, -(content.boomerang.speed * thr.param0)));
   const bool unmoved = b->transform.pos == b->transform.prevPos;
   const bool movedOnce = b->transform.pos == b->transform.prevPos + b->transform.vel;
   CHECK((unmoved || movedOnce));

@@ -38,6 +38,9 @@ constexpr uint8_t kGoalTick = 16;      // where the goal is measured on a path
 constexpr uint8_t kStrikeTick = 8;     // where the distance to dash-ready enemies is measured
 constexpr uint8_t kDirections = 16;    // stick directions considered
 constexpr uint32_t kMaxThrowHold = 2;  // a standoff's random hold before a lined-up throw
+// v0.48: the speed multiplier a charged throw adds beyond what its reach needs
+// (a faster banana leaves less time to dodge).
+constexpr Fixed kChargeMargin = Fixed::fromRaw(Fixed::kOneRaw * 2 / 5);
 // v0.35, the grid: the fighting range and the throw cap in cells, the turns
 // between two calls, how long a sighting or a call stays a goal, the turns
 // between two quarter turns of the sweep.
@@ -190,6 +193,8 @@ void ReferenceBot::init(uint64_t seed, PlayerId slot) {
   lastMoveDir_ = 0;
   decisions_ = 0;
   throwHold_ = -1;
+  chargeHold_ = 0;
+  chargeSpeed_ = Fixed{};
   pending_.fill(sim::PlayerInput{});
   cellSize_ = Fixed::one();
   bananaSpeed_ = Fixed{};
@@ -635,6 +640,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   }
   if (me.alive == 0 || obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) {
     throwHold_ = -1;
+    chargeHold_ = 0;
     return in;
   }
 
@@ -949,24 +955,66 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   }
 
   // --- throw ----------------------------------------------------------------
-  if (tgt == nullptr || !armed || !ready(thr, blocked) ||
-      thr.kind != static_cast<uint8_t>(ObsAbilityKind::Throw)) {
+  const ObsRules& r = obs.rules;
+  const Fixed offset = Fixed::fromRaw(r.bananaSpawnOffset);
+  // Where to aim for a banana at `speed` leaving in `windUp` ticks: the
+  // target's position extrapolated over the wind-up and the flight.
+  const auto leadAim = [&](const ObsPlayer& t, Fixed speed, int32_t windUp, Vec2& from) {
+    from = myPos + (vec(me.velX, me.velY) * windUp);
+    const Vec2 tp = posOf(t);
+    const Vec2 tv = velOf(t);
+    Vec2 at = tp;
+    for (int it = 0; it < 4; ++it) {
+      const Fixed flight = max(distanceBetween(from, at) - offset, Fixed{}) / speed;
+      at = tp + (tv * (flight + Fixed::fromInt(windUp)));
+    }
+    return at;
+  };
+  if (chargeHold_ > 0) {
+    // v0.48: a charging throw stays held until its planned charge, still
+    // leading the target; with the target gone it leaves at once.
+    if (tgt == nullptr || thr.kind != static_cast<uint8_t>(ObsAbilityKind::Throw)) {
+      chargeHold_ = 0;
+    } else {
+      --chargeHold_;
+      in.buttons = static_cast<uint8_t>(in.buttons | thr.button);
+      Vec2 from{};
+      const Vec2 aimAt = leadAim(*tgt, chargeSpeed_, int32_t{lead} + chargeHold_, from);
+      int32_t aim = directionTo(myPos, aimAt);
+      if (config_.aimNoise != 0) aim += rng_.range(-int32_t{config_.aimNoise}, config_.aimNoise);
+      in.aimDir = static_cast<uint8_t>(aim & 0xFF);
+    }
+  } else if (tgt == nullptr || !armed || !ready(thr, blocked) ||
+             thr.kind != static_cast<uint8_t>(ObsAbilityKind::Throw)) {
     throwHold_ = -1;
   } else {
-    const ObsRules& r = obs.rules;
-    const Fixed speed =
+    const Fixed baseSpeed =
         grid && bananaSpeed_ > Fixed{} ? bananaSpeed_ : Fixed::fromRaw(r.bananaSpeed);
-    const Fixed offset = Fixed::fromRaw(r.bananaSpawnOffset);
-    const int32_t windUp = int32_t{lead} + thr.defStartupTicks;
-    const Vec2 from = myPos + (vec(me.velX, me.velY) * windUp);
-    const Vec2 tp = posOf(*tgt);
-    const Vec2 tv = velOf(*tgt);
-    Vec2 aimAt = tp;
-    for (int it = 0; it < 4; ++it) {
-      const Fixed flight = max(distanceBetween(from, aimAt) - offset, Fixed{}) / speed;
-      aimAt = tp + (tv * (flight + Fixed::fromInt(windUp)));
+    const int32_t outbound = r.bananaOutboundTicks;
+    // v0.48, a charged throw (the def's rate in defSpeed, the multipliers of
+    // a tap and a full charge in defParam0/1): hold for the charge the
+    // target's distance needs plus a margin, aiming for the release.
+    const Fixed rate = Fixed::fromRaw(thr.defSpeed);
+    const Fixed mulMin = Fixed::fromRaw(thr.defParam0);
+    const Fixed mulMax = Fixed::fromRaw(thr.defParam1);
+    const bool charges = !grid && rate > Fixed{} && mulMax > mulMin && outbound > 0;
+    int32_t hold = 0;
+    Fixed speed = charges ? baseSpeed * mulMin : baseSpeed;
+    Vec2 from{};
+    Vec2 aimAt = leadAim(*tgt, speed, int32_t{lead} + thr.defStartupTicks, from);
+    if (charges) {
+      const int32_t maxHold = ((mulMax - mulMin) / rate).ceilToInt();
+      for (int pass = 0; pass < 3; ++pass) {
+        const Fixed need =
+            ((distanceBetween(from, aimAt) - offset + Fixed::half()) / (baseSpeed * outbound)) +
+            kChargeMargin;
+        hold = need <= mulMin ? 0 : std::min(((need - mulMin) / rate).ceilToInt(), maxHold);
+        speed = baseSpeed * min(mulMin + (rate * hold), mulMax);
+        aimAt = leadAim(*tgt, speed, int32_t{lead} + thr.defStartupTicks + hold, from);
+      }
     }
-    Fixed range = (speed * int32_t{r.bananaOutboundTicks}) + offset - Fixed::half();
+    Fixed range =
+        (baseSpeed * (charges ? mulMax : Fixed::one()) * outbound) + offset - Fixed::half();
     if (grid) range = min(range, cellSize_ * kGridThrowCells);
     const Fixed dist = distanceBetween(from, aimAt);
     bool clear = dist <= range;
@@ -1002,6 +1050,10 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     } else if (clear && rng_.below(256) < config_.throwPer256) {
       throwHold_ = -1;
       in.buttons = static_cast<uint8_t>(in.buttons | thr.button);
+      // The press tick is the first held one: the banana leaves after the
+      // startup plus `hold` ticks held past it.
+      chargeHold_ = hold > 0 ? static_cast<uint16_t>(thr.defStartupTicks + hold - 1) : uint16_t{0};
+      chargeSpeed_ = speed;
       int32_t aim = directionTo(myPos, aimAt);
       if (config_.aimNoise != 0) aim += rng_.range(-int32_t{config_.aimNoise}, config_.aimNoise);
       in.aimDir = static_cast<uint8_t>(aim & 0xFF);
