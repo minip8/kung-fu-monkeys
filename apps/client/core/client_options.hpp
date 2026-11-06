@@ -26,6 +26,7 @@
 #pragma once
 
 #include "kfm/ai/bot_spec.hpp"
+#include "kfm/presentation/theme.hpp"
 #include "match_session.hpp"
 #include "net_session.hpp"
 
@@ -84,6 +85,8 @@ inline constexpr const char* kUsage =
     "                         flags win over saved ones)\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
     "  --capsules             draw players as capsules, not the skinned model\n"
+    "  --theme T              arena theme: auto (each arena's own; default), jungle,\n"
+    "                         temple or beach (saved; cosmetic, this screen only)\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
@@ -117,6 +120,7 @@ struct ClientOptions {
   bool autostart{false};
   bool overlay{false};
   bool capsules{false};  // capsule placeholders instead of the skinned character model
+  presentation::ThemeChoice theme{presentation::ThemeChoice::Auto};  // v0.52, --theme
   uint8_t bots{0};
   uint64_t seed{1};
   uint64_t playersSeed{kDefaultBotSeed};  // the bots' seed (SessionConfig::botSeed)

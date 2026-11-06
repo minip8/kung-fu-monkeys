@@ -79,8 +79,12 @@ struct Quat {
 
 // --- model ------------------------------------------------------------------------
 
-// 56 bytes, tightly packed: position, normal, joint indices (as floats, so the
-// shader takes a plain vec4 on every backend) and weights (sum 1).
+// 72 bytes, tightly packed: position, normal, joint indices (as floats, so the
+// shader takes a plain vec4 on every backend), weights (sum 1) and colour.
+// v0.49: the colour is COLOR_0 (white when the file has none): rgb is the
+// part's own colour, alpha its player-colour mask; the renderer draws
+// mix(rgb, player colour, alpha), so a model without COLOR_0 is all player
+// colour, as before.
 struct SkinnedVertex {
   float px{0.0f};
   float py{0.0f};
@@ -90,8 +94,9 @@ struct SkinnedVertex {
   float nz{0.0f};
   std::array<float, kMaxJointInfluences> joints{};
   std::array<float, kMaxJointInfluences> weights{};
+  std::array<float, 4> color{1.0f, 1.0f, 1.0f, 1.0f};
 };
-static_assert(sizeof(SkinnedVertex) == 56);
+static_assert(sizeof(SkinnedVertex) == 72);
 
 struct Joint {
   std::string name;

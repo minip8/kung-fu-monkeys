@@ -398,6 +398,8 @@ void applyLobbySettings(App& app) {
   if (s.botSpec().tier != ls.botTier) s.setBotTier(ls.botTier);
   app.audio.setMuted(ls.mute);
   app.audio.setVolumePercent(ls.volume);
+  app.renderer.setThemeChoice(ls.theme);  // v0.52: cosmetic, this screen only
+  client::setHudTheme(ls.theme);
   client::storeLobbySettings(ls, app.content.db, app.options);
   if (app.options.settings) saveSettingsText(client::settingsText(app.options));
 }
@@ -433,6 +435,8 @@ bool syncRenderer(App& app, const sim::MatchContent& content, std::uint32_t cont
                   std::uint8_t arena) {
   const std::uint64_t key = (std::uint64_t{contentHash} << 8) | arena;
   if (app.rendererReady && key == app.rendererKey) return true;
+  app.renderer.setThemeChoice(app.options.theme);
+  client::setHudTheme(app.options.theme);
   app.rendererReady = app.renderer.init(content);
   app.rendererKey = key;
   if (!app.rendererReady) return false;
@@ -1234,8 +1238,10 @@ bool frame(void* user) {
   platform::debugUiFlush();
   if (app->leaveRequested && app->net) leaveNetwork(*app);
 
-  // v0.43: the page and the menus' dark jungle green (ui::kJungle) around the arena.
-  platform::beginDefaultPass({.r = 0.078F, .g = 0.141F, .b = 0.094F, .a = 1.0F}, w, h);
+  // Around the arena: the theme's background (v0.52); the jungle's is the
+  // page's and the menus' dark green (ui::kJungle).
+  const presentation::Color bg = app->renderer.look().background;
+  platform::beginDefaultPass({.r = bg.r, .g = bg.g, .b = bg.b, .a = 1.0F}, w, h);
   if (app->rendererReady) app->renderer.draw(app->renderState, camera, w, h);
   platform::debugUiDraw();
   platform::endPass();

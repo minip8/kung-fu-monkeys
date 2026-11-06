@@ -14,6 +14,7 @@
 #include "core/scoreboard.hpp"
 #include "kfm/presentation/camera.hpp"
 #include "kfm/presentation/render_state.hpp"
+#include "kfm/presentation/theme.hpp"
 
 #include <array>
 #include <cstddef>
@@ -59,6 +60,10 @@ struct HudView {
 // pause notices, and the connection status line. v0.43: the scoreboard
 // between rounds and, unless view.overScreen, at the match's end.
 void drawMatchHud(const HudView& view, const HudInput& in);
+
+// v0.52: the player's arena theme, which the lobby and room panels' arena
+// previews are drawn in (main.cpp keeps it in step with the renderer's).
+void setHudTheme(presentation::ThemeChoice choice);
 inline void drawMatchHud(const MatchSession& session, const HudInput& in) {
   drawMatchHud(hudView(session), in);
 }

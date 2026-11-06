@@ -112,15 +112,26 @@ HANDS = {UPPER_L: (0.3, 0.95, -1.25), UPPER_R: (0.3, 0.95, 1.25)}
 # --- mesh ----------------------------------------------------------------------
 
 
+# Vertex colours (COLOR_0, architecture v0.49 "Look"): rgb is the part's own
+# colour and alpha the player-colour mask; the renderer draws
+# mix(rgb, player colour, alpha), so a part with alpha 1 (the gi, the
+# headband) wears the slot's colour and the rest keeps its own.
+FUR = (0.54, 0.35, 0.17, 0.0)
+FACE = (0.95, 0.79, 0.56, 0.0)
+EYE = (0.12, 0.08, 0.04, 0.0)
+TINT = (1.0, 1.0, 1.0, 1.0)
+
+
 class Mesh:
     def __init__(self):
         self.positions = []
         self.normals = []
+        self.colors = []
         self.joints = []
         self.weights = []
         self.indices = []
 
-    def vertex(self, p, n, influences):
+    def vertex(self, p, n, influences, color=TINT):
         """influences: list of (joint, weight); the 4 largest, normalised."""
         merged = {}
         for j, w in influences:
@@ -133,15 +144,17 @@ class Mesh:
             infl.append((0, 0.0))
         self.positions.append(p)
         self.normals.append(n)
+        self.colors.append(color)
         self.joints.append(tuple(j for j, _ in infl))
         self.weights.append(tuple(w for _, w in infl))
         return len(self.positions) - 1
 
 
-def capsule(mesh, a, b, radius, skin, segments=12, rings=4):
+def capsule(mesh, a, b, radius, skin, segments=12, rings=4, color=TINT):
     """A capsule from a to b (a sphere when a == b): hemispheres of `rings`
     latitude bands each, poles as single vertices with triangle fans, counter-
-    clockwise seen from outside. skin(p) returns the vertex influences."""
+    clockwise seen from outside. skin(p) returns the vertex influences; every
+    vertex gets `color`."""
     axis = sub(b, a)
     length = math.sqrt(dot(axis, axis))
     d = norm(axis) if length > 1e-9 else (0.0, 1.0, 0.0)
@@ -150,7 +163,7 @@ def capsule(mesh, a, b, radius, skin, segments=12, rings=4):
     v = cross(d, u)
 
     def add_vertex(p, n):
-        return mesh.vertex(p, n, skin(p))
+        return mesh.vertex(p, n, skin(p), color)
 
     # Latitude rings from the bottom (around a) to the top (around b).
     lats = []
@@ -187,6 +200,29 @@ def capsule(mesh, a, b, radius, skin, segments=12, rings=4):
     for s in range(segments):
         s1 = (s + 1) % segments
         mesh.indices += [last[s], last[s1], top]
+
+
+def torus(mesh, center, ring_radius, tube_radius, skin, color, segments=20, sides=6):
+    """A ring around the +y axis through `center` (the headband): `segments`
+    around the ring, `sides` around the tube, counter-clockwise from outside."""
+    rows = []
+    for i in range(segments):
+        theta = 2.0 * math.pi * i / segments
+        out = (math.cos(theta), 0.0, math.sin(theta))
+        c = add(center, mul(out, ring_radius))
+        row = []
+        for j in range(sides):
+            phi = 2.0 * math.pi * j / sides
+            n = add(mul(out, math.cos(phi)), mul((0.0, 1.0, 0.0), math.sin(phi)))
+            p = add(c, mul(n, tube_radius))
+            row.append(mesh.vertex(p, n, skin(p), color))
+        rows.append(row)
+    for i in range(segments):
+        i1 = (i + 1) % segments
+        for j in range(sides):
+            j1 = (j + 1) % sides
+            a, b, c, d = rows[i][j], rows[i1][j], rows[i1][j1], rows[i][j1]
+            mesh.indices += [a, c, b, a, d, c]
 
 
 def smoothstep(e0, e1, x):
@@ -236,21 +272,42 @@ def build_mesh(r, k):
 
         return skin
 
-    # Body: a capsule from the feet to the shoulders, radius 0.9. The capsule
+    # v0.49 (the Jungle Toon character): a gi body in the player colour, a
+    # big furry head with a pale face, dark eyes, round ears, a headband in
+    # the player colour with two tails, furry arms with pale hands, feet and
+    # a tail. The top of the head stays at 3.2 radii (the capsule's height).
+    # Body: a capsule from the feet to the shoulders, radius 0.85. The capsule
     # caps stay spherical; only the spacing of the centres follows k.
-    capsule(mesh, s((0.0, 0.9 / k, 0.0)), s((0.0, 2.4 - 0.9 / k, 0.0)), 0.9 * r, body_skin, 16, 4)
-    # Head, muzzle (it shows which way the model faces) and ears.
-    capsule(mesh, s((0.05, 2.55, 0.0)), s((0.05, 2.55, 0.0)), 0.65 * r, head_skin, 14, 4)
-    capsule(mesh, s((0.55, 2.42, 0.0)), s((0.55, 2.42, 0.0)), 0.32 * r, head_skin, 10, 3)
-    for z in (-0.62, 0.62):
-        capsule(mesh, s((0.0, 2.78, z)), s((0.0, 2.78, z)), 0.2 * r, head_skin, 8, 2)
-    # Arms: upper (shoulder -> elbow) and lower (elbow -> hand) stubs.
+    capsule(mesh, s((0.0, 0.85 / k, 0.0)), s((0.0, 2.2 - 0.85 / k, 0.0)), 0.85 * r, body_skin, 16,
+            4, TINT)
+    for z in (-0.4, 0.4):
+        capsule(mesh, s((0.15, 0.24, z)), s((0.15, 0.24, z)), 0.24 * r, lambda _p: [(ROOT, 1.0)], 10,
+                3, FUR)
+    tail = [(-0.7, 0.7, 0.0), (-1.15, 0.8, 0.0), (-1.25, 1.25, 0.0)]
+    for a, b in zip(tail, tail[1:]):
+        capsule(mesh, s(a), s(b), 0.17 * r, lambda _p: [(ROOT, 1.0)], 8, 2, FUR)
+    # Head, face, muzzle (they show which way the model faces), eyes, ears.
+    capsule(mesh, s((0.05, 2.45, 0.0)), s((0.05, 2.45, 0.0)), 0.75 * r, head_skin, 16, 6, FUR)
+    capsule(mesh, s((0.38, 2.47, 0.0)), s((0.38, 2.47, 0.0)), 0.5 * r, head_skin, 14, 5, FACE)
+    capsule(mesh, s((0.72, 2.27, 0.0)), s((0.72, 2.27, 0.0)), 0.3 * r, head_skin, 10, 3, FACE)
+    for z in (-0.19, 0.19):
+        capsule(mesh, s((0.84, 2.6, z)), s((0.84, 2.6, z)), 0.11 * r, head_skin, 8, 2, EYE)
+    for z in (-0.82, 0.82):
+        capsule(mesh, s((0.0, 2.6, z)), s((0.0, 2.6, z)), 0.27 * r, head_skin, 10, 3, FUR)
+        capsule(mesh, s((0.1, 2.6, 1.05 * z)), s((0.1, 2.6, 1.05 * z)), 0.15 * r, head_skin, 8, 2,
+                FACE)
+    # Headband around the head, its two tails trailing behind.
+    torus(mesh, s((0.05, 2.82, 0.0)), 0.66 * r, 0.085 * r, head_skin, TINT)
+    for z0, z1, y1 in ((0.1, 0.32, 2.55), (-0.1, -0.25, 2.45)):
+        capsule(mesh, s((-0.6, 2.82, z0)), s((-1.02, y1, z1)), 0.07 * r, head_skin, 8, 2, TINT)
+    # Arms: upper (shoulder -> elbow) and lower (elbow -> hand) stubs, a hand.
     for upper, lower in ((UPPER_L, LOWER_L), (UPPER_R, LOWER_R)):
         shoulder, elbow, hand = JOINTS[upper][2], JOINTS[lower][2], HANDS[upper]
         capsule(mesh, s(shoulder), s(elbow), 0.22 * r,
-                limb_skin(shoulder, elbow, upper, (SPINE, 0.3), (lower, 0.5)), 10, 3)
+                limb_skin(shoulder, elbow, upper, (SPINE, 0.3), (lower, 0.5)), 10, 3, FUR)
         capsule(mesh, s(elbow), s(hand), 0.2 * r,
-                limb_skin(elbow, hand, lower, (upper, 0.5), None), 10, 3)
+                limb_skin(elbow, hand, lower, (upper, 0.5), None), 10, 3, FUR)
+        capsule(mesh, s(hand), s(hand), 0.21 * r, lambda _p, j=lower: [(j, 1.0)], 8, 3, FACE)
     return mesh
 
 
@@ -435,6 +492,7 @@ def build_gltf(radius, stretch):
 
     pos = vec_accessor(b, mesh.positions, "VEC3", ARRAY_BUFFER, minmax=True)
     nrm = vec_accessor(b, mesh.normals, "VEC3", ARRAY_BUFFER)
+    col = vec_accessor(b, mesh.colors, "VEC4", ARRAY_BUFFER)
     jnt = b.accessor(b.view(bytes(j for row in mesh.joints for j in row), ARRAY_BUFFER),
                      UBYTE, len(mesh.joints), "VEC4")
     wgt = vec_accessor(b, mesh.weights, "VEC4", ARRAY_BUFFER)
@@ -488,7 +546,8 @@ def build_gltf(radius, stretch):
         "scenes": [{"name": "test_rig", "nodes": [ROOT, mesh_node]}],
         "nodes": nodes,
         "meshes": [{"name": "monkey", "primitives": [{
-            "attributes": {"POSITION": pos, "NORMAL": nrm, "JOINTS_0": jnt, "WEIGHTS_0": wgt},
+            "attributes": {"POSITION": pos, "NORMAL": nrm, "COLOR_0": col, "JOINTS_0": jnt,
+                           "WEIGHTS_0": wgt},
             "indices": idx, "mode": 4}]}],
         "skins": [{"name": "monkey_rig", "joints": list(range(len(JOINTS))),
                    "inverseBindMatrices": ibm, "skeleton": ROOT}],

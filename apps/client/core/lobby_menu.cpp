@@ -193,6 +193,7 @@ void LobbyMenu::rebuildRows() {
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::BotDifficulty};
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
     rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
+    rows_[rowCount_++] = LobbyRow{LobbyRowKind::Theme};
   }
   if (settings_.arena >= content.arenaCount) settings_.arena = 0;
   if (settings_.mode >= content.modeCount) settings_.mode = 0;
@@ -284,6 +285,9 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     case LobbyRowKind::Mute:
       settings_.mute = !settings_.mute;
       break;
+    case LobbyRowKind::Theme:
+      settings_.theme = presentation::cycleThemeChoice(settings_.theme, direction);
+      break;
   }
   return !(settings_ == before);
 }
@@ -308,6 +312,8 @@ std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
       return "Volume";
     case LobbyRowKind::Mute:
       return "Sound";
+    case LobbyRowKind::Theme:
+      return "Arena theme";
   }
   return {};
 }
@@ -335,6 +341,15 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
       return std::to_string(settings_.volume) + "%";
     case LobbyRowKind::Mute:
       return settings_.mute ? "muted" : "on";
+    case LobbyRowKind::Theme: {
+      std::string choice(presentation::themeChoiceName(settings_.theme));
+      if (settings_.theme != presentation::ThemeChoice::Auto) return choice;
+      // Auto shows the theme this arena brings.
+      return choice + " (" +
+             std::string(presentation::themeName(
+                 presentation::suggestedTheme(db.arenaAt(settings_.arena).name.view()))) +
+             ")";
+    }
   }
   return {};
 }

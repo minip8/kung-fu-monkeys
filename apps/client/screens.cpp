@@ -80,7 +80,7 @@ std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corn
   ImDrawList* bg = ImGui::GetBackgroundDrawList();
   const float titleSize = std::min(ui::kFontTitle, view.x / 9.0f);
   const float titleY = view.y * 0.2f;
-  ui::centredText(bg, titleSize, ImVec2(view.x * 0.5f, titleY), ui::kBanana, "Kung Fu Monkeys");
+  ui::centredText(bg, titleSize, ImVec2(view.x * 0.5f, titleY), ui::kGold, "Kung Fu Monkeys");
   ui::centredText(bg, ui::kFontUi + 2.0f, ImVec2(view.x * 0.5f, titleY + (titleSize * 0.75f)),
                   ui::kCream, "Throw bananas. They come back. Dash to catch them.");
 

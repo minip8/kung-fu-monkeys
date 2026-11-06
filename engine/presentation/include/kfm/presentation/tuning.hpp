@@ -61,6 +61,26 @@ inline constexpr float kFlagCarrySize = 0.32f;  // units
 inline constexpr float kFlagCarryLift = 0.35f;  // above the head, units
 inline constexpr float kFlagCarrySpinRadPerSec = 2.0f;
 
+// --- cartoon look (§7 "Look", v0.49) -------------------------------------------------
+// Ink outlines are inverted hulls: the mesh again, pushed out along its normals
+// (boxes: out along each axis, so the corners stay closed) by this many world
+// units, back faces only, in ArenaLook::ink.
+inline constexpr float kOutlineMonkey = 0.045f;
+inline constexpr float kOutlineBanana = 0.022f;
+inline constexpr float kOutlineWall = 0.05f;
+inline constexpr float kOutlinePowerUp = 0.035f;
+// Floor slabs (pits, mud) get a flat ink border this wide instead of a hull
+// (a hull's sides would hide under the floor).
+inline constexpr float kOutlineSlab = 0.06f;
+// Two-band cel shading: n·l above this edge is lit, below it the shade band
+// (kShadeBand × ArenaLook::shadeTint). The edge is anti-aliased with fwidth.
+inline constexpr float kCelBandEdge = 0.12f;
+inline constexpr float kShadeBand = 0.62f;
+// The floor patterns' scales live in each ArenaLook (palette.hpp). Water
+// ripples, chasm mist and mud bubbles animate with presentation time.
+inline constexpr float kWaterRippleSpeed = 1.2f;
+inline constexpr float kMudBubbleHz = 0.35f;
+
 // --- facing (§7) ---------------------------------------------------------------------
 // Body yaw follows the move direction at most this fast (720°/s: a half turn
 // in 0.25 s); aim yaw follows the aim directly.

@@ -104,18 +104,35 @@ TEST_CASE("the generated test rig loads", "[presentation][gltf]") {
   }
 
   // Sized like the capsule in radius units: feet on y = 0, kMonkeyHeightOverRadius tall,
-  // facing +x (at head height the muzzle sticks out further forward than the back of the head).
+  // facing +x (at head height the muzzle sticks out further forward than the back of the head;
+  // v0.49: the head's own parts, not the headband's tails, which wear the player colour).
   REQUIRE(m.boundsMin.y == Approx(0.0f).margin(1e-4));
   REQUIRE(m.height() == Approx(kMonkeyHeightOverRadius).margin(1e-3));
   float headFront = 0.0f;
   float headBack = 0.0f;
   for (const SkinnedVertex& v : m.vertices) {
-    if (v.py < 2.0f) continue;
+    if (v.py < 2.0f || v.color[3] > 0.5f) continue;
     headFront = std::fmax(headFront, v.px);
     headBack = std::fmax(headBack, -v.px);
   }
   REQUIRE(headFront > headBack + 0.2f);
   REQUIRE(m.boundsMax.z == Approx(-m.boundsMin.z).margin(1e-4));  // left-right symmetric
+
+  // v0.49: COLOR_0 is read. The gi and the headband wear the player colour (mask 1, white);
+  // the fur, face and eyes keep their own colour (mask 0); every channel is in [0, 1].
+  std::size_t tinted = 0;
+  std::size_t own = 0;
+  for (const SkinnedVertex& v : m.vertices) {
+    for (const float c : v.color) {
+      REQUIRE(c >= 0.0f);
+      REQUIRE(c <= 1.0f);
+    }
+    REQUIRE((v.color[3] == 0.0f || v.color[3] == 1.0f));
+    if (v.color[3] == 1.0f) ++tinted;
+    if (v.color[3] == 0.0f) ++own;
+  }
+  REQUIRE(tinted > 0);
+  REQUIRE(own > 0);
 
   // Mesh: at most 4 normalised influences per vertex, unit normals.
   REQUIRE(m.vertices.size() < 65536);

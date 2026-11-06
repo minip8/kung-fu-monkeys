@@ -2,9 +2,12 @@
 // the HUD, the menus and the ImGui theme, the game font and the widgets the
 // screens share. Dear ImGui stays the drawing library.
 //
-// Palette: banana yellow for titles, the room code and ammo; cream text on
-// a dark jungle green, leaf green for buttons and focus, bark brown for
-// borders; the player and team colours stay presentation::playerColor().
+// Palette (v0.51, Mango Sunset, architecture §7 "Look"): bark-brown panels
+// with dark ink borders and cream text; buttons sand at rest and mango when
+// focused or hovered, each with a chunky ink drop shadow; gold for titles,
+// headings, the room code and status lines; banana yellow only for bananas
+// (ammo pips, the host's crown); the dark jungle green behind every screen.
+// The player and team colours stay presentation::playerColor().
 //
 // Font: Lilita One (assets/fonts/, SIL Open Font License 1.1), compiled into
 // the binary (cmake/EmbedFile.cmake) and loaded once by applyUiStyle() as
@@ -22,16 +25,19 @@ namespace kfm::client::ui {
 
 // --- palette ---------------------------------------------------------------------------
 inline constexpr ImU32 kBanana = IM_COL32(250, 214, 40, 255);
-inline constexpr ImU32 kBananaDeep = IM_COL32(236, 164, 26, 255);
+inline constexpr ImU32 kGold = IM_COL32(255, 201, 60, 255);   // #ffc93c
+inline constexpr ImU32 kMango = IM_COL32(242, 140, 40, 255);  // #f28c28
+inline constexpr ImU32 kMangoLight = IM_COL32(255, 170, 76, 255);
+inline constexpr ImU32 kMangoDeep = IM_COL32(214, 108, 22, 255);
+inline constexpr ImU32 kSand = IM_COL32(245, 220, 176, 255);  // #f5dcb0
 inline constexpr ImU32 kCream = IM_COL32(255, 244, 214, 255);
-inline constexpr ImU32 kCreamDim = IM_COL32(196, 184, 150, 255);
-inline constexpr ImU32 kJungle = IM_COL32(20, 36, 24, 255);
-inline constexpr ImU32 kJungleLight = IM_COL32(38, 64, 42, 255);
-inline constexpr ImU32 kLeaf = IM_COL32(74, 146, 62, 255);
-inline constexpr ImU32 kLeafLight = IM_COL32(104, 184, 82, 255);
-inline constexpr ImU32 kBark = IM_COL32(110, 74, 40, 255);
-inline constexpr ImU32 kSky = IM_COL32(200, 220, 255, 230);  // status and info lines
-inline constexpr ImU32 kAlarm = IM_COL32(255, 96, 70, 255);  // the last seconds, errors
+inline constexpr ImU32 kCreamDim = IM_COL32(214, 190, 150, 255);
+inline constexpr ImU32 kBark = IM_COL32(74, 44, 23, 255);        // #4a2c17, panels
+inline constexpr ImU32 kBarkLight = IM_COL32(107, 68, 35, 255);  // #6b4423, frames
+inline constexpr ImU32 kInk = IM_COL32(43, 29, 14, 255);         // #2b1d0e, borders
+inline constexpr ImU32 kJungle = IM_COL32(20, 36, 24, 255);      // behind the screens
+inline constexpr ImU32 kSky = IM_COL32(200, 220, 255, 230);      // status and info lines
+inline constexpr ImU32 kAlarm = IM_COL32(255, 96, 70, 255);      // the last seconds, errors
 inline constexpr ImU32 kWhite = IM_COL32(255, 255, 255, 255);
 inline constexpr ImU32 kShadow = IM_COL32(0, 0, 0, 200);
 inline constexpr ImU32 kEmptyPip = IM_COL32(40, 40, 40, 200);
@@ -66,12 +72,13 @@ void centredText(ImDrawList* dl, float size, ImVec2 anchor, ImU32 color, const c
 bool beginScreen(const char* id, float width, float bgAlpha = 0.92f);
 void endScreen();
 // A heading line inside a screen.
-void heading(const char* text, ImU32 color = kBanana, float size = kFontHeading);
-// A large button: banana while focused (the keyboard / pad focus) or
-// hovered, greyed when disabled. True when clicked.
+void heading(const char* text, ImU32 color = kGold, float size = kFontHeading);
+// A large button with an ink border and drop shadow: mango while focused
+// (the keyboard / pad focus) or hovered, sand otherwise, greyed when
+// disabled. True when clicked.
 bool bigButton(const char* label, bool focused, float width, bool enabled = true,
                float size = kFontButton);
-// A row marker: the focused row of a menu, as a rounded banana bar behind it.
+// A row marker: the focused row of a menu, as a rounded mango bar behind it.
 void focusBar(ImVec2 min, ImVec2 max);
 
 }  // namespace kfm::client::ui

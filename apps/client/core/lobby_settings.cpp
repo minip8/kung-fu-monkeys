@@ -55,6 +55,7 @@ bool lobbySettingsFrom(const ClientOptions& options, const sim::ContentDB& conte
   out.volume = options.volume;
   out.mute = options.mute;
   out.region = options.region;
+  out.theme = options.theme;
   return true;
 }
 
@@ -69,6 +70,7 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
   options.volume = settings.volume;
   options.mute = settings.mute;
   options.region = settings.region;
+  options.theme = settings.theme;
 }
 
 std::string settingsText(const ClientOptions& options) {
@@ -82,6 +84,7 @@ std::string settingsText(const ClientOptions& options) {
   s += "volume=" + std::to_string(options.volume) + "\n";
   s += std::string("mute=") + (options.mute ? "1" : "0") + "\n";
   s += "region=" + options.region + "\n";
+  s += "theme=" + std::string(presentation::themeChoiceName(options.theme)) + "\n";
   if (!options.nick.empty()) s += "nick=" + options.nick + "\n";
   return s;
 }
@@ -149,6 +152,13 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
         options.mute = m != 0;
       } else {
         warn("mute must be 0 or 1");
+      }
+    } else if (key == "theme") {
+      const std::optional<presentation::ThemeChoice> theme = presentation::parseThemeChoice(value);
+      if (theme) {
+        options.theme = *theme;
+      } else {
+        warn("theme must be auto, jungle, temple or beach");
       }
     } else if (key == "region") {
       if (isRegionLabel(value)) {

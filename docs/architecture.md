@@ -499,6 +499,50 @@ grows the aim bar and rings the turning point while a throw charges. Also a NetC
 held client (room not Playing) that receives the restarted match's snapshot keeps the restart
 guard until `tryResume()` loads it, so a checksum of the new match is not judged against the
 old world (the room flow's late joiner saw one mismatch).
+v0.49 changes: the cartoon look, step 1 (§7 "Look"). The art direction is **Jungle Toon**, picked
+from a three-way style board (Jungle Toon, Ink Temple, Banana Beach) with the Mango Sunset menu
+colours: thick dark-brown ink outlines, two-band cel shading with a cool shade tint, loud greens.
+The renderer draws it: every monkey, banana, wall, rim block and power-up gets an ink outline (an
+inverted hull, new programs `outline` and `skinned outline`, `tuning.hpp` widths); `lit` goes
+from three toon bands to two (`kCelBandEdge`, `kShadeBand` × `ArenaLook::shadeTint`) and gains
+surfaces read from the world position: grass for the floor (two-tone blotches, tufts, the faint
+unit grid), a river for pits (crest lines that drift), mud with swelling bubble rings, mossy rock
+for walls. The arena colours move into one `ArenaLook` (`palette.hpp` `kJungleLook`), which the
+client's arena preview shares. Yellow moves from player slot 2 to slot 5 (purple the other way)
+so no monkey in a match of up to five wears banana yellow. Presentation only: no sim, content or
+wire change, replay checksums unchanged. Next: the character (fur and gi), the Mango Sunset UI,
+then a theme per arena.
+v0.50 changes: the cartoon look, step 2: the character (§7 "Look"). The generated rig gets
+vertex colours (glTF `COLOR_0`: rgb the part's own colour, alpha the player-colour mask) and a
+cartoon build: brown fur, a bigger head (radius 0.75 of 3.2) with a pale face, dark eyes, round
+ears, pale hands, feet and a tail; the gi and a headband (a torus with two tails) wear the slot's
+colour. `SkinnedVertex` grows to 72 bytes with the colour (white, so all player colour, when a
+file has none); `lit` draws `mix(rgb, colour, alpha)` and fades a whole body toward grey for
+an eliminated monkey, fur included. Bananas get brown tips (a `lit` surface over the mesh's u).
+Presentation only; replay checksums unchanged.
+v0.51 changes: the cartoon look, step 3: the Mango Sunset UI (§7 "Look", `apps/client/ui_style.hpp`).
+Panels, HUD cards and the ImGui theme go from dark jungle green with leaf-green buttons to
+bark-brown panels with dark ink borders; big buttons are sand at rest and mango when focused or
+hovered, with a 3 px ink border and a 5 px ink drop shadow (drawn behind the finished button on a
+split draw list); titles, headings, the room code and status lines are gold; banana yellow is
+kept for bananas (ammo pips, the host's crown); the dark jungle green stays behind every screen.
+The palette names roles (`kMango`, `kGold`, `kSand`, `kBark`, `kInk`) instead of the old leaf
+greens. Client only; replay checksums unchanged.
+v0.52 changes: the cartoon look, step 4: arena themes the player chooses (§7 "Look",
+`kfm/presentation/theme.hpp`). A theme is an `ArenaLook` (colours plus the surface kind of the
+floor, walls, pits and slow patches): Jungle (grass, mossy rock, river, mud), Temple (flagstones,
+red lacquer walls under jade roofs, misty chasms, rice paddies) and Beach (rippled sand with
+shells, wooden crates, sea, tide pools); `lit` gains the paving, sand, chasm, planks and lacquer
+surfaces, and every floor gets the unit grid and wall band. A theme is cosmetic and local: each
+client draws with its own player's choice, so two players in one match may see different
+themes, and nothing reaches the sim, the content hash or the wire. This reverses the first idea
+of a `theme` key in the arena TOML, which would have made the theme part of the content every
+peer must match. The choice is Auto (each arena's suggested theme, a table in
+`theme.cpp`: dojos and courtyards Temple, island and outposts Beach, the rest and any unknown
+arena Jungle) or one theme everywhere; it is saved (`theme=`), set by `--theme` / `?theme=`, and
+changed in Settings and the local lobby panel (not the room's, which carries only room
+settings). The client clears around the arena with the theme's background; the lobby's arena
+preview draws in the theme. Replay checksums unchanged.
 v0.53 changes: the charge reads on the monkey, not the floor (§7). The v0.48 ground ring at the
 turning point is gone (and `RenderPlayer::throwReach` with it). A new clip, `charge`, is a
 wind-up pose scrubbed by `throwCharge` rather than played over time: the throwing arm swings
@@ -508,8 +552,7 @@ the spine (two incommensurate sines, fading in over 0.15 s), on top of the sampl
 release starts the throw clip `charge × 0.1 s` in, past as much of its own wind-up as the
 charge pose already did, and owes it a whole clip. The rig gains `hand_r`, an unweighted leaf
 under the forearm, and the held banana is drawn there on skinned bodies (the capsule fallback
-keeps its fixed spot). The growing gold aim bar stays. v0.49 to v0.52 are the cartoon-look
-stack in flight (#37 to #40).
+keeps its fixed spot). The growing gold aim bar stays.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2620,7 +2663,36 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   (`kPitRimWidth`) along every stretch of edge that meets open floor (adjoining pit boxes and
   the outer wall get none, so a ring of boxes reads as one pit); slow patches as a mud slab.
   Slabs stay under the blob shadows. Colours are `kArenaWallColor`, `kArenaPitColor`,
-  `kArenaPitRimColor`, `kArenaSlowColor` in `palette.hpp`, sizes in `tuning.hpp`.
+  `kArenaPitRimColor`, `kArenaSlowColor` in `palette.hpp`, sizes in `tuning.hpp`. (v0.49: the
+  colours are the arena look's, below; a pit is water with a bank strip, a wall mossy rock.)
+- **Look (v0.49).** The art direction is Jungle Toon: a Saturday-morning cartoon in a jungle
+  clearing. Rules every theme keeps: players pop first (the floor is mid-value and muted; the
+  player colour is large and saturated); the banana is the brightest object on screen and always
+  outlined; hazards read by shape (a pit is always a drop, mud always bubbles, a wall always
+  stands tall), so a theme changes the dressing, never what a thing means; looks are
+  presentation only. As built: every monkey, banana, wall, rim block, power-up and carried flag
+  has a dark-brown ink outline, an inverted hull (the mesh again with front faces culled, pushed
+  out in world space by a fixed width: along the normal for smooth meshes, along each box axis
+  for cubes so the corners stay closed); a floor slab (pit, mud) sits on a lower ink slab
+  `kOutlineSlab` wider instead, since a hull's sides would hide under the floor. Shading is two
+  cel bands (lit, and `kShadeBand` × a cool `shadeTint` below `kCelBandEdge` on n·l,
+  anti-aliased with `fwidth`). `lit` draws surfaces from the world position so patterns never
+  stretch with a box's scale: grass (two-tone blotches, small tufts, the faint unit grid, the
+  darker band along the walls), water (deep patches and drifting crest lines), mud (blotches and
+  bubble rings) and mossy rock (moss blotches on top faces). The colours are one `ArenaLook`
+  (`palette.hpp`: `kJungleLook`, from the style board's swatches); the client's arena preview
+  draws from the same look. The clear colour around the arena is the canopy green. The
+  character (v0.50): the rig's vertex colours (`COLOR_0`, rgb the part's colour, alpha the
+  player-colour mask) give brown fur, a pale face and hands, dark eyes, and the slot's colour on
+  the gi and the headband (a torus with two tails); the head is big (0.75 of the 3.2-radius
+  height) and the top of the head stays at the capsule's height. An eliminated monkey fades 0.8
+  toward grey as a whole. Bananas have brown tips. The UI (v0.51) is the style board's Mango
+  Sunset menu: bark-brown panels, ink borders, sand buttons that turn mango under focus with a
+  chunky ink drop shadow, gold titles (`apps/client/ui_style.hpp`). Arena themes (v0.52,
+  `theme.hpp`): Jungle, Temple and Beach `ArenaLook`s, each naming its floor, wall, pit and
+  slow-patch surfaces; the player picks Auto (the arena's suggested theme) or one theme
+  everywhere, locally, and nothing of it leaves the client. Props (bamboo clumps, stalls,
+  treehouses) would be procedural meshes per theme, a later step.
   `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
@@ -2823,8 +2895,9 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   banners 1 / 1.5 / 3 s; at most 64 live effects (128 since v0.19, "Effects" below), the one nearest expiry is replaced when full.
   Screen shake adds 0.12 per hit, 0.3 per elimination, 0.08 per perfect catch, capped at 0.5,
   decays with τ = 0.15 s and oscillates at 23 Hz.
-- Palette (slot order): red, blue, yellow, green, orange, purple, cyan, pink, white, charcoal;
-  every pair at least 0.25 apart in RGB.
+- Palette (slot order): red, blue, purple, green, orange, yellow, cyan, pink, white, charcoal
+  (v0.49: yellow and purple swapped, so slots 0–4 never wear banana yellow); every pair at least
+  0.25 apart in RGB.
 - Placeholder meshes are generated on the CPU (`meshes.hpp`): capsule (16 × 4 per hemisphere),
   banana (a tapered tube bent along a quarter arc whose chord equals the hitbox diameter), disc,
   floor quad whose `uv` is the sim-plane position (a one-unit grid is `fract(uv)`), unit cube.
@@ -2840,10 +2913,12 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   (`kfm::sokol`: one implementation TU, backend define as a public compile definition) so the
   renderer in `presentation` can use it without depending on `platform`.
 - Renderer (`kfm_renderer`): two programs, `lit` (opaque meshes and the floor) and `decal`
-  (unlit discs for shadows, rings and bursts). Uniform blocks are flat `vec4` arrays in std140
+  (unlit discs for shadows, rings and bursts); v0.49 adds `outline` and `skinned outline` (ink
+  hulls, "Look" above) and gives `lit` a sixth fragment vec4. Uniform blocks are flat `vec4` arrays in std140
   layout (matrices as four columns; the C++ structs are built only from `Mat4`/`Vec4` and
   static-asserted to 16·N bytes, so there is no vec3 padding to get wrong); at most 8 vec4s per
-  stage, far below WebGL2 limits. One directional light with a three-band toon ramp; a player
+  stage, far below WebGL2 limits. One directional light with a three-band toon ramp (two cel
+  bands since v0.49); a player
   flash mixes toward white, dashing adds emissive, invulnerability blinks. The floor grid is
   `fract(uv)` with `fwidth` anti-aliasing. Blob shadows are alpha-blended discs just above the
   ground with depth test on, depth write off and a depth bias, darker at the rim so the hitbox
@@ -2851,7 +2926,13 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
   shows a dash, a small banana in hand shows ammo, flying bananas are tinted toward the owner's
   colour. Draw order: opaque, alpha ground decals and billboards, additive billboards; nothing is
   sorted. The per-frame path allocates nothing. Measured 47–55 draw calls and under 5k triangles
-  for 10 players; budget 100 draw calls per frame before instancing is worth doing.
+  for 10 players; budget 100 draw calls per frame before instancing is worth doing. v0.49: an
+  outline is one more draw per outlined object (static hulls queue and draw in one pipeline run,
+  at most 160 a frame; a skinned body's right after it); `kfm_render_probe` measured 37 draw
+  calls on `pillars` with one player, 97 on `island` in a 4-player round with effects, and 145 in
+  a 10-player `grid_rounds` on `courtyard` (a tilemap of many wall boxes, each drawn twice): over
+  the soft budget, cheap for WebGL2, and the follow-up is to bake an arena's static walls and
+  their hulls into one mesh each when the arena loads.
 - GPU skinning (v0.15): the one rigged test model of the M2 exit criterion is generated at
   build time by `tools/assets/gen_test_rig.py` (stdlib Python, byte-identical output; CMake
   target `kfm_test_rig`), copied next to each executable natively and embedded in the browser

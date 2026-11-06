@@ -69,12 +69,12 @@ TEST_CASE("main menu: without a way online, Play online is greyed and skipped", 
   CHECK(m.activate() == MainMenuItem::PlayOnline);
 }
 
-TEST_CASE("settings menu: name, volume, sound, bot difficulty", "[client][menu][settings]") {
+TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme", "[client][menu][settings]") {
   SettingsMenu m;
   LobbySettings ls;
   ls.volume = 80;
   std::string nick = "Bonobo 42";
-  REQUIRE(SettingsMenu::rows().size() == 5);
+  REQUIRE(SettingsMenu::rows().size() == 6);
   CHECK(m.focusedRow() == SettingsRow::Name);
   CHECK(SettingsMenu::rowValue(SettingsRow::Name, ls, nick) == "Bonobo 42");
   CHECK_FALSE(m.apply(MenuAction::Right, ls));  // the name is typed, not cycled
@@ -100,6 +100,13 @@ TEST_CASE("settings menu: name, volume, sound, bot difficulty", "[client][menu][
   CHECK(ls.botTier == ai::ReferenceTier::Easy);
   CHECK(m.apply(MenuAction::Left, ls));
   CHECK(ls.botTier == ai::ReferenceTier::Hard);
+
+  m.apply(MenuAction::Down, ls);  // v0.52
+  REQUIRE(m.focusedRow() == SettingsRow::Theme);
+  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "auto");
+  CHECK(m.apply(MenuAction::Left, ls));  // wraps
+  CHECK(ls.theme == kfm::presentation::ThemeChoice::Beach);
+  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "beach");
 
   m.apply(MenuAction::Down, ls);
   CHECK(m.focusedRow() == SettingsRow::Back);
@@ -166,11 +173,12 @@ TEST_CASE("the room host's menu has only the rows a RoomSettings carries (v0.43)
   client::LobbyMenu m;
   const std::size_t all = m.rows().size();
   m.setRoomRows(true);
-  CHECK(m.rows().size() == all - 3);
+  CHECK(m.rows().size() == all - 4);
   for (const client::LobbyRow& r : m.rows()) {
     CHECK(r.kind != client::LobbyRowKind::BotDifficulty);
     CHECK(r.kind != client::LobbyRowKind::Volume);
     CHECK(r.kind != client::LobbyRowKind::Mute);
+    CHECK(r.kind != client::LobbyRowKind::Theme);  // v0.52: personal, not the room's
   }
   CHECK(m.rows().back().kind == client::LobbyRowKind::Bots);
   // Navigation stays on those rows: Up from the first wraps to Bots.
