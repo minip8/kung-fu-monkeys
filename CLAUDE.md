@@ -112,6 +112,9 @@ build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players
 build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
 build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay] [--mute] [--volume 0..100]   # playable client
+#   v0.54: where vsync cannot be set (X11 under WSLg) the native client paces itself at the display's refresh rate;
+#   --no-frame-limit runs unpaced (use it for long --exit-after-frames runs, which otherwise take N/60 seconds).
+#   A moving monkey glides in its idle pose: the run clip is off behind kMonkeyRunCycle (presentation/tuning.hpp)
 build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
 #   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
 #   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
@@ -218,7 +221,7 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 #   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). v0.44: a lost link offers
 #   Reconnect (the same server with the same token, or a lobby rejoin of the room: lobby protocol v1.2 `join` + `token`);
 #   a full room queues a joiner as a spectator until a bot yields its slot (round end, or a bot off the field). A real-link check needs
-#   --exit-after-frames in the thousands: headless without vsync the client runs hundreds of frames a second
+#   --exit-after-frames in the thousands with --no-frame-limit: unpaced, the client runs hundreds of frames a second
 deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
 #   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images, then update.sh on every VM in the KFM_VMS
 #   variable over IAP, restarting at once (v0.47; deploy/gcp/setup_deploy_identity.sh once), then Cloudflare Pages);

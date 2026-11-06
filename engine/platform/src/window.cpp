@@ -119,12 +119,23 @@ bool Window::init(const WindowConfig& config) {
   if (!SDL_GL_SetSwapInterval(config.vsync ? 1 : 0)) {
     // Not fatal: some drivers (and Emscripten) refuse; the loop still runs.
     SDL_Log("kfm: SDL_GL_SetSwapInterval failed: %s", SDL_GetError());
+#ifndef __EMSCRIPTEN__
+    if (config.vsync && config.paceWithoutVsync) {
+      const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(SDL_GetDisplayForWindow(window_));
+      pacer_.setRate(mode != nullptr && mode->refresh_rate > 0.0F
+                         ? static_cast<double>(mode->refresh_rate)
+                         : FramePacer::kFallbackHz);
+      SDL_Log("kfm: no vsync; pacing frames at %.2f Hz",
+              1e9 / static_cast<double>(pacer_.periodNs()));
+    }
+#endif
   }
   SDL_StartTextInput(window_);  // ImGui text fields; harmless otherwise
   return true;
 }
 
 void Window::shutdown() {
+  pacer_.setRate(0.0);
   if (gl_ != nullptr) {
     SDL_GL_DestroyContext(gl_);
     gl_ = nullptr;
@@ -154,7 +165,12 @@ float Window::pixelDensity() const {
 }
 
 void Window::swap() {
-  if (window_ != nullptr) SDL_GL_SwapWindow(window_);
+  if (window_ == nullptr) return;
+  SDL_GL_SwapWindow(window_);
+  if (pacer_.active()) {
+    const std::uint64_t wait = pacer_.waitAfterPresent(SDL_GetTicksNS());
+    if (wait > 0) SDL_DelayPrecise(wait);
+  }
 }
 
 std::uint64_t Window::nowNs() {

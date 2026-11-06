@@ -568,6 +568,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   out.arenaHalfExtents = toFloat(match.arena.halfExtents);
   buildArenaPieces(match.arena, out);
   buildZones(match, out);
+  out.floorGridCell = match.mode.space == sim::Space::Grid ? match.arena.cellSize.toFloat() : 0.0f;
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
   out.bananaRadius = content.boomerang.radius.toFloat();

@@ -7,10 +7,13 @@
 #include "kfm/presentation/renderer.hpp"
 
 #include "kfm/presentation/animation.hpp"
+#include "kfm/presentation/builder.hpp"
 #include "kfm/presentation/gltf_loader.hpp"
+#include "kfm/presentation/ground.hpp"
 #include "kfm/presentation/meshes.hpp"
 #include "kfm/presentation/palette.hpp"
 #include "kfm/presentation/tuning.hpp"
+#include "kfm/presentation/world_basis.hpp"
 #include "shaders.hpp"
 
 #include <sokol_gfx.h>
@@ -20,6 +23,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <utility>
@@ -32,27 +36,32 @@ namespace {
 constexpr std::size_t kCapsuleMesh = 0;
 constexpr std::size_t kBananaMesh = 1;
 constexpr std::size_t kDiscMesh = 2;
-constexpr std::size_t kFloorMesh = 3;
+constexpr std::size_t kGroundMesh = 3;  // v0.54: the arena plane plus kGroundMargin
 constexpr std::size_t kCubeMesh = 4;
 constexpr std::size_t kQuadMesh = 5;  // v0.33: a unit floor quad, uv centred on 0 (zones)
-constexpr std::size_t kSkinnedMesh = 6;
-constexpr std::size_t kStaticMeshCount = 6;  // built in init(); the skinned one is loaded later
+constexpr std::size_t kWallMesh = 6;  // v0.54: the arena's wall blocks, one mesh per theme
+constexpr std::size_t kSkinnedMesh = kWallMesh + kArenaThemeCount;
+// Built in init() from their own data (the walls after them, from the
+// arena); the skinned one is loaded later.
+constexpr std::size_t kStaticMeshCount = 6;
 
 // Shader and pipeline slots: the static ones first (made in init()), then the
 // character's (made in loadCharacterModel()).
 constexpr std::size_t kLitShader = 0;
 constexpr std::size_t kDecalShader = 1;
 constexpr std::size_t kOutlineShader = 2;
-constexpr std::size_t kSkinnedShader = 3;
-constexpr std::size_t kSkinnedOutlineShader = 4;
-constexpr std::size_t kStaticShaderCount = 3;
+constexpr std::size_t kGroundShader = 3;
+constexpr std::size_t kSkinnedShader = 4;
+constexpr std::size_t kSkinnedOutlineShader = 5;
+constexpr std::size_t kStaticShaderCount = 4;
 constexpr std::size_t kLitPipeline = 0;
 constexpr std::size_t kDecalAlphaPipeline = 1;
 constexpr std::size_t kDecalAdditivePipeline = 2;
 constexpr std::size_t kOutlinePipeline = 3;
-constexpr std::size_t kSkinnedPipeline = 4;
-constexpr std::size_t kSkinnedOutlinePipeline = 5;
-constexpr std::size_t kStaticPipelineCount = 4;
+constexpr std::size_t kGroundPipeline = 4;
+constexpr std::size_t kSkinnedPipeline = 5;
+constexpr std::size_t kSkinnedOutlinePipeline = 6;
+constexpr std::size_t kStaticPipelineCount = 5;
 
 // --- look ----------------------------------------------------------------------
 // Direction toward the light: from above, a little left and toward the camera,
@@ -71,8 +80,6 @@ constexpr Color kSpark{1.0f, 0.62f, 0.25f};
 constexpr Color kSmoke{0.72f, 0.72f, 0.74f};
 constexpr Color kDust{0.62f, 0.52f, 0.38f};
 
-constexpr float kWallHeight = 0.35f;
-constexpr float kWallThickness = 0.3f;
 constexpr float kZoneLift = 0.006f;      // v0.33: zones lie under the shadows
 constexpr float kShadowLift = 0.012f;    // above the floor, plus a depth bias
 constexpr float kDecalLift = 0.022f;     // rings and trails sit above the shadows
@@ -112,10 +119,12 @@ static_assert(sizeof(LitVsParams) == static_cast<std::size_t>(shaders::kLitVsVec
 struct LitFsParams {
   Vec4 color;
   Vec4 light;   // toward the light, shade band
-  Vec4 params;  // surface, flash, emissive, phase
-  Vec4 floor;   // arena half extents, grass patch scale, tuft cells
+  Vec4 params;  // surface, flash, emissive, unused
+  Vec4 box;     // walls: the block's centre (world x, z) and half size
   Vec4 shade;   // shade tint, cel band edge
-  Vec4 alt;     // the surface's second colour, tuft density
+  Vec4 alt;     // the surface's second colour; walls: the height; toon: the fade
+  Vec4 third;   // walls: the third colour
+  Vec4 fourth;  // walls: the fourth colour
 };
 static_assert(sizeof(LitFsParams) == static_cast<std::size_t>(shaders::kLitFsVec4s) * 16);
 
@@ -150,6 +159,71 @@ static_assert(sizeof(SkinnedOutlineVsParams) ==
 struct DecalVsParams {
   Mat4 mvp;
 };
+
+struct GroundVsParams {
+  Mat4 mvp;
+};
+static_assert(sizeof(GroundVsParams) == static_cast<std::size_t>(shaders::kGroundVsVec4s) * 16);
+
+// The ground program's look, boxes and walls (shaders.hpp kGroundFs).
+struct GroundFsParams {
+  std::array<Vec4, shaders::kGroundFsVec4s> v{};
+};
+static_assert(sizeof(GroundFsParams) == static_cast<std::size_t>(shaders::kGroundFsVec4s) * 16);
+
+[[nodiscard]] constexpr Vec4 rgbw(Color c, float w = 0.0f) {
+  return {c.r, c.g, c.b, w};
+}
+
+// The ground program's uniforms: the look, where the field texture lies,
+// the grid and the time.
+[[nodiscard]] GroundFsParams groundParams(const RenderState& state, const ArenaLook& look,
+                                          Vec2f fieldOrigin, Vec2f fieldSize) {
+  GroundFsParams g;
+  auto& v = g.v;
+  v[0] = {state.arenaHalfExtents.x, state.arenaHalfExtents.y, look.cornerRadius, 0.0f};
+  v[1] = {fieldOrigin.x, fieldOrigin.y, fieldSize.x, fieldSize.y};
+  v[2] = {static_cast<float>(look.floorSurface), static_cast<float>(look.pitSurface),
+          static_cast<float>(look.slowSurface), static_cast<float>(look.backdrop)};
+  v[3] = rgbw(look.ink, look.inkWidth);
+  v[4] = {look.cliffDepth, 0.0f, kWallShadowSpread, look.wallShadowAlpha};
+  v[5] = {state.floorGridCell, kGridAlpha, 0.0f, look.edgeAlpha};
+  v[6] = rgbw(look.background, look.haloWidth);
+  v[7] = rgbw(look.backdropAlt, look.pitAltAlpha);
+  v[8] = rgbw(look.decor, look.floorScale);
+  v[9] = rgbw(look.decorAlt, look.floorDetail);
+  v[10] = rgbw(look.floor, look.floorDensity);
+  v[11] = rgbw(look.floorAlt, kWaterRippleSpeed);
+  v[12] = rgbw(look.floorMark, kGridLineWidth);
+  v[13] = rgbw(look.cliff, kWallShadowSoftness);
+  v[14] = rgbw(look.pit);
+  v[15] = rgbw(look.pitAlt, kMudBubbleHz);
+  v[16] = rgbw(look.halo, std::max(look.inkWidth, kEdgeLineMinWidth));
+  v[17] = rgbw(look.mud);
+  v[18] = rgbw(look.mudAlt);
+  v[19] = rgbw(look.mudDetail);
+  v[20] = rgbw(look.wallShadow);
+  v[21] = rgbw(look.edge, state.time);
+  return g;
+}
+
+// Every wall of the arena as one rounded block in one mesh, for `look`
+// (corner radius and bevel); each block has `perBlock` indices.
+[[nodiscard]] MeshData makeWallMesh(const sim::ArenaDef& arena, const ArenaLook& look,
+                                    uint32_t& perBlock) {
+  MeshData all;
+  perBlock = 0;
+  for (uint8_t i = 0; i < arena.wallCount && i < sim::kMaxArenaWalls; ++i) {
+    const Vec2f lo = toFloat(arena.walls[i].min);
+    const Vec2f hi = toFloat(arena.walls[i].max);
+    const Vec2f half{0.5f * (hi.x - lo.x), 0.5f * (hi.y - lo.y)};
+    const MeshData block = makeRoundedBlock(half.x, half.y, kArenaWallHeight,
+                                            wallCornerRadius(look, half), look.wallBevel);
+    perBlock = static_cast<uint32_t>(block.indices.size());
+    (void)appendMesh(all, block, simToWorld(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}));
+  }
+  return all;
+}
 static_assert(sizeof(DecalVsParams) == static_cast<std::size_t>(shaders::kDecalVsVec4s) * 16);
 
 struct DecalFsParams {
@@ -183,8 +257,23 @@ template <typename T>
 }
 
 [[nodiscard]] uint32_t makeShader(const char* vs, const char* fs, int vsVec4s, int fsVec4s,
-                                  const char* label, std::size_t attrCount = 3) {
+                                  const char* label, std::size_t attrCount = 3,
+                                  const char* dataTexture = nullptr) {
   sg_shader_desc desc{};
+  if (dataTexture != nullptr) {
+    // One filtered float texture (v0.54, the ground's distance fields).
+    sg_shader_texture_view& tex = desc.views[0].texture;
+    tex.stage = SG_SHADERSTAGE_FRAGMENT;
+    tex.image_type = SG_IMAGETYPE_2D;
+    tex.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+    desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
+    desc.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
+    sg_shader_texture_sampler_pair& pair = desc.texture_sampler_pairs[0];
+    pair.stage = SG_SHADERSTAGE_FRAGMENT;
+    pair.view_slot = 0;
+    pair.sampler_slot = 0;
+    pair.glsl_name = dataTexture;
+  }
   desc.vertex_func.source = vs;
   desc.fragment_func.source = fs;
   // Attributes are bound by layout(location) in the GLSL (no glsl_name, so
@@ -279,6 +368,13 @@ enum class Blend : uint8_t { Opaque, Alpha, Additive, Outline };
   desc.cull_mode = outline ? SG_CULLMODE_FRONT : SG_CULLMODE_BACK;
   desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
   desc.depth.write_enabled = true;
+  if (outline) {
+    // v0.54: the hull is pushed slightly away from the camera, so where it
+    // grazes the character's own surface (a headband on the head, an arm
+    // against the gi) it stays hidden instead of speckling through.
+    desc.depth.bias = kOutlineSkinnedDepthBias;
+    desc.depth.bias_slope_scale = kOutlineSkinnedDepthBias;
+  }
   desc.label = label;
   return sg_make_pipeline(&desc).id;
 }
@@ -351,22 +447,50 @@ class FrameDrawer {
     submit(kSkinnedMesh, rangeOf(vs), rangeOf(fs));
   }
 
-  void floor(const Mat4& model, Vec2f halfExtents) {
-    usePipeline(kLitPipeline);
-    const LitVsParams vs{.mvp = viewProj_ * model, .model = model};
-    LitFsParams fs = litFs(look_.floor, look_.floorSurface, look_.floorAlt, 0.0f, 0.0f, 0.0f);
-    fs.floor = {halfExtents.x, halfExtents.y, look_.floorScale, look_.floorDetail};
-    fs.alt.w = look_.floorDensity;
-    submit(kFloorMesh, rangeOf(vs), rangeOf(fs));
+  // v0.54: the whole arena plane (shaders.hpp kGroundFs), its distance
+  // fields in the texture `view` (read through `sampler`).
+  void ground(const GroundFsParams& fs, uint32_t view, uint32_t sampler) {
+    usePipeline(kGroundPipeline);
+    sg_bindings bind{};
+    bind.vertex_buffers[0] = sg_buffer{vertexBuffers_[kGroundMesh]};
+    bind.index_buffer = sg_buffer{indexBuffers_[kGroundMesh]};
+    bind.views[0] = sg_view{view};
+    bind.samplers[0] = sg_sampler{sampler};
+    sg_apply_bindings(&bind);
+    currentMesh_ = kNone;  // the next draw binds its mesh without the texture
+    const GroundVsParams vs{.mvp = viewProj_};
+    sg_apply_uniforms(0, rangeOf(vs));
+    sg_apply_uniforms(1, rangeOf(fs));
+    const uint32_t count = indexCounts_[kGroundMesh];
+    sg_draw(0, static_cast<int>(count), 1);
+    ++stats_.drawCalls;
+    stats_.triangles += count / 3U;
   }
 
-  // Queues an ink hull around a static mesh; flushOutlines() draws the queue
-  // in one pipeline run. A full queue drops the rest (counted in the stats as
-  // nothing: the frame just has fewer outlines).
-  void outline(std::size_t mesh, const Mat4& model, float width, Hull hull) {
+  // v0.54: one wall block (`count` indices from `first` of a wall mesh,
+  // already in world space) patterned after its box: `center` on the
+  // ground, `size` its world extents.
+  void wall(std::size_t mesh, uint32_t first, uint32_t count, Vec3 center, Vec3 size) {
+    usePipeline(kLitPipeline);
+    const Mat4 model = Mat4::identity();
+    const LitVsParams vs{.mvp = viewProj_, .model = model};
+    LitFsParams fs = litFs(look_.wall, look_.wallSurface, look_.wallAlt, 0.0f, 0.0f, 0.0f);
+    fs.box = {center.x, center.z, 0.5f * size.x, 0.5f * size.z};
+    fs.alt.w = size.y;
+    fs.third = {look_.wallSide.r, look_.wallSide.g, look_.wallSide.b, 0.0f};
+    fs.fourth = {look_.wallDetail.r, look_.wallDetail.g, look_.wallDetail.b, 0.0f};
+    submit(mesh, rangeOf(vs), rangeOf(fs), first, count);
+  }
+
+  // Queues an ink hull around a static mesh (or `count` of its indices from
+  // `first`; 0 = all); flushOutlines() draws the queue in one pipeline run.
+  // A full queue drops the rest (counted in the stats as nothing: the frame
+  // just has fewer outlines).
+  void outline(std::size_t mesh, const Mat4& model, float width, Hull hull, uint32_t first = 0,
+               uint32_t count = 0) {
     if (outlineCount_ >= outlines_.size()) return;
-    outlines_[outlineCount_++] =
-        OutlineItem{.model = model, .mesh = mesh, .width = width, .hull = hull};
+    outlines_[outlineCount_++] = OutlineItem{
+        .model = model, .mesh = mesh, .width = width, .hull = hull, .first = first, .count = count};
   }
 
   void flushOutlines() {
@@ -377,7 +501,7 @@ class FrameDrawer {
       const OutlineVsParams vs{.viewProj = viewProj_,
                                .model = o.model,
                                .outline = {o.width, o.hull == Hull::Box ? 1.0f : 0.0f, 0.0f, 0.0f}};
-      submit(o.mesh, rangeOf(vs), rangeOf(fs));
+      submit(o.mesh, rangeOf(vs), rangeOf(fs), o.first, o.count);
     }
     outlineCount_ = 0;
   }
@@ -440,6 +564,8 @@ class FrameDrawer {
     std::size_t mesh{0};
     float width{0.0f};
     Hull hull{Hull::Smooth};
+    uint32_t first{0};
+    uint32_t count{0};  // 0: the whole mesh
   };
 
   [[nodiscard]] LitFsParams litFs(Color color, Surface kind, Color alt, float phase, float flash,
@@ -449,9 +575,11 @@ class FrameDrawer {
         .color = {color.r, color.g, color.b, 1.0f},
         .light = {l.x, l.y, l.z, kShadeBand},
         .params = {static_cast<float>(kind), flash, emissive, phase},
-        .floor = {},
+        .box = {},
         .shade = {look_.shadeTint.r, look_.shadeTint.g, look_.shadeTint.b, kCelBandEdge},
-        .alt = {alt.r, alt.g, alt.b, 0.0f}};
+        .alt = {alt.r, alt.g, alt.b, 0.0f},
+        .third = {},
+        .fourth = {}};
   }
 
   void decal(const Mat4& model, Color color, float alpha, DecalMode mode, float inner) {
@@ -462,7 +590,8 @@ class FrameDrawer {
     submit(kDiscMesh, rangeOf(vs), rangeOf(fs));
   }
 
-  void submit(std::size_t mesh, const sg_range& vs, const sg_range& fs) {
+  void submit(std::size_t mesh, const sg_range& vs, const sg_range& fs, uint32_t first = 0,
+              uint32_t count = 0) {
     if (mesh != currentMesh_) {
       sg_bindings bind{};
       bind.vertex_buffers[0] = sg_buffer{vertexBuffers_[mesh]};
@@ -472,8 +601,11 @@ class FrameDrawer {
     }
     sg_apply_uniforms(0, &vs);
     sg_apply_uniforms(1, &fs);
-    const uint32_t count = indexCounts_[mesh];
-    sg_draw(0, static_cast<int>(count), 1);
+    if (count == 0) {
+      first = 0;
+      count = indexCounts_[mesh];
+    }
+    sg_draw(static_cast<int>(first), static_cast<int>(count), 1);
     ++stats_.drawCalls;
     stats_.triangles += count / 3U;
   }
@@ -586,19 +718,31 @@ bool Renderer::init(const sim::MatchContent& match) {
       makeMonkeyCapsule(content.player),
       makeBananaMesh(content.boomerang),
       makeDisc(1.0f, 40),
-      makeFloorQuad(match.arena.halfExtents.x.toFloat(), match.arena.halfExtents.y.toFloat()),
+      makeFloorQuad(match.arena.halfExtents.x.toFloat() + kGroundMargin,
+                    match.arena.halfExtents.y.toFloat() + kGroundMargin),
       makeUnitCube(),
       makeFloorQuad(0.5f, 0.5f),
   };
   constexpr std::array<const char*, kStaticMeshCount> kLabels = {
-      "kfm-capsule", "kfm-banana", "kfm-disc", "kfm-floor", "kfm-cube", "kfm-quad"};
-  for (std::size_t i = 0; i < kStaticMeshCount; ++i) {
-    const MeshData& m = data[i];
-    meshes_[i].vertexBuffer =
-        makeBuffer(m.vertices.data(), m.vertices.size() * sizeof(MeshVertex), false, kLabels[i]);
-    meshes_[i].indexBuffer =
-        makeBuffer(m.indices.data(), m.indices.size() * sizeof(uint16_t), true, kLabels[i]);
-    meshes_[i].indexCount = static_cast<uint32_t>(m.indices.size());
+      "kfm-capsule", "kfm-banana", "kfm-disc", "kfm-ground", "kfm-cube", "kfm-quad"};
+  const auto upload = [&](std::size_t slot, const MeshData& m, const char* label) {
+    meshes_[slot].vertexBuffer =
+        makeBuffer(m.vertices.data(), m.vertices.size() * sizeof(MeshVertex), false, label);
+    meshes_[slot].indexBuffer =
+        makeBuffer(m.indices.data(), m.indices.size() * sizeof(uint16_t), true, label);
+    meshes_[slot].indexCount = static_cast<uint32_t>(m.indices.size());
+  };
+  for (std::size_t i = 0; i < kStaticMeshCount; ++i)
+    upload(i, data[i], kLabels[i]);
+  // v0.54: the wall blocks, in every theme's shape (a theme switch only
+  // picks another mesh). An arena without walls has none to upload.
+  const bool hasWalls = match.arena.wallCount > 0;
+  for (std::size_t t = 0; t < kArenaThemeCount; ++t) {
+    wallIndexCount_[t] = 0;
+    if (!hasWalls) continue;
+    const MeshData walls =
+        makeWallMesh(match.arena, arenaLook(static_cast<ArenaTheme>(t)), wallIndexCount_[t]);
+    upload(kWallMesh + t, walls, "kfm-walls");
   }
 
   shaders_[kLitShader] = makeShader(shaders::kLitVs, shaders::kLitFs, shaders::kLitVsVec4s,
@@ -608,7 +752,11 @@ bool Renderer::init(const sim::MatchContent& match) {
   shaders_[kOutlineShader] =
       makeShader(shaders::kOutlineVs, shaders::kOutlineFs, shaders::kOutlineVsVec4s,
                  shaders::kOutlineFsVec4s, "kfm-outline-shader");
+  shaders_[kGroundShader] =
+      makeShader(shaders::kGroundVs, shaders::kGroundFs, shaders::kGroundVsVec4s,
+                 shaders::kGroundFsVec4s, "kfm-ground-shader", 3, "ground_field");
   pipelines_[kLitPipeline] = makePipeline(shaders_[kLitShader], Blend::Opaque, "kfm-lit");
+  pipelines_[kGroundPipeline] = makePipeline(shaders_[kGroundShader], Blend::Opaque, "kfm-ground");
   pipelines_[kDecalAlphaPipeline] =
       makePipeline(shaders_[kDecalShader], Blend::Alpha, "kfm-decal-alpha");
   pipelines_[kDecalAdditivePipeline] =
@@ -616,8 +764,49 @@ bool Renderer::init(const sim::MatchContent& match) {
   pipelines_[kOutlinePipeline] =
       makePipeline(shaders_[kOutlineShader], Blend::Outline, "kfm-outline");
 
+  // v0.54: the ground's distance fields, one texture per theme (their
+  // corners round differently), bilinear, clamped at the edge.
+  {
+    auto pieces = std::make_unique<RenderState>();
+    buildArenaPieces(match.arena, *pieces);
+    pieces->arenaHalfExtents = toFloat(match.arena.halfExtents);
+    sg_sampler_desc sampler{};
+    sampler.min_filter = SG_FILTER_LINEAR;
+    sampler.mag_filter = SG_FILTER_LINEAR;
+    sampler.wrap_u = SG_WRAP_CLAMP_TO_EDGE;
+    sampler.wrap_v = SG_WRAP_CLAMP_TO_EDGE;
+    sampler.label = "kfm-ground-sampler";
+    groundSampler_ = sg_make_sampler(&sampler).id;
+    for (std::size_t t = 0; t < kArenaThemeCount; ++t) {
+      const ArenaLook& look = arenaLook(static_cast<ArenaTheme>(t));
+      const GroundField field = buildGroundField(buildGroundLayout(*pieces, look), look);
+      groundFieldOrigin_ = field.origin;
+      groundFieldSize_ = field.size;
+      sg_image_desc image{};
+      image.type = SG_IMAGETYPE_2D;
+      image.width = field.width;
+      image.height = field.height;
+      image.pixel_format = SG_PIXELFORMAT_RGBA16F;
+      image.data.mip_levels[0] =
+          sg_range{field.texels.data(), field.texels.size() * sizeof(uint16_t)};
+      image.label = "kfm-ground-field";
+      groundImages_[t] = sg_make_image(&image).id;
+      sg_view_desc view{};
+      view.texture.image = sg_image{groundImages_[t]};
+      view.label = "kfm-ground-field";
+      groundViews_[t] = sg_make_view(&view).id;
+    }
+  }
+
   bool ok = true;
-  for (const GpuMesh& m : std::span(meshes_).first(kStaticMeshCount)) {
+  ok = ok && sg_query_sampler_state(sg_sampler{groundSampler_}) == SG_RESOURCESTATE_VALID;
+  for (std::size_t t = 0; t < kArenaThemeCount; ++t) {
+    ok = ok && sg_query_image_state(sg_image{groundImages_[t]}) == SG_RESOURCESTATE_VALID &&
+         sg_query_view_state(sg_view{groundViews_[t]}) == SG_RESOURCESTATE_VALID;
+  }
+  for (std::size_t i = 0; i < kSkinnedMesh; ++i) {
+    const GpuMesh& m = meshes_[i];
+    if (i >= kWallMesh && !hasWalls) continue;
     ok = ok && sg_query_buffer_state(sg_buffer{m.vertexBuffer}) == SG_RESOURCESTATE_VALID &&
          sg_query_buffer_state(sg_buffer{m.indexBuffer}) == SG_RESOURCESTATE_VALID;
   }
@@ -648,9 +837,17 @@ void Renderer::destroyResources() {
     sg_destroy_buffer(sg_buffer{m.vertexBuffer});
     sg_destroy_buffer(sg_buffer{m.indexBuffer});
   }
+  for (std::size_t t = 0; t < kArenaThemeCount; ++t) {
+    sg_destroy_view(sg_view{groundViews_[t]});
+    sg_destroy_image(sg_image{groundImages_[t]});
+  }
+  sg_destroy_sampler(sg_sampler{groundSampler_});
   pipelines_ = {};
   shaders_ = {};
   meshes_ = {};
+  groundViews_ = {};
+  groundImages_ = {};
+  groundSampler_ = 0;
 }
 
 void Renderer::destroyCharacterModel() {
@@ -745,9 +942,10 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   if (!initialised_ || width <= 0 || height <= 0) return;
   sg_apply_viewport(0, 0, width, height, true);
 
-  // Screen shake moves the eye and the target together.
-  const Mat4 view = lookAt(camera.eye + state.shakeOffset, camera.target + state.shakeOffset,
-                           Vec3{0.0f, 1.0f, 0.0f});
+  // Screen shake moves the eye and the target together, until it is below a
+  // pixel (visibleShakeOffset).
+  const Vec3 shake = visibleShakeOffset(camera, state.shakeAmplitude, state.shakeOffset);
+  const Mat4 view = lookAt(camera.eye + shake, camera.target + shake, Vec3{0.0f, 1.0f, 0.0f});
   const Mat4 viewProj = camera.proj * view;
   const Vec3 camRight{view.at(0, 0), view.at(0, 1), view.at(0, 2)};
   const Vec3 camUp{view.at(1, 0), view.at(1, 1), view.at(1, 2)};
@@ -766,63 +964,33 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
 
   const float r = state.playerRadius;
   const float bodyHeight = state.playerHeight;
-  const Vec2f half = state.arenaHalfExtents;
 
   // --- opaque ------------------------------------------------------------------
-  d.floor(Mat4::identity(), half);
+  // v0.54: the ground program draws the backdrop, the pits, the land and its
+  // cliffs, the slow patches, the walls' shadows and every ground ink line in
+  // one pass, so nothing on the ground is a slab laid over the floor.
   {
-    // Wall rim: four low boxes just outside the arena bounds.
-    const float y = kWallHeight * 0.5f;
-    const float t = kWallThickness;
-    const float lenX = (2.0f * half.x) + (2.0f * t);
-    const float lenZ = 2.0f * half.y;
-    const std::array<Mat4, 4> rim = {
-        translate({0.0f, y, -(half.y + (t * 0.5f))}) * scale({lenX, kWallHeight, t}),
-        translate({0.0f, y, half.y + (t * 0.5f)}) * scale({lenX, kWallHeight, t}),
-        translate({-(half.x + (t * 0.5f)), y, 0.0f}) * scale({t, kWallHeight, lenZ}),
-        translate({half.x + (t * 0.5f), y, 0.0f}) * scale({t, kWallHeight, lenZ})};
-    for (const Mat4& m : rim) {
-      d.lit(kCubeMesh, m, look.rim);
-      d.outline(kCubeMesh, m, kOutlineWall, Hull::Box);
-    }
+    const auto t = static_cast<std::size_t>(theme_);
+    d.ground(groundParams(state, look, groundFieldOrigin_, groundFieldSize_), groundViews_[t],
+             groundSampler_);
   }
-  // Interior walls and hazards (v0.22): unit cubes scaled to each box. Pits
-  // and mud are slabs just above the floor and under the blob shadows; a
-  // pit's rim strips sit on top of its water slab (half its height). v0.49:
-  // walls are mossy rock with an ink hull; a floor slab sits on a lower ink
-  // slab kOutlineSlab wider on every side (a neighbouring slab of the same
-  // kind covers the part that reaches into it).
-  const auto inkSlab = [&](Vec3 c, Vec3 s) {
-    const float w = kOutlineSlab;
-    d.lit(
-        kCubeMesh,
-        translate({c.x, s.y * 0.2f, c.z}) * scale({s.x + (2.0f * w), s.y * 0.4f, s.z + (2.0f * w)}),
-        look.ink);
-  };
-  for (uint16_t i = 0; i < state.arenaPieceCount; ++i) {
-    const RenderArenaPiece& piece = state.arenaPieces[i];
-    const Vec3 c = piece.center;
-    const Vec3 s = piece.size;
-    switch (piece.kind) {
-      case ArenaPieceKind::Wall: {
-        const Mat4 m = translate({c.x, s.y * 0.5f, c.z}) * scale(s);
-        d.surface(kCubeMesh, m, look.wall, look.wallSurface, look.wallAlt);
-        d.outline(kCubeMesh, m, kOutlineWall, Hull::Box);
-        break;
-      }
-      case ArenaPieceKind::Pit:
-        inkSlab(c, s);
-        d.surface(kCubeMesh, translate({c.x, s.y * 0.25f, c.z}) * scale({s.x, s.y * 0.5f, s.z}),
-                  look.pit, look.pitSurface, look.pitAlt, state.time * kWaterRippleSpeed);
-        break;
-      case ArenaPieceKind::PitRim:
-        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), look.pitBank);
-        break;
-      case ArenaPieceKind::Slow:
-        inkSlab(c, s);
-        d.surface(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), look.mud,
-                  look.slowSurface, look.mudAlt, state.time * kMudBubbleHz);
-        break;
+  // Wall blocks: rounded rock, shrines or crates (the theme's mesh), each
+  // patterned after its own box, with an ink hull. Blocks are in content
+  // order, as the arena pieces' walls are.
+  {
+    const auto themeIndex = static_cast<std::size_t>(theme_);
+    const uint32_t perBlock = wallIndexCount_[themeIndex];
+    const std::size_t wallMesh = kWallMesh + themeIndex;
+    uint32_t block = 0;
+    for (uint16_t i = 0; i < state.arenaPieceCount && perBlock > 0; ++i) {
+      const RenderArenaPiece& piece = state.arenaPieces[i];
+      if (piece.kind != ArenaPieceKind::Wall) continue;
+      if (block * perBlock >= meshes_[wallMesh].indexCount) break;
+      const uint32_t first = block * perBlock;
+      d.wall(wallMesh, first, perBlock, piece.center, piece.size);
+      if (look.wallInk)
+        d.outline(wallMesh, Mat4::identity(), kOutlineWall, Hull::Smooth, first, perBlock);
+      ++block;
     }
   }
 

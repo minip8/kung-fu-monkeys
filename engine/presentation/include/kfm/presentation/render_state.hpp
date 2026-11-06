@@ -259,6 +259,9 @@ struct RenderState {
   uint16_t arenaPieceCount{0};
   std::array<RenderZone, sim::kMaxArenaZones> zones{};  // v0.33, in content order
   uint8_t zoneCount{0};
+  // v0.54: the cell size whose edges the floor draws (the arena's cells under
+  // a grid-space mode, §5.12); 0 draws no grid.
+  float floorGridCell{0.0f};
   float playerRadius{0.0f};
   float playerHeight{0.0f};
   float bananaRadius{0.0f};

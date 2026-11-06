@@ -9,6 +9,7 @@
 // their base at y = 0.
 #pragma once
 
+#include "kfm/presentation/math.hpp"
 #include "kfm/sim/content.hpp"
 
 #include <cstdint>
@@ -64,6 +65,18 @@ struct MeshData {
 // the sim-plane position (x, -z) in units, so fract(uv) draws a one-unit grid
 // aligned with sim coordinates.
 [[nodiscard]] MeshData makeFloorQuad(float halfX, float halfZ);
+
+// A wall block (v0.54): a box standing on y = 0 over [-halfX, halfX] ×
+// [-halfZ, halfZ], `height` tall, its vertical edges rounded with `radius`
+// and its top edge with `bevel` (at most 0.75 × radius), `segments` per
+// quarter circle (>= 1). Smooth normals, so an ink hull pushed along them
+// stays closed; no bottom face. uv: the sim-plane position (x, -z).
+[[nodiscard]] MeshData makeRoundedBlock(float halfX, float halfZ, float height, float radius,
+                                        float bevel, uint32_t segments = 4);
+
+// Appends `part` moved by `offset` to `out` (several blocks in one buffer);
+// the uv moves with it (sim x, -z). Returns the index of its first index.
+uint32_t appendMesh(MeshData& out, const MeshData& part, Vec3 offset);
 
 // Axis-aligned unit cube centred at the origin ([-0.5, 0.5]^3), 24 vertices
 // with flat face normals (arena wall rim segments are scaled instances).

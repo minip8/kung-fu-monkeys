@@ -113,6 +113,7 @@ kfm_add_test_exe(kfm_presentation_tests
   presentation/animation_test.cpp
   presentation/audio_test.cpp
   presentation/theme_test.cpp
+  presentation/ground_test.cpp
 )
 target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation)
 if(NOT KFM_HEADLESS)
@@ -133,6 +134,7 @@ endif()
 
 if(NOT KFM_HEADLESS)
   kfm_add_test_exe(kfm_platform_tests
+    platform/frame_pacer_test.cpp
     platform/input_sampler_test.cpp
     platform/platform_services_test.cpp
   )

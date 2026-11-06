@@ -885,3 +885,24 @@ TEST_CASE("the pause menu pauses a local match while open (v0.46)", "[client][se
   d.frame(1);
   CHECK_FALSE(d.s->lastFrame().inputs[0].has(sim::Button::Throw));
 }
+
+TEST_CASE("session: presentation time stands still while paused", "[client][session]") {
+  Driver d(SessionConfig{.seed = 4, .bots = 1});
+  d.start();
+  d.frame(1);
+  CHECK(d.s->presentationSeconds(0.004) == 0.004);  // running: the frame's wall time
+  d.s->setPaused(true);
+  d.frame(1);
+  REQUIRE(d.s->ticksThisFrame() == 0);
+  CHECK(d.s->presentationSeconds(0.004) == 0.0);  // a still frame
+  // A single step moves it by one tick's wall time.
+  d.s->requestSingleStep();
+  d.frame(1);
+  REQUIRE(d.s->ticksThisFrame() == 1);
+  CHECK(std::abs(d.s->presentationSeconds(0.004) - (1.0 / 60.0)) < 1e-6);
+  d.frame(1);
+  CHECK(d.s->presentationSeconds(0.004) == 0.0);
+  d.s->setPaused(false);
+  d.frame(1);
+  CHECK(d.s->presentationSeconds(0.004) == 0.004);
+}

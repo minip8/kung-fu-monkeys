@@ -42,11 +42,13 @@ inline constexpr float kPickupSpinRadPerSec = 1.5f;
 // (hand height + arc) so a bounce reads as hitting the wall, below the
 // camera's framing height so a wall near the far edge never leaves frame.
 inline constexpr float kArenaWallHeight = 1.2f;
-// Hazards are flat slabs lying on the floor; their top sits this high so
-// they never z-fight the floor, below blob shadows (renderer kShadowLift).
+// A hazard piece's height in RenderState::arenaPieces (v0.22). v0.54: the
+// renderer draws hazards in the ground program, flat on the floor, from the
+// pieces' footprints only.
 inline constexpr float kHazardSlabHeight = 0.008f;
-// A pit is drawn as a rim and a darker inset bottom, which reads as depth
-// under the fixed camera; the inset is this far in from the hazard box.
+// The pit rim pieces' width (builder.hpp buildArenaPieces). v0.54: the
+// renderer no longer draws them (the ground program draws a cliff and an ink
+// line along every edge of land); the HUD's arena preview does not either.
 inline constexpr float kPitRimWidth = 0.18f;
 // Objective zones (v0.33): a translucent floor rectangle, opaque at its rim
 // band (the inner fraction of the half-size where the band starts) so the
@@ -67,19 +69,59 @@ inline constexpr float kFlagCarrySpinRadPerSec = 2.0f;
 // units, back faces only, in ArenaLook::ink.
 inline constexpr float kOutlineMonkey = 0.045f;
 inline constexpr float kOutlineBanana = 0.022f;
-inline constexpr float kOutlineWall = 0.05f;
+inline constexpr float kOutlineWall = 0.08f;
 inline constexpr float kOutlinePowerUp = 0.035f;
-// Floor slabs (pits, mud) get a flat ink border this wide instead of a hull
-// (a hull's sides would hide under the floor).
-inline constexpr float kOutlineSlab = 0.06f;
+// v0.54: the skinned character's hull is drawn with this depth bias (constant
+// and slope-scaled, in depth-buffer units, away from the camera): where it
+// grazes the character's own surface it stays hidden; silhouettes keep it.
+inline constexpr float kOutlineSkinnedDepthBias = 1.0f;
 // Two-band cel shading: n·l above this edge is lit, below it the shade band
 // (kShadeBand × ArenaLook::shadeTint). The edge is anti-aliased with fwidth.
 inline constexpr float kCelBandEdge = 0.12f;
 inline constexpr float kShadeBand = 0.62f;
-// The floor patterns' scales live in each ArenaLook (palette.hpp). Water
-// ripples, chasm mist and mud bubbles animate with presentation time.
-inline constexpr float kWaterRippleSpeed = 1.2f;
+// The floor patterns' scales live in each ArenaLook (palette.hpp). Ripples,
+// cloud arcs and wave squiggles sway with presentation time; mud bubbles
+// swell and settle.
+inline constexpr float kWaterRippleSpeed = 0.5f;  // radians of sway per second
 inline constexpr float kMudBubbleHz = 0.35f;
+
+// --- the ground program (§7 "Look", v0.54) ---------------------------------------
+// The arena plane is one quad reaching this far beyond the arena box on
+// every side, so the backdrop fills the view (the camera never sees past it).
+inline constexpr float kGroundMargin = 40.0f;
+// A wall's soft shadow on the ground: its footprint grown by the spread,
+// moved this far toward the camera (sim -y) and blurred over the softness.
+inline constexpr float kWallShadowOffset = 0.3f;
+inline constexpr float kWallShadowSpread = 0.2f;
+inline constexpr float kWallShadowSoftness = 0.3f;
+// A wall block's corner radius is at most this share of its shorter half
+// side (ArenaLook::wallRadius), so a thin wall stays a slab, not a tube.
+inline constexpr float kWallRadiusShare = 0.45f;
+// Grid-space modes only (§5.12): a faint line on every cell edge.
+inline constexpr float kGridLineWidth = 0.06f;
+inline constexpr float kGridAlpha = 0.22f;
+// Where boxes of one kind meet at a concave corner (the land round a notch,
+// an L of mud), the ground rounds it this much: a fillet takes area from the
+// other side (a pit, the floor), so it stays small whatever the look's
+// cornerRadius (which rounds convex corners only).
+inline constexpr float kGroundFillet = 0.3f;
+// The ground's distance fields (ground.hpp GroundField): sampled this many
+// times a unit over the arena and this far around it (deeper than any cliff,
+// shallows band or ink line reaches), and clamped to this range (half
+// floats keep 1/1024 of a unit near the edges that matter).
+inline constexpr float kGroundFieldTexelsPerUnit = 12.0f;
+inline constexpr float kGroundFieldMargin = 2.5f;
+inline constexpr float kGroundFieldRange = 8.0f;
+// The arena edge line is at least this wide (a look without ground ink
+// still marks where bananas bounce).
+inline constexpr float kEdgeLineMinWidth = 0.1f;
+
+// --- locomotion (§7) -----------------------------------------------------------------
+// A moving monkey plays the rig's `run` clip (limb cycle, bob and forward
+// lean) only when this is on. Off, it holds the idle clip and glides while
+// still turning to its heading; dash, charge, throw, hit and eliminated play
+// as before. The clip stays in the rig (tools/assets/gen_test_rig.py).
+inline constexpr bool kMonkeyRunCycle = false;
 
 // --- facing (§7) ---------------------------------------------------------------------
 // Body yaw follows the move direction at most this fast (720°/s: a half turn
@@ -184,5 +226,11 @@ inline constexpr float kShakeOnPerfectCatch = 0.08f;
 inline constexpr float kShakeMax = 0.5f;
 inline constexpr float kShakeTau = 0.15f;  // exponential decay time constant
 inline constexpr float kShakeHz = 23.0f;
+// The shake stops being drawn once it moves the arena centre by less than this
+// many framebuffer pixels (visibleShakeOffset, camera.hpp): below a pixel a
+// 23 Hz offset is no longer seen as motion, only as every hard edge (ink
+// lines, the rim, grid lines) toggling between two pixels, which reads as
+// flicker for the second the exponential tail would otherwise last.
+inline constexpr float kShakeMinPixels = 1.0f;
 
 }  // namespace kfm::presentation

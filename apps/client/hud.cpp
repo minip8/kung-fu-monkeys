@@ -130,14 +130,28 @@ void drawTimerPie(ImDrawList* dl, ImVec2 c, float r, uint8_t colorIndex, float f
   dl->AddCircle(c, r, kShadow, 0, 1.0f);
 }
 
-// The card every slot is drawn on, in the lobby and in the HUD: a dark
-// rounded box with the slot's palette colour as a stripe along the top.
-constexpr float kCardStripe = 4.0f;
-constexpr float kCardRounding = 6.0f;
-void drawCardFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, uint8_t slot, int alpha) {
-  dl->AddRectFilled(min, max, ui::withAlpha(ui::kBark, (200 * alpha) / 255), kCardRounding);
-  dl->AddRectFilled(min, ImVec2(max.x, min.y + kCardStripe), slotColor(slot, alpha), kCardRounding,
-                    ImDrawFlags_RoundCornersTop);
+// The card every slot is drawn on, in the lobby and in the HUD: the
+// panel's chunky card in small (ink border, ink drop) with the slot's
+// palette colour as a stripe along the top and, in a team mode (`team` >=
+// 0), the team's colour along the bottom. A dimmed card (alpha < 255) lies
+// flat, without its drop.
+constexpr float kCardStripe = 6.0f;
+constexpr float kCardRounding = 9.0f;
+constexpr float kCardBorder = 2.5f;
+constexpr float kCardDrop = 3.0f;
+void drawCardFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, uint8_t slot, int alpha, int team = -1,
+                   float k = 1.0f) {
+  const float b = kCardBorder * k;
+  const float r = (kCardRounding - kCardBorder) * k;
+  ui::card(dl, min, max, ui::kBark, kCardRounding * k, b, alpha < 255 ? 0.0f : kCardDrop * k,
+           alpha);
+  dl->AddRectFilled(ImVec2(min.x + b, min.y + b), ImVec2(max.x - b, min.y + (kCardStripe * k)),
+                    slotColor(slot, alpha), r, ImDrawFlags_RoundCornersTop);
+  if (team >= 0) {
+    dl->AddRectFilled(ImVec2(min.x + b, max.y - b - (3.5f * k)), ImVec2(max.x - b, max.y - b),
+                      teamColor(static_cast<uint32_t>(team), alpha), r,
+                      ImDrawFlags_RoundCornersBottom);
+  }
 }
 
 [[nodiscard]] const presentation::RenderPlayer* playerOfSlot(const presentation::RenderState& rs,
@@ -186,7 +200,7 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
                              : static_cast<float>(hud.roundsToWin) * ((kPipR * 2.0f) + 4.0f);
   const float baseW = std::max((kPad * 2.0f) + labelW + 8.0f + scoreW,
                                (kPad * 2.0f) + (static_cast<float>(timers) * kTimerStep));
-  const float baseH = kCardStripe + 4.0f + kLabel + 6.0f + (timers > 0 ? 18.0f : 0.0f);
+  const float baseH = kCardStripe + 4.0f + kLabel + 8.0f + (timers > 0 ? 18.0f : 0.0f);
   const float total =
       (static_cast<float>(entries) * baseW) + (static_cast<float>(entries - 1) * kGap);
   const float k = std::min(1.0f, (viewW - 24.0f) / total);  // shrink to fit
@@ -202,18 +216,15 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
     const bool out =
         waiting || (hud.phase == HudPhase::Playing && playerOfSlot(state, i) == nullptr);
     const int alpha = out ? 120 : 255;
-    drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + h), i, alpha);
-    if (hud.teamCount > 0) {
-      // v0.32: the slot's team as a bar in the team colour along the bottom.
-      dl->AddRectFilled(ImVec2(x, y + h - (3.0f * k)), ImVec2(x + w, y + h),
-                        teamColor(hud.teams[i], alpha), kCardRounding,
-                        ImDrawFlags_RoundCornersBottom);
-    }
+    // v0.32: the slot's team as a bar in the team colour along the bottom.
+    drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + h), i, alpha,
+                  hud.teamCount > 0 ? static_cast<int>(hud.teams[i]) : -1, k);
     const float lineY = y + ((kCardStripe + 4.0f) * k);
     char label[kLabelBytes];
     slotLabel(view, i, label);
     dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k) + 1.0f, lineY + 1.0f), kShadow, label);
-    dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k), lineY), slotColor(i, alpha), label);
+    dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k), lineY), ui::withAlpha(ui::kCream, alpha),
+                label);
     const float right = x + w - (kPad * k);
     if (frags) {
       char score[16];
@@ -288,13 +299,18 @@ void drawPowerUpDots(ImDrawList* dl, const presentation::RenderPlayer& p, ImVec2
   }
 }
 
+// World units above the top of the head where a monkey's tag (name, ammo
+// pips) is anchored: clear of the rig's round head (v0.54), whose silhouette
+// rises above its top point under the tilted camera.
+constexpr float kTagLift = 0.85f;
+
 void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) {
   const presentation::RenderState& rs = *in.state;
   for (uint16_t k = 0; k < rs.playerCount; ++k) {
     const presentation::RenderPlayer& p = rs.players[k];
     if (!p.visible) continue;
     const presentation::Vec3 head =
-        p.position + presentation::Vec3{0.0f, rs.playerHeight + 0.45f, 0.0f};
+        p.position + presentation::Vec3{0.0f, rs.playerHeight + kTagLift, 0.0f};
     const presentation::ScreenPoint sp = presentation::worldToScreen(*in.camera, head);
     if (!sp.inFront) continue;
     const ImVec2 at{sp.x * in.uiScale, sp.y * in.uiScale};
@@ -350,10 +366,8 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
   const float height =
       (kPad * 2.0f) + 24.0f + (static_cast<float>(b.rows.size() + teamLines) * kRowH);
   if (panel) {
-    dl->AddRectFilled(origin, ImVec2(origin.x + width, origin.y + height),
-                      ui::withAlpha(ui::kBark, 225), 14.0f);
-    dl->AddRect(origin, ImVec2(origin.x + width, origin.y + height), ui::withAlpha(ui::kInk, 220),
-                14.0f, 0, 2.0f);
+    ui::card(dl, origin, ImVec2(origin.x + width, origin.y + height), ui::kPanelBg,
+             ui::kPanelRounding, ui::kPanelBorder, ui::kPanelDrop);
   }
   ImFont* font = ImGui::GetFont();
   const float left = origin.x + kPad;
@@ -380,10 +394,10 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
       const float ty = y + ((kRowH - kText) * 0.5f);
       dl->AddRectFilled(ImVec2(left - 4.0f, y + 2.0f), ImVec2(right + 4.0f, y + kRowH - 2.0f),
                         slotColor(team, 60), 8.0f);
-      ui::shadowText(dl, kText, ImVec2(left, ty), slotColor(team), text);
+      ui::shadowText(dl, kText, ImVec2(left, ty), ui::kCream, text);
       std::snprintf(text, sizeof text, "%u",
                     static_cast<unsigned>(b.teamScores[team < sim::kMaxPlayers ? team : 0]));
-      rightText(kText, scoreX, ty, slotColor(team), text);
+      rightText(kText, scoreX, ty, ui::kCream, text);
       y += kRowH;
     }
     const float ty = y + ((kRowH - kText) * 0.5f);
@@ -393,13 +407,15 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
     }
     std::snprintf(text, sizeof text, "%u.", static_cast<unsigned>(r.place));
     dl->AddText(font, kText, ImVec2(left, ty), ui::kCreamDim, text);
+    // The slot's colour as a dot: the label stays cream for contrast.
+    dl->AddCircleFilled(ImVec2(left + 40.0f, y + (kRowH * 0.5f)), 8.0f, ui::kOutline);
     dl->AddCircleFilled(ImVec2(left + 40.0f, y + (kRowH * 0.5f)), 6.0f, slotColor(r.slot));
     float nx = left + 52.0f;
     if (r.winner) {
       drawCrown(dl, ImVec2(nx, ty + kText - 3.0f), 16.0f);
       nx += 22.0f;
     }
-    ui::shadowText(dl, kText, ImVec2(nx, ty), slotColor(r.slot), r.label.c_str());
+    ui::shadowText(dl, kText, ImVec2(nx, ty), ui::kCream, r.label.c_str());
     nx += textWidth(kText, r.label.c_str()) + 8.0f;
     if (r.local) dl->AddText(font, kSmall, ImVec2(nx, ty + 3.0f), ui::kCreamDim, "you");
     std::snprintf(text, sizeof text, "%u", static_cast<unsigned>(r.score));
@@ -580,8 +596,8 @@ void drawCrown(ImDrawList* dl, ImVec2 p, float w) {
 // `perRow`: 0 picks ten in a row, or two rows of five when the window is
 // narrow; the online room asks for five (wider cards for nicknames).
 void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int perRowWanted = 0) {
-  constexpr float kGap = 6.0f;
-  constexpr float kH = 44.0f;
+  constexpr float kGap = 7.0f;
+  constexpr float kH = 48.0f;
   const float avail = ImGui::GetContentRegionAvail().x;
   int perRow = perRowWanted;
   if (perRow == 0) perRow = avail >= (10.0f * 64.0f) + (9.0f * kGap) ? 10 : 5;
@@ -598,14 +614,15 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int pe
     const float x = origin.x + (static_cast<float>(column) * (w + kGap));
     const float y = origin.y + (static_cast<float>(row) * (kH + kGap));
     const int alpha = c.filled ? c.alpha : 70;
-    drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + kH), i, alpha);
-    const ImU32 titleColor = c.filled ? slotColor(i, alpha) : ui::withAlpha(ui::kCreamDim, 160);
+    drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + kH), i, alpha, c.team);
+    const ImU32 titleColor =
+        c.filled ? ui::withAlpha(ui::kCream, alpha) : ui::withAlpha(ui::kCreamDim, 160);
     dl->PushClipRect(ImVec2(x, y), ImVec2(x + w - 2.0f, y + kH), true);
     const float crownW = c.host ? 18.0f : 0.0f;
-    if (c.host) drawCrown(dl, ImVec2(x + 7.0f, y + kCardStripe + 18.0f), crownW - 4.0f);
-    dl->AddText(font, 18.0f, ImVec2(x + 7.0f + crownW, y + kCardStripe + 2.0f), titleColor,
+    if (c.host) drawCrown(dl, ImVec2(x + 7.0f, y + kCardStripe + 17.0f), crownW - 4.0f);
+    dl->AddText(font, 18.0f, ImVec2(x + 8.0f + crownW, y + kCardStripe + 1.0f), titleColor,
                 c.title.c_str());
-    dl->AddText(font, 14.0f, ImVec2(x + 7.0f, y + kCardStripe + 22.0f),
+    dl->AddText(font, 14.0f, ImVec2(x + 8.0f, y + kCardStripe + 21.0f),
                 c.filled ? ui::withAlpha(ui::kCream, alpha) : ui::withAlpha(ui::kCreamDim, 140),
                 c.sub);
     dl->PopClipRect();
@@ -615,10 +632,8 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int pe
       char tag[16];
       std::snprintf(tag, sizeof tag, "T%u", team + 1U);
       const float tw = textWidth(15.0f, tag);
-      dl->AddText(font, 15.0f, ImVec2(x + w - tw - 6.0f, y + kCardStripe + 4.0f),
+      dl->AddText(font, 15.0f, ImVec2(x + w - tw - 7.0f, y + kCardStripe + 4.0f),
                   teamColor(team, alpha), tag);
-      dl->AddRectFilled(ImVec2(x, y + kH - 3.0f), ImVec2(x + w, y + kH), teamColor(team, alpha),
-                        kCardRounding, ImDrawFlags_RoundCornersBottom);
     }
   }
 }
@@ -633,11 +648,13 @@ presentation::ThemeChoice gTheme = presentation::ThemeChoice::Auto;
 void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint16_t powerUps,
                       ImVec2 box) {
   const ImVec2 origin = ImGui::GetCursorScreenPos();
-  ImGui::Dummy(box);
+  ImGui::Dummy(ImVec2(box.x, box.y + 4.0f));
   ImDrawList* dl = ImGui::GetWindowDrawList();
+  // On a small inset card, like everything else on a panel.
+  ui::card(dl, origin, ImVec2(origin.x + box.x, origin.y + box.y), ui::kInk, 10.0f, 2.5f, 3.0f);
   const float hx = std::max(arena.halfExtents.x.toFloat(), 0.01f);
   const float hy = std::max(arena.halfExtents.y.toFloat(), 0.01f);
-  const float scale = std::min((box.x - 8.0f) / (2.0f * hx), (box.y - 8.0f) / (2.0f * hy));
+  const float scale = std::min((box.x - 14.0f) / (2.0f * hx), (box.y - 14.0f) / (2.0f * hy));
   const ImVec2 c{origin.x + (box.x * 0.5f), origin.y + (box.y * 0.5f)};
   const auto at = [&](float x, float y) { return ImVec2(c.x + (x * scale), c.y - (y * scale)); };
   const auto box2 = [&](Vec2 min, Vec2 max) {
@@ -666,10 +683,10 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   // v0.33: objective zones, translucent with a solid rim, lettered a, b, ...
   for (uint8_t i = 0; i < arena.zoneCount && i < sim::kMaxArenaZones; ++i) {
     const auto [a, b] = box2(arena.zones[i].min, arena.zones[i].max);
-    dl->AddRectFilled(a, b, IM_COL32(255, 255, 255, 50));
-    dl->AddRect(a, b, IM_COL32(255, 255, 255, 190), 0.0f, 0, 1.5f);
+    dl->AddRectFilled(a, b, ui::kPreviewZone);
+    dl->AddRect(a, b, ui::kPreviewZoneRim, 0.0f, 0, 1.5f);
     const char letter[2] = {static_cast<char>('a' + i), '\0'};
-    dl->AddText(ImVec2(a.x + 3.0f, a.y + 1.0f), IM_COL32(255, 255, 255, 220), letter);
+    dl->AddText(ImVec2(a.x + 3.0f, a.y + 1.0f), ui::kPreviewZoneLetter, letter);
   }
   for (uint8_t i = 0; i < arena.spawnPointCount; ++i) {
     const Vec2 p = arena.spawnPoints[i];
@@ -687,9 +704,9 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
     const ImVec2 bottom{q.x, q.y + kR};
     const ImVec2 left{q.x - kR, q.y};
     if (live) {
-      dl->AddQuadFilled(top, right, bottom, left, IM_COL32(255, 255, 255, 230));
+      dl->AddQuadFilled(top, right, bottom, left, ui::kPreviewSpawnerOn);
     } else {
-      dl->AddQuad(top, right, bottom, left, IM_COL32(170, 170, 170, 200), 1.5f);
+      dl->AddQuad(top, right, bottom, left, ui::kPreviewSpawnerOff, 1.5f);
     }
   }
 }
@@ -730,7 +747,7 @@ void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   }
 }
 
-// The local settings rows (LobbyMenu): the focused row behind a banana bar,
+// The local settings rows (LobbyMenu): the focused row on the focus bar,
 // a click focuses a row, the arrow buttons change it like Left/Right.
 // v0.43: compact (a smaller font and spacing) and the power-up toggles two
 // to a line, a click on one toggling it, so the lobby fits a 720p window in
@@ -768,11 +785,12 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
       ImDrawList* dl = ImGui::GetWindowDrawList();
       const bool on = (menu.settings().powerUps & (1u << row.powerUp)) != 0;
       const ImVec2 max{min.x + w, min.y + frameH};
-      dl->AddRectFilled(min, max,
-                        ImGui::IsItemHovered() ? ui::withAlpha(ui::kMango, 90)
-                                               : ui::withAlpha(ui::kBarkLight, 160),
-                        8.0f);
-      if (focused) ui::focusBar(min, max);
+      if (focused) {
+        ui::focusBar(min, max);
+      } else {
+        ui::card(dl, min, max, ImGui::IsItemHovered() ? ui::kBarkLight : ui::kBarkInset, 10.0f,
+                 2.0f, 0.0f);
+      }
       const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
       dl->AddCircleFilled(ImVec2(min.x + 12.0f, min.y + (frameH * 0.5f)), 5.0f, slotColor(color));
       const float textY = min.y + ((frameH - kRowFont) * 0.5f);
@@ -804,7 +822,7 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted(menu.rowLabel(row).c_str());
     ImGui::SameLine(x0 + valueX);
-    if (ImGui::ArrowButton("##l", ImGuiDir_Left)) {
+    if (ui::arrowButton("##l", ImGuiDir_Left)) {
       menu.setFocus(i);
       changed = menu.change(i, -1) || changed;
     }
@@ -815,7 +833,7 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     ImGui::SetCursorPosX(vx + std::max(0.0f, (valueW - tw) * 0.5f));
     ImGui::TextUnformatted(value.c_str());
     ImGui::SameLine(vx + valueW);
-    if (ImGui::ArrowButton("##r", ImGuiDir_Right)) {
+    if (ui::arrowButton("##r", ImGuiDir_Right)) {
       menu.setFocus(i);
       changed = menu.change(i, +1) || changed;
     }
@@ -844,7 +862,8 @@ ShareOutcome drawShare(const ShareView& share) {
   // the code itself: friends type it into Play online.
   const bool codeOnly = share.link == share.code;
   ImGui::BeginGroup();
-  if (ui::bigButton(codeOnly ? "Copy code" : "Copy link", false, 0.0f, true, ui::kFontUi + 2.0f)) {
+  if (ui::bigButton(codeOnly ? "Copy code" : "Copy link", false, 0.0f, true, ui::kFontUi + 2.0f,
+                    ui::Tone::Second)) {
     out.copy = true;
   }
   if (share.canShare) {
@@ -959,7 +978,8 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
       const float bw = (ImGui::GetContentRegionAvail().x - gap) / 2.0f;
       for (std::size_t i = 0; i < kButtons.size(); ++i) {
         if (i > 0) ImGui::SameLine();
-        if (ui::bigButton(kButtons[i], i == buttons.focus(), bw)) {
+        if (ui::bigButton(kButtons[i], i == buttons.focus(), bw, true, ui::kFontButton,
+                          i == 0 ? ui::Tone::Lead : ui::Tone::Plain)) {
           buttons.setFocus(i);
           (i == 0 ? out.reconnect : out.leave) = true;
         }
@@ -1017,7 +1037,7 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
 
 LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
   LobbyOutcome out;
-  if (ui::beginScreen("##local_lobby", 900.0f, 0.9f)) {
+  if (ui::beginScreen("##local_lobby", 900.0f)) {
     ui::heading("Local play");
     // Player cards: who is in each slot.
     std::array<LobbyCard, sim::kMaxPlayers> cards{};
@@ -1093,7 +1113,10 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
 
     ImGui::Spacing();
     const bool canStart = session.lobbyPresentMask() != 0;
-    if (ui::bigButton("Start match  (Enter / Start)", false, -1.0f, canStart)) out.start = true;
+    if (ui::bigButton("Start match  (Enter / Start)", false, -1.0f, canStart, ui::kFontButton,
+                      ui::Tone::Lead)) {
+      out.start = true;
+    }
     if (std::popcount(static_cast<uint32_t>(session.lobbyPresentMask())) < 2) {
       ImGui::TextDisabled("Rounds only end with at least two monkeys: add a player or a bot.");
     }
@@ -1179,9 +1202,9 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     ImGui::Spacing();
     const float leaveW = 160.0f;
     if (host) {
-      if (ui::bigButton(
-              "Start match  (Enter)", true,
-              ImGui::GetContentRegionAvail().x - leaveW - ImGui::GetStyle().ItemSpacing.x)) {
+      if (ui::bigButton("Start match  (Enter)", true,
+                        ImGui::GetContentRegionAvail().x - leaveW - ImGui::GetStyle().ItemSpacing.x,
+                        true, ui::kFontButton, ui::Tone::Lead)) {
         out.start = true;
       }
     } else {
@@ -1250,7 +1273,9 @@ std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& 
         n == 0 ? 0.0f : (width - (static_cast<float>(n - 1) * gap)) / static_cast<float>(n);
     for (std::size_t i = 0; i < n; ++i) {
       if (i > 0) ImGui::SameLine();
-      if (ui::bigButton(view.buttons[i].c_str(), i == menu.focus(), bw)) {
+      // The first button is the screen's lead (Play again).
+      if (ui::bigButton(view.buttons[i].c_str(), i == menu.focus(), bw, true, ui::kFontButton,
+                        i == 0 ? ui::Tone::Lead : ui::Tone::Plain)) {
         menu.setFocus(i);
         clicked = i;
       }
@@ -1267,8 +1292,7 @@ std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {
   std::optional<PauseItem> clicked;
   const ImVec2 display = ImGui::GetIO().DisplaySize;
   // Over the scene and the HUD (both on the background list), under the panel.
-  ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), display,
-                                                IM_COL32(0, 0, 0, 150));
+  ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), display, ui::kScrim);
   if (ui::beginScreen("##pause_menu", 380.0f)) {
     ui::heading("Paused");
     ImGui::PushFont(nullptr, ui::kFontSmall);
@@ -1283,7 +1307,8 @@ std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {
     const ImVec2 delta = ImGui::GetIO().MouseDelta;
     const bool mouseMoved = delta.x != 0.0f || delta.y != 0.0f;
     for (std::size_t i = 0; i < items.size(); ++i) {
-      if (ui::bigButton(PauseMenu::label(items[i]), i == menu.focus(), width)) {
+      if (ui::bigButton(PauseMenu::label(items[i]), i == menu.focus(), width, true, ui::kFontButton,
+                        items[i] == PauseItem::Resume ? ui::Tone::Lead : ui::Tone::Plain)) {
         menu.setFocus(i);
         clicked = items[i];
       }
