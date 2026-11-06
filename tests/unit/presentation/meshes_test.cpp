@@ -150,6 +150,40 @@ TEST_CASE("disc, floor quad and cube are valid", "[presentation][meshes]") {
     CHECK(dot(posOf(v), normalOf(v)) == Approx(0.5f));
 }
 
+TEST_CASE("a wall block is valid, rounded and stands on its footprint", "[presentation][meshes]") {
+  const MeshData m = makeRoundedBlock(1.5f, 1.0f, kArenaWallHeight, 0.4f, 0.3f);
+  checkValid(m, "rounded block");
+  const Bounds b = boundsOf(m);
+  CHECK(b.lo.y == Approx(0.0f).margin(1e-5));
+  CHECK(b.hi.y == Approx(kArenaWallHeight));
+  CHECK(b.lo.x == Approx(-1.5f));
+  CHECK(b.hi.x == Approx(1.5f));
+  CHECK(b.lo.z == Approx(-1.0f));
+  CHECK(b.hi.z == Approx(1.0f));
+  // The rounded corner keeps the footprint inside the box with the corner
+  // radius cut off: no vertex lies in the square corner beyond the arc.
+  for (const MeshVertex& v : m.vertices) {
+    const float dx = std::fmax(std::fabs(v.px) - (1.5f - 0.4f), 0.0f);
+    const float dz = std::fmax(std::fabs(v.pz) - (1.0f - 0.4f), 0.0f);
+    CHECK(std::sqrt((dx * dx) + (dz * dz)) <= 0.4f + 1e-4f);
+  }
+  // Thin, nearly sharp and flat-topped variants (the three themes' shapes).
+  checkValid(makeRoundedBlock(5.5f, 0.3f, 1.2f, 0.13f, 0.1f), "thin block");
+  checkValid(makeRoundedBlock(1.0f, 1.0f, 1.2f, 0.04f, 0.04f), "sharp block");
+  checkValid(makeRoundedBlock(1.0f, 2.0f, 1.2f, 0.3f, 0.0f, 2), "unbevelled block");
+
+  // appendMesh moves a part and its indices.
+  MeshData all;
+  CHECK(appendMesh(all, m, Vec3{2.0f, 0.0f, -3.0f}) == 0);
+  const auto second = appendMesh(all, m, Vec3{-4.0f, 0.0f, 1.0f});
+  CHECK(second == m.indices.size());
+  REQUIRE(all.vertices.size() == 2 * m.vertices.size());
+  CHECK(all.vertices[0].px == Approx(m.vertices[0].px + 2.0f));
+  CHECK(all.vertices[0].v == Approx(m.vertices[0].v + 3.0f));
+  CHECK(all.indices[second] == m.indices[0] + m.vertices.size());
+  checkValid(all, "two blocks");
+}
+
 TEST_CASE("mesh generation is deterministic", "[presentation][meshes]") {
   const sim::ContentDB& c = sim::defaultContent();
   CHECK(sameBytes(makeMonkeyCapsule(c.player), makeMonkeyCapsule(c.player)));

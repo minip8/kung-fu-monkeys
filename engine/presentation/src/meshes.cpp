@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <numbers>
+#include <vector>
 
 namespace kfm::presentation {
 namespace {
@@ -203,6 +204,98 @@ MeshData makeFloorQuad(float halfX, float halfZ) {
   pushTriangle(m, 0, 3, 2);
   pushTriangle(m, 0, 2, 1);
   return m;
+}
+
+MeshData makeRoundedBlock(float halfX, float halfZ, float height, float radius, float bevel,
+                          uint32_t segments) {
+  segments = std::max<uint32_t>(segments, 1);
+  halfX = std::max(halfX, 1e-2f);
+  halfZ = std::max(halfZ, 1e-2f);
+  height = std::max(height, 1e-2f);
+  radius = std::clamp(radius, 1e-2f * std::min(halfX, halfZ), 0.95f * std::min(halfX, halfZ));
+  bevel = std::clamp(bevel, 0.0f, std::min(0.75f * radius, 0.5f * height));
+
+  // The footprint: a rounded rectangle, counter-clockwise seen from above
+  // (angle t from +x toward -z, as rotateY turns), segments + 1 points per
+  // corner, each with its outward normal.
+  struct ProfilePoint {
+    float x;
+    float z;
+    float nx;
+    float nz;
+  };
+  std::vector<ProfilePoint> profile;
+  const std::array<Vec2f, 4> centres = {
+      Vec2f{halfX - radius, -(halfZ - radius)}, Vec2f{-(halfX - radius), -(halfZ - radius)},
+      Vec2f{-(halfX - radius), halfZ - radius}, Vec2f{halfX - radius, halfZ - radius}};
+  for (uint32_t q = 0; q < 4; ++q) {
+    for (uint32_t k = 0; k <= segments; ++k) {
+      const float t = 0.5f * kPi * (toFloat(q) + (toFloat(k) / toFloat(segments)));
+      const float c = std::cos(t);
+      const float sn = -std::sin(t);
+      profile.push_back(
+          ProfilePoint{centres[q].x + (radius * c), centres[q].y + (radius * sn), c, sn});
+    }
+  }
+  const auto ringSize = static_cast<uint32_t>(profile.size());
+
+  // Rings from the ground up: the foot, the start of the bevel, then the
+  // bevel's quarter circle (inset and raised, its normal turning up).
+  MeshData m;
+  const auto pushRing = [&](float inset, float y, float tilt) {
+    const float cs = std::cos(tilt);
+    const float sn = std::sin(tilt);
+    for (const ProfilePoint& pp : profile) {
+      const Vec3 at{pp.x - (pp.nx * inset), y, pp.z - (pp.nz * inset)};
+      pushVertex(m, at, Vec3{pp.nx * cs, sn, pp.nz * cs}, at.x, -at.z);
+    }
+  };
+  pushRing(0.0f, 0.0f, 0.0f);
+  pushRing(0.0f, height - bevel, 0.0f);
+  const uint32_t bevelRings = bevel > 0.0f ? segments : 0;
+  for (uint32_t k = 1; k <= bevelRings; ++k) {
+    const float phi = 0.5f * kPi * toFloat(k) / toFloat(bevelRings);
+    pushRing(bevel * (1.0f - std::cos(phi)), height - bevel + (bevel * std::sin(phi)), phi);
+  }
+  const uint32_t rings = 2 + bevelRings;
+  for (uint32_t r = 0; r + 1 < rings; ++r) {
+    for (uint32_t i = 0; i < ringSize; ++i) {
+      const uint32_t j = (i + 1) % ringSize;
+      const uint32_t a = (r * ringSize) + i;
+      const uint32_t b = (r * ringSize) + j;
+      const uint32_t c = ((r + 1) * ringSize) + j;
+      const uint32_t d = ((r + 1) * ringSize) + i;
+      pushTriangle(m, a, b, c);
+      pushTriangle(m, a, c, d);
+    }
+  }
+  // The top: a fan from the centre over the last ring (convex), facing up.
+  const uint32_t top = (rings - 1) * ringSize;
+  const auto centre = static_cast<uint32_t>(m.vertices.size());
+  pushVertex(m, Vec3{0.0f, height, 0.0f}, Vec3{0.0f, 1.0f, 0.0f}, 0.0f, 0.0f);
+  for (uint32_t i = 0; i < ringSize; ++i) {
+    const MeshVertex& v = m.vertices[top + i];
+    m.vertices[top + i] = MeshVertex{v.px, v.py, v.pz, 0.0f, 1.0f, 0.0f, v.u, v.v};
+  }
+  for (uint32_t i = 0; i < ringSize; ++i)
+    pushTriangle(m, centre, top + i, top + ((i + 1) % ringSize));
+  return m;
+}
+
+uint32_t appendMesh(MeshData& out, const MeshData& part, Vec3 offset) {
+  const auto base = static_cast<uint32_t>(out.vertices.size());
+  const auto first = static_cast<uint32_t>(out.indices.size());
+  for (MeshVertex v : part.vertices) {
+    v.px += offset.x;
+    v.py += offset.y;
+    v.pz += offset.z;
+    v.u += offset.x;
+    v.v -= offset.z;
+    out.vertices.push_back(v);
+  }
+  for (const uint16_t i : part.indices)
+    out.indices.push_back(static_cast<uint16_t>(base + i));
+  return first;
 }
 
 MeshData makeUnitCube() {
