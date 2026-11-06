@@ -41,6 +41,9 @@ inline constexpr std::array<Color, sim::kMaxPlayers> kPlayerColors = {{
   return kPlayerColors[slot % kPlayerColors.size()];
 }
 
+// A banana's brown tips (v0.49): the stem and the far end of every banana.
+inline constexpr Color kBananaTip{0.36f, 0.22f, 0.08f};
+
 // The cartoon look of an arena (v0.49, architecture §7 "Look"): the colours
 // of the ground, the statics and the ink lines. Values are the style board's
 // Jungle Toon swatches (sRGB hex / 255; the renderer writes them unconverted).

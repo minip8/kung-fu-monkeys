@@ -65,6 +65,7 @@ constexpr const ArenaLook& kLook = kJungleLook;
 constexpr Color kBananaColor{1.0f, 0.86f, 0.16f};
 constexpr Color kPickupColor{0.98f, 0.80f, 0.12f};
 constexpr Color kEliminatedColor{0.42f, 0.42f, 0.44f};
+constexpr float kEliminatedFade = 0.8f;  // how far an eliminated monkey greys out
 constexpr Color kGold{1.0f, 0.82f, 0.18f};
 constexpr Color kWhite{1.0f, 1.0f, 1.0f};
 constexpr Color kHitRed{1.0f, 0.16f, 0.10f};
@@ -163,7 +164,7 @@ static_assert(sizeof(DecalFsParams) == static_cast<std::size_t>(shaders::kDecalF
 enum class DecalMode : uint8_t { Shadow = 0, Ring = 1, Burst = 2, Rect = 3 };
 
 // The lit program's surfaces (shaders.hpp kLitFs).
-enum class Surface : uint8_t { Toon = 0, Grass = 1, Water = 2, Mud = 3, Rock = 4 };
+enum class Surface : uint8_t { Toon = 0, Grass = 1, Water = 2, Mud = 3, Rock = 4, Banana = 5 };
 
 // How an outline hull is pushed out (shaders.hpp kOutlineVs).
 enum class Hull : uint8_t { Smooth = 0, Box = 1 };
@@ -273,6 +274,9 @@ enum class Blend : uint8_t { Opaque, Alpha, Additive, Outline };
   desc.layout.attrs[3] = {.buffer_index = 0,
                           .offset = static_cast<int>(offsetof(SkinnedVertex, weights)),
                           .format = SG_VERTEXFORMAT_FLOAT4};
+  desc.layout.attrs[4] = {.buffer_index = 0,
+                          .offset = static_cast<int>(offsetof(SkinnedVertex, color)),
+                          .format = SG_VERTEXFORMAT_FLOAT4};
   desc.index_type = SG_INDEXTYPE_UINT16;
   desc.face_winding = SG_FACEWINDING_CCW;
   desc.cull_mode = outline ? SG_CULLMODE_FRONT : SG_CULLMODE_BACK;
@@ -317,19 +321,22 @@ class FrameDrawer {
   // A patterned surface (water, mud, mossy rock): `alt` is its second colour,
   // `phase` its animation time.
   void surface(std::size_t mesh, const Mat4& model, Color color, Surface kind, Color alt,
-               float phase = 0.0f) {
+               float phase = 0.0f, float emissive = 0.0f) {
     usePipeline(kLitPipeline);
     const LitVsParams vs{.mvp = viewProj_ * model, .model = model};
-    const LitFsParams fs = litFs(color, kind, alt, phase, 0.0f, 0.0f);
+    const LitFsParams fs = litFs(color, kind, alt, phase, 0.0f, emissive);
     submit(mesh, rangeOf(vs), rangeOf(fs));
   }
 
-  // A skinned character with the lit cel shading (shaders.hpp, kSkinnedVs).
-  void skinned(const Mat4& model, const SkinMatrices& joints, Color color, float flash,
-               float emissive) {
+  // A skinned character with the lit cel shading (shaders.hpp, kSkinnedVs):
+  // `tint` on the parts its vertex colours mask, the whole faded `fade`
+  // toward `fadeTarget` (an eliminated monkey greys out, fur and all).
+  void skinned(const Mat4& model, const SkinMatrices& joints, Color tint, float flash,
+               float emissive, Color fadeTarget, float fade) {
     usePipeline(kSkinnedPipeline);
     const SkinnedVsParams vs{.mvp = viewProj_ * model, .model = model, .joints = joints};
-    const LitFsParams fs = litFs(color, Surface::Toon, {}, 0.0f, flash, emissive);
+    LitFsParams fs = litFs(tint, Surface::Toon, fadeTarget, 0.0f, flash, emissive);
+    fs.alt.w = fade;
     submit(kSkinnedMesh, rangeOf(vs), rangeOf(fs));
   }
 
@@ -695,14 +702,14 @@ bool Renderer::loadCharacterModel(const char* path) {
   mesh.indexCount = static_cast<uint32_t>(model_.indices.size());
   shaders_[kSkinnedShader] =
       makeShader(shaders::kSkinnedVs, shaders::kLitFs, shaders::kSkinnedVsVec4s,
-                 shaders::kLitFsVec4s, "kfm-skinned-shader", 4);
+                 shaders::kLitFsVec4s, "kfm-skinned-shader", 5);
   pipelines_[kSkinnedPipeline] =
       makeSkinnedPipeline(shaders_[kSkinnedShader], false, "kfm-skinned");
-  // The outline's fragment stage is kOutlineFs; its vertex stage reads only
-  // position, normal, joints and weights, the same four attributes.
+  // The outline's fragment stage is kOutlineFs; its vertex stage reads
+  // position, normal, joints and weights (the colour is bound, unread).
   shaders_[kSkinnedOutlineShader] =
       makeShader(shaders::kSkinnedOutlineVs, shaders::kOutlineFs, shaders::kSkinnedOutlineVsVec4s,
-                 shaders::kOutlineFsVec4s, "kfm-skinned-outline-shader", 4);
+                 shaders::kOutlineFsVec4s, "kfm-skinned-outline-shader", 5);
   pipelines_[kSkinnedOutlinePipeline] =
       makeSkinnedPipeline(shaders_[kSkinnedOutlineShader], true, "kfm-skinned-outline");
 
@@ -829,7 +836,8 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (!p.visible) continue;
     const bool eliminated = p.has(PlayerFlag::Eliminated);
     const Color own = playerColor(p.colorIndex);
-    const Color body = eliminated ? mix(own, kEliminatedColor, 0.8f) : own;
+    const float fade = eliminated ? kEliminatedFade : 0.0f;
+    const Color body = mix(own, kEliminatedColor, fade);
     float flash = p.flash;
     if (p.has(PlayerFlag::Invulnerable)) flash = std::max(flash, 0.35f * blink);
     const float emissive = p.has(PlayerFlag::Dashing) ? 0.25f : 0.0f;
@@ -838,7 +846,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       SkinMatrices joints;
       evaluateAnimState(model_, clips_, anim_[p.slot], joints);
       const Mat4 model = placed * scale({modelScale, modelScale, modelScale});
-      d.skinned(model, joints, body, flash, emissive);
+      d.skinned(model, joints, own, flash, emissive, kEliminatedColor, fade);
       d.skinnedOutline(model, joints, kOutlineMonkey);
     } else {
       d.lit(kCapsuleMesh, placed, body, flash, emissive);
@@ -874,7 +882,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       const Mat4 m = translate(aimBase) * rotateY(p.aimYaw) *
                      translate({r * 0.55f, 0.0f, r * 0.85f}) *
                      scale({kHeldBananaScale, kHeldBananaScale, kHeldBananaScale});
-      d.lit(kBananaMesh, m, kBananaColor, 0.0f, 0.1f);
+      d.surface(kBananaMesh, m, kBananaColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
       d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
     }
   }
@@ -884,7 +892,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     Color c = kBananaColor;
     if (b.ownerSlot >= 0) c = mix(c, playerColor(static_cast<uint32_t>(b.ownerSlot)), kOwnerTint);
     const Mat4 m = translate(b.position) * rotateY(b.headingYaw + b.spin);
-    d.lit(kBananaMesh, m, c, 0.0f, 0.15f);
+    d.surface(kBananaMesh, m, c, Surface::Banana, kBananaTip, 0.0f, 0.15f);
     d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
   }
   for (uint16_t i = 0; i < state.pickupCount; ++i) {
@@ -893,7 +901,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       drawPowerUp(d, p, r, bodyHeight, state.time);  // a flag: its team's colour (v0.33)
     } else {
       const Mat4 m = translate(p.position) * rotateY(p.spin);
-      d.lit(kBananaMesh, m, kPickupColor, 0.0f, 0.1f);
+      d.surface(kBananaMesh, m, kPickupColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
       d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
     }
   }

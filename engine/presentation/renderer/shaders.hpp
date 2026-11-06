@@ -45,15 +45,21 @@ static_assert(kSkinnedOutlineVsVec4s <= 256);
 // --- lit: opaque meshes, two-band cel shading (v0.49) -----------------------------
 // fs_params[0] = base colour (rgb)
 // fs_params[1] = unit direction toward the light (xyz), shade band level (w)
-// fs_params[2] = surface (0 toon, 1 grass floor, 2 water, 3 mud, 4 mossy rock),
+// fs_params[2] = surface (0 toon, 1 grass floor, 2 water, 3 mud, 4 mossy rock,
+//                5 banana),
 //                flash (0..1 toward white), emissive (adds base colour), the
 //                surface's animation phase (seconds × its speed)
 // fs_params[3] = floor only: arena half extents (xy) in sim units; grass only:
 //                patch scale (z), tuft cells per unit (w)
 // fs_params[4] = shade tint (rgb), cel band edge on n.l (w)
 // fs_params[5] = the surface's second colour (rgb: grass patches, foam, mud
-//                bubbles, moss), grass only: tuft density (w); tufts are the
-//                base colour darkened
+//                bubbles, moss, banana tips; toon: a colour to fade toward),
+//                grass: tuft density (w; tufts are the base darkened), toon:
+//                how far to fade (w; an eliminated monkey greys out)
+// The vertex colour (v_color, v0.49) is the skinned model's COLOR_0 and white
+// for static meshes: the base is mix(v_color.rgb, fs_params[0].rgb, v_color.a),
+// so a mesh part keeps its own colour where its alpha is 0 and wears the given
+// colour (a player's) where it is 1.
 // Surfaces read the world position (v_world), so patterns run continuously
 // across pieces and never stretch with a box's scale.
 inline constexpr const char* kLitVs = KFM_GLSL_HEADER R"(
@@ -64,12 +70,14 @@ uniform vec4 vs_params[8];
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_world;
+out vec4 v_color;
 void main() {
   mat4 mvp = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]);
   mat4 model = mat4(vs_params[4], vs_params[5], vs_params[6], vs_params[7]);
   v_normal = transpose(inverse(mat3(model))) * a_normal;
   v_uv = a_uv;
   v_world = (model * vec4(a_position, 1.0)).xyz;
+  v_color = vec4(1.0);
   gl_Position = mvp * vec4(a_position, 1.0);
 }
 )";
@@ -78,6 +86,7 @@ inline constexpr const char* kLitFs = KFM_GLSL_HEADER R"(
 in vec3 v_normal;
 in vec2 v_uv;
 in vec3 v_world;
+in vec4 v_color;
 uniform vec4 fs_params[6];
 out vec4 frag_color;
 float hash(vec2 p) {
@@ -96,7 +105,7 @@ float edge(float threshold, float x) {
   return smoothstep(threshold - w, threshold + w, x);
 }
 void main() {
-  vec3 base = fs_params[0].rgb;
+  vec3 base = mix(v_color.rgb, fs_params[0].rgb, v_color.a);
   vec3 toLight = fs_params[1].xyz;
   float shade = fs_params[1].w;
   float surface = fs_params[2].x;
@@ -110,7 +119,8 @@ void main() {
   vec3 c = base;
   vec2 p = v_world.xz;
   if (surface < 0.5) {
-    // Toon: the base colour alone.
+    // Toon: the base colour, faded toward the second colour by its w.
+    c = mix(base, alt, clamp(fs_params[5].w, 0.0, 1.0));
   } else if (surface < 1.5) {
     // Grass: flat two-tone blotches, small darker tufts, a faint unit grid on
     // the sim coordinates (uv) and a darker band along the walls.
@@ -150,6 +160,9 @@ void main() {
     // Mossy rock: moss blotches over the top faces.
     float top = edge(0.7, n.y);
     c = mix(base, alt, top * edge(0.38, noise(p * 1.6)));
+  } else if (surface < 5.5) {
+    // Banana: brown tips (the mesh's u runs from one tip, 0, to the other, 1).
+    c = mix(base, alt, edge(0.84, abs(v_uv.x * 2.0 - 1.0)));
   }
   float lit = edge(bandEdge, dot(n, toLight));
   c = mix(c * shade * tint, c, lit) + base * emissive;
@@ -197,7 +210,8 @@ void main() {
 )";
 
 // --- skinned: GPU-skinned characters with the lit program's cel shading -------
-// Vertex: position, normal, four joint indices (floats) and weights (sum 1).
+// Vertex: position, normal, four joint indices (floats), weights (sum 1) and
+// the colour (rgb, player-colour mask; see kLitFs).
 // The skin matrix is the weighted sum of the joint matrices (linear blend
 // skinning); normals go through its upper 3×3 (joint transforms are rigid),
 // then through the model's normal matrix (the model matrix carries the
@@ -210,10 +224,12 @@ layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_joints;
 layout(location = 3) in vec4 a_weights;
+layout(location = 4) in vec4 a_color;
 uniform vec4 vs_params[72];
 out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_world;
+out vec4 v_color;
 mat4 jointMatrix(float joint) {
   int i = 8 + 4 * int(joint + 0.5);
   return mat4(vs_params[i], vs_params[i + 1], vs_params[i + 2], vs_params[i + 3]);
@@ -228,6 +244,7 @@ void main() {
   v_normal = transpose(inverse(mat3(model))) * n;
   v_uv = vec2(0.0);
   v_world = (model * skinned).xyz;
+  v_color = a_color;
   gl_Position = mvp * skinned;
 }
 )";

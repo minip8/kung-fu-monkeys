@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.49 (2026-11-06). Working title taken from the repo name.
+Status: proposal v0.50 (2026-11-06). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -494,6 +494,14 @@ client's arena preview shares. Yellow moves from player slot 2 to slot 5 (purple
 so no monkey in a match of up to five wears banana yellow. Presentation only: no sim, content or
 wire change, replay checksums unchanged. Next: the character (fur and gi), the Mango Sunset UI,
 then a theme per arena.
+v0.50 changes: the cartoon look, step 2: the character (§7 "Look"). The generated rig gets
+vertex colours (glTF `COLOR_0`: rgb the part's own colour, alpha the player-colour mask) and a
+cartoon build: brown fur, a bigger head (radius 0.75 of 3.2) with a pale face, dark eyes, round
+ears, pale hands, feet and a tail; the gi and a headband (a torus with two tails) wear the slot's
+colour. `SkinnedVertex` grows to 72 bytes with the colour (white, so all player colour, when a
+file has none); `lit` draws `mix(rgb, colour, alpha)` and fades a whole body toward grey for
+an eliminated monkey, fur included. Bananas get brown tips (a `lit` surface over the mesh's u).
+Presentation only; replay checksums unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2603,9 +2611,13 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   darker band along the walls), water (deep patches and drifting crest lines), mud (blotches and
   bubble rings) and mossy rock (moss blotches on top faces). The colours are one `ArenaLook`
   (`palette.hpp`: `kJungleLook`, from the style board's swatches); the client's arena preview
-  draws from the same look. The clear colour around the arena is the canopy green. Next steps:
-  the character (brown fur, the player colour on a gi and headband, a bigger head, a banana with
-  brown tips), the Mango Sunset UI palette, and one `ArenaLook` per arena theme.
+  draws from the same look. The clear colour around the arena is the canopy green. The
+  character (v0.50): the rig's vertex colours (`COLOR_0`, rgb the part's colour, alpha the
+  player-colour mask) give brown fur, a pale face and hands, dark eyes, and the slot's colour on
+  the gi and the headband (a torus with two tails); the head is big (0.75 of the 3.2-radius
+  height) and the top of the head stays at the capsule's height. An eliminated monkey fades 0.8
+  toward grey as a whole. Bananas have brown tips. Next: the Mango Sunset UI palette, and one
+  `ArenaLook` per arena theme.
   `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
