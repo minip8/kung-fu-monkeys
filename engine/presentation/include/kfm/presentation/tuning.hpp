@@ -71,6 +71,10 @@ inline constexpr float kOutlineMonkey = 0.045f;
 inline constexpr float kOutlineBanana = 0.022f;
 inline constexpr float kOutlineWall = 0.08f;
 inline constexpr float kOutlinePowerUp = 0.035f;
+// v0.54: the skinned character's hull is drawn with this depth bias (constant
+// and slope-scaled, in depth-buffer units, away from the camera): where it
+// grazes the character's own surface it stays hidden; silhouettes keep it.
+inline constexpr float kOutlineSkinnedDepthBias = 1.0f;
 // Two-band cel shading: n·l above this edge is lit, below it the shade band
 // (kShadeBand × ArenaLook::shadeTint). The edge is anti-aliased with fwidth.
 inline constexpr float kCelBandEdge = 0.12f;
@@ -111,6 +115,13 @@ inline constexpr float kGroundFieldRange = 8.0f;
 // The arena edge line is at least this wide (a look without ground ink
 // still marks where bananas bounce).
 inline constexpr float kEdgeLineMinWidth = 0.1f;
+
+// --- locomotion (§7) -----------------------------------------------------------------
+// A moving monkey plays the rig's `run` clip (limb cycle, bob and forward
+// lean) only when this is on. Off, it holds the idle clip and glides while
+// still turning to its heading; dash, charge, throw, hit and eliminated play
+// as before. The clip stays in the rig (tools/assets/gen_test_rig.py).
+inline constexpr bool kMonkeyRunCycle = false;
 
 // --- facing (§7) ---------------------------------------------------------------------
 // Body yaw follows the move direction at most this fast (720°/s: a half turn

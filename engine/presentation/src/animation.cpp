@@ -181,7 +181,8 @@ AnimClip selectClip(const RenderPlayer& player, bool moving, bool throwing) {
   if (player.has(PlayerFlag::Dashing)) return AnimClip::Dash;
   if (player.has(PlayerFlag::Charging)) return AnimClip::Charge;
   if (throwing) return AnimClip::Throw;
-  return moving ? AnimClip::Run : AnimClip::Idle;
+  // kMonkeyRunCycle off: a moving monkey holds its idle pose and glides.
+  return moving && kMonkeyRunCycle ? AnimClip::Run : AnimClip::Idle;
 }
 
 void updateAnimState(AnimState& state, const RenderPlayer& player, float dtSeconds) {
