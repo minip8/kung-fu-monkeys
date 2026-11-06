@@ -502,14 +502,20 @@ void InputSampler::endTickAfter(std::size_t count) {
 }
 
 std::optional<CursorPos> InputSampler::cursor() const {
-  if (!mouseActive_) return std::nullopt;
+  if (!mouseActive_ || !mouseAimEnabled_) return std::nullopt;
   return cursor_;
 }
 
 bool InputSampler::usesMouseAim(PlayerId slot) const {
-  if (!mouseActive_ || !validSlot(slot)) return false;
+  if (!mouseAimEnabled_ || !mouseActive_ || !validSlot(slot)) return false;
   const DeviceBinding& d = slots_[slot.value].device;
   return d.kind == DeviceKind::Keyboard && keyProfiles_[d.keyboardProfile].mouseAim;
+}
+
+void InputSampler::setMouseAimEnabled(bool enabled) {
+  if (enabled == mouseAimEnabled_) return;
+  mouseAimEnabled_ = enabled;
+  mouseActive_ = false;
 }
 
 void InputSampler::setAimOrigin(PlayerId slot, std::optional<AimPoint> origin) {
