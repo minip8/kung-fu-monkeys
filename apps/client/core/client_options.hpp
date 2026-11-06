@@ -5,7 +5,7 @@
 //              [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
 //              [--powerups LIST] [--no-hot-reload] [--no-settings]
 //              [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]
-//              [--no-frame-limit] [--mute] [--volume 0..100]
+//              [--no-frame-limit] [--mute] [--volume 0..100] [--mouse-aim on|off]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]
 //              [--screen menu|settings|online|local|paused]
@@ -14,6 +14,11 @@
 // main menu (screenshots and development; --autostart and the network flags
 // still go straight to play). v0.46: `paused` starts a local match and opens
 // the pause menu over it.
+//
+// --mouse-aim on|off (the browser's ?mouse_aim=, which the page passes as
+// --mouse_aim, also accepted) switches the keyboard + mouse profile's cursor
+// aim; off, that profile aims by its move direction as before v0.45 and the
+// mouse buttons still throw and dash. Saved as `mouse_aim=on|off`.
 //
 // v0.42: --nick (the browser's ?nick=) is the name sent in Hello and shown to
 // the room; saved with the lobby settings (`nick=`); with none, the client
@@ -56,7 +61,7 @@ inline constexpr const char* kUsage =
     "                  [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
     "                  [--powerups LIST] [--no-hot-reload] [--no-settings]\n"
     "                  [--overlay] [--capsules] [--exit-after-frames N] [--screenshot out.ppm]\n"
-    "                  [--no-frame-limit] [--mute] [--volume 0..100]\n"
+    "                  [--no-frame-limit] [--mute] [--volume 0..100] [--mouse-aim on|off]\n"
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
@@ -94,6 +99,9 @@ inline constexpr const char* kUsage =
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
     "  --verbose              online: the transport's own log (ICE, DTLS, the lobby socket)\n"
     "  --volume N             master volume in percent, 0-100 (default 80)\n"
+    "  --mouse-aim on|off     the cursor aims for the keyboard + mouse player (default\n"
+    "                         on; saved); off, the move direction aims and clicks\n"
+    "                         still throw and dash (the browser's ?mouse_aim=off)\n"
     "network mode:\n"
     "  --connect ws://h:p     play on a server: connects at startup; Esc goes to the\n"
     "                         local lobby, whose Start reconnects with every device\n"
@@ -140,6 +148,7 @@ struct ClientOptions {
   bool mute{false};
   bool verbose{false};  // network mode: libdatachannel's log at Debug on stderr
   uint8_t volume{80};   // percent, = presentation::kDefaultMasterVolume
+  bool mouseAim{true};  // --mouse-aim: the cursor aims (InputSampler::setMouseAimEnabled)
   // Network mode (empty connect: local play).
   std::string connect;  // signaling URL, "ws://host:port"
   std::string token;
@@ -169,6 +178,8 @@ struct ClientOptions {
 // (docs/lobby-protocol.md §2). Anything else is nullopt.
 [[nodiscard]] std::optional<std::string> normalizeRoomCode(std::string_view code);
 [[nodiscard]] bool isRoomCodeChar(char c);
+// "on" or "off" (--mouse-aim, the saved mouse_aim=); anything else is nullopt.
+[[nodiscard]] std::optional<bool> parseOnOff(std::string_view v);
 // A region label: 1-16 characters of a-z, 0-9, '-'.
 [[nodiscard]] bool isRegionLabel(std::string_view region);
 // What a player should send a friend to join `room`: in the browser

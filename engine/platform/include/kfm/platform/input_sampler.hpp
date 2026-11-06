@@ -40,6 +40,11 @@
 //     the move direction never sets the aim, and with either point unknown
 //     or the cursor within kMinMouseAimDistance of the origin the previous
 //     aim stays.
+//   - The mouse-aim switch (setMouseAimEnabled, the client's Mouse aim
+//     setting): off, no slot aims with the cursor and a mouseAim profile aims
+//     by its move direction like any other; the mouse buttons still press.
+//     Flipping it either way drops the "the mouse moved" latch, so switched
+//     back on the cursor aims only once the mouse moves or clicks again.
 //   - The mouse buttons are Keys (Key::MouseLeft...) on the keyboard device:
 //     profiles bind them, they edge, stamp subTick and join like keys.
 //   - Consumed buttons: consumeButtons() marks a slot's Throw/Dash/Ability presses
@@ -230,12 +235,17 @@ class InputSampler {
   void endTick();
 
   // --- mouse aim (v0.45) ---------------------------------------------------
-  // The cursor while mouse aim is on (the mouse moved or clicked since it
-  // last left the window), else nothing.
+  // The cursor while mouse aim is on (the switch on, and the mouse moved or
+  // clicked since it last left the window or the switch last flipped), else
+  // nothing.
   [[nodiscard]] std::optional<CursorPos> cursor() const;
-  // Whether `slot` aims with the cursor now: bound to a keyboard profile with
-  // mouseAim, and mouse aim on.
+  // Whether `slot` aims with the cursor now: the switch on, bound to a
+  // keyboard profile with mouseAim, and mouse aim on.
   [[nodiscard]] bool usesMouseAim(PlayerId slot) const;
+  // The mouse-aim switch (on by default; see the header comment). A change
+  // either way also forgets that the mouse moved.
+  void setMouseAimEnabled(bool enabled);
+  [[nodiscard]] bool mouseAimEnabled() const { return mouseAimEnabled_; }
   // The cursor's ground point and a slot's aim origin, set by the host
   // before every sample (nothing = unknown: the slot keeps its aim). Both
   // persist until set again.
@@ -301,6 +311,7 @@ class InputSampler {
   // v0.45, mouse aim.
   CursorPos cursor_{};
   bool mouseActive_{false};
+  bool mouseAimEnabled_{true};
   std::optional<AimPoint> cursorGround_;
 };
 

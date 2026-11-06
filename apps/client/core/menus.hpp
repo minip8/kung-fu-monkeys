@@ -14,8 +14,10 @@
 //                 Play online is greyed and skipped without a way online
 //                 (no lobby URL and no --connect server).
 //   SettingsMenu  Name (the nickname, a text field), Volume, Sound, Bot
-//                 difficulty, Back: what a player (not a developer) sets
-//                 once; the lobby keeps the match's own settings.
+//                 difficulty, Arena theme, Mouse aim (on/off: the cursor
+//                 aims for keyboard + mouse), Back: what a player (not a
+//                 developer) sets once; the lobby keeps the match's own
+//                 settings.
 //   ButtonMenu    a focus over N buttons (Play again / Back to lobby).
 //   PauseMenu     v0.46: Escape (or a bound pad's Start) over a running
 //                 match: Resume, Back to lobby, Main menu locally (the match
@@ -83,7 +85,7 @@ class MainMenu {
 
 // --- the settings screen --------------------------------------------------------------
 
-enum class SettingsRow : uint8_t { Name = 0, Volume, Sound, BotDifficulty, Theme, Back };
+enum class SettingsRow : uint8_t { Name = 0, Volume, Sound, BotDifficulty, Theme, MouseAim, Back };
 
 class SettingsMenu {
  public:
@@ -93,8 +95,8 @@ class SettingsMenu {
   void setFocus(std::size_t row);
 
   // Up/Down move the focus (wrapping); Left/Right change the focused value
-  // in `settings` (volume by kVolumeStep within 0..100, sound toggles, the
-  // bot difficulty cycles). True when a setting changed.
+  // in `settings` (volume by kVolumeStep within 0..100, sound and mouse aim
+  // toggle, the bot difficulty and theme cycle). True when a setting changed.
   bool apply(MenuAction action, LobbySettings& settings);
   static bool change(std::size_t row, int direction, LobbySettings& settings);
 

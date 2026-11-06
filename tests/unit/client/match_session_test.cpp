@@ -847,6 +847,64 @@ TEST_CASE("session: the cursor aims from the local monkey's position (v0.45)",
   CHECK(d.s->lastFrame().inputs[0].has(sim::Button::Dash));
 }
 
+TEST_CASE("session: Mouse aim off aims by moving, on again waits for the mouse",
+          "[client][session][mouse]") {
+  Driver d(SessionConfig{.seed = 3, .bots = 1});
+  constexpr float kW = 1280.0f;
+  constexpr float kH = 720.0f;
+  d.s->setAimViewport({.width = kW, .height = kH, .pixelDensity = 1.0f});
+  d.start();
+  d.frame(1);
+  const sim::Player* p = d.s->curr().playerBySlot(PlayerId{0});
+  REQUIRE(p != nullptr);
+  const presentation::Vec2f at = presentation::toFloat(p->transform.pos);
+  const presentation::Camera cam = presentation::makeArenaCamera(d.s->matchContent().arena, kW, kH);
+  // The cursor 3 units east of the monkey: mouse aim points +x (0).
+  const presentation::ScreenPoint px = presentation::worldToScreen(
+      cam, presentation::simToWorld(presentation::Vec2f{at.x + 3.0f, at.y}));
+  InputEvent motion{};
+  motion.kind = InputEventKind::MouseMotion;
+  motion.x = px.x;
+  motion.y = px.y;
+  d.push(motion);
+  d.frame(1);
+  REQUIRE(d.s->lastFrame().inputs[0].aimDir == 0);
+  REQUIRE(d.s->sampler().usesMouseAim(PlayerId{0}));
+
+  // Off (Settings > Mouse aim): at once, the move direction aims and the
+  // "the mouse moved" latch is gone; clicks still throw.
+  d.s->sampler().setMouseAimEnabled(false);
+  CHECK_FALSE(d.s->sampler().usesMouseAim(PlayerId{0}));
+  CHECK_FALSE(d.s->sampler().cursor().has_value());
+  d.push(key(Key::W, true));
+  d.push(motion);  // the mouse moving while off changes nothing
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].aimDir == 64);
+  InputEvent click{};
+  click.kind = InputEventKind::MouseButtonDown;
+  click.key = Key::MouseLeft;
+  click.x = px.x;
+  click.y = px.y;
+  d.push(click);
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].has(sim::Button::Throw));
+  CHECK(d.s->lastFrame().inputs[0].aimDir == 64);
+
+  // On again: like a fresh start, the keys aim until the mouse moves.
+  d.s->sampler().setMouseAimEnabled(true);
+  CHECK_FALSE(d.s->sampler().usesMouseAim(PlayerId{0}));
+  d.push(key(Key::W, false));
+  d.push(key(Key::S, true));
+  d.frame(1);
+  CHECK(d.s->lastFrame().inputs[0].aimDir == 192);
+  d.push(motion);
+  d.frame(1);
+  // The cursor again: about east (the monkey has moved a little since), not
+  // the move's south (192).
+  const int back = d.s->lastFrame().inputs[0].aimDir;
+  CHECK((back <= 8 || back >= 248));
+}
+
 TEST_CASE("the pause menu pauses a local match while open (v0.46)", "[client][session][menu]") {
   Driver d(SessionConfig{.seed = 4, .bots = 1});
   d.start();

@@ -93,9 +93,9 @@ const char* MainMenu::hint(MainMenuItem item) const {
 // --- SettingsMenu -----------------------------------------------------------------------
 
 namespace {
-constexpr std::array<SettingsRow, 6> kSettingsRows{SettingsRow::Name,  SettingsRow::Volume,
-                                                   SettingsRow::Sound, SettingsRow::BotDifficulty,
-                                                   SettingsRow::Theme, SettingsRow::Back};
+constexpr std::array<SettingsRow, 7> kSettingsRows{
+    SettingsRow::Name,  SettingsRow::Volume,   SettingsRow::Sound, SettingsRow::BotDifficulty,
+    SettingsRow::Theme, SettingsRow::MouseAim, SettingsRow::Back};
 }  // namespace
 
 std::span<const SettingsRow> SettingsMenu::rows() {
@@ -148,6 +148,9 @@ bool SettingsMenu::change(std::size_t row, int direction, LobbySettings& setting
     case SettingsRow::Theme:
       settings.theme = presentation::cycleThemeChoice(settings.theme, direction);
       break;
+    case SettingsRow::MouseAim:
+      settings.mouseAim = !settings.mouseAim;
+      break;
     case SettingsRow::Name:
     case SettingsRow::Back:
       break;
@@ -174,6 +177,8 @@ const char* SettingsMenu::rowLabel(SettingsRow row) {
       return "Bot difficulty";
     case SettingsRow::Theme:
       return "Arena theme";
+    case SettingsRow::MouseAim:
+      return "Mouse aim";
     case SettingsRow::Back:
       return "Back";
   }
@@ -193,6 +198,8 @@ std::string SettingsMenu::rowValue(SettingsRow row, const LobbySettings& setting
       return std::string(ai::toString(settings.botTier));
     case SettingsRow::Theme:
       return std::string(presentation::themeChoiceName(settings.theme));
+    case SettingsRow::MouseAim:
+      return settings.mouseAim ? "on" : "off";
     case SettingsRow::Back:
       break;
   }
