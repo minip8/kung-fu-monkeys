@@ -230,6 +230,7 @@ struct App {
   presentation::RenderState renderState;
   std::uint64_t frames = 0;
   std::uint64_t lastFrameNs = 0;
+  bool heldLastFrame = false;  // the previous frame was not presented (a screen measuring)
   bool quit = false;
   int exitCode = EXIT_SUCCESS;
 };
@@ -1240,6 +1241,21 @@ bool frame(void* user) {
   platform::debugUiFlush();
   if (app->leaveRequested && app->net) leaveNetwork(*app);
 
+  ++app->frames;
+  const bool lastFrame = app->quit || (app->options.exitAfterFrames != 0 &&
+                                       app->frames >= app->options.exitAfterFrames);
+  // A screen's first frame (the main menu at startup, a menu screen on its
+  // first visit) is drawn by ImGui with the panel hidden while it measures
+  // itself: presented, it shows the arena without the menu (and the card at
+  // a wrong size) for one frame. Keep the previous frame on screen instead;
+  // never twice in a row, so a window that never settles cannot freeze it.
+  const bool hold = !lastFrame && !app->heldLastFrame && platform::debugUiMeasuring();
+  app->heldLastFrame = hold;
+  if (hold) {
+    platform::commitWithoutPresent();
+    return true;
+  }
+
   // Around the arena: the theme's background (v0.52); the jungle's is the
   // page's and the menus' dark green (ui::kJungle).
   const presentation::Color bg = app->renderer.look().background;
@@ -1247,10 +1263,6 @@ bool frame(void* user) {
   if (app->rendererReady) app->renderer.draw(app->renderState, camera, w, h);
   platform::debugUiDraw();
   platform::endPass();
-
-  ++app->frames;
-  const bool lastFrame = app->quit || (app->options.exitAfterFrames != 0 &&
-                                       app->frames >= app->options.exitAfterFrames);
   if (lastFrame && !app->options.screenshotPath.empty() &&
       !writePpm(app->options.screenshotPath, w, h)) {
     app->exitCode = EXIT_FAILURE;
