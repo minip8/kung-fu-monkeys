@@ -63,6 +63,10 @@ void endFrame(Window& window) {
   window.swap();
 }
 
+void commitWithoutPresent() {
+  sg_commit();
+}
+
 bool readPixelsRgb(int width, int height, std::span<std::uint8_t> out) {
 #ifdef __EMSCRIPTEN__
   (void)width;

@@ -38,6 +38,10 @@ void beginDefaultPass(const ClearColor& clear, int width, int height);
 void endPass();
 // endPass() then Window::swap().
 void endFrame(Window& window);
+// Ends a frame that draws nothing and presents nothing (sg_commit only): the
+// window keeps showing the previous frame. For a frame that is not ready to
+// be seen (debugUiMeasuring()).
+void commitWithoutPresent();
 
 // Reads the back buffer of the default framebuffer as tightly packed RGB8,
 // top row first. Call after endPass() and before swap. `out` must hold

@@ -26,6 +26,13 @@ void debugUiNewFrame(int width, int height, double dtSeconds, float pixelDensity
 void debugUiFlush();
 // Draws the flushed UI into the current sokol pass (call last in the pass).
 void debugUiDraw();
+// After debugUiFlush(): whether a window created this frame is still
+// measuring itself. ImGui hides a new window whose size is not fully given
+// (an auto-height screen) for its first frame while it measures its
+// contents, so that frame shows the scene without the window; an app may
+// hold the frame back (commitWithoutPresent()) instead of presenting it.
+// Popups and tooltips do not count: their hidden frame shows nothing amiss.
+[[nodiscard]] bool debugUiMeasuring();
 
 // Whether ImGui wants the keyboard / mouse this frame: when true, the app
 // should not feed those events to gameplay input.
