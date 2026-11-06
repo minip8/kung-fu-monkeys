@@ -45,6 +45,7 @@ enum class PlayerFlag : uint16_t {
   Throwing = 1u << 6,  // the Throw slot is in Startup/Active/Recovery
   HasAmmo = 1u << 7,
   Carrying = 1u << 8,  // v0.33: holds a capture flag (Tag::Carrying)
+  Charging = 1u << 9,  // v0.48: the Throw slot's wind-up is a charging one (still in Startup)
 };
 [[nodiscard]] constexpr uint16_t flagBit(PlayerFlag f) {
   return static_cast<uint16_t>(f);
@@ -77,7 +78,12 @@ struct RenderPlayer {
   uint8_t ammoMax{0};
   uint8_t hp{0};
   uint8_t maxHp{0};
-  float dashCooldown{0.0f};                                  // 0 = ready, 1 = just used
+  float dashCooldown{0.0f};  // 0 = ready, 1 = just used
+  // v0.48, while Charging: the charge so far (0 = a tap, 1 = full) and the
+  // distance from the ground position along aimYaw at which a banana released
+  // now would turn for home (spawn offset + speed x outbound ticks).
+  float throwCharge{0.0f};
+  float throwReach{0.0f};
   std::array<RenderPowerUp, sim::kMaxModifiers> powerUps{};  // in slot (pickup) order
   uint8_t powerUpCount{0};
 
