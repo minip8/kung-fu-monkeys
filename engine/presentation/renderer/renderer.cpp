@@ -869,13 +869,16 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (!p.visible || p.has(PlayerFlag::Eliminated)) continue;
     const Color own = playerColor(p.colorIndex);
 
-    // Aim indicator: a thin bar from the capsule surface along the aim.
+    // Aim indicator: a thin bar from the capsule surface along the aim. A
+    // charging throw (v0.48) stretches it and warms it toward gold.
     const Vec3 aimBase = p.position + Vec3{0.0f, bodyHeight * kAimHeightFraction, 0.0f};
+    const float charge = p.has(PlayerFlag::Charging) ? p.throwCharge : 0.0f;
+    const float aimLength =
+        p.has(PlayerFlag::Charging) ? lerp(kAimLength, kChargeAimLength, charge) : kAimLength;
     d.lit(kCubeMesh,
-          translate(aimBase) * rotateY(p.aimYaw) *
-              translate({r + (kAimLength * 0.5f), 0.0f, 0.0f}) *
-              scale({kAimLength, kAimThickness, kAimThickness}),
-          mix(own, kWhite, 0.45f), 0.0f, 0.15f);
+          translate(aimBase) * rotateY(p.aimYaw) * translate({r + (aimLength * 0.5f), 0.0f, 0.0f}) *
+              scale({aimLength, kAimThickness, kAimThickness}),
+          mix(mix(own, kWhite, 0.45f), kGold, charge), 0.0f, 0.15f + (0.35f * charge));
     // v0.33: a capture flag's carrier wears a small gold diamond overhead.
     if (p.has(PlayerFlag::Carrying)) {
       const float s = kFlagCarrySize;
@@ -947,6 +950,13 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (p.has(PlayerFlag::Shielded)) {
       d.groundDisc(p.ground, kDecalLift, 0.0f, r * 1.5f, r * 1.5f, kShieldBlue, 0.7f,
                    DecalMode::Ring, 0.8f);
+    }
+    if (p.has(PlayerFlag::Charging)) {
+      // v0.48: where a banana released now turns for home.
+      const Vec3 at = p.ground + (yawDirection(p.aimYaw) * p.throwReach);
+      d.groundDisc(at, kDecalLift, 0.0f, kChargeMarkerRadius, kChargeMarkerRadius,
+                   mix(mix(own, kWhite, 0.3f), kGold, p.throwCharge), kChargeMarkerOpacity,
+                   DecalMode::Ring, kChargeMarkerRingInner);
     }
   }
   // A pulsing ring in the power-up's colour marks a power-up pickup.

@@ -15,7 +15,8 @@
 // --hide-ui             no Dear ImGui overlay (clean screenshots).
 // --exit-on WHAT        ends on the first frame showing WHAT, one of dash-ring,
 //                       perfect-catch, auto-catch, hit, throw, elimination (effects)
-//                       or catch-window (a player with the PerfectDash flag);
+//                       catch-window (a player with the PerfectDash flag) or
+//                       charge (v0.48: a throw charged past half);
 //                       --exit-after-frames still bounds the run.
 // --capsules            draw players as capsules instead of the skinned model
 //                       (also the fallback when content/models/test_rig.glb is missing).
@@ -83,12 +84,13 @@ struct Options {
 };
 
 constexpr int kExitOnWindow = 100;
+constexpr int kExitOnCharge = 101;
 
 struct ExitOnName {
   std::string_view name;
   int value;
 };
-constexpr std::array<ExitOnName, 7> kExitOnNames = {{
+constexpr std::array<ExitOnName, 8> kExitOnNames = {{
     {"dash-ring", static_cast<int>(presentation::EffectKind::DashRing)},
     {"perfect-catch", static_cast<int>(presentation::EffectKind::PerfectCatchFlash)},
     {"auto-catch", static_cast<int>(presentation::EffectKind::AutoCatchFlash)},
@@ -96,6 +98,7 @@ constexpr std::array<ExitOnName, 7> kExitOnNames = {{
     {"throw", static_cast<int>(presentation::EffectKind::ThrowPuff)},
     {"elimination", static_cast<int>(presentation::EffectKind::EliminationBurst)},
     {"catch-window", kExitOnWindow},
+    {"charge", kExitOnCharge},
 }};
 
 struct App {
@@ -263,6 +266,14 @@ void stepSim(App& app) {
 
 [[nodiscard]] bool showsExitOn(const presentation::RenderState& rs, int exitOn) {
   if (exitOn < 0) return false;
+  if (exitOn == kExitOnCharge) {
+    for (uint16_t i = 0; i < rs.playerCount; ++i) {
+      const presentation::RenderPlayer& p = rs.players[i];
+      if (p.visible && p.has(presentation::PlayerFlag::Charging) && p.throwCharge > 0.5f)
+        return true;
+    }
+    return false;
+  }
   if (exitOn == kExitOnWindow) {
     for (uint16_t i = 0; i < rs.playerCount; ++i) {
       if (rs.players[i].visible && rs.players[i].has(presentation::PlayerFlag::PerfectDash))

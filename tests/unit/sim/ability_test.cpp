@@ -2,6 +2,7 @@
 // Tests drive inputSystem + abilitySystem directly and advance the tick by
 // hand, so nothing downstream (movement, projectiles, collisions) interferes.
 #include "kfm/sim/abilities/registry.hpp"
+#include "kfm/sim/abilities/throw.hpp"
 #include "kfm/sim/systems.hpp"
 #include "sim_test_util.hpp"
 
@@ -154,6 +155,7 @@ TEST_CASE("abilities do not activate outside Playing", "[sim][ability]") {
 
 TEST_CASE("zero-length phases are skipped in the same tick", "[sim][ability]") {
   ContentDB content = defaultContent();
+  removeThrowCharge(content);  // v0.48: these press and hold for the machine alone
   AbilityDef& thr = content.abilities[content.player.abilities[kAbilitySlotThrow]];
   thr.startupTicks = 0;
   thr.activeTicks = 0;
@@ -255,7 +257,7 @@ TEST_CASE("tag rebuild leaves HitStun and Eliminated alone", "[sim][ability]") {
 }
 
 TEST_CASE("throw timeline: banana spawns on the Startup -> Active tick", "[sim][ability]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = unchargedContent();
   const AbilityDef& thr = content.abilityForSlot(kAbilitySlotThrow);
   REQUIRE(thr.startupTicks == 2);
   WorldState s = makePlayingWorld(11, 0b1);
@@ -306,8 +308,86 @@ TEST_CASE("throw timeline: banana spawns on the Startup -> Active tick", "[sim][
   CHECK(s.boomerangs.size() == 1);  // exactly one banana per throw
 }
 
+// v0.48, the charged throw: the default throw holds its Startup while the
+// button is down and scales the banana's speed by the hold.
+TEST_CASE("throwChargeMul: a tap is charge_min, rising to charge_max", "[sim][ability][charge]") {
+  const AbilityDef& thr = defaultContent().abilityForSlot(kAbilitySlotThrow);
+  REQUIRE(throwCharges(thr));
+  CHECK(throwChargeMul(thr, 0) == thr.param0);
+  CHECK(throwChargeMul(thr, 1) == thr.param0 + thr.speed);
+  CHECK(throwChargeMul(thr, 1000) == thr.param1);
+  CHECK(throwChargeMul(thr, UINT32_MAX) == thr.param1);
+  Fixed last = Fixed::zero();
+  for (uint32_t t = 0; t < 60; ++t) {
+    CHECK(throwChargeMul(thr, t) >= last);
+    last = throwChargeMul(thr, t);
+  }
+  // 40 ticks reach the cap within the rate's truncation.
+  CHECK(thr.param1.raw - throwChargeMul(thr, 40).raw < 40);
+  CHECK(throwChargeMul(unchargedContent().abilityForSlot(kAbilitySlotThrow), 30) == Fixed::one());
+}
+
+TEST_CASE("a held throw leaves on the release, faster the longer it was held",
+          "[sim][ability][charge]") {
+  const ContentDB& content = defaultContent();
+  const AbilityDef& thr = content.abilityForSlot(kAbilitySlotThrow);
+  REQUIRE(thr.startupTicks == 2);
+  // Held for `held` ticks from the press (1 = a tap): the banana leaves on
+  // the first tick past the startup with the button up.
+  for (const int held : {1, 2, 3, 12, 42, 90}) {
+    INFO("held " << held);
+    WorldState s = makePlayingWorld(16, 0b1);
+    playerAt(s, kP0).ammo = 1;
+    EventSink sink;
+    const Tick t0 = s.tick;
+    int thrown = 0;
+    Tick at{};
+    for (int k = 0; k < held + 4; ++k) {
+      abilityTick(s, withButtons(s, k < held ? kThrow : 0, 0), content, sink);
+      if (const SimEvent* e = findEvent(sink, EventKind::BoomerangThrown)) {
+        ++thrown;
+        at = e->tick;
+      }
+      if (k < held) CHECK(slot(s, 1).phase == AbilityPhase::Startup);
+    }
+    REQUIRE(thrown == 1);
+    const int leaves = held > 2 ? held : 2;
+    CHECK(at == t0.plus(leaves));
+    const Boomerang& b = s.boomerangs.items[0];
+    const Fixed mul = throwChargeMul(thr, static_cast<uint32_t>(leaves - 2));
+    CHECK(near(b.transform.vel.x, content.boomerang.speed * mul));
+    CHECK(b.speedMul == mul);
+  }
+}
+
+TEST_CASE("a charging throw waits for good and takes the release's aim", "[sim][ability][charge]") {
+  const ContentDB& content = defaultContent();
+  WorldState s = makePlayingWorld(17, 0b1);
+  playerAt(s, kP0).ammo = 1;
+  EventSink sink;
+  for (int k = 0; k < 600; ++k)
+    abilityTick(s, withButtons(s, kThrow, 0), content, sink);
+  CHECK(slot(s, 1).phase == AbilityPhase::Startup);
+  CHECK(s.boomerangs.empty());
+  CHECK(playerAt(s, kP0).ammo == 1);
+  // phaseTicks saturates rather than wrapping under the startup.
+  playerAt(s, kP0).abilities[1].phaseTicks = UINT16_MAX;
+  abilityTick(s, withButtons(s, kThrow, 0), content, sink);
+  CHECK(slot(s, 1).phase == AbilityPhase::Startup);
+  CHECK(slot(s, 1).phaseTicks == UINT16_MAX);
+  // Released aiming +y: the banana goes along the release's aim at full charge.
+  abilityTick(s, withButtons(s, 0, 64), content, sink);
+  const SimEvent* e = findEvent(sink, EventKind::BoomerangThrown);
+  REQUIRE(e != nullptr);
+  const Boomerang& b = *s.boomerangs.get(e->entity);
+  CHECK(std::abs(b.transform.facing.signedDeltaFrom(Angle::fromInput8(64))) <= 4);
+  CHECK(b.speedMul == content.abilityForSlot(kAbilitySlotThrow).param1);
+  CHECK(playerAt(s, kP0).ammo == 0);
+}
+
 TEST_CASE("throw heading matches aim in every direction", "[sim][ability]") {
   ContentDB content = defaultContent();
+  removeThrowCharge(content);  // v0.48: these press and hold for the machine alone
   content.abilities[content.player.abilities[kAbilitySlotThrow]].startupTicks = 0;
   for (int aim = 0; aim < 256; aim += 7) {
     WorldState s = makePlayingWorld(12, 0b1);
@@ -355,6 +435,7 @@ TEST_CASE("throw into a full boomerang pool spends no ammo", "[sim][ability]") {
 
 TEST_CASE("dash and throw run independently in the same tick", "[sim][ability]") {
   ContentDB content = defaultContent();
+  removeThrowCharge(content);  // v0.48: these press and hold for the machine alone
   content.abilities[content.player.abilities[kAbilitySlotThrow]].startupTicks = 0;
   WorldState s = makePlayingWorld(15, 0b1);
   EventSink sink;

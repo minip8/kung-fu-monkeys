@@ -3,6 +3,7 @@
 #include "kfm/sim/scripted_inputs.hpp"
 
 #include "kfm/core/vec2.hpp"
+#include "kfm/sim/abilities/throw.hpp"
 #include "systems/angle_of.hpp"
 
 #include <cstdint>
@@ -219,6 +220,14 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
 
     if (throwUp && p.ammo > 0 && ready(p.abilities[kAbilitySlotThrow]) &&
         oneIn(rng, config.throwOneIn)) {
+      in.buttons |= throwBit;
+    }
+    // v0.48: a charging throw stays held now and then (no edge needed: the
+    // Startup holds while the button is down).
+    const AbilityState& thr = p.abilities[kAbilitySlotThrow];
+    if (!throwUp && thr.phase == AbilityPhase::Startup &&
+        throwCharges(content.db.abilityAt(thr.defIndex)) &&
+        rng.below(256) < config.chargeHoldPer256) {
       in.buttons |= throwBit;
     }
 

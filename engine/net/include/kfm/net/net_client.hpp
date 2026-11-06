@@ -316,6 +316,7 @@ class NetClient {
   void promote(uint64_t nowNs);
   [[nodiscard]] bool roomHeld() const { return room_ && room_->phase != RoomPhase::Playing; }
   void loadSnapshot(Tick runTo);
+  void adoptRestart();
   void advanceConfirmed();
   void checkChecksums();
   void requestResync(Tick tick, uint32_t localSum);

@@ -160,6 +160,11 @@ class ReferenceBot final : public IAgent {
   uint32_t decisions_{0};
   // Ticks left of a standoff's throw hold; -1 while none is drawn.
   int8_t throwHold_{-1};
+  // v0.48, a charging throw: the ticks the button stays held after the press
+  // tick (0 = none or a tap), and the planned flight speed (Q16.16 per tick),
+  // which keeps the aim leading the target until the release.
+  uint16_t chargeHold_{0};
+  Fixed chargeSpeed_{};
   // The reaction delay line: decision n is played on act n + reactionDelayTicks.
   std::array<sim::PlayerInput, kMaxReactionDelayTicks + 1> pending_{};
   // Scratch, kept here rather than on the stack (no allocation after construction).
