@@ -279,6 +279,13 @@ enum class Blend : uint8_t { Opaque, Alpha, Additive, Outline };
   desc.cull_mode = outline ? SG_CULLMODE_FRONT : SG_CULLMODE_BACK;
   desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
   desc.depth.write_enabled = true;
+  if (outline) {
+    // v0.54: the hull is pushed slightly away from the camera, so where it
+    // grazes the character's own surface (a headband on the head, an arm
+    // against the gi) it stays hidden instead of speckling through.
+    desc.depth.bias = kOutlineSkinnedDepthBias;
+    desc.depth.bias_slope_scale = kOutlineSkinnedDepthBias;
+  }
   desc.label = label;
   return sg_make_pipeline(&desc).id;
 }

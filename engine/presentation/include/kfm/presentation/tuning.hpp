@@ -69,6 +69,10 @@ inline constexpr float kOutlineMonkey = 0.045f;
 inline constexpr float kOutlineBanana = 0.022f;
 inline constexpr float kOutlineWall = 0.05f;
 inline constexpr float kOutlinePowerUp = 0.035f;
+// v0.54: the skinned character's hull is drawn with this depth bias (constant
+// and slope-scaled, in depth-buffer units, away from the camera): where it
+// grazes the character's own surface it stays hidden; silhouettes keep it.
+inline constexpr float kOutlineSkinnedDepthBias = 1.0f;
 // Floor slabs (pits, mud) get a flat ink border this wide instead of a hull
 // (a hull's sides would hide under the floor).
 inline constexpr float kOutlineSlab = 0.06f;
