@@ -748,9 +748,12 @@ class Builder {
     // param1), charge_ticks the ticks held past the startup from one to the
     // other; the rate per tick lands in speed (truncated, like every decimal).
     if (s.has("charge_ticks") || s.has("charge_min") || s.has("charge_max")) {
-      const std::string_view key = s.has("charge_ticks") ? "charge_ticks"
-                                   : s.has("charge_min") ? "charge_min"
-                                                         : "charge_max";
+      std::string_view key = "charge_max";
+      if (s.has("charge_ticks")) {
+        key = "charge_ticks";
+      } else if (s.has("charge_min")) {
+        key = "charge_min";
+      }
       const toml::node* at = s.take(key);
       if (d.kind != AbilityKind::Throw) {
         s.error(*at, "'" + std::string(key) + "' belongs to a throw (kind = \"throw\")");

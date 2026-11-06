@@ -18,28 +18,29 @@ namespace kfm::sim {
 
 // Hooks called by AbilitySystem for one ability slot. `p` is the owning
 // player (an element of s.players) and `st` one of p.abilities. Every
-// pointer is non-null; behaviours that do not need a hook use a no-op.
+// pointer is non-null in the registry; behaviours that do not need a hook
+// use a no-op (the nullptr defaults only keep the aggregate initialised).
 struct AbilityBehavior {
   // Extra activation condition on top of "idle, cooldown 0, button pressed".
-  bool (*canActivate)(const WorldState& s, const Player& p, const AbilityDef& def);
+  bool (*canActivate)(const WorldState& s, const Player& p, const AbilityDef& def) = nullptr;
   // Called once on activation, after AbilitySystem recorded activatedTick,
   // activatedSubTick and reset the phase.
   void (*onActivate)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                     const MatchContent& content, EventSink& sink);
+                     const MatchContent& content, EventSink& sink) = nullptr;
   // Called every tick the slot is not Idle, after the phase advanced.
   void (*onTick)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                 const MatchContent& content, EventSink& sink);
+                 const MatchContent& content, EventSink& sink) = nullptr;
   // Called on every phase transition, including skipped zero-length phases.
   void (*onPhaseChange)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
                         AbilityPhase from, AbilityPhase to, const MatchContent& content,
-                        EventSink& sink);
+                        EventSink& sink) = nullptr;
   // Called when the slot returns to Idle.
   void (*onEnd)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
-                const MatchContent& content, EventSink& sink);
+                const MatchContent& content, EventSink& sink) = nullptr;
   // Tags the kind itself grants in the slot's current state, on top of the
   // def's phase tags (Dash: PerfectDash while the perfect window may be open).
   // Pure: AbilitySystem re-derives every tick from the state alone.
-  Tags (*kindTags)(const AbilityState& st, const AbilityDef& def);
+  Tags (*kindTags)(const AbilityState& st, const AbilityDef& def) = nullptr;
   // v0.48: true keeps the current phase going past its def's duration
   // (AbilitySystem's settle does not advance it this tick). `buttonHeld` is
   // the slot's button in the player's intent (Throw: a charging wind-up runs
