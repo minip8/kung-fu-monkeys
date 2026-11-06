@@ -113,7 +113,7 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   }
   CHECK(baselines == 2);
   const uint8_t toggles = static_cast<uint8_t>(db.powerUpCount - baselines);
-  REQUIRE(rows.size() == 8u + toggles);
+  REQUIRE(rows.size() == 9u + toggles);
   CHECK(rows[0].kind == LobbyRowKind::Arena);
   CHECK(rows[1].kind == LobbyRowKind::Mode);
   CHECK(rows[2].kind == LobbyRowKind::Teams);  // v0.32
@@ -126,16 +126,18 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
     CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
     CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[i].name.view());
   }
-  CHECK(rows[rows.size() - 4].kind == LobbyRowKind::Bots);
-  CHECK(rows[rows.size() - 3].kind == LobbyRowKind::BotDifficulty);
-  CHECK(m.rowLabel(rows[rows.size() - 3]) == "Bot difficulty");
-  CHECK(rows[rows.size() - 2].kind == LobbyRowKind::Volume);
-  CHECK(rows.back().kind == LobbyRowKind::Mute);
+  CHECK(rows[rows.size() - 5].kind == LobbyRowKind::Bots);
+  CHECK(rows[rows.size() - 4].kind == LobbyRowKind::BotDifficulty);
+  CHECK(m.rowLabel(rows[rows.size() - 4]) == "Bot difficulty");
+  CHECK(rows[rows.size() - 3].kind == LobbyRowKind::Volume);
+  CHECK(rows[rows.size() - 2].kind == LobbyRowKind::Mute);
+  CHECK(rows.back().kind == LobbyRowKind::Theme);  // v0.52
+  CHECK(m.rowLabel(rows.back()) == "Arena theme");
   CHECK(m.focus() == 0);
 
   // A menu that never saw content still has the default fixture's rows.
   const LobbyMenu bare;
-  CHECK(bare.rows().size() == 8u + sim::defaultContent().powerUpCount);
+  CHECK(bare.rows().size() == 9u + sim::defaultContent().powerUpCount);
 }
 
 TEST_CASE("lobby menu: a team mode shows its teams and keeps a suitable arena (v0.32)",
@@ -467,10 +469,11 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   saved.volume = 30;
   saved.mute = true;
   saved.region = "us";
+  saved.theme = presentation::ThemeChoice::Temple;
   const std::string text = client::settingsText(saved);
   CHECK(text ==
         "arena=island\nmode=survival\nloadout=parry\npowerups=none\nbots=4\nbot_difficulty=hard\n"
-        "volume=30\nmute=1\nregion=us\n");
+        "volume=30\nmute=1\nregion=us\ntheme=temple\n");
 
   ClientOptions loaded;
   std::vector<std::string> warnings;
@@ -478,6 +481,7 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   CHECK(warnings.empty());
   CHECK(client::settingsText(loaded) == text);
   CHECK(loaded.botDifficulty == ai::ReferenceTier::Hard);
+  CHECK(loaded.theme == presentation::ThemeChoice::Temple);
 
   SECTION("names the content lost, bad numbers and unknown keys warn and are skipped") {
     ClientOptions o;
@@ -657,4 +661,48 @@ TEST_CASE("client flags and settings: the nickname (v0.42)", "[client][lobby][op
     names.insert(n);
   }
   CHECK(names.size() > 32);
+}
+
+TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client][lobby][options]") {
+  const sim::ContentDB& db = shipped();
+  ClientOptions o;
+  std::string error;
+  CHECK(o.theme == presentation::ThemeChoice::Auto);
+  // The browser page turns ?theme=beach into this.
+  REQUIRE(parse({"--theme", "beach"}, o, error));
+  CHECK(o.theme == presentation::ThemeChoice::Beach);
+  ClientOptions bad;
+  CHECK_FALSE(parse({"--theme", "lava"}, bad, error));
+  CHECK(error == "--theme must be auto, jungle, temple or beach, got 'lava'");
+  CHECK_FALSE(parse({"--theme"}, bad, error));
+
+  std::vector<std::string> warnings;
+  client::applySettingsText("theme=volcano\n", db, o, warnings);
+  CHECK(warnings.size() == 1);
+  CHECK(o.theme == presentation::ThemeChoice::Beach);  // a bad line keeps the setting
+
+  LobbySettings ls;
+  REQUIRE(client::lobbySettingsFrom(o, db, ls, error));
+  CHECK(ls.theme == presentation::ThemeChoice::Beach);
+
+  // The panel's row cycles through every choice; Auto names the arena's own theme.
+  LobbyMenu m;
+  m.setContent(db);
+  const auto rows = m.rows();
+  const std::size_t row = rows.size() - 1;
+  REQUIRE(rows[row].kind == LobbyRowKind::Theme);
+  CHECK(m.rowValue(rows[row]) == "auto (temple)");  // the dojo, arena 0, is a temple
+  CHECK(m.change(row, +1));
+  CHECK(m.settings().theme == presentation::ThemeChoice::Jungle);
+  CHECK(m.rowValue(rows[row]) == "jungle");
+  CHECK(m.change(row, -1));
+  CHECK(m.change(row, -1));  // wraps to the last choice
+  CHECK(m.settings().theme == presentation::ThemeChoice::Beach);
+
+  // The room's panel carries only what a RoomSettings carries: no theme there.
+  LobbyMenu room;
+  room.setRoomRows(true);
+  room.setContent(db);
+  for (const LobbyRow& r : room.rows())
+    CHECK(r.kind != LobbyRowKind::Theme);
 }

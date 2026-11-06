@@ -1,6 +1,7 @@
-// The M2 sokol_gfx renderer (architecture §7): placeholder meshes, one
-// directional light with a three-band toon ramp, blob-shadow decals and
-// disc-based effects, and GPU-skinned characters when a model is loaded. See
+// The sokol_gfx renderer (architecture §7): placeholder meshes, one
+// directional light with two-band cel shading and ink outlines (v0.49, the
+// Jungle Toon look), blob-shadow decals and disc-based effects, and
+// GPU-skinned characters when a model is loaded. See
 // renderer.hpp for the draw order and shaders.hpp for the GLSL and uniform
 // layout.
 #include "kfm/presentation/renderer.hpp"
@@ -37,29 +38,31 @@ constexpr std::size_t kQuadMesh = 5;  // v0.33: a unit floor quad, uv centred on
 constexpr std::size_t kSkinnedMesh = 6;
 constexpr std::size_t kStaticMeshCount = 6;  // built in init(); the skinned one is loaded later
 
-// Shader and pipeline slots.
+// Shader and pipeline slots: the static ones first (made in init()), then the
+// character's (made in loadCharacterModel()).
 constexpr std::size_t kLitShader = 0;
 constexpr std::size_t kDecalShader = 1;
-constexpr std::size_t kSkinnedShader = 2;
-constexpr std::size_t kStaticShaderCount = 2;
+constexpr std::size_t kOutlineShader = 2;
+constexpr std::size_t kSkinnedShader = 3;
+constexpr std::size_t kSkinnedOutlineShader = 4;
+constexpr std::size_t kStaticShaderCount = 3;
 constexpr std::size_t kLitPipeline = 0;
 constexpr std::size_t kDecalAlphaPipeline = 1;
 constexpr std::size_t kDecalAdditivePipeline = 2;
-constexpr std::size_t kSkinnedPipeline = 3;
-constexpr std::size_t kStaticPipelineCount = 3;
+constexpr std::size_t kOutlinePipeline = 3;
+constexpr std::size_t kSkinnedPipeline = 4;
+constexpr std::size_t kSkinnedOutlinePipeline = 5;
+constexpr std::size_t kStaticPipelineCount = 4;
 
 // --- look ----------------------------------------------------------------------
 // Direction toward the light: from above, a little left and toward the camera,
 // so capsule fronts are lit and their right sides fall into the half band.
 constexpr Vec3 kToLight{-0.42f, 1.0f, 0.55f};
-constexpr float kShadeBand = 0.6f;  // brightness of the darkest toon band
 
-constexpr Color kFloorColor{0.52f, 0.56f, 0.50f};
-constexpr Color kWallColor{0.36f, 0.30f, 0.24f};
 constexpr Color kBananaColor{1.0f, 0.86f, 0.16f};
 constexpr Color kPickupColor{0.98f, 0.80f, 0.12f};
 constexpr Color kEliminatedColor{0.42f, 0.42f, 0.44f};
-constexpr Color kShadowColor{0.04f, 0.05f, 0.06f};
+constexpr float kEliminatedFade = 0.8f;  // how far an eliminated monkey greys out
 constexpr Color kGold{1.0f, 0.82f, 0.18f};
 constexpr Color kWhite{1.0f, 1.0f, 1.0f};
 constexpr Color kHitRed{1.0f, 0.16f, 0.10f};
@@ -108,9 +111,11 @@ static_assert(sizeof(LitVsParams) == static_cast<std::size_t>(shaders::kLitVsVec
 
 struct LitFsParams {
   Vec4 color;
-  Vec4 light;
-  Vec4 params;  // mode, flash, emissive, unused
-  Vec4 floor;   // arena half extents
+  Vec4 light;   // toward the light, shade band
+  Vec4 params;  // surface, flash, emissive, phase
+  Vec4 floor;   // arena half extents, grass patch scale, tuft cells
+  Vec4 shade;   // shade tint, cel band edge
+  Vec4 alt;     // the surface's second colour, tuft density
 };
 static_assert(sizeof(LitFsParams) == static_cast<std::size_t>(shaders::kLitFsVec4s) * 16);
 
@@ -120,6 +125,27 @@ struct SkinnedVsParams {
   SkinMatrices joints;
 };
 static_assert(sizeof(SkinnedVsParams) == static_cast<std::size_t>(shaders::kSkinnedVsVec4s) * 16);
+
+struct OutlineVsParams {
+  Mat4 viewProj;
+  Mat4 model;
+  Vec4 outline;  // width, mode (1 box), unused, unused
+};
+static_assert(sizeof(OutlineVsParams) == static_cast<std::size_t>(shaders::kOutlineVsVec4s) * 16);
+
+struct OutlineFsParams {
+  Vec4 ink;
+};
+static_assert(sizeof(OutlineFsParams) == static_cast<std::size_t>(shaders::kOutlineFsVec4s) * 16);
+
+struct SkinnedOutlineVsParams {
+  Mat4 viewProj;
+  Mat4 model;
+  SkinMatrices joints;
+  Vec4 outline;  // width, unused...
+};
+static_assert(sizeof(SkinnedOutlineVsParams) ==
+              static_cast<std::size_t>(shaders::kSkinnedOutlineVsVec4s) * 16);
 
 struct DecalVsParams {
   Mat4 mvp;
@@ -133,6 +159,12 @@ struct DecalFsParams {
 static_assert(sizeof(DecalFsParams) == static_cast<std::size_t>(shaders::kDecalFsVec4s) * 16);
 
 enum class DecalMode : uint8_t { Shadow = 0, Ring = 1, Burst = 2, Rect = 3 };
+
+// The lit program's surfaces (palette.hpp, shaders.hpp kLitFs).
+using Surface = SurfaceKind;
+
+// How an outline hull is pushed out (shaders.hpp kOutlineVs).
+enum class Hull : uint8_t { Smooth = 0, Box = 1 };
 
 template <typename T>
 [[nodiscard]] sg_range rangeOf(const T& value) {
@@ -179,7 +211,9 @@ template <typename T>
   return sg_make_shader(&desc).id;
 }
 
-enum class Blend : uint8_t { Opaque, Alpha, Additive };
+// Outline is opaque with front faces culled: only the hull's inside shows,
+// around the mesh drawn normally.
+enum class Blend : uint8_t { Opaque, Alpha, Additive, Outline };
 
 [[nodiscard]] uint32_t makePipeline(uint32_t shader, Blend blend, const char* label) {
   sg_pipeline_desc desc{};
@@ -197,8 +231,8 @@ enum class Blend : uint8_t { Opaque, Alpha, Additive };
   desc.index_type = SG_INDEXTYPE_UINT16;
   desc.face_winding = SG_FACEWINDING_CCW;
   desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
-  if (blend == Blend::Opaque) {
-    desc.cull_mode = SG_CULLMODE_BACK;
+  if (blend == Blend::Opaque || blend == Blend::Outline) {
+    desc.cull_mode = blend == Blend::Outline ? SG_CULLMODE_FRONT : SG_CULLMODE_BACK;
     desc.depth.write_enabled = true;
   } else {
     // Decals and effects: depth-tested against the opaque scene, never
@@ -219,8 +253,9 @@ enum class Blend : uint8_t { Opaque, Alpha, Additive };
   return sg_make_pipeline(&desc).id;
 }
 
-// The skinned character pipeline: opaque like `lit`, SkinnedVertex layout.
-[[nodiscard]] uint32_t makeSkinnedPipeline(uint32_t shader) {
+// The skinned character pipelines: opaque like `lit` (or, for the outline,
+// front faces culled), SkinnedVertex layout.
+[[nodiscard]] uint32_t makeSkinnedPipeline(uint32_t shader, bool outline, const char* label) {
   sg_pipeline_desc desc{};
   desc.shader = sg_shader{shader};
   desc.layout.buffers[0].stride = static_cast<int>(sizeof(SkinnedVertex));
@@ -236,12 +271,15 @@ enum class Blend : uint8_t { Opaque, Alpha, Additive };
   desc.layout.attrs[3] = {.buffer_index = 0,
                           .offset = static_cast<int>(offsetof(SkinnedVertex, weights)),
                           .format = SG_VERTEXFORMAT_FLOAT4};
+  desc.layout.attrs[4] = {.buffer_index = 0,
+                          .offset = static_cast<int>(offsetof(SkinnedVertex, color)),
+                          .format = SG_VERTEXFORMAT_FLOAT4};
   desc.index_type = SG_INDEXTYPE_UINT16;
   desc.face_winding = SG_FACEWINDING_CCW;
-  desc.cull_mode = SG_CULLMODE_BACK;
+  desc.cull_mode = outline ? SG_CULLMODE_FRONT : SG_CULLMODE_BACK;
   desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
   desc.depth.write_enabled = true;
-  desc.label = "kfm-skinned";
+  desc.label = label;
   return sg_make_pipeline(&desc).id;
 }
 
@@ -251,7 +289,8 @@ class FrameDrawer {
  public:
   FrameDrawer(std::span<const uint32_t> pipelines, std::span<const uint32_t> vertexBuffers,
               std::span<const uint32_t> indexBuffers, std::span<const uint32_t> indexCounts,
-              const Mat4& viewProj, Vec3 camRight, Vec3 camUp, Vec3 camBack, RendererStats& stats)
+              const Mat4& viewProj, Vec3 camRight, Vec3 camUp, Vec3 camBack, const ArenaLook& look,
+              RendererStats& stats)
       : pipelines_(pipelines),
         vertexBuffers_(vertexBuffers),
         indexBuffers_(indexBuffers),
@@ -260,6 +299,7 @@ class FrameDrawer {
         camRight_(camRight),
         camUp_(camUp),
         camBack_(camBack),
+        look_(look),
         stats_(stats) {}
 
   void usePipeline(std::size_t pipeline) {
@@ -273,36 +313,73 @@ class FrameDrawer {
            float emissive = 0.0f) {
     usePipeline(kLitPipeline);
     const LitVsParams vs{.mvp = viewProj_ * model, .model = model};
-    const Vec3 l = normalize(kToLight);
-    const LitFsParams fs{.color = {color.r, color.g, color.b, 1.0f},
-                         .light = {l.x, l.y, l.z, kShadeBand},
-                         .params = {0.0f, flash, emissive, 0.0f},
-                         .floor = {}};
+    const LitFsParams fs = litFs(color, Surface::Toon, {}, 0.0f, flash, emissive);
     submit(mesh, rangeOf(vs), rangeOf(fs));
   }
 
-  // A skinned character with the lit toon ramp (shaders.hpp, kSkinnedVs).
-  void skinned(const Mat4& model, const SkinMatrices& joints, Color color, float flash,
-               float emissive) {
+  // A patterned surface (water, mud, mossy rock): `alt` is its second colour,
+  // `phase` its animation time.
+  void surface(std::size_t mesh, const Mat4& model, Color color, Surface kind, Color alt,
+               float phase = 0.0f, float emissive = 0.0f) {
+    usePipeline(kLitPipeline);
+    const LitVsParams vs{.mvp = viewProj_ * model, .model = model};
+    const LitFsParams fs = litFs(color, kind, alt, phase, 0.0f, emissive);
+    submit(mesh, rangeOf(vs), rangeOf(fs));
+  }
+
+  // A skinned character with the lit cel shading (shaders.hpp, kSkinnedVs):
+  // `tint` on the parts its vertex colours mask, the whole faded `fade`
+  // toward `fadeTarget` (an eliminated monkey greys out, fur and all).
+  void skinned(const Mat4& model, const SkinMatrices& joints, Color tint, float flash,
+               float emissive, Color fadeTarget, float fade) {
     usePipeline(kSkinnedPipeline);
     const SkinnedVsParams vs{.mvp = viewProj_ * model, .model = model, .joints = joints};
-    const Vec3 l = normalize(kToLight);
-    const LitFsParams fs{.color = {color.r, color.g, color.b, 1.0f},
-                         .light = {l.x, l.y, l.z, kShadeBand},
-                         .params = {0.0f, flash, emissive, 0.0f},
-                         .floor = {}};
+    LitFsParams fs = litFs(tint, Surface::Toon, fadeTarget, 0.0f, flash, emissive);
+    fs.alt.w = fade;
+    submit(kSkinnedMesh, rangeOf(vs), rangeOf(fs));
+  }
+
+  // The skinned character's ink hull, drawn right after the body (the joints
+  // are not kept for a later pass).
+  void skinnedOutline(const Mat4& model, const SkinMatrices& joints, float width) {
+    usePipeline(kSkinnedOutlinePipeline);
+    const SkinnedOutlineVsParams vs{.viewProj = viewProj_,
+                                    .model = model,
+                                    .joints = joints,
+                                    .outline = {width, 0.0f, 0.0f, 0.0f}};
+    const OutlineFsParams fs{.ink = {look_.ink.r, look_.ink.g, look_.ink.b, 1.0f}};
     submit(kSkinnedMesh, rangeOf(vs), rangeOf(fs));
   }
 
   void floor(const Mat4& model, Vec2f halfExtents) {
     usePipeline(kLitPipeline);
     const LitVsParams vs{.mvp = viewProj_ * model, .model = model};
-    const Vec3 l = normalize(kToLight);
-    const LitFsParams fs{.color = {kFloorColor.r, kFloorColor.g, kFloorColor.b, 1.0f},
-                         .light = {l.x, l.y, l.z, kShadeBand},
-                         .params = {1.0f, 0.0f, 0.0f, 0.0f},
-                         .floor = {halfExtents.x, halfExtents.y, 0.0f, 0.0f}};
+    LitFsParams fs = litFs(look_.floor, look_.floorSurface, look_.floorAlt, 0.0f, 0.0f, 0.0f);
+    fs.floor = {halfExtents.x, halfExtents.y, look_.floorScale, look_.floorDetail};
+    fs.alt.w = look_.floorDensity;
     submit(kFloorMesh, rangeOf(vs), rangeOf(fs));
+  }
+
+  // Queues an ink hull around a static mesh; flushOutlines() draws the queue
+  // in one pipeline run. A full queue drops the rest (counted in the stats as
+  // nothing: the frame just has fewer outlines).
+  void outline(std::size_t mesh, const Mat4& model, float width, Hull hull) {
+    if (outlineCount_ >= outlines_.size()) return;
+    outlines_[outlineCount_++] =
+        OutlineItem{.model = model, .mesh = mesh, .width = width, .hull = hull};
+  }
+
+  void flushOutlines() {
+    if (outlineCount_ == 0) return;
+    usePipeline(kOutlinePipeline);
+    const OutlineFsParams fs{.ink = {look_.ink.r, look_.ink.g, look_.ink.b, 1.0f}};
+    for (const OutlineItem& o : std::span(outlines_).first(outlineCount_)) {
+      const OutlineVsParams vs{.viewProj = viewProj_,
+                               .model = o.model,
+                               .outline = {o.width, o.hull == Hull::Box ? 1.0f : 0.0f, 0.0f, 0.0f}};
+      submit(o.mesh, rangeOf(vs), rangeOf(fs));
+    }
+    outlineCount_ = 0;
   }
 
   // A disc lying on the ground (y = lift) under `center`, scaled `along` the
@@ -354,6 +431,28 @@ class FrameDrawer {
 
  private:
   static constexpr std::size_t kNone = ~std::size_t{0};
+  // Walls (a tilemap arena has up to kMaxArenaWalls), the rim, players,
+  // bananas, pickups: 160 covers a full 10-player tilemap match.
+  static constexpr std::size_t kMaxOutlines = 160;
+
+  struct OutlineItem {
+    Mat4 model;
+    std::size_t mesh{0};
+    float width{0.0f};
+    Hull hull{Hull::Smooth};
+  };
+
+  [[nodiscard]] LitFsParams litFs(Color color, Surface kind, Color alt, float phase, float flash,
+                                  float emissive) {
+    const Vec3 l = normalize(kToLight);
+    return LitFsParams{
+        .color = {color.r, color.g, color.b, 1.0f},
+        .light = {l.x, l.y, l.z, kShadeBand},
+        .params = {static_cast<float>(kind), flash, emissive, phase},
+        .floor = {},
+        .shade = {look_.shadeTint.r, look_.shadeTint.g, look_.shadeTint.b, kCelBandEdge},
+        .alt = {alt.r, alt.g, alt.b, 0.0f}};
+  }
 
   void decal(const Mat4& model, Color color, float alpha, DecalMode mode, float inner) {
     if (alpha <= 0.0f) return;
@@ -387,9 +486,12 @@ class FrameDrawer {
   Vec3 camRight_;
   Vec3 camUp_;
   Vec3 camBack_;
+  const ArenaLook& look_;
   RendererStats& stats_;
   std::size_t currentPipeline_{kNone};
   std::size_t currentMesh_{kNone};
+  std::array<OutlineItem, kMaxOutlines> outlines_{};
+  std::size_t outlineCount_{0};
 };
 
 // n billboards flying out from an effect's position: around the full circle,
@@ -440,28 +542,34 @@ void drawPowerUp(FrameDrawer& d, const RenderPickup& p, float playerRadius, floa
   const float rx = playerRadius > 0.0f ? (0.5f * s) / playerRadius : 1.0f;
   const float hy = playerHeight > 0.0f ? 1.0f / playerHeight : 1.0f;
   switch (p.shape) {
-    case PowerUpShapeView::Orb:
+    case PowerUpShapeView::Orb: {
       // The capsule squashed to its own width: a ball centred on `at`.
-      d.lit(kCapsuleMesh, base * translate({0.0f, -0.5f * s, 0.0f}) * scale({rx, s * hy, rx}), c,
-            0.0f, glow);
+      const Mat4 m = base * translate({0.0f, -0.5f * s, 0.0f}) * scale({rx, s * hy, rx});
+      d.lit(kCapsuleMesh, m, c, 0.0f, glow);
+      d.outline(kCapsuleMesh, m, kOutlinePowerUp, Hull::Smooth);
       break;
-    case PowerUpShapeView::Cube:
-      d.lit(kCubeMesh, base * rotateX(0.35f) * scale({0.75f * s, 0.75f * s, 0.75f * s}), c, 0.0f,
-            glow);
+    }
+    case PowerUpShapeView::Cube: {
+      const Mat4 m = base * rotateX(0.35f) * scale({0.75f * s, 0.75f * s, 0.75f * s});
+      d.lit(kCubeMesh, m, c, 0.0f, glow);
+      d.outline(kCubeMesh, m, kOutlinePowerUp, Hull::Box);
       break;
-    case PowerUpShapeView::Diamond:
-      d.lit(kCubeMesh,
-            base * rotateZ(0.25f * kPi) * rotateX(0.25f * kPi) *
-                scale({0.62f * s, 0.62f * s, 0.62f * s}),
-            c, 0.0f, glow);
+    }
+    case PowerUpShapeView::Diamond: {
+      const Mat4 m = base * rotateZ(0.25f * kPi) * rotateX(0.25f * kPi) *
+                     scale({0.62f * s, 0.62f * s, 0.62f * s});
+      d.lit(kCubeMesh, m, c, 0.0f, glow);
+      d.outline(kCubeMesh, m, kOutlinePowerUp, Hull::Box);
       break;
-    case PowerUpShapeView::Coin:
+    }
+    case PowerUpShapeView::Coin: {
       // A flat capsule stood on its edge.
-      d.lit(kCapsuleMesh,
-            base * rotateX(0.5f * kPi) * translate({0.0f, -0.1f * s, 0.0f}) *
-                scale({rx, 0.2f * s * hy, rx}),
-            c, 0.0f, glow);
+      const Mat4 m = base * rotateX(0.5f * kPi) * translate({0.0f, -0.1f * s, 0.0f}) *
+                     scale({rx, 0.2f * s * hy, rx});
+      d.lit(kCapsuleMesh, m, c, 0.0f, glow);
+      d.outline(kCapsuleMesh, m, kOutlinePowerUp, Hull::Smooth);
       break;
+    }
   }
 }
 
@@ -470,6 +578,8 @@ void drawPowerUp(FrameDrawer& d, const RenderPickup& p, float playerRadius, floa
 bool Renderer::init(const sim::MatchContent& match) {
   const sim::ContentDB& content = match.db;
   if (initialised_) shutdown();
+  arenaName_ = match.arena.name;
+  theme_ = resolveTheme(themeChoice_, arenaName_.view());
   if (!sg_isvalid()) return false;
 
   const std::array<MeshData, kStaticMeshCount> data = {
@@ -495,11 +605,16 @@ bool Renderer::init(const sim::MatchContent& match) {
                                     shaders::kLitFsVec4s, "kfm-lit-shader");
   shaders_[kDecalShader] = makeShader(shaders::kDecalVs, shaders::kDecalFs, shaders::kDecalVsVec4s,
                                       shaders::kDecalFsVec4s, "kfm-decal-shader");
+  shaders_[kOutlineShader] =
+      makeShader(shaders::kOutlineVs, shaders::kOutlineFs, shaders::kOutlineVsVec4s,
+                 shaders::kOutlineFsVec4s, "kfm-outline-shader");
   pipelines_[kLitPipeline] = makePipeline(shaders_[kLitShader], Blend::Opaque, "kfm-lit");
   pipelines_[kDecalAlphaPipeline] =
       makePipeline(shaders_[kDecalShader], Blend::Alpha, "kfm-decal-alpha");
   pipelines_[kDecalAdditivePipeline] =
       makePipeline(shaders_[kDecalShader], Blend::Additive, "kfm-decal-additive");
+  pipelines_[kOutlinePipeline] =
+      makePipeline(shaders_[kOutlineShader], Blend::Outline, "kfm-outline");
 
   bool ok = true;
   for (const GpuMesh& m : std::span(meshes_).first(kStaticMeshCount)) {
@@ -516,6 +631,11 @@ bool Renderer::init(const sim::MatchContent& match) {
     return false;
   }
   return true;
+}
+
+void Renderer::setThemeChoice(ThemeChoice choice) {
+  themeChoice_ = choice;
+  theme_ = resolveTheme(choice, arenaName_.view());
 }
 
 void Renderer::destroyResources() {
@@ -536,12 +656,16 @@ void Renderer::destroyResources() {
 void Renderer::destroyCharacterModel() {
   if (sg_isvalid()) {
     sg_destroy_pipeline(sg_pipeline{pipelines_[kSkinnedPipeline]});
+    sg_destroy_pipeline(sg_pipeline{pipelines_[kSkinnedOutlinePipeline]});
     sg_destroy_shader(sg_shader{shaders_[kSkinnedShader]});
+    sg_destroy_shader(sg_shader{shaders_[kSkinnedOutlineShader]});
     sg_destroy_buffer(sg_buffer{meshes_[kSkinnedMesh].vertexBuffer});
     sg_destroy_buffer(sg_buffer{meshes_[kSkinnedMesh].indexBuffer});
   }
   pipelines_[kSkinnedPipeline] = 0;
+  pipelines_[kSkinnedOutlinePipeline] = 0;
   shaders_[kSkinnedShader] = 0;
+  shaders_[kSkinnedOutlineShader] = 0;
   meshes_[kSkinnedMesh] = {};
   model_ = SkinnedModel{};
   clips_ = {};
@@ -585,14 +709,26 @@ bool Renderer::loadCharacterModel(const char* path) {
   mesh.indexCount = static_cast<uint32_t>(model_.indices.size());
   shaders_[kSkinnedShader] =
       makeShader(shaders::kSkinnedVs, shaders::kLitFs, shaders::kSkinnedVsVec4s,
-                 shaders::kLitFsVec4s, "kfm-skinned-shader", 4);
-  pipelines_[kSkinnedPipeline] = makeSkinnedPipeline(shaders_[kSkinnedShader]);
+                 shaders::kLitFsVec4s, "kfm-skinned-shader", 5);
+  pipelines_[kSkinnedPipeline] =
+      makeSkinnedPipeline(shaders_[kSkinnedShader], false, "kfm-skinned");
+  // The outline's fragment stage is kOutlineFs; its vertex stage reads
+  // position, normal, joints and weights (the colour is bound, unread).
+  shaders_[kSkinnedOutlineShader] =
+      makeShader(shaders::kSkinnedOutlineVs, shaders::kOutlineFs, shaders::kSkinnedOutlineVsVec4s,
+                 shaders::kOutlineFsVec4s, "kfm-skinned-outline-shader", 5);
+  pipelines_[kSkinnedOutlinePipeline] =
+      makeSkinnedPipeline(shaders_[kSkinnedOutlineShader], true, "kfm-skinned-outline");
 
   const bool ok =
       sg_query_buffer_state(sg_buffer{mesh.vertexBuffer}) == SG_RESOURCESTATE_VALID &&
       sg_query_buffer_state(sg_buffer{mesh.indexBuffer}) == SG_RESOURCESTATE_VALID &&
       sg_query_shader_state(sg_shader{shaders_[kSkinnedShader]}) == SG_RESOURCESTATE_VALID &&
-      sg_query_pipeline_state(sg_pipeline{pipelines_[kSkinnedPipeline]}) == SG_RESOURCESTATE_VALID;
+      sg_query_pipeline_state(sg_pipeline{pipelines_[kSkinnedPipeline]}) ==
+          SG_RESOURCESTATE_VALID &&
+      sg_query_shader_state(sg_shader{shaders_[kSkinnedOutlineShader]}) == SG_RESOURCESTATE_VALID &&
+      sg_query_pipeline_state(sg_pipeline{pipelines_[kSkinnedOutlinePipeline]}) ==
+          SG_RESOURCESTATE_VALID;
   if (!ok) {
     destroyCharacterModel();
     modelError_ = "creating the skinned character's GPU resources failed";
@@ -625,7 +761,8 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     ibufs[i] = meshes_[i].indexBuffer;
     counts[i] = meshes_[i].indexCount;
   }
-  FrameDrawer d(pipelines_, vbufs, ibufs, counts, viewProj, camRight, camUp, camBack, stats_);
+  const ArenaLook& look = arenaLook(theme_);
+  FrameDrawer d(pipelines_, vbufs, ibufs, counts, viewProj, camRight, camUp, camBack, look, stats_);
 
   const float r = state.playerRadius;
   const float bodyHeight = state.playerHeight;
@@ -639,35 +776,52 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const float t = kWallThickness;
     const float lenX = (2.0f * half.x) + (2.0f * t);
     const float lenZ = 2.0f * half.y;
-    d.lit(kCubeMesh, translate({0.0f, y, -(half.y + (t * 0.5f))}) * scale({lenX, kWallHeight, t}),
-          kWallColor);
-    d.lit(kCubeMesh, translate({0.0f, y, half.y + (t * 0.5f)}) * scale({lenX, kWallHeight, t}),
-          kWallColor);
-    d.lit(kCubeMesh, translate({-(half.x + (t * 0.5f)), y, 0.0f}) * scale({t, kWallHeight, lenZ}),
-          kWallColor);
-    d.lit(kCubeMesh, translate({half.x + (t * 0.5f), y, 0.0f}) * scale({t, kWallHeight, lenZ}),
-          kWallColor);
+    const std::array<Mat4, 4> rim = {
+        translate({0.0f, y, -(half.y + (t * 0.5f))}) * scale({lenX, kWallHeight, t}),
+        translate({0.0f, y, half.y + (t * 0.5f)}) * scale({lenX, kWallHeight, t}),
+        translate({-(half.x + (t * 0.5f)), y, 0.0f}) * scale({t, kWallHeight, lenZ}),
+        translate({half.x + (t * 0.5f), y, 0.0f}) * scale({t, kWallHeight, lenZ})};
+    for (const Mat4& m : rim) {
+      d.lit(kCubeMesh, m, look.rim);
+      d.outline(kCubeMesh, m, kOutlineWall, Hull::Box);
+    }
   }
   // Interior walls and hazards (v0.22): unit cubes scaled to each box. Pits
   // and mud are slabs just above the floor and under the blob shadows; a
-  // pit's rim strips sit on top of its near-black slab (half its height).
+  // pit's rim strips sit on top of its water slab (half its height). v0.49:
+  // walls are mossy rock with an ink hull; a floor slab sits on a lower ink
+  // slab kOutlineSlab wider on every side (a neighbouring slab of the same
+  // kind covers the part that reaches into it).
+  const auto inkSlab = [&](Vec3 c, Vec3 s) {
+    const float w = kOutlineSlab;
+    d.lit(
+        kCubeMesh,
+        translate({c.x, s.y * 0.2f, c.z}) * scale({s.x + (2.0f * w), s.y * 0.4f, s.z + (2.0f * w)}),
+        look.ink);
+  };
   for (uint16_t i = 0; i < state.arenaPieceCount; ++i) {
     const RenderArenaPiece& piece = state.arenaPieces[i];
     const Vec3 c = piece.center;
     const Vec3 s = piece.size;
     switch (piece.kind) {
-      case ArenaPieceKind::Wall:
-        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kArenaWallColor);
+      case ArenaPieceKind::Wall: {
+        const Mat4 m = translate({c.x, s.y * 0.5f, c.z}) * scale(s);
+        d.surface(kCubeMesh, m, look.wall, look.wallSurface, look.wallAlt);
+        d.outline(kCubeMesh, m, kOutlineWall, Hull::Box);
         break;
+      }
       case ArenaPieceKind::Pit:
-        d.lit(kCubeMesh, translate({c.x, s.y * 0.25f, c.z}) * scale({s.x, s.y * 0.5f, s.z}),
-              kArenaPitColor);
+        inkSlab(c, s);
+        d.surface(kCubeMesh, translate({c.x, s.y * 0.25f, c.z}) * scale({s.x, s.y * 0.5f, s.z}),
+                  look.pit, look.pitSurface, look.pitAlt, state.time * kWaterRippleSpeed);
         break;
       case ArenaPieceKind::PitRim:
-        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kArenaPitRimColor);
+        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), look.pitBank);
         break;
       case ArenaPieceKind::Slow:
-        d.lit(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), kArenaSlowColor);
+        inkSlab(c, s);
+        d.surface(kCubeMesh, translate({c.x, s.y * 0.5f, c.z}) * scale(s), look.mud,
+                  look.slowSurface, look.mudAlt, state.time * kMudBubbleHz);
         break;
     }
   }
@@ -690,7 +844,8 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (!p.visible) continue;
     const bool eliminated = p.has(PlayerFlag::Eliminated);
     const Color own = playerColor(p.colorIndex);
-    const Color body = eliminated ? mix(own, kEliminatedColor, 0.8f) : own;
+    const float fade = eliminated ? kEliminatedFade : 0.0f;
+    const Color body = mix(own, kEliminatedColor, fade);
     float flash = p.flash;
     if (p.has(PlayerFlag::Invulnerable)) flash = std::max(flash, 0.35f * blink);
     const float emissive = p.has(PlayerFlag::Dashing) ? 0.25f : 0.0f;
@@ -698,10 +853,12 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (skinnedBodies && p.slot < anim_.size()) {
       SkinMatrices joints;
       evaluateAnimState(model_, clips_, anim_[p.slot], joints);
-      d.skinned(placed * scale({modelScale, modelScale, modelScale}), joints, body, flash,
-                emissive);
+      const Mat4 model = placed * scale({modelScale, modelScale, modelScale});
+      d.skinned(model, joints, own, flash, emissive, kEliminatedColor, fade);
+      d.skinnedOutline(model, joints, kOutlineMonkey);
     } else {
       d.lit(kCapsuleMesh, placed, body, flash, emissive);
+      d.outline(kCapsuleMesh, placed, kOutlineMonkey, Hull::Smooth);
     }
   }
 
@@ -725,18 +882,19 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     // v0.33: a capture flag's carrier wears a small gold diamond overhead.
     if (p.has(PlayerFlag::Carrying)) {
       const float s = kFlagCarrySize;
-      d.lit(kCubeMesh,
-            translate(p.position + Vec3{0.0f, bodyHeight + kFlagCarryLift, 0.0f}) *
-                rotateY(state.time * kFlagCarrySpinRadPerSec) * rotateZ(0.25f * kPi) *
-                rotateX(0.25f * kPi) * scale({s, s, s}),
-            kGold, 0.0f, 0.3f);
+      const Mat4 m = translate(p.position + Vec3{0.0f, bodyHeight + kFlagCarryLift, 0.0f}) *
+                     rotateY(state.time * kFlagCarrySpinRadPerSec) * rotateZ(0.25f * kPi) *
+                     rotateX(0.25f * kPi) * scale({s, s, s});
+      d.lit(kCubeMesh, m, kGold, 0.0f, 0.3f);
+      d.outline(kCubeMesh, m, kOutlinePowerUp, Hull::Box);
     }
     // A banana in hand while the player has ammo.
     if (p.has(PlayerFlag::HasAmmo)) {
-      d.lit(kBananaMesh,
-            translate(aimBase) * rotateY(p.aimYaw) * translate({r * 0.55f, 0.0f, r * 0.85f}) *
-                scale({kHeldBananaScale, kHeldBananaScale, kHeldBananaScale}),
-            kBananaColor, 0.0f, 0.1f);
+      const Mat4 m = translate(aimBase) * rotateY(p.aimYaw) *
+                     translate({r * 0.55f, 0.0f, r * 0.85f}) *
+                     scale({kHeldBananaScale, kHeldBananaScale, kHeldBananaScale});
+      d.surface(kBananaMesh, m, kBananaColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
+      d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
     }
   }
 
@@ -744,16 +902,21 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const RenderBanana& b = state.bananas[i];
     Color c = kBananaColor;
     if (b.ownerSlot >= 0) c = mix(c, playerColor(static_cast<uint32_t>(b.ownerSlot)), kOwnerTint);
-    d.lit(kBananaMesh, translate(b.position) * rotateY(b.headingYaw + b.spin), c, 0.0f, 0.15f);
+    const Mat4 m = translate(b.position) * rotateY(b.headingYaw + b.spin);
+    d.surface(kBananaMesh, m, c, Surface::Banana, kBananaTip, 0.0f, 0.15f);
+    d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
   }
   for (uint16_t i = 0; i < state.pickupCount; ++i) {
     const RenderPickup& p = state.pickups[i];
     if (p.kind == PickupKindView::PowerUp || p.kind == PickupKindView::Flag) {
       drawPowerUp(d, p, r, bodyHeight, state.time);  // a flag: its team's colour (v0.33)
     } else {
-      d.lit(kBananaMesh, translate(p.position) * rotateY(p.spin), kPickupColor, 0.0f, 0.1f);
+      const Mat4 m = translate(p.position) * rotateY(p.spin);
+      d.surface(kBananaMesh, m, kPickupColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
+      d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
     }
   }
+  d.flushOutlines();
 
   // --- ground decals (alpha) -------------------------------------------------------
   d.usePipeline(kDecalAlphaPipeline);
@@ -766,7 +929,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   }
   for (uint16_t i = 0; i < state.shadowCount; ++i) {
     const RenderShadow& s = state.shadows[i];
-    d.groundDisc(s.ground, kShadowLift, 0.0f, s.radius, s.radius, kShadowColor,
+    d.groundDisc(s.ground, kShadowLift, 0.0f, s.radius, s.radius, look.shadow,
                  kShadowOpacity * s.opacity, DecalMode::Shadow);
   }
   for (uint16_t i = 0; i < state.playerCount; ++i) {

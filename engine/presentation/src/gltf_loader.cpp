@@ -175,17 +175,24 @@ struct Loader {
     const cgltf_accessor* normal = nullptr;
     const cgltf_accessor* joints = nullptr;
     const cgltf_accessor* weights = nullptr;
+    const cgltf_accessor* color = nullptr;  // optional (v0.49)
     for (const cgltf_attribute& a : std::span(prim.attributes, prim.attributes_count)) {
       if (a.type == cgltf_attribute_type_position) position = a.data;
       if (a.type == cgltf_attribute_type_normal) normal = a.data;
       if (a.type == cgltf_attribute_type_joints && a.index == 0) joints = a.data;
       if (a.type == cgltf_attribute_type_weights && a.index == 0) weights = a.data;
+      if (a.type == cgltf_attribute_type_color && a.index == 0) color = a.data;
     }
     if (position == nullptr || normal == nullptr || joints == nullptr || weights == nullptr)
       return fail("a primitive lacks POSITION, NORMAL, JOINTS_0 or WEIGHTS_0");
     const std::size_t count = position->count;
-    if (normal->count != count || joints->count != count || weights->count != count)
+    if (normal->count != count || joints->count != count || weights->count != count ||
+        (color != nullptr && color->count != count))
       return fail("a primitive's attributes have different counts");
+    // COLOR_0 is VEC3 or VEC4 (glTF 2.0 §3.7.2.1); a VEC3 colour has alpha 1.
+    if (color != nullptr && color->type != cgltf_type_vec3 && color->type != cgltf_type_vec4)
+      return fail("COLOR_0 must be VEC3 or VEC4");
+    const cgltf_size colorComponents = color != nullptr && color->type == cgltf_type_vec3 ? 3 : 4;
     const std::size_t base = model.vertices.size();
     if (base + count > 65535) return fail("the mesh has more than 65535 vertices");
 
@@ -201,6 +208,13 @@ struct Loader {
         return fail("cannot read vertex " + std::to_string(i));
       }
       SkinnedVertex v{};
+      if (color != nullptr) {
+        std::array<float, 4> c{1.0f, 1.0f, 1.0f, 1.0f};
+        if (cgltf_accessor_read_float(color, i, c.data(), colorComponents) == 0)
+          return fail("cannot read the colour of vertex " + std::to_string(i));
+        for (std::size_t k = 0; k < 4; ++k)
+          v.color[k] = std::clamp(c[k], 0.0f, 1.0f);
+      }
       v.px = p[0];
       v.py = p[1];
       v.pz = p[2];

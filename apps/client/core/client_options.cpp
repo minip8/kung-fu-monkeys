@@ -186,6 +186,18 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.overlay = true;
     } else if (arg == "--capsules") {
       out.capsules = true;
+    } else if (arg == "--theme") {
+      if (i + 1 >= args.size()) {
+        error = "--theme needs a value";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      const std::optional<presentation::ThemeChoice> theme = presentation::parseThemeChoice(v);
+      if (!theme) {
+        error = "--theme must be auto, jungle, temple or beach, got '" + std::string(v) + "'";
+        return false;
+      }
+      out.theme = *theme;
     } else if (arg == "--mute") {
       out.mute = true;
     } else if (arg == "--verbose") {

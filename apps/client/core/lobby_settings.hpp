@@ -18,6 +18,7 @@
 //   mute=0
 //   region=eu                       (M6a: the Online section's Create room region)
 //   nick=Bonobo 42                  (v0.42: the name online; absent until there is one)
+//   theme=auto                      (v0.52: auto, jungle, temple or beach; cosmetic)
 //
 // stored natively in SDL's per-user preference directory and in the
 // browser's localStorage (main.cpp). Precedence at startup: defaults, then
@@ -46,6 +47,7 @@ struct LobbySettings {
   uint8_t volume{80};  // percent
   bool mute{false};
   std::string region{"eu"};  // M6a: the Online section's region label (the lobby lists them)
+  presentation::ThemeChoice theme{presentation::ThemeChoice::Auto};  // v0.52
   constexpr bool operator==(const LobbySettings&) const = default;
 };
 

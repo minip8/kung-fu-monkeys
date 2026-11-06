@@ -25,10 +25,12 @@ namespace kfm::presentation::shaders {
 #endif
 
 // vec4 counts of each uniform block (the C++ structs in renderer.cpp match).
-inline constexpr int kLitVsVec4s = 8;    // mvp, model
-inline constexpr int kLitFsVec4s = 4;    // color, light, params, floor
-inline constexpr int kDecalVsVec4s = 4;  // mvp
-inline constexpr int kDecalFsVec4s = 2;  // color, shape
+inline constexpr int kLitVsVec4s = 8;      // mvp, model
+inline constexpr int kLitFsVec4s = 6;      // color, light, params, floor, shade, alt
+inline constexpr int kDecalVsVec4s = 4;    // mvp
+inline constexpr int kDecalFsVec4s = 2;    // color, shape
+inline constexpr int kOutlineVsVec4s = 9;  // viewProj, model, outline
+inline constexpr int kOutlineFsVec4s = 1;  // ink
 // mvp, model, then 4 column vec4s per joint. With kMaxSkinJoints = 16 that is
 // 72 vec4s: WebGL2 guarantees at least 256 vertex-shader vec4 uniforms
 // (GL_MAX_VERTEX_UNIFORM_VECTORS), so the budget leaves room for 2.5× the
@@ -36,13 +38,33 @@ inline constexpr int kDecalFsVec4s = 2;  // color, shape
 inline constexpr int kSkinnedVsVec4s = 72;
 static_assert(kSkinnedVsVec4s == 8 + (4 * static_cast<int>(kMaxSkinJoints)));
 static_assert(kSkinnedVsVec4s <= 256);
+// The skinned outline: viewProj, model, the joints, then the outline vec4.
+inline constexpr int kSkinnedOutlineVsVec4s = kSkinnedVsVec4s + 1;
+static_assert(kSkinnedOutlineVsVec4s <= 256);
 
-// --- lit: opaque meshes with a three-band toon ramp ------------------------------
+// --- lit: opaque meshes, two-band cel shading (v0.49) -----------------------------
 // fs_params[0] = base colour (rgb)
 // fs_params[1] = unit direction toward the light (xyz), shade band level (w)
-// fs_params[2] = mode (0 toon mesh, 1 arena floor), flash (0..1 toward white),
-//                emissive (adds base colour), unused
-// fs_params[3] = floor only: arena half extents (xy) in sim units
+// fs_params[2] = surface (palette.hpp SurfaceKind: 0 toon, 1 grass floor,
+//                2 water, 3 mud, 4 mossy rock, 5 banana; v0.52: 6 paving
+//                floor, 7 sand floor, 8 chasm, 9 planks, 10 lacquer),
+//                flash (0..1 toward white), emissive (adds base colour), the
+//                surface's animation phase (seconds × its speed)
+// fs_params[3] = floors only: arena half extents (xy) in sim units, which
+//                also turns on the faint unit grid and the darker band along
+//                the walls (zero for everything else); the pattern's scale
+//                (z) and detail cells per unit (w)
+// fs_params[4] = shade tint (rgb), cel band edge on n.l (w)
+// fs_params[5] = the surface's second colour (rgb: grass patches, foam, mud
+//                bubbles, moss, banana tips; toon: a colour to fade toward),
+//                grass and sand: detail density (w; tufts and shells), toon:
+//                how far to fade (w; an eliminated monkey greys out)
+// The vertex colour (v_color, v0.49) is the skinned model's COLOR_0 and white
+// for static meshes: the base is mix(v_color.rgb, fs_params[0].rgb, v_color.a),
+// so a mesh part keeps its own colour where its alpha is 0 and wears the given
+// colour (a player's) where it is 1.
+// Surfaces read the world position (v_world), so patterns run continuously
+// across pieces and never stretch with a box's scale.
 inline constexpr const char* kLitVs = KFM_GLSL_HEADER R"(
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
@@ -50,11 +72,15 @@ layout(location = 2) in vec2 a_uv;
 uniform vec4 vs_params[8];
 out vec3 v_normal;
 out vec2 v_uv;
+out vec3 v_world;
+out vec4 v_color;
 void main() {
   mat4 mvp = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]);
   mat4 model = mat4(vs_params[4], vs_params[5], vs_params[6], vs_params[7]);
   v_normal = transpose(inverse(mat3(model))) * a_normal;
   v_uv = a_uv;
+  v_world = (model * vec4(a_position, 1.0)).xyz;
+  v_color = vec4(1.0);
   gl_Position = mvp * vec4(a_position, 1.0);
 }
 )";
@@ -62,43 +88,174 @@ void main() {
 inline constexpr const char* kLitFs = KFM_GLSL_HEADER R"(
 in vec3 v_normal;
 in vec2 v_uv;
-uniform vec4 fs_params[4];
+in vec3 v_world;
+in vec4 v_color;
+uniform vec4 fs_params[6];
 out vec4 frag_color;
+float hash(vec2 p) {
+  return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
+float noise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  vec2 u = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+             mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x), u.y);
+}
+// A hard-edged step, anti-aliased over one pixel of `x`.
+float edge(float threshold, float x) {
+  float w = max(fwidth(x), 1e-4);
+  return smoothstep(threshold - w, threshold + w, x);
+}
 void main() {
-  vec3 base = fs_params[0].rgb;
+  vec3 base = mix(v_color.rgb, fs_params[0].rgb, v_color.a);
   vec3 toLight = fs_params[1].xyz;
   float shade = fs_params[1].w;
-  float mode = fs_params[2].x;
+  float surface = fs_params[2].x;
   float flash = fs_params[2].y;
   float emissive = fs_params[2].z;
+  float time = fs_params[2].w;
+  vec3 tint = fs_params[4].rgb;
+  float bandEdge = fs_params[4].w;
+  vec3 alt = fs_params[5].rgb;
   vec3 n = normalize(v_normal);
-  float ndl = dot(n, toLight);
-  // Three flat bands (lit, half-lit, shade): a toon look, no gradients.
-  float band = ndl > 0.5 ? 1.0 : (ndl > 0.05 ? mix(shade, 1.0, 0.55) : shade);
   vec3 c = base;
-  if (mode > 0.5) {
-    // Arena floor: a subtle checker of one-unit cells, thin grid lines on the
-    // integer sim coordinates (uv = sim x, y) and a darker band along the
-    // walls.
+  vec2 p = v_world.xz;
+  if (surface < 0.5) {
+    // Toon: the base colour, faded toward the second colour by its w.
+    c = mix(base, alt, clamp(fs_params[5].w, 0.0, 1.0));
+  } else if (surface < 1.5) {
+    // Grass: flat two-tone blotches and small darker tufts.
+    c = mix(base, alt, edge(0.56, noise(p * fs_params[3].z)));
+    vec2 tc = p * fs_params[3].w;
+    vec2 cell = floor(tc);
+    vec2 spot = vec2(hash(cell + 3.1), hash(cell + 7.7)) * 0.6 + 0.2;
+    float tuft = step(1.0 - fs_params[5].w, hash(cell)) *
+                 (1.0 - edge(0.09, length(fract(tc) - spot)));
+    c = mix(c, base * 0.78, tuft);
+  } else if (surface < 2.5) {
+    // Water: darker deep patches, then thin wavy crest lines that drift and
+    // break up (a cartoon river, not a texture).
+    float t = time;
+    c = mix(base, base * 0.85, edge(0.55, noise(p * 0.45 - 0.08 * t)));
+    float wave = sin(dot(p, vec2(0.9, 0.45)) * 2.6 + 2.4 * noise(p * 0.6 + 0.12 * t) + t);
+    float crest = edge(0.9, wave) * edge(0.5, noise(p * 1.1 - 0.2 * t));
+    c = mix(c, alt, 0.8 * crest);
+  } else if (surface < 3.5) {
+    // Mud: darker blotches and bubble rings that swell and fade.
+    c = mix(base, base * 0.82, edge(0.5, noise(p * 1.3)));
+    vec2 q = p * 1.4;
+    vec2 cell = floor(q);
+    float h = hash(cell);
+    float phase = fract(time + h);
+    vec2 centre = cell + 0.3 + 0.4 * vec2(hash(cell + 3.1), hash(cell + 7.7));
+    float d = length(q - centre);
+    float ring = 1.0 - edge(0.05, abs(d - (0.06 + 0.22 * phase)));
+    c = mix(c, alt, ring * (1.0 - phase) * step(0.45, h));
+  } else if (surface < 4.5) {
+    // Mossy rock: moss blotches over the top faces.
+    float top = edge(0.7, n.y);
+    c = mix(base, alt, top * edge(0.38, noise(p * 1.6)));
+  } else if (surface < 5.5) {
+    // Banana: brown tips (the mesh's u runs from one tip, 0, to the other, 1).
+    c = mix(base, alt, edge(0.84, abs(v_uv.x * 2.0 - 1.0)));
+  } else if (surface < 6.5) {
+    // Paving: flagstones in offset rows, each a little lighter or darker,
+    // with mortar lines between them.
+    vec2 q = p * fs_params[3].z;
+    q.x += 0.5 * mod(floor(q.y), 2.0);
+    vec2 cell = floor(q);
+    vec2 f = fract(q);
+    float m = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+    c = base * (0.94 + 0.12 * hash(cell));
+    c = mix(c, alt, 1.0 - edge(0.04, m));
+  } else if (surface < 7.5) {
+    // Sand: wind ripples bent by noise, and the odd pale shell.
+    float r = sin(p.y * fs_params[3].z * 3.0 + 3.0 * noise(p * 0.5));
+    c = mix(base, alt, 0.6 * edge(0.82, r));
+    c = mix(c, base * 1.06, edge(0.55, noise(p * 0.3)) * 0.5);
+    vec2 tc = p * fs_params[3].w;
+    vec2 cell = floor(tc);
+    vec2 spot = vec2(hash(cell + 3.1), hash(cell + 7.7)) * 0.6 + 0.2;
+    float shell = step(1.0 - fs_params[5].w, hash(cell)) *
+                  (1.0 - edge(0.07, length(fract(tc) - spot)));
+    c = mix(c, vec3(0.98, 0.94, 0.88), shell);
+  } else if (surface < 8.5) {
+    // Chasm: a dark drop with mist drifting across it.
+    float t = time;
+    c = mix(base * 0.7, base, edge(0.5, noise(p * 0.35 + 0.05 * t)));
+    c = mix(c, alt, 0.35 * edge(0.68, noise(p * 0.6 + vec2(0.18 * t, 0.05 * t))));
+  } else if (surface < 9.5) {
+    // Planks: crate boards, across the top and stacked up the sides, each a
+    // little lighter or darker, with darker seams.
+    float top = edge(0.7, n.y);
+    float along = mix(v_world.y * 3.0, p.x * 2.5, top);
+    c = mix(base, alt, edge(0.86, abs(fract(along) - 0.5) * 2.0));
+    c *= 0.94 + 0.1 * hash(vec2(floor(along), 0.0));
+  } else if (surface < 10.5) {
+    // Lacquer: red posts under a jade tiled roof on the top faces.
+    float top = edge(0.7, n.y);
+    vec3 roof = mix(alt, alt * 0.78, edge(0.75, fract(p.x * 3.0)));
+    c = mix(base, roof, top);
+  }
+  if (fs_params[3].x > 0.0) {
+    // Floors: a faint grid on the sim coordinates (uv) and a darker band
+    // along the walls.
     vec2 dist = abs(fract(v_uv + 0.5) - 0.5);
     vec2 w = max(fwidth(v_uv), vec2(1e-4));
     vec2 g = 1.0 - smoothstep(0.5 * w, 1.5 * w, dist);
-    float line = max(g.x, g.y);
-    vec2 cell = floor(v_uv);
-    float checker = mod(cell.x + cell.y, 2.0);
-    c = base * (0.97 + 0.05 * checker);
-    c = mix(c, base * 0.8, 0.5 * line);
-    vec2 edge = fs_params[3].xy - abs(v_uv);
-    c *= mix(0.82, 1.0, clamp(min(edge.x, edge.y) / 1.25, 0.0, 1.0));
+    c = mix(c, c * 0.88, 0.5 * max(g.x, g.y));
+    vec2 wall = fs_params[3].xy - abs(v_uv);
+    c *= mix(0.8, 1.0, clamp(min(wall.x, wall.y) / 1.25, 0.0, 1.0));
   }
-  c = c * band + base * emissive;
+  float lit = edge(bandEdge, dot(n, toLight));
+  c = mix(c * shade * tint, c, lit) + base * emissive;
   c = mix(c, vec3(1.0), clamp(flash, 0.0, 1.0));
   frag_color = vec4(c, 1.0);
 }
 )";
 
-// --- skinned: GPU-skinned characters with the lit program's toon ramp ----------
-// Vertex: position, normal, four joint indices (floats) and weights (sum 1).
+// --- outline: ink hulls (v0.49) ---------------------------------------------------
+// The mesh drawn again with front faces culled, every vertex pushed out in
+// world space by the outline width: along the normal for smooth meshes, or
+// for boxes (mode 1) along each of the box's axes by the sign of the vertex,
+// so the hull is the box grown by the width on every side with closed
+// corners (flat cube normals would split them).
+// vs_params[0..3] = viewProj, [4..7] = model, [8] = width (x), mode (y)
+// fs_params[0] = ink colour (rgb)
+inline constexpr const char* kOutlineVs = KFM_GLSL_HEADER R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+uniform vec4 vs_params[9];
+void main() {
+  mat4 viewProj = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]);
+  mat4 model = mat4(vs_params[4], vs_params[5], vs_params[6], vs_params[7]);
+  float width = vs_params[8].x;
+  vec4 world = model * vec4(a_position, 1.0);
+  vec3 dir;
+  if (vs_params[8].y > 0.5) {
+    mat3 m = mat3(model);
+    dir = normalize(m[0]) * sign(a_position.x) + normalize(m[1]) * sign(a_position.y) +
+          normalize(m[2]) * sign(a_position.z);
+  } else {
+    dir = normalize(transpose(inverse(mat3(model))) * a_normal);
+  }
+  world.xyz += dir * width;
+  gl_Position = viewProj * world;
+}
+)";
+
+inline constexpr const char* kOutlineFs = KFM_GLSL_HEADER R"(
+uniform vec4 fs_params[1];
+out vec4 frag_color;
+void main() {
+  frag_color = vec4(fs_params[0].rgb, 1.0);
+}
+)";
+
+// --- skinned: GPU-skinned characters with the lit program's cel shading -------
+// Vertex: position, normal, four joint indices (floats), weights (sum 1) and
+// the colour (rgb, player-colour mask; see kLitFs).
 // The skin matrix is the weighted sum of the joint matrices (linear blend
 // skinning); normals go through its upper 3×3 (joint transforms are rigid),
 // then through the model's normal matrix (the model matrix carries the
@@ -111,9 +268,12 @@ layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_joints;
 layout(location = 3) in vec4 a_weights;
+layout(location = 4) in vec4 a_color;
 uniform vec4 vs_params[72];
 out vec3 v_normal;
 out vec2 v_uv;
+out vec3 v_world;
+out vec4 v_color;
 mat4 jointMatrix(float joint) {
   int i = 8 + 4 * int(joint + 0.5);
   return mat4(vs_params[i], vs_params[i + 1], vs_params[i + 2], vs_params[i + 3]);
@@ -127,7 +287,34 @@ void main() {
   vec3 n = mat3(skin) * a_normal;
   v_normal = transpose(inverse(mat3(model))) * n;
   v_uv = vec2(0.0);
+  v_world = (model * skinned).xyz;
+  v_color = a_color;
   gl_Position = mvp * skinned;
+}
+)";
+
+// The skinned character's ink hull: kSkinnedVs's skinning, then the smooth
+// outline push of kOutlineVs. vs_params[0..3] = viewProj, [4..7] = model,
+// [8 .. 71] = the joints, [72] = width (x).
+inline constexpr const char* kSkinnedOutlineVs = KFM_GLSL_HEADER R"(
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_joints;
+layout(location = 3) in vec4 a_weights;
+uniform vec4 vs_params[73];
+mat4 jointMatrix(float joint) {
+  int i = 8 + 4 * int(joint + 0.5);
+  return mat4(vs_params[i], vs_params[i + 1], vs_params[i + 2], vs_params[i + 3]);
+}
+void main() {
+  mat4 viewProj = mat4(vs_params[0], vs_params[1], vs_params[2], vs_params[3]);
+  mat4 model = mat4(vs_params[4], vs_params[5], vs_params[6], vs_params[7]);
+  mat4 skin = a_weights.x * jointMatrix(a_joints.x) + a_weights.y * jointMatrix(a_joints.y) +
+              a_weights.z * jointMatrix(a_joints.z) + a_weights.w * jointMatrix(a_joints.w);
+  vec4 world = model * (skin * vec4(a_position, 1.0));
+  vec3 n = normalize(transpose(inverse(mat3(model))) * (mat3(skin) * a_normal));
+  world.xyz += n * vs_params[72].x;
+  gl_Position = viewProj * world;
 }
 )";
 

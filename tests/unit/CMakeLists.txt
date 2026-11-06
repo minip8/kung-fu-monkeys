@@ -112,6 +112,7 @@ kfm_add_test_exe(kfm_presentation_tests
   presentation/meshes_test.cpp
   presentation/animation_test.cpp
   presentation/audio_test.cpp
+  presentation/theme_test.cpp
 )
 target_link_libraries(kfm_presentation_tests PRIVATE kfm::presentation)
 if(NOT KFM_HEADLESS)
