@@ -406,7 +406,10 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   pause, online idle input and Leave room) landed in v0.46; the friends playtest (step 5) was played and
   M6b landed in v0.58. Next is M7, not started. The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
-  append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. M5b landed in v0.35 (five PRs, one
+  append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. v0.59: a
+  ladder season is a time window, not a pinned release; every match records its release tag,
+  replays are served with their release's content and viewed in that release's client (the page
+  under a versioned path per tag), ratings persist across a release. M5b landed in v0.35 (five PRs, one
   architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)
   is pending. Spawn groups fixed the side bias between teams only: the free-for-all
   spawn-order slot bias of §12 is still open (tournaments rotate).
