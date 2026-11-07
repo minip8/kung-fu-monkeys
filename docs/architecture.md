@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.60 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.61 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -822,6 +822,33 @@ and the versioned pages are for replays and local play. The workflow has not yet
 (the Actions, macOS, Windows and Cloudflare `:version` header behaviour is unverified; the first
 release after this lands is the check). Replay checksums: unchanged, corpus regenerated because
 the content hash moved (a new mode); one new entry.
+v0.61 changes: M7 step (2) landed, the bots repository (§8, §9, §11). `minip8/kung-fu-monkeys-bots`
+holds the C header copied byte for byte (its CI diffs the copy against this repository at the
+commit its `engine.lock` names; the copy here stays normative with `example_bot_test`), the C++
+layer `sdk/cpp/kfm_bot.hpp` (Q16.16 and vector arithmetic over the header's exact math, typed
+views of Observation v1, the helpers §8 keeps out of the host ABI: nearest enemy and banana,
+the exact flight path and time to impact, threats, the dash-catch direction, the grid cells and
+commitments, and a `KFM_BOT(T)` macro that defines the four exports over a `constinit`
+instance, because wasm-ld with no C runtime runs global constructors at the start of every
+exported call), the two C examples and a C++ starter (one directory per bot), the recipe
+`tools/build.sh` (every source of the directory in one clang command: the §5 flags, C as C11,
+anything with a C++ file as C++20 with `-fno-exceptions -fno-rtti -fno-threadsafe-statics`; it
+checks the module's size, its exports, that the only import is `env.kfm_log` and that memory is
+not imported), the build image on `emscripten/emsdk:6.0.13` pinned by digest, the same clang
+as `BUILT_WITH.txt`, with `tools/build_in_sandbox.sh` running the §8 docker command verbatim,
+`tools/fetch_kfm_arena.sh` (the release asset by host, verified against `SHA256SUMS`) and
+`tools/build_kfm_arena.sh` (a shallow clone at the pinned commit, the headless Release build,
+25 s locally) for the time before the first release, and a CI that checks the header, builds
+every example in the image and with a bare emsdk and requires the two modules byte-identical,
+and plays each against the reference bot failing on any trap, over-budget tick, bad return or
+dead module. Measured: the sandbox and local builds of every example are byte-identical; the
+starter beats `ref:medium` 8 of 10 and `ref:hard` 12 of 20 one on one, peaks at 61 k fuel of
+the 100 k budget, and loses 5v5 contests to `ref:hard`. Two findings here: the checked-in
+`chaser.wasm` was stale since the pit falls (rebuilt; `example_bot_test` plays the module and
+never compared it with its source: open, a CI rebuild needs a wasm32 clang on the runners), and
+GCC 14.3 cannot build the engine at `-Werror` (a `-Wnull-dereference` false positive in
+libstdc++ reached from the content loader), so the bots repository's CI builds the runner on
+Ubuntu 26.04; whether §9 keeps GCC 14 in the toolchain line is open. No engine code change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4309,7 +4336,7 @@ the lobby service or the regional servers. Its order: (1) in this repository, th
 the JSON result pinned append-only, a tagged release that publishes the headless `kfm_arena`
 (landed in v0.60, with the versioned page per tag of v0.59);
 (2) the bots repository created with the SDK moved from `tools/bots/`, the C++ layer and the
-build image, `example_bot_test` kept here against the normative header; (3) the service:
+build image, `example_bot_test` kept here against the normative header (landed in v0.61); (3) the service:
 accounts, teams, submissions and the sandboxed build; (4) the scheduler and ratings; (5) the
 CLI on PyPI; (6) the client's replay viewer and the portal's replay links. M8 (Steam) is
 unchanged.
@@ -4348,7 +4375,15 @@ running the echo module inside a Debian trixie image, and the workflow's shell s
 bash against a fake `gh`. Not yet run: the workflow itself (no release exists yet; the first
 tag creates one), the macOS and Windows legs, Cloudflare's `:version` rules. Open: a stamped
 build hash; a global concurrency group for `web` when two tags land close together; a
-`CMAKE_OSX_DEPLOYMENT_TARGET` for older macOS. Next: step (2), the bots repository.
+`CMAKE_OSX_DEPLOYMENT_TARGET` for older macOS.
+
+Progress: M7 step (2) landed in v0.61 in `minip8/kung-fu-monkeys-bots` (the SDK, the C++
+layer, the examples and starter, the recipe, the image, the engine pin and CI; the v0.61
+changelog line has the measurements). Here only `tools/bots/README.md` points at it and the
+stale `chaser.wasm` was rebuilt. Not yet run: the bots repository's CI on GitHub (its
+`fetch_kfm_arena.sh` needs the first engine release; until then CI builds the runner from the
+pinned commit). Next: step (3), the service (accounts, teams, submissions, the sandboxed build),
+which needs a hosting decision for the service and its build host.
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and

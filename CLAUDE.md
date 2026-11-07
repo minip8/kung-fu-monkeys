@@ -401,7 +401,7 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   beside the old ones; a reader treats a missing key as the older lobby's meaning, as a missing
   `free` means "every listed region free"); `/healthz`'s shape is unchanged. GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>`
   as a null dereference (`-Werror` on the Release legs): move instead.
-- Next milestone: M7, the bot ladder (architecture §11 "M7 sequencing"; step 1 landed in v0.60). M6b
+- Next milestone: M7, the bot ladder (architecture §11 "M7 sequencing"; steps 1 and 2 landed in v0.60 and v0.61). M6b
   "Play with friends" (architecture v0.40, §11 "M6b design") landed in v0.58: step 1,
   lobby protocol v1.1 (`regions` lists every region plus `free`), landed in v0.41; step 2, the
   online room (Waiting/Playing/Over beside `ServerHost`, `RoomSettings`/`RoomState`/`Start`,
@@ -414,7 +414,9 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   M6b landed in v0.58. Next is M7, not started. The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
   append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena` (step 1,
-  landed in v0.60; next is step 2, the bots repository). v0.59: a
+  landed in v0.60); step 2, the bots repository `minip8/kung-fu-monkeys-bots` (the C header copied
+  byte for byte and diffed by its CI, the C++ layer, examples, the recipe and image, the engine
+  pin in its `engine.lock`), landed in v0.61; next is step 3, the service. v0.59: a
   ladder season is a time window, not a pinned release; every match records its release tag,
   replays are served with their release's content and viewed in that release's client (the page
   under a versioned path per tag), ratings persist across a release. M5b landed in v0.35 (five PRs, one
