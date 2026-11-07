@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.64 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.65 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -886,6 +886,26 @@ and MinIO with the real sandbox image and the released v0.5.1 runner; upload to 
 through the local stack, the module byte-identical to a local sandbox build. Not yet done: the
 VMs, the R2 bucket and the OAuth apps (the runbook in the bots repository's `deploy/README.md`
 lists the order). Next is step (4), the scheduler and ratings.
+
+v0.65 changes: M7 step (4) landed in the bots repository (§8, §11, §12). Seasons as time
+windows (`kfm-ladder season create`, no overlap, one current; a job past its season's end
+records nothing, so the board freezes). The scheduler is a task in the API under an advisory
+lock, one round per interval by the database clock; Swiss-style pairing in k passes from the top
+of the board (a single greedy walk left the bottom team without a game), never the same pair
+twice in a round, a pair with a live job counting toward k but getting no new job, seeds
+deterministic from (season, round, submissions) below 2^62. The match job runs one `kfm_arena
+--mode contest --team A×5 --team B×5 --matches 2 --rotate` for both sides, stores both replays,
+records the engine tag, both hashes, sides and per-slot faults (a fault in a ranked game is
+counted on the submission, never a rejection), and updates both ratings in the same transaction
+(rows created in team-id order: three workers deadlocked otherwise). Decided: the rating is
+Glicko-2 (tau 0.5, 1500/350/0.06), applied per game as a one-game period, Glickman's worked
+example pinned by a test; at a release RD' = min(350, sqrt(RD² + 100²)) before a team's first
+game under the new tag. Validation now plays the ranked shape, 5v5 (the 1v1 smoke match cost a
+third less fuel per tick than a ranked game). Routes: seasons, the ladder, matches with a
+presigned replay URL and the viewer URL `https://kfm.minip8.com/<tag>/?replay=…` (step 6).
+Measured: 155 tests; a 5v5 pair that ends takes 0.3 s of `kfm_arena` on the released v0.5.1
+runner, two capped games 5 s. Next: step (5), the CLI, then (6), the viewer; the deployment
+(VMs, R2, the OAuth apps) is still to do.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4510,8 +4530,11 @@ which needs a hosting decision for the service and its build host.
 
 Progress: M7 step (3) landed in v0.64 in the bots repository (`service/`, `deploy/`, bots PRs #3
 and #4; the v0.64 changelog line has the departures and measurements). Not yet deployed: the two
-VMs, the R2 bucket, the GitHub and Google OAuth apps. Next: step (4), the scheduler and ratings
-(the `match` job, Swiss rounds, Glicko-2, `GET /ladder` and `GET /matches`).
+VMs, the R2 bucket, the GitHub and Google OAuth apps.
+
+Progress: M7 step (4) landed in v0.65 in the bots repository (bots PR #5; the v0.65 changelog
+line has the decisions and measurements). Next: step (5), the Rust CLI on PyPI (`login`,
+`build`, `test`, `submit`, `bots`, `matches`, `replay`), then (6), the client's replay viewer.
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
@@ -4984,7 +5007,8 @@ baseline moved to C++23 (§9).
   may change inside a season, and ratings persist across a release.
   v0.63: the service's shape (§11 "M7 step 3 design"): Rust, Postgres, S3-compatible blobs, a
   jobs table as the queue, GitHub or Google OAuth, gVisor on a dedicated build VM, Swiss-style
-  rounds under Glicko-2.
+  rounds under Glicko-2. v0.65: Glicko-2 decided (per-game periods, the release widening
+  constant 100), seasons as time windows, validation in the ranked 5v5 shape.
   Open: how long a release's content, page and replays are kept, and whether a fog overlay
   belongs in the viewer.
 - Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP

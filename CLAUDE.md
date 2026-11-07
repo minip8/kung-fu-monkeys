@@ -419,7 +419,8 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   pin in its `engine.lock`), landed in v0.61; step 3, the service, is designed in v0.63 (§11 "M7
   step 3 design": Rust/axum/sqlx, Postgres, S3-compatible blobs, a jobs table as the queue, GitHub or
   Google OAuth, gVisor on a build VM, Swiss rounds under Glicko-2) and landed there in v0.64 (`service/`,
-  `deploy/`; kfm_arena baked into the service image); next is step 4, the scheduler and ratings. v0.59: a
+  `deploy/`; kfm_arena baked into the service image); step 4, seasons, the Swiss scheduler, the match
+  job and Glicko-2, landed there in v0.65; next is step 5, the CLI. v0.59: a
   ladder season is a time window, not a pinned release; every match records its release tag,
   replays are served with their release's content and viewed in that release's client (the page
   under a versioned path per tag), ratings persist across a release. M5b landed in v0.35 (five PRs, one
