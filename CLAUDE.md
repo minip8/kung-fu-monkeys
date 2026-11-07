@@ -84,8 +84,8 @@ a changelog line. Do not let code and doc disagree silently.
 
 ## Commands
 
-Toolchain: CMake ≥ 3.25, Ninja, a C++23 compiler: GCC ≥ 14 or Clang ≥ 19 on Linux (Ubuntu
-24.04's GCC 13 and Clang 18 do not work), MSVC 2022, Apple Clang 16+, Emscripten 4+; verified on
+Toolchain: CMake ≥ 3.25, Ninja, a C++23 compiler: GCC ≥ 15 or Clang ≥ 19 on Linux (Ubuntu
+24.04's GCC 13 and Clang 18 do not work; GCC 14 fails at -Werror, v0.62), MSVC 2022, Apple Clang 16+, Emscripten 4+; verified on
 GCC 15, Clang 21, MSVC 19.51, Apple Clang 21, Emscripten 6. Optional: vcpkg (`VCPKG_ROOT`; without it
 every dependency is fetched at configure time at the same pinned version) and emsdk (`EMSDK`, set by
 `source ~/emsdk/emsdk_env.sh`) for the `wasm` preset. Build directories are `build/<preset>`.

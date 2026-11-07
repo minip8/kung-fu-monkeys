@@ -73,7 +73,7 @@ jobs:
         # combinations it names; includes without a base key all merge into
         # every combination and the last one wins.
         include:
-          # Linux runs on 26.04: the C++23 baseline needs GCC >= 14 / Clang >= 19
+          # Linux runs on 26.04: the C++23 baseline needs GCC >= 15 / Clang >= 19
           # (architecture §9), which ubuntu-latest (24.04) does not ship.
           - { name: linux-gcc,        os: ubuntu-26.04,   cc: gcc,   cxx: g++ }
           - { name: linux-clang,      os: ubuntu-26.04,   cc: clang, cxx: clang++ }
