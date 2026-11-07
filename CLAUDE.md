@@ -416,7 +416,9 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena` (step 1,
   landed in v0.60); step 2, the bots repository `minip8/kung-fu-monkeys-bots` (the C header copied
   byte for byte and diffed by its CI, the C++ layer, examples, the recipe and image, the engine
-  pin in its `engine.lock`), landed in v0.61; next is step 3, the service. v0.59: a
+  pin in its `engine.lock`), landed in v0.61; step 3, the service, is designed in v0.63 (§11 "M7
+  step 3 design": Rust/axum/sqlx, Postgres, S3-compatible blobs, a jobs table as the queue, GitHub or
+  Google OAuth, gVisor on a build VM, Swiss rounds under Glicko-2) and coded in the bots repository. v0.59: a
   ladder season is a time window, not a pinned release; every match records its release tag,
   replays are served with their release's content and viewed in that release's client (the page
   under a versioned path per tag), ratings persist across a release. M5b landed in v0.35 (five PRs, one
