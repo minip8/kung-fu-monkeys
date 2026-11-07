@@ -94,6 +94,8 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
       return cue(SoundId::Hit);
     case EventKind::PlayerEliminated:
       return cue(SoundId::Elimination);
+    case EventKind::PlayerFell:
+      return cue(SoundId::Fall);
     case EventKind::PickupTaken:
       // A power-up or a capture flag (v0.33) sounds the same.
       return cue(e.a != static_cast<uint32_t>(sim::PickupKind::Banana) ? SoundId::PowerUp
@@ -228,12 +230,22 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       soundAt = player;
       break;
     }
-    case EventKind::PlayerEliminated:
-      addEffect(ps, makeEffect(EffectKind::EliminationBurst, slot, bodyAt(player),
-                               kEliminationBurstSeconds));
-      addEffect(ps, makeEffect(EffectKind::EliminationPoof, slot, bodyAt(player),
-                               kEliminationPoofSeconds));
+    case EventKind::PlayerEliminated: {
+      // v0.57: the end of a pit fall bursts out of the pit, where the body
+      // was last drawn going under, not at body height over the edge.
+      const Player* was = prev.playerBySlot(e.player);
+      const bool fell = was != nullptr && was->tags.has(sim::Tag::Falling) && slot != kNoSlot;
+      const Vec2f at = fell ? ps.players[static_cast<uint8_t>(slot)].motion.lastDrawn : player;
+      const Vec3 where = fell ? groundAt(at) : bodyAt(at);
+      addEffect(ps,
+                makeEffect(EffectKind::EliminationBurst, slot, where, kEliminationBurstSeconds));
+      addEffect(ps, makeEffect(EffectKind::EliminationPoof, slot, where, kEliminationPoofSeconds));
       addShake(ps, kShakeOnElimination);
+      soundAt = at;
+      break;
+    }
+    case EventKind::PlayerFell:
+      addEffect(ps, makeEffect(EffectKind::PitFall, slot, groundAt(player), kPitFallSeconds));
       soundAt = player;
       break;
     case EventKind::PickupTaken: {

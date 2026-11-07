@@ -45,6 +45,7 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.50f, 0.95f},   // Slam
     {0.32f, 0.75f},   // Parry
     {0.20f, 0.45f},   // CallPing
+    {0.62f, 0.55f},   // Fall
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -291,6 +292,15 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         // A call (v0.35): two quick bell notes a fifth apart.
         v = bell(t, 1760.0f, 0.05f) + (0.7f * bell(t - 0.06f, 2637.0f, 0.06f));
         break;
+      case SoundId::Fall: {
+        // v0.57: a slide whistle falling from 1.4 kHz to under 300 Hz with a
+        // widening wobble, fading as the monkey drops out of earshot.
+        const float hz = 260.0f + (1140.0f * std::exp(-t * 4.2f));
+        const float wobble = 1.0f + (0.03f * u * std::sin(kTwoPi * 7.0f * t));
+        osc.next(hz * wobble, sr);
+        v = std::min(clamp01(t / 0.02f), 1.0f - (u * u)) * harmonics(osc.phase(), 0.2f, 0.05f);
+        break;
+      }
       case SoundId::Count:
         break;
     }

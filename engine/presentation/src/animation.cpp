@@ -177,7 +177,8 @@ ClipBinding bindClips(const SkinnedModel& model) {
 
 AnimClip selectClip(const RenderPlayer& player, bool moving, bool throwing) {
   if (player.has(PlayerFlag::Eliminated)) return AnimClip::Eliminated;
-  if (player.has(PlayerFlag::HitStun)) return AnimClip::Hit;
+  // v0.57: a monkey going down a pit flails like a hit one.
+  if (player.has(PlayerFlag::HitStun) || player.has(PlayerFlag::Falling)) return AnimClip::Hit;
   if (player.has(PlayerFlag::Dashing)) return AnimClip::Dash;
   if (player.has(PlayerFlag::Charging)) return AnimClip::Charge;
   if (throwing) return AnimClip::Throw;

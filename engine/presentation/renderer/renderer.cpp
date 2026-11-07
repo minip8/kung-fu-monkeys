@@ -72,6 +72,8 @@ constexpr Color kBananaColor{1.0f, 0.86f, 0.16f};
 constexpr Color kPickupColor{0.98f, 0.80f, 0.12f};
 constexpr Color kEliminatedColor{0.42f, 0.42f, 0.44f};
 constexpr float kEliminatedFade = 0.8f;  // how far an eliminated monkey greys out
+// v0.57: a monkey going down a pit darkens toward this (by kFallDarken × fall).
+constexpr Color kFallShade{0.05f, 0.07f, 0.12f};
 constexpr Color kGold{1.0f, 0.82f, 0.18f};
 constexpr Color kWhite{1.0f, 1.0f, 1.0f};
 constexpr Color kHitRed{1.0f, 0.16f, 0.10f};
@@ -93,10 +95,6 @@ constexpr float kMaxAnimStepSeconds = 0.25f;  // a stalled frame must not skip w
 
 [[nodiscard]] constexpr Color mix(Color a, Color b, float t) {
   return {lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t)};
-}
-
-[[nodiscard]] constexpr float easeOut(float t) {
-  return 1.0f - ((1.0f - t) * (1.0f - t));
 }
 
 // A sim-plane direction as a world vector on the ground (world_basis.hpp).
@@ -1013,19 +1011,24 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const RenderPlayer& p = state.players[i];
     if (!p.visible) continue;
     const bool eliminated = p.has(PlayerFlag::Eliminated);
+    const bool falling = p.has(PlayerFlag::Falling);  // v0.57
     const Color own = playerColor(p.colorIndex);
-    const float fade = eliminated ? kEliminatedFade : 0.0f;
-    const Color body = mix(own, kEliminatedColor, fade);
+    const Color fadeTo = falling ? kFallShade : kEliminatedColor;
+    float fade = falling ? kFallDarken * p.fall : 0.0f;
+    if (eliminated) fade = kEliminatedFade;
+    const Color body = mix(own, fadeTo, fade);
     float flash = p.flash;
     if (p.has(PlayerFlag::Invulnerable)) flash = std::max(flash, 0.35f * blink);
     const float emissive = p.has(PlayerFlag::Dashing) ? 0.25f : 0.0f;
-    const Mat4 placed = translate(p.position) * rotateY(p.bodyYaw) * scale(p.scale);
+    // v0.57: a falling monkey also tips about its side axis (RenderPlayer::tilt).
+    const Mat4 placed =
+        translate(p.position) * rotateY(p.bodyYaw) * rotateZ(p.tilt) * scale(p.scale);
     if (skinnedBodies && p.slot < anim_.size()) {
       SkinMatrices joints;
       SkinMatrices globals;
       evaluateAnimState(model_, clips_, anim_[p.slot], joints, &globals);
       const Mat4 model = placed * scale({modelScale, modelScale, modelScale});
-      d.skinned(model, joints, own, flash, emissive, kEliminatedColor, fade);
+      d.skinned(model, joints, own, flash, emissive, fadeTo, fade);
       d.skinnedOutline(model, joints, kOutlineMonkey);
       // v0.53: the held banana sits in the animated hand (wound up while a
       // throw charges, shaking with the strain).
@@ -1044,7 +1047,8 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   // changes once. hasHand[i]: player i's hand position from its skinned pose.
   for (uint16_t i = 0; i < state.playerCount; ++i) {
     const RenderPlayer& p = state.players[i];
-    if (!p.visible || p.has(PlayerFlag::Eliminated)) continue;
+    // v0.57: a falling monkey aims at nothing and its banana goes down with it.
+    if (!p.visible || p.has(PlayerFlag::Eliminated) || p.has(PlayerFlag::Falling)) continue;
     const Color own = playerColor(p.colorIndex);
 
     // Aim indicator: a thin bar from the capsule surface along the aim. A
@@ -1172,6 +1176,18 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
             e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.5f) : kWhite;
         const float rr = r * lerp(2.6f, 1.0f, easeOut(t));
         d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.9f * fade, DecalMode::Ring, 0.8f);
+        break;
+      }
+      case EffectKind::PitFall: {
+        // v0.57: two rings closing in over the pit where the monkey went
+        // down, the inner one a beat behind.
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.55f) : kWhite;
+        const float rr = r * lerp(2.4f, 0.4f, easeOut(t));
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.85f * fade, DecalMode::Ring, 0.8f);
+        const float inner = r * lerp(1.6f, 0.2f, easeOut(clamp01(t * 1.3f)));
+        d.groundDisc(e.position, kDecalLift, 0.0f, inner, inner, kWhite, 0.6f * fade,
+                     DecalMode::Ring, 0.75f);
         break;
       }
       case EffectKind::DashTrail: {

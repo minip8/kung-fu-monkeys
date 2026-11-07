@@ -46,6 +46,7 @@ enum class PlayerFlag : uint16_t {
   HasAmmo = 1u << 7,
   Carrying = 1u << 8,  // v0.33: holds a capture flag (Tag::Carrying)
   Charging = 1u << 9,  // v0.48: the Throw slot's wind-up is a charging one (still in Startup)
+  Falling = 1u << 10,  // v0.57: going down a pit (Tag::Falling); RenderPlayer::fall
 };
 [[nodiscard]] constexpr uint16_t flagBit(PlayerFlag f) {
   return static_cast<uint16_t>(f);
@@ -82,6 +83,12 @@ struct RenderPlayer {
   // v0.48, while Charging: the charge so far (0 = a tap, 1 = full). v0.53:
   // it drives the charge pose and, at 1, the strain (animation.hpp).
   float throwCharge{0.0f};
+  // v0.57, while Falling: the fall so far (0 = it just went in, 1 = out),
+  // interpolated like the position, and the body's pitch about the model's
+  // side axis (z; negative tips the nose down). position, scale and bodyYaw
+  // already carry the rest of the fall (builder.hpp).
+  float fall{0.0f};
+  float tilt{0.0f};
   std::array<RenderPowerUp, sim::kMaxModifiers> powerUps{};  // in slot (pickup) order
   uint8_t powerUpCount{0};
 
@@ -164,6 +171,8 @@ enum class EffectKind : uint8_t {
   ParrySpark,     // a bright clash where a banana was parried (direction: its new heading)
   // v0.35 (the squad contest):
   CallShout,  // a call: rings popping over the caller's head (slot colour; size = symbol / 255)
+  // v0.57 (pit falls):
+  PitFall,  // a ring closing in where a monkey went down a pit (slot colour)
 };
 
 struct RenderEffect {

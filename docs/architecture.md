@@ -616,7 +616,7 @@ changed their content hash only); servers and the page must deploy together (con
 reference-bot strength test's elimination bar went 5x → 3x: a sweep of five seed bases put 5x on
 the noise mean (3.4x to 8.5x per base at either pause). The other three changes are client and
 platform only.
-v0.57 changes: pit falls (§5.3, §5.6, §5.9, §5.10, §5.12). A pit no longer eliminates a monkey
+v0.57 changes: pit falls (§5.3, §5.6, §5.9, §5.10, §5.12, §7, §8). A pit no longer eliminates a monkey
 on the tick its centre crosses the edge: the monkey **falls**. Row 60 forbids `Dashing` (and
 `Falling`, via `kGone`), so a dash carries a monkey over a pit and how wide a pit it clears is
 the dash's reach (4.4 units: a 2-wide pit from up to 2.4 units before its edge), with no
@@ -639,7 +639,11 @@ fall ends, and if it too is gone by then the round is a draw. The grid falls by 
 a walk falls where its centre crosses the pit's edge and stays there, a dash's slide is
 `Dashing` throughout and falls only if it ends on a pit cell. The reference bot keeps out of
 pits (a fall is scored like a hit), fetches no banana lying in one, ignores a falling enemy and
-dashes across a pit it can clear when that is the way to its goal (§8).
+dashes across a pit it can clear when that is the way to its goal (§8). The presentation draws
+the fall from state (§7 "Pit falls"): a startled hop, then a drop under the floor (whose depth
+hides the body) while the monkey slides wholly into the pit, shrinks, tips, spins and darkens,
+its shadow shrinking away, its tag, aim bar and banana gone; `PlayerFell` adds a closing ring
+and a falling slide whistle, and the elimination bursts out of the pit at floor level.
 Replay checksums: changed, corpus regenerated because `Player::fallTicks` and
 `PlayerDef::fallTicks` entered the world state and the content. With both left out of the
 visitors the gate passed on the old `.checksums` for every entry but the two in which a monkey
@@ -3124,7 +3128,8 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `BoomerangCaught` Perfect | PerfectCatchFlash 0.4 s, PerfectCatchBurst 0.45 s (8 gold sparks), flash, shake | CatchPerfect (two-note chime) |
 | `BoomerangCaught` Auto | AutoCatchFlash 0.2 s, flash | CatchAuto (tick) |
 | `PlayerHit`, `PlayerDashHit` | HitFlash 0.2 s, HitSpark 0.25 s (6 sparks in a cone away from the banana or attacker), flash, shake | Hit (thud) |
-| `PlayerEliminated` | EliminationBurst 0.6 s, EliminationPoof 0.7 s (5 smoke puffs), shake | Elimination |
+| `PlayerEliminated` | EliminationBurst 0.6 s, EliminationPoof 0.7 s (5 smoke puffs), shake; v0.57: at the end of a pit fall both rise from the floor where the body went under (its last drawn position at `kEffectGroundHeight`), not at body height over the edge | Elimination |
+| `PlayerFell` (v0.57) | PitFall 0.45 s: two rings in the slot colour closing in where the monkey went down; the fall itself is drawn from state (below) | Fall (a slide whistle falling from 1.4 kHz to under 300 Hz) |
 | `PickupTaken` | PickupSparkle 0.35 s at the pickup; a power-up (v0.20) adds PowerUpBurst 0.5 s (a ring and 8 sparks in the taker's colour) | Pickup; PowerUp (rising arpeggio) for a power-up |
 | `ShieldBroken` (v0.20) | ShieldShatter 0.4 s (a blue ring, flash and 7 shards), flash, shake | ShieldBreak (glassy crack) |
 | `BoomerangGrounded` | GroundDust 0.35 s where it landed | BananaGround |
@@ -3147,6 +3152,24 @@ countdown crosses, RoundGo on `RoundStarting` → `Playing`. Entity positions fo
 `curr`, else `prev` (despawned this tick), else the entity's presentation track. Player colours
 come from `palette.hpp`. Bursts cost one draw call per spark; a busy 10-player frame measured
 72–90 draw calls.
+
+Pit falls (v0.57), sampled from state like the trails: a monkey with `Tag::Falling` is drawn
+from its fall's progress t = (`PlayerDef::fallTicks` − `Player::fallTicks`) / `fallTicks`,
+interpolated between the two rendered ticks like the position (`RenderPlayer::fall`,
+`PlayerFlag::Falling`). Over the first `kFallTeeterFraction` (0.18) it hops `kFallHopHeight`;
+then it drops `kFallDepth` (2.2) × u² below the floor, and the ground pass, which writes depth
+at height 0, hides whatever is under it, so it reads as sinking into water, mist or sea on every
+theme without a hole in the mesh. Over `kFallTuckFraction` (0.35) its drawn position (and its
+shadow) slides to the nearest point that holds its whole body inside the pit holding its centre
+(the pit's middle on an axis narrower than the body): the sim leaves the centre on the edge,
+where half the body would otherwise sink through solid ground. It shrinks to `kFallEndScale`
+(0.5), tips its nose down by `kFallTilt` (0.7 rad, `RenderPlayer::tilt`, a rotation about the
+model's side axis), spins `kFallSpinTurns` (0.75) turns as t², darkens toward `kFallShade` by
+`kFallDarken` (0.55) × t, and plays the `hit` clip; its shadow shrinks and fades with 1 − t;
+its HUD tag, aim bar and held banana are not drawn. All numbers live in `tuning.hpp`. The body
+is gone well before the sim's last falling tick, and the elimination's burst then rises from the
+pit. `kfm_render_probe --exit-on pit-fall|fall [--fall-at PERCENT]` stops on a fall's first
+frame or once a fall is that far through (the screenshots for this change).
 
 Rollback rule: effects and sounds are started only from the event stream the builder is given,
 each event once: locally the per-tick sink, online `EventJournal::drain()` (§5.9). A

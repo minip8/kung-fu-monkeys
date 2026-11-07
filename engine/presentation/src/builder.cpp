@@ -74,6 +74,40 @@ void decayOffset(EntityTrack& t, float dt) {
   return clamp01(static_cast<float>(p.hitStunTicks) / static_cast<float>(total));
 }
 
+// v0.57: how far a falling monkey's fall has run, 0 (standing, or the tick
+// it went in) .. 1; LifecycleSystem eliminates it before it reaches 1.
+[[nodiscard]] float fallProgress(const Player& p, const ContentDB& content) {
+  if (!p.tags.has(Tag::Falling)) return 0.0f;
+  const float total = static_cast<float>(std::max<uint16_t>(content.player.fallTicks, 1));
+  return clamp01((total - static_cast<float>(p.fallTicks)) / total);
+}
+
+// v0.57: where a monkey falling at `pos` sinks: the nearest point that holds
+// its whole body inside the pit holding its centre (the pit's middle on an
+// axis narrower than the body), or `pos` when no pit holds it.
+[[nodiscard]] Vec2f fallTuck(const sim::ArenaDef& arena, Vec2f pos, float radius) {
+  for (uint8_t i = 0; i < arena.hazardCount && i < sim::kMaxArenaHazards; ++i) {
+    const sim::Hazard& h = arena.hazards[i];
+    if (h.kind != sim::HazardKind::Pit) continue;
+    const Vec2f lo = toFloat(h.min);
+    const Vec2f hi = toFloat(h.max);
+    if (pos.x < lo.x || pos.x > hi.x || pos.y < lo.y || pos.y > hi.y) continue;
+    const auto axis = [radius](float v, float a, float b) {
+      return b - a > 2.0f * radius ? std::clamp(v, a + radius, b - radius) : 0.5f * (a + b);
+    };
+    return Vec2f{axis(pos.x, lo.x, hi.x), axis(pos.y, lo.y, hi.y)};
+  }
+  return pos;
+}
+
+// v0.57: the fall's height: a teeter, then the drop under the floor.
+[[nodiscard]] float fallHeight(float t) {
+  if (t <= 0.0f) return 0.0f;
+  if (t < kFallTeeterFraction) return kFallHopHeight * std::sin(kPi * t / kFallTeeterFraction);
+  const float u = (t - kFallTeeterFraction) / (1.0f - kFallTeeterFraction);
+  return -kFallDepth * u * u;
+}
+
 [[nodiscard]] Vec3 playerScale(const Player& p, const ContentDB& content) {
   // v0.34: the contact radius is a stat; the model (built at the def's
   // radius) grows and shrinks with it so the body still marks the hitbox.
@@ -135,6 +169,7 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
   set(p.ammo > 0, PlayerFlag::HasAmmo);
   set(p.tags.has(Tag::Carrying), PlayerFlag::Carrying);
   set(throwCharging(p, content), PlayerFlag::Charging);
+  set(p.tags.has(Tag::Falling), PlayerFlag::Falling);
   return f;
 }
 
@@ -241,7 +276,8 @@ void phaseSounds(PresentationState& ps, const RenderHud& hud, RenderState& out) 
 // --- entities -------------------------------------------------------------------
 
 void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                  float alpha, const ContentDB& content, float dt, RenderState& out) {
+                  float alpha, const sim::MatchContent& match, float dt, RenderState& out) {
+  const ContentDB& content = match.db;
   for (uint16_t i = 0; i < sim::kMaxPlayers; ++i) {
     if (!curr.players.isAliveIndex(i)) continue;
     const uint16_t gen = curr.players.generation[i];
@@ -273,12 +309,26 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     track.bodyYaw = approachAngle(track.bodyYaw, track.bodyTarget, kBodyTurnRate * dt);
     track.flashRemaining = std::max(0.0f, track.flashRemaining - dt);
 
-    const Vec2f drawn = simPos + track.motion.visualOffset;
-    track.motion.lastDrawn = drawn;
+    Vec2f drawn = simPos + track.motion.visualOffset;
+    Vec2f groundAt = simPos;
 
     const float hCurr = playerHeight(cp, content);
-    const float height =
+    float height =
         snapped || pp == nullptr ? hCurr : lerp(playerHeight(*pp, content), hCurr, alpha);
+
+    // v0.57: a pit fall, from the fall's progress (tuning.hpp kFall*).
+    const float fallCurr = fallProgress(cp, content);
+    const float fall =
+        snapped || pp == nullptr ? fallCurr : lerp(fallProgress(*pp, content), fallCurr, alpha);
+    const float radius = cp.stats.radius.toFloat();
+    if (cp.tags.has(Tag::Falling)) {
+      const Vec2f tuck = fallTuck(match.arena, currPos, radius);
+      const float k = easeOut(clamp01(fall / kFallTuckFraction));
+      drawn = lerp(drawn, tuck, k);
+      groundAt = lerp(groundAt, tuck, k);
+      height = fallHeight(fall);
+    }
+    track.motion.lastDrawn = drawn;
 
     RenderPlayer& rp = out.players[out.playerCount++];
     rp = RenderPlayer{};
@@ -287,11 +337,17 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.flags = playerFlags(cp, content);
     rp.visible = !cp.tags.has(Tag::Eliminated);
     rp.position = simToWorld(drawn, height);
-    rp.ground = simToWorld(simPos);
+    rp.ground = simToWorld(groundAt);
     rp.height = height;
     rp.bodyYaw = track.bodyYaw;
     rp.aimYaw = simAngleToYaw(cp.intent.aim);
     rp.scale = playerScale(cp, content);
+    if (cp.tags.has(Tag::Falling)) {
+      rp.fall = fall;
+      rp.tilt = -kFallTilt * easeOut(fall);
+      rp.bodyYaw = wrapRadians(track.bodyYaw + (kFallSpinTurns * kTwoPi * fall * fall));
+      rp.scale = rp.scale * lerp(1.0f, kFallEndScale, fall);
+    }
     rp.ammo = cp.ammo;
     rp.ammoMax = cp.stats.ammoMax;
     rp.hp = cp.hp;
@@ -316,7 +372,15 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     const uint16_t cd = content.abilityAt(dash.defIndex).cooldownTicks;
     rp.dashCooldown =
         cd > 0 ? clamp01(static_cast<float>(dash.cooldownTicks) / static_cast<float>(cd)) : 0.0f;
-    pushShadow(out, rp.ground, cp.stats.radius.toFloat(), height, ShadowOwner::Player);
+    if (cp.tags.has(Tag::Falling)) {
+      // The shadow shrinks away with the falling body (no lift: it is below).
+      if (out.shadowCount < kMaxRenderShadows) {
+        out.shadows[out.shadowCount++] =
+            RenderShadow{rp.ground, radius * (1.0f - fall), 1.0f - fall, ShadowOwner::Player};
+      }
+    } else {
+      pushShadow(out, rp.ground, radius, height, ShadowOwner::Player);
+    }
 
     // Dash trail: afterimages while the Dash is active.
     if (dashActive(cp, content) && !cp.tags.has(Tag::Eliminated)) {
@@ -541,7 +605,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   // and the new events' effects then start at full duration. Player tracks
   // are still valid for players eliminated this tick.
   ageEffects(ps, dt);
-  buildPlayers(ps, prev, curr, alpha, content, dt, out);
+  buildPlayers(ps, prev, curr, alpha, match, dt, out);
   buildBananas(ps, prev, curr, alpha, content, dt, out);
   buildPickups(ps, curr, content, dt, out);
 

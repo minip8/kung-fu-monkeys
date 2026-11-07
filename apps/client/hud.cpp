@@ -308,7 +308,8 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
   const presentation::RenderState& rs = *in.state;
   for (uint16_t k = 0; k < rs.playerCount; ++k) {
     const presentation::RenderPlayer& p = rs.players[k];
-    if (!p.visible) continue;
+    // v0.57: a monkey going down a pit is out; its tag would hang over the pit.
+    if (!p.visible || p.has(presentation::PlayerFlag::Falling)) continue;
     const presentation::Vec3 head =
         p.position + presentation::Vec3{0.0f, rs.playerHeight + kTagLift, 0.0f};
     const presentation::ScreenPoint sp = presentation::worldToScreen(*in.camera, head);

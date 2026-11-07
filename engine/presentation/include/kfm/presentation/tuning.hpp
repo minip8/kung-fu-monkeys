@@ -138,6 +138,26 @@ inline constexpr float kChargeAimLength = 1.6f;
 inline constexpr float kDashStretch = 0.18f;  // forward stretch while dashing
 inline constexpr float kHitSquash = 0.2f;     // vertical squash at the start of hit-stun
 
+// --- pit falls (v0.57) ------------------------------------------------------------------
+// A falling monkey (Tag::Falling) is drawn from its fall progress t in [0, 1]
+// (PlayerDef::fallTicks, interpolated like the position): over the first
+// kFallTeeterFraction it hops up kFallHopHeight (a startled teeter at the
+// edge), then drops kFallDepth below the floor as u², u the rest of the fall;
+// the floor's depth hides what is under it. Over kFallTuckFraction it slides
+// to where its whole body fits inside the pit (the sim leaves its centre at
+// the edge), it shrinks to kFallEndScale, tips its nose down by kFallTilt
+// radians, spins kFallSpinTurns whole turns (as t²) and darkens by
+// kFallDarken; its shadow shrinks away with it.
+inline constexpr float kFallTeeterFraction = 0.18f;
+inline constexpr float kFallHopHeight = 0.22f;
+inline constexpr float kFallDepth = 2.2f;
+inline constexpr float kFallTuckFraction = 0.35f;
+inline constexpr float kFallEndScale = 0.5f;
+inline constexpr float kFallTilt = 0.7f;
+inline constexpr float kFallSpinTurns = 0.75f;
+inline constexpr float kFallDarken = 0.55f;
+inline constexpr float kPitFallSeconds = 0.45f;  // the PitFall ring
+
 // --- effects ---------------------------------------------------------------------------
 inline constexpr float kDashRingSeconds = 0.25f;
 inline constexpr float kPerfectCatchFlashSeconds = 0.4f;

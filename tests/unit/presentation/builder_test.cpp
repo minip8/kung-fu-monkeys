@@ -1137,3 +1137,66 @@ TEST_CASE("zones and capture flags render (v0.33)", "[presentation][builder][cap
       EventKind::PickupTaken, s.tick, kP1, flag, static_cast<uint32_t>(PickupKind::Flag), 1};
   CHECK(soundForEvent(taken).value_or(SoundCue{SoundId::Count, 0.0f, 0.0f}).id == SoundId::PowerUp);
 }
+
+TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit (v0.57)",
+          "[presentation][builder][pit]") {
+  // The dojo with a pit strip at x in [-9, -7]; P0 stands with its centre
+  // on the strip's east edge and goes in on the first tick.
+  ContentDB c = defaultContent();
+  ArenaDef& a = c.arenas[0];
+  a.hazards[0] = Hazard{Vec2{Fixed::fromInt(-9), -a.halfExtents.y},
+                        Vec2{Fixed::fromInt(-7), a.halfExtents.y}, HazardKind::Pit, Fixed::one()};
+  a.hazardCount = 1;
+  const std::optional<SoundCue> cue =
+      soundForEvent(SimEvent{EventKind::PlayerFell, Tick{0}, kP0, EntityId{}, 0, 0});
+  CHECK(cue.has_value());
+  CHECK(cue.value_or(SoundCue{}).id == SoundId::Fall);
+  WorldState s = makePlayingWorld(57, 0b11, c);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-7), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(8), Fixed::zero()});
+  const float radius = c.player.radius.toFloat();
+  PresentationState ps;
+  float lastFall = -1.0f;
+  float deepest = 0.0f;
+  bool sawStart = false;
+  bool sawBurst = false;
+  for (int k = 0; k < c.player.fallTicks + 2 && !sawBurst; ++k) {
+    const WorldState prev = s;
+    EventLog log;
+    runTicks(s, frameFor(s), 1, c, log);
+    const RenderState rs = buildRenderState(ps, prev, s, 1.0f, log, c, kDt);
+    if (findEvent(log, EventKind::PlayerFell) != nullptr) {
+      sawStart = true;
+      CHECK(countEffects(rs, EffectKind::PitFall) == 1);
+      bool fallSound = false;
+      for (uint16_t i = 0; i < rs.soundCount; ++i)
+        fallSound = fallSound || rs.sounds[i].id == SoundId::Fall;
+      CHECK(fallSound);
+    }
+    if (const RenderPlayer* p = findPlayer(rs, 0)) {
+      REQUIRE(p->has(PlayerFlag::Falling));
+      CHECK(p->fall >= lastFall);
+      lastFall = p->fall;
+      deepest = std::min(deepest, p->position.y);
+      // The drawn body slides into the pit, never back out.
+      CHECK(groundOf(*p).x <= -7.0f + 1e-4f);
+      if (p->fall > 0.5f) {
+        CHECK(groundOf(*p).x <= -7.0f - radius + 1e-3f);  // its whole body over the pit
+        CHECK(p->scale.y < 1.0f);
+        CHECK(p->tilt < 0.0f);
+      }
+    } else if (findEvent(log, EventKind::PlayerEliminated) != nullptr) {
+      // The burst comes out of the pit at floor level, not at body height.
+      for (uint16_t i = 0; i < rs.effectCount; ++i) {
+        if (rs.effects[i].kind != EffectKind::EliminationBurst) continue;
+        CHECK(rs.effects[i].position.y == Approx(kEffectGroundHeight));
+        sawBurst = true;
+      }
+    }
+  }
+  CHECK(sawStart);
+  CHECK(sawBurst);
+  CHECK(lastFall > 0.9f);
+  // Deep enough under the floor that the body, scaled down, is gone.
+  CHECK(deepest < -radius * kMonkeyHeightOverRadius * kFallEndScale);
+}
