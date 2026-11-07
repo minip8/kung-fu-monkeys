@@ -100,6 +100,11 @@ if(EMSCRIPTEN)
   # tools/web/serve.py serves no 404; the deploy workflow writes its own.
   file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/config.js"
     CONTENT "window.KFM_CONFIG = { lobbyUrl: \"${KFM_LOBBY_URL}\", sentryDsn: \"\" };\n")
+  # The page's icon (shell.html's <link rel="icon">): the source SVG beside the
+  # page; the deploy workflow copies it into the site. configure_file re-runs
+  # the configure step when the SVG changes.
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/favicon.svg"
+    "${CMAKE_CURRENT_BINARY_DIR}/favicon.svg" COPYONLY)
 endif()
 
 # Network mode (--connect) runs NetSession over WebRtcTransport, natively and

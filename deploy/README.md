@@ -5,7 +5,7 @@ format is `docs/lobby-protocol.md`. Three parts:
 
 | Part | What | Where |
 |---|---|---|
-| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js`, `_headers` | Cloudflare Pages (`play.<domain>`), published by `.github/workflows/deploy.yml` on a `v*` tag |
+| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js`, `favicon.svg`, `_headers` | Cloudflare Pages (`play.<domain>`), published by `.github/workflows/deploy.yml` on a `v*` tag |
 | Lobby | `kfm-lobby` (Rust) behind Caddy, the only public TCP endpoint | the EU VM, `ghcr.io/<owner>/kfm-lobby` |
 | Game servers | a pool of `kfm_server` processes, one match each, dialling the lobby | one VM per region, `ghcr.io/<owner>/kfm-server` |
 
