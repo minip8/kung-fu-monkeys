@@ -183,6 +183,6 @@ the last line). The hashes and numbers are those of the build and content this d
 updated with; any release may move them:
 
 ```
-{"match":0,"seed":1,"ticks":600,"checksum":"c2cfdc04","result":"cap","winner":null,"slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":1,"score":1,"kills":1,"deaths":0,"acts":600,"subs":0},{"slot":1,"bot":1,"spec":"ref:hard","module":false,"place":2,"score":0,"kills":0,"deaths":1,"acts":419,"subs":0}],"content_hash":"01a25421","build_hash":"00000000"}
+{"match":0,"seed":1,"ticks":600,"checksum":"c2cfdc04","result":"cap","winner":null,"slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":1,"score":1,"kills":1,"deaths":0,"acts":600,"subs":0},{"slot":1,"bot":1,"spec":"ref:hard","module":false,"place":2,"score":0,"kills":0,"deaths":1,"acts":419,"subs":0}],"content_hash":"a99dfcf8","build_hash":"00000000"}
 {"summary":true,"matches":1,"ended":0,"draws":0,"cap":1,"ticks_mean":600,"slots":[{"slot":0,"spec":"ref:hard","module":false,"wins":0,"mean_place":1.00,"score":1,"kills":1,"deaths":0,"acts":600,"subs":0},{"slot":1,"spec":"ref:hard","module":false,"wins":0,"mean_place":2.00,"score":0,"kills":0,"deaths":1,"acts":419,"subs":0}]}
 ```

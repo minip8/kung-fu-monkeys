@@ -128,7 +128,8 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   grid space: one of eight neighbouring cells per 15-tick turn, a dash 2 cells, a throw costs the next turn, one
 #   catcher per team by role, the grid_base baseline: radius 0.35, bananas 0.15, HP 2) and grid_rounds_1t (the same
 #   at 1-tick turns, for kfm_arena); a grid mode needs an arena with cells (a tilemap) and opens on its own
-#   (modes.toml `arena`: courtyard)
+#   (modes.toml `arena`: courtyard). v0.60: contest, the bot ladder's row (M7), today grid_rounds_1t renamed; a test
+#   pins the equality, so a season's change to the row is a deliberate edit of both
 #   arenas: content/arenas.toml (dojo) and content/arenas/*.toml, appended by file name; a tilemap arena gives
 #   cell = 1.0 and map = ["..."] (# wall . floor ~ pit : mud 0-9 spawns a-h zones) in place of half_extents/walls/
 #   hazards/spawn_points/zones (format: content/arenas/06-hilltop.toml, architecture §5.10)
@@ -192,6 +193,9 @@ build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --ma
 #   [--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
 #   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
 #   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
+#   v0.60: the --json objects are an append-only contract (docs/arena-result.md, normative; a test freezes every key,
+#   its order and type: a new key is appended to the code, the doc and the test, never inserted or renamed); the match
+#   object carries content_hash and build_hash (zero until a build stamps one)
 build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5   # v0.34: the grid at 1-tick turns (courtyard)
 build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
 #   v0.35: one --team LIST per team of a team mode (no --bot/--bots): the specs fill that team's slots in order, the
@@ -229,6 +233,9 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
 #   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images, then update.sh on every VM in the KFM_VMS
 #   variable over IAP, restarting at once (v0.47; deploy/gcp/setup_deploy_identity.sh once), then Cloudflare Pages);
+#   v0.60: a v* tag is also a GitHub release with the headless kfm_arena for linux-x86_64 (static), macos-arm64 and
+#   windows-x86_64 plus SHA256SUMS, and the page's site tarball; the web job republishes every release's page under
+#   /<tag>/ (a Pages deploy is a full snapshot), the viewer of that release's replays (architecture v0.59)
 #   docker compose -f deploy/docker-compose.yml
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
@@ -394,7 +401,7 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   beside the old ones; a reader treats a missing key as the older lobby's meaning, as a missing
   `free` means "every listed region free"); `/healthz`'s shape is unchanged. GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>`
   as a null dereference (`-Werror` on the Release legs): move instead.
-- Next milestone: M7, the bot ladder (architecture §11 "M7 sequencing"; not started). M6b
+- Next milestone: M7, the bot ladder (architecture §11 "M7 sequencing"; step 1 landed in v0.60). M6b
   "Play with friends" (architecture v0.40, §11 "M6b design") landed in v0.58: step 1,
   lobby protocol v1.1 (`regions` lists every region plus `free`), landed in v0.41; step 2, the
   online room (Waiting/Playing/Over beside `ServerHost`, `RoomSettings`/`RoomState`/`Start`,
@@ -406,7 +413,8 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   pause, online idle input and Leave room) landed in v0.46; the friends playtest (step 5) was played and
   M6b landed in v0.58. Next is M7, not started. The bot
   ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
-  append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena`. v0.59: a
+  append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena` (step 1,
+  landed in v0.60; next is step 2, the bots repository). v0.59: a
   ladder season is a time window, not a pinned release; every match records its release tag,
   replays are served with their release's content and viewed in that release's client (the page
   under a versioned path per tag), ratings persist across a release. M5b landed in v0.35 (five PRs, one
