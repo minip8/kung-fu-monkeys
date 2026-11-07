@@ -118,6 +118,7 @@ struct RenderPickup {
   Vec3 ground{};
   float spin{0.0f};
   float radius{0.0f};  // sim contact radius
+  uint8_t count{1};    // v0.57, Banana: bananas stacked here (drawn as up to three)
   PickupKindView kind{PickupKindView::Banana};
   // PowerUp: the def's look (palette.hpp index, shape) and its index.
   // Flag (v0.33): the team's colour (team t is palette colour t), shape

@@ -36,6 +36,10 @@ inline constexpr float kPickupHeight = 0.15f;
 inline constexpr float kPickupBobHeight = 0.08f;
 inline constexpr float kPickupBobHz = 0.8f;
 inline constexpr float kPickupSpinRadPerSec = 1.5f;
+// v0.57: a stacked banana pickup (several bananas on one spot) draws each
+// extra banana this much higher and turned this much further.
+inline constexpr float kPickupStackLift = 0.12f;
+inline constexpr float kPickupStackTurn = 0.9f;
 
 // --- arena statics (§7, v0.22) -------------------------------------------------------
 // Interior walls are drawn as blocks this tall: above a banana in flight

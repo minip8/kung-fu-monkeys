@@ -493,6 +493,7 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
     rp.ground = simToWorld(simPos);
     rp.spin = wrapRadians((kPickupSpinRadPerSec * ps.time) + phase);
     rp.radius = radius;
+    rp.count = cp.count;
     rp.kind = PickupKindView::Banana;
     if (cp.kind == sim::PickupKind::PowerUp) {
       const sim::PowerUpDef& def = content.powerUpAt(cp.powerUpIndex);

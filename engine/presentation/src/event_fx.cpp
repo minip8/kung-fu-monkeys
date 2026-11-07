@@ -111,6 +111,7 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::BoomerangParried:
       return cue(SoundId::Parry);
     case EventKind::BoomerangGrounded:
+    case EventKind::BananaDropped:  // v0.57: a held banana dropped looks the same
       return cue(SoundId::BananaGround);
     case EventKind::BoomerangBounced:
       return cue(SoundId::WallBounce);
@@ -280,6 +281,17 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       break;
     case EventKind::BoomerangGrounded: {
       const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity);
+      if (at) {
+        addEffect(ps,
+                  makeEffect(EffectKind::GroundDust, kNoSlot, groundAt(*at), kGroundDustSeconds));
+      }
+      soundAt = at;
+      break;
+    }
+    case EventKind::BananaDropped: {
+      // v0.57: a held (or overflowing) banana dropped to the floor: the
+      // grounding look where its pickup lies.
+      const std::optional<Vec2f> at = pickupPlane(ps, prev, curr, e.entity);
       if (at) {
         addEffect(ps,
                   makeEffect(EffectKind::GroundDust, kNoSlot, groundAt(*at), kGroundDustSeconds));

@@ -18,7 +18,9 @@
 //                       perfect-catch, auto-catch, hit, throw, elimination (effects)
 //                       catch-window (a player with the PerfectDash flag) or
 //                       charge (v0.48: a throw charged past half),
-//                       pit-fall (v0.57: the ring where a monkey went down a pit) or
+//                       pit-fall (v0.57: the ring where a monkey went down a pit),
+//                       scatter (v0.57: a few frames after a dead monkey's held
+//                       bananas scattered, two or more of them) or
 //                       fall (a monkey's pit fall at least --fall-at PERCENT through,
 //                       default 40); --exit-after-frames still bounds the run.
 // --capsules            draw players as capsules instead of the skinned model
@@ -89,13 +91,14 @@ struct Options {
 
 constexpr int kExitOnWindow = 100;
 constexpr int kExitOnCharge = 101;
-constexpr int kExitOnFall = 102;  // v0.57
+constexpr int kExitOnFall = 102;     // v0.57
+constexpr int kExitOnScatter = 103;  // v0.57
 
 struct ExitOnName {
   std::string_view name;
   int value;
 };
-constexpr std::array<ExitOnName, 10> kExitOnNames = {{
+constexpr std::array<ExitOnName, 11> kExitOnNames = {{
     {"dash-ring", static_cast<int>(presentation::EffectKind::DashRing)},
     {"perfect-catch", static_cast<int>(presentation::EffectKind::PerfectCatchFlash)},
     {"auto-catch", static_cast<int>(presentation::EffectKind::AutoCatchFlash)},
@@ -106,6 +109,7 @@ constexpr std::array<ExitOnName, 10> kExitOnNames = {{
     {"charge", kExitOnCharge},
     {"pit-fall", static_cast<int>(presentation::EffectKind::PitFall)},
     {"fall", kExitOnFall},
+    {"scatter", kExitOnScatter},
 }};
 
 struct App {
@@ -115,6 +119,7 @@ struct App {
   platform::Window window;
   presentation::Renderer renderer;
   presentation::PresentationState presentation{};
+  int scatterFrames{-1};  // v0.57, --exit-on scatter: frames left, -1 = not yet
   presentation::RenderState renderState{};
   sim::WorldState prev{};
   sim::WorldState curr{};
@@ -273,6 +278,17 @@ void stepSim(App& app) {
     sim::step(app.curr, f, content, app.sink);
     app.frameEvents.insert(app.frameEvents.end(), app.sink.events.begin(),
                            app.sink.events.begin() + app.sink.count);
+    // v0.57, --exit-on scatter: two or more held bananas dropped by one monkey
+    // at once (a death); the probe ends a few frames on, the dust settling.
+    std::array<uint8_t, sim::kMaxPlayers> dropped{};
+    for (uint16_t e = 0; e < app.sink.count; ++e) {
+      const sim::SimEvent& ev = app.sink.events[e];
+      if (ev.kind == sim::EventKind::BananaDropped && ev.player.isValid() &&
+          ev.player.value < sim::kMaxPlayers && ++dropped[ev.player.value] >= 2 &&
+          app.scatterFrames < 0) {
+        app.scatterFrames = 8;
+      }
+    }
   }
 }
 
@@ -358,7 +374,9 @@ bool frame(void* user) {
   const bool lastFrame =
       app->quit ||
       (app->options.exitAfterFrames != 0 && app->frames >= app->options.exitAfterFrames) ||
-      showsExitOn(app->renderState, app->options.exitOn, app->options.fallAt);
+      showsExitOn(app->renderState, app->options.exitOn, app->options.fallAt) ||
+      (app->options.exitOn == kExitOnScatter && app->scatterFrames == 0);
+  if (app->scatterFrames > 0) --app->scatterFrames;
   if (lastFrame) {
     std::printf("kfm_render_probe: %llu frames, tick %u, %u draw calls, %u triangles\n",
                 static_cast<unsigned long long>(app->frames), app->curr.tick.value,

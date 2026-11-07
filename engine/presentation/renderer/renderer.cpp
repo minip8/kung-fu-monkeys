@@ -1102,9 +1102,16 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (p.kind == PickupKindView::PowerUp || p.kind == PickupKindView::Flag) {
       drawPowerUp(d, p, r, bodyHeight, state.time);  // a flag: its team's colour (v0.33)
     } else {
-      const Mat4 m = translate(p.position) * rotateY(p.spin);
-      d.surface(kBananaMesh, m, kPickupColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
-      d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
+      // v0.57: a stacked pickup shows up to three bananas, each a little
+      // higher and turned.
+      const int shown = std::clamp<int>(p.count, 1, 3);
+      for (int k = 0; k < shown; ++k) {
+        const float fk = static_cast<float>(k);
+        const Mat4 m = translate(p.position + Vec3{0.0f, kPickupStackLift * fk, 0.0f}) *
+                       rotateY(p.spin + (kPickupStackTurn * fk));
+        d.surface(kBananaMesh, m, kPickupColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
+        d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
+      }
     }
   }
   d.flushOutlines();
