@@ -100,6 +100,14 @@ TEST_CASE("rules table is sorted and every row ignores eliminated players", "[si
     CHECK(rules[i].forbidA.has(Tag::Eliminated));
     if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Eliminated));
     CHECK(rules[i].resolve != nullptr);
+    // v0.57: a falling monkey is out of reach, and so is a banana sinking
+    // into a pit: every Boomerang row names Outbound/Returning only.
+    CHECK(rules[i].forbidA.has(Tag::Falling));
+    if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Falling));
+    if (rules[i].kindB == EntityKind::Boomerang) {
+      CHECK(rules[i].phaseMaskB != kPhaseAny);
+      CHECK_FALSE(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::Sinking));
+    }
   }
 }
 
@@ -307,8 +315,10 @@ TEST_CASE("own returning banana is auto-caught, ammo capped", "[sim][interaction
   SECTION("from empty") {
     p0.ammo = 0;
   }
-  SECTION("already full: still absorbed") {
+  bool full = false;
+  SECTION("already full: still absorbed, the extra one drops (v0.57)") {
     p0.ammo = p0.stats.ammoMax;
+    full = true;
   }
   const EntityId banana =
       spawnBanana(s, kP0, Vec2::zero(), Vec2::zero(), BoomerangPhase::Returning);
@@ -316,11 +326,12 @@ TEST_CASE("own returning banana is auto-caught, ammo capped", "[sim][interaction
       resolve(s, contactsOf({touch(s, kP0, EntityKind::Boomerang, banana, ticks(0.3))}));
   CHECK_FALSE(s.boomerangs.isAlive(banana));
   CHECK(playerAt(s, kP0).ammo == 1);
-  REQUIRE(sink.count == 1);
-  CHECK(sink.events[0].kind == EventKind::BoomerangCaught);
-  CHECK(sink.events[0].player == kP0);
-  CHECK(sink.events[0].a == static_cast<uint32_t>(CatchHow::Auto));
+  const SimEvent& caught = firstEvent(sink, EventKind::BoomerangCaught);
+  CHECK(caught.player == kP0);
+  CHECK(caught.a == static_cast<uint32_t>(CatchHow::Auto));
   CHECK(countEvents(sink, EventKind::PlayerHit) == 0);
+  CHECK(countEvents(sink, EventKind::BananaDropped) == (full ? 1 : 0));
+  CHECK(s.pickups.size() == (full ? 1u : 0u));
 }
 
 TEST_CASE("another player's banana damages and stuns, then flies on", "[sim][interaction]") {

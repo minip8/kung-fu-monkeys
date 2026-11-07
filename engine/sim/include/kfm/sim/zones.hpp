@@ -11,9 +11,9 @@
 
 namespace kfm::sim {
 
-// The monkeys still in play (alive, not Eliminated) whose centre lies in
-// zone k of the arena (the closed box), as a mask over their slots; 0 for a
-// zone the arena does not have.
+// The monkeys still in play (alive, not Eliminated, v0.57 not Falling) whose
+// centre lies in zone k of the arena (the closed box), as a mask over their
+// slots; 0 for a zone the arena does not have.
 [[nodiscard]] PlayerMask zoneOccupants(const WorldState& s, const ArenaDef& arena, uint8_t k);
 
 }  // namespace kfm::sim

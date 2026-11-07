@@ -5,6 +5,7 @@
 
 #include "bot_math.hpp"
 #include "kfm/ai/vision.hpp"
+#include "kfm/sim/content/arena.hpp"
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/tags.hpp"
@@ -38,6 +39,9 @@ constexpr uint8_t kGoalTick = 16;      // where the goal is measured on a path
 constexpr uint8_t kStrikeTick = 8;     // where the distance to dash-ready enemies is measured
 constexpr uint8_t kDirections = 16;    // stick directions considered
 constexpr uint32_t kMaxThrowHold = 2;  // a standoff's random hold before a lined-up throw
+// v0.57: walled off from its target this long, an armed bot throws anyway (a
+// bank shot off the wall beats two mirrored bots waiting for ever).
+constexpr uint16_t kStandoffTicks = 180;
 // v0.48: the speed multiplier a charged throw adds beyond what its reach needs
 // (a faster banana leaves less time to dodge).
 constexpr Fixed kChargeMargin = Fixed::fromRaw(Fixed::kOneRaw * 2 / 5);
@@ -69,9 +73,11 @@ constexpr uint32_t kSweepTurns = 4;
 constexpr uint32_t kTagInvulnerable = 4;  // sim::Tag::Invulnerable
 constexpr uint32_t kTagShielded = 3;      // sim::Tag::Shielded
 constexpr uint32_t kTagFriendlyFire = 8;  // sim::Tag::FriendlyFire (v0.32)
+constexpr uint32_t kTagFalling = 10;      // sim::Tag::Falling (v0.57)
 static_assert(kTagInvulnerable == static_cast<uint32_t>(sim::Tag::Invulnerable));
 static_assert(kTagShielded == static_cast<uint32_t>(sim::Tag::Shielded));
 static_assert(kTagFriendlyFire == static_cast<uint32_t>(sim::Tag::FriendlyFire));
+static_assert(kTagFalling == static_cast<uint32_t>(sim::Tag::Falling));
 
 [[nodiscard]] Fixed distanceBetween(Vec2 a, Vec2 b) {
   return length(b - a);
@@ -112,7 +118,11 @@ struct TieBreak {
   TieBreak tie;
   for (uint32_t i = 0; i < kObsMaxPlayers; ++i) {
     const ObsPlayer& p = obs.players[i];
-    if (p.alive == 0 || p.relation != static_cast<uint8_t>(ObsRelation::Enemy)) continue;
+    // v0.57: a monkey falling down a pit is already out.
+    if (p.alive == 0 || p.relation != static_cast<uint8_t>(ObsRelation::Enemy) ||
+        hasTag(p.tags, kTagFalling)) {
+      continue;
+    }
     const bool prot = hasTag(p.tags, kTagInvulnerable);
     const uint64_t d = lengthSqRaw(posOf(p) - me);
     bool take = (bestProtected && !prot) || (prot == bestProtected && d < bestD);
@@ -153,18 +163,20 @@ struct TieBreak {
   return from;
 }
 
-// Whether a centre lies in one of the arena's pits (a grid walk may step
-// into one, and the monkey falls).
-[[nodiscard]] bool inPit(const Observation& obs, Vec2 c) {
-  for (uint32_t i = 0; i < obs.arena.hazardCount && i < kObsMaxHazards; ++i) {
-    const ObsHazard& h = obs.arena.hazards[i];
-    if (h.kind != static_cast<uint8_t>(ObsHazardKind::Pit)) continue;
-    if (c.x >= Fixed::fromRaw(h.box.minX) && c.x <= Fixed::fromRaw(h.box.maxX) &&
-        c.y >= Fixed::fromRaw(h.box.minY) && c.y <= Fixed::fromRaw(h.box.maxY)) {
-      return true;
-    }
-  }
-  return false;
+// Whether a monkey of radius r at c would fall: its whole disc over the
+// union of the arena's pits, the sim's own test (sim::discWithinBoxes,
+// v0.57; a monkey not dashing there falls).
+[[nodiscard]] bool inPit(const Observation& obs, Vec2 c, Fixed r) {
+  return sim::discWithinBoxes(
+      std::min<uint32_t>(obs.arena.hazardCount, kObsMaxHazards),
+      [&obs](uint32_t i, Vec2& min, Vec2& max) {
+        const ObsHazard& h = obs.arena.hazards[i];
+        if (h.kind != static_cast<uint8_t>(ObsHazardKind::Pit)) return false;
+        min = Vec2{Fixed::fromRaw(h.box.minX), Fixed::fromRaw(h.box.minY)};
+        max = Vec2{Fixed::fromRaw(h.box.maxX), Fixed::fromRaw(h.box.maxY)};
+        return true;
+      },
+      c, r);
 }
 
 // Whether a banana of radius r flies from `from` to `to` clear of the
@@ -226,7 +238,7 @@ void ReferenceBot::learn(const Observation& obs, int target) {
   // The flight speed: Observation v1 has only the base one, a mode's
   // baseline scales every banana alike; the own banana's wins.
   for (const ObsBanana& b : obs.bananas) {
-    if (b.valid == 0 || b.speed <= 0 || b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
+    if (b.valid == 0 || b.speed <= 0 || b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
       continue;
     }
     if (b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self) || bananaSpeed_ == Fixed{}) {
@@ -272,7 +284,7 @@ void ReferenceBot::prepareGrid(const Observation& obs) {
   for (int32_t row = 0; row < gridRows_; ++row) {
     for (int32_t col = 0; col < gridCols_; ++col) {
       const Vec2 at{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
-      bool free = abs(at.x) <= hx - r && abs(at.y) <= hy - r && !inPit(obs, at);
+      bool free = abs(at.x) <= hx - r && abs(at.y) <= hy - r && !inPit(obs, at, r);
       for (uint32_t w = 0; free && w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
         if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) free = false;
       }
@@ -335,8 +347,14 @@ Fixed ReferenceBot::walkDistance(Vec2 at) const {
 void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idle, Path& p) const {
   // The slide in progress runs until the next latch (or the host delay);
   // then a step to the octant's neighbour every turn, taken only when that
-  // cell is free for the monkey's circle (the outer box, the walls, and for
-  // a diagonal both orthogonal neighbours), else it stays.
+  // cell is open for the monkey's circle (the outer box, the walls, and for
+  // a diagonal both orthogonal neighbours), else it stays. v0.57: for the
+  // first step, the one the bot commits to now, a pit cell is open as in the
+  // sim's latch, so the path walks in and pitDanger scores the fall (modelled
+  // as staying, a step into a pit tied with idle and the hysteresis could
+  // pick it: about half the grid bots' deaths). Later steps, which the bot
+  // will choose again, stop at a pit as before: else every straight line
+  // that meets a pit some cells on would be scored as a fall.
   const uint32_t turn = obs.match.reservedTurnTicks > 0 ? obs.match.reservedTurnTicks : 1u;
   const uint8_t start = static_cast<uint8_t>(std::min<uint32_t>(
       std::max<uint32_t>(obs.match.inputDelayTicks, obs.match.reservedTicksToLatch), kHorizon / 2));
@@ -350,8 +368,9 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
     const int32_t row = ((hy - at.y) / c).floorToInt();
     return Vec2{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
   };
-  const auto free = [&](Vec2 at) {
-    if (abs(at.x) > hx - r || abs(at.y) > hy - r || inPit(obs, at)) return false;
+  bool first = true;
+  const auto open = [&](Vec2 at) {
+    if (abs(at.x) > hx - r || abs(at.y) > hy - r || (!first && inPit(obs, at, r))) return false;
     for (uint32_t w = 0; w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
       if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) return false;
     }
@@ -366,8 +385,8 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
   Vec2 at = centreOf(p.pos[k - 1]);
   while (k <= kHorizon) {
     Vec2 to = at;
-    if (!idle && free(at + dc + dr) &&
-        (!sim::grid::diagonal(octant) || (free(at + dc) && free(at + dr)))) {
+    if (!idle && open(at + dc + dr) &&
+        (!sim::grid::diagonal(octant) || (open(at + dc) && open(at + dr)))) {
       to = at + dc + dr;
     }
     for (uint32_t j = 1; j <= turn && k <= kHorizon; ++j, ++k) {
@@ -375,6 +394,7 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
           at + ((to - at) * Fixed::fromRatio(static_cast<int32_t>(j), static_cast<int32_t>(turn)));
     }
     at = to;
+    first = false;
   }
 }
 
@@ -485,7 +505,8 @@ void ReferenceBot::trackThreats(const Observation& obs) {
   // (the mode's baseline grants the tag), so it is no threat to track.
   const bool friendlyFire = hasTag(obs.self.tags, kTagFriendlyFire);
   for (const ObsBanana& b : obs.bananas) {
-    if (b.valid == 0 || b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded) ||
+    // Grounded, or (v0.57) sinking into a pit: harmless.
+    if (b.valid == 0 || b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded) ||
         b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self) ||
         (b.ownerRelation == static_cast<uint8_t>(ObsRelation::Ally) && !friendlyFire)) {
       continue;
@@ -540,7 +561,16 @@ void ReferenceBot::dashPath(const Observation& obs, uint8_t dir, Path& p) {
   const uint8_t lead = std::min<uint8_t>(obs.match.inputDelayTicks, kHorizon / 2);
   const ObsAbility& dash = obs.self.abilities[0];
   const Vec2 cur = vec(obs.self.velX, obs.self.velY);
-  const Vec2 v = unitOf(dir) * Fixed::fromRaw(dash.defSpeed);
+  Vec2 v = unitOf(dir) * Fixed::fromRaw(dash.defSpeed);
+  // v0.57, the grid: a dash commits to whole cells along its octant, so a
+  // diagonal one covers its dash cells on both axes, not along the diagonal
+  // (the dash def's speed x active ticks is the cells' length); a pit check
+  // on the old straight line missed the diagonal landing cell.
+  if (obs.match.reservedTurnTicks > 0) {
+    const uint8_t o = sim::grid::octantOf(dir);
+    v = Vec2{Fixed::fromInt(kStepCol[o]), Fixed::fromInt(-kStepRow[o])} *
+        Fixed::fromRaw(dash.defSpeed);
+  }
   p.pos[0] = vec(obs.self.posX, obs.self.posY);
   for (uint8_t k = 1; k <= kHorizon; ++k) {
     Vec2 step{};
@@ -611,6 +641,17 @@ ReferenceBot::Outcome ReferenceBot::evaluate(const Observation& obs, const Path&
   return o;
 }
 
+Fixed ReferenceBot::pitDanger(const Observation& obs, const Path& p, uint8_t airFrom,
+                              uint8_t airUntil) {
+  if (obs.arena.hazardCount == 0) return Fixed{};
+  const Fixed r = Fixed::fromRaw(obs.self.radius);
+  for (uint8_t k = 1; k <= kHorizon; ++k) {
+    if (k >= airFrom && k < airUntil) continue;
+    if (inPit(obs, p.pos[k], r)) return kHitPenalty + Fixed::fromInt(16 * (kHorizon - k));
+  }
+  return Fixed{};
+}
+
 sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   sim::PlayerInput in{};
   const ObsSelf& me = obs.self;
@@ -638,7 +679,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       in.aimDir = static_cast<uint8_t>(((obs.match.tick / (kSweepTurns * turn)) & 3u) * 64u);
     }
   }
-  if (me.alive == 0 || obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) {
+  if (me.alive == 0 || hasTag(me.tags, kTagFalling) ||
+      obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) {
     throwHold_ = -1;
     chargeHold_ = 0;
     return in;
@@ -653,10 +695,19 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   const ObsPlayer* tgt = target >= 0 ? &obs.players[target] : nullptr;
   // Where a path's goal is measured: kGoalTick ticks, on the grid two turns
   // after the next latch.
+  // v0.57: an armed bot with a wall between it and its target looks to the
+  // end of the horizon, far enough to see round a block (at kGoalTick no
+  // walk leaves a 2-unit block's face band, and two such bots stood still).
+  const bool walledOff =
+      !grid && me.ammo > 0 && target >= 0 &&
+      !lineClear(obs, myPos, posOf(obs.players[target]), Fixed::fromRaw(obs.rules.bananaRadius));
+  walledTicks_ = walledOff ? static_cast<uint16_t>(std::min<uint32_t>(walledTicks_ + 1u, 65535u))
+                           : uint16_t{0};
+  const uint8_t continuousGoalTick = walledOff ? kHorizon : kGoalTick;
   const auto goalTick = static_cast<uint8_t>(
       grid ? std::clamp<uint32_t>(uint32_t{obs.match.reservedTicksToLatch} + (2 * turn), 1u,
                                   kHorizon)
-           : kGoalTick);
+           : continuousGoalTick);
   const Fixed preferredRange = grid ? cellSize_ * kGridPreferredCells : kPreferredRange;
   const Vec2 tgtAt = tgt != nullptr ? posOf(*tgt) + (velOf(*tgt) * int32_t{goalTick}) : Vec2{};
   bool haveFetch = false;
@@ -667,7 +718,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     uint64_t best = UINT64_MAX;
     for (const ObsBanana& b : obs.bananas) {
       if (b.valid == 0 || b.ownerRelation != static_cast<uint8_t>(ObsRelation::Self) ||
-          b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
+          b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
         continue;
       }
       const uint64_t d = lengthSqRaw(vec(b.posX, b.posY) - myPos);
@@ -679,7 +730,13 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     }
     if (!haveFetch) {
       for (const ObsPickup& k : obs.pickups) {
-        if (k.valid == 0 || k.kind != static_cast<uint8_t>(ObsPickupKind::Banana)) continue;
+        // v0.57: a banana lying where standing would mean a fall (deep in
+        // a pit) costs the monkey that fetches it; one near the edge is
+        // reached from the floor.
+        if (k.valid == 0 || k.kind != static_cast<uint8_t>(ObsPickupKind::Banana) ||
+            inPit(obs, vec(k.posX, k.posY), Fixed::fromRaw(obs.self.radius))) {
+          continue;
+        }
         const uint64_t d = lengthSqRaw(vec(k.posX, k.posY) - myPos);
         if (d < best) {
           best = d;
@@ -748,9 +805,11 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     if (tgt != nullptr) {
       const Fixed d = walk && armed ? walkDistance(end) : distanceBetween(end, tgtAt);
       u -= armed ? abs(d - preferredRange) : -min(d, kFleeRange) / 2;
-      // v0.35, the grid: an armed bot wants a clear line to its target (a
-      // wall between two bots at fighting range is a standoff for ever).
-      if (grid && armed && !lineClear(obs, end, tgtAt, Fixed::fromRaw(obs.rules.bananaRadius))) {
+      // An armed bot wants a clear line to its target (a wall between two
+      // bots at fighting range is a standoff for ever): v0.35 on the grid,
+      // v0.57 in the continuous space too (two mirrored bots had parked on
+      // either side of island's central block for eight minutes).
+      if (armed && !lineClear(obs, end, tgtAt, Fixed::fromRaw(obs.rules.bananaRadius))) {
         u -= preferredRange;
       }
     } else if (explore && (armed || !haveFetch)) {
@@ -783,6 +842,10 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   uint8_t bestDir = lastMoveDir_;
   bool bestIdle = true;
   TieBreak moveTie;
+  // v0.57: the walk the goal would want most if it did not fall down a pit.
+  Fixed pitWalkUtil = Fixed::min();
+  uint8_t pitWalkDir = 0;
+  bool pitWalk = false;
   // On the grid: the eight octants (moveDir 32·o is exactly octant o) and idle.
   const uint8_t directions = grid ? sim::grid::kOctants : kDirections;
   for (uint8_t c = 0; c <= directions; ++c) {
@@ -796,6 +859,15 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     const Outcome o = evaluate(obs, path_, 0, 0);
     Fixed util = goal(path_) - o.danger;
     if (!idle && dir == lastMoveDir_) util += kHysteresis;
+    const Fixed fall = pitDanger(obs, path_, 0, 0);
+    if (fall > Fixed{}) {
+      if (!idle && o.danger < kHitThreshold && util > pitWalkUtil) {
+        pitWalkUtil = util;
+        pitWalkDir = dir;
+        pitWalk = true;
+      }
+      util -= fall;
+    }
     bool take = util > bestUtil;
     if (take) {
       moveTie.reset();
@@ -830,6 +902,10 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     return grid ? static_cast<uint8_t>(sim::grid::octantOf(dir) * 32u) : dir;
   };
   bool dashed = false;
+  // A dash's active ticks on its path (dashPath): the press at lead + 1.
+  const auto airFrom = static_cast<uint8_t>(lead + 1);
+  const auto airUntil = static_cast<uint8_t>(
+      std::min<uint32_t>(uint32_t{lead} + 1 + dash.defActiveTicks, uint32_t{kHorizon} + 1));
 
   // --- dash-catch -----------------------------------------------------------
   const auto catchFrom = static_cast<uint8_t>(lead + 1);
@@ -845,7 +921,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         const uint8_t dir = snap(directionTo(myPos, t.pos[aim]));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, catchFrom, catchUntil);
-        if (o.catches && o.danger < catchDanger) {
+        if (o.catches && o.danger < catchDanger &&
+            pitDanger(obs, path_, airFrom, airUntil) == Fixed{}) {
           found = true;
           catchDir = dir;
           catchDanger = o.danger;
@@ -868,7 +945,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         const auto dir = static_cast<uint8_t>(c * (256 / directions));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, canCatch ? catchFrom : 0, canCatch ? catchUntil : 0);
-        if (o.danger < best) {
+        if (o.danger + pitDanger(obs, path_, airFrom, airUntil) < best) {
           best = o.danger;
           bestDash = dir;
           found = true;
@@ -889,7 +966,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
           const auto dir = static_cast<uint8_t>(c * (256 / kDirections));
           blinkPath(obs, dir, path_);
           const Outcome o = evaluate(obs, path_, 0, 0);
-          if (o.danger < best) {
+          if (o.danger + pitDanger(obs, path_, 0, 0) < best) {
             best = o.danger;
             bestBlink = dir;
             found = true;
@@ -915,6 +992,22 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
           }
         }
       }
+    }
+  }
+
+  // --- dash across a pit (v0.57) ---------------------------------------------
+  // The walk the goal wants most would fall in: a dash the same way that
+  // lands clear of every pit and every banana, and scores better than the
+  // walk chosen, takes it. The grid's walks never enter a pit, so this is
+  // the continuous space's.
+  if (!dashed && !grid && dashReady && pitWalk && pitWalkUtil > bestUtil &&
+      bestDanger < kHitThreshold) {
+    dashPath(obs, pitWalkDir, path_);
+    const Outcome o = evaluate(obs, path_, 0, 0);
+    if (o.danger < kHitThreshold && pitDanger(obs, path_, airFrom, airUntil) == Fixed{} &&
+        goal(path_) - o.danger > bestUtil) {
+      press(dash, pitWalkDir);
+      dashed = true;
     }
   }
 
@@ -945,7 +1038,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         const Vec2 r = e0 - path_.pos[k - 1];
         const Vec2 d = tv - (path_.pos[k] - path_.pos[k - 1]);
         if (segmentMinSq(r, d) < strikeSq) {
-          found = evaluate(obs, path_, 0, 0).danger < kHitThreshold;
+          found = evaluate(obs, path_, 0, 0).danger < kHitThreshold &&
+                  pitDanger(obs, path_, airFrom, airUntil) == Fixed{};
           strikeDir = dir;
           break;
         }
@@ -1018,8 +1112,9 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     if (grid) range = min(range, cellSize_ * kGridThrowCells);
     const Fixed dist = distanceBetween(from, aimAt);
     bool clear = dist <= range;
-    if (clear && obs.arena.wallCount > 0) {
-      // Sample the line every half unit against the walls.
+    if (clear && obs.arena.wallCount > 0 && walledTicks_ < kStandoffTicks) {
+      // Sample the line every half unit against the walls (v0.57: unless a
+      // long standoff calls for a bank shot).
       const int32_t samples = std::max<int32_t>(1, (dist * 2).ceilToInt());
       const Fixed bananaRadius = Fixed::fromRaw(r.bananaRadius);
       for (int32_t s = 1; s <= samples && clear; ++s) {

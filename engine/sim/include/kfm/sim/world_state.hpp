@@ -102,9 +102,19 @@ struct Player {
   // continuous space leaves both zero.
   Vec2 moveTarget{};
   uint16_t moveTicks{0};
+  // v0.57, a pit fall (Tag::Falling): ticks left before LifecycleSystem
+  // eliminates the monkey; 0 while it stands.
+  uint16_t fallTicks{0};
+  // v0.57, ModeDef::bananaRegrowTicks: Playing ticks in a row it has owned
+  // no banana (none held, none of its own in flight); 0 while it owns one.
+  uint16_t regrowTicks{0};
 };
 
-enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded };
+// v0.57: Sinking, a banana that came down over a pit dropping into the hole
+// (BoomerangDef::pitSinkTicks, then LifecycleSystem despawns it): never a
+// pickup, and it matches no rule row (each Boomerang row names
+// Outbound/Returning).
+enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded, Sinking };
 
 struct Boomerang {
   PlayerId owner{PlayerId::invalid()};
@@ -131,6 +141,9 @@ struct Pickup {
   // PowerUp: index into the arena's pickupSpawners. Flag (v0.33): the team
   // whose flag it is, which is also the index of its home zone.
   uint8_t spawner{0};
+  // v0.57, Banana: how many bananas lie here (1, more only when a full pool
+  // stacked drops on it, rules/bananas.hpp); taking it takes as many as fit.
+  uint8_t count{1};
 };
 
 // --- match --------------------------------------------------------------------
@@ -151,8 +164,10 @@ struct MatchRules {
   PlayerMask present{0};
   uint32_t ticksInPhase{0};
   uint8_t round{0};
-  // Round wins (rounds, survival) or eliminations scored (deathmatch).
-  std::array<uint8_t, kMaxPlayers> scores{};
+  // Round wins (the round kinds) or points (scoresPoints: eliminations, hill
+  // points, captures, v0.57's catch and suicide points). Signed since v0.57:
+  // a suicide may take a slot below zero; saturates at the int8_t range.
+  std::array<int8_t, kMaxPlayers> scores{};
   PlayerId lastRoundWinner{PlayerId::invalid()};
   // v0.23 per-player mode counters: only deathmatch and survival write them,
   // so they stay zero in the rounds mode.
@@ -163,6 +178,9 @@ struct MatchRules {
   // written only by its ModeBehavior hooks. Cleared at match start, visited
   // unconditionally; the rounds, deathmatch and survival kinds never touch it.
   std::array<uint32_t, kModeDataWords> modeData{};
+  // v0.57: the round kinds' dry clock (modes/mode_flow.hpp roundRanDry):
+  // ticks in a row with no banana left anywhere; 0 while there is one.
+  uint16_t dryTicks{0};
 
   // Any of the mode counters is non-zero.
   [[nodiscard]] constexpr bool hasModeCounters() const {

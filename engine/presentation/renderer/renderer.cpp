@@ -72,6 +72,8 @@ constexpr Color kBananaColor{1.0f, 0.86f, 0.16f};
 constexpr Color kPickupColor{0.98f, 0.80f, 0.12f};
 constexpr Color kEliminatedColor{0.42f, 0.42f, 0.44f};
 constexpr float kEliminatedFade = 0.8f;  // how far an eliminated monkey greys out
+// v0.57: a monkey going down a pit darkens toward this (by kFallDarken × fall).
+constexpr Color kFallShade{0.05f, 0.07f, 0.12f};
 constexpr Color kGold{1.0f, 0.82f, 0.18f};
 constexpr Color kWhite{1.0f, 1.0f, 1.0f};
 constexpr Color kHitRed{1.0f, 0.16f, 0.10f};
@@ -93,10 +95,6 @@ constexpr float kMaxAnimStepSeconds = 0.25f;  // a stalled frame must not skip w
 
 [[nodiscard]] constexpr Color mix(Color a, Color b, float t) {
   return {lerp(a.r, b.r, t), lerp(a.g, b.g, t), lerp(a.b, b.b, t)};
-}
-
-[[nodiscard]] constexpr float easeOut(float t) {
-  return 1.0f - ((1.0f - t) * (1.0f - t));
 }
 
 // A sim-plane direction as a world vector on the ground (world_basis.hpp).
@@ -1013,19 +1011,24 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const RenderPlayer& p = state.players[i];
     if (!p.visible) continue;
     const bool eliminated = p.has(PlayerFlag::Eliminated);
+    const bool falling = p.has(PlayerFlag::Falling);  // v0.57
     const Color own = playerColor(p.colorIndex);
-    const float fade = eliminated ? kEliminatedFade : 0.0f;
-    const Color body = mix(own, kEliminatedColor, fade);
+    const Color fadeTo = falling ? kFallShade : kEliminatedColor;
+    float fade = falling ? kFallDarken * p.fall : 0.0f;
+    if (eliminated) fade = kEliminatedFade;
+    const Color body = mix(own, fadeTo, fade);
     float flash = p.flash;
     if (p.has(PlayerFlag::Invulnerable)) flash = std::max(flash, 0.35f * blink);
     const float emissive = p.has(PlayerFlag::Dashing) ? 0.25f : 0.0f;
-    const Mat4 placed = translate(p.position) * rotateY(p.bodyYaw) * scale(p.scale);
+    // v0.57: a falling monkey also tips about its side axis (RenderPlayer::tilt).
+    const Mat4 placed =
+        translate(p.position) * rotateY(p.bodyYaw) * rotateZ(p.tilt) * scale(p.scale);
     if (skinnedBodies && p.slot < anim_.size()) {
       SkinMatrices joints;
       SkinMatrices globals;
       evaluateAnimState(model_, clips_, anim_[p.slot], joints, &globals);
       const Mat4 model = placed * scale({modelScale, modelScale, modelScale});
-      d.skinned(model, joints, own, flash, emissive, kEliminatedColor, fade);
+      d.skinned(model, joints, own, flash, emissive, fadeTo, fade);
       d.skinnedOutline(model, joints, kOutlineMonkey);
       // v0.53: the held banana sits in the animated hand (wound up while a
       // throw charges, shaking with the strain).
@@ -1046,6 +1049,9 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const RenderPlayer& p = state.players[i];
     if (!p.visible || p.has(PlayerFlag::Eliminated)) continue;
     const Color own = playerColor(p.colorIndex);
+    // v0.57: a falling monkey aims at nothing; a banana in its hand goes
+    // down the pit with it (drawn below, in the sinking hand).
+    const bool falling = p.has(PlayerFlag::Falling);
 
     // Aim indicator: a thin bar from the capsule surface along the aim. A
     // charging throw (v0.48) stretches it and warms it toward gold.
@@ -1053,10 +1059,13 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const float charge = p.has(PlayerFlag::Charging) ? p.throwCharge : 0.0f;
     const float aimLength =
         p.has(PlayerFlag::Charging) ? lerp(kAimLength, kChargeAimLength, charge) : kAimLength;
-    d.lit(kCubeMesh,
-          translate(aimBase) * rotateY(p.aimYaw) * translate({r + (aimLength * 0.5f), 0.0f, 0.0f}) *
-              scale({aimLength, kAimThickness, kAimThickness}),
-          mix(mix(own, kWhite, 0.45f), kGold, charge), 0.0f, 0.15f + (0.35f * charge));
+    if (!falling) {
+      d.lit(kCubeMesh,
+            translate(aimBase) * rotateY(p.aimYaw) *
+                translate({r + (aimLength * 0.5f), 0.0f, 0.0f}) *
+                scale({aimLength, kAimThickness, kAimThickness}),
+            mix(mix(own, kWhite, 0.45f), kGold, charge), 0.0f, 0.15f + (0.35f * charge));
+    }
     // v0.33: a capture flag's carrier wears a small gold diamond overhead.
     if (p.has(PlayerFlag::Carrying)) {
       const float s = kFlagCarrySize;
@@ -1072,7 +1081,9 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       const Mat4 at = hasHand[i] ? translate(handAt[i]) * rotateY(p.aimYaw)
                                  : translate(aimBase) * rotateY(p.aimYaw) *
                                        translate({r * 0.55f, 0.0f, r * 0.85f});
-      const Mat4 m = at * scale({kHeldBananaScale, kHeldBananaScale, kHeldBananaScale});
+      // v0.57: shrinking with a falling body.
+      const float held = kHeldBananaScale * (falling ? lerp(1.0f, kFallEndScale, p.fall) : 1.0f);
+      const Mat4 m = at * scale({held, held, held});
       d.surface(kBananaMesh, m, kBananaColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
       d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
     }
@@ -1091,9 +1102,16 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     if (p.kind == PickupKindView::PowerUp || p.kind == PickupKindView::Flag) {
       drawPowerUp(d, p, r, bodyHeight, state.time);  // a flag: its team's colour (v0.33)
     } else {
-      const Mat4 m = translate(p.position) * rotateY(p.spin);
-      d.surface(kBananaMesh, m, kPickupColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
-      d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
+      // v0.57: a stacked pickup shows up to three bananas, each a little
+      // higher and turned.
+      const int shown = std::clamp<int>(p.count, 1, 3);
+      for (int k = 0; k < shown; ++k) {
+        const float fk = static_cast<float>(k);
+        const Mat4 m = translate(p.position + Vec3{0.0f, kPickupStackLift * fk, 0.0f}) *
+                       rotateY(p.spin + (kPickupStackTurn * fk));
+        d.surface(kBananaMesh, m, kPickupColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
+        d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
+      }
     }
   }
   d.flushOutlines();
@@ -1172,6 +1190,20 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
             e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.5f) : kWhite;
         const float rr = r * lerp(2.6f, 1.0f, easeOut(t));
         d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.9f * fade, DecalMode::Ring, 0.8f);
+        break;
+      }
+      case EffectKind::PitFall: {
+        // v0.57: two rings closing in over the pit where the monkey went
+        // down, the inner one a beat behind.
+        const Color c =
+            e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.55f) : kWhite;
+        // `size` set: a faller's banana dropping in (smaller rings).
+        const float base = e.size > 0.0f ? e.size : r;
+        const float rr = base * lerp(2.4f, 0.4f, easeOut(t));
+        d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.85f * fade, DecalMode::Ring, 0.8f);
+        const float inner = base * lerp(1.6f, 0.2f, easeOut(clamp01(t * 1.3f)));
+        d.groundDisc(e.position, kDecalLift, 0.0f, inner, inner, kWhite, 0.6f * fade,
+                     DecalMode::Ring, 0.75f);
         break;
       }
       case EffectKind::DashTrail: {

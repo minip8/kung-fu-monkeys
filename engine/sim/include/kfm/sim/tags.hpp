@@ -22,6 +22,11 @@ enum class Tag : uint8_t {
   // v0.33: holds a capture flag (modes/capture.cpp sets and clears it; rule
   // row 52 lets no carrier take a second flag). No stat change.
   Carrying,
+  // v0.57: going down a pit (rules/hazard.cpp sets it, LifecycleSystem
+  // eliminates the monkey when Player::fallTicks runs out). The rules table
+  // treats it like Eliminated (no row touches the monkey); input, abilities
+  // and movement leave it alone. No stat change.
+  Falling,
   kCount,  // NOLINT(readability-identifier-naming): count sentinel
 };
 static_assert(static_cast<uint32_t>(Tag::kCount) <= 32);

@@ -1,7 +1,7 @@
 # A playfield of 22 x 12 surrounded by a pit that runs out to the arena
 # walls, a block in the middle and two patches of mud. Bananas fly over the
-# pit and bounce back off the outer walls; a monkey that steps or dashes off
-# the edge is out. See 01-pillars.toml for the walls / hazards keys.
+# pit and bounce back off the outer walls; a monkey that steps off the edge,
+# or whose dash ends over the pit, falls and is out. See 01-pillars.toml for the walls / hazards keys.
 [[arena]]
 name = "island"
 half_extents = [16, 9]

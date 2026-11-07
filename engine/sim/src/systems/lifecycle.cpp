@@ -1,7 +1,27 @@
 // LifecycleSystem (architecture §5.3 step 9, §5.7, §5.8): spawn protection and
-// respawns (v0.23), despawns players tagged Eliminated (already reported by
-// InteractionSystem), turns grounded boomerangs into banana pickups at their
-// position, and runs the arena's power-up spawners (v0.20).
+// respawns (v0.23), pit falls (v0.57), despawns players tagged Eliminated
+// (already reported by InteractionSystem), turns grounded boomerangs into
+// banana pickups at their position, and runs the arena's power-up spawners
+// (v0.20).
+//
+// Pit falls run in every match phase, after the respawn timers: a falling
+// monkey's fallTicks counts down and at 0 it is eliminated by nobody
+// (rules/fall.hpp), so it despawns in the same pass. A fall that starts on
+// tick T (fallTicks = PlayerDef::fallTicks = N) ends on tick T + N - 1.
+//
+// v0.57, bananas never disappear (rules/bananas.hpp): an eliminated monkey's
+// bananas still away from it (outbound or returning) drop where they are as
+// it despawns (the pit row already dropped a faller's when its fall began),
+// so they come down as pickups below like any grounded banana, on the tick
+// of the death; the ones in its hand drop too, scattered around it, unless
+// it fell down a pit with them; in a mode whose ModeDef::deathBananas is
+// vanish they all go with it instead (releaseBananasOf, no drop). After the
+// despawns an empty hand counts toward a regrow (regrowBananas). A grounded
+// banana whose disc (the
+// banana's contact radius) lies wholly over the pits (discOverPits, the
+// monkeys' own test) falls into the hole instead: Sinking, BoomerangFell,
+// gone after BoomerangDef::pitSinkTicks; so no pickup ever lies where only a
+// fall could reach it.
 //
 // Respawns are driven by MatchRules' timers, which only modes that respawn
 // (deathmatch) set, so the code is the same for every mode: during Playing a
@@ -23,7 +43,10 @@
 // of ticksInPhase, not state of its own; a pickup remembers its spawner.
 #include "kfm/sim/systems.hpp"
 #include "modes/mode_flow.hpp"
+#include "rules/bananas.hpp"
+#include "rules/fall.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 
@@ -49,6 +72,35 @@ void respawnTimers(WorldState& s, const MatchContent& content, EventSink& sink) 
     }
     if (--r.respawnTicks[i] == 0) respawnPlayer(s, content, id, sink);
   }
+}
+
+// v0.57, ModeDef::bananaRegrowTicks: while Playing, every monkey still in
+// play (not eliminated, not falling) that owns no banana (none in its hand,
+// none of its own outbound or returning) counts a tick; at the mode's number
+// it grows one in its hand (BananaRegrown) and the count starts over. Owning
+// one by any route (a pickup, a catch, a parry, a power-up) resets it. Runs
+// after this tick's catches and despawns, so it sees the tick's last word.
+void regrowBananas(WorldState& s, const MatchContent& content, EventSink& sink) {
+  const uint16_t need = content.mode.bananaRegrowTicks;
+  if (need == 0 || s.rules.phase != MatchPhase::Playing) return;
+  PlayerMask away = 0;
+  s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
+    if ((b.phase == BoomerangPhase::Outbound || b.phase == BoomerangPhase::Returning) &&
+        b.owner.isValid() && b.owner.value < kMaxPlayers) {
+      away = static_cast<PlayerMask>(away | (1u << b.owner.value));
+    }
+  });
+  s.players.forEachAlive([&](EntityId id, Player& p) {
+    if (p.tags.has(Tag::Eliminated) || p.tags.has(Tag::Falling)) return;
+    if (p.ammo > 0 || maskHas(away, p.id)) {
+      p.regrowTicks = 0;
+      return;
+    }
+    if (++p.regrowTicks < need) return;
+    p.regrowTicks = 0;
+    p.ammo = 1;
+    sink.push(SimEvent{EventKind::BananaRegrown, s.tick, p.id, id, 0, 0});
+  });
 }
 
 [[nodiscard]] bool spawnerBeat(const PickupSpawner& sp, uint32_t t) {
@@ -108,26 +160,50 @@ void runSpawners(WorldState& s, const MatchContent& content, EventSink& sink) {
 void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
   if (s.rules.phase == MatchPhase::Playing) respawnTimers(s, content, sink);
 
-  s.players.forEachAlive([&](EntityId id, const Player& p) {
+  s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
+    if (!p.tags.has(Tag::Falling) || p.tags.has(Tag::Eliminated)) return;
+    if (p.fallTicks > 0) --p.fallTicks;
+    if (p.fallTicks == 0) eliminateFallen(s, content, p, sink);
+  });
+
+  const bool vanish = content.mode.deathBananas == DeathBananas::Vanish;
+  s.players.forEachAlive([&](EntityId id, Player& p) {
     if (!p.tags.has(Tag::Eliminated)) return;
     s.rules.invulnTicks[id.index] = 0;
+    // v0.57: its bananas come down where they are, the held ones scattered
+    // around it, unless it fell down a pit holding them; in a vanish mode
+    // they all go with it.
+    releaseBananasOf(s, content, p.id, sink);
+    if (!vanish && !p.tags.has(Tag::Falling)) dropHeldBananas(s, content, p, p.ammo, sink);
     s.players.despawn(id);
   });
 
+  regrowBananas(s, content, sink);
+
   // Iterates boomerangs and spawns pickups: a different pool, so the
   // forEachAlive no-spawn rule holds.
-  s.boomerangs.forEachAlive([&](EntityId id, const Boomerang& b) {
+  const BoomerangDef& bananaDef = content.db.boomerang;
+  s.boomerangs.forEachAlive([&](EntityId id, Boomerang& b) {
+    // v0.57: a banana that has sunk into a pit is gone.
+    if (b.phase == BoomerangPhase::Sinking &&
+        b.ticksInPhase >= std::max<uint16_t>(bananaDef.pitSinkTicks, 1)) {
+      s.boomerangs.despawn(id);
+      return;
+    }
     if (b.phase != BoomerangPhase::Grounded) return;
     const Vec2 pos = b.transform.pos;
+    // v0.57: come down wholly over a pit, it drops into the hole.
+    if (discOverPits(content.arena, pos, bananaDef.radius * b.radiusMul)) {
+      b.phase = BoomerangPhase::Sinking;
+      b.ticksInPhase = 0;
+      b.transform.vel = Vec2::zero();
+      sink.push(SimEvent{EventKind::BoomerangFell, s.tick, b.owner, id, 0, 0});
+      return;
+    }
     s.boomerangs.despawn(id);
     sink.push(SimEvent{EventKind::BoomerangGrounded, s.tick, PlayerId::invalid(), id, 0, 0});
-    const EntityId pickupId = s.pickups.spawn();
-    if (!pickupId.isValid()) return;  // pickup pool full: the banana vanishes
-    Pickup& pickup = s.pickups.items[pickupId.index];
-    pickup.kind = PickupKind::Banana;
-    pickup.pos = pos;
-    pickup.powerUpIndex = 0;
-    sink.push(SimEvent{EventKind::PickupSpawned, s.tick, PlayerId::invalid(), pickupId, 0, 0});
+    // v0.57: a full pickup pool stacks it on the nearest banana pickup.
+    layBananaPickup(s, pos, sink);
   });
 
   runSpawners(s, content, sink);

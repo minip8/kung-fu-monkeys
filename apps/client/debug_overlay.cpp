@@ -68,6 +68,8 @@ constexpr float kDebugFontSize = 13.0f;
       return "Returning";
     case sim::BoomerangPhase::Grounded:
       return "Grounded";
+    case sim::BoomerangPhase::Sinking:  // v0.57
+      return "Sinking";
   }
   return "?";
 }
@@ -90,8 +92,8 @@ constexpr float kDebugFontSize = 13.0f;
 
 void tagsText(sim::Tags tags, char (&out)[96]) {
   constexpr std::array<const char*, static_cast<std::size_t>(sim::Tag::kCount)> kNames = {
-      "Dashing",    "PerfectDash", "HitStun",  "Shielded",    "Invulnerable",
-      "Eliminated", "Slamming",    "Parrying", "FriendlyFire"};
+      "Dashing",  "PerfectDash", "HitStun",      "Shielded", "Invulnerable", "Eliminated",
+      "Slamming", "Parrying",    "FriendlyFire", "Carrying", "Falling"};
   out[0] = '\0';
   std::size_t used = 0;
   for (std::size_t t = 0; t < kNames.size(); ++t) {

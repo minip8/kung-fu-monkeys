@@ -278,11 +278,14 @@ TEST_CASE("hitStunTicks counts down and clears HitStun at zero", "[sim][modifier
   CHECK_FALSE(p.tags.has(Tag::HitStun));
 }
 
-TEST_CASE("ammo is clamped to ammoMax", "[sim][modifier]") {
+TEST_CASE("ammo is clamped to ammoMax: the extra bananas vanish (v0.57)", "[sim][modifier]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(8, 0b1);
   Player& p = freshPlayer(s);
   p.ammo = 7;
   modifierSystem(s, content);
   CHECK(p.ammo == content.player.ammoMax);
+  EventSink sink;
+  lifecycleSystem(s, content, sink);
+  CHECK(s.pickups.size() == 0);  // nothing dropped: they went with the power-up
 }

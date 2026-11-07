@@ -384,14 +384,15 @@ std::string modeSummary(const sim::ModeDef& mode) {
     case sim::ModeKind::TeamDeathmatch: {
       const std::string clock =
           mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      // v0.57: with catch or suicide points the target counts points.
+      const char* unit = mode.catchScore != 0 || mode.suicideScore != 0 ? "points" : "eliminations";
       if (mode.respawnInvulnTicks > 0) {
-        std::snprintf(buf, sizeof buf,
-                      "first %sto %u eliminations, %s, respawn %.1f s (%.1f s protected)", team,
-                      static_cast<unsigned>(mode.scoreToWin), clock.c_str(),
+        std::snprintf(buf, sizeof buf, "first %sto %u %s, %s, respawn %.1f s (%.1f s protected)",
+                      team, static_cast<unsigned>(mode.scoreToWin), unit, clock.c_str(),
                       secs(mode.respawnTicks), secs(mode.respawnInvulnTicks));
       } else {
-        std::snprintf(buf, sizeof buf, "first %sto %u eliminations, %s, respawn %.1f s", team,
-                      static_cast<unsigned>(mode.scoreToWin), clock.c_str(),
+        std::snprintf(buf, sizeof buf, "first %sto %u %s, %s, respawn %.1f s", team,
+                      static_cast<unsigned>(mode.scoreToWin), unit, clock.c_str(),
                       secs(mode.respawnTicks));
       }
       return buf;

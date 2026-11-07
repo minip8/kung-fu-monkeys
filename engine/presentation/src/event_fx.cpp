@@ -94,6 +94,10 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
       return cue(SoundId::Hit);
     case EventKind::PlayerEliminated:
       return cue(SoundId::Elimination);
+    case EventKind::PlayerFell:
+      return cue(SoundId::Fall);
+    case EventKind::BoomerangFell:  // v0.57: a faller's banana drops into its pit
+      return cue(SoundId::BananaPlop);
     case EventKind::PickupTaken:
       // A power-up or a capture flag (v0.33) sounds the same.
       return cue(e.a != static_cast<uint32_t>(sim::PickupKind::Banana) ? SoundId::PowerUp
@@ -107,6 +111,7 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::BoomerangParried:
       return cue(SoundId::Parry);
     case EventKind::BoomerangGrounded:
+    case EventKind::BananaDropped:  // v0.57: a held banana dropped looks the same
       return cue(SoundId::BananaGround);
     case EventKind::BoomerangBounced:
       return cue(SoundId::WallBounce);
@@ -117,7 +122,11 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::PlayerRespawned:
       return cue(SoundId::Respawn);
     case EventKind::ScoreChanged:
+      // v0.57: a suicide's point lost rides on the fall's own sounds.
+      if (e.b == static_cast<uint32_t>(sim::ScoreReason::Suicide)) break;
       return cue(SoundId::Score);
+    case EventKind::BananaRegrown:
+      return cue(SoundId::Regrow);
     case EventKind::TimerWarning:
       return cue(SoundId::TimerWarning);
     default:
@@ -228,14 +237,34 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       soundAt = player;
       break;
     }
-    case EventKind::PlayerEliminated:
-      addEffect(ps, makeEffect(EffectKind::EliminationBurst, slot, bodyAt(player),
-                               kEliminationBurstSeconds));
-      addEffect(ps, makeEffect(EffectKind::EliminationPoof, slot, bodyAt(player),
-                               kEliminationPoofSeconds));
+    case EventKind::PlayerEliminated: {
+      // v0.57: the end of a pit fall bursts out of the pit, where the body
+      // was last drawn going under, not at body height over the edge.
+      const Player* was = prev.playerBySlot(e.player);
+      const bool fell = was != nullptr && was->tags.has(sim::Tag::Falling) && slot != kNoSlot;
+      const Vec2f at = fell ? ps.players[static_cast<uint8_t>(slot)].motion.lastDrawn : player;
+      const Vec3 where = fell ? groundAt(at) : bodyAt(at);
+      addEffect(ps,
+                makeEffect(EffectKind::EliminationBurst, slot, where, kEliminationBurstSeconds));
+      addEffect(ps, makeEffect(EffectKind::EliminationPoof, slot, where, kEliminationPoofSeconds));
       addShake(ps, kShakeOnElimination);
+      soundAt = at;
+      break;
+    }
+    case EventKind::PlayerFell:
+      addEffect(ps, makeEffect(EffectKind::PitFall, slot, groundAt(player), kPitFallSeconds));
       soundAt = player;
       break;
+    case EventKind::BoomerangFell: {
+      // v0.57: a faller's banana reached its pit and drops in (the sinking is
+      // drawn from state): a small ring closing over the spot.
+      const Vec2f at = bananaPlane(ps, prev, curr, e.entity).value_or(player);
+      RenderEffect splash = makeEffect(EffectKind::PitFall, slot, groundAt(at), kPitFallSeconds);
+      splash.size = kBananaSplashSize;
+      addEffect(ps, splash);
+      soundAt = at;
+      break;
+    }
     case EventKind::PickupTaken: {
       const Vec2f at = pickupPlane(ps, prev, curr, e.entity).value_or(player);
       addEffect(ps, makeEffect(EffectKind::PickupSparkle, slot, simToWorld(at, kPickupHeight),
@@ -256,6 +285,17 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       break;
     case EventKind::BoomerangGrounded: {
       const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity);
+      if (at) {
+        addEffect(ps,
+                  makeEffect(EffectKind::GroundDust, kNoSlot, groundAt(*at), kGroundDustSeconds));
+      }
+      soundAt = at;
+      break;
+    }
+    case EventKind::BananaDropped: {
+      // v0.57: a held (or overflowing) banana dropped to the floor: the
+      // grounding look where its pickup lies.
+      const std::optional<Vec2f> at = pickupPlane(ps, prev, curr, e.entity);
       if (at) {
         addEffect(ps,
                   makeEffect(EffectKind::GroundDust, kNoSlot, groundAt(*at), kGroundDustSeconds));
@@ -291,9 +331,29 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       break;
     }
     case EventKind::ScoreChanged:
-      addEffect(ps, makeEffect(EffectKind::ScorePop, slot, groundAt(player), kScorePopSeconds));
+      // v0.57: no gold ring for a point lost to a suicide (the slot may be
+      // gone: the fall's burst is the news).
+      if (e.b != static_cast<uint32_t>(sim::ScoreReason::Suicide)) {
+        addEffect(ps, makeEffect(EffectKind::ScorePop, slot, groundAt(player), kScorePopSeconds));
+      }
       soundAt = player;
       break;
+    case EventKind::BananaRegrown:
+      // v0.57: twinkles in the monkey's hand and a short flash.
+      addEffect(ps,
+                makeEffect(EffectKind::PickupSparkle, slot, bodyAt(player), kRegrowSparkleSeconds));
+      flashPlayer(ps, e.player, kRegrowFlashSeconds);
+      soundAt = player;
+      break;
+    case EventKind::BananaVanished: {
+      // v0.57: a dead monkey's banana in flight goes with it: a small puff.
+      const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity);
+      if (at) {
+        addEffect(ps, makeEffect(EffectKind::ThrowPuff, kNoSlot, simToWorld(*at, kBananaHandHeight),
+                                 kBananaVanishSeconds));
+      }
+      break;
+    }
     case EventKind::TimerWarning:
       addEffect(ps, makeEffect(EffectKind::TimerBanner, kNoSlot, Vec3{}, kTimerBannerSeconds));
       break;

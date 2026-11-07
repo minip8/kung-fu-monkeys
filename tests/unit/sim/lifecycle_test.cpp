@@ -23,6 +23,7 @@ EventSink runLifecycle(WorldState& s) {
 TEST_CASE("eliminated players are despawned, others stay", "[sim][lifecycle]") {
   WorldState s = makePlayingWorld(1, 0b111);
   playerAt(s, PlayerId{1}).tags.set(Tag::Eliminated);
+  playerAt(s, PlayerId{1}).ammo = 0;  // v0.57: held bananas would drop (below)
   playerAt(s, PlayerId{2}).tags.set(Tag::HitStun);
   const EventSink sink = runLifecycle(s);
   CHECK(sink.count == 0);  // PlayerEliminated was already emitted by the damage rule

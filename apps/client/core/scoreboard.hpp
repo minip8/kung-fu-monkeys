@@ -9,7 +9,8 @@
 // banner and count) and at the match's end in every mode
 // (showsScoreboard()). A row is a present slot: its label (the nickname
 // online, else P<n> / BOT<n>), its team, its score (round
-// wins, eliminations, hill points or captures by mode kind), its deaths
+// wins, points (deathmatch: eliminations plus catch points less suicides,
+// v0.57; may be negative), hill points or captures by mode kind), its deaths
 // where the mode counts them (deathmatch, team deathmatch, hill, capture,
 // survival), whether it is a local player or a bot, and whether it won.
 // Free-for-all rows sort by score (desc), deaths (asc), slot; team rows by
@@ -36,8 +37,8 @@ namespace kfm::client {
 struct ScoreRow {
   uint8_t slot{0};
   std::string label;
-  int8_t team{-1};  // -1: free-for-all
-  uint16_t score{0};
+  int8_t team{-1};   // -1: free-for-all
+  int16_t score{0};  // signed since v0.57 (a suicide may go below zero)
   uint8_t deaths{0};
   uint8_t place{1};  // 1-based, shared on a tie
   bool local{false};
@@ -48,10 +49,10 @@ struct ScoreRow {
 
 struct Scoreboard {
   std::vector<ScoreRow> rows;
-  const char* scoreLabel{"Rounds"};  // the score column: Rounds, Kills, Points, Flags
+  const char* scoreLabel{"Rounds"};  // the score column: Rounds, Score, Points, Flags
   bool showDeaths{false};
   uint8_t teamCount{0};
-  std::array<uint16_t, sim::kMaxPlayers> teamScores{};
+  std::array<int16_t, sim::kMaxPlayers> teamScores{};
   bool final{false};  // the match is over
 };
 

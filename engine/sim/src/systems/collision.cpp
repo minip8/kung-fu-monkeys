@@ -245,20 +245,32 @@ void narrowphase(const WorldState& s, const MatchContent& content, const Candida
 // Player × Hazard (v0.22): one contact per hazard whose closed box holds the
 // player's centre at the end of the tick, in (player slot, hazard index)
 // order, timed at the centre's entry into the box. Statics need no
-// broadphase: at most kMaxArenaHazards boxes per player.
+// broadphase: at most kMaxArenaHazards boxes per player. v0.57, pits: one
+// contact for the lot, and only once the player's whole contact disc (the
+// radius stat) lies inside their union (discOverPits); it names the first
+// pit box holding the centre, sits at that box's place in the order and is
+// timed at the end of the tick (tHit 1), where the test was made, so every
+// other contact of the tick resolves first.
 void pushHazardContacts(const WorldState& s, const MatchContent& content, Contacts& out) {
   const ArenaDef& arena = content.arena;
   if (arena.hazardCount == 0) return;
   s.players.forEachAlive([&](EntityId id, const Player& p) {
     const Transform& t = p.transform;
+    bool pitPushed = false;
     for (uint8_t i = 0; i < arena.hazardCount && i < kMaxArenaHazards; ++i) {
       const Hazard& h = arena.hazards[i];
       if (!boxContains(h.min, h.max, t.pos)) continue;
+      Fixed tHit = statics::entryTime(t.prevPos, t.pos, h.min, h.max);
+      if (h.kind == HazardKind::Pit) {
+        if (pitPushed || !discOverPits(arena, t.pos, p.stats.radius)) continue;
+        pitPushed = true;
+        tHit = Fixed::one();
+      }
       out.push(Contact{.kindA = EntityKind::Player,
                        .a = id,
                        .kindB = EntityKind::Hazard,
                        .b = EntityId{i, 0},
-                       .tHit = statics::entryTime(t.prevPos, t.pos, h.min, h.max),
+                       .tHit = tHit,
                        .point = t.pos,
                        .normal = Vec2::zero()});
     }

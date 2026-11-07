@@ -16,7 +16,8 @@
 //   3. HP clamp against the previous tick's maxHp: a rise raises hp by the
 //      same amount; a fall gives hp = max(1, min(hp, maxHp)), so losing a
 //      modifier never eliminates. A player already at hp 0 is left alone.
-//      ammo is clamped to ammoMax.
+//      ammo is clamped to ammoMax: the extra bananas an ammo power-up
+//      granted go with it when it runs out (v0.57: they do not drop).
 //   4. Ability overrides: each slot's def is the loadout's (the mode's when it
 //      has one, v0.21), unless a live
 //      AbilityOverride names another (the last one in slot order wins). A

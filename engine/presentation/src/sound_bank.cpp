@@ -45,6 +45,9 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.50f, 0.95f},   // Slam
     {0.32f, 0.75f},   // Parry
     {0.20f, 0.45f},   // CallPing
+    {0.62f, 0.55f},   // Fall
+    {0.20f, 0.45f},   // BananaPlop
+    {0.30f, 0.45f},   // Regrow
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -291,6 +294,33 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         // A call (v0.35): two quick bell notes a fifth apart.
         v = bell(t, 1760.0f, 0.05f) + (0.7f * bell(t - 0.06f, 2637.0f, 0.06f));
         break;
+      case SoundId::Fall: {
+        // v0.57: a slide whistle falling from 1.4 kHz to under 300 Hz with a
+        // widening wobble, fading as the monkey drops out of earshot.
+        const float hz = 260.0f + (1140.0f * std::exp(-t * 4.2f));
+        const float wobble = 1.0f + (0.03f * u * std::sin(kTwoPi * 7.0f * t));
+        osc.next(hz * wobble, sr);
+        v = std::min(clamp01(t / 0.02f), 1.0f - (u * u)) * harmonics(osc.phase(), 0.2f, 0.05f);
+        break;
+      }
+      case SoundId::BananaPlop: {
+        // v0.57: a bloop falling from 900 Hz with a dab of low-passed splash.
+        const float hz = 220.0f + (680.0f * std::exp(-t / 0.05f));
+        svf.step(noise.next(), 1200.0f, sr, 0.7f);
+        osc.next(hz, sr);
+        v = (env(t, 0.004f, 0.06f) * harmonics(osc.phase(), 0.25f, 0.0f)) +
+            (0.25f * env(t, 0.002f, 0.03f) * svf.low());
+        break;
+      }
+      case SoundId::Regrow: {
+        // v0.57: a soft pop gliding up from 520 Hz to an octave above, then a
+        // small bell twinkle on top.
+        const float hz = 520.0f * std::pow(2.0f, clamp01(t / 0.12f));
+        osc.next(hz, sr);
+        v = (env(t, 0.006f, 0.1f) * harmonics(osc.phase(), 0.15f, 0.0f)) +
+            (0.5f * bell(t - 0.12f, 2093.0f, 0.07f));
+        break;
+      }
       case SoundId::Count:
         break;
     }

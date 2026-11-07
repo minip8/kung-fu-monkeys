@@ -101,6 +101,9 @@ struct BoomerangDef {
   Fixed restitution{};         // wall bounce velocity scale (1 = elastic)
   Fixed spawnOffset{};         // distance ahead of the thrower where it spawns
   uint8_t damage{1};           // per hit; the banana flies on through its victim
+  // v0.57: a banana that comes down over a pit sinks into it for this long
+  // (BoomerangPhase::Sinking), then is gone.
+  uint16_t pitSinkTicks{18};
 };
 
 // Pickups lying in the arena (M1: grounded bananas; M4 adds power-ups).
@@ -115,6 +118,9 @@ struct PlayerDef {
   uint8_t ammoMax{1};
   uint8_t ammoStart{1};
   uint16_t hitStunTicks{0};
+  // v0.57: how long a monkey falls down a pit before it is eliminated,
+  // counting the tick it went in (>= 1; 1 = out on that very tick).
+  uint16_t fallTicks{1};
   // Base loadout: slot kAbilitySlotDash, kAbilitySlotThrow, kAbilitySlotExtra
   // (indices into ContentDB::abilities; 0 = None). It is also loadout 0
   // (ContentDB::loadouts[0], "base"); a match may pick another (v0.31).
@@ -341,12 +347,12 @@ struct MatchContent {
     return teams[a.value] == teams[b.value] ? Relation::Ally : Relation::Enemy;
   }
   // A team's score (v0.32): the sum of its slots' per-slot scores
-  // (MatchRules::scores: round wins or eliminations).
-  [[nodiscard]] constexpr uint16_t teamScore(const std::array<uint8_t, kMaxPlayers>& scores,
-                                             uint8_t team) const {
-    uint16_t sum = 0;
+  // (MatchRules::scores: round wins or points; signed since v0.57).
+  [[nodiscard]] constexpr int16_t teamScore(const std::array<int8_t, kMaxPlayers>& scores,
+                                            uint8_t team) const {
+    int16_t sum = 0;
     for (uint8_t i = 0; i < kMaxPlayers; ++i) {
-      if (teams[i] == team) sum = static_cast<uint16_t>(sum + scores[i]);
+      if (teams[i] == team) sum = static_cast<int16_t>(sum + scores[i]);
     }
     return sum;
   }

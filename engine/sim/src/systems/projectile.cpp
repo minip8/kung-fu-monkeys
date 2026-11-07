@@ -14,6 +14,11 @@
 // fly over pits). A returning banana that bounces keeps homing; it is
 // grounded by maxReturnTicks like any other, so no extra bounce cap is
 // needed.
+//
+// v0.57: a banana sinking into a pit (Sinking, set by LifecycleSystem where a
+// grounded banana came down over one) stays put and counts its ticks in
+// every match phase, so it finishes sinking even if the round is decided;
+// LifecycleSystem despawns it after BoomerangDef::pitSinkTicks.
 #include "kfm/sim/systems.hpp"
 #include "systems/angle_of.hpp"
 #include "systems/statics.hpp"
@@ -63,6 +68,13 @@ void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sin
   s.boomerangs.forEachAlive([&](EntityId id, Boomerang& b) {
     Transform& t = b.transform;
     t.prevPos = t.pos;
+    if (b.phase == BoomerangPhase::Sinking) {  // v0.57, in every phase
+      t.vel = Vec2::zero();
+      saturatingIncrement(b.ticksAlive);
+      saturatingIncrement(b.ticksInPhase);
+      b.spin += Angle::fromBam(kSpinBamPerTick);
+      return;
+    }
     if (!playing) return;
     saturatingIncrement(b.ticksAlive);
     saturatingIncrement(b.ticksInPhase);

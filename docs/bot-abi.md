@@ -135,7 +135,7 @@ Units:
 | bam | u16 1/65536 turn, same orientation (a banana's heading, which the sim steers at that precision). |
 | ticks | 60 per second. Tick numbers are the sim's tick counter. |
 | slot | player slot 0..9; `0xFF` = none. |
-| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it), 9 Carrying (architecture v0.33: holds a capture flag; no stat change). |
+| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it), 9 Carrying (architecture v0.33: holds a capture flag; no stat change), 10 Falling (architecture v0.57: going down a pit; its input is ignored, nothing hits it, and it is eliminated by nobody `fall_ticks` (content, 36) ticks after it went in, counting that tick; `alive` stays 1 until then). |
 
 The world: the arena is the box [−halfExtents, +halfExtents] centred on the origin, +x right,
 +y up. Everything is full information unless the mode's vision is a fog (architecture v0.35,
@@ -150,9 +150,9 @@ Enumerations (byte values):
 | mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
-| banana phase | 0 Outbound, 1 Returning, 2 Grounded |
+| banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup) |
 | pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
-| hazard kind | 0 Pit (a centre inside is eliminated), 1 Slow (move speed × `speedMul` inside) |
+| hazard kind | 0 Pit (a monkey whose whole disc ends a tick inside the union of the pit boxes while not Dashing falls: tag Falling for `fall_ticks`, then eliminated by nobody; architecture v0.57), 1 Slow (move speed × `speedMul` inside) |
 
 ### 2.2 Top level
 
@@ -202,18 +202,17 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 26 | u16 | `aliveMask` | bit i: slot i has a monkey in the arena |
 | 28 | u8 | `inputDelayTicks` | ticks from this observation to the tick its answer applies on (§1.5) |
 | 29 | u8 | `lastRoundWinner` | slot; `0xFF` after a draw or before the first round end |
-| 30 | u8 | `pad0` | |
-| 31 | u8 | `pad1` | |
+| 30 | u16 | `bananaRegrowTicks` | architecture v0.57 (was `pad0`, `pad1`, always 0): ticks a monkey owning no banana (none in its hand, none of its own in flight) waits until one grows in its hand; 0 = the mode regrows none |
 | 32 | u16 | `roundStartTicks` | countdown at a round start (everyone spawned and frozen) |
 | 34 | u16 | `roundEndTicks` | pause after a round end |
 | 36 | u16 | `respawnDelayTicks` | deathmatch: ticks from an elimination to the respawn |
 | 38 | u16 | `respawnInvulnTicks` | deathmatch: spawn protection after a respawn |
 | 40 | u16 | `reservedTurnTicks` | §3: ticks per turn in a grid mode, 0 in a continuous one |
 | 42 | u16 | `reservedTicksToLatch` | §3: in a grid mode, ticks from this observation's tick to the next latch (0: this tick's input is latched) |
-| 44 | u8[10] | `scores` | per slot: round wins (rounds, survival) or eliminations (deathmatch) |
+| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
 | 54 | u8[10] | `deaths` | per slot: eliminations suffered this match |
 | 64 | u16[10] | `respawnTicks` | per slot: ticks until a dead slot respawns, 0 = none due |
-| 84 | u16[10] | `reservedTeamScores` | §3: per team index |
+| 84 | i16[10] | `reservedTeamScores` | §3: per team index (signed since architecture v0.57) |
 | 104 | u32[16] | `reservedModeData` | §3: the mode's own state |
 
 ### 2.5 `rules` (offset 184, 44 bytes)
@@ -434,7 +433,19 @@ maxY`, 16 bytes); points are i32 Q16.16 `x, y` (8 bytes).
 
 `hazards[i]` (24 bytes; absolute 5044 + 24 i): offset 0 box `box`; 16 i32 `speedMul` (Q16.16,
 Slow); 20 u8 `kind` (hazard kind); 21..23 `pad0..pad2`. A hazard acts on a monkey whose centre is
-inside; it never blocks movement or bananas.
+inside (the closed box); it never blocks movement or bananas. A pit is the exception (v0.57): a
+monkey falls once its whole contact disc (`self.radius`; touching the edge from inside counts)
+lies inside the union of all the pit boxes, adjoining tilemap boxes counting as one pit, so a
+pit narrower than the body takes nobody. A Dashing monkey is spared: a dash carries it across,
+and it falls if the dash ends with its disc still over the pits. When a monkey dies (or starts
+to fall) its bananas in flight drop where they are and become pickups; a monkey killed by
+anything but a fall also drops the bananas in its hand, scattered around it, and a catch past
+`ammoMax` drops the extra banana where it was caught; one that comes down wholly over a pit
+sinks into it instead (banana phase Sinking: harmless, then gone, never a pickup). A banana
+pickup may hold more than one banana when the pickup pool was full (the count is not in the
+observation): touching it takes as many as fit and leaves the rest lying. A round of a round kind with no banana left anywhere (none held, out or lying around, a
+Sinking one counting as gone, and no ammo power-up to come) ends as its clock-out would, after
+the mode's `dry_round_ticks` on an arena with pits.
 
 `spawners[i]` (16 bytes; absolute 5428 + 16 i): offset 0 point `pos`; 8 u16 `powerUpSet` (bit j:
 power-up j may spawn, 0 = any); 10 u16 `firstTicks` (Playing tick of the first spawn); 12 u16

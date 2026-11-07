@@ -6,6 +6,9 @@
 // MatchRules::present, so a player who joins or leaves mid-match is spawned
 // or removed by RulesSystem at the next round start (§6.6). Then the mode's
 // space latches (§5.12): facing, and in the grid the turn's commitments.
+// A monkey falling down a pit (v0.57, Tag::Falling) has lost control: its
+// intent is idle with the aim at its facing (so the latch keeps the facing),
+// and prevButtons still follows the input.
 #include "kfm/sim/spaces/registry.hpp"
 #include "kfm/sim/systems.hpp"
 
@@ -24,6 +27,10 @@ void inputSystem(WorldState& s, const MatchContent& content, const InputFrame& i
     intent.pressed = static_cast<uint8_t>(pi.buttons & ~p.prevButtons);
     intent.held = pi.buttons;
     intent.subTick = pi.subTick;
+    if (p.tags.has(Tag::Falling)) {
+      intent = Intent{};
+      intent.aim = p.transform.facing;
+    }
     p.intent = intent;
     p.prevButtons = pi.buttons;
   });

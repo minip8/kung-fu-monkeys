@@ -2,8 +2,8 @@
 // count hits; the victim gets HitStun so a banana overlapping it across ticks
 // lands once, and is tagged Eliminated at 0 hp (LifecycleSystem despawns it at
 // the end of the tick). The banana always flies on through its victim (v0.28).
-#include "kfm/sim/modes/registry.hpp"
 #include "kfm/sim/rules/handlers.hpp"
+#include "modes/mode_flow.hpp"
 #include "rules/apply_damage.hpp"
 
 namespace kfm::sim {
@@ -22,7 +22,7 @@ void applyDamage(WorldState& s, const MatchContent& content, Player& victim, Ent
     const PlayerId killer = source.attackerSlot < kMaxPlayers
                                 ? PlayerId{static_cast<uint8_t>(source.attackerSlot)}
                                 : PlayerId::invalid();
-    modeBehaviorOf(content).onEliminated(s, content, victim.id, killer, sink);
+    reportElimination(s, content, victim.id, killer, sink);
   }
 }
 

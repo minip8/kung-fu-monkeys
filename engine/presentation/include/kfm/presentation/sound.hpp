@@ -37,6 +37,10 @@ enum class SoundId : uint8_t {
   Parry,  // a banana parried: a bright metallic clang
   // v0.35 (the squad contest):
   CallPing,  // a local human's call: a short two-note ping
+  // v0.57 (pit falls):
+  Fall,        // a monkey went down a pit: a falling slide whistle
+  BananaPlop,  // a faller's banana dropped into its pit: a short falling bloop
+  Regrow,      // an empty hand grew a banana: a soft rising pop with a twinkle
   Count,
 };
 
@@ -90,6 +94,12 @@ inline constexpr uint8_t kSoundCount = static_cast<uint8_t>(SoundId::Count);
       return "parry";
     case SoundId::CallPing:
       return "call-ping";
+    case SoundId::Fall:
+      return "fall";
+    case SoundId::BananaPlop:
+      return "banana-plop";
+    case SoundId::Regrow:
+      return "regrow";
     case SoundId::Count:
       break;
   }

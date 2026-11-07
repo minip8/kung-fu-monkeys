@@ -151,7 +151,8 @@ class LobbyMenu {
 };
 
 // The key numbers of a mode, one line: "first to 3 rounds",
-// "first to 10 eliminations, 3:00, respawn 2.0 s (1.5 s protected)",
+// "first to 10 eliminations, 3:00, respawn 2.0 s (1.5 s protected)" (v0.57:
+// "points" when the mode has a catch or suicide score),
 // "first to 3 rounds of 1:00".
 [[nodiscard]] std::string modeSummary(const sim::ModeDef& mode);
 

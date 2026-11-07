@@ -19,6 +19,7 @@
 // second shield power-up keeps the player shielded). Shielded set by anything
 // else (a test, a future mode) is just cleared.
 #include "kfm/sim/rules/handlers.hpp"
+#include "rules/bananas.hpp"
 
 #include <cstdint>
 
@@ -90,13 +91,17 @@ bool shieldBlocksBanana(WorldState& s, const MatchContent& content, EntityId a, 
 }
 
 bool shieldBlocksDash(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
-                      const Contact& /*contact*/, EventSink& sink) {
+                      const Contact& contact, EventSink& sink) {
   Player* attacker = s.players.get(a);
   Player* victim = s.players.get(b);
   if (attacker == nullptr || victim == nullptr || a == b) return false;
   const DashAttackDef& def = content.db.dashAttack;
   if (attacker->ammo < def.minAmmo) return false;
-  if (def.consumesAmmo != 0 && attacker->ammo > 0) --attacker->ammo;
+  // v0.57: a consumed banana drops at the contact rather than vanishing.
+  if (def.consumesAmmo != 0 && attacker->ammo > 0) {
+    --attacker->ammo;
+    dropBanana(s, content, contact.point, attacker->id, sink);
+  }
   stopDash(*attacker, content.db);
   const uint8_t broken = consumeShield(*victim, content.db);
   sink.push(SimEvent{EventKind::ShieldBroken, s.tick, victim->id, a, attacker->id.value, broken});

@@ -36,6 +36,7 @@ add_library(kfm_sim STATIC
   src/rules/flag.cpp
   src/rules/shield.cpp
   src/rules/hazard.cpp
+  src/rules/bananas.cpp
   src/rules/slam.cpp
   src/rules/parry.cpp
   src/systems/rules.cpp

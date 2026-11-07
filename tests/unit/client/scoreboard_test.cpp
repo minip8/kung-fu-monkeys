@@ -84,7 +84,7 @@ TEST_CASE("free-for-all rows: score, then deaths, then slot; shared places",
   hud.deaths = {2, 4, 1, 0, 5, 4, 0, 2};
   hud.matchWinner = 1;
   const Scoreboard b = buildScoreboard(hud, labels(), /*local*/ 0b0000'0100, /*bots*/ 0b1000'0000);
-  CHECK(std::string(b.scoreLabel) == "Kills");
+  CHECK(std::string(b.scoreLabel) == "Score");  // v0.57: kills plus catches less suicides
   CHECK(b.showDeaths);
   CHECK(b.final);
   REQUIRE(b.rows.size() == 6);
@@ -109,6 +109,30 @@ TEST_CASE("free-for-all rows: score, then deaths, then slot; shared places",
   CHECK(b.rows[4].bot);
   CHECK(b.rows[0].score == 7);
   CHECK(b.rows[0].deaths == 4);
+}
+
+TEST_CASE("negative scores sort below zero, the team score is the sum", "[client][scoreboard]") {
+  // v0.57: a suicide costs a point (suicide_score), so a score may be < 0.
+  RenderHud hud;
+  hud.mode = sim::ModeKind::TeamDeathmatch;
+  hud.phase = HudPhase::MatchEnded;
+  hud.presentMask = 0b1111;
+  hud.teamCount = 2;
+  hud.teams = {0, 1, 0, 1};
+  hud.scores = {-2, 3, 1, -1};
+  hud.teamScores = {-1, 2};
+  hud.matchWinner = 1;
+  const Scoreboard b = buildScoreboard(hud, labels(), 0, 0);
+  CHECK(std::string(b.scoreLabel) == "Score");
+  REQUIRE(b.rows.size() == 4);
+  CHECK(b.rows[0].slot == 2);  // team 0: 1 above -2
+  CHECK(b.rows[1].slot == 0);
+  CHECK(b.rows[1].score == -2);
+  CHECK(b.rows[2].slot == 1);  // team 1: 3 above -1
+  CHECK(b.rows[3].score == -1);
+  CHECK(b.teamScores[0] == -1);
+  CHECK(b.rows[2].winner);
+  CHECK(b.rows[3].winner);
 }
 
 TEST_CASE("round kinds count rounds and no deaths; nobody wins mid-match", "[client][scoreboard]") {

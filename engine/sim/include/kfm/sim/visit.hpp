@@ -28,6 +28,16 @@ namespace kfm::sim {
 
 // --- core types -------------------------------------------------------------
 
+// A signed byte rides as its two's-complement u8 (v0.57: a score, a mode's
+// points), so 0..127 serialise exactly as the unsigned byte did.
+template <class V>
+void visitI8(V& v, int8_t& x) {
+  auto bits = static_cast<uint8_t>(x);
+  v.u8(bits);
+  // Only a reader stores it back: a writer or a hasher may be handed const
+  // data cast to non-const (a static ContentDB in read-only memory).
+  if constexpr (V::kIsReader) x = static_cast<int8_t>(bits);
+}
 template <class V>
 void visit(V& v, Tick& t) {
   v.u32(t.value);
@@ -75,7 +85,7 @@ inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<StatKind> = 4;
 template <>
-inline constexpr uint8_t kEnumCount<BoomerangPhase> = 3;
+inline constexpr uint8_t kEnumCount<BoomerangPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<PickupKind> = 3;
 template <>
@@ -87,6 +97,8 @@ inline constexpr uint8_t kEnumCount<Space> = static_cast<uint8_t>(Space::kCount)
 template <>
 inline constexpr uint8_t kEnumCount<VisionKind> = static_cast<uint8_t>(VisionKind::kCount);
 template <>
+inline constexpr uint8_t kEnumCount<DeathBananas> = static_cast<uint8_t>(DeathBananas::kCount);
+template <>
 inline constexpr uint8_t kEnumCount<GrantKind> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
@@ -94,7 +106,7 @@ template <>
 inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
 static_assert(static_cast<uint8_t>(StatKind::Radius) + 1 == kEnumCount<StatKind>);
-static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
+static_assert(static_cast<uint8_t>(BoomerangPhase::Sinking) + 1 == kEnumCount<BoomerangPhase>);
 static_assert(static_cast<uint8_t>(PickupKind::Flag) + 1 == kEnumCount<PickupKind>);
 static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);
 static_assert(static_cast<uint8_t>(PowerUpShape::Coin) + 1 == kEnumCount<PowerUpShape>);
@@ -211,6 +223,7 @@ void visit(V& v, BoomerangDef& d) {
   visit(v, d.restitution);
   visit(v, d.spawnOffset);
   v.u8(d.damage);
+  v.u16(d.pitSinkTicks);  // v0.57
 }
 template <class V>
 void visit(V& v, PickupDef& d) {
@@ -224,6 +237,7 @@ void visit(V& v, PlayerDef& d) {
   v.u8(d.ammoMax);
   v.u8(d.ammoStart);
   v.u16(d.hitStunTicks);
+  v.u16(d.fallTicks);  // v0.57
   for (uint8_t& a : d.abilities)
     v.u8(a);
 }
@@ -325,6 +339,11 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.vision.focus);
   v.u8(d.vision.hearing);
   v.u8(d.vision.bananaSight);
+  v.u16(d.dryRoundTicks);  // v0.57
+  visit(v, d.deathBananas);
+  visitI8(v, d.catchScore);
+  visitI8(v, d.suicideScore);
+  v.u16(d.bananaRegrowTicks);
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {
@@ -389,8 +408,8 @@ void visit(V& v, MatchRules& r) {
   v.u16(r.present);
   v.u32(r.ticksInPhase);
   v.u8(r.round);
-  for (uint8_t& score : r.scores)
-    v.u8(score);
+  for (int8_t& score : r.scores)  // v0.57: signed, the same byte as before for 0..127
+    visitI8(v, score);
   visit(v, r.lastRoundWinner);
   validatePlayerRef(v, r.lastRoundWinner);
   for (uint8_t& d : r.deaths)
@@ -401,6 +420,7 @@ void visit(V& v, MatchRules& r) {
     v.u16(t);
   for (uint32_t& d : r.modeData)
     v.u32(d);
+  v.u16(r.dryTicks);  // v0.57
 }
 template <class V>
 void visit(V& v, Transform& t) {
@@ -490,6 +510,8 @@ void visit(V& v, Player& p) {
   v.u16(p.knockbackTicks);
   visit(v, p.moveTarget);  // v0.34: the grid's commitment
   v.u16(p.moveTicks);
+  v.u16(p.fallTicks);  // v0.57: a pit fall
+  v.u16(p.regrowTicks);
 }
 template <class V>
 void visit(V& v, Boomerang& b) {
@@ -510,6 +532,7 @@ void visit(V& v, Pickup& p) {
   visit(v, p.pos);
   v.u8(p.powerUpIndex);
   v.u8(p.spawner);
+  v.u8(p.count);  // v0.57
   if constexpr (V::kIsReader) {
     if (p.powerUpIndex >= kMaxPowerUps || p.spawner >= kMaxPickupSpawners) {
       v.markInvalid();

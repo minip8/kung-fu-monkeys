@@ -14,7 +14,7 @@
 // fixed formula so a module's seed is reproducible from the result line.
 //
 // Placements: the MatchEnded winner first, then by final score (round wins
-// or deathmatch eliminations, MatchRules::scores) descending, then by fewer
+// or points, MatchRules::scores) descending, then by fewer
 // deaths, then by lower slot. The sim's winner is always the unique top
 // scorer, so the first key only makes "winner N" and "place 1" agree by
 // construction; a draw or a capped match falls through to the other keys.
@@ -128,8 +128,8 @@ struct SlotResult {
   uint8_t team{0};  // MatchConfig::teams[slot] (slot i in a free-for-all)
   std::string bot;  // toString(spec): "ref:hard" or the module path
   bool module{false};
-  uint8_t place{0};  // 1..n
-  uint32_t score{0};
+  uint8_t place{0};    // 1..n
+  int32_t score{0};    // MatchRules::scores (signed since v0.57: a suicide may go below 0)
   uint32_t kills{0};   // PlayerEliminated with this slot as the killer (not itself)
   uint32_t deaths{0};  // PlayerEliminated with this slot as the victim
   uint32_t acts{0};    // AgentHost counters (acts: ticks with a monkey, v0.35)
@@ -153,7 +153,7 @@ struct TeamResult {
   uint8_t entrant{0};  // index into MatchSetup::teams
   std::string bots;    // the specs of its slots in slot order, comma-separated
   uint8_t place{0};    // 1..T
-  uint32_t score{0};   // MatchContent::teamScore
+  int32_t score{0};    // MatchContent::teamScore (signed since v0.57)
   uint32_t kills{0};   // its slots' kills of enemies
   uint32_t deaths{0};
 };
@@ -195,7 +195,7 @@ struct SlotSummary {
   bool module{false};    // a module played it in some match
   uint32_t wins{0};      // matches this slot is the MatchEnded winner of
   uint64_t placeSum{0};  // for the mean place
-  uint64_t score{0};
+  int64_t score{0};
   uint64_t kills{0};
   uint64_t deaths{0};
   uint64_t acts{0};
@@ -212,7 +212,7 @@ struct EntrantSummary {
   std::string bots;      // its specs
   uint32_t wins{0};      // matches its team won
   uint64_t placeSum{0};  // team places, for the mean
-  uint64_t score{0};
+  int64_t score{0};
   uint64_t kills{0};
   uint64_t deaths{0};
 };

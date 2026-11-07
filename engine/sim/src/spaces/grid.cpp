@@ -6,7 +6,7 @@
 // latch (InputSystem, after the decode). Outside Playing, facing follows aim
 // as in the continuous space. On a Playing tick with ticksInPhase %
 // turnTicks == 0 (a latch), every alive monkey's facing becomes its aim, and
-// each monkey that is not Eliminated, not in HitStun, not rooted
+// each monkey that is not Eliminated or Falling, not in HitStun, not rooted
 // (AbilityDef::rootPhases) and at rest (moveTicks == 0) takes the frame's
 // intent:
 //   - idle (moveMag == 0): it stays; a monkey off its cell's centre (a push,
@@ -14,7 +14,10 @@
 //   - else the neighbour of its cell in octantOf(moveDir), when that cell is
 //     one of the arena's, its circle (the radius stat) lies in the outer box
 //     and overlaps no wall, and for a diagonal both orthogonal neighbours do
-//     too (no corner cutting). A pit is allowed: the monkey falls on the way.
+//     too (no corner cutting). A pit is allowed: the monkey falls on the way
+//     (v0.57: where its centre crosses the pit's edge, as in the continuous
+//     space; a dash's slide is Dashing throughout and falls only if it ends
+//     over the pit).
 //     A blocked step stays (re-centring if off-centre).
 // Contested cells, judged in one pass over the steps taken above: a step
 // loses to another that targets the same cell, or that swaps cells with it,
@@ -39,7 +42,8 @@
 // The last tick's step is exactly moveTarget - pos, so an unobstructed slide
 // lands on the target bit for bit and rounding never accumulates; a slide a
 // push deflected ends where it stands. Slow hazards and move_speed have no
-// say in the grid: a walk is one cell per turn.
+// say in the grid: a walk is one cell per turn. A falling monkey (v0.57)
+// stays where it went in, its commitment dropped.
 #include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/systems.hpp"
 #include "spaces/spaces.hpp"
@@ -127,8 +131,8 @@ void gridLatch(WorldState& s, const MatchContent& content, const InputFrame& fra
   std::array<Step, kMaxPlayers> steps{};
   for (uint8_t i = 0; i < kMaxPlayers; ++i) {
     Player* p = s.playerBySlot(PlayerId{i});
-    if (p == nullptr || p->tags.has(Tag::Eliminated) || p->tags.has(Tag::HitStun) ||
-        p->moveTicks > 0 || rooted(*p, content)) {
+    if (p == nullptr || p->tags.has(Tag::Eliminated) || p->tags.has(Tag::Falling) ||
+        p->tags.has(Tag::HitStun) || p->moveTicks > 0 || rooted(*p, content)) {
       continue;
     }
     const PlayerInput in = maskHas(frame.present, p->id) ? frame.inputs[i] : PlayerInput{};
@@ -167,6 +171,10 @@ void gridMove(WorldState& s, const MatchContent& content) {
     Transform& t = p.transform;
     t.prevPos = t.pos;
     t.vel = Vec2::zero();
+    if (p.tags.has(Tag::Falling)) {
+      p.moveTicks = 0;
+      return;
+    }
     if (!playing) return;
     if (p.tags.has(Tag::HitStun)) {
       p.moveTicks = 0;

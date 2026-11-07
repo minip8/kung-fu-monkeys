@@ -17,7 +17,8 @@ using presentation::HudPhase;
   switch (kind) {
     case sim::ModeKind::Deathmatch:
     case sim::ModeKind::TeamDeathmatch:
-      return "Kills";
+      // v0.57: eliminations plus catch points less suicides, not kills alone.
+      return "Score";
     case sim::ModeKind::Hill:
       return "Points";
     case sim::ModeKind::Capture:
@@ -78,7 +79,8 @@ Scoreboard buildScoreboard(const presentation::RenderHud& hud,
     r.slot = i;
     r.label = labels[i];
     r.team = teams ? static_cast<int8_t>(hud.teams[i]) : int8_t{-1};
-    r.score = hud.scores[i];
+    // An int8_t score is a number, not a character (v0.57: signed scores).
+    r.score = hud.scores[i];  // NOLINT(bugprone-signed-char-misuse)
     r.deaths = b.showDeaths ? hud.deaths[i] : uint8_t{0};
     r.local = sim::maskHas(local, slot);
     r.bot = sim::maskHas(bots, slot);

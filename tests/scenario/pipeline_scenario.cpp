@@ -173,12 +173,14 @@ TEST_CASE("throws decide rounds; rounds respawn everyone; roundsToWin ends the m
                   {EventKind::BoomerangThrown, EventKind::PlayerHit, EventKind::PlayerEliminated,
                    EventKind::BoomerangGrounded, EventKind::PickupSpawned, EventKind::RoundEnded,
                    EventKind::MatchEnded, EventKind::BoomerangCaught}) ==
+          // v0.57: the victim's held banana drops (PickupSpawned) as it despawns.
           (round < content.modes[0].roundsToWin
                ? std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
-                                        EventKind::PlayerEliminated, EventKind::RoundEnded}
+                                        EventKind::PlayerEliminated, EventKind::PickupSpawned,
+                                        EventKind::RoundEnded}
                : std::vector<EventKind>{EventKind::BoomerangThrown, EventKind::PlayerHit,
-                                        EventKind::PlayerEliminated, EventKind::RoundEnded,
-                                        EventKind::MatchEnded}));
+                                        EventKind::PlayerEliminated, EventKind::PickupSpawned,
+                                        EventKind::RoundEnded, EventKind::MatchEnded}));
     const SimEvent& ended = onlyEvent(roundLog, EventKind::RoundEnded);
     CHECK(ended.player == kP1);
     CHECK(ended.a == round);

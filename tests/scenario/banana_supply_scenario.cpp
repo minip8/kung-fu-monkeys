@@ -79,13 +79,13 @@ TEST_CASE("a perfect dash at full ammo into a non-own banana takes the hit",
   CHECK(s.playerBySlot(PlayerId{0}) == nullptr);
   REQUIRE(s.rules.phase == MatchPhase::Playing);
 
-  // The hitting banana flies on toward its thrower; the victim's held banana
-  // went with it. Supply: player 2's banana plus the one in flight.
+  // The hitting banana flies on toward its thrower; v0.57: the victim's held
+  // banana dropped where it died instead of vanishing. Supply: all three.
   CHECK(playerAt(s, PlayerId{1}).ammo == 0);
   CHECK(s.boomerangs.size() == 1);
-  CHECK(s.pickups.empty());
-  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
-  CHECK(supplyOf(s) == 2);
+  CHECK(s.pickups.size() == 1);
+  CHECK(countEvents(log, EventKind::BananaDropped) == 1);
+  CHECK(supplyOf(s) == 3);
 }
 
 TEST_CASE("scripted matches never run out of bananas", "[scenario][supply]") {

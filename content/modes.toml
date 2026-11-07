@@ -15,9 +15,35 @@
 #   rounds_to_win        rounds, survival: round wins that take the match
 #   time_limit_ticks     deathmatch: length of the match; survival: of each
 #                        round; 0 = no clock
-#   score_to_win         deathmatch: eliminations that win (at least 1)
-#   respawn_ticks        deathmatch: from an elimination to the respawn (>= 1)
+#   score_to_win         the point kinds: points that win (at least 1, at most
+#                        127; deathmatch: eliminations plus catch_score and
+#                        suicide_score points)
+#   respawn_ticks        the respawning kinds: from an elimination to the
+#                        respawn (>= 1), the same for every cause of death
 #   respawn_invuln_ticks deathmatch: spawn protection after a respawn
+#   dry_round_ticks      rounds, survival, team_rounds (v0.57): a round with no
+#                        banana left anywhere ends as its clock-out would, at
+#                        once on an arena without pits, after this many dry
+#                        ticks on one with pits (default 180, 3 s)
+#   death_bananas        v0.57: what a death does to the monkey's bananas:
+#                        "drop" (default: the ones in flight come down where
+#                        they are, the held ones scatter around it) or
+#                        "vanish" (every one it owns, held or in flight, goes
+#                        with it; the respawn hands out the starting banana).
+#                        A pit fall always takes the held ones down; the ones
+#                        in flight follow this key from the fall's start
+#   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture:
+#                        points for a perfect dash catch of an enemy's banana
+#                        (the own one or an ally's scores nothing; default 0)
+#   suicide_score        v0.57, the same kinds: points for an elimination with
+#                        no killer (a pit fall; default 0). Negative takes the
+#                        score below zero; score_to_win counts these points
+#                        and a team's score is the sum of its slots'
+#   banana_regrow_ticks  v0.57: a monkey owning no banana (none in its hand,
+#                        none of its own in flight) for this many Playing
+#                        ticks in a row grows one in its hand (0 = never, the
+#                        default); the clock stops while it falls. A mode that
+#                        regrows never runs dry
 #   teams                0 = free-for-all (default), else 2 to 10 teams the
 #                        hosts split the slots into, round-robin (the team
 #                        kinds need it; such a mode plays only on an arena
@@ -78,10 +104,13 @@ round_start_ticks = 60      # 1 s countdown with everyone spawned and frozen
 [[mode]]
 name = "deathmatch"         # eliminations score; the eliminated respawn
 kind = "deathmatch"
-score_to_win = 10           # first to ten eliminations wins
+score_to_win = 10           # first to ten points (eliminations and catches, less suicides)
 time_limit_ticks = 10800    # else the leader after 3 minutes (a tied lead is a draw)
 respawn_ticks = 120         # back in 2 s after an elimination
 respawn_invuln_ticks = 90   # 1.5 s of spawn protection
+death_bananas = "vanish"    # v0.57: a death takes its bananas along; the respawn hands one out
+catch_score = 1             # a perfect catch of an enemy's banana scores
+suicide_score = -1          # a pit fall costs a point (scores may go below zero)
 round_start_ticks = 60
 round_end_ticks = 180
 
@@ -107,10 +136,13 @@ round_end_ticks = 180
 name = "team_deathmatch"    # a team's eliminations to score_to_win
 kind = "team_deathmatch"
 teams = 2
-score_to_win = 20           # the first team to twenty eliminations wins
+score_to_win = 20           # the first team to twenty points
 time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
 respawn_ticks = 120
 respawn_invuln_ticks = 90
+death_bananas = "vanish"
+catch_score = 1
+suicide_score = -1
 round_start_ticks = 60
 round_end_ticks = 180
 
@@ -122,8 +154,10 @@ teams = 2
 hill_ticks = 300            # 5 s alone on the hill scores a point
 score_to_win = 5            # the first team to five points wins
 time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
-respawn_ticks = 120
+respawn_ticks = 300         # v0.57: back in 5 s, whatever the cause (a regrow takes 8 s)
 respawn_invuln_ticks = 90
+death_bananas = "vanish"
+banana_regrow_ticks = 480   # an empty hand grows a banana after 8 s
 round_start_ticks = 60
 round_end_ticks = 180
 
@@ -134,8 +168,10 @@ teams = 2
 score_to_win = 3            # the first team to three captures wins
 flag_return_ticks = 600     # a dropped flag left alone goes home after 10 s
 time_limit_ticks = 10800    # else the leading team after 3 minutes (a tie is a draw)
-respawn_ticks = 120
+respawn_ticks = 300
 respawn_invuln_ticks = 90
+death_bananas = "vanish"
+banana_regrow_ticks = 480
 round_start_ticks = 60
 round_end_ticks = 180
 

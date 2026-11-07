@@ -77,6 +77,7 @@ constexpr ContentDB makeDefaultContent() {
   // Clear of the thrower's contact radius (0.5 + 0.35): no own contact on the spawn tick.
   c.boomerang.spawnOffset = Fixed::one();
   c.boomerang.damage = 1;
+  c.boomerang.pitSinkTicks = 18;
 
   c.pickup.radius = Fixed::half();
 
@@ -86,6 +87,7 @@ constexpr ContentDB makeDefaultContent() {
   c.player.ammoMax = 1;
   c.player.ammoStart = 1;
   c.player.hitStunTicks = 6;
+  c.player.fallTicks = 36;
   c.player.abilities[kAbilitySlotDash] = static_cast<uint8_t>(AbilityKind::Dash);
   c.player.abilities[kAbilitySlotThrow] = static_cast<uint8_t>(AbilityKind::Throw);
   c.loadouts[0].name = ContentName::of(kBaseLoadoutName);

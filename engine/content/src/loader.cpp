@@ -105,7 +105,7 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 10> kTagNames = {{
+constexpr std::array<TagName, 11> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
@@ -116,6 +116,7 @@ constexpr std::array<TagName, 10> kTagNames = {{
     {"parrying", Tag::Parrying},
     {"friendly_fire", Tag::FriendlyFire},
     {"carrying", Tag::Carrying},  // v0.33: the capture mode's, never granted
+    {"falling", Tag::Falling},    // v0.57: a pit fall's, never granted
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -640,6 +641,7 @@ class Builder {
     s.integer("ammo_max", p.ammoMax, 0, 255);
     s.integer("ammo_start", p.ammoStart, 0, 255);
     s.integer("hit_stun_ticks", p.hitStunTicks, 0, 65535);
+    s.integer("fall_ticks", p.fallTicks, 1, 65535);  // v0.57
     if (const toml::node* n = s.take("abilities", true)) parseLoadout(s, *n, loadout_);
   }
 
@@ -674,6 +676,7 @@ class Builder {
     s.fixed("restitution", b.restitution, Fixed::zero(), Fixed::fromInt(4));
     s.fixed("spawn_offset", b.spawnOffset, Fixed::zero(), Fixed::fromInt(16));
     s.integer("damage", b.damage, 0, 255);
+    s.integer("pit_sink_ticks", b.pitSinkTicks, 1, 65535);  // v0.57
   }
 
   void parsePickup(Section& s) {
@@ -1341,13 +1344,38 @@ class Builder {
         m.kind = entry->kind;
       }
     }
-    s.integer("rounds_to_win", m.roundsToWin, 1, 255);
+    // v0.57: scores are int8_t (MatchRules::scores), so a target fits in 127.
+    s.integer("rounds_to_win", m.roundsToWin, 1, INT8_MAX);
     s.integer("round_end_ticks", m.roundEndTicks, 0, 65535);
     s.integer("round_start_ticks", m.roundStartTicks, 0, 65535);
     s.integer("time_limit_ticks", m.timeLimitTicks, 0, 4294967295);
-    s.integer("score_to_win", m.scoreToWin, 0, 255);
+    s.integer("score_to_win", m.scoreToWin, 0, INT8_MAX);
     s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
     s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
+    s.integer("dry_round_ticks", m.dryRoundTicks, 0, 65535);  // v0.57
+    // v0.57, the banana economy.
+    if (const std::optional<std::string> death = s.string("death_bananas")) {
+      if (*death == "drop") {
+        m.deathBananas = sim::DeathBananas::Drop;
+      } else if (*death == "vanish") {
+        m.deathBananas = sim::DeathBananas::Vanish;
+      } else {
+        s.error("unknown death_bananas " + inQuotes(*death) + " (drop or vanish)");
+      }
+    }
+    if (sim::scoresPoints(m.kind)) {
+      s.integer("catch_score", m.catchScore, INT8_MIN, INT8_MAX);
+      s.integer("suicide_score", m.suicideScore, INT8_MIN, INT8_MAX);
+    } else {
+      for (const std::string_view key : {"catch_score", "suicide_score"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) +
+                          "' belongs to a point-scoring kind (deathmatch, team_deathmatch, hill, "
+                          "capture): a round kind's score counts round wins");
+        }
+      }
+    }
+    s.integer("banana_regrow_ticks", m.bananaRegrowTicks, 0, 65535);
     // v0.32: teams, the baseline power-up and the roles. Names resolve once
     // every file is read (powerups.toml sorts after modes.toml).
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);
@@ -1739,7 +1767,8 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
       }
     }
     // Power-ups never take more than half the pickup pool: grounded bananas
-    // need the rest (a full pool makes a grounded banana vanish).
+    // need the rest (v0.57: a full pool stacks a banana on a banana pickup,
+    // rules/bananas.hpp, so there must be some).
     if (alive > sim::kMaxPickups / 2) {
       fail(where + ": spawners' max_alive add up to " + std::to_string(alive) + " (at most " +
            std::to_string(sim::kMaxPickups / 2) + ")");

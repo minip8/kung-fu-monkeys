@@ -102,8 +102,8 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
     float x = (viewW * 0.5f) - (static_cast<float>(teams - 1) * kTeamW * 0.5f);
     for (uint8_t t = 0; t < teams; ++t) {
       char text[32];
-      std::snprintf(text, sizeof text, "Team %u: %u", static_cast<unsigned>(t) + 1U,
-                    static_cast<unsigned>(hud.teamScores[t]));
+      std::snprintf(text, sizeof text, "Team %u: %d", static_cast<unsigned>(t) + 1U,
+                    static_cast<int>(hud.teamScores[t]));
       centredText(dl, 18.0f, ImVec2(x, y), teamColor(t), text);
       x += kTeamW;
     }
@@ -196,7 +196,7 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
       labelW = std::max(labelW, textWidth(kLabel, view.names[i].c_str()));
     }
   }
-  const float scoreW = frags ? textWidth(kLabel, "00 (0)")
+  const float scoreW = frags ? textWidth(kLabel, "-00 (0)")
                              : static_cast<float>(hud.roundsToWin) * ((kPipR * 2.0f) + 4.0f);
   const float baseW = std::max((kPad * 2.0f) + labelW + 8.0f + scoreW,
                                (kPad * 2.0f) + (static_cast<float>(timers) * kTimerStep));
@@ -229,10 +229,10 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
     if (frags) {
       char score[16];
       if (waiting) {
-        std::snprintf(score, sizeof score, "%u (%d)", static_cast<unsigned>(hud.scores[i]),
+        std::snprintf(score, sizeof score, "%d (%d)", static_cast<int>(hud.scores[i]),
                       static_cast<int>(std::ceil(hud.respawnSeconds[i])));
       } else {
-        std::snprintf(score, sizeof score, "%u", static_cast<unsigned>(hud.scores[i]));
+        std::snprintf(score, sizeof score, "%d", static_cast<int>(hud.scores[i]));
       }
       const float sw = textWidth(kLabel * k, score);
       dl->AddText(font, kLabel * k, ImVec2(right - sw, lineY), kWhite, score);
@@ -243,7 +243,7 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
       float px = right - r - (static_cast<float>(hud.roundsToWin) - 1.0f) * step;
       for (uint32_t pip = 0; pip < hud.roundsToWin; ++pip) {
         const ImVec2 c{px, lineY + (kLabel * k * 0.5f)};
-        if (pip < hud.scores[i]) {
+        if (std::cmp_less(pip, hud.scores[i])) {
           dl->AddCircleFilled(c, r, slotColor(i));
         } else {
           dl->AddCircleFilled(c, r, kEmptyPip);
@@ -308,7 +308,8 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
   const presentation::RenderState& rs = *in.state;
   for (uint16_t k = 0; k < rs.playerCount; ++k) {
     const presentation::RenderPlayer& p = rs.players[k];
-    if (!p.visible) continue;
+    // v0.57: a monkey going down a pit is out; its tag would hang over the pit.
+    if (!p.visible || p.has(presentation::PlayerFlag::Falling)) continue;
     const presentation::Vec3 head =
         p.position + presentation::Vec3{0.0f, rs.playerHeight + kTagLift, 0.0f};
     const presentation::ScreenPoint sp = presentation::worldToScreen(*in.camera, head);
@@ -395,8 +396,8 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
       dl->AddRectFilled(ImVec2(left - 4.0f, y + 2.0f), ImVec2(right + 4.0f, y + kRowH - 2.0f),
                         slotColor(team, 60), 8.0f);
       ui::shadowText(dl, kText, ImVec2(left, ty), ui::kCream, text);
-      std::snprintf(text, sizeof text, "%u",
-                    static_cast<unsigned>(b.teamScores[team < sim::kMaxPlayers ? team : 0]));
+      std::snprintf(text, sizeof text, "%d",
+                    static_cast<int>(b.teamScores[team < sim::kMaxPlayers ? team : 0]));
       rightText(kText, scoreX, ty, ui::kCream, text);
       y += kRowH;
     }
@@ -418,7 +419,7 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
     ui::shadowText(dl, kText, ImVec2(nx, ty), ui::kCream, r.label.c_str());
     nx += textWidth(kText, r.label.c_str()) + 8.0f;
     if (r.local) dl->AddText(font, kSmall, ImVec2(nx, ty + 3.0f), ui::kCreamDim, "you");
-    std::snprintf(text, sizeof text, "%u", static_cast<unsigned>(r.score));
+    std::snprintf(text, sizeof text, "%d", static_cast<int>(r.score));
     rightText(kText, scoreX, ty, kWhite, text);
     if (b.showDeaths) {
       std::snprintf(text, sizeof text, "%u", static_cast<unsigned>(r.deaths));

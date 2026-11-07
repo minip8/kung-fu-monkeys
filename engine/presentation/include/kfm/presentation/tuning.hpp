@@ -36,6 +36,10 @@ inline constexpr float kPickupHeight = 0.15f;
 inline constexpr float kPickupBobHeight = 0.08f;
 inline constexpr float kPickupBobHz = 0.8f;
 inline constexpr float kPickupSpinRadPerSec = 1.5f;
+// v0.57: a stacked banana pickup (several bananas on one spot) draws each
+// extra banana this much higher and turned this much further.
+inline constexpr float kPickupStackLift = 0.12f;
+inline constexpr float kPickupStackTurn = 0.9f;
 
 // --- arena statics (§7, v0.22) -------------------------------------------------------
 // Interior walls are drawn as blocks this tall: above a banana in flight
@@ -137,6 +141,37 @@ inline constexpr float kChargeAimLength = 1.6f;
 // --- squash and stretch ------------------------------------------------------------
 inline constexpr float kDashStretch = 0.18f;  // forward stretch while dashing
 inline constexpr float kHitSquash = 0.2f;     // vertical squash at the start of hit-stun
+
+// --- pit falls (v0.57) ------------------------------------------------------------------
+// A falling monkey (Tag::Falling) is drawn from its fall progress t in [0, 1]
+// (PlayerDef::fallTicks, interpolated like the position): over the first
+// kFallTeeterFraction it hops up kFallHopHeight (a startled teeter at the
+// edge), then drops kFallDepth below the floor as u², u the rest of the fall;
+// the floor's depth hides what is under it (the sim starts a fall only with
+// the whole body over the pit, so it sinks where it stands). It shrinks to
+// kFallEndScale, tips its nose down by kFallTilt
+// radians, spins kFallSpinTurns whole turns (as t²) and darkens by
+// kFallDarken; its shadow shrinks away with it, and a banana in its hand
+// goes down with it.
+inline constexpr float kFallTeeterFraction = 0.18f;
+inline constexpr float kFallHopHeight = 0.22f;
+inline constexpr float kFallDepth = 2.2f;
+inline constexpr float kFallEndScale = 0.5f;
+inline constexpr float kFallTilt = 0.7f;
+inline constexpr float kFallSpinTurns = 0.75f;
+inline constexpr float kFallDarken = 0.55f;
+inline constexpr float kPitFallSeconds = 0.45f;  // the PitFall ring
+// A banana that comes down over a pit (v0.57, Sinking) drops from hand height
+// to this far below the floor as t² over BoomerangDef::pitSinkTicks; the
+// splash ring where it drops in is this big.
+inline constexpr float kBananaSinkDepth = 0.8f;
+inline constexpr float kBananaSplashSize = 0.45f;
+// The banana economy (v0.57): a banana grown in an empty hand twinkles there
+// (PickupSparkle) with a short flash; a dead monkey's banana in flight that
+// vanishes with it leaves a small white puff (ThrowPuff) where it was.
+inline constexpr float kRegrowSparkleSeconds = 0.5f;
+inline constexpr float kRegrowFlashSeconds = 0.15f;
+inline constexpr float kBananaVanishSeconds = 0.3f;
 
 // --- effects ---------------------------------------------------------------------------
 inline constexpr float kDashRingSeconds = 0.25f;

@@ -13,3 +13,4 @@ turn_rate_bam = 1200        # ~6.6 degrees per tick of homing while returning
 restitution = 1             # wall bounce keeps all its speed
 spawn_offset = 1            # spawns 1 unit ahead of the thrower: clear of 0.5 + 0.35
 damage = 1                  # one hit eliminates a 1-hp monkey; the banana flies on through it
+pit_sink_ticks = 18         # a banana that comes down over a pit: 0.3 s dropping in, then gone

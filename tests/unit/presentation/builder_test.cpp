@@ -486,7 +486,7 @@ TEST_CASE("HUD derives phase, countdown, scores and winners", "[presentation][bu
 
   // MatchEnded names the winner.
   s.rules.phase = MatchPhase::MatchEnded;
-  s.rules.scores[0] = content.modes[0].roundsToWin;
+  s.rules.scores[0] = static_cast<int8_t>(content.modes[0].roundsToWin);
   rs = build(ps, s, s, 1.0f);
   CHECK(rs.hud.phase == HudPhase::MatchEnded);
   CHECK(rs.hud.matchWinner == 0);
@@ -782,6 +782,11 @@ TEST_CASE("sound cues: table, pan and same-frame merging", "[presentation][build
   CHECK(id(MatchEnded) == SoundId::MatchEnd);
   CHECK(id(PlayerRespawned) == SoundId::Respawn);
   CHECK(id(ScoreChanged) == SoundId::Score);
+  // v0.57: a point lost to a suicide plays no coin; a regrown banana pops.
+  CHECK(soundForEvent(SimEvent{ScoreChanged, Tick{0}, kP0, EntityId{}, 0xFFFFFFFFu,
+                               static_cast<uint32_t>(sim::ScoreReason::Suicide)}) == std::nullopt);
+  CHECK(id(BananaRegrown) == SoundId::Regrow);
+  CHECK(id(BananaVanished) == SoundId::Count);
   CHECK(id(TimerWarning) == SoundId::TimerWarning);
   CHECK(id(PlayerSpawned) == SoundId::Count);
   CHECK(id(PickupSpawned) == SoundId::Count);
@@ -1136,4 +1141,88 @@ TEST_CASE("zones and capture flags render (v0.33)", "[presentation][builder][cap
   const SimEvent taken{
       EventKind::PickupTaken, s.tick, kP1, flag, static_cast<uint32_t>(PickupKind::Flag), 1};
   CHECK(soundForEvent(taken).value_or(SoundCue{SoundId::Count, 0.0f, 0.0f}).id == SoundId::PowerUp);
+}
+
+TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit (v0.57)",
+          "[presentation][builder][pit]") {
+  // The dojo with a pit strip at x in [-9, -7]; P0 stands with its whole
+  // body over it, touching the east edge, and goes in on the first tick.
+  ContentDB c = defaultContent();
+  ArenaDef& a = c.arenas[0];
+  a.hazards[0] = Hazard{Vec2{Fixed::fromInt(-9), -a.halfExtents.y},
+                        Vec2{Fixed::fromInt(-7), a.halfExtents.y}, HazardKind::Pit, Fixed::one()};
+  a.hazardCount = 1;
+  const std::optional<SoundCue> cue =
+      soundForEvent(SimEvent{EventKind::PlayerFell, Tick{0}, kP0, EntityId{}, 0, 0});
+  CHECK(cue.has_value());
+  CHECK(cue.value_or(SoundCue{}).id == SoundId::Fall);
+  // A faller's banana dropping into its pit plops.
+  CHECK(soundForEvent(SimEvent{EventKind::BoomerangFell, Tick{0}, kP0, EntityId{}, 0, 0})
+            .value_or(SoundCue{})
+            .id == SoundId::BananaPlop);
+  WorldState s = makePlayingWorld(57, 0b11, c);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-7) - c.player.radius, Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(8), Fixed::zero()});
+  REQUIRE(playerAt(s, kP0).ammo > 0);
+  // And one of its bananas in flight over the pit: it comes down as the fall
+  // begins and drops into the hole.
+  spawnBanana(s, kP0, Vec2{-Fixed::fromInt(8), Fixed::fromInt(3)}, Vec2{}, BoomerangPhase::Outbound,
+              c);
+  const float radius = c.player.radius.toFloat();
+  PresentationState ps;
+  float lastFall = -1.0f;
+  float deepest = 0.0f;
+  bool sawStart = false;
+  bool sawBurst = false;
+  bool bananaSank = false;
+  bool plop = false;
+  for (int k = 0; k < c.player.fallTicks + 2 && !sawBurst; ++k) {
+    const WorldState prev = s;
+    EventLog log;
+    runTicks(s, frameFor(s), 1, c, log);
+    const RenderState rs = buildRenderState(ps, prev, s, 1.0f, log, c, kDt);
+    for (uint16_t i = 0; i < rs.bananaCount; ++i) {
+      const RenderBanana& b = rs.bananas[i];
+      if (b.phase == BananaPhase::Sinking && b.height < 0.0f) bananaSank = true;
+    }
+    for (uint16_t i = 0; i < rs.soundCount; ++i)
+      plop = plop || rs.sounds[i].id == SoundId::BananaPlop;
+    if (findEvent(log, EventKind::PlayerFell) != nullptr) {
+      sawStart = true;
+      // The monkey's ring and the small splash of its banana coming down over the pit.
+      CHECK(countEffects(rs, EffectKind::PitFall) == 2);
+      bool fallSound = false;
+      for (uint16_t i = 0; i < rs.soundCount; ++i)
+        fallSound = fallSound || rs.sounds[i].id == SoundId::Fall;
+      CHECK(fallSound);
+    }
+    if (const RenderPlayer* p = findPlayer(rs, 0)) {
+      REQUIRE(p->has(PlayerFlag::Falling));
+      CHECK(p->fall >= lastFall);
+      lastFall = p->fall;
+      deepest = std::min(deepest, p->position.y);
+      // It sinks where it stands, its whole body over the pit, the banana
+      // still in its hand.
+      CHECK(groundOf(*p).x <= -7.0f - radius + 1e-3f);
+      CHECK(p->has(PlayerFlag::HasAmmo));
+      if (p->fall > 0.5f) {
+        CHECK(p->scale.y < 1.0f);
+        CHECK(p->tilt < 0.0f);
+      }
+    } else if (findEvent(log, EventKind::PlayerEliminated) != nullptr) {
+      // The burst comes out of the pit at floor level, not at body height.
+      for (uint16_t i = 0; i < rs.effectCount; ++i) {
+        if (rs.effects[i].kind != EffectKind::EliminationBurst) continue;
+        CHECK(rs.effects[i].position.y == Approx(kEffectGroundHeight));
+        sawBurst = true;
+      }
+    }
+  }
+  CHECK(sawStart);
+  CHECK(sawBurst);
+  CHECK(bananaSank);
+  CHECK(plop);
+  CHECK(lastFall > 0.9f);
+  // Deep enough under the floor that the body, scaled down, is gone.
+  CHECK(deepest < -radius * kMonkeyHeightOverRadius * kFallEndScale);
 }

@@ -46,6 +46,7 @@ enum class PlayerFlag : uint16_t {
   HasAmmo = 1u << 7,
   Carrying = 1u << 8,  // v0.33: holds a capture flag (Tag::Carrying)
   Charging = 1u << 9,  // v0.48: the Throw slot's wind-up is a charging one (still in Startup)
+  Falling = 1u << 10,  // v0.57: going down a pit (Tag::Falling); RenderPlayer::fall
 };
 [[nodiscard]] constexpr uint16_t flagBit(PlayerFlag f) {
   return static_cast<uint16_t>(f);
@@ -82,13 +83,20 @@ struct RenderPlayer {
   // v0.48, while Charging: the charge so far (0 = a tap, 1 = full). v0.53:
   // it drives the charge pose and, at 1, the strain (animation.hpp).
   float throwCharge{0.0f};
+  // v0.57, while Falling: the fall so far (0 = it just went in, 1 = out),
+  // interpolated like the position, and the body's pitch about the model's
+  // side axis (z; negative tips the nose down). position, scale and bodyYaw
+  // already carry the rest of the fall (builder.hpp).
+  float fall{0.0f};
+  float tilt{0.0f};
   std::array<RenderPowerUp, sim::kMaxModifiers> powerUps{};  // in slot (pickup) order
   uint8_t powerUpCount{0};
 
   [[nodiscard]] constexpr bool has(PlayerFlag f) const { return (flags & flagBit(f)) != 0; }
 };
 
-enum class BananaPhase : uint8_t { Outbound = 0, Returning, Grounded };
+// v0.57: Sinking, a banana that came down over a pit dropping into the hole.
+enum class BananaPhase : uint8_t { Outbound = 0, Returning, Grounded, Sinking };
 
 struct RenderBanana {
   Vec3 position{};  // world space, y = hand height + arc
@@ -110,6 +118,7 @@ struct RenderPickup {
   Vec3 ground{};
   float spin{0.0f};
   float radius{0.0f};  // sim contact radius
+  uint8_t count{1};    // v0.57, Banana: bananas stacked here (drawn as up to three)
   PickupKindView kind{PickupKindView::Banana};
   // PowerUp: the def's look (palette.hpp index, shape) and its index.
   // Flag (v0.33): the team's colour (team t is palette colour t), shape
@@ -164,6 +173,8 @@ enum class EffectKind : uint8_t {
   ParrySpark,     // a bright clash where a banana was parried (direction: its new heading)
   // v0.35 (the squad contest):
   CallShout,  // a call: rings popping over the caller's head (slot colour; size = symbol / 255)
+  // v0.57 (pit falls):
+  PitFall,  // a ring closing in where a monkey went down a pit (slot colour)
 };
 
 struct RenderEffect {
@@ -220,8 +231,8 @@ struct RenderHud {
   float roundEndSeconds{0.0f};   // RoundEnded: until the next round; else 0
   uint8_t round{0};
   uint8_t roundsToWin{0};
-  uint16_t presentMask{0};  // bit i: slot i is in the match
-  std::array<uint8_t, sim::kMaxPlayers> scores{};
+  uint16_t presentMask{0};                        // bit i: slot i is in the match
+  std::array<int8_t, sim::kMaxPlayers> scores{};  // signed since v0.57
   int8_t lastRoundWinner{kNoSlot};  // kNoSlot before the first round end or after a draw
   int8_t matchWinner{kNoSlot};      // set in MatchEnded
   // v0.23 (modes): what the scoreboard shows. scores are round wins in
@@ -237,7 +248,7 @@ struct RenderHud {
   // team (MatchConfig::teams) and every team's score (the sum of its slots').
   uint8_t teamCount{0};
   std::array<uint8_t, sim::kMaxPlayers> teams{};
-  std::array<uint16_t, sim::kMaxPlayers> teamScores{};
+  std::array<int16_t, sim::kMaxPlayers> teamScores{};
 };
 
 struct RenderState {

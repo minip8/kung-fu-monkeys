@@ -31,7 +31,9 @@ enum class EventKind : uint8_t {
   PlayerDashHit,      // player = victim, entity = attacker's player, a = attacker slot,
                       // b = hp after (a dash attack, §5.6; PlayerHit is a banana hit)
   // v0.23 (modes, §5.3):
-  ScoreChanged,     // player, a = score after (a round win, or an elimination in deathmatch)
+  ScoreChanged,     // player, a = score after (int32 bits: may be negative, v0.57),
+                    // b = ScoreReason (a point-scoring kind's point; round wins ride on
+                    // RoundEnded)
   PlayerRespawned,  // player, entity, a = spawn point index (deathmatch respawn or late join)
   TimerWarning,     // a = whole seconds left on the mode's clock (10, 3, 2, 1)
   ShieldBroken,     // player = shielded victim, entity = the banana or the dashing player,
@@ -48,10 +50,28 @@ enum class EventKind : uint8_t {
   // v0.35 (the squad contest, §8):
   MonkeyCalled,  // player = caller, entity = caller's player, a = symbol (the aim byte),
                  // b = the call's range (raw Q16.16 bits)
+  // v0.57 (pit falls, §5.6):
+  PlayerFell,      // player, entity = player, a = the pit's index in the arena's hazards;
+                   // PlayerEliminated (killer 0xFF) follows PlayerDef::fallTicks - 1 ticks later
+  BoomerangFell,   // player = owner, entity = boomerang: a banana came down over a pit and
+                   // drops into the hole (Sinking) instead of becoming a pickup
+  BananaDropped,   // player = the monkey it came from, entity = the pickup: a held (or
+                   // overflowing) banana dropped to the floor instead of vanishing
+  BananaVanished,  // player = owner, entity = boomerang: a dead (or falling) monkey's banana
+                   // in flight went with it (ModeDef::deathBananas = vanish)
+  BananaRegrown,   // player, entity = player: an empty hand grew a banana
+                   // (ModeDef::bananaRegrowTicks)
 };
 
 // BoomerangCaught payload `a`.
 enum class CatchHow : uint8_t { Perfect = 0, Auto = 1 };
+
+// ScoreChanged payload `b` (v0.57): why a point-scoring slot's score moved.
+enum class ScoreReason : uint8_t {
+  Objective = 0,  // the kind's own point: an elimination, a hill point, a capture
+  Catch = 1,      // ModeDef::catchScore: a perfect catch of an enemy's banana
+  Suicide = 2,    // ModeDef::suicideScore: an elimination with no killer (a pit fall)
+};
 
 struct SimEvent {
   EventKind kind{EventKind::None};

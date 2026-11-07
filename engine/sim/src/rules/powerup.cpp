@@ -48,6 +48,21 @@ bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, Entity
       ammo += std::max(grant.stat.add.floorToInt(), int32_t{0});
     }
   }
+  // v0.57: the top-up fills up to the ammoMax the new entry gives, never past
+  // it (ammo above ammoMax is real bananas that LifecycleSystem drops), and
+  // never takes any away.
+  int32_t ammoMax = content.db.player.ammoMax;  // as ModifierSystem derives it
+  for (uint8_t i = 0; i < mods.count && i < kMaxModifiers; ++i) {
+    const PowerUpDef& held = content.db.powerUpAt(mods.items[i].powerUp);
+    for (uint8_t g = 0; g < held.grantCount && g < kMaxPowerUpGrants; ++g) {
+      const PowerUpGrant& grant = held.grants[g];
+      if (grant.kind == GrantKind::Stat && grant.stat.stat == StatKind::AmmoMax) {
+        ammoMax += grant.stat.add.floorToInt();
+      }
+    }
+  }
+  ammoMax = std::clamp<int32_t>(ammoMax, 0, UINT8_MAX);
+  ammo = std::min<int32_t>(ammo, std::max<int32_t>(p->ammo, ammoMax));
   p->ammo = static_cast<uint8_t>(std::min<int32_t>(ammo, UINT8_MAX));
 
   const Pickup taken = *pickup;  // the hook sees it after the despawn

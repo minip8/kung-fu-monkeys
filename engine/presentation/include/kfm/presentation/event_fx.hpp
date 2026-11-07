@@ -30,7 +30,8 @@ namespace kfm::presentation {
 //   PickupTaken -> Pickup              BoomerangGrounded -> BananaGround
 //   BoomerangBounced -> WallBounce     RoundEnded -> RoundEnd
 //   MatchEnded -> MatchEnd             PlayerRespawned -> Respawn
-//   ScoreChanged -> Score              TimerWarning -> TimerWarning
+//   ScoreChanged -> Score (none for a Suicide point, v0.57)
+//   TimerWarning -> TimerWarning       BananaRegrown -> Regrow (v0.57)
 // CountIn and RoundGo follow the HUD countdown (builder), UiClick the app.
 [[nodiscard]] std::optional<SoundCue> soundForEvent(const sim::SimEvent& e);
 

@@ -146,7 +146,7 @@ TEST_CASE("teams: balanced assignment and the relation", "[scenario][teams]") {
   CHECK(teams.relation(kP0, kP2) == Relation::Ally);
   CHECK(teams.relation(kP3, kP1) == Relation::Ally);
   CHECK(teams.relation(kP0, kP1) == Relation::Enemy);
-  std::array<uint8_t, kMaxPlayers> scores{};
+  std::array<int8_t, kMaxPlayers> scores{};
   scores = {1, 2, 3, 4};
   CHECK(teams.teamScore(scores, 0) == 4);
   CHECK(teams.teamScore(scores, 1) == 6);

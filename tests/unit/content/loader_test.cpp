@@ -547,6 +547,21 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
   // v0.34: a window of 0 (never perfect) and one spanning the active phase load.
   CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 0")));
   CHECK(loads(replaced(kMinimal, "perfect_window_ticks = 4", "perfect_window_ticks = 12")));
+  // v0.57: the banana economy; the score keys only in a point-scoring kind.
+  CHECK(loads(replaced(kMinimal, "name = \"rounds\"",
+                       "name = \"rounds\"\ndeath_bananas = \"vanish\"\nbanana_regrow_ticks = 9")));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\ndeath_bananas = \"keep\"")),
+                 "unknown death_bananas \"keep\" (drop or vanish)"));
+  CHECK(contains(
+      loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\ncatch_score = 1")),
+      "'catch_score' belongs to a point-scoring kind"));
+  CHECK(loads(replaced(kMinimal, "name = \"rounds\"",
+                       "name = \"rounds\"\nkind = \"deathmatch\"\nsuicide_score = -1")));
+  CHECK(contains(loadErrors(replaced(kMinimal, "name = \"rounds\"",
+                                     "name = \"rounds\"\nkind = \"deathmatch\"\n"
+                                     "suicide_score = -129")),
+                 "'suicide_score' must be an integer in [-128, 127]"));
   // v0.34: the space, and the grid's keys only in a grid mode.
   CHECK(contains(
       loadErrors(replaced(kMinimal, "name = \"rounds\"", "name = \"rounds\"\nspace = \"hex\"")),
@@ -1042,6 +1057,35 @@ TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][m
   CHECK(loaded.modes[deathmatch].timeLimitTicks > 0);
   CHECK(loaded.modes[survival].kind == sim::ModeKind::Survival);
   CHECK(loaded.modes[survival].timeLimitTicks > 0);
+}
+
+TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loader][modes]") {
+  ContentDB loaded{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
+  for (const char* name : {"rounds", "survival", "team_rounds", "grid_rounds", "grid_rounds_1t"}) {
+    const sim::ModeDef& m = loaded.modes[loaded.findMode(name).value_or(0)];
+    CHECK(m.deathBananas == sim::DeathBananas::Drop);
+    CHECK(m.catchScore == 0);
+    CHECK(m.suicideScore == 0);
+    CHECK(m.bananaRegrowTicks == 0);
+  }
+  for (const char* name : {"deathmatch", "team_deathmatch"}) {
+    const sim::ModeDef& m = loaded.modes[loaded.findMode(name).value_or(0)];
+    CHECK(m.deathBananas == sim::DeathBananas::Vanish);
+    CHECK(m.catchScore == 1);
+    CHECK(m.suicideScore == -1);
+    CHECK(m.bananaRegrowTicks == 0);
+    CHECK(m.respawnTicks == 120);
+  }
+  for (const char* name : {"hill", "capture"}) {
+    const sim::ModeDef& m = loaded.modes[loaded.findMode(name).value_or(0)];
+    CHECK(m.deathBananas == sim::DeathBananas::Vanish);
+    CHECK(m.catchScore == 0);
+    CHECK(m.suicideScore == 0);
+    CHECK(m.bananaRegrowTicks == 480);
+    CHECK(m.respawnTicks == 300);
+  }
 }
 
 TEST_CASE("content/ ships blink, slam and parry as loadouts (v0.21, v0.31)",

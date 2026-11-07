@@ -277,7 +277,8 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
 
   for (size_t i = 0; i < n; ++i) {
     SlotResult& s = result.slots[i];
-    s.score = world->rules.scores[i];
+    // An int8_t score is a number, not a character (v0.57: signed scores).
+    s.score = world->rules.scores[i];  // NOLINT(bugprone-signed-char-misuse)
     const ai::AgentSlotStats stats = host.stats(PlayerId{static_cast<uint8_t>(i)});
     s.acts = stats.acts;
     s.substitutions = stats.substitutions;

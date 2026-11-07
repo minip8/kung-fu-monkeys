@@ -104,6 +104,17 @@ struct VisionDef {
   constexpr bool operator==(const VisionDef&) const = default;
 };
 
+// v0.57, what becomes of a dead monkey's bananas (ModeDef::deathBananas).
+// Drop: the ones away from it come down where they are and the held ones
+// scatter around it (the round kinds, where a round ends when none is left).
+// Vanish: every banana it owns, held or in flight, goes with it (the respawn
+// kinds: the respawn hands out the starting banana again).
+enum class DeathBananas : uint8_t {
+  Drop = 0,
+  Vanish,
+  kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a choice
+};
+
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
 // ModeDef::arena when the mode names no arena of its own (v0.34).
@@ -163,6 +174,26 @@ struct ModeDef {
   uint8_t arena{kNoArena};
   // v0.35, the squad contest (§8): what a bot sees. Defaults to everything.
   VisionDef vision{};
+  // v0.57, the round kinds: a round in which no banana is left anywhere (none
+  // in a hand, in flight or lying around, and no spawner that can still lay a
+  // power-up that tops ammo up) ends like a clock-out, at once on an arena
+  // without pits (nothing else can eliminate anyone) or after this many dry
+  // ticks on one with pits (a monkey may still walk or be pushed in).
+  uint16_t dryRoundTicks{180};
+  // v0.57, the banana economy. What a death does to the monkey's bananas (a
+  // pit fall always takes the held ones down; the ones in flight follow this
+  // too, from the moment the fall begins).
+  DeathBananas deathBananas{DeathBananas::Drop};
+  // Points a point-scoring kind (scoresPoints) adds to a slot's score for a
+  // perfect dash catch of an enemy's banana (the own one or an ally's scores
+  // nothing), and for a suicide: an elimination with no killer (a pit fall).
+  // 0 = none; a score may go below zero. The loader keeps both 0 elsewhere.
+  int8_t catchScore{0};
+  int8_t suicideScore{0};
+  // A monkey that owns no banana (none in its hand, none of its own in
+  // flight) for this many Playing ticks in a row grows one (BananaRegrown);
+  // 0 = never. The clock stops while it falls and is not kept across a death.
+  uint16_t bananaRegrowTicks{0};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }

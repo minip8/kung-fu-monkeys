@@ -8,6 +8,7 @@
 //                    [--width W] [--height H] [--exit-after-frames N]
 //                    [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]
 //                    [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]
+//                    [--fall-at PERCENT]
 //
 // --exit-after-frames N renders N frames and exits 0 (rendering smoke test).
 // --screenshot path     writes the last rendered frame as binary PPM (native only;
@@ -16,8 +17,12 @@
 // --exit-on WHAT        ends on the first frame showing WHAT, one of dash-ring,
 //                       perfect-catch, auto-catch, hit, throw, elimination (effects)
 //                       catch-window (a player with the PerfectDash flag) or
-//                       charge (v0.48: a throw charged past half);
-//                       --exit-after-frames still bounds the run.
+//                       charge (v0.48: a throw charged past half),
+//                       pit-fall (v0.57: the ring where a monkey went down a pit),
+//                       scatter (v0.57: a few frames after a dead monkey's held
+//                       bananas scattered, two or more of them) or
+//                       fall (a monkey's pit fall at least --fall-at PERCENT through,
+//                       default 40); --exit-after-frames still bounds the run.
 // --capsules            draw players as capsules instead of the skinned model
 //                       (also the fallback when content/models/test_rig.glb is missing).
 // --content DIR         content directory (default: content/ next to the
@@ -76,7 +81,8 @@ struct Options {
   bool hideUi = false;
   bool capsules = false;
   presentation::ThemeChoice theme = presentation::ThemeChoice::Auto;  // v0.52
-  int exitOn = -1;  // -1: none; < kExitOnWindow: an EffectKind; kExitOnWindow: PerfectDash
+  int exitOn = -1;      // -1: none; < kExitOnWindow: an EffectKind; kExitOnWindow: PerfectDash
+  float fallAt = 0.4f;  // v0.57: --exit-on fall's threshold
   std::string_view contentDir;  // empty: next to the executable, else embedded
   std::string_view arena;       // names; empty = the first one
   std::string_view mode;
@@ -85,12 +91,14 @@ struct Options {
 
 constexpr int kExitOnWindow = 100;
 constexpr int kExitOnCharge = 101;
+constexpr int kExitOnFall = 102;     // v0.57
+constexpr int kExitOnScatter = 103;  // v0.57
 
 struct ExitOnName {
   std::string_view name;
   int value;
 };
-constexpr std::array<ExitOnName, 8> kExitOnNames = {{
+constexpr std::array<ExitOnName, 11> kExitOnNames = {{
     {"dash-ring", static_cast<int>(presentation::EffectKind::DashRing)},
     {"perfect-catch", static_cast<int>(presentation::EffectKind::PerfectCatchFlash)},
     {"auto-catch", static_cast<int>(presentation::EffectKind::AutoCatchFlash)},
@@ -99,6 +107,9 @@ constexpr std::array<ExitOnName, 8> kExitOnNames = {{
     {"elimination", static_cast<int>(presentation::EffectKind::EliminationBurst)},
     {"catch-window", kExitOnWindow},
     {"charge", kExitOnCharge},
+    {"pit-fall", static_cast<int>(presentation::EffectKind::PitFall)},
+    {"fall", kExitOnFall},
+    {"scatter", kExitOnScatter},
 }};
 
 struct App {
@@ -108,6 +119,7 @@ struct App {
   platform::Window window;
   presentation::Renderer renderer;
   presentation::PresentationState presentation{};
+  int scatterFrames{-1};  // v0.57, --exit-on scatter: frames left, -1 = not yet
   presentation::RenderState renderState{};
   sim::WorldState prev{};
   sim::WorldState curr{};
@@ -131,7 +143,7 @@ constexpr const char* kUsage =
     "                        [--width W] [--height H] [--exit-after-frames N]\n"
     "                        [--screenshot out.ppm] [--hide-ui] [--exit-on WHAT] [--capsules]\n"
     "                        [--content DIR] [--arena NAME] [--mode NAME] [--loadout NAME]\n"
-    "                        [--theme auto|jungle|temple|beach]\n";
+    "                        [--theme auto|jungle|temple|beach] [--fall-at PERCENT]\n";
 
 template <typename T>
 bool parseNumber(std::string_view v, T& out) {
@@ -161,6 +173,11 @@ bool parseArgs(int argc, const char* const* argv, Options& o) {
           ok = true;
         }
       }
+    } else if (arg == "--fall-at" && hasValue) {
+      const std::string_view v = argv[++i];
+      int percent = 0;
+      ok = parseNumber(v, percent) && percent >= 0 && percent <= 100;
+      o.fallAt = static_cast<float>(percent) / 100.0f;
     } else if (arg == "--content" && hasValue) {
       o.contentDir = argv[++i];
     } else if (arg == "--arena" && hasValue) {
@@ -261,11 +278,29 @@ void stepSim(App& app) {
     sim::step(app.curr, f, content, app.sink);
     app.frameEvents.insert(app.frameEvents.end(), app.sink.events.begin(),
                            app.sink.events.begin() + app.sink.count);
+    // v0.57, --exit-on scatter: two or more held bananas dropped by one monkey
+    // at once (a death); the probe ends a few frames on, the dust settling.
+    std::array<uint8_t, sim::kMaxPlayers> dropped{};
+    for (uint16_t e = 0; e < app.sink.count; ++e) {
+      const sim::SimEvent& ev = app.sink.events[e];
+      if (ev.kind == sim::EventKind::BananaDropped && ev.player.isValid() &&
+          ev.player.value < sim::kMaxPlayers && ++dropped[ev.player.value] >= 2 &&
+          app.scatterFrames < 0) {
+        app.scatterFrames = 8;
+      }
+    }
   }
 }
 
-[[nodiscard]] bool showsExitOn(const presentation::RenderState& rs, int exitOn) {
+[[nodiscard]] bool showsExitOn(const presentation::RenderState& rs, int exitOn, float fallAt) {
   if (exitOn < 0) return false;
+  if (exitOn == kExitOnFall) {
+    for (uint16_t i = 0; i < rs.playerCount; ++i) {
+      const presentation::RenderPlayer& p = rs.players[i];
+      if (p.visible && p.has(presentation::PlayerFlag::Falling) && p.fall >= fallAt) return true;
+    }
+    return false;
+  }
   if (exitOn == kExitOnCharge) {
     for (uint16_t i = 0; i < rs.playerCount; ++i) {
       const presentation::RenderPlayer& p = rs.players[i];
@@ -339,7 +374,9 @@ bool frame(void* user) {
   const bool lastFrame =
       app->quit ||
       (app->options.exitAfterFrames != 0 && app->frames >= app->options.exitAfterFrames) ||
-      showsExitOn(app->renderState, app->options.exitOn);
+      showsExitOn(app->renderState, app->options.exitOn, app->options.fallAt) ||
+      (app->options.exitOn == kExitOnScatter && app->scatterFrames == 0);
+  if (app->scatterFrames > 0) --app->scatterFrames;
   if (lastFrame) {
     std::printf("kfm_render_probe: %llu frames, tick %u, %u draw calls, %u triangles\n",
                 static_cast<unsigned long long>(app->frames), app->curr.tick.value,

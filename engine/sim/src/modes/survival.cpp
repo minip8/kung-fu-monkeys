@@ -3,7 +3,9 @@
 // present); when timeLimitTicks of play pass first, the survivor with the
 // most hp wins it, then the one with the fewest deaths this match, and a tie
 // on both is a draw. Round wins count toward roundsToWin as in rounds mode;
-// nobody respawns within a round.
+// nobody respawns within a round. v0.57: neither end comes while a monkey is
+// falling down a pit (anyFalling); the clock waits the fall out. A round with
+// no banana left anywhere ends as the clock would (roundRanDry, mode_flow.hpp).
 #include "kfm/sim/modes/modes.hpp"
 #include "modes/mode_flow.hpp"
 
@@ -39,9 +41,12 @@ namespace {
 void survivalOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink) {
   const uint32_t limit = content.mode.timeLimitTicks;
   clockWarnings(s, limit, sink);
-  if (std::popcount(static_cast<uint32_t>(s.rules.present)) >= 2 && s.players.size() <= 1) {
+  if (anyFalling(s)) return;
+  const bool contest = std::popcount(static_cast<uint32_t>(s.rules.present)) >= 2;
+  if (contest && s.players.size() <= 1) {
     endRound(s, content, soleSurvivor(s), sink);
-  } else if (clockExpired(s.rules, limit)) {
+  } else if (clockExpired(s.rules, limit) || (contest && roundRanDry(s, content))) {
+    // v0.57: a round with no banana left ends as on the clock.
     endRound(s, content, timeoutWinner(s), sink);
   }
 }

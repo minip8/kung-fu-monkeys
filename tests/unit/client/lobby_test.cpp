@@ -617,6 +617,8 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   dm.timeLimitTicks = 0;
   dm.respawnInvulnTicks = 0;
   CHECK(client::modeSummary(dm) == "first to 10 eliminations, no clock, respawn 2.0 s");
+  dm.catchScore = 1;  // v0.57: catch (or suicide) points make the target points
+  CHECK(client::modeSummary(dm) == "first to 10 points, no clock, respawn 2.0 s");
   sim::ModeDef survival;
   survival.kind = sim::ModeKind::Survival;
   survival.roundsToWin = 3;

@@ -2,12 +2,14 @@
 #include "modes/mode_flow.hpp"
 
 #include "kfm/sim/constants.hpp"
+#include "kfm/sim/modes/registry.hpp"
 #include "systems/modifier_internal.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <utility>
 
 namespace kfm::sim {
 namespace {
@@ -96,6 +98,82 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
   return true;
 }
 
+bool anyFalling(const WorldState& s) {
+  bool falling = false;
+  s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+    if (p.tags.has(Tag::Falling) && !p.tags.has(Tag::Eliminated)) falling = true;
+  });
+  return falling;
+}
+
+namespace {
+
+// A power-up that tops ammo up when taken (rules/powerup.cpp).
+[[nodiscard]] bool laysBananas(const PowerUpDef& def) {
+  for (uint8_t g = 0; g < def.grantCount && g < kMaxPowerUpGrants; ++g) {
+    const PowerUpGrant& grant = def.grants[g];
+    if (grant.kind == GrantKind::Stat && grant.stat.stat == StatKind::AmmoMax &&
+        grant.stat.add > Fixed::zero()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] bool bananaLeft(const WorldState& s, const MatchContent& content) {
+  if (content.mode.bananaRegrowTicks > 0) return true;  // an empty hand grows one
+  bool left = false;
+  s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+    if (!p.tags.has(Tag::Eliminated) && p.ammo > 0) left = true;
+  });
+  s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
+    if (b.phase != BoomerangPhase::Sinking) left = true;
+  });
+  const ContentDB& db = content.db;
+  s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+    if (k.kind == PickupKind::Banana) left = true;
+    if (k.kind == PickupKind::PowerUp && k.powerUpIndex < db.powerUpCount &&
+        laysBananas(db.powerUpAt(k.powerUpIndex))) {
+      left = true;
+    }
+  });
+  if (left) return true;
+  // A spawner with a beat still to come (LifecycleSystem::runSpawners) that
+  // may draw a power-up laying bananas.
+  const ArenaDef& arena = content.arena;
+  for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {
+    const PickupSpawner& sp = arena.pickupSpawners[i];
+    if (sp.intervalTicks == 0 && s.rules.ticksInPhase > sp.firstTicks) continue;
+    const uint32_t all = db.powerUpCount >= 32 ? UINT32_MAX : (uint32_t{1} << db.powerUpCount) - 1u;
+    const uint32_t set =
+        (sp.powerUpSet == 0 ? all : (uint32_t{sp.powerUpSet} & all)) & content.powerUps;
+    for (uint8_t d = 0; d < db.powerUpCount && d < kMaxPowerUps; ++d) {
+      if ((set & (1u << d)) != 0 && laysBananas(db.powerUpAt(d))) return true;
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] bool arenaHasPit(const ArenaDef& arena) {
+  for (uint8_t i = 0; i < arena.hazardCount && i < kMaxArenaHazards; ++i) {
+    if (arena.hazards[i].kind == HazardKind::Pit) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool roundRanDry(WorldState& s, const MatchContent& content) {
+  uint16_t& dry = s.rules.dryTicks;
+  if (bananaLeft(s, content)) {
+    dry = 0;
+    return false;
+  }
+  const uint16_t grace = arenaHasPit(content.arena) ? content.mode.dryRoundTicks : uint16_t{0};
+  if (dry < grace) ++dry;
+  return dry >= grace;
+}
+
 PlayerId soleSurvivor(const WorldState& s) {
   PlayerId winner = PlayerId::invalid();
   if (s.players.size() != 1) return winner;
@@ -110,9 +188,10 @@ void endRound(WorldState& s, const MatchContent& content, PlayerId winner, Event
   r.phase = MatchPhase::RoundEnded;
   sink.push(SimEvent{EventKind::RoundEnded, s.tick, winner, EntityId{}, r.round, 0});
   if (!winner.isValid()) return;  // draw: nobody scores
-  uint8_t& score = r.scores[winner.value];
-  ++score;
-  if (content.teamScore(r.scores, content.teamOf(winner)) >= content.mode.roundsToWin) {
+  int8_t& score = r.scores[winner.value];
+  if (score < INT8_MAX) ++score;
+  if (std::cmp_greater_equal(content.teamScore(r.scores, content.teamOf(winner)),
+                             content.mode.roundsToWin)) {
     r.phase = MatchPhase::MatchEnded;
     sink.push(SimEvent{EventKind::MatchEnded, s.tick, winner, EntityId{}, 0, 0});
   }
@@ -127,7 +206,7 @@ void endMatch(WorldState& s, PlayerId winner, EventSink& sink) {
   sink.push(SimEvent{EventKind::MatchEnded, s.tick, winner, EntityId{}, 0, 0});
 }
 
-PlayerId scoreLeader(const MatchRules& r, uint8_t& best) {
+PlayerId scoreLeader(const MatchRules& r, int8_t& best) {
   best = 0;
   PlayerId leader = PlayerId::invalid();
   bool tied = false;
@@ -173,7 +252,7 @@ PlayerId lowestAliveOf(const WorldState& s, const MatchContent& content, uint8_t
   return PlayerId::invalid();
 }
 
-PlayerId teamScoreLeader(const WorldState& s, const MatchContent& content, uint16_t& best) {
+PlayerId teamScoreLeader(const WorldState& s, const MatchContent& content, int16_t& best) {
   const MatchRules& r = s.rules;
   best = 0;
   bool any = false;
@@ -182,7 +261,7 @@ PlayerId teamScoreLeader(const WorldState& s, const MatchContent& content, uint1
   const uint16_t teams = teamsPresent(s, content);
   for (uint8_t t = 0; t < kMaxPlayers; ++t) {
     if ((teams & (1u << t)) == 0) continue;
-    const uint16_t score = content.teamScore(r.scores, t);
+    const int16_t score = content.teamScore(r.scores, t);
     if (!any || score > best) {
       best = score;
       leaderTeam = t;
@@ -200,6 +279,22 @@ PlayerId teamScoreLeader(const WorldState& s, const MatchContent& content, uint1
     if (!leader.isValid() || r.scores[i] > r.scores[leader.value]) leader = id;
   }
   return leader;
+}
+
+void addScore(WorldState& s, PlayerId id, int delta, ScoreReason reason, EventSink& sink) {
+  if (delta == 0 || !id.isValid() || id.value >= kMaxPlayers) return;
+  int8_t& score = s.rules.scores[id.value];
+  score = static_cast<int8_t>(std::clamp<int>(score + delta, INT8_MIN, INT8_MAX));
+  sink.push(SimEvent{EventKind::ScoreChanged, s.tick, id, EntityId{},
+                     static_cast<uint32_t>(int32_t{score}), static_cast<uint32_t>(reason)});
+}
+
+void reportElimination(WorldState& s, const MatchContent& content, PlayerId victim, PlayerId killer,
+                       EventSink& sink) {
+  modeBehaviorOf(content).onEliminated(s, content, victim, killer, sink);
+  if (!killer.isValid() || killer == victim) {
+    addScore(s, victim, content.mode.suicideScore, ScoreReason::Suicide, sink);
+  }
 }
 
 void countDeath(WorldState& s, const MatchContent& content, PlayerId victim) {

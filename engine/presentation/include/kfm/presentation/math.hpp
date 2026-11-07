@@ -33,6 +33,10 @@ inline constexpr float kTwoPi = 2.0f * kPi;
   if (v < 0.0f) return 0.0f;
   return v > 1.0f ? 1.0f : v;
 }
+// Quadratic ease-out over [0, 1]: fast, then settling.
+[[nodiscard]] constexpr float easeOut(float t) {
+  return 1.0f - ((1.0f - t) * (1.0f - t));
+}
 [[nodiscard]] constexpr float degreesToRadians(float deg) {
   return deg * (kPi / 180.0f);
 }

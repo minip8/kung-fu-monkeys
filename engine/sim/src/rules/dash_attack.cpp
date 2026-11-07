@@ -10,18 +10,23 @@
 // enough ammo the handler declines (no other row matches, so nothing happens).
 #include "kfm/sim/rules/handlers.hpp"
 #include "rules/apply_damage.hpp"
+#include "rules/bananas.hpp"
 
 namespace kfm::sim {
 
 bool dashAttack(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
-                const Contact& /*contact*/, EventSink& sink) {
+                const Contact& contact, EventSink& sink) {
   Player* attacker = s.players.get(a);
   Player* victim = s.players.get(b);
   if (attacker == nullptr || victim == nullptr || a == b) return false;
   const DashAttackDef& def = content.db.dashAttack;
   if (attacker->ammo < def.minAmmo) return false;
 
-  if (def.consumesAmmo != 0 && attacker->ammo > 0) --attacker->ammo;
+  // v0.57: a consumed banana drops at the contact rather than vanishing.
+  if (def.consumesAmmo != 0 && attacker->ammo > 0) {
+    --attacker->ammo;
+    dropBanana(s, content, contact.point, attacker->id, sink);
+  }
   applyDamage(s, content, *victim, b, def.damage,
               HitSource{EventKind::PlayerDashHit, a, attacker->id.value}, sink);
   return true;

@@ -50,7 +50,9 @@ static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
 static_assert(static_cast<uint8_t>(sim::AbilityPhase::Recovery) ==
               static_cast<uint8_t>(ObsAbilityPhase::Recovery));
 static_assert(static_cast<uint8_t>(sim::BoomerangPhase::Grounded) ==
-              static_cast<uint8_t>(ObsBananaPhase::Grounded));
+                  static_cast<uint8_t>(ObsBananaPhase::Grounded) &&
+              static_cast<uint8_t>(sim::BoomerangPhase::Sinking) ==
+                  static_cast<uint8_t>(ObsBananaPhase::Sinking));
 static_assert(static_cast<uint8_t>(sim::PickupKind::PowerUp) ==
                   static_cast<uint8_t>(ObsPickupKind::PowerUp) &&
               static_cast<uint8_t>(sim::PickupKind::Flag) ==
@@ -129,6 +131,7 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   m.roundEndTicks = mode.roundEndTicks;
   m.respawnDelayTicks = mode.respawnTicks;
   m.respawnInvulnTicks = mode.respawnInvulnTicks;
+  m.bananaRegrowTicks = mode.bananaRegrowTicks;  // v0.57
   uint8_t alive = 0;
   uint16_t aliveMask = 0;
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {

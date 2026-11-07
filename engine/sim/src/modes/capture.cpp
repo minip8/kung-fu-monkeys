@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <utility>
 
 namespace kfm::sim {
 namespace {
@@ -113,9 +114,7 @@ void captureOnPlaying(WorldState& s, const MatchContent& content, EventSink& sin
         const Zone& base = content.arena.zones[own];
         if (!boxContains(base.min, base.max, carrier->transform.pos)) break;
         carrier->tags.clear(Tag::Carrying);
-        uint8_t& score = r.scores[carrier->id.value];
-        if (score < UINT8_MAX) ++score;
-        sink.push(SimEvent{EventKind::ScoreChanged, s.tick, carrier->id, EntityId{}, score, 0});
+        addScore(s, carrier->id, 1, ScoreReason::Objective, sink);
         sendHome(s, content, t, sink);
         break;
       }
@@ -137,9 +136,10 @@ void captureOnPlaying(WorldState& s, const MatchContent& content, EventSink& sin
     }
   }
 
-  uint16_t best = 0;
+  int16_t best = 0;
   const PlayerId leader = teamScoreLeader(s, content, best);
-  if (best >= mode.scoreToWin || clockExpired(r, mode.timeLimitTicks)) endMatch(s, leader, sink);
+  if (std::cmp_greater_equal(best, mode.scoreToWin) || clockExpired(r, mode.timeLimitTicks))
+    endMatch(s, leader, sink);
 }
 
 void captureOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,

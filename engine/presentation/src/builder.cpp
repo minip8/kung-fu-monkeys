@@ -74,6 +74,22 @@ void decayOffset(EntityTrack& t, float dt) {
   return clamp01(static_cast<float>(p.hitStunTicks) / static_cast<float>(total));
 }
 
+// v0.57: how far a falling monkey's fall has run, 0 (standing, or the tick
+// it went in) .. 1; LifecycleSystem eliminates it before it reaches 1.
+[[nodiscard]] float fallProgress(const Player& p, const ContentDB& content) {
+  if (!p.tags.has(Tag::Falling)) return 0.0f;
+  const float total = static_cast<float>(std::max<uint16_t>(content.player.fallTicks, 1));
+  return clamp01((total - static_cast<float>(p.fallTicks)) / total);
+}
+
+// v0.57: the fall's height: a teeter, then the drop under the floor.
+[[nodiscard]] float fallHeight(float t) {
+  if (t <= 0.0f) return 0.0f;
+  if (t < kFallTeeterFraction) return kFallHopHeight * std::sin(kPi * t / kFallTeeterFraction);
+  const float u = (t - kFallTeeterFraction) / (1.0f - kFallTeeterFraction);
+  return -kFallDepth * u * u;
+}
+
 [[nodiscard]] Vec3 playerScale(const Player& p, const ContentDB& content) {
   // v0.34: the contact radius is a stat; the model (built at the def's
   // radius) grows and shrinks with it so the body still marks the hitbox.
@@ -135,6 +151,7 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
   set(p.ammo > 0, PlayerFlag::HasAmmo);
   set(p.tags.has(Tag::Carrying), PlayerFlag::Carrying);
   set(throwCharging(p, content), PlayerFlag::Charging);
+  set(p.tags.has(Tag::Falling), PlayerFlag::Falling);
   return f;
 }
 
@@ -163,10 +180,24 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
       return BananaPhase::Outbound;
     case BoomerangPhase::Returning:
       return BananaPhase::Returning;
+    case BoomerangPhase::Sinking:
+      return BananaPhase::Sinking;
     case BoomerangPhase::Grounded:
       break;
   }
   return BananaPhase::Grounded;
+}
+
+// v0.57: how far a banana sinking into a pit has gone, 0..1.
+[[nodiscard]] float bananaSunk(const Boomerang& b, const ContentDB& content) {
+  const float total = static_cast<float>(std::max<uint16_t>(content.boomerang.pitSinkTicks, 1));
+  return clamp01(static_cast<float>(b.ticksInPhase) / total);
+}
+
+// v0.57: the height of a banana sinking into a pit: from hand height (where
+// it was flying when it came down) to below the floor, as t².
+[[nodiscard]] float bananaSinkHeight(float sunk) {
+  return kBananaHandHeight - ((kBananaHandHeight + kBananaSinkDepth) * sunk * sunk);
 }
 
 [[nodiscard]] HudPhase hudPhase(sim::MatchPhase p) {
@@ -241,7 +272,8 @@ void phaseSounds(PresentationState& ps, const RenderHud& hud, RenderState& out) 
 // --- entities -------------------------------------------------------------------
 
 void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                  float alpha, const ContentDB& content, float dt, RenderState& out) {
+                  float alpha, const sim::MatchContent& match, float dt, RenderState& out) {
+  const ContentDB& content = match.db;
   for (uint16_t i = 0; i < sim::kMaxPlayers; ++i) {
     if (!curr.players.isAliveIndex(i)) continue;
     const uint16_t gen = curr.players.generation[i];
@@ -274,11 +306,20 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     track.flashRemaining = std::max(0.0f, track.flashRemaining - dt);
 
     const Vec2f drawn = simPos + track.motion.visualOffset;
-    track.motion.lastDrawn = drawn;
 
     const float hCurr = playerHeight(cp, content);
-    const float height =
+    float height =
         snapped || pp == nullptr ? hCurr : lerp(playerHeight(*pp, content), hCurr, alpha);
+
+    // v0.57: a pit fall, from the fall's progress (tuning.hpp kFall*).
+    const float fallCurr = fallProgress(cp, content);
+    const float fall =
+        snapped || pp == nullptr ? fallCurr : lerp(fallProgress(*pp, content), fallCurr, alpha);
+    const float radius = cp.stats.radius.toFloat();
+    // The sim starts a fall only with the whole body over the pit, so the
+    // body sinks where it stands.
+    if (cp.tags.has(Tag::Falling)) height = fallHeight(fall);
+    track.motion.lastDrawn = drawn;
 
     RenderPlayer& rp = out.players[out.playerCount++];
     rp = RenderPlayer{};
@@ -292,6 +333,12 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.bodyYaw = track.bodyYaw;
     rp.aimYaw = simAngleToYaw(cp.intent.aim);
     rp.scale = playerScale(cp, content);
+    if (cp.tags.has(Tag::Falling)) {
+      rp.fall = fall;
+      rp.tilt = -kFallTilt * easeOut(fall);
+      rp.bodyYaw = wrapRadians(track.bodyYaw + (kFallSpinTurns * kTwoPi * fall * fall));
+      rp.scale = rp.scale * lerp(1.0f, kFallEndScale, fall);
+    }
     rp.ammo = cp.ammo;
     rp.ammoMax = cp.stats.ammoMax;
     rp.hp = cp.hp;
@@ -316,7 +363,15 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     const uint16_t cd = content.abilityAt(dash.defIndex).cooldownTicks;
     rp.dashCooldown =
         cd > 0 ? clamp01(static_cast<float>(dash.cooldownTicks) / static_cast<float>(cd)) : 0.0f;
-    pushShadow(out, rp.ground, cp.stats.radius.toFloat(), height, ShadowOwner::Player);
+    if (cp.tags.has(Tag::Falling)) {
+      // The shadow shrinks away with the falling body (no lift: it is below).
+      if (out.shadowCount < kMaxRenderShadows) {
+        out.shadows[out.shadowCount++] =
+            RenderShadow{rp.ground, radius * (1.0f - fall), 1.0f - fall, ShadowOwner::Player};
+      }
+    } else {
+      pushShadow(out, rp.ground, radius, height, ShadowOwner::Player);
+    }
 
     // Dash trail: afterimages while the Dash is active.
     if (dashActive(cp, content) && !cp.tags.has(Tag::Eliminated)) {
@@ -368,8 +423,16 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
       heading = lerpAngle(simAngleToYaw(pb->transform.facing), heading, alpha);
       spin = lerpAngle(simAngleToYaw(pb->spin), spin, alpha);
     }
-    const float height =
-        cb.phase == BoomerangPhase::Grounded ? kPickupHeight : kBananaHandHeight + arc;
+    float height = cb.phase == BoomerangPhase::Grounded ? kPickupHeight : kBananaHandHeight + arc;
+    // v0.57: come down over a pit, it drops into the hole.
+    float sunk = 0.0f;  // 0..1 of the drop into the hole
+    if (cb.phase == BoomerangPhase::Sinking) {
+      sunk = bananaSunk(cb, content);
+      if (lerped && pb->phase == BoomerangPhase::Sinking) {
+        sunk = lerp(bananaSunk(*pb, content), sunk, alpha);
+      }
+      height = bananaSinkHeight(sunk);
+    }
 
     const Vec2f drawn = simPos + track.motion.visualOffset;
     track.motion.lastDrawn = drawn;
@@ -384,10 +447,20 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     rb.ownerSlot = slotOrNone(cb.owner);
     // v0.34: the shadow marks the banana's contact radius (big banana, the
     // grid's baseline).
-    pushShadow(out, rb.ground, radius * cb.radiusMul.toFloat(), height, ShadowOwner::Banana);
+    if (sunk > 0.0f) {
+      // Going down the hole: the shadow shrinks away (no lift: it is below).
+      if (out.shadowCount < kMaxRenderShadows) {
+        out.shadows[out.shadowCount++] =
+            RenderShadow{rb.ground, radius * cb.radiusMul.toFloat() * (1.0f - sunk), 1.0f - sunk,
+                         ShadowOwner::Banana};
+      }
+    } else {
+      pushShadow(out, rb.ground, radius * cb.radiusMul.toFloat(), std::max(height, 0.0f),
+                 ShadowOwner::Banana);
+    }
 
     // A short trail behind a flying banana.
-    if (cb.phase != BoomerangPhase::Grounded &&
+    if (cb.phase != BoomerangPhase::Grounded && cb.phase != BoomerangPhase::Sinking &&
         trailDue(track.trailTimer, dt, kBananaTrailInterval)) {
       addEffect(ps, RenderEffect{EffectKind::BananaTrail, rb.ownerSlot, rb.position,
                                  Vec2f{std::cos(heading), std::sin(heading)}, kBananaTrailSeconds,
@@ -420,6 +493,7 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
     rp.ground = simToWorld(simPos);
     rp.spin = wrapRadians((kPickupSpinRadPerSec * ps.time) + phase);
     rp.radius = radius;
+    rp.count = cp.count;
     rp.kind = PickupKindView::Banana;
     if (cp.kind == sim::PickupKind::PowerUp) {
       const sim::PowerUpDef& def = content.powerUpAt(cp.powerUpIndex);
@@ -517,6 +591,7 @@ float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnSta
       return kBananaArcPeak * std::sin(0.5f * kPi * u);
     }
     case BoomerangPhase::Grounded:
+    case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
       break;
   }
   return 0.0f;
@@ -541,7 +616,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   // and the new events' effects then start at full duration. Player tracks
   // are still valid for players eliminated this tick.
   ageEffects(ps, dt);
-  buildPlayers(ps, prev, curr, alpha, content, dt, out);
+  buildPlayers(ps, prev, curr, alpha, match, dt, out);
   buildBananas(ps, prev, curr, alpha, content, dt, out);
   buildPickups(ps, curr, content, dt, out);
 

@@ -31,13 +31,15 @@ struct Wall {
 };
 
 enum class HazardKind : uint8_t {
-  Pit = 0,  // a player whose centre is inside is eliminated (killer 0xFF); bananas fly over
+  Pit = 0,  // a player wholly over the pits (their union, discOverPits), not dashing, falls
+            // (v0.57), eliminated (killer 0xFF) PlayerDef::fallTicks later; bananas fly over
   Slow,     // move speed x speedMul while the player's centre is inside (ModifierSystem)
   kCount,   // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 
 // A floor region acting on the players whose centre lies inside it (closed
-// box). Hazards never block movement or bananas.
+// box; v0.57: a pit only on players wholly over the union of the pits,
+// discOverPits). Hazards never block movement or bananas.
 struct Hazard {
   Vec2 min{};
   Vec2 max{};
@@ -115,6 +117,100 @@ struct SpawnRange {
 // Whether a circle overlaps the box; touching is not overlapping.
 [[nodiscard]] constexpr bool circleOverlapsBox(Vec2 min, Vec2 max, Vec2 c, Fixed r) {
   return boxDistanceSqRaw(min, max, c) < static_cast<int64_t>(r.raw) * r.raw;
+}
+
+// v0.57: whether the closed disc (c, r) lies wholly inside the union of the
+// closed boxes boxAt selects among 0..count (at most kMaxArenaHazards;
+// boxAt(i, min, max) fills box i and returns false to leave it out). The
+// union matters: a tilemap pit is several boxes, and a disc straddling two
+// adjoining ones is inside it. Exact in fixed point, with no sampling: the
+// disc's bounding square is cut at every box edge that crosses it into
+// sub-rectangles that no edge enters, so each one lies wholly inside or
+// wholly outside every box, and its (doubled, so exact) midpoint says which.
+// The disc is inside the union iff every sub-rectangle it overlaps (touching
+// is not overlapping, circleOverlapsBox) is inside some box. A radius of 0
+// is the centre point. Pure integer arithmetic over the arguments, so the
+// sim, the bots and the tests all get the same answer on every host.
+template <class BoxAt>
+[[nodiscard]] constexpr bool discWithinBoxes(uint32_t count, BoxAt&& boxAt, Vec2 c, Fixed r) {
+  constexpr uint32_t kMaxBoxes = kMaxArenaHazards;
+  std::array<Vec2, kMaxBoxes> mins{};
+  std::array<Vec2, kMaxBoxes> maxs{};
+  uint32_t n = 0;
+  for (uint32_t i = 0; i < count && i < kMaxBoxes; ++i) {
+    if (boxAt(i, mins[n], maxs[n])) ++n;
+  }
+  const auto inside2 = [&](int64_t x2, int64_t y2) {  // a doubled point in some box
+    for (uint32_t k = 0; k < n; ++k) {
+      if (2 * int64_t{mins[k].x.raw} <= x2 && x2 <= 2 * int64_t{maxs[k].x.raw} &&
+          2 * int64_t{mins[k].y.raw} <= y2 && y2 <= 2 * int64_t{maxs[k].y.raw}) {
+        return true;
+      }
+    }
+    return false;
+  };
+  if (r.raw <= 0) return inside2(2 * int64_t{c.x.raw}, 2 * int64_t{c.y.raw});
+
+  // The breakpoints along each axis: the disc's extent and every box edge
+  // strictly inside it, sorted (insertion sort: at most 2 + 2 * 16 values).
+  constexpr uint32_t kMaxBreaks = 2 + (2 * kMaxBoxes);
+  std::array<int32_t, kMaxBreaks> xs{};
+  std::array<int32_t, kMaxBreaks> ys{};
+  uint32_t nx = 0;
+  uint32_t ny = 0;
+  const int32_t x0 = c.x.raw - r.raw;
+  const int32_t x1 = c.x.raw + r.raw;
+  const int32_t y0 = c.y.raw - r.raw;
+  const int32_t y1 = c.y.raw + r.raw;
+  xs[nx++] = x0;
+  xs[nx++] = x1;
+  ys[ny++] = y0;
+  ys[ny++] = y1;
+  for (uint32_t k = 0; k < n; ++k) {
+    for (const int32_t v : {mins[k].x.raw, maxs[k].x.raw}) {
+      if (v > x0 && v < x1) xs[nx++] = v;
+    }
+    for (const int32_t v : {mins[k].y.raw, maxs[k].y.raw}) {
+      if (v > y0 && v < y1) ys[ny++] = v;
+    }
+  }
+  const auto sortPrefix = [](std::array<int32_t, kMaxBreaks>& a, uint32_t len) {
+    for (uint32_t i = 1; i < len; ++i) {
+      const int32_t v = a[i];
+      uint32_t j = i;
+      for (; j > 0 && a[j - 1] > v; --j)
+        a[j] = a[j - 1];
+      a[j] = v;
+    }
+  };
+  sortPrefix(xs, nx);
+  sortPrefix(ys, ny);
+  for (uint32_t i = 0; i + 1 < nx; ++i) {
+    if (xs[i] == xs[i + 1]) continue;
+    for (uint32_t j = 0; j + 1 < ny; ++j) {
+      if (ys[j] == ys[j + 1]) continue;
+      const Vec2 lo{Fixed::fromRaw(xs[i]), Fixed::fromRaw(ys[j])};
+      const Vec2 hi{Fixed::fromRaw(xs[i + 1]), Fixed::fromRaw(ys[j + 1])};
+      if (!circleOverlapsBox(lo, hi, c, r)) continue;
+      if (!inside2(int64_t{xs[i]} + xs[i + 1], int64_t{ys[j]} + ys[j + 1])) return false;
+    }
+  }
+  return true;
+}
+
+// v0.57: whether a monkey of contact radius r at c is wholly over the
+// arena's pits (their union), the test that starts a fall (§5.6 row 60).
+[[nodiscard]] constexpr bool discOverPits(const ArenaDef& arena, Vec2 c, Fixed r) {
+  return discWithinBoxes(
+      arena.hazardCount,
+      [&arena](uint32_t i, Vec2& min, Vec2& max) {
+        const Hazard& h = arena.hazards[i];
+        if (h.kind != HazardKind::Pit) return false;
+        min = h.min;
+        max = h.max;
+        return true;
+      },
+      c, r);
 }
 
 }  // namespace kfm::sim

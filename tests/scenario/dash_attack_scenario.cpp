@@ -81,8 +81,9 @@ TEST_CASE("dashing into an enemy with a banana in hand eliminates it", "[scenari
 
   CHECK(d.s.playerBySlot(kP1) == nullptr);
   CHECK(playerAt(d.s, kP0).ammo == 1);  // the attacker keeps its banana
-  CHECK(d.s.pickups.empty());           // nothing drops
-  CHECK(countEvents(d.log, EventKind::PickupSpawned) == 0);
+  // v0.57: the victim's held banana drops where it died.
+  CHECK(countEvents(d.log, EventKind::BananaDropped) == 1);
+  CHECK(firstEvent(d.log, EventKind::BananaDropped).player == kP1);
   CHECK(d.s.rules.phase == MatchPhase::Playing);  // player 2 is still in
 }
 
@@ -170,7 +171,13 @@ TEST_CASE("consumesAmmo spends the attacker's banana", "[scenario][dash_attack]"
   content.dashAttack.consumesAmmo = 1;
   const Duel d = dashDuel(Press{0, 0}, Press{}, 30, content);
   REQUIRE(countEvents(d.log, EventKind::PlayerDashHit) == 1);
-  CHECK(playerAt(d.s, kP0).ammo == 0);
+  // v0.57: the spent banana drops at the contact (as does the victim's held
+  // one), it never vanishes; the attacker may pick it straight back up.
+  int spent = 0;
+  for (const SimEvent& e : d.log) {
+    if (e.kind == EventKind::BananaDropped && e.player == kP0) ++spent;
+  }
+  CHECK(spent == 1);
 }
 
 TEST_CASE("rollback across a dash attack re-simulates identically", "[scenario][dash_attack]") {

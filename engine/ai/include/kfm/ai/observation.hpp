@@ -96,7 +96,9 @@ enum class ObsAbilityKind : uint8_t {
   Call = 6,  // architecture v0.35
 };
 enum class ObsAbilityPhase : uint8_t { Idle = 0, Startup = 1, Active = 2, Recovery = 3 };
-enum class ObsBananaPhase : uint8_t { Outbound = 0, Returning = 1, Grounded = 2 };
+// v0.57: Sinking, a banana that came down over a pit dropping into the hole:
+// harmless, never a pickup, gone shortly.
+enum class ObsBananaPhase : uint8_t { Outbound = 0, Returning = 1, Grounded = 2, Sinking = 3 };
 // Flag (architecture v0.33): a capture team's flag; `spawner` is its team.
 enum class ObsPickupKind : uint8_t { Banana = 0, PowerUp = 1, Flag = 2 };
 enum class ObsHazardKind : uint8_t { Pit = 0, Slow = 1 };
@@ -134,18 +136,22 @@ struct ObsMatch {
   uint16_t aliveMask;       // bit i: slot i has a monkey in the arena
   uint8_t inputDelayTicks;  // ticks between this observation and the tick the answer applies on
   uint8_t lastRoundWinner;  // slot, kObsNoSlot after a draw or before the first round end
-  uint8_t pad0;
-  uint8_t pad1;
-  uint16_t roundStartTicks;        // ticks: countdown at a round start (players frozen)
-  uint16_t roundEndTicks;          // ticks: pause after a round end
-  uint16_t respawnDelayTicks;      // deathmatch: ticks from an elimination to the respawn
-  uint16_t respawnInvulnTicks;     // deathmatch: spawn protection after a respawn
-  uint16_t reservedTurnTicks;      // grid: ticks per turn (v0.35; 0 in a continuous mode)
-  uint16_t reservedTicksToLatch;   // grid: ticks to the next latch, 0 = this tick latches (v0.35)
-  uint8_t scores[kObsMaxPlayers];  // round wins (rounds, survival) or eliminations
-  uint8_t deaths[kObsMaxPlayers];  // eliminations suffered this match
+  // v0.57 (was two pad bytes): ticks an empty hand waits for a banana to grow
+  // (ModeDef::bananaRegrowTicks), 0 = the mode regrows none
+  uint16_t bananaRegrowTicks;
+  uint16_t roundStartTicks;       // ticks: countdown at a round start (players frozen)
+  uint16_t roundEndTicks;         // ticks: pause after a round end
+  uint16_t respawnDelayTicks;     // deathmatch: ticks from an elimination to the respawn
+  uint16_t respawnInvulnTicks;    // deathmatch: spawn protection after a respawn
+  uint16_t reservedTurnTicks;     // grid: ticks per turn (v0.35; 0 in a continuous mode)
+  uint16_t reservedTicksToLatch;  // grid: ticks to the next latch, 0 = this tick latches (v0.35)
+  // round wins (the round kinds) or points (eliminations, hill points, captures,
+  // catch and suicide points); signed since v0.57 (a suicide may go below 0)
+  int8_t scores[kObsMaxPlayers];
+  uint8_t deaths[kObsMaxPlayers];                // eliminations suffered this match
   uint16_t respawnTicks[kObsMaxPlayers];         // ticks until a dead slot respawns, 0 = none due
-  uint16_t reservedTeamScores[kObsMaxPlayers];   // v0.29: per team index (filled since v0.32)
+  int16_t reservedTeamScores[kObsMaxPlayers];    // v0.29: per team index (filled since v0.32;
+                                                 // signed since v0.57)
   uint32_t reservedModeData[kObsModeDataWords];  // v0.29: MatchRules::modeData (v0.31: words 0-7)
 };
 
@@ -414,6 +420,7 @@ static_assert(offsetof(Observation, reservedHeardCalls) == 5556);
 static_assert(offsetof(ObsMatch, modeIndex) == 16);
 static_assert(offsetof(ObsMatch, presentMask) == 24);
 static_assert(offsetof(ObsMatch, inputDelayTicks) == 28);
+static_assert(offsetof(ObsMatch, bananaRegrowTicks) == 30);
 static_assert(offsetof(ObsMatch, roundStartTicks) == 32);
 static_assert(offsetof(ObsMatch, scores) == 44);
 static_assert(offsetof(ObsMatch, deaths) == 54);

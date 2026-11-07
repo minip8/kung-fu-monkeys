@@ -122,7 +122,14 @@ enum {
   KFM_ABILITY_ACTIVE = 2,
   KFM_ABILITY_RECOVERY = 3
 };
-enum { KFM_BANANA_OUTBOUND = 0, KFM_BANANA_RETURNING = 1, KFM_BANANA_GROUNDED = 2 };
+/* v0.57: SINKING, a banana that came down over a pit dropping into the hole:
+ * harmless, never a pickup. Every phase from GROUNDED on is out of flight. */
+enum {
+  KFM_BANANA_OUTBOUND = 0,
+  KFM_BANANA_RETURNING = 1,
+  KFM_BANANA_GROUNDED = 2,
+  KFM_BANANA_SINKING = 3
+};
 enum { KFM_PICKUP_BANANA = 0, KFM_PICKUP_POWERUP = 1, KFM_PICKUP_FLAG = 2 };
 enum { KFM_HAZARD_PIT = 0, KFM_HAZARD_SLOW = 1 };
 /* Tag bit numbers (the `tags` fields): test with kfm_has_tag(tags, KFM_TAG_...). */
@@ -136,7 +143,8 @@ enum {
   KFM_TAG_SLAMMING = 6,
   KFM_TAG_PARRYING = 7,
   KFM_TAG_FRIENDLY_FIRE = 8, /* allies' bananas and dashes hit this monkey (team modes) */
-  KFM_TAG_CARRYING = 9       /* holds a capture flag */
+  KFM_TAG_CARRYING = 9,      /* holds a capture flag */
+  KFM_TAG_FALLING = 10       /* going down a pit: out of control, out of reach, soon out */
 };
 /* header.schemaFlags bit 0 (architecture v0.35): the mode's vision is not
  * "all", so players[i].visible and bananas[i].visible are meaningful; an
@@ -171,12 +179,15 @@ typedef struct kfm_obs_match {
   uint16_t presentMask;    /* bit i: slot i in the roster */
   uint16_t aliveMask;      /* bit i: slot i in the arena */
   uint8_t inputDelayTicks; /* the answer applies on tick + this */
-  uint8_t lastRoundWinner, pad0, pad1;
+  uint8_t lastRoundWinner;
+  uint16_t bananaRegrowTicks; /* v0.57: an empty hand grows a banana after this, 0 = never */
   uint16_t roundStartTicks, roundEndTicks, respawnDelayTicks, respawnInvulnTicks;
   uint16_t turnTicks;    /* a grid mode's turn length, 0 in a continuous one (v0.35) */
   uint16_t ticksToLatch; /* grid: ticks to the next latch, 0 = this tick's input is latched */
-  uint8_t scores[KFM_MAX_PLAYERS], deaths[KFM_MAX_PLAYERS];
-  uint16_t respawnTicks[KFM_MAX_PLAYERS], teamScores[KFM_MAX_PLAYERS]; /* by team index */
+  int8_t scores[KFM_MAX_PLAYERS]; /* round wins or points; signed since v0.57 */
+  uint8_t deaths[KFM_MAX_PLAYERS];
+  uint16_t respawnTicks[KFM_MAX_PLAYERS];
+  int16_t teamScores[KFM_MAX_PLAYERS]; /* by team index; signed since v0.57 */
   uint32_t modeData[KFM_MODE_DATA_WORDS]; /* the mode's state (bot-abi.md §3) */
 } kfm_obs_match;
 
@@ -227,7 +238,7 @@ typedef struct kfm_obs_self {
   int32_t velY, moveSpeed, radius, knockbackX, knockbackY;
   uint32_t tags;
   uint16_t hitStunTicks, knockbackTicks, invulnTicks, respawnTicks;
-  uint8_t facing; /* angle8 */
+  uint8_t facing;       /* angle8 */
   uint8_t facingOctant; /* grid: facing as 0..7 (0 east, counter-clockwise), the cone's */
   uint8_t role;         /* the loadout index the slot plays */
   uint8_t team;
@@ -344,6 +355,7 @@ KFM_CHECK_AT(kfm_observation, heardCalls, 5556);
 KFM_CHECK_AT(kfm_obs_match, modeIndex, 16);
 KFM_CHECK_AT(kfm_obs_match, presentMask, 24);
 KFM_CHECK_AT(kfm_obs_match, inputDelayTicks, 28);
+KFM_CHECK_AT(kfm_obs_match, bananaRegrowTicks, 30);
 KFM_CHECK_AT(kfm_obs_match, roundStartTicks, 32);
 KFM_CHECK_AT(kfm_obs_match, scores, 44);
 KFM_CHECK_AT(kfm_obs_match, deaths, 54);
@@ -851,7 +863,7 @@ static inline int kfm_ability_ready(const kfm_observation* o, int slot) {
  * caught on contact). */
 static inline int kfm_banana_is_threat(const kfm_observation* o, int i) {
   const kfm_obs_banana* b = &o->bananas[i];
-  return b->valid != 0 && b->phase != KFM_BANANA_GROUNDED && b->ownerRelation != KFM_REL_SELF;
+  return b->valid != 0 && b->phase < KFM_BANANA_GROUNDED && b->ownerRelation != KFM_REL_SELF;
 }
 
 /* The slot of the nearest living enemy (ties: the lower slot), preferring one
@@ -1089,7 +1101,7 @@ static inline int kfm_flight_step(kfm_flight* f, const kfm_observation* o, kfm_v
   int hitWall = 0;
   int hitOuter;
   if (f->ticksInPhase < 0xFFFFu) ++f->ticksInPhase;
-  if (f->phase == KFM_BANANA_GROUNDED) return 0;
+  if (f->phase >= KFM_BANANA_GROUNDED) return 0;
   if (f->phase == KFM_BANANA_OUTBOUND && f->ticksInPhase >= ru->bananaOutboundTicks) {
     f->phase = KFM_BANANA_RETURNING;
     f->ticksInPhase = 0;
@@ -1147,7 +1159,7 @@ static inline int kfm_predict_banana(const kfm_observation* o, int i, int ticks,
   const kfm_obs_banana* b = &o->bananas[i];
   const kfm_obs_player* owner = b->owner < KFM_MAX_PLAYERS ? &o->players[b->owner] : 0;
   kfm_flight f = kfm_flight_of(b);
-  int flying = b->phase == KFM_BANANA_GROUNDED ? 0 : ticks;
+  int flying = b->phase >= KFM_BANANA_GROUNDED ? 0 : ticks;
   int k;
   out[0] = f.pos;
   for (k = 1; k <= ticks; ++k) {
