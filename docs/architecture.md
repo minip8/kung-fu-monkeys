@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.58 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.59 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -790,6 +790,18 @@ full evening from one link without help") is judged met; the code was complete i
 play polish of v0.45 to v0.57 went in before the verdict. The same play closes M6a's open
 playtest item; its second region and Sentry project stay open. Next is M7, the bot ladder, in
 the order of §11 "M7 sequencing"; it has not started. No code change.
+v0.59 changes: the ladder updates the game inside a season (§8 "The ladder", §11, §12). A
+season no longer pins one release: it is a time window whose ranking freezes at a date, and
+the service runs every match on the current release, recording the release tag beside the
+seed and the two submission ids. The pin moves to the match: a disputed result is re-run with
+that tag's `kfm_arena` from the GitHub release; a replay is served with its own release's
+content and opened in that release's client, since a sim change can replay differently even
+when the content hash did not move (the header carries both hashes already), so the page is
+published under a versioned path per tag beside the root that serves the newest; the `contest`
+row may change between releases inside a season. Ratings persist across a release (a shared
+shock to every entrant, not a reason to reset; Glicko-2 would widen the deviation instead); the
+service announces releases to entrants and the CLI's `test` defaults to the current release so
+an author sees breakage before the scheduler does. Design only: no code change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3880,7 +3892,7 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
 
 **The ladder (v0.36, M6b then; M7 since v0.40).** The ladder is the hosted contest: authors submit bots, the service
 plays them against each other with `kfm_arena`, ranks the entrants and serves the replays. It
-lives in the bots repository (above) and uses this repository through a pinned release. Decided:
+lives in the bots repository (above) and uses this repository through its tagged releases (one per match, v0.59). Decided:
 
 - **Accounts, tokens and teams.** A user has an account and a personal bearer token, created and
   revoked on the portal and stored by the CLI after `login`; it is scoped to submit and read. An
@@ -3919,9 +3931,14 @@ lives in the bots repository (above) and uses this repository through a pinned r
   ladder's row of the contest knobs above (team size, `vision`, call range, `turnTicks`, fuel,
   memory on respawn) on its arena; today it is `grid_rounds_1t` on `courtyard` under `own` fog
   with calls, the M5b shape. The ladder points at the name, so a season changes the row, not
-  the service. A season pins a release of this repository, which pins the content hash; the
-  content directory is kept per season because replays carry the hash and a viewer or
-  `kfm_replay verify` needs that exact content.
+  the service, and the row may change between releases inside a season (v0.59). **A season is a
+  time window, not a release** (v0.59; until then a season pinned one release and its content
+  hash): the ranking freezes at a date, the service runs every match on the current tagged
+  release of this repository and records that tag on the match, and the content directory is
+  kept per release because replays carry the content hash and a viewer or `kfm_replay verify`
+  needs that exact content. A release changes the game for every entrant at once; the service
+  announces it to them, and the CLI's `test` runs the current release by default so an author
+  sees a bot broken by the change before the scheduler does.
 - **Matches and ratings.** The service schedules two-sided matches between active submissions
   with `kfm_arena --mode contest --team A --team B --rotate --json --replay-dir`, deterministic
   seeds recorded per match, and parses the per-match JSON object (`match`, `seed`, `ticks`,
@@ -3929,13 +3946,22 @@ lives in the bots repository (above) and uses this repository through a pinned r
   `slots[]` with the module's `traps`, `over`, `bad`, `fuel_*` and `dead`); from v0.36 that
   object's keys are append-only, like the ABI. The rating is per entrant (switching the active
   submission keeps the rank), Elo or Glicko-2 over the two-sided pairs, with the submission ids
-  on both sides recorded on every match so a disputed result is re-run bit for bit. The free-
+  on both sides and the release tag recorded on every match so a disputed result is re-run bit
+  for bit with that tag's `kfm_arena` from the GitHub release (v0.59). Ratings persist across a
+  release inside a season (v0.59): an update is the same shock to every entrant, and a reset
+  would charge the leaders for the project's own changes; under Glicko-2 the rating deviation
+  widens at a release instead. The free-
   for-all slot bias of §12 does not reach the ladder: `--rotate` plays every pair from both sides.
-- **Replays.** A match's `.kfmr` is served with its season's content; the CLI downloads it and
-  prints the viewer URL, and the browser client loads a replay by URL (a client feature of M7:
-  the client has no replay playback as of v0.35; it needs no bot runtime, since a replay is
-  inputs). Fog is a projection in the observation builder, so a replay shows the whole arena;
-  a fog overlay in the viewer is a follow-up.
+- **Replays.** A match's `.kfmr` is served with the content of the release it ran under (v0.59;
+  its season's until then); the CLI downloads it and prints the viewer URL, and the browser
+  client loads a replay by URL (a client feature of M7: the client has no replay playback as of
+  v0.35; it needs no bot runtime, since a replay is inputs). The viewer is the client of the
+  replay's own release (v0.59): a sim change between releases can replay differently even when
+  the content hash did not move, and the header carries both the content and the build hash, so
+  the release workflow publishes the page under a versioned path per tag (`/v0.60/`) beside the
+  root, which serves the newest for play, and the ladder's link names the match's tag. Fog is a
+  projection in the observation builder, so a replay shows the whole arena; a fog overlay in
+  the viewer is a follow-up.
 - **The CLI.** One static binary written in Rust, released as platform wheels through PyPI with
   maturin (`uv tool install kfm`, `uvx kfm`) and on the bots repository's releases page.
   Commands: `login`, `build` (the recipe in the pinned image, locally), `test` (a match against
@@ -4222,7 +4248,7 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
 | M6a Ship on the web | The client on Cloudflare Pages (v0.39); the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
 | M6b Play with friends | The online room: a waiting state on the server, the host's settings (arena, mode, loadout, power-ups, bots) sent over the wire and a host role that passes on; the code with copy-link and share in the client; every region listed with its availability (lobby protocol v1.1); nicknames on the scoreboard, a between-rounds scoreboard and a match-over screen with play again; a main menu and a game-looking lobby; bots yield slots to joining humans; reconnect from the UI; the lead control checked at high RTT (§6.6, §13.5, "M6b design" below) | A group of friends plays a full evening from one link without help: create, invite, pick the mode, start, play again |
-| M7 The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, replays served with their season's content, the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
+| M7 The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, the release tag on every match and replays served with their release's content and client (v0.59), the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
 | M8 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
 M6b design (v0.40). A room has three states on the server, kept in the host beside
@@ -4751,13 +4777,16 @@ baseline moved to C++23 (§9).
   4 MiB modules, 16 MiB memory; `Observation` v1 is pinned in `docs/bot-abi.md`; bots are named
   by `BotSpec` and seeded per slot by one formula in every host; the server delays bots by the
   humans' lead (§8, §10, §11).
-- Decided (v0.36, M6b then, M7 since v0.40): the ladder is a hosted service in the bots repository over a pinned
-  release of this one; per-user tokens, teams as entrants, source-only C++ submissions built in
+- Decided (v0.36, M6b then, M7 since v0.40): the ladder is a hosted service in the bots repository over tagged
+  releases of this one; per-user tokens, teams as entrants, source-only C++ submissions built in
   a throwaway container, five submissions kept plus the active one, a `contest` mode as the
   season's knob row, ratings per entrant over rotated two-sided matches reproducible from seed
-  plus modules, replays served with their season's content, a Rust CLI on PyPI (§8, §11).
+  plus modules, a Rust CLI on PyPI (§8, §11). v0.59: a season is a time window, not a release;
+  every match records its release tag, replays are served with their release's content and
+  viewed in that release's client (the page under a versioned path per tag), the `contest` row
+  may change inside a season, and ratings persist across a release.
   Open: the rating formula (Elo or Glicko-2), continuous play against scheduled rounds, how long
-  a season's content and replays are kept, and whether a fog overlay belongs in the viewer.
+  a release's content, page and replays are kept, and whether a fog overlay belongs in the viewer.
 - Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP
   endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
   `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
