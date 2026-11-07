@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.62 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.63 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -854,6 +854,22 @@ build the engine at `-Werror` (v0.61), so the claim was nominal; the requirement
 what CI verifies: GCC ≥ 15 or Clang ≥ 19. If a GCC 14 build is ever wanted, the one warning is
 cheap to silence and a CI leg on Ubuntu 24.04 with `gcc-14` is the way to keep it. No code
 change.
+
+v0.63 changes: M7 step (3) designed, the ladder service (§8 "The ladder", §11 "M7 step 3
+design", §12, §13.5). The service is one Rust binary (Tokio, axum, sqlx) in the bots repository
+with Postgres as the system of record and S3-compatible object storage (Cloudflare R2 first,
+behind the S3 API so any store serves) for sources, modules, logs and replays; slow work is a
+row in a `jobs` table that workers claim with `FOR UPDATE SKIP LOCKED` (no broker), and a worker
+is the same binary with `--worker build|match`. Identity is GitHub **or Google** OAuth (v0.63
+adds Google): an account may link both, the key is the provider's subject id, never the email.
+Sessions are signed cookies for the portal; API tokens are stored hashed and shown once. The
+build worker runs the §8 docker command under gVisor on a VM that holds nothing else; match
+workers need no container, `kfm_arena` is the sandbox. Scheduling is Swiss-style rounds (each
+active submission against a few opponents near its rating, two-sided through `--rotate`), not
+all pairs, and the rating is Glicko-2 (decided: its deviation widens at a release, v0.59).
+Deployment follows the lobby: images from GHCR, systemd units, Caddy, Sentry; one VM for the API,
+Postgres and the match workers, a second for the build worker. Deferred: Kubernetes, a message
+broker, a frontend framework (the portal is server-rendered by the same binary). Design only.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3951,7 +3967,9 @@ lives in the bots repository (above) and uses this repository through its tagged
   entrant is a team of users (a solo player is a team of one), and a team's membership is a
   table, so a member leaves without rotating a shared secret. Submissions, the active bot and
   the rating belong to the team; the submitting user is recorded on each submission. Identity is
-  a hosted OAuth provider (GitHub to start), never a password the service stores.
+  a hosted OAuth provider, never a password the service stores: GitHub or Google (v0.63), an
+  account may link both, and the account is keyed by the provider's subject id, never by the
+  email (an email changes and two providers may report the same one).
 - **Source in, module out.** A submission is a source tree plus a small manifest (the entrant,
   the language, the build entry), uploaded as a zip through the portal or through the CLI; the two
   paths hit one HTTP endpoint. The service builds it, never the author: every ranked module then
@@ -4345,6 +4363,87 @@ build image, `example_bot_test` kept here against the normative header (landed i
 accounts, teams, submissions and the sandboxed build; (4) the scheduler and ratings; (5) the
 CLI on PyPI; (6) the client's replay viewer and the portal's replay links. M8 (Steam) is
 unchanged.
+
+M7 step 3 design (v0.63). The ladder service, `service/` in the bots repository, has the shape
+every hosted bot ladder converges on, sized so that growing is adding workers.
+
+- **One process, three roles.** A Rust binary (Tokio, axum, sqlx; the lobby's toolchain) runs
+  as the API and portal (`kfm-ladder serve`), as a build worker (`--worker build`) or as a match
+  worker (`--worker match`). The API never builds or plays anything itself: it writes a row
+  and a worker claims it. Configuration is environment variables (database URL, object store
+  endpoint and keys, OAuth client ids and secrets, the session key, the engine release tag),
+  never a file in the image.
+- **Postgres is the system of record** from day one (SQLite's single writer is exactly what a
+  job queue and concurrent workers contend on), run as a container on the API VM with a
+  nightly dump to the object store; a managed database is a later swap behind the same URL.
+  Tables: `users` (id, display name, created), `identities` (provider, subject, user, email
+  as shown, one row per linked provider), `sessions` (portal cookies, signed and expiring),
+  `tokens` (user, a SHA-256 of the secret, scope, created, revoked), `teams`, `memberships`
+  (team, user, role), `submissions` (team, submitting user, created, the manifest, the source
+  and module object keys, the module hash, the build log key, state: queued, building, failed,
+  rejected, ready), `active_bots` (team → submission), `jobs` (kind, payload, state, attempts,
+  claimed by and at, finished at, error), `matches` (seed, the release tag, the content hash,
+  the two submission ids and sides, the replay key, the parsed result, created), `ratings`
+  (team, mu, phi, sigma, games, updated) and `seasons` (name, start, end, the `contest` row's
+  name). Migrations live in the repository and run at start.
+- **Blobs go to S3-compatible object storage**, Cloudflare R2 first (the page is already on
+  Cloudflare, no egress fee for replays served to browsers), behind the S3 API so MinIO serves
+  tests and development and any other store a move; keys are
+  `sources/<submission>.zip`, `modules/<submission>.wasm`, `logs/<submission>.txt`,
+  `replays/<match>.kfmr`. Never in Postgres, never on a VM disk that needs backing up.
+- **The jobs table is the queue.** A worker claims with `UPDATE … WHERE id = (SELECT … FOR
+  UPDATE SKIP LOCKED)`, heartbeats while it runs, and a job whose claim goes stale is
+  re-queued up to a small attempt count; there is no broker to run. Kinds: `build`
+  (submission → module, or a failure with its log), `validate` (the module through the checks
+  `WasmAgent` makes plus one smoke match against the reference bot with the season's
+  `kfm_arena`; a trap or an over-budget tick rejects it), `match` (one `kfm_arena --mode
+  contest --team A --team B --rotate --json --replay-dir` run, its JSON parsed per
+  `docs/arena-result.md`, the replay uploaded, the ratings updated in one transaction).
+- **Identity.** OAuth with GitHub or Google (authorization code with PKCE; the `openidconnect`
+  and `oauth2` crates), the account keyed by the provider's subject id; a signed-in user may
+  link the other provider from the portal, and an email is display data only. A portal
+  session is a signed, expiring cookie. An API token is 256 random bits shown once, stored as
+  its SHA-256, scoped `submit` (upload, activate, read own) or `read`, sent as a bearer; the
+  CLI stores it after `login`, which is the browser flow with a local redirect. A team's
+  membership table means a member leaves without rotating anything.
+- **The HTTP surface** (`docs/ladder-api.md` in the bots repository is normative, JSON in and
+  out, append-only like the engine's contracts): `/healthz`; `/auth/{github,google}` and their
+  callbacks; `/auth/logout`; `GET /me`; `/tokens` (list, create, revoke); `/teams` (create,
+  invite by user, leave, list mine); `POST /teams/{t}/submissions` (multipart: `manifest.toml`
+  and `source.zip`, at most 4 MiB of source, the manifest names the language and the entry
+  directory), `GET /teams/{t}/submissions`, `GET /submissions/{s}` (state, hash, log URL),
+  `POST /teams/{t}/active` (set the active submission); `GET /ladder` (ratings, paged);
+  `GET /matches?team=` and `GET /matches/{m}` (the result, the replay URL, the viewer URL
+  `https://kfm.minip8.com/<tag>/?replay=<url>`, the client feature of step 6). The portal is the
+  same routes rendered as HTML by the same binary (askama templates, no frontend framework):
+  sign in, tokens, teams, submissions with their logs, the ladder, a match's result.
+- **Retention.** Five submissions per team plus the active one; pruning deletes the source
+  and log objects, never a module a recorded match used, so every ranked match stays
+  reproducible from seed plus modules for the season.
+- **Scheduling and ratings.** A scheduler tick (every few minutes) makes one round: every
+  team with an active, validated submission is paired with up to k opponents near its rating
+  (Swiss-style, k = 3 to start, never the same pair twice in a round), each pair is one `match`
+  job played both sides through `--rotate`, so match volume is linear in entrants. The rating
+  is Glicko-2 per team over the two-sided results, updated as each match lands; at an engine
+  release the deviation is widened (v0.59), never reset. `seasons` freezes the ladder at its end
+  date; a new season starts ratings afresh.
+- **Deployment.** Two VMs, as `deploy/` does for the lobby: `kfm-ladder-1` runs Caddy, the API
+  and portal, Postgres and the match workers (a match is a `kfm_arena` process, already the
+  sandbox); `kfm-build-1` runs only the build worker, with Docker and gVisor (`runsc`) as the
+  runtime of the §8 command, no inbound ports, and the §8 caps. Images from GHCR on the bots
+  repository's tags, systemd units, Sentry. The engine release the season runs on is a single
+  setting; `tools/fetch_kfm_arena.sh` fetches it on the workers at start.
+- **Deferred, on purpose.** Kubernetes, a message broker, microservices, a separate frontend,
+  rate limiting beyond a per-token submission cap (one build per team per minute), and
+  email. The contest's season rules (prizes, eligibility) are the portal's text, not code.
+
+Sequencing, one PR each in the bots repository: (3a) the service core: the crate, config,
+migrations, `/healthz`, OAuth for both providers, sessions, tokens, teams, `docs/ladder-api.md`,
+tests over a Postgres in CI; (3b) submissions and the build path: the upload endpoint, the
+object store with a MinIO-backed test, the jobs table and worker loop, the build worker over
+the sandbox image, validation with the released `kfm_arena`, activation and retention; (3c)
+deployment: images, units, the gVisor runtime, the two VMs scripted, the runbook. Steps (4)
+scheduling and ratings, (5) the CLI and (6) the viewer follow as in the M7 sequencing.
 
 M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
 test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
@@ -4859,8 +4958,11 @@ baseline moved to C++23 (§9).
   every match records its release tag, replays are served with their release's content and
   viewed in that release's client (the page under a versioned path per tag), the `contest` row
   may change inside a season, and ratings persist across a release.
-  Open: the rating formula (Elo or Glicko-2), continuous play against scheduled rounds, how long
-  a release's content, page and replays are kept, and whether a fog overlay belongs in the viewer.
+  v0.63: the service's shape (§11 "M7 step 3 design"): Rust, Postgres, S3-compatible blobs, a
+  jobs table as the queue, GitHub or Google OAuth, gVisor on a dedicated build VM, Swiss-style
+  rounds under Glicko-2.
+  Open: how long a release's content, page and replays are kept, and whether a fog overlay
+  belongs in the viewer.
 - Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP
   endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
   `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
