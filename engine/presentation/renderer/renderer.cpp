@@ -1047,9 +1047,11 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
   // changes once. hasHand[i]: player i's hand position from its skinned pose.
   for (uint16_t i = 0; i < state.playerCount; ++i) {
     const RenderPlayer& p = state.players[i];
-    // v0.57: a falling monkey aims at nothing and its banana goes down with it.
-    if (!p.visible || p.has(PlayerFlag::Eliminated) || p.has(PlayerFlag::Falling)) continue;
+    if (!p.visible || p.has(PlayerFlag::Eliminated)) continue;
     const Color own = playerColor(p.colorIndex);
+    // v0.57: a falling monkey aims at nothing; a banana in its hand goes
+    // down the pit with it (drawn below, in the sinking hand).
+    const bool falling = p.has(PlayerFlag::Falling);
 
     // Aim indicator: a thin bar from the capsule surface along the aim. A
     // charging throw (v0.48) stretches it and warms it toward gold.
@@ -1057,10 +1059,13 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const float charge = p.has(PlayerFlag::Charging) ? p.throwCharge : 0.0f;
     const float aimLength =
         p.has(PlayerFlag::Charging) ? lerp(kAimLength, kChargeAimLength, charge) : kAimLength;
-    d.lit(kCubeMesh,
-          translate(aimBase) * rotateY(p.aimYaw) * translate({r + (aimLength * 0.5f), 0.0f, 0.0f}) *
-              scale({aimLength, kAimThickness, kAimThickness}),
-          mix(mix(own, kWhite, 0.45f), kGold, charge), 0.0f, 0.15f + (0.35f * charge));
+    if (!falling) {
+      d.lit(kCubeMesh,
+            translate(aimBase) * rotateY(p.aimYaw) *
+                translate({r + (aimLength * 0.5f), 0.0f, 0.0f}) *
+                scale({aimLength, kAimThickness, kAimThickness}),
+            mix(mix(own, kWhite, 0.45f), kGold, charge), 0.0f, 0.15f + (0.35f * charge));
+    }
     // v0.33: a capture flag's carrier wears a small gold diamond overhead.
     if (p.has(PlayerFlag::Carrying)) {
       const float s = kFlagCarrySize;
@@ -1076,7 +1081,9 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       const Mat4 at = hasHand[i] ? translate(handAt[i]) * rotateY(p.aimYaw)
                                  : translate(aimBase) * rotateY(p.aimYaw) *
                                        translate({r * 0.55f, 0.0f, r * 0.85f});
-      const Mat4 m = at * scale({kHeldBananaScale, kHeldBananaScale, kHeldBananaScale});
+      // v0.57: shrinking with a falling body.
+      const float held = kHeldBananaScale * (falling ? lerp(1.0f, kFallEndScale, p.fall) : 1.0f);
+      const Mat4 m = at * scale({held, held, held});
       d.surface(kBananaMesh, m, kBananaColor, Surface::Banana, kBananaTip, 0.0f, 0.1f);
       d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
     }

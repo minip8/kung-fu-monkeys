@@ -82,24 +82,6 @@ void decayOffset(EntityTrack& t, float dt) {
   return clamp01((total - static_cast<float>(p.fallTicks)) / total);
 }
 
-// v0.57: where a monkey falling at `pos` sinks: the nearest point that holds
-// its whole body inside the pit holding its centre (the pit's middle on an
-// axis narrower than the body), or `pos` when no pit holds it.
-[[nodiscard]] Vec2f fallTuck(const sim::ArenaDef& arena, Vec2f pos, float radius) {
-  for (uint8_t i = 0; i < arena.hazardCount && i < sim::kMaxArenaHazards; ++i) {
-    const sim::Hazard& h = arena.hazards[i];
-    if (h.kind != sim::HazardKind::Pit) continue;
-    const Vec2f lo = toFloat(h.min);
-    const Vec2f hi = toFloat(h.max);
-    if (pos.x < lo.x || pos.x > hi.x || pos.y < lo.y || pos.y > hi.y) continue;
-    const auto axis = [radius](float v, float a, float b) {
-      return b - a > 2.0f * radius ? std::clamp(v, a + radius, b - radius) : 0.5f * (a + b);
-    };
-    return Vec2f{axis(pos.x, lo.x, hi.x), axis(pos.y, lo.y, hi.y)};
-  }
-  return pos;
-}
-
 // v0.57: the fall's height: a teeter, then the drop under the floor.
 [[nodiscard]] float fallHeight(float t) {
   if (t <= 0.0f) return 0.0f;
@@ -309,8 +291,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     track.bodyYaw = approachAngle(track.bodyYaw, track.bodyTarget, kBodyTurnRate * dt);
     track.flashRemaining = std::max(0.0f, track.flashRemaining - dt);
 
-    Vec2f drawn = simPos + track.motion.visualOffset;
-    Vec2f groundAt = simPos;
+    const Vec2f drawn = simPos + track.motion.visualOffset;
 
     const float hCurr = playerHeight(cp, content);
     float height =
@@ -321,13 +302,9 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     const float fall =
         snapped || pp == nullptr ? fallCurr : lerp(fallProgress(*pp, content), fallCurr, alpha);
     const float radius = cp.stats.radius.toFloat();
-    if (cp.tags.has(Tag::Falling)) {
-      const Vec2f tuck = fallTuck(match.arena, currPos, radius);
-      const float k = easeOut(clamp01(fall / kFallTuckFraction));
-      drawn = lerp(drawn, tuck, k);
-      groundAt = lerp(groundAt, tuck, k);
-      height = fallHeight(fall);
-    }
+    // The sim starts a fall only with the whole body over the pit, so the
+    // body sinks where it stands.
+    if (cp.tags.has(Tag::Falling)) height = fallHeight(fall);
     track.motion.lastDrawn = drawn;
 
     RenderPlayer& rp = out.players[out.playerCount++];
@@ -337,7 +314,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
     rp.flags = playerFlags(cp, content);
     rp.visible = !cp.tags.has(Tag::Eliminated);
     rp.position = simToWorld(drawn, height);
-    rp.ground = simToWorld(groundAt);
+    rp.ground = simToWorld(simPos);
     rp.height = height;
     rp.bodyYaw = track.bodyYaw;
     rp.aimYaw = simAngleToYaw(cp.intent.aim);

@@ -143,20 +143,21 @@ inline constexpr float kHitSquash = 0.2f;     // vertical squash at the start of
 // (PlayerDef::fallTicks, interpolated like the position): over the first
 // kFallTeeterFraction it hops up kFallHopHeight (a startled teeter at the
 // edge), then drops kFallDepth below the floor as u², u the rest of the fall;
-// the floor's depth hides what is under it. Over kFallTuckFraction it slides
-// to where its whole body fits inside the pit (the sim leaves its centre at
-// the edge), it shrinks to kFallEndScale, tips its nose down by kFallTilt
+// the floor's depth hides what is under it (the sim starts a fall only with
+// the whole body over the pit, so it sinks where it stands). It shrinks to
+// kFallEndScale, tips its nose down by kFallTilt
 // radians, spins kFallSpinTurns whole turns (as t²) and darkens by
-// kFallDarken; its shadow shrinks away with it.
+// kFallDarken; its shadow shrinks away with it, and a banana in its hand
+// goes down with it.
 inline constexpr float kFallTeeterFraction = 0.18f;
 inline constexpr float kFallHopHeight = 0.22f;
 inline constexpr float kFallDepth = 2.2f;
-inline constexpr float kFallTuckFraction = 0.35f;
 inline constexpr float kFallEndScale = 0.5f;
 inline constexpr float kFallTilt = 0.7f;
 inline constexpr float kFallSpinTurns = 0.75f;
 inline constexpr float kFallDarken = 0.55f;
-inline constexpr float kPitFallSeconds = 0.45f;  // the PitFall ring
+inline constexpr float kPitFallSeconds = 0.45f;     // the PitFall ring
+inline constexpr float kBananaLostSeconds = 0.35f;  // a faller's banana lost away from it
 
 // --- effects ---------------------------------------------------------------------------
 inline constexpr float kDashRingSeconds = 0.25f;

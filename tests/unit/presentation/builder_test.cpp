@@ -1140,8 +1140,8 @@ TEST_CASE("zones and capture flags render (v0.33)", "[presentation][builder][cap
 
 TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit (v0.57)",
           "[presentation][builder][pit]") {
-  // The dojo with a pit strip at x in [-9, -7]; P0 stands with its centre
-  // on the strip's east edge and goes in on the first tick.
+  // The dojo with a pit strip at x in [-9, -7]; P0 stands with its whole
+  // body over it, touching the east edge, and goes in on the first tick.
   ContentDB c = defaultContent();
   ArenaDef& a = c.arenas[0];
   a.hazards[0] = Hazard{Vec2{Fixed::fromInt(-9), -a.halfExtents.y},
@@ -1151,9 +1151,17 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
       soundForEvent(SimEvent{EventKind::PlayerFell, Tick{0}, kP0, EntityId{}, 0, 0});
   CHECK(cue.has_value());
   CHECK(cue.value_or(SoundCue{}).id == SoundId::Fall);
+  // A faller's banana: home into the sinking hand ticks; lost, it only puffs.
+  const auto fellSound = [](BananaFall how) {
+    return soundForEvent(SimEvent{EventKind::BoomerangFell, Tick{0}, kP0, EntityId{},
+                                  static_cast<uint32_t>(how), 0});
+  };
+  CHECK(fellSound(BananaFall::WithOwner).value_or(SoundCue{}).id == SoundId::CatchAuto);
+  CHECK_FALSE(fellSound(BananaFall::Lost).has_value());
   WorldState s = makePlayingWorld(57, 0b11, c);
-  placePlayer(s, kP0, Vec2{Fixed::fromInt(-7), Fixed::zero()});
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-7) - c.player.radius, Fixed::zero()});
   placePlayer(s, kP1, Vec2{Fixed::fromInt(8), Fixed::zero()});
+  REQUIRE(playerAt(s, kP0).ammo > 0);
   const float radius = c.player.radius.toFloat();
   PresentationState ps;
   float lastFall = -1.0f;
@@ -1178,10 +1186,11 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
       CHECK(p->fall >= lastFall);
       lastFall = p->fall;
       deepest = std::min(deepest, p->position.y);
-      // The drawn body slides into the pit, never back out.
-      CHECK(groundOf(*p).x <= -7.0f + 1e-4f);
+      // It sinks where it stands, its whole body over the pit, the banana
+      // still in its hand.
+      CHECK(groundOf(*p).x <= -7.0f - radius + 1e-3f);
+      CHECK(p->has(PlayerFlag::HasAmmo));
       if (p->fall > 0.5f) {
-        CHECK(groundOf(*p).x <= -7.0f - radius + 1e-3f);  // its whole body over the pit
         CHECK(p->scale.y < 1.0f);
         CHECK(p->tilt < 0.0f);
       }
