@@ -22,7 +22,8 @@ namespace kfm::sim {
 bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                     const Contact& contact, EventSink& sink) {
   Player* p = s.players.get(a);
-  if (p == nullptr || !s.boomerangs.isAlive(b)) return false;
+  const Boomerang* banana = s.boomerangs.get(b);
+  if (p == nullptr || banana == nullptr) return false;
   // The slot whose perfect window is open (the base kit's dash slot); a tag
   // set by something else (a test) falls back to the dash slot.
   const AbilityState* dashSlot = slotGranting(*p, content, Tag::PerfectDash);
@@ -37,7 +38,7 @@ bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, Enti
                       Fixed::fromRatio(dash.activatedSubTick, 256);
   if (delta < Fixed::zero() || delta >= Fixed::fromInt(def.perfectWindowTicks)) return false;
 
-  const PlayerId thrower = s.boomerangs.get(b)->owner;
+  const PlayerId thrower = banana->owner;  // read before the despawn
   s.boomerangs.despawn(b);
   ++p->ammo;  // below ammoMax, checked above
   sink.push(SimEvent{EventKind::BoomerangCaught, s.tick, p->id, b,
