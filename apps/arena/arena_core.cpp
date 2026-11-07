@@ -229,6 +229,8 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   MatchResult result;
   result.index = index;
   result.seed = config.seed;
+  result.contentHash = contentHash(content);
+  result.buildHash = 0;  // no build stamps a hash yet (kfm_replay writes 0 too)
   result.slots.resize(n);
   for (size_t i = 0; i < n; ++i) {
     const ai::BotSpec& bot = *specOf[i];
@@ -321,8 +323,8 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   if (setup.recordReplay) {
     ReplayHeader h;
     h.seed = config.seed;
-    h.contentHash = contentHash(content);
-    h.buildHash = 0;
+    h.contentHash = result.contentHash;
+    h.buildHash = result.buildHash;
     h.players = config.players;
     h.arena = config.arena;
     h.mode = config.mode;
@@ -531,7 +533,9 @@ std::string formatResultJson(const MatchResult& r) {
     }
     out.push_back('}');
   }
-  out += "]}";
+  // v0.60, appended: the replay header's hashes, so a record names its content and build.
+  std::format_to(std::back_inserter(out), R"(],"content_hash":"{:08x}","build_hash":"{:08x}"}})",
+                 r.contentHash, r.buildHash);
   return out;
 }
 

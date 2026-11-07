@@ -173,6 +173,11 @@ struct MatchResult {
   std::vector<SlotResult> slots;  // by slot
   std::vector<TeamResult> teams;  // v0.35: by team index, team matches only
   std::vector<std::byte> replay;  // the .kfmr bytes when recordReplay
+  // v0.60: the replay header's two hashes, set whether or not a replay is
+  // recorded: sim::contentHash of the match's content, and the build hash
+  // (0: no build stamps one yet, as in every replay header).
+  uint32_t contentHash{0};
+  uint32_t buildHash{0};
 };
 
 // Plays one match. `index` is only carried into the result. Fails only when
@@ -254,8 +259,12 @@ struct Summary {
 // bot: the bot's index in MatchSetup::bots (the --bot order, padding last).
 // The same as one JSON object on one line:
 //   {"match":0,"seed":7,"ticks":5432,"checksum":"0c0ffee1","result":"ended","winner":1,
-//   "slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":2,...},...]}
+//   "slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":2,...},...],
+//   "content_hash":"5e1f00d2","build_hash":"00000000"}
 // winner and dead are null when none; module slots carry the module fields.
+// The JSON objects are a contract with the ladder (docs/arena-result.md):
+// keys are only ever appended, never renamed, removed or retyped. The text
+// lines are for humans and make no such promise.
 [[nodiscard]] std::string formatResultJson(const MatchResult& result);
 // The tournament line:
 //   summary matches 20 ended 19 draws 1 cap 0 ticks_mean 5432 | slot 0 ref:hard wins 7

@@ -17,10 +17,16 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
 #include <cstdint>
+#include <format>
+#include <initializer_list>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -75,6 +81,198 @@ SlotResult slotWith(uint8_t slot, int32_t score, uint32_t deaths) {
 
 bool contains(const std::string& text, const std::string& part) {
   return text.contains(part);
+}
+
+// A flat scan over the JSON kfm_arena prints, enough to pin its keys without
+// a JSON library (no whitespace, keys without escapes). The end of the value
+// starting at i, npos when it is malformed.
+size_t valueEnd(std::string_view s, size_t i) {
+  if (i >= s.size()) return std::string_view::npos;
+  if (s[i] == '"') {
+    for (++i; i < s.size(); ++i) {
+      if (s[i] == '\\') {
+        ++i;
+      } else if (s[i] == '"') {
+        return i + 1;
+      }
+    }
+    return std::string_view::npos;
+  }
+  if (s[i] == '{' || s[i] == '[') {
+    int depth = 0;
+    bool inString = false;
+    for (; i < s.size(); ++i) {
+      const char c = s[i];
+      if (inString) {
+        if (c == '\\') {
+          ++i;
+        } else if (c == '"') {
+          inString = false;
+        }
+      } else if (c == '"') {
+        inString = true;
+      } else if (c == '{' || c == '[') {
+        ++depth;
+      } else if ((c == '}' || c == ']') && --depth == 0) {
+        return i + 1;
+      }
+    }
+    return std::string_view::npos;
+  }
+  while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']')
+    ++i;
+  return i;
+}
+
+// The JSON type of a value, by its first character.
+std::string_view typeOf(std::string_view v) {
+  if (v.empty()) return "?";
+  switch (v.front()) {
+    case '"':
+      return "string";
+    case '{':
+      return "object";
+    case '[':
+      return "array";
+    case 't':
+    case 'f':
+      return "bool";
+    case 'n':
+      return "null";
+    default:
+      return "number";
+  }
+}
+
+struct Member {
+  std::string key;  // empty for an array element
+  std::string_view value;
+};
+
+// The members of an object, or the elements of an array, in order; nullopt
+// unless `text` is exactly one well-formed object or array.
+std::optional<std::vector<Member>> membersOf(std::string_view text) {
+  if (text.size() < 2 || (text.front() != '{' && text.front() != '[')) return std::nullopt;
+  if (valueEnd(text, 0) != text.size()) return std::nullopt;
+  const bool object = text.front() == '{';
+  std::vector<Member> out;
+  const size_t close = text.size() - 1;
+  size_t i = 1;
+  while (i < close) {
+    Member m;
+    if (object) {
+      const size_t keyEnd = valueEnd(text, i);
+      if (text[i] != '"' || keyEnd == std::string_view::npos || keyEnd >= close ||
+          text[keyEnd] != ':') {
+        return std::nullopt;
+      }
+      m.key = std::string(text.substr(i + 1, keyEnd - i - 2));
+      i = keyEnd + 1;
+    }
+    const size_t end = valueEnd(text, i);
+    if (end == std::string_view::npos || end == i || end > close) return std::nullopt;
+    m.value = text.substr(i, end - i);
+    out.push_back(std::move(m));
+    i = end;
+    if (i < close) {
+      if (text[i] != ',') return std::nullopt;
+      ++i;
+    }
+  }
+  return out;
+}
+
+// Checks that `object` has exactly the frozen members, in order: each entry
+// is "key:type", or "key:type|null" for a key that may be null.
+void checkShape(std::string_view object, std::span<const std::string_view> frozen) {
+  INFO(object);
+  const std::optional<std::vector<Member>> members = membersOf(object);
+  if (!members || object.front() != '{') {
+    FAIL("not one JSON object");
+    return;
+  }
+  std::vector<std::string> keys;
+  std::vector<std::string> frozenKeys;
+  keys.reserve(members->size());
+  frozenKeys.reserve(frozen.size());
+  for (const Member& m : *members)
+    keys.push_back(m.key);
+  for (const std::string_view f : frozen)
+    frozenKeys.emplace_back(f.substr(0, f.find(':')));
+  CHECK(keys == frozenKeys);
+  for (size_t i = 0; i < members->size() && i < frozen.size(); ++i) {
+    const std::string_view type = typeOf((*members)[i].value);
+    const std::string_view types = frozen[i].substr(frozen[i].find(':') + 1);
+    INFO("key " << keys[i] << " is " << type << ", frozen as " << types);
+    CHECK((types == type || types == std::format("{}|null", type) ||
+           (type == "null" && types.ends_with("|null"))));
+  }
+}
+
+// A member's value (empty when absent) and an array's elements.
+std::string_view valueOf(std::string_view object, std::string_view key) {
+  const std::optional<std::vector<Member>> members = membersOf(object);
+  if (!members) return {};
+  for (const Member& m : *members) {
+    if (m.key == key) return m.value;
+  }
+  return {};
+}
+
+std::vector<std::string_view> elementsOf(std::string_view array) {
+  std::vector<std::string_view> out;
+  const std::optional<std::vector<Member>> members = membersOf(array);
+  if (!members || array.front() != '[') return out;
+  for (const Member& m : *members)
+    out.push_back(m.value);
+  return out;
+}
+
+// The frozen shapes of docs/arena-result.md, in its order. A new key is
+// appended to the doc's table and to the end of its list here, with the
+// version that added it; a key is never inserted, renamed, removed or
+// retyped (the ladder parses these objects across releases).
+constexpr std::string_view kMatchHead[] = {"match:number",  "seed:number",
+                                           "ticks:number",  "checksum:string",
+                                           "result:string", "winner:number|null"};
+constexpr std::string_view kMatchTeams[] = {"winner_team:number|null", "teams:array"};
+constexpr std::string_view kMatchTail[] = {
+    "slots:array",
+    "content_hash:string",  // v0.60
+    "build_hash:string",    // v0.60
+};
+constexpr std::string_view kTeam[] = {"team:number",  "entrant:number", "spec:string",
+                                      "place:number", "score:number",   "kills:number",
+                                      "deaths:number"};
+constexpr std::string_view kSlotHead[] = {"slot:number", "bot:number", "spec:string",
+                                          "module:bool"};
+constexpr std::string_view kSlotTeam[] = {"team:number"};
+constexpr std::string_view kSlotTail[] = {"place:number",  "score:number", "kills:number",
+                                          "deaths:number", "acts:number",  "subs:number"};
+constexpr std::string_view kSlotModule[] = {
+    "traps:number",    "over:number",      "bad:number", "fuel_mean:number",
+    "fuel_max:number", "fuel_init:number", "log:number", "dead:string|null"};
+constexpr std::string_view kSummary[] = {"summary:bool", "matches:number", "ended:number",
+                                         "draws:number", "cap:number",     "ticks_mean:number",
+                                         "slots:array"};
+constexpr std::string_view kSummaryBots[] = {"bots:array"};
+constexpr std::string_view kSummaryEntrants[] = {"entrants:array"};
+constexpr std::string_view kSummarySlot[] = {"slot:number"};
+constexpr std::string_view kSummaryBot[] = {"bot:number"};
+constexpr std::string_view kSummaryTotals[] = {"spec:string",       "module:bool",  "wins:number",
+                                               "mean_place:number", "score:number", "kills:number",
+                                               "deaths:number",     "acts:number",  "subs:number"};
+constexpr std::string_view kSummaryModule[] = {"traps:number", "over:number", "bad:number",
+                                               "fuel_max:number"};
+constexpr std::string_view kEntrant[] = {"entrant:number",    "spec:string",  "wins:number",
+                                         "mean_place:number", "score:number", "kills:number",
+                                         "deaths:number"};
+
+std::vector<std::string_view> join(std::initializer_list<std::span<const std::string_view>> parts) {
+  std::vector<std::string_view> out;
+  for (const std::span<const std::string_view> p : parts)
+    out.insert(out.end(), p.begin(), p.end());
+  return out;
 }
 
 }  // namespace
@@ -181,6 +379,8 @@ TEST_CASE("the result line and its JSON", "[arena]") {
   r.slots[1].fuelMean = 61234;
   r.slots[1].fuelMax = 62731;
   r.slots[1].fuelInit = 13;
+  r.contentHash = 0x5e1f00d2;
+  r.buildHash = 0xabcd;
   assignPlaces(r);
 
   CHECK(formatResultLine(r) ==
@@ -194,7 +394,8 @@ TEST_CASE("the result line and its JSON", "[arena]") {
         R"("kills":3,"deaths":2,"acts":5432,"subs":0},{"slot":1,"bot":1,)"
         R"("spec":"bots\\x \"y\".wasm","module":true,)"
         R"("place":1,"score":3,"kills":5,"deaths":1,"acts":5432,"subs":3,"traps":1,"over":2,)"
-        R"("bad":0,"fuel_mean":61234,"fuel_max":62731,"fuel_init":13,"log":0,"dead":null}]})");
+        R"("bad":0,"fuel_mean":61234,"fuel_max":62731,"fuel_init":13,"log":0,"dead":null}],)"
+        R"("content_hash":"5e1f00d2","build_hash":"0000abcd"})");
 
   r.winner = PlayerId::invalid();
   r.slots[1].dead = "init-trap";
@@ -202,6 +403,116 @@ TEST_CASE("the result line and its JSON", "[arena]") {
   CHECK(contains(formatResultLine(r), " dead init-trap"));
   CHECK(contains(formatResultJson(r), R"("winner":null,)"));
   CHECK(contains(formatResultJson(r), R"("dead":"init-trap"})"));
+}
+
+TEST_CASE("the JSON result's keys are the frozen contract (docs/arena-result.md)", "[arena]") {
+  // A team match with a module slot (and a reference one), by hand.
+  MatchResult r;
+  r.index = 2;
+  r.seed = 9;
+  r.ticks = 100;
+  r.outcome = MatchOutcome::Ended;
+  r.winner = PlayerId{1};
+  r.slots = {slotWith(0, 0, 1), slotWith(1, 2, 0)};
+  r.slots[1].team = 1;
+  r.slots[1].bot = "bots/x.wasm";
+  r.slots[1].module = true;
+  r.teams = {TeamResult{0, 1, "ref:hard", 0, 0, 0, 1}, TeamResult{1, 0, "bots/x.wasm", 0, 2, 1, 0}};
+  assignPlaces(r);
+  assignTeamPlaces(r);
+
+  SECTION("a team match") {
+    const std::string json = formatResultJson(r);
+    checkShape(json, join({kMatchHead, kMatchTeams, kMatchTail}));
+    const std::vector<std::string_view> teams = elementsOf(valueOf(json, "teams"));
+    REQUIRE(teams.size() == 2);
+    for (const std::string_view t : teams)
+      checkShape(t, kTeam);
+    const std::vector<std::string_view> slots = elementsOf(valueOf(json, "slots"));
+    REQUIRE(slots.size() == 2);
+    checkShape(slots[0], join({kSlotHead, kSlotTeam, kSlotTail}));
+    checkShape(slots[1], join({kSlotHead, kSlotTeam, kSlotTail, kSlotModule}));
+    r.slots[1].dead = "trap";  // dead: a string once the module is dead
+    const std::string dead = formatResultJson(r);
+    const std::vector<std::string_view> deadSlots = elementsOf(valueOf(dead, "slots"));
+    REQUIRE(deadSlots.size() == 2);
+    CHECK(valueOf(deadSlots[1], "dead") == R"("trap")");
+    checkShape(deadSlots[1], join({kSlotHead, kSlotTeam, kSlotTail, kSlotModule}));
+  }
+  SECTION("a free-for-all, no winner") {
+    r.teams.clear();
+    r.outcome = MatchOutcome::Cap;
+    r.winner = PlayerId::invalid();
+    const std::string json = formatResultJson(r);
+    checkShape(json, join({kMatchHead, kMatchTail}));
+    CHECK(valueOf(json, "winner") == "null");
+    const std::vector<std::string_view> slots = elementsOf(valueOf(json, "slots"));
+    REQUIRE(slots.size() == 2);
+    checkShape(slots[0], join({kSlotHead, kSlotTail}));
+    checkShape(slots[1], join({kSlotHead, kSlotTail, kSlotModule}));
+  }
+  SECTION("the summary, rotated, with entrants") {
+    Summary sum;
+    sum.add(r);
+    sum.rotated = true;  // as if a later match had rotated the bots
+    REQUIRE(sum.slots.size() == 2);
+    REQUIRE(sum.bots.size() == 2);
+    REQUIRE(sum.entrants.size() == 2);
+    const std::string json = formatSummaryJson(sum);
+    checkShape(json, join({kSummary, kSummaryBots, kSummaryEntrants}));
+    const std::vector<std::string_view> slots = elementsOf(valueOf(json, "slots"));
+    REQUIRE(slots.size() == 2);
+    checkShape(slots[0], join({kSummarySlot, kSummaryTotals}));
+    checkShape(slots[1], join({kSummarySlot, kSummaryTotals, kSummaryModule}));
+    const std::vector<std::string_view> bots = elementsOf(valueOf(json, "bots"));
+    REQUIRE(bots.size() == 2);
+    checkShape(bots[0], join({kSummaryBot, kSummaryTotals}));
+    checkShape(bots[1], join({kSummaryBot, kSummaryTotals, kSummaryModule}));
+    const std::vector<std::string_view> entrants = elementsOf(valueOf(json, "entrants"));
+    REQUIRE(entrants.size() == 2);
+    for (const std::string_view e : entrants)
+      checkShape(e, kEntrant);
+  }
+  SECTION("the summary of a plain tournament") {
+    r.teams.clear();
+    Summary sum;
+    sum.add(r);
+    checkShape(formatSummaryJson(sum), kSummary);
+  }
+}
+
+TEST_CASE("every --json line is one complete object with the match's hashes", "[arena]") {
+  BotFactory factory;
+  MatchSetup setup = setupOf({"ref:hard", "ref:easy"}, 3, 600);
+  setup.recordReplay = true;
+  Summary sum;
+  std::vector<std::string> lines;
+  for (uint32_t k = 0; k < 2; ++k) {
+    MatchSetup s = setup;
+    s.config.seed += k;
+    const MatchResult r = play(s, factory, k);
+    // The hashes are the replay header's.
+    BitReader reader(r.replay);
+    sim::ReplayHeader h;
+    REQUIRE(sim::readReplayHeader(reader, h));
+    CHECK(r.contentHash == gameContent().hash);
+    CHECK(h.contentHash == r.contentHash);
+    CHECK(h.buildHash == r.buildHash);
+    lines.push_back(formatResultJson(r));
+    CHECK(valueOf(lines.back(), "content_hash") == std::format("\"{:08x}\"", h.contentHash));
+    CHECK(valueOf(lines.back(), "build_hash") == std::format("\"{:08x}\"", h.buildHash));
+    sum.add(r);
+  }
+  lines.push_back(formatSummaryJson(sum));
+  for (const std::string& line : lines) {
+    INFO(line);
+    CHECK(line.starts_with('{'));
+    CHECK(line.ends_with('}'));
+    CHECK(!line.contains('\n'));
+    CHECK(membersOf(line).has_value());
+  }
+  CHECK(valueOf(lines[0], "summary").empty());  // only the summary carries "summary"
+  CHECK(valueOf(lines[2], "summary") == "true");
 }
 
 TEST_CASE("the summary totals a tournament", "[arena]") {
