@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Kung Fu Monkeys favicon: a monkey face in a banana-yellow headband on the
+       jungle tile. Colours are apps/client/ui_style.hpp's palette (kJungle,
+       kBarkLight, kSand, kBanana, kInk). Hand-written on a 32-unit grid so it
+       stays legible at 16x16. -->
+  <defs>
+    <clipPath id="head"><circle cx="16" cy="17.5" r="10.5"/></clipPath>
+  </defs>
+  <rect width="32" height="32" rx="7" fill="#142418"/>
+  <g stroke="#2b1d0e" stroke-width="1.4">
+    <circle cx="5.5" cy="18" r="4" fill="#6b4423"/>
+    <circle cx="26.5" cy="18" r="4" fill="#6b4423"/>
+    <circle cx="16" cy="17.5" r="10.5" fill="#6b4423"/>
+  </g>
+  <circle cx="5.5" cy="18" r="2" fill="#f5dcb0"/>
+  <circle cx="26.5" cy="18" r="2" fill="#f5dcb0"/>
+  <g fill="#f5dcb0">
+    <circle cx="12.2" cy="17" r="4.3"/>
+    <circle cx="19.8" cy="17" r="4.3"/>
+    <ellipse cx="16" cy="22.6" rx="6.8" ry="4.4"/>
+  </g>
+  <rect x="4" y="8" width="24" height="4.2" fill="#fad628" stroke="#2b1d0e" stroke-width="1" clip-path="url(#head)"/>
+  <path d="M25 9.5 L30.5 7 L29.5 11.5 Z" fill="#fad628" stroke="#2b1d0e" stroke-width="1" stroke-linejoin="round"/>
+  <g fill="#2b1d0e">
+    <circle cx="12.4" cy="16.6" r="1.7"/>
+    <circle cx="19.6" cy="16.6" r="1.7"/>
+    <ellipse cx="14.6" cy="21.2" rx="0.8" ry="0.6"/>
+    <ellipse cx="17.4" cy="21.2" rx="0.8" ry="0.6"/>
+  </g>
+  <path d="M12.5 23.8 Q16 26.4 19.5 23.8" fill="none" stroke="#2b1d0e" stroke-width="1.2" stroke-linecap="round"/>
+</svg>
