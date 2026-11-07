@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.57 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.58 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -783,6 +783,13 @@ respawn numbers the gate passed on the old `.checksums` for all 17 round-kind en
 the four respawn-mode entries (`scripted_4p_deathmatch_3600t`, `scripted_4p_team_deathmatch_3600t`,
 `scripted_4p_hill_3600t`, `scripted_4p_capture_3600t`) changed their inputs; every other `.kfmr`
 differs only in its content hash.
+
+v0.58 changes: M6b landed (§11). The friends playtest, step (5) of the M6b sequencing, has
+been played over the production deployment and the exit criterion ("a group of friends plays a
+full evening from one link without help") is judged met; the code was complete in v0.44 and the
+play polish of v0.45 to v0.57 went in before the verdict. The same play closes M6a's open
+playtest item; its second region and Sentry project stay open. Next is M7, the bot ladder, in
+the order of §11 "M7 sequencing"; it has not started. No code change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4248,7 +4255,7 @@ match-over (landed in v0.43, §7: the game font and palette, Settings, Play onli
 and Share through `IPlatformServices`); (4) bots yielding, reconnect from the UI and the lead-control check at high RTT
 (landed in v0.44, §6.2, §6.6, §13.5: the queue for a bot's slot, lobby protocol v1.2's rejoin
 behind the Reconnect button, the jitter-aware lead band and a 500 ms soak gate);
-(5) a friends playtest against the criterion (pending: the M6b code is complete).
+(5) the friends playtest against the criterion (done: M6b landed in v0.58).
 
 M7 sequencing (v0.36, numbered M6b until v0.40): M6a and M7 share only the hosted client and
 proceed in parallel. M7 depends on `kfm_arena`, static hosting and an identity provider, not on
@@ -4309,8 +4316,9 @@ australia-southeast1, four server processes, the `v0.1.0` images from GHCR, regi
 lobby at `wss://lobby.kfm.minip8.com` behind Caddy with a Let's Encrypt certificate, and the
 page at `https://kfm.minip8.com/` from Cloudflare Pages. Verified from a home connection: a
 native client in a room on that server at 34 ms RTT for 40 s with 0 checksum mismatches, and
-the published page creating a room in headless Chromium with 0 console errors. Only the
-playtest with friends over the link, a second region and a Sentry project remain.
+the published page creating a room in headless Chromium with 0 console errors. The
+playtest with friends over the link was played (v0.58, with M6b); a second region and a Sentry
+project remain.
 
 Progress: M5b landed in v0.35. Against the exit criterion: "a 5v5 bot match on a tilemap arena
 with `own` vision and calls replays identically across the determinism gate at one-tick
