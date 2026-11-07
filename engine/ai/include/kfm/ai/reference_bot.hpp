@@ -9,7 +9,8 @@
 //   - movement: 16 stick directions and idle, each walked over the horizon
 //     against the predicted bananas (a contact is a heavy penalty, a near
 //     miss a light one), plus the goal of the moment: keep a throwing range
-//     to the target with a banana in hand; empty-handed, meet the own banana
+//     to the target, with a clear line past the walls (v0.57 in every space),
+//     with a banana in hand; empty-handed, meet the own banana
 //     on its way back, else fetch the nearest banana lying around (v0.57:
 //     not one deep in a pit); power-ups close by; stay off the outer walls;
 //     and (v0.57) a path that ends a tick with its whole disc over the pits

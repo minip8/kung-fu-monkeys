@@ -3517,6 +3517,13 @@ which the contract needs.
     pit and of every banana takes it (continuous space; the grid's walks never enter a pit).
     Four hard bots on `island` over ten rotated matches: 2 of 166 eliminations were falls,
     against 78 of 197 with the pit terms off (with the first cut's centre rule, 0 of 162).
+    The same run showed a standoff the grid had already met: two armed, mirrored bots parked at
+    fighting range on either side of island's central block, neither with a line to throw,
+    for a 33 019-tick match. The grid's clear-line goal (an armed bot's goal loses the preferred
+    range when a wall blocks the line to its target) now applies in the continuous space too:
+    island's ten matches average 2 768 ticks (5 480 before) with 0 falls in 190 eliminations,
+    pillars 3 422 (3 839); dojo has no walls and is unchanged; corridors still caps 5 of 10, as
+    it did before.
 
 Teams, fog and calls (v0.29). The contest shape is a squad: a team of monkeys, each run by its
 own program, seeing a slice of the world and talking through the game. One rule sits behind

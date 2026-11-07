@@ -775,9 +775,11 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     if (tgt != nullptr) {
       const Fixed d = walk && armed ? walkDistance(end) : distanceBetween(end, tgtAt);
       u -= armed ? abs(d - preferredRange) : -min(d, kFleeRange) / 2;
-      // v0.35, the grid: an armed bot wants a clear line to its target (a
-      // wall between two bots at fighting range is a standoff for ever).
-      if (grid && armed && !lineClear(obs, end, tgtAt, Fixed::fromRaw(obs.rules.bananaRadius))) {
+      // An armed bot wants a clear line to its target (a wall between two
+      // bots at fighting range is a standoff for ever): v0.35 on the grid,
+      // v0.57 in the continuous space too (two mirrored bots had parked on
+      // either side of island's central block for eight minutes).
+      if (armed && !lineClear(obs, end, tgtAt, Fixed::fromRaw(obs.rules.bananaRadius))) {
         u -= preferredRange;
       }
     } else if (explore && (armed || !haveFetch)) {
