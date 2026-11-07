@@ -174,6 +174,9 @@ class ReferenceBot final : public IAgent {
   uint32_t decisions_{0};
   // Ticks left of a standoff's throw hold; -1 while none is drawn.
   int8_t throwHold_{-1};
+  // v0.57: consecutive decisions armed with a wall between the bot and its
+  // target (continuous space); past kStandoffTicks it throws anyway.
+  uint16_t walledTicks_{0};
   // v0.48, a charging throw: the ticks the button stays held after the press
   // tick (0 = none or a tap), and the planned flight speed (Q16.16 per tick),
   // which keeps the aim leading the target until the release.

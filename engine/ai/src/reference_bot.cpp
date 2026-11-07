@@ -39,6 +39,9 @@ constexpr uint8_t kGoalTick = 16;      // where the goal is measured on a path
 constexpr uint8_t kStrikeTick = 8;     // where the distance to dash-ready enemies is measured
 constexpr uint8_t kDirections = 16;    // stick directions considered
 constexpr uint32_t kMaxThrowHold = 2;  // a standoff's random hold before a lined-up throw
+// v0.57: walled off from its target this long, an armed bot throws anyway (a
+// bank shot off the wall beats two mirrored bots waiting for ever).
+constexpr uint16_t kStandoffTicks = 180;
 // v0.48: the speed multiplier a charged throw adds beyond what its reach needs
 // (a faster banana leaves less time to dodge).
 constexpr Fixed kChargeMargin = Fixed::fromRaw(Fixed::kOneRaw * 2 / 5);
@@ -502,7 +505,7 @@ void ReferenceBot::trackThreats(const Observation& obs) {
   // (the mode's baseline grants the tag), so it is no threat to track.
   const bool friendlyFire = hasTag(obs.self.tags, kTagFriendlyFire);
   for (const ObsBanana& b : obs.bananas) {
-    // Grounded, or (v0.57) bound for a falling owner's pit: harmless.
+    // Grounded, or (v0.57) sinking into a pit: harmless.
     if (b.valid == 0 || b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded) ||
         b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self) ||
         (b.ownerRelation == static_cast<uint8_t>(ObsRelation::Ally) && !friendlyFire)) {
@@ -698,6 +701,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   const bool walledOff =
       !grid && me.ammo > 0 && target >= 0 &&
       !lineClear(obs, myPos, posOf(obs.players[target]), Fixed::fromRaw(obs.rules.bananaRadius));
+  walledTicks_ = walledOff ? static_cast<uint16_t>(std::min<uint32_t>(walledTicks_ + 1u, 65535u))
+                           : uint16_t{0};
   const uint8_t continuousGoalTick = walledOff ? kHorizon : kGoalTick;
   const auto goalTick = static_cast<uint8_t>(
       grid ? std::clamp<uint32_t>(uint32_t{obs.match.reservedTicksToLatch} + (2 * turn), 1u,
@@ -1107,8 +1112,9 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     if (grid) range = min(range, cellSize_ * kGridThrowCells);
     const Fixed dist = distanceBetween(from, aimAt);
     bool clear = dist <= range;
-    if (clear && obs.arena.wallCount > 0) {
-      // Sample the line every half unit against the walls.
+    if (clear && obs.arena.wallCount > 0 && walledTicks_ < kStandoffTicks) {
+      // Sample the line every half unit against the walls (v0.57: unless a
+      // long standoff calls for a bank shot).
       const int32_t samples = std::max<int32_t>(1, (dist * 2).ceilToInt());
       const Fixed bananaRadius = Fixed::fromRaw(r.bananaRadius);
       for (int32_t s = 1; s <= samples && clear; ++s) {
