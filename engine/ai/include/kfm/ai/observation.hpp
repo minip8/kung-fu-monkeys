@@ -96,7 +96,15 @@ enum class ObsAbilityKind : uint8_t {
   Call = 6,  // architecture v0.35
 };
 enum class ObsAbilityPhase : uint8_t { Idle = 0, Startup = 1, Active = 2, Recovery = 3 };
-enum class ObsBananaPhase : uint8_t { Outbound = 0, Returning = 1, Grounded = 2 };
+// v0.57: ToPit, a falling monkey's banana flying straight to its pit, and
+// Sinking, dropping in: both harmless (they hit and are caught by nothing).
+enum class ObsBananaPhase : uint8_t {
+  Outbound = 0,
+  Returning = 1,
+  Grounded = 2,
+  ToPit = 3,
+  Sinking = 4
+};
 // Flag (architecture v0.33): a capture team's flag; `spawner` is its team.
 enum class ObsPickupKind : uint8_t { Banana = 0, PowerUp = 1, Flag = 2 };
 enum class ObsHazardKind : uint8_t { Pit = 0, Slow = 1 };

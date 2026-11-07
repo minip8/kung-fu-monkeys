@@ -122,7 +122,16 @@ enum {
   KFM_ABILITY_ACTIVE = 2,
   KFM_ABILITY_RECOVERY = 3
 };
-enum { KFM_BANANA_OUTBOUND = 0, KFM_BANANA_RETURNING = 1, KFM_BANANA_GROUNDED = 2 };
+/* v0.57: TO_PIT, a falling monkey's banana flying straight to its pit, and
+ * SINKING, dropping in: both harmless. Every phase from GROUNDED on is out of
+ * flight. */
+enum {
+  KFM_BANANA_OUTBOUND = 0,
+  KFM_BANANA_RETURNING = 1,
+  KFM_BANANA_GROUNDED = 2,
+  KFM_BANANA_TO_PIT = 3,
+  KFM_BANANA_SINKING = 4
+};
 enum { KFM_PICKUP_BANANA = 0, KFM_PICKUP_POWERUP = 1, KFM_PICKUP_FLAG = 2 };
 enum { KFM_HAZARD_PIT = 0, KFM_HAZARD_SLOW = 1 };
 /* Tag bit numbers (the `tags` fields): test with kfm_has_tag(tags, KFM_TAG_...). */
@@ -228,7 +237,7 @@ typedef struct kfm_obs_self {
   int32_t velY, moveSpeed, radius, knockbackX, knockbackY;
   uint32_t tags;
   uint16_t hitStunTicks, knockbackTicks, invulnTicks, respawnTicks;
-  uint8_t facing; /* angle8 */
+  uint8_t facing;       /* angle8 */
   uint8_t facingOctant; /* grid: facing as 0..7 (0 east, counter-clockwise), the cone's */
   uint8_t role;         /* the loadout index the slot plays */
   uint8_t team;
@@ -852,7 +861,7 @@ static inline int kfm_ability_ready(const kfm_observation* o, int slot) {
  * caught on contact). */
 static inline int kfm_banana_is_threat(const kfm_observation* o, int i) {
   const kfm_obs_banana* b = &o->bananas[i];
-  return b->valid != 0 && b->phase != KFM_BANANA_GROUNDED && b->ownerRelation != KFM_REL_SELF;
+  return b->valid != 0 && b->phase < KFM_BANANA_GROUNDED && b->ownerRelation != KFM_REL_SELF;
 }
 
 /* The slot of the nearest living enemy (ties: the lower slot), preferring one
@@ -1090,7 +1099,7 @@ static inline int kfm_flight_step(kfm_flight* f, const kfm_observation* o, kfm_v
   int hitWall = 0;
   int hitOuter;
   if (f->ticksInPhase < 0xFFFFu) ++f->ticksInPhase;
-  if (f->phase == KFM_BANANA_GROUNDED) return 0;
+  if (f->phase >= KFM_BANANA_GROUNDED) return 0;
   if (f->phase == KFM_BANANA_OUTBOUND && f->ticksInPhase >= ru->bananaOutboundTicks) {
     f->phase = KFM_BANANA_RETURNING;
     f->ticksInPhase = 0;
@@ -1148,7 +1157,7 @@ static inline int kfm_predict_banana(const kfm_observation* o, int i, int ticks,
   const kfm_obs_banana* b = &o->bananas[i];
   const kfm_obs_player* owner = b->owner < KFM_MAX_PLAYERS ? &o->players[b->owner] : 0;
   kfm_flight f = kfm_flight_of(b);
-  int flying = b->phase == KFM_BANANA_GROUNDED ? 0 : ticks;
+  int flying = b->phase >= KFM_BANANA_GROUNDED ? 0 : ticks;
   int k;
   out[0] = f.pos;
   for (k = 1; k <= ticks; ++k) {

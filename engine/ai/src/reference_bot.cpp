@@ -235,7 +235,7 @@ void ReferenceBot::learn(const Observation& obs, int target) {
   // The flight speed: Observation v1 has only the base one, a mode's
   // baseline scales every banana alike; the own banana's wins.
   for (const ObsBanana& b : obs.bananas) {
-    if (b.valid == 0 || b.speed <= 0 || b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
+    if (b.valid == 0 || b.speed <= 0 || b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
       continue;
     }
     if (b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self) || bananaSpeed_ == Fixed{}) {
@@ -344,8 +344,14 @@ Fixed ReferenceBot::walkDistance(Vec2 at) const {
 void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idle, Path& p) const {
   // The slide in progress runs until the next latch (or the host delay);
   // then a step to the octant's neighbour every turn, taken only when that
-  // cell is free for the monkey's circle (the outer box, the walls, and for
-  // a diagonal both orthogonal neighbours), else it stays.
+  // cell is open for the monkey's circle (the outer box, the walls, and for
+  // a diagonal both orthogonal neighbours), else it stays. v0.57: for the
+  // first step, the one the bot commits to now, a pit cell is open as in the
+  // sim's latch, so the path walks in and pitDanger scores the fall (modelled
+  // as staying, a step into a pit tied with idle and the hysteresis could
+  // pick it: about half the grid bots' deaths). Later steps, which the bot
+  // will choose again, stop at a pit as before: else every straight line
+  // that meets a pit some cells on would be scored as a fall.
   const uint32_t turn = obs.match.reservedTurnTicks > 0 ? obs.match.reservedTurnTicks : 1u;
   const uint8_t start = static_cast<uint8_t>(std::min<uint32_t>(
       std::max<uint32_t>(obs.match.inputDelayTicks, obs.match.reservedTicksToLatch), kHorizon / 2));
@@ -359,8 +365,9 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
     const int32_t row = ((hy - at.y) / c).floorToInt();
     return Vec2{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
   };
-  const auto free = [&](Vec2 at) {
-    if (abs(at.x) > hx - r || abs(at.y) > hy - r || inPit(obs, at, r)) return false;
+  bool first = true;
+  const auto open = [&](Vec2 at) {
+    if (abs(at.x) > hx - r || abs(at.y) > hy - r || (!first && inPit(obs, at, r))) return false;
     for (uint32_t w = 0; w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
       if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) return false;
     }
@@ -375,8 +382,8 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
   Vec2 at = centreOf(p.pos[k - 1]);
   while (k <= kHorizon) {
     Vec2 to = at;
-    if (!idle && free(at + dc + dr) &&
-        (!sim::grid::diagonal(octant) || (free(at + dc) && free(at + dr)))) {
+    if (!idle && open(at + dc + dr) &&
+        (!sim::grid::diagonal(octant) || (open(at + dc) && open(at + dr)))) {
       to = at + dc + dr;
     }
     for (uint32_t j = 1; j <= turn && k <= kHorizon; ++j, ++k) {
@@ -384,6 +391,7 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
           at + ((to - at) * Fixed::fromRatio(static_cast<int32_t>(j), static_cast<int32_t>(turn)));
     }
     at = to;
+    first = false;
   }
 }
 
@@ -494,7 +502,8 @@ void ReferenceBot::trackThreats(const Observation& obs) {
   // (the mode's baseline grants the tag), so it is no threat to track.
   const bool friendlyFire = hasTag(obs.self.tags, kTagFriendlyFire);
   for (const ObsBanana& b : obs.bananas) {
-    if (b.valid == 0 || b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded) ||
+    // Grounded, or (v0.57) bound for a falling owner's pit: harmless.
+    if (b.valid == 0 || b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded) ||
         b.ownerRelation == static_cast<uint8_t>(ObsRelation::Self) ||
         (b.ownerRelation == static_cast<uint8_t>(ObsRelation::Ally) && !friendlyFire)) {
       continue;
@@ -549,7 +558,16 @@ void ReferenceBot::dashPath(const Observation& obs, uint8_t dir, Path& p) {
   const uint8_t lead = std::min<uint8_t>(obs.match.inputDelayTicks, kHorizon / 2);
   const ObsAbility& dash = obs.self.abilities[0];
   const Vec2 cur = vec(obs.self.velX, obs.self.velY);
-  const Vec2 v = unitOf(dir) * Fixed::fromRaw(dash.defSpeed);
+  Vec2 v = unitOf(dir) * Fixed::fromRaw(dash.defSpeed);
+  // v0.57, the grid: a dash commits to whole cells along its octant, so a
+  // diagonal one covers its dash cells on both axes, not along the diagonal
+  // (the dash def's speed x active ticks is the cells' length); a pit check
+  // on the old straight line missed the diagonal landing cell.
+  if (obs.match.reservedTurnTicks > 0) {
+    const uint8_t o = sim::grid::octantOf(dir);
+    v = Vec2{Fixed::fromInt(kStepCol[o]), Fixed::fromInt(-kStepRow[o])} *
+        Fixed::fromRaw(dash.defSpeed);
+  }
   p.pos[0] = vec(obs.self.posX, obs.self.posY);
   for (uint8_t k = 1; k <= kHorizon; ++k) {
     Vec2 step{};
@@ -688,7 +706,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     uint64_t best = UINT64_MAX;
     for (const ObsBanana& b : obs.bananas) {
       if (b.valid == 0 || b.ownerRelation != static_cast<uint8_t>(ObsRelation::Self) ||
-          b.phase == static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
+          b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
         continue;
       }
       const uint64_t d = lengthSqRaw(vec(b.posX, b.posY) - myPos);
