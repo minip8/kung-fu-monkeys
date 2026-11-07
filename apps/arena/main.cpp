@@ -41,7 +41,9 @@
 //   --replay F     write match 0's .kfmr to F; --replay-dir D writes every
 //                  match to D/match_<k>.kfmr
 //   --result F     also write the result lines (and the summary) to F
-//   --json         one JSON object per line instead of the text lines
+//   --json         one JSON object per line instead of the text lines: a
+//                  match object per match, the summary last; the keys are
+//                  append-only (docs/arena-result.md, the ladder parses them)
 //   --quiet        no per-match lines on stdout (the summary still prints)
 //   --log          print each module's captured kfm_log output at the end
 //                  (stderr)
@@ -93,7 +95,8 @@ constexpr const char* kUsage =
     "                 [--json] [--quiet] [--log]\n"
     "  SPEC: ref | ref:easy | ref:medium | ref:hard | path/to/bot.wasm\n"
     "  --rotate: match k moves bot b to slot (b + k) mod n; the summary adds per-bot totals\n"
-    "  --team: one per team of a team mode, its specs fill the team's slots in order\n";
+    "  --team: one per team of a team mode, its specs fill the team's slots in order\n"
+    "  --json: one object per line, the summary last (docs/arena-result.md)\n";
 
 struct Args {
   std::vector<std::string> bots;
