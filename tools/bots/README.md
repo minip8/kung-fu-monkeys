@@ -11,8 +11,11 @@ Bot tooling kept in the game repository (architecture §8). The normative contra
 | `build_example.sh` | Builds the examples (`tools/bots/build_example.sh [name...]`). |
 | `build_fixtures.sh`, `check_fixtures.cmake` | The hand-written ABI test modules in `tests/fixtures/bots` (`.wat` to `.wasm`, wabt). |
 
-**The SDK's home is the separate bots repository**, with the other language SDKs, the example
-bots and the contest. What is here is the seed copied there, and the in-repo proof that a module
+**The SDK's home is the separate bots repository**,
+[`minip8/kung-fu-monkeys-bots`](https://github.com/minip8/kung-fu-monkeys-bots) (M7 step 2):
+the C header copied byte for byte (its CI diffs the copy against this file at the engine commit
+its `engine.lock` names), the C++ layer, the example bots, the build recipe and image, and
+later the ladder. What is here is the seed copied there, and the in-repo proof that a module
 built from it loads and plays: `tests/unit/ai/example_bot_test.cpp` (in `kfm_ai_wasm_tests`)
 checks the header's layout and constants against `engine/ai/include/kfm/ai/observation.hpp`,
 its integer math and banana flight step against the engine and the sim, and plays the checked-in
