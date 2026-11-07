@@ -448,10 +448,12 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   `content/arena.hpp`, exact and integer-only; the bot uses the same function). Row 60 forbids
   `Dashing`, so a dash's reach is how wide a pit it clears. `kGone` in `rules/table.cpp` holds
   `Falling`: a new row that forbids `kGone` is safe against a falling monkey. A dead (or newly
-  falling) monkey's bananas in flight drop at once (`dropBananasOf`) and become pickups, and
-  bananas never disappear (`rules/bananas.hpp`: held ones at a non-pit death, a catch past
-  `ammoMax`, a lowered `ammoMax`, a full pickup pool all drop or stack; a new path that would
-  destroy a banana must drop it instead); a
+  falling) monkey's bananas in flight are released at once (`releaseBananasOf`: dropped as
+  pickups, or gone in a mode whose `death_bananas` is vanish), and otherwise bananas never
+  disappear (`rules/bananas.hpp`: held ones at a non-pit death in a drop mode, a catch past
+  `ammoMax`, a full pickup pool all drop or stack; a new path that would destroy a banana must
+  drop it instead; the exceptions are a vanish mode's death and an ammo power-up's extra
+  bananas when it runs out); a
   grounded banana wholly over a pit sinks instead (`BoomerangPhase::Sinking`, never a pickup); a
   new Boomerang row must name an Outbound/Returning phase mask so it never touches a sinking one
   (a test pins it). A new

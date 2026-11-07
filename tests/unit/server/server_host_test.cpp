@@ -283,7 +283,7 @@ TEST_CASE("ServerHost restarts a deathmatch and a survival match the same way",
   CHECK(c.simConfig().mode == mode);
   const sim::WorldState& w = rig.host->server().world();
   CHECK_FALSE(w.rules.hasModeCounters());  // a fresh match: nothing carried over
-  CHECK(w.rules.scores == std::array<uint8_t, sim::kMaxPlayers>{});
+  CHECK(w.rules.scores == std::array<int8_t, sim::kMaxPlayers>{});
 
   rig.runFor(10 * kSec);
   CHECK(c.running());

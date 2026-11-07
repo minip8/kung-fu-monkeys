@@ -415,7 +415,9 @@ TEST_CASE("after a fall the next round hands out bananas as ever", "[scenario][p
 
 TEST_CASE("a hit monkey's held bananas that scatter over a pit sink; the rest lie",
           "[scenario][pit][banana]") {
-  Lab lab(0b111);
+  ContentDB db = pitContent();
+  db.player.ammoMax = 2;  // two held (v0.57: ammo above ammoMax is cut each tick)
+  Lab lab(0b111, db);
   // Standing at the narrow pit's east edge, its body still half on the floor.
   const Vec2 edge{Fixed::fromRatio(-36, 5), Fixed::zero()};
   placePlayer(lab.s, kP0, edge).ammo = 2;

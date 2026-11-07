@@ -202,18 +202,17 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 26 | u16 | `aliveMask` | bit i: slot i has a monkey in the arena |
 | 28 | u8 | `inputDelayTicks` | ticks from this observation to the tick its answer applies on (§1.5) |
 | 29 | u8 | `lastRoundWinner` | slot; `0xFF` after a draw or before the first round end |
-| 30 | u8 | `pad0` | |
-| 31 | u8 | `pad1` | |
+| 30 | u16 | `bananaRegrowTicks` | architecture v0.57 (was `pad0`, `pad1`, always 0): ticks a monkey owning no banana (none in its hand, none of its own in flight) waits until one grows in its hand; 0 = the mode regrows none |
 | 32 | u16 | `roundStartTicks` | countdown at a round start (everyone spawned and frozen) |
 | 34 | u16 | `roundEndTicks` | pause after a round end |
 | 36 | u16 | `respawnDelayTicks` | deathmatch: ticks from an elimination to the respawn |
 | 38 | u16 | `respawnInvulnTicks` | deathmatch: spawn protection after a respawn |
 | 40 | u16 | `reservedTurnTicks` | §3: ticks per turn in a grid mode, 0 in a continuous one |
 | 42 | u16 | `reservedTicksToLatch` | §3: in a grid mode, ticks from this observation's tick to the next latch (0: this tick's input is latched) |
-| 44 | u8[10] | `scores` | per slot: round wins (rounds, survival) or eliminations (deathmatch) |
+| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
 | 54 | u8[10] | `deaths` | per slot: eliminations suffered this match |
 | 64 | u16[10] | `respawnTicks` | per slot: ticks until a dead slot respawns, 0 = none due |
-| 84 | u16[10] | `reservedTeamScores` | §3: per team index |
+| 84 | i16[10] | `reservedTeamScores` | §3: per team index (signed since architecture v0.57) |
 | 104 | u32[16] | `reservedModeData` | §3: the mode's own state |
 
 ### 2.5 `rules` (offset 184, 44 bytes)

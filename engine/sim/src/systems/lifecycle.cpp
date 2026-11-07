@@ -14,8 +14,10 @@
 // it despawns (the pit row already dropped a faller's when its fall began),
 // so they come down as pickups below like any grounded banana, on the tick
 // of the death; the ones in its hand drop too, scattered around it, unless
-// it fell down a pit with them. A monkey holding more than its ammoMax (a
-// power-up ran out) drops the extra ones the same way. A grounded banana whose disc (the
+// it fell down a pit with them; in a mode whose ModeDef::deathBananas is
+// vanish they all go with it instead (releaseBananasOf, no drop). After the
+// despawns an empty hand counts toward a regrow (regrowBananas). A grounded
+// banana whose disc (the
 // banana's contact radius) lies wholly over the pits (discOverPits, the
 // monkeys' own test) falls into the hole instead: Sinking, BoomerangFell,
 // gone after BoomerangDef::pitSinkTicks; so no pickup ever lies where only a
@@ -70,6 +72,35 @@ void respawnTimers(WorldState& s, const MatchContent& content, EventSink& sink) 
     }
     if (--r.respawnTicks[i] == 0) respawnPlayer(s, content, id, sink);
   }
+}
+
+// v0.57, ModeDef::bananaRegrowTicks: while Playing, every monkey still in
+// play (not eliminated, not falling) that owns no banana (none in its hand,
+// none of its own outbound or returning) counts a tick; at the mode's number
+// it grows one in its hand (BananaRegrown) and the count starts over. Owning
+// one by any route (a pickup, a catch, a parry, a power-up) resets it. Runs
+// after this tick's catches and despawns, so it sees the tick's last word.
+void regrowBananas(WorldState& s, const MatchContent& content, EventSink& sink) {
+  const uint16_t need = content.mode.bananaRegrowTicks;
+  if (need == 0 || s.rules.phase != MatchPhase::Playing) return;
+  PlayerMask away = 0;
+  s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
+    if ((b.phase == BoomerangPhase::Outbound || b.phase == BoomerangPhase::Returning) &&
+        b.owner.isValid() && b.owner.value < kMaxPlayers) {
+      away = static_cast<PlayerMask>(away | (1u << b.owner.value));
+    }
+  });
+  s.players.forEachAlive([&](EntityId id, Player& p) {
+    if (p.tags.has(Tag::Eliminated) || p.tags.has(Tag::Falling)) return;
+    if (p.ammo > 0 || maskHas(away, p.id)) {
+      p.regrowTicks = 0;
+      return;
+    }
+    if (++p.regrowTicks < need) return;
+    p.regrowTicks = 0;
+    p.ammo = 1;
+    sink.push(SimEvent{EventKind::BananaRegrown, s.tick, p.id, id, 0, 0});
+  });
 }
 
 [[nodiscard]] bool spawnerBeat(const PickupSpawner& sp, uint32_t t) {
@@ -135,22 +166,19 @@ void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink
     if (p.fallTicks == 0) eliminateFallen(s, content, p, sink);
   });
 
+  const bool vanish = content.mode.deathBananas == DeathBananas::Vanish;
   s.players.forEachAlive([&](EntityId id, Player& p) {
-    if (!p.tags.has(Tag::Eliminated)) {
-      // v0.57: more held than ammoMax allows (a power-up ran out): the
-      // extra ones drop around the monkey.
-      if (p.ammo > p.stats.ammoMax) {
-        dropHeldBananas(s, content, p, static_cast<uint8_t>(p.ammo - p.stats.ammoMax), sink);
-      }
-      return;
-    }
+    if (!p.tags.has(Tag::Eliminated)) return;
     s.rules.invulnTicks[id.index] = 0;
     // v0.57: its bananas come down where they are, the held ones scattered
-    // around it, unless it fell down a pit holding them.
-    dropBananasOf(s, p.id);
-    if (!p.tags.has(Tag::Falling)) dropHeldBananas(s, content, p, p.ammo, sink);
+    // around it, unless it fell down a pit holding them; in a vanish mode
+    // they all go with it.
+    releaseBananasOf(s, content, p.id, sink);
+    if (!vanish && !p.tags.has(Tag::Falling)) dropHeldBananas(s, content, p, p.ammo, sink);
     s.players.despawn(id);
   });
+
+  regrowBananas(s, content, sink);
 
   // Iterates boomerangs and spawns pickups: a different pool, so the
   // forEachAlive no-spawn rule holds.

@@ -2,7 +2,7 @@
 // a monkey killed by anything but a pit drops every banana it holds as
 // floor pickups scattered around it (inside the arena, off the walls); a
 // catch over ammoMax drops the extra banana at the catch point; ammo above a
-// lowered ammoMax (a power-up running out) drops; a full pickup pool stacks
+// lowered ammoMax (a power-up running out) vanishes with it (round 6); a full pickup pool stacks
 // a new banana on the nearest banana pickup; walking over a pickup at full
 // ammo leaves it; an ammo power-up's top-up never makes phantom bananas.
 // (A pit fall keeps its held bananas, and a banana over a pit sinks:
@@ -148,7 +148,8 @@ TEST_CASE("a catch over ammoMax drops the extra banana at the catch point", "[sc
   CHECK(s.pickups.size() == 1);
 }
 
-TEST_CASE("a power-up running out drops the bananas above the new ammoMax", "[scenario][banana]") {
+TEST_CASE("a power-up running out takes the bananas above the new ammoMax with it",
+          "[scenario][banana]") {
   ContentDB c = defaultContent();
   const uint8_t more = addAmmoPowerUp(c);
   const MatchContent m = matchContent(c, MatchConfig{.seed = 64, .players = 0b11});
@@ -162,8 +163,9 @@ TEST_CASE("a power-up running out drops the bananas above the new ammoMax", "[sc
   runTicks(s, frameFor(s), 5, m, log);  // it expires
   CHECK(playerAt(s, kP0).stats.ammoMax == c.player.ammoMax);
   CHECK(playerAt(s, kP0).ammo == c.player.ammoMax);
-  CHECK(countEvents(log, EventKind::BananaDropped) == 2);
-  CHECK(bananaPickups(s).size() == 2);
+  // v0.57 (PR #49 round 6): the extra ones vanish with the power-up.
+  CHECK(countEvents(log, EventKind::BananaDropped) == 0);
+  CHECK(bananaPickups(s).empty());
 }
 
 TEST_CASE("an ammo power-up's top-up never makes phantom bananas", "[scenario][banana]") {

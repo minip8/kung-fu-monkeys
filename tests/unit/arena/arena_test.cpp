@@ -63,7 +63,7 @@ MatchResult play(const MatchSetup& setup, BotFactory& factory, uint32_t index = 
   return std::move(result).value_or(MatchResult{});
 }
 
-SlotResult slotWith(uint8_t slot, uint32_t score, uint32_t deaths) {
+SlotResult slotWith(uint8_t slot, int32_t score, uint32_t deaths) {
   SlotResult s;
   s.slot = slot;
   s.botIndex = slot;

@@ -171,7 +171,7 @@ TEST_CASE("deathmatch: reaching scoreToWin ends the match", "[scenario][modes][d
   const MatchContent m = modeMatch(kDeathmatch);
   WorldState s = playing(kDeathmatch, 0b111);
   spreadOut(s);
-  s.rules.scores[2] = static_cast<uint8_t>(m.mode.scoreToWin - 1);
+  s.rules.scores[2] = static_cast<int8_t>(m.mode.scoreToWin - 1);
   EventLog log;
   REQUIRE(shoot(s, m, kP2, kP0, log));
   CHECK(s.rules.phase == MatchPhase::MatchEnded);

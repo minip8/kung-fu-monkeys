@@ -34,7 +34,8 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
 // but already out, so the round waits the fall out and then judges.
 [[nodiscard]] bool anyFalling(const WorldState& s);
 
-// The dry-round rule of the round kinds (v0.57). A round is dry while no
+// The dry-round rule of the round kinds (v0.57). A mode that regrows
+// bananas (ModeDef::bananaRegrowTicks) never runs dry. A round is dry while no
 // banana is left: none in a live monkey's hand, no banana entity in flight,
 // returning or grounded (one sinking into a pit counts as gone), no banana
 // pickup, no power-up pickup lying around that tops ammo
@@ -64,7 +65,18 @@ void endMatch(WorldState& s, PlayerId winner, EventSink& sink);
 
 // The present slot with the strictly highest score, or invalid on a tie
 // (or with nobody present). `best` receives the highest score.
-[[nodiscard]] PlayerId scoreLeader(const MatchRules& r, uint8_t& best);
+[[nodiscard]] PlayerId scoreLeader(const MatchRules& r, int8_t& best);
+
+// Adds `delta` to slot `id`'s score, saturating at the int8_t range, and
+// pushes ScoreChanged (a = the score after as int32 bits, b = the reason).
+// Nothing for delta 0 or an invalid slot.
+void addScore(WorldState& s, PlayerId id, int delta, ScoreReason reason, EventSink& sink);
+
+// Reports an elimination to the mode (v0.57: every caller goes through it):
+// ModeBehavior::onEliminated, then, for one with no killer (invalid, or the
+// victim itself: a pit fall), ModeDef::suicideScore to the victim's slot.
+void reportElimination(WorldState& s, const MatchContent& content, PlayerId victim, PlayerId killer,
+                       EventSink& sink);
 
 // Teams (v0.32): bit t set when a present slot (teamsPresent) or a monkey
 // still in the arena (teamsAlive) belongs to team t.
@@ -79,7 +91,7 @@ void endMatch(WorldState& s, PlayerId winner, EventSink& sink);
 // slot on a tie); invalid on a tie for the lead or with nobody present.
 // `best` receives the highest team score.
 [[nodiscard]] PlayerId teamScoreLeader(const WorldState& s, const MatchContent& content,
-                                       uint16_t& best);
+                                       int16_t& best);
 
 // Deathmatch roster (v0.23, shared with team deathmatch in v0.32): a present
 // slot without a monkey and without a pending respawn (a late joiner) is

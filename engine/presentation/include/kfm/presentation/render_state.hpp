@@ -231,8 +231,8 @@ struct RenderHud {
   float roundEndSeconds{0.0f};   // RoundEnded: until the next round; else 0
   uint8_t round{0};
   uint8_t roundsToWin{0};
-  uint16_t presentMask{0};  // bit i: slot i is in the match
-  std::array<uint8_t, sim::kMaxPlayers> scores{};
+  uint16_t presentMask{0};                        // bit i: slot i is in the match
+  std::array<int8_t, sim::kMaxPlayers> scores{};  // signed since v0.57
   int8_t lastRoundWinner{kNoSlot};  // kNoSlot before the first round end or after a draw
   int8_t matchWinner{kNoSlot};      // set in MatchEnded
   // v0.23 (modes): what the scoreboard shows. scores are round wins in
@@ -248,7 +248,7 @@ struct RenderHud {
   // team (MatchConfig::teams) and every team's score (the sum of its slots').
   uint8_t teamCount{0};
   std::array<uint8_t, sim::kMaxPlayers> teams{};
-  std::array<uint16_t, sim::kMaxPlayers> teamScores{};
+  std::array<int16_t, sim::kMaxPlayers> teamScores{};
 };
 
 struct RenderState {

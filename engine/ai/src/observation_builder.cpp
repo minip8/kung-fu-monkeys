@@ -131,6 +131,7 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   m.roundEndTicks = mode.roundEndTicks;
   m.respawnDelayTicks = mode.respawnTicks;
   m.respawnInvulnTicks = mode.respawnInvulnTicks;
+  m.bananaRegrowTicks = mode.bananaRegrowTicks;  // v0.57
   uint8_t alive = 0;
   uint16_t aliveMask = 0;
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {

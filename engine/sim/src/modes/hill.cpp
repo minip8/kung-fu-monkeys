@@ -18,6 +18,7 @@
 #include "modes/mode_flow.hpp"
 
 #include <cstdint>
+#include <utility>
 
 namespace kfm::sim {
 namespace {
@@ -82,17 +83,16 @@ void hillOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink) 
     const uint32_t held = clockOf(r, team) + 1;
     if (held >= (mode.hillTicks > 0 ? mode.hillTicks : 1u)) {
       setClock(r, team, 0);
-      uint8_t& score = r.scores[credit.value];
-      if (score < UINT8_MAX) ++score;
-      sink.push(SimEvent{EventKind::ScoreChanged, s.tick, credit, EntityId{}, score, 0});
+      addScore(s, credit, 1, ScoreReason::Objective, sink);
     } else {
       setClock(r, team, held);
     }
   }
 
-  uint16_t best = 0;
+  int16_t best = 0;
   const PlayerId leader = teamScoreLeader(s, content, best);
-  if (best >= mode.scoreToWin || clockExpired(r, mode.timeLimitTicks)) endMatch(s, leader, sink);
+  if (std::cmp_greater_equal(best, mode.scoreToWin) || clockExpired(r, mode.timeLimitTicks))
+    endMatch(s, leader, sink);
 }
 
 void hillOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,

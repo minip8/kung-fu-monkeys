@@ -47,6 +47,7 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.20f, 0.45f},   // CallPing
     {0.62f, 0.55f},   // Fall
     {0.20f, 0.45f},   // BananaPlop
+    {0.30f, 0.45f},   // Regrow
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -309,6 +310,15 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         osc.next(hz, sr);
         v = (env(t, 0.004f, 0.06f) * harmonics(osc.phase(), 0.25f, 0.0f)) +
             (0.25f * env(t, 0.002f, 0.03f) * svf.low());
+        break;
+      }
+      case SoundId::Regrow: {
+        // v0.57: a soft pop gliding up from 520 Hz to an octave above, then a
+        // small bell twinkle on top.
+        const float hz = 520.0f * std::pow(2.0f, clamp01(t / 0.12f));
+        osc.next(hz, sr);
+        v = (env(t, 0.006f, 0.1f) * harmonics(osc.phase(), 0.15f, 0.0f)) +
+            (0.5f * bell(t - 0.12f, 2093.0f, 0.07f));
         break;
       }
       case SoundId::Count:

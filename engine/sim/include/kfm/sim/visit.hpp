@@ -28,6 +28,16 @@ namespace kfm::sim {
 
 // --- core types -------------------------------------------------------------
 
+// A signed byte rides as its two's-complement u8 (v0.57: a score, a mode's
+// points), so 0..127 serialise exactly as the unsigned byte did.
+template <class V>
+void visitI8(V& v, int8_t& x) {
+  auto bits = static_cast<uint8_t>(x);
+  v.u8(bits);
+  // Only a reader stores it back: a writer or a hasher may be handed const
+  // data cast to non-const (a static ContentDB in read-only memory).
+  if constexpr (V::kIsReader) x = static_cast<int8_t>(bits);
+}
 template <class V>
 void visit(V& v, Tick& t) {
   v.u32(t.value);
@@ -86,6 +96,8 @@ template <>
 inline constexpr uint8_t kEnumCount<Space> = static_cast<uint8_t>(Space::kCount);
 template <>
 inline constexpr uint8_t kEnumCount<VisionKind> = static_cast<uint8_t>(VisionKind::kCount);
+template <>
+inline constexpr uint8_t kEnumCount<DeathBananas> = static_cast<uint8_t>(DeathBananas::kCount);
 template <>
 inline constexpr uint8_t kEnumCount<GrantKind> = 5;
 template <>
@@ -328,6 +340,10 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.vision.hearing);
   v.u8(d.vision.bananaSight);
   v.u16(d.dryRoundTicks);  // v0.57
+  visit(v, d.deathBananas);
+  visitI8(v, d.catchScore);
+  visitI8(v, d.suicideScore);
+  v.u16(d.bananaRegrowTicks);
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {
@@ -392,8 +408,8 @@ void visit(V& v, MatchRules& r) {
   v.u16(r.present);
   v.u32(r.ticksInPhase);
   v.u8(r.round);
-  for (uint8_t& score : r.scores)
-    v.u8(score);
+  for (int8_t& score : r.scores)  // v0.57: signed, the same byte as before for 0..127
+    visitI8(v, score);
   visit(v, r.lastRoundWinner);
   validatePlayerRef(v, r.lastRoundWinner);
   for (uint8_t& d : r.deaths)
@@ -495,6 +511,7 @@ void visit(V& v, Player& p) {
   visit(v, p.moveTarget);  // v0.34: the grid's commitment
   v.u16(p.moveTicks);
   v.u16(p.fallTicks);  // v0.57: a pit fall
+  v.u16(p.regrowTicks);
 }
 template <class V>
 void visit(V& v, Boomerang& b) {

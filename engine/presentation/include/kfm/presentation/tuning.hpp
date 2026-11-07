@@ -166,6 +166,12 @@ inline constexpr float kPitFallSeconds = 0.45f;  // the PitFall ring
 // splash ring where it drops in is this big.
 inline constexpr float kBananaSinkDepth = 0.8f;
 inline constexpr float kBananaSplashSize = 0.45f;
+// The banana economy (v0.57): a banana grown in an empty hand twinkles there
+// (PickupSparkle) with a short flash; a dead monkey's banana in flight that
+// vanishes with it leaves a small white puff (ThrowPuff) where it was.
+inline constexpr float kRegrowSparkleSeconds = 0.5f;
+inline constexpr float kRegrowFlashSeconds = 0.15f;
+inline constexpr float kBananaVanishSeconds = 0.3f;
 
 // --- effects ---------------------------------------------------------------------------
 inline constexpr float kDashRingSeconds = 0.25f;

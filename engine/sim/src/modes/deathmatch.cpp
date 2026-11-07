@@ -12,6 +12,7 @@
 #include "modes/mode_flow.hpp"
 
 #include <cstdint>
+#include <utility>
 
 namespace kfm::sim {
 
@@ -19,9 +20,9 @@ void deathmatchOnPlaying(WorldState& s, const MatchContent& content, EventSink& 
   const ModeDef& mode = content.mode;
   deathmatchRoster(s, content, /*forfeitScore=*/true);
   clockWarnings(s, mode.timeLimitTicks, sink);
-  uint8_t best = 0;
+  int8_t best = 0;
   const PlayerId leader = scoreLeader(s.rules, best);
-  if (best >= mode.scoreToWin || clockExpired(s.rules, mode.timeLimitTicks)) {
+  if (std::cmp_greater_equal(best, mode.scoreToWin) || clockExpired(s.rules, mode.timeLimitTicks)) {
     endMatch(s, leader, sink);
   }
 }
@@ -34,9 +35,7 @@ void deathmatchOnEliminated(WorldState& s, const MatchContent& content, PlayerId
     r.respawnTicks[victim.value] = respawnDelay(content.mode);
   }
   if (!killer.isValid() || killer.value >= kMaxPlayers || killer == victim) return;
-  uint8_t& score = r.scores[killer.value];
-  if (score < UINT8_MAX) ++score;
-  sink.push(SimEvent{EventKind::ScoreChanged, s.tick, killer, EntityId{}, score, 0});
+  addScore(s, killer, 1, ScoreReason::Objective, sink);
 }
 
 }  // namespace kfm::sim

@@ -14,6 +14,7 @@ kfm_add_test_exe(kfm_scenario_tests
   match_config_scenario.cpp
   arena_scenario.cpp
   banana_conservation_scenario.cpp
+  banana_economy_scenario.cpp
   pit_scenario.cpp
   dry_round_scenario.cpp
   mode_scenario.cpp

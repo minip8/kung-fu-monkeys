@@ -414,7 +414,8 @@ start, open slots), the host's settings (`LobbyMenu::setRoomRows()`: only the ro
 read-only view with the arena preview, Start match / "Waiting for <host> to start" and Leave.
 Scoreboards are a view model (`core/scoreboard.hpp`, a pure function of `RenderHud`, the labels
 and the local / bot masks): rows sorted by score, then deaths, then slot (by team first in a team
-mode, places shared on a tie), the score column named by the kind (Rounds, Kills, Points, Flags),
+mode, places shared on a tie), the score column named by the kind (Rounds, Kills, Points, Flags;
+v0.57: Score for the deathmatch kinds, whose points are kills plus catches less suicides),
 deaths where the kind counts them, the winner crowned and this client's rows outlined online; it
 shows after a round in the round kinds (RoundEnded only: the next round's countdown keeps the
 screen to its banner and count, v0.55) under a raised banner, and at every match's end. The match-over screen (the winner in their colour, the
@@ -661,9 +662,9 @@ overlap a wall and clamped into the arena box; `BananaDropped{monkey, pickup}`).
 `ammoMax` (the auto-catch of the owner's returning banana; the perfect catch already declines at
 `ammoMax`) keeps the hand full and drops the extra banana at the catch point; walking over a
 pickup at full ammo leaves it, as before. Ammo above a lowered `ammoMax` (an ammo power-up running
-out) is no longer cut by ModifierSystem: LifecycleSystem drops the extra bananas around the
-monkey; an ammo power-up's top-up fills only up to the `ammoMax` it gives (never past it, never
-taking any), so it makes no phantom bananas. A dash attack's spent banana (`consumes_ammo`, off in
+out) is cut by ModifierSystem as before: the extra bananas it granted go with it (a review round
+had them drop; the economy below took that back); an ammo power-up's top-up fills only up to the
+`ammoMax` it gives (never past it, never taking any), so it makes no phantom bananas. A dash attack's spent banana (`consumes_ammo`, off in
 shipped content) drops at the contact. A full pickup pool no longer swallows a banana: it is
 stacked on the nearest banana pickup (`Pickup::count`, taken as many as fit, the rest left
 lying); the pool cannot fill without banana pickups (power-up spawners hold at most half of its
@@ -707,6 +708,45 @@ closing ring and a falling slide whistle; a dropped banana comes down with the e
 look (dust, the banana-ground sound) and becomes the pickup; one over a pit sinks into the hole
 from hand height with a small ring and a plop; and the elimination bursts out of the pit at floor
 level.
+**The banana economy is per mode** (ModeDef, `content/modes.toml`, the defaults keeping the round
+kinds as above). `death_bananas = "drop" | "vanish"` (`ModeDef::deathBananas`, default drop):
+drop is the rule above; vanish takes every banana a dead monkey owns, held and in flight
+(`BananaVanished{owner, banana}` for each one away, despawned where it is), and the respawn hands
+out `ammo_start` again. A pit fall always takes the held ones down; the ones away follow the mode
+from the moment the fall begins (`releaseBananasOf`). Shipped: drop in rounds, survival,
+team_rounds and the grid modes; vanish in deathmatch, team_deathmatch, hill and capture, where
+dropped bananas piled up over a long match. The point kinds (`scoresPoints`) take
+`catch_score` and `suicide_score` (int8, default 0; the loader refuses them on a round kind,
+whose score counts round wins): a perfect dash catch of an **enemy's** banana (its thrower known
+and on another team) adds `catch_score` to the catcher's slot, the own banana or an ally's
+nothing; an elimination with no killer (a pit fall; also a killer equal to the victim) adds
+`suicide_score` to the victim's slot (`reportElimination`, the one path every elimination now
+takes to the mode). Deathmatch and team_deathmatch ship catch +1 and suicide −1 (measured with
+four hard reference bots, `kfm_arena --rotate --seed 7`, 10 matches: a deathmatch to 10 now
+ends in 710 to 1412 ticks against 1902 to 3269 without the economy, most points being catches;
+the bots perfect-catch often, so `score_to_win` may want raising). **Scores are
+signed**: `MatchRules::scores` is `int8_t` (saturating; `rounds_to_win` and `score_to_win` are
+capped at 127), `teamScore` an `int16_t` sum, serialised as the same byte for 0..127 (`visitI8`);
+`score_to_win` counts the points, so a catch can win and a suicide can take a slot or a team below
+zero. `ScoreChanged` carries the score after as int32 bits in `a` and a `ScoreReason` in `b`
+(Objective 0, Catch 1, Suicide 2); a suicide's point plays no coin and no ScorePop. The scoreboard
+column for the deathmatch kinds reads "Score" (was "Kills": it is kills plus catches less
+suicides), the HUD cards and team totals print signed numbers, and the lobby's summary says
+"points" for a mode with a catch or suicide score. `banana_regrow_ticks`
+(`ModeDef::bananaRegrowTicks`, default 0 = off; hill and capture ship 480, 8 s): a monkey that owns
+no banana (none in its hand, none of its own outbound or returning; catches and parries move
+ownership) for that many Playing ticks in a row grows one in its hand (`BananaRegrown`; a twinkle
+in the hand, a short flash and a rising pop, §7). The clock is `Player::regrowTicks`, run by
+`LifecycleSystem` after the tick's catches and despawns; owning a banana by any route resets it,
+it stops while the monkey falls and a death ends it (a respawn starts fresh). A mode that regrows
+never runs dry. Hill and capture also ship `respawn_ticks = 300` (5 s, every cause of death), so a
+pit is no quicker way to rearm than the regrow; deathmatch and team_deathmatch keep 120 (their
+suicide costs a point). An ammo power-up's extra bananas vanish when it runs out, in every mode
+(above). Observation v1 (bot-abi.md §3): `ObsMatch::scores` becomes `int8_t` and
+`reservedTeamScores` `int16_t` (the same bytes for non-negative scores), and the two pad bytes
+at offset 30 become `bananaRegrowTicks` (the mode's number, 0 = none); the reference bot needs no
+change (empty-handed it fetches the nearest banana, else keeps its distance, and in a regrow mode
+the regrow re-arms it).
 Replay checksums: changed, corpus regenerated because `Player::fallTicks` and
 `PlayerDef::fallTicks` entered the world state and the content. With both left out of the
 visitors the gate passed on the old `.checksums` for every entry but the two in which a monkey
@@ -721,7 +761,13 @@ deaths with a banana away, which now drops at once instead of flying on, so ever
 only their content hash. "Bananas never disappear" (dropped held bananas, catch overflow, the
 pickup stack) moved all 19 scripted entries again (`Pickup::count` entered the world state, and
 held bananas now lie where monkeys die); the two empty replays have no pickups and kept their
-checksums and inputs.
+checksums and inputs. The per-mode economy moved every entry's `.checksums`
+(`Player::regrowTicks` entered the world state, the four ModeDef fields and hill's and capture's
+`respawn_ticks` the content hash); with the new fields left out of the visitors and the old
+respawn numbers the gate passed on the old `.checksums` for all 17 round-kind entries, and only
+the four respawn-mode entries (`scripted_4p_deathmatch_3600t`, `scripted_4p_team_deathmatch_3600t`,
+`scripted_4p_hill_3600t`, `scripted_4p_capture_3600t`) changed their inputs; every other `.kfmr`
+differs only in its content hash.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -987,6 +1033,7 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 | `team_deathmatch` (v0.32) | one round; the first team whose slots' eliminations sum to `scoreToWin`, or the leading team once `timeLimitTicks` pass (a tied lead: draw); `MatchEnded` names the team's present top scorer | +1 score for an enemy attacker only (an ally's or one's own scores nothing), +1 death, respawn as deathmatch | a slot that leaves keeps its score: it is the team's |
 | `hill` (v0.33) | one round; every Playing tick, if the monkeys in zone 0 are of exactly one team, that team's hold clock advances, and at `hillTicks` the team scores a point (credited to its lowest slot in the zone) and that clock alone restarts; a contested or empty zone holds every clock; the first team to `scoreToWin` points, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch; nobody scores | `HillHolderChanged` when the sole holder changes; a leaver keeps its score |
 | `capture` (v0.33) | one round; team t's flag starts at the centre of zone t; a carrier in its own team's zone while its own flag is home scores a capture (credited to the carrier) and the flag goes home; the first team to `scoreToWin` captures, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch, nobody scores; a carrier drops the flag as a pickup where it stood | a dropped flag no enemy picks up for `flagReturnTicks` goes home; its own team cannot touch it |
+| (v0.57, every kind: the banana economy) | the point kinds' `catch_score` (a perfect catch of an enemy's banana) and `suicide_score` (an elimination with no killer, after the kind's own hook: `reportElimination`) move the slot's signed score and count toward `scoreToWin`; shipped: deathmatch and team_deathmatch +1 / −1 | `death_bananas`: drop (the round kinds) or vanish (the respawn kinds: held and in flight go with it) | `banana_regrow_ticks` (hill, capture: 480): an empty hand grows a banana (`Player::regrowTicks`, `LifecycleSystem`); a regrowing mode never runs dry; hill and capture respawn in 300 ticks |
 
 Respawn (`LifecycleSystem`, v0.23) is driven only by the timers: during Playing a dead present slot
 with a pending `respawnTicks` counts down before this tick's despawns and respawns at 0, so a
@@ -1584,7 +1631,8 @@ is a defence only for a player who has thrown.
 - v0.57: a dead owner's bananas still away from it drop at once (Grounded where they are,
   on the tick of the death, or as a fall begins), so the "owner eliminated → Grounded" path
   above now applies at the death rather than when the banana next turns for home; they become
-  pickups like any grounded banana. One more phase, `Sinking`: `LifecycleSystem` turns a
+  pickups like any grounded banana (in a mode whose `death_bananas` is vanish they are
+  despawned instead, `BananaVanished`). One more phase, `Sinking`: `LifecycleSystem` turns a
   grounded banana whose disc lies wholly over the pits (`discOverPits` at the banana's contact
   radius) into a sinking one (`BoomerangFell`) instead of a pickup, and despawns it after
   `pitSinkTicks`; it advances in every match phase and matches no rule row (§5.6 "Pit falls").
@@ -1728,10 +1776,13 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `fallTicks − 1` ticks later, §5.6), `BoomerangFell{owner, banana}` (v0.57: a banana came
   down wholly over a pit and drops into the hole, `Sinking`, instead of becoming a pickup),
   `BananaDropped{monkey, pickup}` (v0.57: a held banana dropped to the floor at a death, a catch
-  past `ammoMax`, a lowered `ammoMax` or a spent dash-attack banana),
+  past `ammoMax` or a spent dash-attack banana), `BananaVanished{owner, banana}` (v0.57: a
+  dead or falling monkey's banana in flight went with it, `death_bananas = "vanish"`),
+  `BananaRegrown{player, entity}` (v0.57: an empty hand grew a banana, `banana_regrow_ticks`),
   `RoundEnded{winner}`, `MatchEnded{winner}` (an invalid winner is a draw),
   ... v0.23 (modes): `ScoreChanged{player, score}` (a deathmatch elimination scored; round wins
-  are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
+  are carried by `RoundEnded`; v0.57: `a` is the signed score after as int32 bits and `b` a
+  `ScoreReason`: Objective, Catch, Suicide), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
   respawn or late join; `PlayerSpawned` stays the round-start spawn), `TimerWarning{seconds}`
   (10, 3, 2, 1 s left on the mode clock).
   v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`,
@@ -3244,7 +3295,9 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `BoomerangBounced` | BounceSpark 0.15 s | WallBounce |
 | `RoundStarted`, `RoundEnded`, `MatchEnded` | banners 1 / 1.5 / 3 s; the HUD text pops in at 1.35× and settles over the first quarter (`bannerScale`) | — , RoundEnd, MatchEnd |
 | `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
-| `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer) | Score (coin blip) |
+| `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer); v0.57: none for a `Suicide` point | Score (coin blip); none for a `Suicide` point |
+| `BananaRegrown` (v0.57) | PickupSparkle 0.5 s in the hand (`kRegrowSparkleSeconds`), a 0.15 s flash | Regrow (a soft pop gliding up an octave, then a twinkle) |
+| `BananaVanished` (v0.57) | a small white puff (ThrowPuff, `kBananaVanishSeconds` 0.3 s) where the banana was | — |
 | `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
 | `PlayerBlinked` (v0.21) | BlinkFlash 0.3 s at the origin (from the payload) and at the landing, in the slot colour; the jump exceeds `kSnapDistance`, so the body snaps | Blink (rising zap) |
 | `SlamLanded` (v0.21) | SlamShockwave 0.45 s (a ring racing out to the reach, carried in `RenderEffect::size`), GroundDust, shake | Slam (deep boom) |

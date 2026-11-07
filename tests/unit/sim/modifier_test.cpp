@@ -87,9 +87,7 @@ TEST_CASE("moveSpeed never goes negative and integer stats stay in range", "[sim
   CHECK(p.stats.moveSpeed == Fixed::zero());
   CHECK(p.stats.maxHp == 1);
   CHECK(p.stats.ammoMax == 0);
-  // v0.57: ammo above the new ammoMax is not cut here; LifecycleSystem drops
-  // the extra bananas (rules/bananas.hpp, the lifecycle tests).
-  CHECK(p.ammo == content.player.ammoStart);
+  CHECK(p.ammo == 0);  // clamped to the new ammoMax
 }
 
 TEST_CASE("maxHp up raises hp by the same amount; down clamps but never kills", "[sim][modifier]") {
@@ -280,17 +278,14 @@ TEST_CASE("hitStunTicks counts down and clears HitStun at zero", "[sim][modifier
   CHECK_FALSE(p.tags.has(Tag::HitStun));
 }
 
-TEST_CASE("ammo above ammoMax drops to the floor, never vanishes (v0.57)", "[sim][modifier]") {
+TEST_CASE("ammo is clamped to ammoMax: the extra bananas vanish (v0.57)", "[sim][modifier]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(8, 0b1);
   Player& p = freshPlayer(s);
   p.ammo = 7;
   modifierSystem(s, content);
-  CHECK(p.ammo == 7);  // ModifierSystem leaves it to LifecycleSystem
+  CHECK(p.ammo == content.player.ammoMax);
   EventSink sink;
   lifecycleSystem(s, content, sink);
-  CHECK(playerAt(s, PlayerId{0}).ammo == content.player.ammoMax);
-  uint32_t lying = 0;
-  s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) { lying += k.count; });
-  CHECK(lying == 7u - content.player.ammoMax);
+  CHECK(s.pickups.size() == 0);  // nothing dropped: they went with the power-up
 }

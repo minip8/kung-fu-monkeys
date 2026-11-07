@@ -236,7 +236,7 @@ TEST_CASE("RoundEnded lasts roundEndTicks, then everyone respawns", "[sim][rules
 TEST_CASE("match ends when a player reaches roundsToWin", "[sim][rules]") {
   const ContentDB& content = defaultContent();
   WorldState s = makePlayingWorld(1, 0b11);
-  s.rules.scores[1] = static_cast<uint8_t>(content.modes[0].roundsToWin - 1);
+  s.rules.scores[1] = static_cast<int8_t>(content.modes[0].roundsToWin - 1);
   s.rules.round = content.modes[0].roundsToWin;
   removePlayers(s, {0});
   const EventLog log = stepIdle(s);

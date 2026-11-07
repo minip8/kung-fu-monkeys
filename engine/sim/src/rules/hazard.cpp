@@ -18,11 +18,12 @@
 // decline here: Slow acts through ModifierSystem's derived stats.
 //
 // The faller's bananas (v0.57): the one in its hand goes down with it; every
-// one away from it (outbound or returning) drops where it is the moment the
-// fall begins (dropBananasOf, as at any death), so LifecycleSystem lays it as
-// a pickup this very tick, or sinks it if it came down over a pit.
-#include "kfm/sim/modes/registry.hpp"
+// one away from it (outbound or returning) is released the moment the fall
+// begins, as at any death (releaseBananasOf, by ModeDef::deathBananas): it
+// drops where it is, so LifecycleSystem lays it as a pickup this very tick
+// (or sinks it if it came down over a pit), or in a vanish mode it is gone.
 #include "kfm/sim/rules/handlers.hpp"
+#include "modes/mode_flow.hpp"
 #include "rules/bananas.hpp"
 #include "rules/fall.hpp"
 
@@ -44,7 +45,7 @@ bool fallIntoPit(WorldState& s, const MatchContent& content, EntityId a, EntityI
     st.phase = AbilityPhase::Idle;
     st.phaseTicks = 0;
   }
-  dropBananasOf(s, victim->id);  // it is doomed: they come down now
+  releaseBananasOf(s, content, victim->id, sink);  // it is doomed: they come down (or vanish) now
   sink.push(SimEvent{EventKind::PlayerFell, s.tick, victim->id, a, b.index, 0});
   return true;
 }
@@ -55,7 +56,7 @@ void eliminateFallen(WorldState& s, const MatchContent& content, Player& p, Even
   p.tags.set(Tag::Eliminated);
   sink.push(SimEvent{EventKind::PlayerEliminated, s.tick, p.id, s.players.idAt(p.id.value),
                      PlayerId::invalid().value, 0});
-  modeBehaviorOf(content).onEliminated(s, content, p.id, PlayerId::invalid(), sink);
+  reportElimination(s, content, p.id, PlayerId::invalid(), sink);  // v0.57: a suicide
 }
 
 }  // namespace kfm::sim

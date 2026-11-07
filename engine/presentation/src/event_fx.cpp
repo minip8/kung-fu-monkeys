@@ -122,7 +122,11 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::PlayerRespawned:
       return cue(SoundId::Respawn);
     case EventKind::ScoreChanged:
+      // v0.57: a suicide's point lost rides on the fall's own sounds.
+      if (e.b == static_cast<uint32_t>(sim::ScoreReason::Suicide)) break;
       return cue(SoundId::Score);
+    case EventKind::BananaRegrown:
+      return cue(SoundId::Regrow);
     case EventKind::TimerWarning:
       return cue(SoundId::TimerWarning);
     default:
@@ -327,9 +331,29 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       break;
     }
     case EventKind::ScoreChanged:
-      addEffect(ps, makeEffect(EffectKind::ScorePop, slot, groundAt(player), kScorePopSeconds));
+      // v0.57: no gold ring for a point lost to a suicide (the slot may be
+      // gone: the fall's burst is the news).
+      if (e.b != static_cast<uint32_t>(sim::ScoreReason::Suicide)) {
+        addEffect(ps, makeEffect(EffectKind::ScorePop, slot, groundAt(player), kScorePopSeconds));
+      }
       soundAt = player;
       break;
+    case EventKind::BananaRegrown:
+      // v0.57: twinkles in the monkey's hand and a short flash.
+      addEffect(ps,
+                makeEffect(EffectKind::PickupSparkle, slot, bodyAt(player), kRegrowSparkleSeconds));
+      flashPlayer(ps, e.player, kRegrowFlashSeconds);
+      soundAt = player;
+      break;
+    case EventKind::BananaVanished: {
+      // v0.57: a dead monkey's banana in flight goes with it: a small puff.
+      const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity);
+      if (at) {
+        addEffect(ps, makeEffect(EffectKind::ThrowPuff, kNoSlot, simToWorld(*at, kBananaHandHeight),
+                                 kBananaVanishSeconds));
+      }
+      break;
+    }
     case EventKind::TimerWarning:
       addEffect(ps, makeEffect(EffectKind::TimerBanner, kNoSlot, Vec3{}, kTimerBannerSeconds));
       break;

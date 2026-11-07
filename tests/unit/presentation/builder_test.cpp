@@ -486,7 +486,7 @@ TEST_CASE("HUD derives phase, countdown, scores and winners", "[presentation][bu
 
   // MatchEnded names the winner.
   s.rules.phase = MatchPhase::MatchEnded;
-  s.rules.scores[0] = content.modes[0].roundsToWin;
+  s.rules.scores[0] = static_cast<int8_t>(content.modes[0].roundsToWin);
   rs = build(ps, s, s, 1.0f);
   CHECK(rs.hud.phase == HudPhase::MatchEnded);
   CHECK(rs.hud.matchWinner == 0);
@@ -782,6 +782,11 @@ TEST_CASE("sound cues: table, pan and same-frame merging", "[presentation][build
   CHECK(id(MatchEnded) == SoundId::MatchEnd);
   CHECK(id(PlayerRespawned) == SoundId::Respawn);
   CHECK(id(ScoreChanged) == SoundId::Score);
+  // v0.57: a point lost to a suicide plays no coin; a regrown banana pops.
+  CHECK(soundForEvent(SimEvent{ScoreChanged, Tick{0}, kP0, EntityId{}, 0xFFFFFFFFu,
+                               static_cast<uint32_t>(sim::ScoreReason::Suicide)}) == std::nullopt);
+  CHECK(id(BananaRegrown) == SoundId::Regrow);
+  CHECK(id(BananaVanished) == SoundId::Count);
   CHECK(id(TimerWarning) == SoundId::TimerWarning);
   CHECK(id(PlayerSpawned) == SoundId::Count);
   CHECK(id(PickupSpawned) == SoundId::Count);

@@ -105,6 +105,9 @@ struct Player {
   // v0.57, a pit fall (Tag::Falling): ticks left before LifecycleSystem
   // eliminates the monkey; 0 while it stands.
   uint16_t fallTicks{0};
+  // v0.57, ModeDef::bananaRegrowTicks: Playing ticks in a row it has owned
+  // no banana (none held, none of its own in flight); 0 while it owns one.
+  uint16_t regrowTicks{0};
 };
 
 // v0.57: Sinking, a banana that came down over a pit dropping into the hole
@@ -161,8 +164,10 @@ struct MatchRules {
   PlayerMask present{0};
   uint32_t ticksInPhase{0};
   uint8_t round{0};
-  // Round wins (rounds, survival) or eliminations scored (deathmatch).
-  std::array<uint8_t, kMaxPlayers> scores{};
+  // Round wins (the round kinds) or points (scoresPoints: eliminations, hill
+  // points, captures, v0.57's catch and suicide points). Signed since v0.57:
+  // a suicide may take a slot below zero; saturates at the int8_t range.
+  std::array<int8_t, kMaxPlayers> scores{};
   PlayerId lastRoundWinner{PlayerId::invalid()};
   // v0.23 per-player mode counters: only deathmatch and survival write them,
   // so they stay zero in the rounds mode.

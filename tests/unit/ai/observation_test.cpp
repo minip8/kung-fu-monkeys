@@ -57,6 +57,7 @@ TEST_CASE("Observation v1 matches the documented layout", "[ai][observation]") {
   CHECK(alignof(Observation) == 4);
   CHECK(offsetof(Observation, header) + offsetof(ObsHeader, size) == 4);
   CHECK(offsetof(Observation, match) + offsetof(ObsMatch, inputDelayTicks) == 44);
+  CHECK(offsetof(Observation, match) + offsetof(ObsMatch, bananaRegrowTicks) == 46);  // v0.57
   CHECK(offsetof(Observation, match) + offsetof(ObsMatch, scores) == 60);
   CHECK(offsetof(Observation, match) + offsetof(ObsMatch, reservedModeData) == 120);
   CHECK(offsetof(Observation, rules) + offsetof(ObsRules, bananaTurnRateBam) == 216);
@@ -409,6 +410,27 @@ TEST_CASE("the host delay and the content hash are copied through", "[ai][observ
   Observation twin{};
   buildObservation(s, defaultContent(), kP1, 255, twin);
   CHECK(std::memcmp(&obs, &twin, sizeof obs) == 0);
+}
+
+TEST_CASE("signed scores and the regrow number reach the bot (v0.57)", "[ai][observation]") {
+  ContentDB c = defaultContent();
+  ModeDef& m = c.modes[1];
+  m.name = ContentName::of("team_dm");
+  m.kind = ModeKind::TeamDeathmatch;
+  m.teams = 2;
+  m.bananaRegrowTicks = 480;
+  c.modeCount = 2;
+  const MatchConfig config{
+      .seed = 4, .players = 0b1111, .mode = 1, .teams = balancedTeams(2, 0b1111)};
+  const MatchContent match = matchContent(c, config);
+  WorldState s = makePlayingWorld(4, 0b1111);
+  s.rules.scores = {-3, 2, 1, -1};
+  Observation obs{};
+  buildObservation(s, match, kP0, 0, obs);
+  CHECK(obs.match.bananaRegrowTicks == 480);
+  CHECK(obs.match.scores[0] == -3);
+  CHECK(obs.match.reservedTeamScores[0] == -2);  // slots 0 and 2
+  CHECK(obs.match.reservedTeamScores[1] == 1);   // slots 1 and 3
 }
 
 TEST_CASE("a team match fills team, Ally, team scores and the role (v0.32)",

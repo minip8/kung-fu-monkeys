@@ -347,12 +347,12 @@ struct MatchContent {
     return teams[a.value] == teams[b.value] ? Relation::Ally : Relation::Enemy;
   }
   // A team's score (v0.32): the sum of its slots' per-slot scores
-  // (MatchRules::scores: round wins or eliminations).
-  [[nodiscard]] constexpr uint16_t teamScore(const std::array<uint8_t, kMaxPlayers>& scores,
-                                             uint8_t team) const {
-    uint16_t sum = 0;
+  // (MatchRules::scores: round wins or points; signed since v0.57).
+  [[nodiscard]] constexpr int16_t teamScore(const std::array<int8_t, kMaxPlayers>& scores,
+                                            uint8_t team) const {
+    int16_t sum = 0;
     for (uint8_t i = 0; i < kMaxPlayers; ++i) {
-      if (teams[i] == team) sum = static_cast<uint16_t>(sum + scores[i]);
+      if (teams[i] == team) sum = static_cast<int16_t>(sum + scores[i]);
     }
     return sum;
   }

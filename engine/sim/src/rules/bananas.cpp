@@ -86,4 +86,19 @@ void dropBananasOf(WorldState& s, PlayerId owner) {
   });
 }
 
+void releaseBananasOf(WorldState& s, const MatchContent& content, PlayerId owner, EventSink& sink) {
+  if (content.mode.deathBananas != DeathBananas::Vanish) {
+    dropBananasOf(s, owner);
+    return;
+  }
+  s.boomerangs.forEachAlive([&](EntityId id, const Boomerang& banana) {
+    if (banana.owner != owner) return;
+    if (banana.phase != BoomerangPhase::Outbound && banana.phase != BoomerangPhase::Returning) {
+      return;
+    }
+    s.boomerangs.despawn(id);
+    sink.push(SimEvent{EventKind::BananaVanished, s.tick, owner, id, 0, 0});
+  });
+}
+
 }  // namespace kfm::sim

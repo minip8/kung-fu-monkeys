@@ -1344,14 +1344,38 @@ class Builder {
         m.kind = entry->kind;
       }
     }
-    s.integer("rounds_to_win", m.roundsToWin, 1, 255);
+    // v0.57: scores are int8_t (MatchRules::scores), so a target fits in 127.
+    s.integer("rounds_to_win", m.roundsToWin, 1, INT8_MAX);
     s.integer("round_end_ticks", m.roundEndTicks, 0, 65535);
     s.integer("round_start_ticks", m.roundStartTicks, 0, 65535);
     s.integer("time_limit_ticks", m.timeLimitTicks, 0, 4294967295);
-    s.integer("score_to_win", m.scoreToWin, 0, 255);
+    s.integer("score_to_win", m.scoreToWin, 0, INT8_MAX);
     s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
     s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
     s.integer("dry_round_ticks", m.dryRoundTicks, 0, 65535);  // v0.57
+    // v0.57, the banana economy.
+    if (const std::optional<std::string> death = s.string("death_bananas")) {
+      if (*death == "drop") {
+        m.deathBananas = sim::DeathBananas::Drop;
+      } else if (*death == "vanish") {
+        m.deathBananas = sim::DeathBananas::Vanish;
+      } else {
+        s.error("unknown death_bananas " + inQuotes(*death) + " (drop or vanish)");
+      }
+    }
+    if (sim::scoresPoints(m.kind)) {
+      s.integer("catch_score", m.catchScore, INT8_MIN, INT8_MAX);
+      s.integer("suicide_score", m.suicideScore, INT8_MIN, INT8_MAX);
+    } else {
+      for (const std::string_view key : {"catch_score", "suicide_score"}) {
+        if (const toml::node* n = s.take(key)) {
+          s.error(*n, "'" + std::string(key) +
+                          "' belongs to a point-scoring kind (deathmatch, team_deathmatch, hill, "
+                          "capture): a round kind's score counts round wins");
+        }
+      }
+    }
+    s.integer("banana_regrow_ticks", m.bananaRegrowTicks, 0, 65535);
     // v0.32: teams, the baseline power-up and the roles. Names resolve once
     // every file is read (powerups.toml sorts after modes.toml).
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);

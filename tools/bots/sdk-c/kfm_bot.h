@@ -179,12 +179,15 @@ typedef struct kfm_obs_match {
   uint16_t presentMask;    /* bit i: slot i in the roster */
   uint16_t aliveMask;      /* bit i: slot i in the arena */
   uint8_t inputDelayTicks; /* the answer applies on tick + this */
-  uint8_t lastRoundWinner, pad0, pad1;
+  uint8_t lastRoundWinner;
+  uint16_t bananaRegrowTicks; /* v0.57: an empty hand grows a banana after this, 0 = never */
   uint16_t roundStartTicks, roundEndTicks, respawnDelayTicks, respawnInvulnTicks;
   uint16_t turnTicks;    /* a grid mode's turn length, 0 in a continuous one (v0.35) */
   uint16_t ticksToLatch; /* grid: ticks to the next latch, 0 = this tick's input is latched */
-  uint8_t scores[KFM_MAX_PLAYERS], deaths[KFM_MAX_PLAYERS];
-  uint16_t respawnTicks[KFM_MAX_PLAYERS], teamScores[KFM_MAX_PLAYERS]; /* by team index */
+  int8_t scores[KFM_MAX_PLAYERS]; /* round wins or points; signed since v0.57 */
+  uint8_t deaths[KFM_MAX_PLAYERS];
+  uint16_t respawnTicks[KFM_MAX_PLAYERS];
+  int16_t teamScores[KFM_MAX_PLAYERS]; /* by team index; signed since v0.57 */
   uint32_t modeData[KFM_MODE_DATA_WORDS]; /* the mode's state (bot-abi.md §3) */
 } kfm_obs_match;
 
@@ -352,6 +355,7 @@ KFM_CHECK_AT(kfm_observation, heardCalls, 5556);
 KFM_CHECK_AT(kfm_obs_match, modeIndex, 16);
 KFM_CHECK_AT(kfm_obs_match, presentMask, 24);
 KFM_CHECK_AT(kfm_obs_match, inputDelayTicks, 28);
+KFM_CHECK_AT(kfm_obs_match, bananaRegrowTicks, 30);
 KFM_CHECK_AT(kfm_obs_match, roundStartTicks, 32);
 KFM_CHECK_AT(kfm_obs_match, scores, 44);
 KFM_CHECK_AT(kfm_obs_match, deaths, 54);

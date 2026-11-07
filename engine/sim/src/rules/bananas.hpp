@@ -1,9 +1,12 @@
-// Bananas never disappear (architecture §5.6, §5.7, v0.57): every path that
-// would destroy a banana entity or a banana held as ammo drops it as a floor
-// pickup instead. The only exceptions are a round reset (a fresh round), the
-// bananas in a monkey's hand when it falls down a pit (they go down with it),
-// and a banana that comes down wholly over a pit (it drops into the hole:
-// Sinking, then gone). Internal to engine/sim/src.
+// Bananas never disappear by accident (architecture §5.6, §5.7, v0.57): every
+// path that would destroy a banana entity or a banana held as ammo drops it as
+// a floor pickup instead. The exceptions are a round reset (a fresh round),
+// the bananas in a monkey's hand when it falls down a pit (they go down with
+// it), a banana that comes down wholly over a pit (it drops into the hole:
+// Sinking, then gone), a dead monkey's bananas in a mode whose deathBananas is
+// vanish (the respawn kinds: the respawn hands one out again), and the extra
+// bananas an ammo power-up granted when it runs out (they go with it).
+// Internal to engine/sim/src.
 #pragma once
 
 #include "kfm/sim/content.hpp"
@@ -41,6 +44,11 @@ void dropHeldBananas(WorldState& s, const MatchContent& content, Player& p, uint
 // this tick, or sinks it if it came down over a pit. Called when a monkey
 // starts to fall (it is doomed) and as an eliminated one despawns.
 void dropBananasOf(WorldState& s, PlayerId owner);
+
+// What a death (or the start of a fall) does to `owner`'s bananas away from
+// it, by ModeDef::deathBananas (v0.57): drop, dropBananasOf; vanish, each
+// one despawns where it is (BananaVanished).
+void releaseBananasOf(WorldState& s, const MatchContent& content, PlayerId owner, EventSink& sink);
 
 // The ring a monkey's held bananas scatter on at a death (units).
 inline constexpr Fixed kBananaScatterRadius = Fixed::fromRaw(Fixed::kOneRaw * 3 / 4);
