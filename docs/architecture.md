@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.63 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.64 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -870,6 +870,22 @@ all pairs, and the rating is Glicko-2 (decided: its deviation widens at a releas
 Deployment follows the lobby: images from GHCR, systemd units, Caddy, Sentry; one VM for the API,
 Postgres and the match workers, a second for the build worker. Deferred: Kubernetes, a message
 broker, a frontend framework (the portal is server-rendered by the same binary). Design only.
+
+v0.64 changes: M7 step (3) landed in the bots repository (§8, §11, §13.5). The service of the
+v0.63 design as built, with the departures: the engine's `kfm_arena` is baked into the service
+image at build time, verified against the release's `SHA256SUMS`, with an entrypoint that pins
+the engine tag to the baked runner (not fetched on the workers at start: every container runs
+the same verified bytes and starts offline; moving engines is a pin bump and a bots release);
+validation is its own `validate` job after `build`, so a rejected submission keeps its module and
+hash; the object store is `rust-s3` (the AWS SDK needs a newer rustc than the crate pins); the
+build worker runs as a container with the docker socket on a VM whose docker runtime defaults to
+gVisor, so every sibling build container is sandboxed whatever the worker passes; submission
+zips are fully decompressed and checked at upload, never on a worker; the upload answers 202
+with the whole submission (`docs/ladder-api.md` v1.1). Measured: 61 then 113 tests over Postgres
+and MinIO with the real sandbox image and the released v0.5.1 runner; upload to ready in 2.25 s
+through the local stack, the module byte-identical to a local sandbox build. Not yet done: the
+VMs, the R2 bucket and the OAuth apps (the runbook in the bots repository's `deploy/README.md`
+lists the order). Next is step (4), the scheduler and ratings.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4431,8 +4447,10 @@ every hosted bot ladder converges on, sized so that growing is adding workers.
   and portal, Postgres and the match workers (a match is a `kfm_arena` process, already the
   sandbox); `kfm-build-1` runs only the build worker, with Docker and gVisor (`runsc`) as the
   runtime of the §8 command, no inbound ports, and the §8 caps. Images from GHCR on the bots
-  repository's tags, systemd units, Sentry. The engine release the season runs on is a single
-  setting; `tools/fetch_kfm_arena.sh` fetches it on the workers at start.
+  repository's tags, systemd units, Sentry. The engine release the season runs on is the one
+  baked into the service image (v0.64; the design said fetched on the workers at start): the
+  image's entrypoint pins `KFM_LADDER_ENGINE_TAG` to the baked runner, and a season moves
+  engines by bumping the bots repository's `engine.lock` and releasing.
 - **Deferred, on purpose.** Kubernetes, a message broker, microservices, a separate frontend,
   rate limiting beyond a per-token submission cap (one build per team per minute), and
   email. The contest's season rules (prizes, eligibility) are the portal's text, not code.
@@ -4442,8 +4460,9 @@ migrations, `/healthz`, OAuth for both providers, sessions, tokens, teams, `docs
 tests over a Postgres in CI; (3b) submissions and the build path: the upload endpoint, the
 object store with a MinIO-backed test, the jobs table and worker loop, the build worker over
 the sandbox image, validation with the released `kfm_arena`, activation and retention; (3c)
-deployment: images, units, the gVisor runtime, the two VMs scripted, the runbook. Steps (4)
-scheduling and ratings, (5) the CLI and (6) the viewer follow as in the M7 sequencing.
+deployment: images, units, the gVisor runtime, the two VMs scripted, the runbook. All three
+landed in v0.64 (bots PRs #3 and #4). Steps (4) scheduling and ratings, (5) the CLI and (6) the
+viewer follow as in the M7 sequencing.
 
 M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
 test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
@@ -4488,6 +4507,11 @@ stale `chaser.wasm` was rebuilt. Not yet run: the bots repository's CI on GitHub
 `fetch_kfm_arena.sh` needs the first engine release; until then CI builds the runner from the
 pinned commit). Next: step (3), the service (accounts, teams, submissions, the sandboxed build),
 which needs a hosting decision for the service and its build host.
+
+Progress: M7 step (3) landed in v0.64 in the bots repository (`service/`, `deploy/`, bots PRs #3
+and #4; the v0.64 changelog line has the departures and measurements). Not yet deployed: the two
+VMs, the R2 bucket, the GitHub and Google OAuth apps. Next: step (4), the scheduler and ratings
+(the `match` job, Swiss rounds, Glicko-2, `GET /ladder` and `GET /matches`).
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
