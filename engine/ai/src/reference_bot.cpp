@@ -692,10 +692,17 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   const ObsPlayer* tgt = target >= 0 ? &obs.players[target] : nullptr;
   // Where a path's goal is measured: kGoalTick ticks, on the grid two turns
   // after the next latch.
+  // v0.57: an armed bot with a wall between it and its target looks to the
+  // end of the horizon, far enough to see round a block (at kGoalTick no
+  // walk leaves a 2-unit block's face band, and two such bots stood still).
+  const bool walledOff =
+      !grid && me.ammo > 0 && target >= 0 &&
+      !lineClear(obs, myPos, posOf(obs.players[target]), Fixed::fromRaw(obs.rules.bananaRadius));
+  const uint8_t continuousGoalTick = walledOff ? kHorizon : kGoalTick;
   const auto goalTick = static_cast<uint8_t>(
       grid ? std::clamp<uint32_t>(uint32_t{obs.match.reservedTicksToLatch} + (2 * turn), 1u,
                                   kHorizon)
-           : kGoalTick);
+           : continuousGoalTick);
   const Fixed preferredRange = grid ? cellSize_ * kGridPreferredCells : kPreferredRange;
   const Vec2 tgtAt = tgt != nullptr ? posOf(*tgt) + (velOf(*tgt) * int32_t{goalTick}) : Vec2{};
   bool haveFetch = false;
