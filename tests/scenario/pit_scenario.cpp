@@ -412,3 +412,24 @@ TEST_CASE("after a fall the next round hands out bananas as ever", "[scenario][p
   CHECK(playerAt(lab.s, kP1).ammo == lab.db.player.ammoStart);
   CHECK_FALSE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
 }
+
+TEST_CASE("a hit monkey's held bananas that scatter over a pit sink; the rest lie",
+          "[scenario][pit][banana]") {
+  Lab lab(0b111);
+  // Standing at the narrow pit's east edge, its body still half on the floor.
+  const Vec2 edge{Fixed::fromRatio(-36, 5), Fixed::zero()};
+  placePlayer(lab.s, kP0, edge).ammo = 2;
+  placePlayer(lab.s, kP1, aside());
+  placePlayer(lab.s, kP2, at(10, 6));
+  spawnBanana(lab.s, kP1, edge - Vec2{Fixed::one(), Fixed{}}, Vec2{Fixed::fromRatio(1, 4), Fixed{}},
+              BoomerangPhase::Outbound, lab.db);
+  const EventLog log = lab.step();
+  REQUIRE(findEvent(log, EventKind::PlayerEliminated) != nullptr);
+  CHECK(countEvents(log, EventKind::PlayerFell) == 0);  // a hit, not a fall
+  // Two held: the one scattered west over the pit sinks, the east one lies.
+  CHECK(countEvents(log, EventKind::BoomerangFell) == 1);
+  CHECK(countEvents(log, EventKind::BananaDropped) == 1);
+  REQUIRE(lab.s.pickups.size() == 1);
+  lab.s.pickups.forEachAlive(
+      [&](EntityId /*id*/, const Pickup& k) { CHECK(k.pos.x > Fixed::fromInt(kNarrowMaxX)); });
+}

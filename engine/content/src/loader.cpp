@@ -1743,7 +1743,8 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
       }
     }
     // Power-ups never take more than half the pickup pool: grounded bananas
-    // need the rest (a full pool makes a grounded banana vanish).
+    // need the rest (v0.57: a full pool stacks a banana on a banana pickup,
+    // rules/bananas.hpp, so there must be some).
     if (alive > sim::kMaxPickups / 2) {
       fail(where + ": spawners' max_alive add up to " + std::to_string(alive) + " (at most " +
            std::to_string(sim::kMaxPickups / 2) + ")");

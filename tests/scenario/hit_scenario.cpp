@@ -70,12 +70,14 @@ TEST_CASE("a thrown banana eliminates, flies on and ends the round", "[scenario]
   CHECK(log[iHit].tick == log[iEnd].tick);
   CHECK(log[iEnd].player == PlayerId{1});
   CHECK(countEvents(log, EventKind::BoomerangGrounded) == 0);
-  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
+  // v0.57: the victim's held banana drops where it died.
+  CHECK(countEvents(log, EventKind::PickupSpawned) == 1);
+  CHECK(countEvents(log, EventKind::BananaDropped) == 1);
 
   CHECK(s.playerBySlot(PlayerId{0}) == nullptr);
   CHECK(s.rules.phase == MatchPhase::RoundEnded);
   CHECK(s.rules.scores[1] == 1);
-  CHECK(s.pickups.empty());
+  CHECK(s.pickups.size() == 1);
 }
 
 TEST_CASE("a missed banana returns and is auto-caught by its thrower", "[scenario][hit]") {

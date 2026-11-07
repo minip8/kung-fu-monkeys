@@ -53,6 +53,8 @@ enum class EventKind : uint8_t {
                   // PlayerEliminated (killer 0xFF) follows PlayerDef::fallTicks - 1 ticks later
   BoomerangFell,  // player = owner, entity = boomerang: a banana came down over a pit and
                   // drops into the hole (Sinking) instead of becoming a pickup
+  BananaDropped,  // player = the monkey it came from, entity = the pickup: a held (or
+                  // overflowing) banana dropped to the floor instead of vanishing
 };
 
 // BoomerangCaught payload `a`.

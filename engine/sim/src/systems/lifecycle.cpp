@@ -9,11 +9,13 @@
 // (rules/fall.hpp), so it despawns in the same pass. A fall that starts on
 // tick T (fallTicks = PlayerDef::fallTicks = N) ends on tick T + N - 1.
 //
-// v0.57, bananas at a death: an eliminated monkey's bananas still away from
-// it (outbound or returning) drop where they are as it despawns (the pit row
-// already dropped a faller's when its fall began; rules/fall.hpp
-// dropBananasOf), so they come down as pickups below like any grounded
-// banana, on the tick of the death. A grounded banana whose disc (the
+// v0.57, bananas never disappear (rules/bananas.hpp): an eliminated monkey's
+// bananas still away from it (outbound or returning) drop where they are as
+// it despawns (the pit row already dropped a faller's when its fall began),
+// so they come down as pickups below like any grounded banana, on the tick
+// of the death; the ones in its hand drop too, scattered around it, unless
+// it fell down a pit with them. A monkey holding more than its ammoMax (a
+// power-up ran out) drops the extra ones the same way. A grounded banana whose disc (the
 // banana's contact radius) lies wholly over the pits (discOverPits, the
 // monkeys' own test) falls into the hole instead: Sinking, BoomerangFell,
 // gone after BoomerangDef::pitSinkTicks; so no pickup ever lies where only a
@@ -39,6 +41,7 @@
 // of ticksInPhase, not state of its own; a pickup remembers its spawner.
 #include "kfm/sim/systems.hpp"
 #include "modes/mode_flow.hpp"
+#include "rules/bananas.hpp"
 #include "rules/fall.hpp"
 
 #include <algorithm>
@@ -132,10 +135,20 @@ void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink
     if (p.fallTicks == 0) eliminateFallen(s, content, p, sink);
   });
 
-  s.players.forEachAlive([&](EntityId id, const Player& p) {
-    if (!p.tags.has(Tag::Eliminated)) return;
+  s.players.forEachAlive([&](EntityId id, Player& p) {
+    if (!p.tags.has(Tag::Eliminated)) {
+      // v0.57: more held than ammoMax allows (a power-up ran out): the
+      // extra ones drop around the monkey.
+      if (p.ammo > p.stats.ammoMax) {
+        dropHeldBananas(s, content, p, static_cast<uint8_t>(p.ammo - p.stats.ammoMax), sink);
+      }
+      return;
+    }
     s.rules.invulnTicks[id.index] = 0;
-    dropBananasOf(s, p.id);  // v0.57: they come down where they are
+    // v0.57: its bananas come down where they are, the held ones scattered
+    // around it, unless it fell down a pit holding them.
+    dropBananasOf(s, p.id);
+    if (!p.tags.has(Tag::Falling)) dropHeldBananas(s, content, p, p.ammo, sink);
     s.players.despawn(id);
   });
 
@@ -161,13 +174,8 @@ void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink
     }
     s.boomerangs.despawn(id);
     sink.push(SimEvent{EventKind::BoomerangGrounded, s.tick, PlayerId::invalid(), id, 0, 0});
-    const EntityId pickupId = s.pickups.spawn();
-    if (!pickupId.isValid()) return;  // pickup pool full: the banana vanishes
-    Pickup& pickup = s.pickups.items[pickupId.index];
-    pickup.kind = PickupKind::Banana;
-    pickup.pos = pos;
-    pickup.powerUpIndex = 0;
-    sink.push(SimEvent{EventKind::PickupSpawned, s.tick, PlayerId::invalid(), pickupId, 0, 0});
+    // v0.57: a full pickup pool stacks it on the nearest banana pickup.
+    layBananaPickup(s, pos, sink);
   });
 
   runSpawners(s, content, sink);

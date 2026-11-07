@@ -138,6 +138,9 @@ struct Pickup {
   // PowerUp: index into the arena's pickupSpawners. Flag (v0.33): the team
   // whose flag it is, which is also the index of its home zone.
   uint8_t spawner{0};
+  // v0.57, Banana: how many bananas lie here (1, more only when a full pool
+  // stacked drops on it, rules/bananas.hpp); taking it takes as many as fit.
+  uint8_t count{1};
 };
 
 // --- match --------------------------------------------------------------------

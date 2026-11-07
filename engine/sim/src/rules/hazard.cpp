@@ -23,6 +23,7 @@
 // a pickup this very tick, or sinks it if it came down over a pit.
 #include "kfm/sim/modes/registry.hpp"
 #include "kfm/sim/rules/handlers.hpp"
+#include "rules/bananas.hpp"
 #include "rules/fall.hpp"
 
 namespace kfm::sim {
@@ -46,18 +47,6 @@ bool fallIntoPit(WorldState& s, const MatchContent& content, EntityId a, EntityI
   dropBananasOf(s, victim->id);  // it is doomed: they come down now
   sink.push(SimEvent{EventKind::PlayerFell, s.tick, victim->id, a, b.index, 0});
   return true;
-}
-
-void dropBananasOf(WorldState& s, PlayerId owner) {
-  s.boomerangs.forEachAlive([&](EntityId /*id*/, Boomerang& banana) {
-    if (banana.owner != owner) return;
-    if (banana.phase != BoomerangPhase::Outbound && banana.phase != BoomerangPhase::Returning) {
-      return;
-    }
-    banana.phase = BoomerangPhase::Grounded;
-    banana.ticksInPhase = 0;
-    banana.transform.vel = Vec2::zero();
-  });
 }
 
 void eliminateFallen(WorldState& s, const MatchContent& content, Player& p, EventSink& sink) {

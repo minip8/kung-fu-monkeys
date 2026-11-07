@@ -652,8 +652,25 @@ lays it as a floor pickup anyone may take (`BoomerangGrounded`, `PickupSpawned`)
 is the moment the fall begins (the monkey is doomed; the pit row drops them); for any other
 elimination, the tick of the elimination (as `LifecycleSystem` despawns the monkey). Before, a
 dead owner's banana flew on (still able to hit) until it turned for home and only then grounded.
-Bananas held in the hand still vanish with the monkey on any death, as before, and a falling
-monkey's goes down in its hand. **A banana that comes down over a pit drops into the hole**: a
+**Bananas never disappear** (`rules/bananas.hpp`), the one exception being a monkey falling down
+a pit with bananas in its hand (they go down with it), besides a round reset and a banana sinking
+into a pit. A monkey killed any other way drops every banana it holds as floor pickups,
+scattered around where it died (`dropHeldBananas`: one at the spot; several on a ring of
+`kBananaScatterRadius`, 0.75, from east in equal steps, each pulled back to the spot if it would
+overlap a wall and clamped into the arena box; `BananaDropped{monkey, pickup}`). A catch past
+`ammoMax` (the auto-catch of the owner's returning banana; the perfect catch already declines at
+`ammoMax`) keeps the hand full and drops the extra banana at the catch point; walking over a
+pickup at full ammo leaves it, as before. Ammo above a lowered `ammoMax` (an ammo power-up running
+out) is no longer cut by ModifierSystem: LifecycleSystem drops the extra bananas around the
+monkey; an ammo power-up's top-up fills only up to the `ammoMax` it gives (never past it, never
+taking any), so it makes no phantom bananas. A dash attack's spent banana (`consumes_ammo`, off in
+shipped content) drops at the contact. A full pickup pool no longer swallows a banana: it is
+stacked on the nearest banana pickup (`Pickup::count`, taken as many as fit, the rest left
+lying); the pool cannot fill without banana pickups (power-up spawners hold at most half of its
+32 slots, flags at most 8), so there is always one to stack on. The audit found nothing else that
+destroys a banana: a throw with the banana pool full keeps its ammo, a shield or a slam grounds
+the banana (a pickup), a parry hands it over, a respawn or round start only hands out
+`ammo_start`, and no mode hook touches bananas. **A banana that comes down over a pit drops into the hole**: a
 grounded banana whose disc (its contact radius) lies wholly over the pits' union (`discOverPits`,
 the monkeys' own test) turns `BoomerangPhase::Sinking` (`BoomerangFell{owner, banana}`) instead of
 a pickup, for `[boomerang] pit_sink_ticks` (18), then `LifecycleSystem` despawns it; Sinking
@@ -701,7 +718,10 @@ moved every entry: `MatchRules::dryTicks` entered the world state and `pit_sink_
 `dry_round_ticks` the content (every `.checksums` and content hash), and every scripted match has
 deaths with a banana away, which now drops at once instead of flying on, so every scripted
 `.kfmr`'s inputs changed too (the generator steers by the bananas); the two empty replays changed
-only their content hash.
+only their content hash. "Bananas never disappear" (dropped held bananas, catch overflow, the
+pickup stack) moved all 19 scripted entries again (`Pickup::count` entered the world state, and
+held bananas now lie where monkeys die); the two empty replays have no pickups and kept their
+checksums and inputs.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -1462,7 +1482,9 @@ to the pit (below), and `PlayerFell{player, entity, a = the hazard index}`. Whil
   it at the latch).
 - No rule row touches it (`kGone`): bananas fly over it, a dash attack or a slam push misses
   it, it takes no pickup and catches nothing; `zoneOccupants` leaves it out.
-- Its bananas: the one in its hand goes down with it. Every one away from it (outbound or
+- Its bananas: the one in its hand goes down with it (the one exception to "bananas never
+  disappear"; a monkey killed any other way drops its held bananas around it). Every one away
+  from it (outbound or
   returning) drops where it is the moment the fall begins (`dropBananasOf` in `rules/fall.hpp`:
   Grounded, velocity zero), and `LifecycleSystem` lays it as a floor pickup that very tick, as it
   does for the bananas of any monkey that dies (dropped as it despawns, on the tick of the
@@ -1705,6 +1727,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   (v0.57: the start of a pit fall; its `PlayerEliminated` with killer 0xFF follows
   `fallTicks − 1` ticks later, §5.6), `BoomerangFell{owner, banana}` (v0.57: a banana came
   down wholly over a pit and drops into the hole, `Sinking`, instead of becoming a pickup),
+  `BananaDropped{monkey, pickup}` (v0.57: a held banana dropped to the floor at a death, a catch
+  past `ammoMax`, a lowered `ammoMax` or a spent dash-attack banana),
   `RoundEnded{winner}`, `MatchEnded{winner}` (an invalid winner is a draw),
   ... v0.23 (modes): `ScoreChanged{player, score}` (a deathmatch elimination scored; round wins
   are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
@@ -3212,6 +3236,7 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `PlayerHit`, `PlayerDashHit` | HitFlash 0.2 s, HitSpark 0.25 s (6 sparks in a cone away from the banana or attacker), flash, shake | Hit (thud) |
 | `PlayerEliminated` | EliminationBurst 0.6 s, EliminationPoof 0.7 s (5 smoke puffs), shake; v0.57: at the end of a pit fall both rise from the floor where the body went under (its last drawn position at `kEffectGroundHeight`), not at body height over the edge | Elimination |
 | `PlayerFell` (v0.57) | PitFall 0.45 s: two rings in the slot colour closing in where the monkey went down; the fall itself is drawn from state (below) | Fall (a slide whistle falling from 1.4 kHz to under 300 Hz) |
+| `BananaDropped` (v0.57) | GroundDust 0.35 s where the pickup lies, the grounding look; a stacked pickup (`Pickup::count` > 1) draws up to three bananas (`kPickupStackLift`, `kPickupStackTurn`) | BananaGround |
 | `BoomerangFell` (v0.57) | a small PitFall (`RenderEffect::size` = `kBananaSplashSize`) where the banana drops in; its sinking is drawn from state (below) | BananaPlop (a short falling bloop) |
 | `PickupTaken` | PickupSparkle 0.35 s at the pickup; a power-up (v0.20) adds PowerUpBurst 0.5 s (a ring and 8 sparks in the taker's colour) | Pickup; PowerUp (rising arpeggio) for a power-up |
 | `ShieldBroken` (v0.20) | ShieldShatter 0.4 s (a blue ring, flash and 7 shards), flash, shake | ShieldBreak (glassy crack) |

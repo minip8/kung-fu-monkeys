@@ -439,9 +439,12 @@ monkey falls once its whole contact disc (`self.radius`; touching the edge from 
 lies inside the union of all the pit boxes, adjoining tilemap boxes counting as one pit, so a
 pit narrower than the body takes nobody. A Dashing monkey is spared: a dash carries it across,
 and it falls if the dash ends with its disc still over the pits. When a monkey dies (or starts
-to fall) its bananas in flight drop where they are and become pickups; one that comes down
-wholly over a pit sinks into it instead (banana phase Sinking: harmless, then gone, never a
-pickup). A round of a round kind with no banana left anywhere (none held, out or lying around, a
+to fall) its bananas in flight drop where they are and become pickups; a monkey killed by
+anything but a fall also drops the bananas in its hand, scattered around it, and a catch past
+`ammoMax` drops the extra banana where it was caught; one that comes down wholly over a pit
+sinks into it instead (banana phase Sinking: harmless, then gone, never a pickup). A banana
+pickup may hold more than one banana when the pickup pool was full (the count is not in the
+observation): touching it takes as many as fit and leaves the rest lying. A round of a round kind with no banana left anywhere (none held, out or lying around, a
 Sinking one counting as gone, and no ammo power-up to come) ends as its clock-out would, after
 the mode's `dry_round_ticks` on an arena with pits.
 

@@ -515,6 +515,7 @@ void visit(V& v, Pickup& p) {
   visit(v, p.pos);
   v.u8(p.powerUpIndex);
   v.u8(p.spawner);
+  v.u8(p.count);  // v0.57
   if constexpr (V::kIsReader) {
     if (p.powerUpIndex >= kMaxPowerUps || p.spawner >= kMaxPickupSpawners) {
       v.markInvalid();

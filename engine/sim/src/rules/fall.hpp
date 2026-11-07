@@ -15,10 +15,4 @@ namespace kfm::sim {
 // invalid killer. LifecycleSystem despawns it in the same tick.
 void eliminateFallen(WorldState& s, const MatchContent& content, Player& p, EventSink& sink);
 
-// v0.57: every banana of `owner` still away from it (Outbound or Returning)
-// drops where it is (Grounded, velocity zero); LifecycleSystem lays it as a
-// pickup this tick, or sinks it if it came down over a pit. Called when a
-// monkey starts to fall (it is doomed) and as an eliminated one despawns.
-void dropBananasOf(WorldState& s, PlayerId owner);
-
 }  // namespace kfm::sim
