@@ -159,14 +159,17 @@ jobs:
       - name: Package
         id: package
         shell: bash
+        # KFM_ prefixed: the MSVC environment exports Platform=x64 and Windows
+        # variable names are case-insensitive, so a step env PLATFORM is lost
+        # to it (the v0.5.0 run) while bash looks for PLATFORM, case-sensitively.
         env:
-          PLATFORM: ${{ matrix.platform }}
-          EXT: ${{ matrix.ext }}
+          KFM_PLATFORM: ${{ matrix.platform }}
+          KFM_EXT: ${{ matrix.ext }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then ver="$GITHUB_REF_NAME"; else ver="sha-${GITHUB_SHA::7}"; fi
           exe=kfm_arena; [[ "$RUNNER_OS" == Windows ]] && exe=kfm_arena.exe
-          name="kfm_arena-$ver-$PLATFORM"
+          name="kfm_arena-$ver-$KFM_PLATFORM"
           rm -rf dist && mkdir -p dist/stage
           cp "build/server-headless/apps/arena/$exe" dist/stage/
           # What the binary needs from the host, for README.txt, and a check
@@ -193,7 +196,7 @@ jobs:
           esac
           if [[ -f LICENSE ]]; then cp LICENSE dist/stage/; fi
           cat > dist/stage/README.txt << EOF
-          kfm_arena $ver ($PLATFORM)
+          kfm_arena $ver ($KFM_PLATFORM)
 
           The headless match runner of Kung Fu Monkeys, built from
           $GITHUB_SERVER_URL/$GITHUB_REPOSITORY at $GITHUB_SHA.
@@ -208,13 +211,13 @@ jobs:
           Exit status: 0 ok, 2 bad arguments, 3 a module refused, 4 an I/O error.
           Runs on: $runs_on
           EOF
-          if [[ "$EXT" == zip ]]; then
+          if [[ "$KFM_EXT" == zip ]]; then
             (cd dist/stage && python -m zipfile -c "../$name.zip" *)
           else
             (cd dist/stage && tar -czf "../$name.tar.gz" *)
           fi
           ls -l dist
-          echo "archive=dist/$name.$EXT" >> "$GITHUB_OUTPUT"
+          echo "archive=dist/$name.$KFM_EXT" >> "$GITHUB_OUTPUT"
           echo "name=$name" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
