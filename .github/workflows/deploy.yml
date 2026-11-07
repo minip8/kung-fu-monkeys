@@ -18,6 +18,38 @@ name: Deploy
 # creates the pool, provider and service account and prints the variables).
 # Without KFM_VMS the job is skipped and the VMs are updated by hand.
 #
+# M7 step 1 (architecture §8 "The ladder", §11; v0.59): a tag is also a
+# GitHub release. The `release` job creates it (once; a re-run finds it) and
+# two jobs upload to it with --clobber, so a re-run replaces its own assets:
+#   arena  (parallel to images/vms/web, never waiting on them) builds the
+#          headless Release kfm_arena with the wasm bot runtime on the three
+#          ci.yml OSes, smoke-runs it (reference bots, then the echo.wasm
+#          fixture) and uploads
+#            kfm_arena-<tag>-linux-x86_64.tar.gz    (fully static: no glibc floor)
+#            kfm_arena-<tag>-macos-arm64.tar.gz
+#            kfm_arena-<tag>-windows-x86_64.zip     (static CRT)
+#          each holding kfm_arena[.exe] and README.txt (and LICENSE, once the
+#          repository has one) at the archive's root; content is compiled in.
+#          The ladder's CLI and scheduler download these by name.
+#   arena-sums  then uploads SHA256SUMS (sha256sum format) over the three.
+#   web    uploads kfm_client-site-<tag>.tar.gz, this release's page (the
+#          files below without _headers), before it publishes the site.
+# A Pages deployment is a full snapshot, so the web job rebuilds every
+# versioned path on every deploy: it unpacks the site asset of every earlier
+# non-draft v* release under site/<tag>/ (a release without one, v0.1.0 to
+# v0.4.0, is skipped with a notice) and this release's under site/<tag>/,
+# and the root serves the release being deployed. A replay is viewed in the
+# client of its own release (§8 "Replays"): https://<host>/v0.60/ keeps
+# working after v0.61 ships. Each versioned copy is self-contained (the page
+# references assets/, config.js and favicon.svg relatively) and carries the
+# config.js of its release, i.e. the lobby URL at that release.
+# The run graph: release -> arena -> arena-sums; images -> vms -> web, where
+# web also needs release (it uploads the site asset before publishing).
+# A manual run creates no release and uploads no release asset: arena and
+# arena-sums keep their archives as workflow artifacts (sha-<short> in the
+# names) and web publishes the branch's build at the root plus the earlier
+# releases' paths (a preview, or production from main, as before).
+#
 # Repository settings it reads:
 #   variables  CF_PAGES_PROJECT  the Cloudflare Pages project name
 #              KFM_LOBBY_URL     the lobby's wss:// URL, written into config.js
@@ -28,6 +60,7 @@ name: Deploy
 #              GCP_WORKLOAD_IDENTITY_PROVIDER  the provider's full resource name
 #              GCP_DEPLOY_SERVICE_ACCOUNT      the deploy service account's email
 #   secrets    CLOUDFLARE_API_TOKEN (Cloudflare Pages: Edit), CLOUDFLARE_ACCOUNT_ID
+#              GITHUB_TOKEN (automatic): GHCR, and the release (contents: write)
 on:
   push:
     tags: ['v*']
@@ -38,6 +71,201 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release:
+    # The GitHub release of the tag, created once so the uploading jobs never
+    # race to create it; a re-run of the workflow finds it and goes on.
+    name: GitHub release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Create the release unless it exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "release $TAG exists"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          fi
+
+  arena:
+    # The released headless kfm_arena (architecture §8 "The ladder"): the
+    # ladder's CLI runs it on an author's machine and its scheduler re-runs a
+    # disputed match with the match's tag. Toolchains as ci.yml's native legs,
+    # dependencies from FetchContent (kfm_arena needs only toml++ and WAMR, so
+    # no vcpkg), KFM_WASM_BOTS on (the default), no WebRTC, no tests.
+    name: kfm_arena ${{ matrix.platform }}
+    needs: release
+    # Runs on a manual run too (release skipped), never after a failed release.
+    if: >-
+      !cancelled()
+      && (needs.release.result == 'success' || needs.release.result == 'skipped')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: write   # gh release upload
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Fully static on Linux (glibc, libstdc++, libgcc): built on 26.04,
+          # a dynamic binary would need its glibc (2.43, for sqrtf), which no
+          # older distribution has. kfm_arena does no name lookup and no
+          # dlopen, so static glibc is safe.
+          - platform: linux-x86_64
+            os: ubuntu-26.04
+            cc: gcc
+            cxx: g++
+            ext: tar.gz
+            cmake_args: -DCMAKE_EXE_LINKER_FLAGS=-static
+          - platform: macos-arm64
+            os: macos-latest
+            cc: clang
+            cxx: clang++
+            ext: tar.gz
+            cmake_args: ''
+          # The static CRT: no Visual C++ redistributable on the author's machine.
+          - platform: windows-x86_64
+            os: windows-latest
+            ext: zip
+            cmake_args: -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+    env:
+      CC: ${{ matrix.cc }}
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: lukka/get-cmake@latest
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Configure
+        run: >-
+          cmake --preset server-headless -DKFM_USE_VCPKG=OFF -DKFM_WEBRTC=OFF
+          -DKFM_BUILD_TESTS=OFF -DKFM_CXX23_PROBE=OFF ${{ matrix.cmake_args }}
+      - name: Build kfm_arena
+        run: cmake --build --preset server-headless --target kfm_arena
+      - name: Smoke (reference bots, then a wasm module)
+        shell: bash
+        run: |
+          set -euo pipefail
+          arena=build/server-headless/apps/arena/kfm_arena
+          "$arena" --bots 4 --ticks 600 --quiet
+          "$arena" --bot tests/fixtures/bots/echo.wasm --bots 2 --ticks 300 --quiet
+      - name: Package
+        id: package
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then ver="$GITHUB_REF_NAME"; else ver="sha-${GITHUB_SHA::7}"; fi
+          exe=kfm_arena; [[ "$RUNNER_OS" == Windows ]] && exe=kfm_arena.exe
+          name="kfm_arena-$ver-$PLATFORM"
+          rm -rf dist && mkdir -p dist/stage
+          cp "build/server-headless/apps/arena/$exe" dist/stage/
+          # What the binary needs from the host, for README.txt, and a check
+          # that the static link took.
+          case "$RUNNER_OS" in
+            Linux)
+              if readelf -d "dist/stage/$exe" | grep -q NEEDED; then
+                echo "::error::kfm_arena is not statically linked"; readelf -d "dist/stage/$exe"; exit 1
+              fi
+              runs_on="any x86_64 Linux (statically linked: no glibc or libstdc++ version needed)." ;;
+            macOS)
+              minos="$(otool -l "dist/stage/$exe" | awk '/LC_BUILD_VERSION/ {b = 1} b && $1 == "minos" {print $2; exit}')"
+              runs_on="macOS ${minos:-(version unknown)} or newer on Apple silicon. The binary is not
+            notarised: if a browser downloaded it, run  xattr -d com.apple.quarantine kfm_arena" ;;
+            Windows)
+              if command -v dumpbin > /dev/null; then
+                if dumpbin -nologo -dependents "dist/stage/$exe" | grep -iE 'vcruntime|msvcp'; then
+                  echo "::error::kfm_arena.exe needs the Visual C++ runtime"; exit 1
+                fi
+              else
+                echo "::warning::dumpbin not found: the static CRT is not checked"
+              fi
+              runs_on="64-bit Windows 10 or newer (static CRT: no Visual C++ redistributable needed)." ;;
+          esac
+          if [[ -f LICENSE ]]; then cp LICENSE dist/stage/; fi
+          cat > dist/stage/README.txt << EOF
+          kfm_arena $ver ($PLATFORM)
+
+          The headless match runner of Kung Fu Monkeys, built from
+          $GITHUB_SERVER_URL/$GITHUB_REPOSITORY at $GITHUB_SHA.
+          Bots are wasm modules (the ABI is docs/bot-abi.md at the same tag) or the
+          built-in reference bot; the game content is compiled in (--content DIR
+          overrides it).
+
+          Usage:
+            $exe --bot ref:hard --bot path/to/bot.wasm --bots 4 --matches 20 --rotate [--json]
+            $exe --help    (every flag)
+
+          Exit status: 0 ok, 2 bad arguments, 3 a module refused, 4 an I/O error.
+          Runs on: $runs_on
+          EOF
+          if [[ "$EXT" == zip ]]; then
+            (cd dist/stage && python -m zipfile -c "../$name.zip" *)
+          else
+            (cd dist/stage && tar -czf "../$name.tar.gz" *)
+          fi
+          ls -l dist
+          echo "archive=dist/$name.$EXT" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: ${{ steps.package.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload to the release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ARCHIVE: ${{ steps.package.outputs.archive }}
+        run: gh release upload "$GITHUB_REF_NAME" "$ARCHIVE" --clobber
+
+  arena-sums:
+    # One SHA256SUMS over the three kfm_arena archives (`sha256sum -c` reads it).
+    name: kfm_arena SHA256SUMS
+    needs: arena
+    if: ${{ !cancelled() && needs.arena.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: kfm_arena-*
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          count="$(find . -maxdepth 1 -name 'kfm_arena-*' | wc -l)"
+          [[ "$count" -eq 3 ]] || { echo "::error::expected three archives, found $count"; ls -l; exit 1; }
+          sha256sum kfm_arena-* > SHA256SUMS
+          cat SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SHA256SUMS
+          path: dist/SHA256SUMS
+          retention-days: 14
+      - name: Upload to the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$GITHUB_REF_NAME" dist/SHA256SUMS --clobber
+
   images:
     name: image ${{ matrix.image }}
     runs-on: ubuntu-latest
@@ -125,17 +353,22 @@ jobs:
 
   web:
     name: browser client to Cloudflare Pages
-    needs: [images, vms]
+    needs: [images, vms, release]
     # Runs after the VMs (or at once when the vms job is skipped: a manual
-    # run, or no KFM_VMS), never after a failed one.
+    # run, or no KFM_VMS), never after a failed one; the release exists by
+    # then on a tag (a manual run skips it).
     if: >-
       !cancelled() && needs.images.result == 'success'
       && (needs.vms.result == 'success' || needs.vms.result == 'skipped')
+      && (needs.release.result == 'success' || needs.release.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      contents: read
+      contents: write   # read the releases' site assets, upload this one's
       deployments: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
@@ -146,13 +379,14 @@ jobs:
         run: cmake --preset wasm
       - name: Build kfm_client (html + js + wasm)
         run: cmake --build --preset wasm --target kfm_client
-      - name: Assemble the site
+      - name: Assemble this release's page
         # kfm_client.js and .wasm keep their names from build to build, so they
         # go under assets/<content hash>/ and only that directory is cached as
         # immutable; the pages that reference them are revalidated every load.
-        # Emscripten's loader fetches the .wasm next to the .js. The page is
-        # served at / (room links are https://<host>/?room=CODE) and at
-        # /kfm_client.html.
+        # Emscripten's loader fetches the .wasm next to the .js. Every reference
+        # (assets/, config.js, favicon.svg) is relative, so the same files serve
+        # the root and a /<tag>/ copy. release-site/ is the release's site
+        # asset; the site adds the earlier releases and _headers below.
         env:
           KFM_LOBBY_URL: ${{ vars.KFM_LOBBY_URL }}
           KFM_SENTRY_DSN: ${{ vars.KFM_SENTRY_DSN }}
@@ -160,38 +394,107 @@ jobs:
           set -euo pipefail
           src=build/wasm/apps/client
           hash="$(cat "$src/kfm_client.js" "$src/kfm_client.wasm" | sha256sum | cut -c1-12)"
-          rm -rf site && mkdir -p "site/assets/$hash"
-          cp "$src/kfm_client.js" "$src/kfm_client.wasm" "site/assets/$hash/"
+          rm -rf release-site && mkdir -p "release-site/assets/$hash"
+          cp "$src/kfm_client.js" "$src/kfm_client.wasm" "release-site/assets/$hash/"
           # The Release shell is minified: src=kfm_client.js may be unquoted.
           sed -E "s#src=(\"?)kfm_client\.js#src=\1assets/$hash/kfm_client.js#" \
-            "$src/kfm_client.html" > site/kfm_client.html
-          grep -q "assets/$hash/kfm_client.js" site/kfm_client.html \
+            "$src/kfm_client.html" > release-site/kfm_client.html
+          grep -q "assets/$hash/kfm_client.js" release-site/kfm_client.html \
             || { echo "::error::no kfm_client.js script tag in kfm_client.html"; exit 1; }
-          cp site/kfm_client.html site/index.html
-          cp "$src/favicon.svg" site/
+          cp release-site/kfm_client.html release-site/index.html
+          cp "$src/favicon.svg" release-site/
           if [[ -z "$KFM_LOBBY_URL" ]]; then
             echo "::warning::repository variable KFM_LOBBY_URL is not set"
           fi
+          # A versioned copy keeps the config.js of its release: the lobby URL
+          # of that release.
           printf 'window.KFM_CONFIG = { lobbyUrl: "%s", sentryDsn: "%s" };\n' \
-            "$KFM_LOBBY_URL" "$KFM_SENTRY_DSN" > site/config.js
+            "$KFM_LOBBY_URL" "$KFM_SENTRY_DSN" > release-site/config.js
+          find release-site -type f | sort
+          cat release-site/config.js
+      - name: Upload the page as the release's site asset
+        # Before publishing, so every /<tag>/ the site serves can be rebuilt by
+        # the next deploy.
+        if: github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          asset="kfm_client-site-$GITHUB_REF_NAME.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/$asset" --owner=0 --group=0 -C release-site .
+          tar -tzf "dist/$asset"
+          gh release upload "$GITHUB_REF_NAME" "dist/$asset" --clobber
+      - name: Assemble the site (the root and every release under /<tag>/)
+        # A Pages deployment is a full snapshot: each deploy brings back the
+        # site asset of every earlier non-draft v* release under site/<tag>/.
+        # The page is served at / (room links are https://<host>/?room=CODE)
+        # and at /kfm_client.html, and each release at /<tag>/ (the trailing
+        # slash matters: the page's references are relative). Two rules have
+        # a :version placeholder (one path segment) so _headers stays far
+        # under Pages' 100 rules however many releases there are; /*.html and
+        # /*.wasm already match below /<tag>/ (a splat matches across /).
+        run: |
+          set -euo pipefail
+          rm -rf site earlier && mkdir -p site earlier
+          cp -R release-site/. site/
+          current=""
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then current="$GITHUB_REF_NAME"; fi
+          # Captured first: a failed gh inside a for list would not stop the
+          # script, and the deploy would silently drop every versioned path.
+          tags="$(gh release list --limit 1000 --exclude-drafts --json tagName --jq '.[].tagName')"
+          for tag in $tags; do
+            [[ "$tag" == v* && "$tag" != "$current" ]] || continue
+            if [[ ! "$tag" =~ ^v[0-9A-Za-z._-]+$ ]]; then
+              echo "::warning::release $tag: not a plain path segment, not served"; continue
+            fi
+            asset="kfm_client-site-$tag.tar.gz"
+            names="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+            if ! grep -qxF "$asset" <<< "$names"; then
+              echo "::notice::release $tag has no $asset: /$tag/ is not served"; continue
+            fi
+            gh release download "$tag" --pattern "$asset" --dir earlier
+            mkdir -p "site/$tag"
+            tar -xzf "earlier/$asset" --no-same-owner -C "site/$tag"
+            [[ -f "site/$tag/index.html" ]] \
+              || { echo "::error::$asset has no index.html"; exit 1; }
+            echo "/$tag/ from $asset"
+          done
+          if [[ -n "$current" ]]; then
+            mkdir -p "site/$current"
+            cp -R release-site/. "site/$current/"
+          fi
           cat > site/_headers << 'EOF'
           /assets/*
+            Cache-Control: public, max-age=31536000, immutable
+          /:version/assets/*
             Cache-Control: public, max-age=31536000, immutable
           /*.wasm
             Content-Type: application/wasm
           /
             Cache-Control: no-cache
+          /:version/
+            Cache-Control: no-cache
           /*.html
             Cache-Control: no-cache
           /kfm_client
             Cache-Control: no-cache
+          /:version/kfm_client
+            Cache-Control: no-cache
           /config.js
+            Cache-Control: no-cache
+          /:version/config.js
             Cache-Control: no-cache
           /favicon.svg
             Cache-Control: no-cache
+          /:version/favicon.svg
+            Cache-Control: no-cache
           EOF
-          find site -type f | sort
-          cat site/config.js
+          files="$(find site -type f | wc -l)"
+          echo "$files files (Pages allows 20000 per site on the free plan)"
+          if (( files > 19000 )); then
+            echo "::warning::the site has $files files, close to Pages' 20000"
+          fi
+          find site -maxdepth 1 | sort
+          find site -maxdepth 2 -name index.html | sort
       - name: Publish to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.59 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.60 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -802,6 +802,26 @@ row may change between releases inside a season. Ratings persist across a releas
 shock to every entrant, not a reason to reset; Glicko-2 would widen the deviation instead); the
 service announces releases to entrants and the CLI's `test` defaults to the current release so
 an author sees breakage before the scheduler does. Design only: no code change.
+v0.60 changes: M7 step (1) landed (§8 "The ladder", §9, §11, §13.5). The `contest` mode is the
+last row of `content/modes.toml`, today `grid_rounds_1t` renamed (a test pins the equality, so a
+season's change to the row is a deliberate edit), with a 10-player corpus entry
+(`scripted_10p_contest_1800t`). The `kfm_arena --json` result is a normative, append-only
+contract in `docs/arena-result.md`, pinned by a test over every object's keys, their order and
+their JSON types; the match object gains `content_hash` and `build_hash` (the replay header's
+two hashes, 8 hex digits like `checksum`) so a result names the content it ran under; the build
+hash is zero until a build stamps one (open: nothing stamps the netcode's build id either). A
+`v*` tag is now a GitHub release: the deploy workflow builds the headless Release `kfm_arena`
+with the wasm runtime on the three CI OSes (Linux fully static, Windows with the static CRT),
+smoke-runs it with reference bots and the echo module, and uploads
+`kfm_arena-<tag>-{linux-x86_64,macos-arm64}.tar.gz`, `kfm_arena-<tag>-windows-x86_64.zip` and
+`SHA256SUMS`; the web job uploads the assembled page as `kfm_client-site-<tag>.tar.gz` and, since
+a Pages deployment is a full snapshot, unpacks every earlier release's site asset under
+`/<tag>/` on each deploy, so a release's page keeps its path (v0.59's viewer per release); each
+copy carries its own `config.js`, so an old page's Play online is refused by the current servers
+and the versioned pages are for replays and local play. The workflow has not yet run on a tag
+(the Actions, macOS, Windows and Cloudflare `:version` header behaviour is unverified; the first
+release after this lands is the check). Replay checksums: unchanged, corpus regenerated because
+the content hash moved (a new mode); one new entry.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3968,7 +3988,7 @@ lives in the bots repository (above) and uses this repository through its tagged
   the reference bot through a released headless `kfm_arena`), `submit`, `bots list` and
   `bots activate`, `matches list`, `replay get` and `replay open`.
 - **What this repository contributes.** `kfm_arena` as the engine with its append-only JSON
-  result, the `contest` mode in content, the browser client's replay-by-URL viewer, a released
+  result (`docs/arena-result.md`, normative since v0.60), the `contest` mode in content, the browser client's replay-by-URL viewer, a released
   headless `kfm_arena` binary per tagged version, and `docs/bot-abi.md` as the normative ABI.
   The portal, the accounts, the build images, the scheduler, the ratings store and the CLI are
   the bots repository's.
@@ -4286,7 +4306,8 @@ behind the Reconnect button, the jitter-aware lead band and a 500 ms soak gate);
 M7 sequencing (v0.36, numbered M6b until v0.40): M6a and M7 share only the hosted client and
 proceed in parallel. M7 depends on `kfm_arena`, static hosting and an identity provider, not on
 the lobby service or the regional servers. Its order: (1) in this repository, the `contest` mode (content hash only),
-the JSON result pinned append-only, a tagged release that publishes the headless `kfm_arena`;
+the JSON result pinned append-only, a tagged release that publishes the headless `kfm_arena`
+(landed in v0.60, with the versioned page per tag of v0.59);
 (2) the bots repository created with the SDK moved from `tools/bots/`, the C++ layer and the
 build image, `example_bot_test` kept here against the normative header; (3) the service:
 accounts, teams, submissions and the sandboxed build; (4) the scheduler and ratings; (5) the
@@ -4315,6 +4336,19 @@ calls, `Observation` fields, `kfm_arena --team`, per-instance lifecycle (no sim 
 change beyond the `call` ability's event). Steps 1 to 3 are worth doing even if the grid is
 dropped; step 4 is the only one with design risk and is prototyped behind the table before the
 contest layer goes on top.
+
+Progress: M7 step (1) landed in v0.60: the `contest` row (grid_rounds_1t renamed, pinned equal by
+a loader test, with `scripted_10p_contest_1800t` in the gate), `docs/arena-result.md` and the
+frozen-key test with `content_hash`/`build_hash` appended to the match object, and the release
+workflow's `release`, `arena` and `arena-sums` jobs plus the web job's site asset and versioned
+paths (`deploy/README.md`). Verified locally: the headless and `dev` builds with every non-soak
+test, the corpus regenerated with every existing `.checksums` byte-identical, `kfm_arena --mode
+contest --team ... --rotate` ending its matches on courtyard, a fully static Linux `kfm_arena`
+running the echo module inside a Debian trixie image, and the workflow's shell steps run under
+bash against a fake `gh`. Not yet run: the workflow itself (no release exists yet; the first
+tag creates one), the macOS and Windows legs, Cloudflare's `:version` rules. Open: a stamped
+build hash; a global concurrency group for `web` when two tags land close together; a
+`CMAKE_OSX_DEPLOYMENT_TARGET` for older macOS. Next: step (2), the bots repository.
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and

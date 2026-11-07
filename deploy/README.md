@@ -1,13 +1,15 @@
 # Deploying Kung Fu Monkeys (M6a)
 
 The decision record is architecture §13.5, "The M6a deployment (v0.37)"; the lobby's wire
-format is `docs/lobby-protocol.md`. Three parts:
+format is `docs/lobby-protocol.md`. Three parts, plus what a release publishes for the bot
+ladder (M7, architecture §8 "The ladder"):
 
 | Part | What | Where |
 |---|---|---|
-| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js`, `favicon.svg`, `_headers` | Cloudflare Pages (`play.<domain>`), published by `.github/workflows/deploy.yml` on a `v*` tag |
+| Client page | `kfm_client.html` + `.js` + `.wasm`, `config.js`, `favicon.svg`, `_headers` | Cloudflare Pages (`play.<domain>`), published by `.github/workflows/deploy.yml` on a `v*` tag: the newest at `/`, every release at `/<tag>/` |
 | Lobby | `kfm-lobby` (Rust) behind Caddy, the only public TCP endpoint | the EU VM, `ghcr.io/<owner>/kfm-lobby` |
 | Game servers | a pool of `kfm_server` processes, one match each, dialling the lobby | one VM per region, `ghcr.io/<owner>/kfm-server` |
+| Release assets | the headless `kfm_arena` per OS, `SHA256SUMS`, the page as `kfm_client-site-<tag>.tar.gz` | the tag's GitHub release, created by `deploy.yml` ("Releases and versioned pages" below) |
 
 Files:
 
@@ -43,8 +45,8 @@ Files:
    `deploy.yml` writes `config.js` from the two `KFM_` variables:
    `window.KFM_CONFIG = { lobbyUrl: "…", sentryDsn: "…" };`.
 3. **First release.** `git tag v0.1.0 && git push origin v0.1.0`. `deploy.yml` pushes
-   `ghcr.io/<owner>/kfm-server:v0.1.0` and `kfm-lobby:v0.1.0` (plus `latest`) and publishes
-   the page. GHCR packages start private: make both public (package settings), or put a
+   `ghcr.io/<owner>/kfm-server:v0.1.0` and `kfm-lobby:v0.1.0` (plus `latest`), publishes
+   the page and creates the GitHub release `v0.1.0` with its assets. GHCR packages start private: make both public (package settings), or put a
    `read:packages` token in `KFM_GHCR_USER`/`KFM_GHCR_TOKEN` in `kfm.env`.
 4. **GCP project.** Create it, link billing, then
    `gcloud services enable compute.googleapis.com --project my-proj`.
@@ -134,6 +136,71 @@ reboot; to make them permanent, recreate the VM (or update its startup-script me
 
 Logs: `journalctl -u kfm-lobby -u 'kfm-server@*' -u caddy`. Each server prints a stats line
 every 60 s (`--stats-every 60`).
+
+## Releases and versioned pages
+
+From M7 step 1 (architecture §8 "The ladder", v0.59) every `v*` tag is also a GitHub release.
+The workflow's `release` job creates it (with generated notes; a re-run finds the existing one)
+and two jobs upload to it with `--clobber`, so re-running a deploy replaces its own assets:
+
+| Asset | From | What |
+|---|---|---|
+| `kfm_arena-<tag>-linux-x86_64.tar.gz` | `arena` job, ubuntu-26.04, GCC | fully static (`-static`): runs on any x86_64 Linux, no glibc floor |
+| `kfm_arena-<tag>-macos-arm64.tar.gz` | `arena` job, macos-latest, Apple Clang | needs the macOS the runner built for (its `minos` is in README.txt); not notarised |
+| `kfm_arena-<tag>-windows-x86_64.zip` | `arena` job, windows-latest, MSVC | static CRT: no Visual C++ redistributable |
+| `SHA256SUMS` | `arena-sums` job | `sha256sum` format over the three archives (`sha256sum -c SHA256SUMS`) |
+| `kfm_client-site-<tag>.tar.gz` | `web` job | this release's page: `index.html`, `kfm_client.html`, `config.js`, `favicon.svg`, `assets/<hash>/` (no `_headers`) |
+
+Each `kfm_arena` archive holds `kfm_arena` (`kfm_arena.exe`), `README.txt` (the tag, the
+commit, the usage line, what the host needs) and `LICENSE` once the repository has one, all at
+the archive's root; the content is compiled in. It is the headless Release build
+(`server-headless` preset, FetchContent, no WebRTC) with the wasm bot runtime, smoke-run before
+upload with four reference bots and with `tests/fixtures/bots/echo.wasm`. The ladder's CLI
+(`kfm test`) and scheduler download it by these names. The `arena` jobs run beside the images
+and the VMs and never wait for them; a manual run builds the same archives (named
+`sha-<short>` for the tag) as workflow artifacts and creates no release.
+
+**Versioned pages.** A replay is viewed in the client of its own release (§8 "Replays"), so the
+site serves every release under its tag, `https://play.example.com/v0.60/` (keep the trailing
+slash: the page's references are relative), beside the root, which serves the release being
+deployed. A Pages deployment is a full snapshot of `site/`, so the `web` job rebuilds every
+versioned path each time: it uploads this release's site asset first, then unpacks the site
+asset of every earlier non-draft `v*` release under `site/<tag>/`, adds this release under
+`site/<tag>/`, and writes `_headers` with `/:version/...` rules beside the root's (assets
+immutable, the page, `config.js` and `favicon.svg` revalidated). A release without a site asset
+(every tag before the first release made by this workflow, v0.1.0 to v0.4.0) is skipped with a
+notice. Each versioned copy keeps the `config.js` of its release, the lobby URL and Sentry DSN
+at that release: an old page that opens Play online reaches the current lobby, whose servers
+refuse its build id, so versioned pages are for viewing replays and playing locally. All
+versions share one origin, so settings saved in `localStorage` are shared too (an older client
+warns about a key it does not know and carries on). A manual run publishes the branch's build at the
+root plus the earlier releases' paths and uploads no release asset.
+
+**Re-publishing an old tag's page.** When a release lacks its site asset (it failed, or it
+predates this workflow), build it from that tag and attach it; the next deploy serves it:
+
+```sh
+git worktree add ../kfm-v0.58 v0.58 && cd ../kfm-v0.58
+source ~/emsdk/emsdk_env.sh && cmake --preset wasm && cmake --build --preset wasm --target kfm_client
+# then run the shell of the "Assemble this release's page" step of main's deploy.yml here,
+# with that release's KFM_LOBBY_URL and KFM_SENTRY_DSN in the environment: it writes release-site/
+tar -czf kfm_client-site-v0.58.tar.gz --owner=0 --group=0 -C release-site .
+gh release view v0.58 > /dev/null 2>&1 || gh release create v0.58 --verify-tag --title v0.58 --notes 'Page only.'
+gh release upload v0.58 kfm_client-site-v0.58.tar.gz --clobber
+```
+
+To serve it at once rather than at the next tag, re-run only the `web` job of the newest tag's
+Deploy run (Actions → the run → `web` → Re-run this job: the images and VMs are not touched).
+A manual run of the workflow from a branch other than `main` is a preview of that branch; one
+from `main` publishes to production, as before. Deleting a release's site asset (or the release) drops `/<tag>/` at the next deploy.
+
+**Retention.** One release adds six files (about 3.4 MB, the `.wasm` being 3.2 MB of it, far
+under Pages' 25 MiB per file). Pages allows 20,000 files per site on the free plan, so about
+3,000 releases fit; the web job prints the count and warns past 19,000. The practical cost is
+the web job downloading every earlier site asset (about 1.2 MB each) and wrangler hashing the
+files, which it uploads only when new (a re-served release costs no upload). At a release a
+week that is years away; when it matters, prune by deleting old releases' site assets (or
+restrict the loop to the last N tags) and decide which replay links may break.
 
 ## What to watch
 

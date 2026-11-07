@@ -1063,7 +1063,8 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
   ContentDB loaded{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
-  for (const char* name : {"rounds", "survival", "team_rounds", "grid_rounds", "grid_rounds_1t"}) {
+  for (const char* name :
+       {"rounds", "survival", "team_rounds", "grid_rounds", "grid_rounds_1t", "contest"}) {
     const sim::ModeDef& m = loaded.modes[loaded.findMode(name).value_or(0)];
     CHECK(m.deathBananas == sim::DeathBananas::Drop);
     CHECK(m.catchScore == 0);
@@ -1086,6 +1087,31 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
     CHECK(m.bananaRegrowTicks == 480);
     CHECK(m.respawnTicks == 300);
   }
+}
+
+// M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset
+// and today grid_rounds_1t under another name, so a season's change to the
+// row is a deliberate edit here.
+TEST_CASE("content/ ships contest as grid_rounds_1t renamed (M7)", "[content][loader][modes]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> contest = db.findMode("contest");
+  const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
+  const std::optional<uint8_t> courtyard = db.findArena("courtyard");
+  REQUIRE(contest);
+  REQUIRE(grid);
+  REQUIRE(courtyard);
+  const sim::ModeDef& g = db.modes[grid.value_or(0)];
+  sim::ModeDef renamed = db.modes[contest.value_or(0)];
+  CHECK(renamed.name.view() == "contest");
+  renamed.name = g.name;
+  CHECK(bytesOf(renamed) == bytesOf(g));  // every field but the name
+  CHECK(renamed.vision == g.vision);
+  CHECK(renamed.vision.kind == sim::VisionKind::Own);
+  CHECK(db.firstCompatibleArena(contest.value_or(0)) == courtyard);
+  CHECK(db.compatible(courtyard.value_or(0), contest.value_or(0)));
+  CHECK_FALSE(db.compatible(0, contest.value_or(0)));  // the dojo has no cells
 }
 
 TEST_CASE("content/ ships blink, slam and parry as loadouts (v0.21, v0.31)",
