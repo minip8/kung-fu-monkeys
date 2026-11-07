@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.65 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.66 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -906,6 +906,25 @@ presigned replay URL and the viewer URL `https://kfm.minip8.com/<tag>/?replay=�
 Measured: 155 tests; a 5v5 pair that ends takes 0.3 s of `kfm_arena` on the released v0.5.1
 runner, two capped games 5 s. Next: step (5), the CLI, then (6), the viewer; the deployment
 (VMs, R2, the OAuth apps) is still to do.
+
+v0.66 changes: M7 step (5) landed in the bots repository, and four ladder decisions (§8, §11,
+§12). The CLI is `kfm`, published on PyPI as **`kfm-cli`** (`kfm` is taken by an unrelated
+package; `uv tool install kfm-cli`), one static binary per platform through maturin (the Linux
+wheel a musl binary tagged for manylinux and musllinux). `login` is the local-redirect browser
+flow (API v1.3: `/auth/cli` confirms a `submit` token named for the machine, a single-use
+five-minute code stored hashed and the token sealed against it, exchanged over
+`/auth/cli/exchange`); `build` runs the pinned image or `--local` with the recipe reimplemented;
+`test` fetches and verifies the release's `kfm_arena` and plays the ranked 5v5 shape; `submit
+--wait --activate`, the listings, `replay get|open`. The ladder's public host is
+**`bots.kfm.minip8.com`** (it will carry more than the ladder; GCP and unit names unchanged).
+Decided: **replays are kept 24 hours** (the open retention item): the API's scheduler, under its
+advisory lock, deletes older replay objects in batches and nulls the match's key, the match row
+keeping its result, seed, submissions and rating change for ever (a dispute re-runs from seed
+plus modules); the presigning routes are rate limited per client IP (60 a minute, behind
+Caddy's forwarded address); the default round is 30 minutes (five minutes with 20 teams would
+write 17 k replays a day into R2); a public `/privacy` page for Google's consent screen, written
+from what the service stores. Measured: 182 service tests and 57 CLI tests, the CLI run end to
+end against the real service. Not yet done: the deployment and the PyPI trusted publisher.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4069,7 +4088,8 @@ lives in the bots repository (above) and uses this repository through its tagged
   projection in the observation builder, so a replay shows the whole arena; a fog overlay in
   the viewer is a follow-up.
 - **The CLI.** One static binary written in Rust, released as platform wheels through PyPI with
-  maturin (`uv tool install kfm`, `uvx kfm`) and on the bots repository's releases page.
+  maturin (`uv tool install kfm-cli`, `uvx --from kfm-cli kfm`; the PyPI project is `kfm-cli`,
+  v0.66) and on the bots repository's releases page.
   Commands: `login`, `build` (the recipe in the pinned image, locally), `test` (a match against
   the reference bot through a released headless `kfm_arena`), `submit`, `bots list` and
   `bots activate`, `matches list`, `replay get` and `replay open`.
@@ -4533,8 +4553,11 @@ and #4; the v0.64 changelog line has the departures and measurements). Not yet d
 VMs, the R2 bucket, the GitHub and Google OAuth apps.
 
 Progress: M7 step (4) landed in v0.65 in the bots repository (bots PR #5; the v0.65 changelog
-line has the decisions and measurements). Next: step (5), the Rust CLI on PyPI (`login`,
-`build`, `test`, `submit`, `bots`, `matches`, `replay`), then (6), the client's replay viewer.
+line has the decisions and measurements).
+
+Progress: M7 step (5) landed in v0.66 in the bots repository (bots PRs #6 and #7). Next: the
+deployment (the two VMs, R2, the OAuth apps, the PyPI trusted publisher; the runbook is the
+bots repository's `deploy/README.md`), then step (6), the client's replay viewer, here.
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
@@ -5009,8 +5032,10 @@ baseline moved to C++23 (§9).
   jobs table as the queue, GitHub or Google OAuth, gVisor on a dedicated build VM, Swiss-style
   rounds under Glicko-2. v0.65: Glicko-2 decided (per-game periods, the release widening
   constant 100), seasons as time windows, validation in the ranked 5v5 shape.
-  Open: how long a release's content, page and replays are kept, and whether a fog overlay
-  belongs in the viewer.
+  v0.66: replays are kept 24 hours; the host is `bots.kfm.minip8.com`; the CLI is `kfm-cli` on
+  PyPI.
+  Open: how long a release's content and page are kept, and whether a fog overlay belongs in
+  the viewer.
 - Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP
   endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
   `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
