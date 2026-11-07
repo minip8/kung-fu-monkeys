@@ -95,8 +95,8 @@ struct RenderPlayer {
   [[nodiscard]] constexpr bool has(PlayerFlag f) const { return (flags & flagBit(f)) != 0; }
 };
 
-// v0.57: ToPit, a falling monkey's banana flying to its pit; Sinking, dropping in.
-enum class BananaPhase : uint8_t { Outbound = 0, Returning, Grounded, ToPit, Sinking };
+// v0.57: Sinking, a banana that came down over a pit dropping into the hole.
+enum class BananaPhase : uint8_t { Outbound = 0, Returning, Grounded, Sinking };
 
 struct RenderBanana {
   Vec3 position{};  // world space, y = hand height + arc

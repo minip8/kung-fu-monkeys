@@ -101,9 +101,8 @@ struct BoomerangDef {
   Fixed restitution{};         // wall bounce velocity scale (1 = elastic)
   Fixed spawnOffset{};         // distance ahead of the thrower where it spawns
   uint8_t damage{1};           // per hit; the banana flies on through its victim
-  // v0.57: a falling monkey's bananas fly straight to its pit at this speed
-  // (units/tick; 0 = `speed`), over walls, and sink for pitSinkTicks.
-  Fixed pitSpeed{};
+  // v0.57: a banana that comes down over a pit sinks into it for this long
+  // (BoomerangPhase::Sinking), then is gone.
   uint16_t pitSinkTicks{18};
 };
 

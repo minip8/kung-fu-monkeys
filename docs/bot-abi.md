@@ -150,7 +150,7 @@ Enumerations (byte values):
 | mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
-| banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 ToPit (architecture v0.57: a falling monkey's banana flying straight to the point it went in, through walls; harmless), 4 Sinking (dropping into that pit; harmless, then gone, never a pickup) |
+| banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup) |
 | pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
 | hazard kind | 0 Pit (a monkey whose whole disc ends a tick inside the union of the pit boxes while not Dashing falls: tag Falling for `fall_ticks`, then eliminated by nobody; architecture v0.57), 1 Slow (move speed × `speedMul` inside) |
 
@@ -438,11 +438,12 @@ inside (the closed box); it never blocks movement or bananas. A pit is the excep
 monkey falls once its whole contact disc (`self.radius`; touching the edge from inside counts)
 lies inside the union of all the pit boxes, adjoining tilemap boxes counting as one pit, so a
 pit narrower than the body takes nobody. A Dashing monkey is spared: a dash carries it across,
-and it falls if the dash ends with its disc still over the pits. A faller's bananas fly straight
-to the point it went in (banana phase ToPit, through walls) and drop in (Sinking): harmless on
-the way, never a pickup. A round of a round kind with no banana left anywhere (none held, out or
-lying around, a ToPit/Sinking one counting as gone, and no ammo power-up to come) ends as its
-clock-out would, after the mode's `dry_round_ticks` on an arena with pits.
+and it falls if the dash ends with its disc still over the pits. When a monkey dies (or starts
+to fall) its bananas in flight drop where they are and become pickups; one that comes down
+wholly over a pit sinks into it instead (banana phase Sinking: harmless, then gone, never a
+pickup). A round of a round kind with no banana left anywhere (none held, out or lying around, a
+Sinking one counting as gone, and no ammo power-up to come) ends as its clock-out would, after
+the mode's `dry_round_ticks` on an arena with pits.
 
 `spawners[i]` (16 bytes; absolute 5428 + 16 i): offset 0 point `pos`; 8 u16 `powerUpSet` (bit j:
 power-up j may spawn, 0 = any); 10 u16 `firstTicks` (Playing tick of the first spawn); 12 u16

@@ -75,7 +75,7 @@ inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<StatKind> = 4;
 template <>
-inline constexpr uint8_t kEnumCount<BoomerangPhase> = 5;
+inline constexpr uint8_t kEnumCount<BoomerangPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<PickupKind> = 3;
 template <>
@@ -211,8 +211,7 @@ void visit(V& v, BoomerangDef& d) {
   visit(v, d.restitution);
   visit(v, d.spawnOffset);
   v.u8(d.damage);
-  visit(v, d.pitSpeed);  // v0.57
-  v.u16(d.pitSinkTicks);
+  v.u16(d.pitSinkTicks);  // v0.57
 }
 template <class V>
 void visit(V& v, PickupDef& d) {
@@ -509,7 +508,6 @@ void visit(V& v, Boomerang& b) {
   v.u8(b.damage);
   visit(v, b.speedMul);  // projectile modifiers (§5.8)
   visit(v, b.radiusMul);
-  visit(v, b.target);  // v0.57: a falling owner's pit
 }
 template <class V>
 void visit(V& v, Pickup& p) {

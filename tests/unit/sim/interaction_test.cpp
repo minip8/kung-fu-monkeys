@@ -100,13 +100,12 @@ TEST_CASE("rules table is sorted and every row ignores eliminated players", "[si
     CHECK(rules[i].forbidA.has(Tag::Eliminated));
     if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Eliminated));
     CHECK(rules[i].resolve != nullptr);
-    // v0.57: a falling monkey is out of reach, and so are its bananas bound
-    // for its pit: every Boomerang row names Outbound/Returning only.
+    // v0.57: a falling monkey is out of reach, and so is a banana sinking
+    // into a pit: every Boomerang row names Outbound/Returning only.
     CHECK(rules[i].forbidA.has(Tag::Falling));
     if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Falling));
     if (rules[i].kindB == EntityKind::Boomerang) {
       CHECK(rules[i].phaseMaskB != kPhaseAny);
-      CHECK_FALSE(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::ToPit));
       CHECK_FALSE(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::Sinking));
     }
   }

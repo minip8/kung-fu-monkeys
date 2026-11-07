@@ -7,9 +7,17 @@
 // Pit falls run in every match phase, after the respawn timers: a falling
 // monkey's fallTicks counts down and at 0 it is eliminated by nobody
 // (rules/fall.hpp), so it despawns in the same pass. A fall that starts on
-// tick T (fallTicks = PlayerDef::fallTicks = N) ends on tick T + N - 1. A
-// faller's banana that has sunk into its pit for BoomerangDef::pitSinkTicks
-// (v0.57, ProjectileSystem) despawns here, in every phase, never a pickup.
+// tick T (fallTicks = PlayerDef::fallTicks = N) ends on tick T + N - 1.
+//
+// v0.57, bananas at a death: an eliminated monkey's bananas still away from
+// it (outbound or returning) drop where they are as it despawns (the pit row
+// already dropped a faller's when its fall began; rules/fall.hpp
+// dropBananasOf), so they come down as pickups below like any grounded
+// banana, on the tick of the death. A grounded banana whose disc (the
+// banana's contact radius) lies wholly over the pits (discOverPits, the
+// monkeys' own test) falls into the hole instead: Sinking, BoomerangFell,
+// gone after BoomerangDef::pitSinkTicks; so no pickup ever lies where only a
+// fall could reach it.
 //
 // Respawns are driven by MatchRules' timers, which only modes that respawn
 // (deathmatch) set, so the code is the same for every mode: during Playing a
@@ -127,20 +135,30 @@ void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink
   s.players.forEachAlive([&](EntityId id, const Player& p) {
     if (!p.tags.has(Tag::Eliminated)) return;
     s.rules.invulnTicks[id.index] = 0;
+    dropBananasOf(s, p.id);  // v0.57: they come down where they are
     s.players.despawn(id);
   });
 
   // Iterates boomerangs and spawns pickups: a different pool, so the
   // forEachAlive no-spawn rule holds.
-  s.boomerangs.forEachAlive([&](EntityId id, const Boomerang& b) {
-    // v0.57: a falling monkey's banana that has sunk into its pit is gone.
+  const BoomerangDef& bananaDef = content.db.boomerang;
+  s.boomerangs.forEachAlive([&](EntityId id, Boomerang& b) {
+    // v0.57: a banana that has sunk into a pit is gone.
     if (b.phase == BoomerangPhase::Sinking &&
-        b.ticksInPhase >= std::max<uint16_t>(content.db.boomerang.pitSinkTicks, 1)) {
+        b.ticksInPhase >= std::max<uint16_t>(bananaDef.pitSinkTicks, 1)) {
       s.boomerangs.despawn(id);
       return;
     }
     if (b.phase != BoomerangPhase::Grounded) return;
     const Vec2 pos = b.transform.pos;
+    // v0.57: come down wholly over a pit, it drops into the hole.
+    if (discOverPits(content.arena, pos, bananaDef.radius * b.radiusMul)) {
+      b.phase = BoomerangPhase::Sinking;
+      b.ticksInPhase = 0;
+      b.transform.vel = Vec2::zero();
+      sink.push(SimEvent{EventKind::BoomerangFell, s.tick, b.owner, id, 0, 0});
+      return;
+    }
     s.boomerangs.despawn(id);
     sink.push(SimEvent{EventKind::BoomerangGrounded, s.tick, PlayerId::invalid(), id, 0, 0});
     const EntityId pickupId = s.pickups.spawn();

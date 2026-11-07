@@ -62,7 +62,6 @@ struct PlayerTrack {
 struct BananaTrack {
   EntityTrack motion{};
   float returnStartDistance{-1.0f};  // owner distance when first seen Returning; < 0 = unset
-  float pitStartDistance{-1.0f};     // v0.57: pit distance when first seen ToPit; < 0 = unset
   float trailTimer{0.0f};            // seconds until the next trail puff
 };
 

@@ -51,8 +51,6 @@ static_assert(static_cast<uint8_t>(sim::AbilityPhase::Recovery) ==
               static_cast<uint8_t>(ObsAbilityPhase::Recovery));
 static_assert(static_cast<uint8_t>(sim::BoomerangPhase::Grounded) ==
                   static_cast<uint8_t>(ObsBananaPhase::Grounded) &&
-              static_cast<uint8_t>(sim::BoomerangPhase::ToPit) ==
-                  static_cast<uint8_t>(ObsBananaPhase::ToPit) &&
               static_cast<uint8_t>(sim::BoomerangPhase::Sinking) ==
                   static_cast<uint8_t>(ObsBananaPhase::Sinking));
 static_assert(static_cast<uint8_t>(sim::PickupKind::PowerUp) ==

@@ -77,7 +77,6 @@ constexpr ContentDB makeDefaultContent() {
   // Clear of the thrower's contact radius (0.5 + 0.35): no own contact on the spawn tick.
   c.boomerang.spawnOffset = Fixed::one();
   c.boomerang.damage = 1;
-  c.boomerang.pitSpeed = perSecond(24);
   c.boomerang.pitSinkTicks = 18;
 
   c.pickup.radius = Fixed::half();

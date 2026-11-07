@@ -124,7 +124,7 @@ namespace {
     if (!p.tags.has(Tag::Eliminated) && p.ammo > 0) left = true;
   });
   s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
-    if (!b.pitBound()) left = true;
+    if (b.phase != BoomerangPhase::Sinking) left = true;
   });
   const ContentDB& db = content.db;
   s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {

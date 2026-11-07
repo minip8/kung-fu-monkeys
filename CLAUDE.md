@@ -446,9 +446,11 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   disc is over the union of the pit boxes (`discOverPits` / `discWithinBoxes` in
   `content/arena.hpp`, exact and integer-only; the bot uses the same function). Row 60 forbids
   `Dashing`, so a dash's reach is how wide a pit it clears. `kGone` in `rules/table.cpp` holds
-  `Falling`: a new row that forbids `kGone` is safe against a falling monkey. A faller's bananas
-  fly to its pit (`BoomerangPhase::ToPit`, then `Sinking`) and are never pickups; a new Boomerang
-  row must name an Outbound/Returning phase mask so it never touches them (a test pins it). A new
+  `Falling`: a new row that forbids `kGone` is safe against a falling monkey. A dead (or newly
+  falling) monkey's bananas in flight drop at once (`dropBananasOf`) and become pickups; a
+  grounded banana wholly over a pit sinks instead (`BoomerangPhase::Sinking`, never a pickup); a
+  new Boomerang row must name an Outbound/Returning phase mask so it never touches a sinking one
+  (a test pins it). A new
   round-ending rule must wait for falls (`anyFalling`), or a doomed last monkey wins; the round
   kinds also end a dry round (no banana left anywhere, `roundRanDry`, `[[mode]]
   dry_round_ticks`), and anything new that makes bananas must count in `bananaLeft`.

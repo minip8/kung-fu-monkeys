@@ -5,8 +5,9 @@
 // nobody. A dash carries it over a pit narrower than the dash's reach and
 // drops it into one it cannot clear; a body partly over the edge stays up,
 // one straddling two adjoining pit boxes goes, and a pit narrower than the
-// body takes nobody; a round waits for every fall to end. The faller's
-// bananas fly to its pit, harmless, and drop in; never pickups.
+// body takes nobody; a round waits for every fall to end. A dead (or doomed)
+// monkey's bananas in flight drop where they are as pickups, unless they
+// come down over a pit, where they drop into the hole.
 #include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -23,6 +24,7 @@ constexpr uint8_t kDash = buttonBit(Button::Dash);
 constexpr uint8_t kThrow = buttonBit(Button::Throw);
 const PlayerId kP0{0};
 const PlayerId kP1{1};
+const PlayerId kP2{2};
 
 constexpr uint8_t kRight = 0;  // input angles: 0 = +x, 128 = -x
 constexpr uint8_t kLeft = 128;
@@ -52,7 +54,8 @@ ContentDB pitContent() {
   a.name = ContentName::of("pits");
   a.spawnPoints[0] = at(-12, 0);
   a.spawnPoints[1] = at(0, 6);
-  a.spawnPointCount = 2;
+  a.spawnPoints[2] = at(-14, -7);
+  a.spawnPointCount = 3;
   a.wallCount = 0;
   a.hazards[0] = Hazard{at(kNarrowMinX, -9), at(kNarrowMaxX, 9), HazardKind::Pit, Fixed::one()};
   a.hazards[1] = Hazard{at(kWideMinX, -9), at(kWideMaxX, 9), HazardKind::Pit, Fixed::one()};
@@ -298,70 +301,106 @@ TEST_CASE("a round waits for every fall: a doomed last monkey does not win", "[s
   CHECK(lab.s.rules.scores[1] == 0);
 }
 
-TEST_CASE("a faller's far banana flies to its pit harmlessly and drops in after the fall",
+TEST_CASE("a hit monkey's banana in flight drops on the spot and anyone may take it",
           "[scenario][pit][banana]") {
-  Lab lab(0b11);
-  const Vec2 wentIn = at(-8, 0);  // the middle of the narrow pit
-  placePlayer(lab.s, kP0, wentIn).ammo = 0;
-  placePlayer(lab.s, kP1, at(10, 0));  // right on the banana's way to the pit
-  // Its banana far east, outbound away from it: 22 units from the pit, more
-  // than a fall's worth of flight.
-  const EntityId id = spawnBanana(lab.s, kP0, at(14, 0), Vec2{Fixed::fromRatio(4, 15), Fixed{}},
-                                  BoomerangPhase::Outbound, lab.db);
-  lab.step();
-  REQUIRE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
-  {
-    const Boomerang* b = lab.s.boomerangs.get(id);
-    REQUIRE(b != nullptr);
-    CHECK(b->phase == BoomerangPhase::ToPit);
-    CHECK(b->target == wentIn);
-  }
-  // The fall ends with the banana still on its way; the round with it.
-  while (lab.s.playerBySlot(kP0) != nullptr)
-    lab.step();
-  const SimEvent& out = firstEvent(lab.all, EventKind::PlayerEliminated);
-  CHECK(findEvent(lab.all, EventKind::BoomerangFell) == nullptr);
-  REQUIRE(lab.s.boomerangs.get(id) != nullptr);
-  CHECK(lab.s.boomerangs.get(id)->phase == BoomerangPhase::ToPit);
-  CHECK(firstEvent(lab.all, EventKind::RoundEnded).player == kP1);
-  // It finishes its trip during the round's pause, straight to the spot.
-  for (int t = 0; t < 120 && findEvent(lab.all, EventKind::BoomerangFell) == nullptr; ++t)
-    lab.step();
-  const SimEvent& in = firstEvent(lab.all, EventKind::BoomerangFell);
-  CHECK(in.entity == id);
-  CHECK(in.player == kP0);
-  CHECK(in.tick.value > out.tick.value);
-  const Boomerang* b = lab.s.boomerangs.get(id);
+  Lab lab(0b111);
+  placePlayer(lab.s, kP0, at(-12, -6)).ammo = 0;
+  placePlayer(lab.s, kP1, at(0, 6));
+  placePlayer(lab.s, kP2, at(10, 6)).ammo = 0;
+  // P0's banana flying east over the floor between the narrow and wide pits.
+  const Vec2 where = at(0, -4);
+  const EntityId own = spawnBanana(lab.s, kP0, where, Vec2{Fixed::fromRatio(1, 10), Fixed{}},
+                                   BoomerangPhase::Outbound, lab.db);
+  // P1's banana about to hit P0.
+  spawnBanana(lab.s, kP1, at(-11, -6), Vec2{-Fixed::fromRatio(1, 4), Fixed{}},
+              BoomerangPhase::Outbound, lab.db);
+  const EventLog log = lab.step();
+  const SimEvent* out = findEvent(log, EventKind::PlayerEliminated);
+  REQUIRE(out != nullptr);
+  REQUIRE(out->player == kP0);
+  // On the tick of the death: grounded and laid as a pickup where it was.
+  CHECK(lab.s.boomerangs.get(own) == nullptr);
+  const SimEvent& grounded = firstEvent(log, EventKind::BoomerangGrounded);
+  CHECK(grounded.entity == own);
+  const SimEvent& laid = firstEvent(log, EventKind::PickupSpawned);
+  const Pickup* pickup = lab.s.pickups.get(laid.entity);
+  REQUIRE(pickup != nullptr);
+  CHECK(pickup->kind == PickupKind::Banana);
+  CHECK(abs(pickup->pos.x - where.x) <= Fixed::fromRatio(1, 5));
+  CHECK(pickup->pos.y == where.y);
+  // Anyone may take it: P2 walks onto it.
+  placePlayer(lab.s, kP2, pickup->pos);
+  const EventLog taken = lab.step();
+  const SimEvent* took = findEvent(taken, EventKind::PickupTaken);
+  REQUIRE(took != nullptr);
+  CHECK(took->player == kP2);
+  CHECK(playerAt(lab.s, kP2).ammo == 1);
+}
+
+TEST_CASE("a faller's banana in flight drops the moment the fall begins",
+          "[scenario][pit][banana]") {
+  Lab lab(0b111);
+  placePlayer(lab.s, kP0, at(-8, 0)).ammo = 0;  // wholly over the narrow pit
+  placePlayer(lab.s, kP1, aside());
+  placePlayer(lab.s, kP2, at(10, 6)).ammo = 0;
+  const EntityId own = spawnBanana(lab.s, kP0, at(0, -4), Vec2{Fixed::fromRatio(1, 10), Fixed{}},
+                                   BoomerangPhase::Returning, lab.db);
+  const EventLog log = lab.step();
+  REQUIRE(findEvent(log, EventKind::PlayerFell) != nullptr);
+  CHECK(countEvents(log, EventKind::PlayerEliminated) == 0);  // doomed, not out yet
+  CHECK(lab.s.boomerangs.get(own) == nullptr);
+  CHECK(firstEvent(log, EventKind::BoomerangGrounded).entity == own);
+  const Pickup* pickup = lab.s.pickups.get(firstEvent(log, EventKind::PickupSpawned).entity);
+  REQUIRE(pickup != nullptr);
+  placePlayer(lab.s, kP2, pickup->pos);
+  const EventLog taken = lab.step();
+  REQUIRE(findEvent(taken, EventKind::PickupTaken) != nullptr);
+  CHECK(firstEvent(taken, EventKind::PickupTaken).player == kP2);
+}
+
+TEST_CASE("a banana that comes down over a pit drops into the hole, never a pickup",
+          "[scenario][pit][banana]") {
+  Lab lab(0b111);
+  placePlayer(lab.s, kP0, at(-8, 0));  // wholly over the narrow pit, holding its banana
+  placePlayer(lab.s, kP1, aside());
+  placePlayer(lab.s, kP2, at(10, 6));
+  REQUIRE(playerAt(lab.s, kP0).ammo > 0);  // the one in its hand goes down with it
+  // Its other banana over the middle of the wide pit when the fall begins.
+  const Vec2 overPit = at(6, -3);
+  const EntityId own = spawnBanana(lab.s, kP0, overPit, Vec2{Fixed::fromRatio(1, 100), Fixed{}},
+                                   BoomerangPhase::Returning, lab.db);
+  const EventLog log = lab.step();
+  REQUIRE(findEvent(log, EventKind::PlayerFell) != nullptr);
+  const SimEvent* in = findEvent(log, EventKind::BoomerangFell);
+  REQUIRE(in != nullptr);
+  CHECK(in->entity == own);
+  CHECK(in->player == kP0);
+  const Boomerang* b = lab.s.boomerangs.get(own);
   REQUIRE(b != nullptr);
   CHECK(b->phase == BoomerangPhase::Sinking);
-  CHECK(b->transform.pos == wentIn);
-  // It sinks, then is gone: never a pickup, and it touched nobody on the way.
+  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
+  // It sinks for pitSinkTicks, then is gone; it was never a pickup.
   for (int t = 0; t < lab.db.boomerang.pitSinkTicks + 1; ++t)
     lab.step();
-  CHECK(lab.s.boomerangs.get(id) == nullptr);
-  CHECK(countEvents(lab.all, EventKind::PlayerHit) == 0);
-  CHECK(countEvents(lab.all, EventKind::BoomerangCaught) == 0);
-  CHECK(countEvents(lab.all, EventKind::BoomerangGrounded) == 0);
+  CHECK(lab.s.boomerangs.get(own) == nullptr);
   CHECK(countEvents(lab.all, EventKind::PickupSpawned) == 0);
+  CHECK(lab.s.pickups.empty());
+
+  // A banana grounding over a pit for any reason (the return clock, a slam)
+  // goes the same way.
+  const EntityId other =
+      spawnBanana(lab.s, kP1, at(6, 3), Vec2{}, BoomerangPhase::Grounded, lab.db);
+  const EventLog next = lab.step();
+  CHECK(firstEvent(next, EventKind::BoomerangFell).entity == other);
   CHECK(lab.s.pickups.empty());
 }
 
-TEST_CASE("a faller's near banana drops in during the fall; the next round hands out bananas",
-          "[scenario][pit][banana]") {
+TEST_CASE("after a fall the next round hands out bananas as ever", "[scenario][pit][banana]") {
   Lab lab(0b11);
   placePlayer(lab.s, kP1, aside());
   placePlayer(lab.s, kP0, at(-8, 0));
-  REQUIRE(playerAt(lab.s, kP0).ammo > 0);  // the one in its hand goes down with it
-  const EntityId id = spawnBanana(lab.s, kP0, at(-5, 0), Vec2{-Fixed::fromRatio(4, 15), Fixed{}},
-                                  BoomerangPhase::Returning, lab.db);
   while (lab.s.playerBySlot(kP0) != nullptr)
     lab.step();
-  const SimEvent& in = firstEvent(lab.all, EventKind::BoomerangFell);
-  CHECK(in.entity == id);
-  CHECK(in.tick.value < firstEvent(lab.all, EventKind::PlayerEliminated).tick.value);
-  CHECK(countEvents(lab.all, EventKind::BoomerangCaught) == 0);
-  CHECK(countEvents(lab.all, EventKind::PickupSpawned) == 0);
-
   const uint8_t round = lab.s.rules.round;
   const auto nextRoundOn = [&] {
     return lab.s.rules.round > round && lab.s.rules.phase == MatchPhase::Playing;
@@ -369,28 +408,7 @@ TEST_CASE("a faller's near banana drops in during the fall; the next round hands
   for (int t = 0; t < 1200 && !nextRoundOn(); ++t)
     lab.step();
   REQUIRE(nextRoundOn());
-  CHECK(lab.s.boomerangs.empty());
   CHECK(playerAt(lab.s, kP0).ammo == lab.db.player.ammoStart);
   CHECK(playerAt(lab.s, kP1).ammo == lab.db.player.ammoStart);
   CHECK_FALSE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
-}
-
-TEST_CASE("a faller's grounded banana goes to the pit too, never a pickup",
-          "[scenario][pit][banana]") {
-  Lab lab(0b11);
-  placePlayer(lab.s, kP1, aside());
-  placePlayer(lab.s, kP0, at(-8, 0));
-  // Grounded on the floor this very tick: LifecycleSystem would lay it as a
-  // pickup at the end of the tick, but the fall comes first.
-  const EntityId id = spawnBanana(lab.s, kP0, at(0, -4), Vec2{}, BoomerangPhase::Grounded, lab.db);
-  const EventLog log = lab.step();
-  REQUIRE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
-  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
-  const Boomerang* b = lab.s.boomerangs.get(id);
-  REQUIRE(b != nullptr);
-  CHECK(b->phase == BoomerangPhase::ToPit);
-  for (int t = 0; t < 120 && findEvent(lab.all, EventKind::BoomerangFell) == nullptr; ++t)
-    lab.step();
-  CHECK(firstEvent(lab.all, EventKind::BoomerangFell).entity == id);
-  CHECK(lab.s.pickups.empty());
 }

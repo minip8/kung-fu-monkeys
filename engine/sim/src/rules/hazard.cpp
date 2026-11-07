@@ -6,8 +6,8 @@
 // Player::fallTicks = PlayerDef::fallTicks, its velocity, push and grid
 // commitment dropped, every ability slot back to Idle without
 // onPhaseChange or onEnd (a charging throw is dropped, not thrown; the next
-// AbilitySystem pass clears the phase tags), its bananas away from it sent
-// to the pit, and PlayerFell. From then on no rule row touches it (kGone),
+// AbilitySystem pass clears the phase tags), its bananas away from it
+// dropped, and PlayerFell. From then on no rule row touches it (kGone),
 // InputSystem hands it an idle intent (so no slot activates again) and the
 // spaces leave it where it is, and LifecycleSystem
 // counts the fall down and eliminates it (eliminateFallen) as if hit by
@@ -17,12 +17,10 @@
 // the death and schedules the respawn, nobody scores). Other hazard kinds
 // decline here: Slow acts through ModifierSystem's derived stats.
 //
-// The faller's bananas go down the pit with it and never become pickups
-// (v0.57): every banana it owns that is not in its hand (outbound,
-// returning or grounded) turns ToPit with Boomerang::target = where the
-// monkey went in, and ProjectileSystem flies it straight there and drops it
-// in (Sinking), whether the fall has ended by then or not. Bound for the
-// pit, it matches no rule row (each Boomerang row names Outbound/Returning).
+// The faller's bananas (v0.57): the one in its hand goes down with it; every
+// one away from it (outbound or returning) drops where it is the moment the
+// fall begins (dropBananasOf, as at any death), so LifecycleSystem lays it as
+// a pickup this very tick, or sinks it if it came down over a pit.
 #include "kfm/sim/modes/registry.hpp"
 #include "kfm/sim/rules/handlers.hpp"
 #include "rules/fall.hpp"
@@ -45,17 +43,21 @@ bool fallIntoPit(WorldState& s, const MatchContent& content, EntityId a, EntityI
     st.phase = AbilityPhase::Idle;
     st.phaseTicks = 0;
   }
-  const PlayerId owner = victim->id;
-  const Vec2 wentIn = victim->transform.pos;
+  dropBananasOf(s, victim->id);  // it is doomed: they come down now
+  sink.push(SimEvent{EventKind::PlayerFell, s.tick, victim->id, a, b.index, 0});
+  return true;
+}
+
+void dropBananasOf(WorldState& s, PlayerId owner) {
   s.boomerangs.forEachAlive([&](EntityId /*id*/, Boomerang& banana) {
-    if (banana.owner != owner || banana.pitBound()) return;
-    banana.phase = BoomerangPhase::ToPit;
+    if (banana.owner != owner) return;
+    if (banana.phase != BoomerangPhase::Outbound && banana.phase != BoomerangPhase::Returning) {
+      return;
+    }
+    banana.phase = BoomerangPhase::Grounded;
     banana.ticksInPhase = 0;
-    banana.target = wentIn;
     banana.transform.vel = Vec2::zero();
   });
-  sink.push(SimEvent{EventKind::PlayerFell, s.tick, owner, a, b.index, 0});
-  return true;
 }
 
 void eliminateFallen(WorldState& s, const MatchContent& content, Player& p, EventSink& sink) {

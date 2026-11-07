@@ -68,9 +68,7 @@ constexpr float kDebugFontSize = 13.0f;
       return "Returning";
     case sim::BoomerangPhase::Grounded:
       return "Grounded";
-    case sim::BoomerangPhase::ToPit:  // v0.57
-      return "ToPit";
-    case sim::BoomerangPhase::Sinking:
+    case sim::BoomerangPhase::Sinking:  // v0.57
       return "Sinking";
   }
   return "?";

@@ -36,8 +36,8 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
 
 // The dry-round rule of the round kinds (v0.57). A round is dry while no
 // banana is left: none in a live monkey's hand, no banana entity in flight,
-// returning or grounded (a falling owner's banana bound for its pit counts
-// as gone), no banana pickup, no power-up pickup lying around that tops ammo
+// returning or grounded (one sinking into a pit counts as gone), no banana
+// pickup, no power-up pickup lying around that tops ammo
 // up (a stat grant on ammo_max with add > 0), and no spawner that can still
 // lay one (a candidate that tops ammo up and a beat still to come). The
 // round kinds then end the round as their clock-out would (rounds and team

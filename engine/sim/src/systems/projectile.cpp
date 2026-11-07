@@ -15,15 +15,10 @@
 // grounded by maxReturnTicks like any other, so no extra bounce cap is
 // needed.
 //
-// v0.57, a falling monkey's bananas (ToPit, set by the pit row): each flies
-// in a straight line to Boomerang::target, where its owner went in, at
-// BoomerangDef::pitSpeed (`speed` when 0), through walls and the outer box
-// alike, so it arrives from anywhere in the arena within a couple of seconds
-// whatever lies between (the homing turn limit would take a far banana half
-// a second just to turn round). The last step lands exactly on the target;
-// it then turns Sinking (BoomerangFell) and LifecycleSystem despawns it after
-// pitSinkTicks. Both run in every match phase, like the fall itself: a
-// banana still on its way when the round is decided finishes its trip.
+// v0.57: a banana sinking into a pit (Sinking, set by LifecycleSystem where a
+// grounded banana came down over one) stays put and counts its ticks in
+// every match phase, so it finishes sinking even if the round is decided;
+// LifecycleSystem despawns it after BoomerangDef::pitSinkTicks.
 #include "kfm/sim/systems.hpp"
 #include "systems/angle_of.hpp"
 #include "systems/statics.hpp"
@@ -62,32 +57,6 @@ void steerToward(Boomerang& b, Vec2 target, const BoomerangDef& def, Fixed speed
   t.vel = Vec2::fromAngle(t.facing, speed);
 }
 
-// v0.57: one tick of a banana bound for its owner's pit (header comment).
-void flyToPit(const WorldState& s, EntityId id, Boomerang& b, const BoomerangDef& def,
-              EventSink& sink) {
-  Transform& t = b.transform;
-  saturatingIncrement(b.ticksAlive);
-  saturatingIncrement(b.ticksInPhase);
-  b.spin += Angle::fromBam(kSpinBamPerTick);
-  if (b.phase == BoomerangPhase::Sinking) {
-    t.vel = Vec2::zero();
-    return;
-  }
-  const Fixed speed = def.pitSpeed > Fixed::zero() ? def.pitSpeed : def.speed;
-  const Vec2 toTarget = b.target - t.pos;
-  if (lengthSqRaw(toTarget) <= static_cast<uint64_t>(int64_t{speed.raw} * speed.raw)) {
-    t.vel = toTarget;
-    t.pos = b.target;
-    enterPhase(b, BoomerangPhase::Sinking);
-    sink.push(SimEvent{
-        .kind = EventKind::BoomerangFell, .tick = s.tick, .player = b.owner, .entity = id});
-    return;
-  }
-  t.vel = normalized(toTarget) * speed;
-  t.facing = angleOf(t.vel);
-  t.pos = t.pos + t.vel;
-}
-
 }  // namespace
 
 void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
@@ -99,8 +68,11 @@ void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sin
   s.boomerangs.forEachAlive([&](EntityId id, Boomerang& b) {
     Transform& t = b.transform;
     t.prevPos = t.pos;
-    if (b.pitBound()) {
-      flyToPit(s, id, b, def, sink);
+    if (b.phase == BoomerangPhase::Sinking) {  // v0.57, in every phase
+      t.vel = Vec2::zero();
+      saturatingIncrement(b.ticksAlive);
+      saturatingIncrement(b.ticksInPhase);
+      b.spin += Angle::fromBam(kSpinBamPerTick);
       return;
     }
     if (!playing) return;

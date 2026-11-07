@@ -157,11 +157,9 @@ inline constexpr float kFallTilt = 0.7f;
 inline constexpr float kFallSpinTurns = 0.75f;
 inline constexpr float kFallDarken = 0.55f;
 inline constexpr float kPitFallSeconds = 0.45f;  // the PitFall ring
-// A falling monkey's banana (v0.57) flies to the pit on a hop of this height
-// over its straight line (from its flight height down to hand height), then
-// sinks from hand height to this far below the floor as t² over
-// BoomerangDef::pitSinkTicks; the splash ring where it drops in is this big.
-inline constexpr float kBananaPitArcPeak = 0.9f;
+// A banana that comes down over a pit (v0.57, Sinking) drops from hand height
+// to this far below the floor as t² over BoomerangDef::pitSinkTicks; the
+// splash ring where it drops in is this big.
 inline constexpr float kBananaSinkDepth = 0.8f;
 inline constexpr float kBananaSplashSize = 0.45f;
 

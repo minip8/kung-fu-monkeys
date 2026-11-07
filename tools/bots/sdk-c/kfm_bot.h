@@ -122,15 +122,13 @@ enum {
   KFM_ABILITY_ACTIVE = 2,
   KFM_ABILITY_RECOVERY = 3
 };
-/* v0.57: TO_PIT, a falling monkey's banana flying straight to its pit, and
- * SINKING, dropping in: both harmless. Every phase from GROUNDED on is out of
- * flight. */
+/* v0.57: SINKING, a banana that came down over a pit dropping into the hole:
+ * harmless, never a pickup. Every phase from GROUNDED on is out of flight. */
 enum {
   KFM_BANANA_OUTBOUND = 0,
   KFM_BANANA_RETURNING = 1,
   KFM_BANANA_GROUNDED = 2,
-  KFM_BANANA_TO_PIT = 3,
-  KFM_BANANA_SINKING = 4
+  KFM_BANANA_SINKING = 3
 };
 enum { KFM_PICKUP_BANANA = 0, KFM_PICKUP_POWERUP = 1, KFM_PICKUP_FLAG = 2 };
 enum { KFM_HAZARD_PIT = 0, KFM_HAZARD_SLOW = 1 };

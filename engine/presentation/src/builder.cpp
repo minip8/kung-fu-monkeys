@@ -180,8 +180,6 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
       return BananaPhase::Outbound;
     case BoomerangPhase::Returning:
       return BananaPhase::Returning;
-    case BoomerangPhase::ToPit:
-      return BananaPhase::ToPit;
     case BoomerangPhase::Sinking:
       return BananaPhase::Sinking;
     case BoomerangPhase::Grounded:
@@ -190,18 +188,16 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
   return BananaPhase::Grounded;
 }
 
-// v0.57: the height of a falling monkey's banana bound for (or in) its pit.
-[[nodiscard]] float bananaPitHeight(const Boomerang& b, float startDistance,
-                                    const ContentDB& content) {
-  if (b.phase == BoomerangPhase::Sinking) {
-    const float total = static_cast<float>(std::max<uint16_t>(content.boomerang.pitSinkTicks, 1));
-    const float t = clamp01(static_cast<float>(b.ticksInPhase) / total);
-    return kBananaHandHeight - ((kBananaHandHeight + kBananaSinkDepth) * t * t);
-  }
-  const float d = length(toFloat(b.target) - toFloat(b.transform.pos));
-  const float u = startDistance > 0.0f ? 1.0f - clamp01(d / startDistance) : 1.0f;
-  return kBananaHandHeight + (kBananaArcPeak * (1.0f - u)) +
-         (kBananaPitArcPeak * std::sin(kPi * u));
+// v0.57: how far a banana sinking into a pit has gone, 0..1.
+[[nodiscard]] float bananaSunk(const Boomerang& b, const ContentDB& content) {
+  const float total = static_cast<float>(std::max<uint16_t>(content.boomerang.pitSinkTicks, 1));
+  return clamp01(static_cast<float>(b.ticksInPhase) / total);
+}
+
+// v0.57: the height of a banana sinking into a pit: from hand height (where
+// it was flying when it came down) to below the floor, as t².
+[[nodiscard]] float bananaSinkHeight(float sunk) {
+  return kBananaHandHeight - ((kBananaHandHeight + kBananaSinkDepth) * sunk * sunk);
 }
 
 [[nodiscard]] HudPhase hudPhase(sim::MatchPhase p) {
@@ -405,7 +401,6 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     BananaTrack& track = ps.bananas[i];
     if (refreshTrack(track.motion, gen)) {
       track.returnStartDistance = -1.0f;
-      track.pitStartDistance = -1.0f;
       track.trailTimer = 0.0f;
     }
     decayOffset(track.motion, dt);
@@ -429,23 +424,14 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
       spin = lerpAngle(simAngleToYaw(pb->spin), spin, alpha);
     }
     float height = cb.phase == BoomerangPhase::Grounded ? kPickupHeight : kBananaHandHeight + arc;
-    // v0.57: bound for its falling owner's pit: a hop there, then down the hole.
-    const bool pitBound = cb.pitBound();
+    // v0.57: come down over a pit, it drops into the hole.
     float sunk = 0.0f;  // 0..1 of the drop into the hole
-    if (pitBound) {
-      if (track.pitStartDistance < 0.0f) {
-        track.pitStartDistance =
-            std::max(length(toFloat(cb.target) - toFloat(cb.transform.pos)), 0.01f);
+    if (cb.phase == BoomerangPhase::Sinking) {
+      sunk = bananaSunk(cb, content);
+      if (lerped && pb->phase == BoomerangPhase::Sinking) {
+        sunk = lerp(bananaSunk(*pb, content), sunk, alpha);
       }
-      const float hCurr = bananaPitHeight(cb, track.pitStartDistance, content);
-      height = lerped && pb->pitBound()
-                   ? lerp(bananaPitHeight(*pb, track.pitStartDistance, content), hCurr, alpha)
-                   : hCurr;
-      if (cb.phase == BoomerangPhase::Sinking) {
-        const float total =
-            static_cast<float>(std::max<uint16_t>(content.boomerang.pitSinkTicks, 1));
-        sunk = clamp01(static_cast<float>(cb.ticksInPhase) / total);
-      }
+      height = bananaSinkHeight(sunk);
     }
 
     const Vec2f drawn = simPos + track.motion.visualOffset;
@@ -604,8 +590,7 @@ float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnSta
       return kBananaArcPeak * std::sin(0.5f * kPi * u);
     }
     case BoomerangPhase::Grounded:
-    case BoomerangPhase::ToPit:  // v0.57: bananaPitHeight
-    case BoomerangPhase::Sinking:
+    case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
       break;
   }
   return 0.0f;

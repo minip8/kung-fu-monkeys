@@ -1159,16 +1159,16 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
   placePlayer(s, kP0, Vec2{Fixed::fromInt(-7) - c.player.radius, Fixed::zero()});
   placePlayer(s, kP1, Vec2{Fixed::fromInt(8), Fixed::zero()});
   REQUIRE(playerAt(s, kP0).ammo > 0);
-  // And one of its bananas away from it, over the floor east of the pit: it
-  // hops to the pit and sinks.
-  spawnBanana(s, kP0, Vec2{-Fixed::fromInt(3), Fixed::zero()}, Vec2{}, BoomerangPhase::Outbound, c);
+  // And one of its bananas in flight over the pit: it comes down as the fall
+  // begins and drops into the hole.
+  spawnBanana(s, kP0, Vec2{-Fixed::fromInt(8), Fixed::fromInt(3)}, Vec2{}, BoomerangPhase::Outbound,
+              c);
   const float radius = c.player.radius.toFloat();
   PresentationState ps;
   float lastFall = -1.0f;
   float deepest = 0.0f;
   bool sawStart = false;
   bool sawBurst = false;
-  bool bananaHopped = false;
   bool bananaSank = false;
   bool plop = false;
   for (int k = 0; k < c.player.fallTicks + 2 && !sawBurst; ++k) {
@@ -1178,14 +1178,14 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
     const RenderState rs = buildRenderState(ps, prev, s, 1.0f, log, c, kDt);
     for (uint16_t i = 0; i < rs.bananaCount; ++i) {
       const RenderBanana& b = rs.bananas[i];
-      if (b.phase == BananaPhase::ToPit && b.height > kBananaHandHeight) bananaHopped = true;
       if (b.phase == BananaPhase::Sinking && b.height < 0.0f) bananaSank = true;
     }
     for (uint16_t i = 0; i < rs.soundCount; ++i)
       plop = plop || rs.sounds[i].id == SoundId::BananaPlop;
     if (findEvent(log, EventKind::PlayerFell) != nullptr) {
       sawStart = true;
-      CHECK(countEffects(rs, EffectKind::PitFall) == 1);
+      // The monkey's ring and the small splash of its banana coming down over the pit.
+      CHECK(countEffects(rs, EffectKind::PitFall) == 2);
       bool fallSound = false;
       for (uint16_t i = 0; i < rs.soundCount; ++i)
         fallSound = fallSound || rs.sounds[i].id == SoundId::Fall;
@@ -1215,7 +1215,6 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
   }
   CHECK(sawStart);
   CHECK(sawBurst);
-  CHECK(bananaHopped);
   CHECK(bananaSank);
   CHECK(plop);
   CHECK(lastFall > 0.9f);
