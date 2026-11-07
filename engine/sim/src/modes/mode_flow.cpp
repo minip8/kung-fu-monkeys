@@ -96,6 +96,14 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
   return true;
 }
 
+bool anyFalling(const WorldState& s) {
+  bool falling = false;
+  s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+    if (p.tags.has(Tag::Falling) && !p.tags.has(Tag::Eliminated)) falling = true;
+  });
+  return falling;
+}
+
 PlayerId soleSurvivor(const WorldState& s) {
   PlayerId winner = PlayerId::invalid();
   if (s.players.size() != 1) return winner;

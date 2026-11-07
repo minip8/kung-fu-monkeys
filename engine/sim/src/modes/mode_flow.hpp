@@ -29,6 +29,11 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content);
 // PlayerRespawned. Returns false if the slot could not be spawned.
 bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, EventSink& sink);
 
+// Whether any monkey is falling down a pit (v0.57). The round kinds (rounds,
+// survival, team rounds) end no round while one is: it is still in the pool
+// but already out, so the round waits the fall out and then judges.
+[[nodiscard]] bool anyFalling(const WorldState& s);
+
 // The only monkey left, or invalid when none or several are.
 [[nodiscard]] PlayerId soleSurvivor(const WorldState& s);
 

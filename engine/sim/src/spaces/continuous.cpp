@@ -16,7 +16,9 @@
 // to the arena box shrunk by the player's radius stat (v0.34), zeroing the velocity
 // component that was clamped. Without walls this is the M1
 // integrate-and-clamp, bit for bit. A pending knockback (v0.21, a slam's
-// push) is added to the velocity, stun or not, while it lasts.
+// push) is added to the velocity, stun or not, while it lasts. A monkey
+// falling down a pit (v0.57, Tag::Falling) stays where it went in, velocity
+// zero.
 #include "kfm/sim/systems.hpp"
 #include "spaces/spaces.hpp"
 #include "systems/statics.hpp"
@@ -34,6 +36,10 @@ void continuousMove(WorldState& s, const MatchContent& content) {
                                      .response = statics::Response::Slide};
     Transform& t = p.transform;
     t.prevPos = t.pos;
+    if (p.tags.has(Tag::Falling)) {
+      t.vel = Vec2::zero();
+      return;
+    }
     if (!playing) {
       t.vel = Vec2::zero();
     } else if (!p.tags.has(Tag::Dashing)) {

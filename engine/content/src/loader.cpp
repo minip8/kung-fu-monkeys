@@ -105,7 +105,7 @@ struct TagName {
   std::string_view name;
   Tag tag;
 };
-constexpr std::array<TagName, 10> kTagNames = {{
+constexpr std::array<TagName, 11> kTagNames = {{
     {"dashing", Tag::Dashing},
     {"perfect_dash", Tag::PerfectDash},
     {"hit_stun", Tag::HitStun},
@@ -116,6 +116,7 @@ constexpr std::array<TagName, 10> kTagNames = {{
     {"parrying", Tag::Parrying},
     {"friendly_fire", Tag::FriendlyFire},
     {"carrying", Tag::Carrying},  // v0.33: the capture mode's, never granted
+    {"falling", Tag::Falling},    // v0.57: a pit fall's, never granted
 }};
 static_assert(kTagNames.size() == static_cast<size_t>(Tag::kCount),
               "every Tag needs a TOML name in kTagNames");
@@ -640,6 +641,7 @@ class Builder {
     s.integer("ammo_max", p.ammoMax, 0, 255);
     s.integer("ammo_start", p.ammoStart, 0, 255);
     s.integer("hit_stun_ticks", p.hitStunTicks, 0, 65535);
+    s.integer("fall_ticks", p.fallTicks, 1, 65535);  // v0.57
     if (const toml::node* n = s.take("abilities", true)) parseLoadout(s, *n, loadout_);
   }
 

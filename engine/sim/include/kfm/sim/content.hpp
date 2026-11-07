@@ -115,6 +115,9 @@ struct PlayerDef {
   uint8_t ammoMax{1};
   uint8_t ammoStart{1};
   uint16_t hitStunTicks{0};
+  // v0.57: how long a monkey falls down a pit before it is eliminated,
+  // counting the tick it went in (>= 1; 1 = out on that very tick).
+  uint16_t fallTicks{1};
   // Base loadout: slot kAbilitySlotDash, kAbilitySlotThrow, kAbilitySlotExtra
   // (indices into ContentDB::abilities; 0 = None). It is also loadout 0
   // (ContentDB::loadouts[0], "base"); a match may pick another (v0.31).

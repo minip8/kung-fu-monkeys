@@ -8,7 +8,11 @@ PlayerMask zoneOccupants(const WorldState& s, const ArenaDef& arena, uint8_t k) 
   const Zone& zone = arena.zones[k];
   PlayerMask mask = 0;
   s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
-    if (p.tags.has(Tag::Eliminated) || !p.id.isValid() || p.id.value >= kMaxPlayers) return;
+    // v0.57: a monkey falling down a pit holds nothing.
+    if (p.tags.has(Tag::Eliminated) || p.tags.has(Tag::Falling) || !p.id.isValid() ||
+        p.id.value >= kMaxPlayers) {
+      return;
+    }
     if (boxContains(zone.min, zone.max, p.transform.pos))
       mask = static_cast<PlayerMask>(mask | (1u << p.id.value));
   });

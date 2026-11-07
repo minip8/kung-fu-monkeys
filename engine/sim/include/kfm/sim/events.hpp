@@ -48,6 +48,9 @@ enum class EventKind : uint8_t {
   // v0.35 (the squad contest, §8):
   MonkeyCalled,  // player = caller, entity = caller's player, a = symbol (the aim byte),
                  // b = the call's range (raw Q16.16 bits)
+  // v0.57 (pit falls, §5.6):
+  PlayerFell,  // player, entity = player, a = the pit's index in the arena's hazards;
+               // PlayerEliminated (killer 0xFF) follows PlayerDef::fallTicks - 1 ticks later
 };
 
 // BoomerangCaught payload `a`.

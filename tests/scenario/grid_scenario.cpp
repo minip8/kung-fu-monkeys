@@ -210,6 +210,18 @@ TEST_CASE("grid: walls, corners and the outer box block a commitment", "[scenari
   CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{0, 0}));
 }
 
+namespace {
+
+// Whether lab.log from `from` on holds an event of `kind` for `who`.
+[[nodiscard]] bool logged(const Lab& lab, size_t from, EventKind kind, PlayerId who) {
+  for (size_t i = from; i < lab.log.size(); ++i) {
+    if (lab.log[i].kind == kind && lab.log[i].player == who) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
 TEST_CASE("grid: a pit cell may be entered, and the monkey falls", "[scenario][grid]") {
   Lab lab(0b111);
   lab.put(kP0, Cell{7, 8});
@@ -217,11 +229,48 @@ TEST_CASE("grid: a pit cell may be entered, and the monkey falls", "[scenario][g
   lab.put(kP2, Cell{1, 1});
   const size_t before = lab.log.size();
   lab.turn(walk(0));
-  bool fell = false;
-  for (size_t i = before; i < lab.log.size(); ++i) {
-    fell = fell || (lab.log[i].kind == EventKind::PlayerEliminated && lab.log[i].player == kP0);
+  // v0.57: it went in where its centre crossed the pit's edge, and stays.
+  CHECK(logged(lab, before, EventKind::PlayerFell, kP0));
+  CHECK_FALSE(logged(lab, before, EventKind::PlayerEliminated, kP0));
+  const Player& p = playerAt(lab.s, kP0);
+  CHECK(p.tags.has(Tag::Falling));
+  CHECK(p.moveTicks == 0);
+  const Vec2 at = p.transform.pos;
+  for (uint16_t t = 0; t < lab.db.player.fallTicks && lab.s.playerBySlot(kP0) != nullptr; ++t) {
+    lab.tick(walk(4, kDash));  // no control: neither the walk back nor a dash
+    if (const Player* q = lab.s.playerBySlot(kP0)) CHECK(q->transform.pos == at);
   }
-  CHECK(fell);
+  CHECK(logged(lab, before, EventKind::PlayerEliminated, kP0));
+  CHECK(lab.s.playerBySlot(kP0) == nullptr);
+}
+
+TEST_CASE("grid: a dash slides over a one-cell pit, and falls if it ends in one",
+          "[scenario][grid]") {
+  Lab lab(0b111);
+  lab.put(kP1, Cell{14, 1});
+  lab.put(kP2, Cell{1, 1});
+  const AbilityDef& dash = lab.db.abilityAt(lab.db.player.abilities[kAbilitySlotDash]);
+  const size_t before = lab.log.size();
+  SECTION("over the pit: two cells from beside it") {
+    lab.put(kP0, Cell{7, 8});
+    lab.tick(walk(0, kDash));
+    for (uint16_t t = 1; t < dash.activeTicks + 4; ++t)
+      lab.tick();
+    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{9, 8}));
+    CHECK_FALSE(logged(lab, before, EventKind::PlayerFell, kP0));
+  }
+  SECTION("into the pit: the slide ends on it") {
+    lab.put(kP0, Cell{6, 8});
+    lab.tick(walk(0, kDash));
+    for (uint16_t t = 1; t < dash.activeTicks; ++t) {
+      lab.tick();
+      CHECK_FALSE(logged(lab, before, EventKind::PlayerFell, kP0));
+    }
+    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{8, 8}));
+    lab.tick();  // the dash's Active phase is over: the centre is over the pit
+    CHECK(logged(lab, before, EventKind::PlayerFell, kP0));
+    CHECK(playerAt(lab.s, kP0).tags.has(Tag::Falling));
+  }
 }
 
 TEST_CASE("grid: a contested cell goes to the earlier press, then the lower slot",

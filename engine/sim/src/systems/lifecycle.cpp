@@ -1,7 +1,13 @@
 // LifecycleSystem (architecture §5.3 step 9, §5.7, §5.8): spawn protection and
-// respawns (v0.23), despawns players tagged Eliminated (already reported by
-// InteractionSystem), turns grounded boomerangs into banana pickups at their
-// position, and runs the arena's power-up spawners (v0.20).
+// respawns (v0.23), pit falls (v0.57), despawns players tagged Eliminated
+// (already reported by InteractionSystem), turns grounded boomerangs into
+// banana pickups at their position, and runs the arena's power-up spawners
+// (v0.20).
+//
+// Pit falls run in every match phase, after the respawn timers: a falling
+// monkey's fallTicks counts down and at 0 it is eliminated by nobody
+// (rules/fall.hpp), so it despawns in the same pass. A fall that starts on
+// tick T (fallTicks = PlayerDef::fallTicks = N) ends on tick T + N - 1.
 //
 // Respawns are driven by MatchRules' timers, which only modes that respawn
 // (deathmatch) set, so the code is the same for every mode: during Playing a
@@ -23,6 +29,7 @@
 // of ticksInPhase, not state of its own; a pickup remembers its spawner.
 #include "kfm/sim/systems.hpp"
 #include "modes/mode_flow.hpp"
+#include "rules/fall.hpp"
 
 #include <bit>
 #include <cstdint>
@@ -107,6 +114,12 @@ void runSpawners(WorldState& s, const MatchContent& content, EventSink& sink) {
 
 void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
   if (s.rules.phase == MatchPhase::Playing) respawnTimers(s, content, sink);
+
+  s.players.forEachAlive([&](EntityId /*id*/, Player& p) {
+    if (!p.tags.has(Tag::Falling) || p.tags.has(Tag::Eliminated)) return;
+    if (p.fallTicks > 0) --p.fallTicks;
+    if (p.fallTicks == 0) eliminateFallen(s, content, p, sink);
+  });
 
   s.players.forEachAlive([&](EntityId id, const Player& p) {
     if (!p.tags.has(Tag::Eliminated)) return;

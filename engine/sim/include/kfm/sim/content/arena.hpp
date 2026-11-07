@@ -31,7 +31,8 @@ struct Wall {
 };
 
 enum class HazardKind : uint8_t {
-  Pit = 0,  // a player whose centre is inside is eliminated (killer 0xFF); bananas fly over
+  Pit = 0,  // a player whose centre is inside, not dashing, falls (v0.57) and is eliminated
+            // (killer 0xFF) PlayerDef::fallTicks later; bananas fly over
   Slow,     // move speed x speedMul while the player's centre is inside (ModifierSystem)
   kCount,   // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };

@@ -6,6 +6,7 @@
 // the first team whose slots' round wins sum to roundsToWin takes the match
 // (endRound judges content.teamScore). Never touches the per-player mode
 // counters. With every slot its own team it plays exactly like rounds.
+// v0.57: no round ends while a monkey is falling down a pit (anyFalling).
 #include "kfm/sim/modes/modes.hpp"
 #include "modes/mode_flow.hpp"
 
@@ -18,6 +19,7 @@ void teamRoundsOnPlaying(WorldState& s, const MatchContent& content, EventSink& 
   if (std::popcount(static_cast<uint32_t>(teamsPresent(s, content))) < 2) return;
   const uint16_t alive = teamsAlive(s, content);
   if (std::popcount(static_cast<uint32_t>(alive)) > 1) return;
+  if (anyFalling(s)) return;
   const PlayerId winner =
       alive != 0 ? lowestAliveOf(s, content, static_cast<uint8_t>(std::countr_zero(alive)))
                  : PlayerId::invalid();

@@ -58,9 +58,11 @@ bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, Entity
 // taker its carrier).
 bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
               const Contact& contact, EventSink& sink);
-// Prio 60, rules/hazard.cpp (v0.22): a player whose centre is in a Pit is
-// eliminated, killer 0xFF; declines for every other HazardKind. b.index is
-// the hazard's index in content.arena.hazards.
+// Prio 60, rules/hazard.cpp (v0.22, v0.57): a player whose centre is in a Pit
+// and that is not Dashing starts to fall (Tag::Falling, PlayerFell);
+// LifecycleSystem eliminates it fallTicks later, killer 0xFF. Declines for
+// every other HazardKind. b.index is the hazard's index in
+// content.arena.hazards.
 bool fallIntoPit(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                  const Contact& contact, EventSink& sink);
 

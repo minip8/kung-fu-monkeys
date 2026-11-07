@@ -10,8 +10,10 @@ namespace kfm::sim {
 namespace {
 
 // A player eliminated earlier in the same tick is still in the pool until
-// LifecycleSystem runs; no row may touch it again.
-constexpr Tags kGone = Tags::of(Tag::Eliminated);
+// LifecycleSystem runs; no row may touch it again. Nor one falling down a pit
+// (v0.57): bananas fly over it, nobody dashes into or pushes it, it takes
+// nothing, and the pit row does not start its fall twice.
+constexpr Tags kGone = Tags::of(Tag::Eliminated) | Tag::Falling;
 // A slam row also matches contacts made only through the slammer's reach.
 constexpr uint8_t kReach = 1;
 
@@ -30,8 +32,9 @@ constexpr uint8_t kReach = 1;
 // and keys on the same tags, so it only breaks on a hit that would land.
 // Pickups are split by kind: row 50 the grounded banana, row 51 a power-up,
 // row 52 (v0.33) a capture flag, which a carrier cannot take a second of.
-// Player × Hazard (row 60, v0.22) is the pit: no tag spares a player whose
-// centre is over it.
+// Player × Hazard (row 60, v0.22) is the pit: a player whose centre is over
+// it starts to fall (v0.57), unless it is Dashing: a dash carries a monkey
+// over a pit, and it falls if its dash ends with the centre still over one.
 // The parry (v0.21, row 15) sits below the perfect catch (both reward
 // timing; the catch also gains a banana at once, so it wins a tie) and above
 // the slam, the shield and damage: a mistimed parry declines and falls
@@ -133,9 +136,9 @@ constexpr std::array<InteractionRule, 21> kRules = {{
     // Player[!Carrying] x Pickup[Flag] (v0.33): an enemy of the flag's team takes it.
     {52, EntityKind::Player, Tags{}, kGone | Tag::Carrying, EntityKind::Pickup, Tags{}, Tags{},
      kPhaseAny, Ownership::Any, &takeFlag, pickupKindBit(PickupKind::Flag)},
-    // Player[] x Hazard[Pit]: falls in, eliminated by nobody.
-    {60, EntityKind::Player, Tags{}, kGone, EntityKind::Hazard, Tags{}, Tags{}, kPhaseAny,
-     Ownership::Any, &fallIntoPit},
+    // Player[!Dashing] x Hazard[Pit]: falls in (v0.57), eliminated by nobody when it lands.
+    {60, EntityKind::Player, Tags{}, kGone | Tag::Dashing, EntityKind::Hazard, Tags{}, Tags{},
+     kPhaseAny, Ownership::Any, &fallIntoPit},
 }};
 
 static_assert(std::ranges::is_sorted(kRules, {}, &InteractionRule::priority));

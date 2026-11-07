@@ -13,6 +13,7 @@ kfm_add_test_exe(kfm_scenario_tests
   dash_attack_scenario.cpp
   match_config_scenario.cpp
   arena_scenario.cpp
+  pit_scenario.cpp
   mode_scenario.cpp
   mode_hooks_scenario.cpp
   powerup_scenario.cpp

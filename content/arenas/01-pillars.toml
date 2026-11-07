@@ -11,7 +11,8 @@
 # Boxes are axis aligned in arena units, min < max, inside the arena box.
 # Walls are solid: monkeys slide along them (a dash stops at one), bananas
 # bounce off them like off the outer box. Hazards act on a monkey whose
-# centre is inside: a pit eliminates it at once (nobody scores the kill),
+# centre is inside: a pit makes it fall unless it is dashing (a dash carries
+# it across; it is out, nobody scoring the kill, [player] fall_ticks later),
 # slow multiplies its move speed by speed_mul (0 < m <= 4). Bananas fly over
 # hazards. The loader rejects a spawn point that puts a monkey overlapping a
 # wall or with its centre in a pit.

@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.55 (2026-11-06). Working title taken from the repo name.
+Status: proposal v0.57 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -616,6 +616,32 @@ changed their content hash only); servers and the page must deploy together (con
 reference-bot strength test's elimination bar went 5x → 3x: a sweep of five seed bases put 5x on
 the noise mean (3.4x to 8.5x per base at either pause). The other three changes are client and
 platform only.
+v0.57 changes: pit falls (§5.3, §5.6, §5.9, §5.10, §5.12). A pit no longer eliminates a monkey
+on the tick its centre crosses the edge: the monkey **falls**. Row 60 forbids `Dashing` (and
+`Falling`, via `kGone`), so a dash carries a monkey over a pit and how wide a pit it clears is
+the dash's reach (4.4 units: a 2-wide pit from up to 2.4 units before its edge), with no
+pit-size check anywhere; a dash that ends over a pit falls on the next tick. The test stays the
+centre in the closed box (half the body over the hole, the point the shadow marks; the loader's
+spawn check and the bot ABI already say "centre"), so a body that merely overhangs the edge is
+safe. The fall is `Tag::Falling` (bit 10) plus `Player::fallTicks`, set from the new
+`PlayerDef::fallTicks` (`[player] fall_ticks`, 36 ticks, 0.6 s, at least 1, counting the tick
+it went in) with `PlayerFell{player, entity, a = the pit's hazard index}`; the monkey's
+velocity, push, grid commitment and every ability phase are dropped (a charging throw is not
+thrown), InputSystem gives it an idle intent with the aim at its facing, the spaces leave it in
+place, and `kGone` keeps every rule row off it (bananas fly over it, nobody dashes into or
+pushes it, it takes nothing, it holds no zone). `LifecycleSystem` counts the fall down in every
+phase and on its last tick eliminates it as before (hp 0, `Eliminated`, `PlayerEliminated` with
+killer 0xFF, `onEliminated` with no killer), then despawns it. The round kinds (rounds,
+survival, team rounds) end no round while a monkey is falling (`anyFalling`): a monkey that went
+into a pit is already out, so the last one standing while another falls wins only once that
+fall ends, and if it too is gone by then the round is a draw. The grid falls by the same rule:
+a walk falls where its centre crosses the pit's edge and stays there, a dash's slide is
+`Dashing` throughout and falls only if it ends on a pit cell.
+Replay checksums: changed, corpus regenerated because `Player::fallTicks` and
+`PlayerDef::fallTicks` entered the world state and the content. With both left out of the
+visitors the gate passed on the old `.checksums` for every entry but the two in which a monkey
+fell (`scripted_4p_island_1800t`, `scripted_10p_grid_rounds_1t_1800t`, whose scripted inputs
+react to the longer rounds); every other `.kfmr` differs only in its content hash.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -822,7 +848,7 @@ step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& e
    6. CollisionSystem           broadphase (uniform-grid spatial hash) + swept narrowphase with time-of-impact, emits Contacts
    7. InteractionSystem         resolves Contacts via the rules table (hit, catch, dash attack, pickup)
    8. ModifierSystem            expire, recompute derived Stats (incl. slow hazards), overrides and tags, tick timers
-   9. LifecycleSystem           eliminations, respawns, despawns, power-up spawners (v0.20)
+   9. LifecycleSystem           eliminations, respawns, pit falls (v0.57), despawns, power-up spawners (v0.20)
   10. RulesSystem::postTick     win conditions, scoring
   11. s.tick++
 ```
@@ -1227,7 +1253,8 @@ scanning": that is how a perfect catch judged outside its time window falls thro
 order (then earlier dash press, then pool index), and a contact whose entity an earlier contact
 despawned is skipped. Every row forbids `Tag::Eliminated` on the player: a player eliminated
 earlier in the same tick stays in the pool until `LifecycleSystem` and must not be hit, catch
-or pick up again.
+or pick up again. v0.57: the same set (`kGone`) holds `Tag::Falling`, so no row touches a
+monkey falling down a pit either, on whichever side of the pair it is.
 
 ```
 prio  A                          B                              handler
@@ -1243,7 +1270,7 @@ prio  A                          B                              handler
  50   Player[]                   Pickup[Banana]                 TakePickup (declines at ammoMax)
  51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
  52   Player[!Carrying]          Pickup[Flag]                   TakeFlag (v0.33; declines for the flag's own team)
- 60   Player[]                   Hazard[Pit]                    FallIntoPit
+ 60   Player[!Dashing]           Hazard[Pit]                    FallIntoPit (v0.57: starts the fall)
 ```
 
 Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
@@ -1343,12 +1370,38 @@ catch stays row 10 in every space; what changes on the grid is who can ever be `
 
 Pit (v0.22): `CollisionSystem` emits `Player × Hazard` for every hazard holding a player's
 centre at the end of the tick (`EntityKind::Hazard`, `b.index` = the hazard's index in
-`content.arena.hazards`, `tHit` = the centre's entry time). Row 60 forbids only `Eliminated`:
-no tag (not even `Invulnerable` or a dash) saves a monkey over a pit. `fallIntoPit` declines for
-non-pit kinds (a slow patch acts through stats, §5.8) and otherwise sets hp 0 and `Eliminated`
-and emits `PlayerEliminated` with killer 0xFF and no `PlayerHit`: nobody is credited. Its
-`tHit` orders it among the tick's other contacts, so a banana that reached the monkey before it
-stepped over the edge still scores.
+`content.arena.hazards`, `tHit` = the centre's entry time). Its `tHit` orders it among the
+tick's other contacts, so a banana that reached the monkey before it stepped over the edge
+still scores.
+
+Pit falls (v0.57). Row 60 forbids `kGone` (`Eliminated`, `Falling`) and `Dashing`: no other
+tag (not `Invulnerable`, not a shield) saves a monkey whose centre is over a pit, but a dash
+carries it across, so the widest pit a monkey clears is the dash's reach and nothing measures
+pits. The test is the centre in the closed box, not any overlap: the centre is where half the
+body hangs over the hole, it is the point the shadow marks, and a monkey brushing the edge with
+its side stays up. `fallIntoPit` declines for non-pit kinds (a slow patch acts through stats,
+§5.8) and otherwise starts the fall: `Tag::Falling`, `Player::fallTicks = PlayerDef::fallTicks`
+(TOML `[player] fall_ticks`, 36; at least 1, counting the tick it went in), the velocity, a
+slam's pending push and a grid commitment cleared, every ability slot back to Idle without
+`onPhaseChange`/`onEnd` (a charging throw is dropped, not thrown), and `PlayerFell{player,
+entity, a = the hazard index}`. While it falls:
+- InputSystem hands it an idle intent with the aim at its facing (no press reaches a slot, the
+  latch keeps the facing); `prevButtons` still follows the input, so no stale edge fires after.
+- The spaces leave it where it went in (velocity zero; the grid drops its commitment and skips
+  it at the latch).
+- No rule row touches it (`kGone`): bananas fly over it, a dash attack or a slam push misses
+  it, it takes no pickup and catches nothing; `zoneOccupants` leaves it out.
+- `LifecycleSystem` counts `fallTicks` down in every match phase (after the respawn timers,
+  before the despawns) and at 0 eliminates it by nobody (`rules/fall.hpp`, `eliminateFallen`):
+  hp 0, `Eliminated`, `PlayerEliminated` with killer 0xFF and no `PlayerHit`, then the mode's
+  `onEliminated` with no killer (a deathmatch counts the death and schedules the respawn,
+  nobody scores; capture drops a carried flag where the monkey went in). It despawns in the
+  same pass. A fall that starts on tick T ends on T + `fallTicks` − 1.
+- The round kinds wait for it: `rounds`, `survival` and `team_rounds` end no round while a
+  monkey is falling (`anyFalling` in `mode_flow`; survival's clock waits too). The faller is
+  still in the pool but already out, so the last monkey standing beside it wins only when the
+  fall ends, and a round in which both go is a draw. The respawning kinds play on: a fall is a
+  death that comes `fallTicks` later.
 
 Dash attack (v0.16): dashing into an enemy while holding at least `DashAttackDef::minAmmo`
 bananas damages it. Row 25, `Player[Dashing, !HitStun, !Eliminated] ×
@@ -1563,7 +1616,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `BoomerangCaught{catcher, how}`, `PlayerDashed`, `PlayerHit{victim, attacker, damage, hpAfter}`,
   `PlayerDashHit{victim, attacker, hpAfter}` (v0.16: a dash attack; `entity` is the attacking
   player where `PlayerHit` carries the banana, and presentation shows both the same way),
-  `PlayerEliminated{victim, killer}`,
+  `PlayerEliminated{victim, killer}`, `PlayerFell{victim, entity, a = the pit's hazard index}`
+  (v0.57: the start of a pit fall; its `PlayerEliminated` with killer 0xFF follows
+  `fallTicks − 1` ticks later, §5.6),
   `RoundEnded{winner}`, `MatchEnded{winner}` (an invalid winner is a draw),
   ... v0.23 (modes): `ScoreChanged{player, score}` (a deathmatch elimination scored; round wins
   are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
@@ -1640,8 +1695,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
     worst case of 32 walls 0.37–0.47 M ticks/s (2.1–2.7 µs/tick). Even the worst case is about
     0.2% of a 60 Hz frame per simulated tick, so a rollback of 10 ticks stays far below a
     millisecond: no grid until an arena needs more than 32 statics.
-  - Hazards: the pit is a rules-table row fed by a `Player × Hazard` contact (§5.3, §5.6); a
-    slow patch multiplies move speed in `ModifierSystem` (§5.8). Bananas ignore hazards (a
+  - Hazards: the pit is a rules-table row fed by a `Player × Hazard` contact (§5.3, §5.6; v0.57:
+    the monkey falls for `fall_ticks`, and a dash crosses it); a slow patch multiplies move
+    speed in `ModifierSystem` (§5.8). Bananas ignore hazards (a
     grounded banana can lie in a pit; picking it up costs the monkey).
   - TOML (`[[arena]]`): `walls = [{ min = [x, y], max = [x, y] }, ...]`,
     `hazards = [{ kind = "pit" | "slow", min, max, speed_mul = m }, ...]` (`speed_mul` required
@@ -2054,7 +2110,8 @@ centre happens to rest on a cell centre.
   speed in `kfm_arena`; human lobbies set about 15 (four moves a second).
 - **Commitment.** At the latch each monkey that is alive, not rooted and at rest takes the
   latched intent: idle, or one of the eight neighbouring cells. The target must lie inside the
-  outer box and overlap no wall (a pit is allowed: the monkey falls, §5.6 row 60). Contested
+  outer box and overlap no wall (a pit is allowed: the monkey falls, §5.6 row 60; v0.57: where
+  its centre crosses the pit's edge, as in the continuous space). Contested
   cells resolve at the latch: two monkeys that target one cell, or each other's cell, keep the
   earlier press (`subTick` of the latch tick), then the lower slot; the loser stays. Nothing
   about this is a rule row: the table says what happens when things touch, the space says who
@@ -2067,7 +2124,9 @@ centre happens to rest on a cell centre.
   contact test has an answer; at the turn boundary, where bots observe and act, every monkey is
   on a cell. A dash is a commitment of `dashCells` (content, 2) with `Tag::Dashing` for its
   active phase; a wall stops it on the last free cell. Knockback, hit stun and pits act on the
-  position as in the continuous space.
+  position as in the continuous space (v0.57: the slide is `Dashing` throughout, so a 2-cell
+  dash crosses a one-cell pit and falls only if it ends on a pit cell; a falling monkey keeps
+  no commitment and takes no latch).
 - **Facing.** `Transform::facing` is the latched `aimDir`. The cone (§8) quantises it to the
   nearest of eight directions when it reads.
 - **Bananas.** Untouched: thrown at any of the 256 angles, flying, steering home, bouncing off
@@ -2107,7 +2166,7 @@ differs from or adds to the design above:
   monkey's circle (its radius stat) at the target's centre inside the outer box and clear of
   every wall, and for a diagonal the two orthogonal neighbours clear as well: no corner
   cutting, so the slide's straight path never meets a wall and lands exactly. A pit is
-  allowed. Eligible: alive, not `Eliminated`, not in `HitStun`, not rooted, at rest. A monkey
+  allowed. Eligible: alive, not `Eliminated` (v0.57: nor `Falling`), not in `HitStun`, not rooted, at rest. A monkey
   that stays (idle, blocked, rooted out, or the loser of a contest) and stands off its cell's
   centre (a slam's push, a stun that cut a slide, a blink) commits to that centre, so the turn
   boundary puts it back on a cell.

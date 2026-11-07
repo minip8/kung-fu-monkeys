@@ -2,8 +2,9 @@
 // through step() on an arena with an interior wall, a pit and a slow patch.
 // A dash stops at a wall, a banana bounces off one and still comes home, a
 // throw into a wall at point blank bounces instead of spawning inside it, a
-// monkey walking into a pit is eliminated by nobody while a banana flies
-// over it, and the slow patch halves move speed through the derived stats.
+// monkey walking into a pit is eliminated by nobody (v0.57: after its fall,
+// tests/scenario/pit_scenario.cpp) while a banana flies over it, and the slow patch halves move
+// speed through the derived stats.
 #include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -168,15 +169,18 @@ TEST_CASE("walking into a pit eliminates by nobody and ends the round", "[scenar
   placePlayer(lab.s, kP0, at(-11, 0));
   placePlayer(lab.s, kP1, at(10, 0));
   EventLog all;
-  for (int t = 0; t < 60 && lab.s.rules.phase == MatchPhase::Playing; ++t) {
+  for (int t = 0; t < 120 && lab.s.rules.phase == MatchPhase::Playing; ++t) {
     const Fixed before = playerAt(lab.s, kP0).transform.pos.x;
     const EventLog log = lab.step(PlayerInput{kLeft, 255, kLeft, 0, 0});
     all.insert(all.end(), log.begin(), log.end());
-    if (findEvent(log, EventKind::PlayerEliminated) != nullptr) {
-      // The tick it went in, its centre was over the edge (x <= -12).
+    if (findEvent(log, EventKind::PlayerFell) != nullptr) {
+      // The tick it went in (v0.57: the fall starts), its centre crossed the
+      // edge (x <= -12).
       CHECK(before > Fixed::fromInt(-12));
+      CHECK(playerAt(lab.s, kP0).transform.pos.x <= Fixed::fromInt(-12));
     }
   }
+  CHECK(firstEvent(all, EventKind::PlayerFell).player == kP0);
   const SimEvent& out = firstEvent(all, EventKind::PlayerEliminated);
   CHECK(out.player == kP0);
   CHECK(out.a == PlayerId::invalid().value);  // killer 0xFF
@@ -193,7 +197,7 @@ TEST_CASE("a deathmatch pit fall counts a death, scores nobody and respawns",
   placePlayer(lab.s, kP1, at(10, 0));
   EventLog all;
   int fellAt = -1;
-  for (int t = 0; t < 60 && fellAt < 0; ++t) {
+  for (int t = 0; t < 120 && fellAt < 0; ++t) {
     const EventLog log = lab.step(PlayerInput{kLeft, 255, kLeft, 0, 0});
     all.insert(all.end(), log.begin(), log.end());
     if (findEvent(log, EventKind::PlayerEliminated) != nullptr) fellAt = t;

@@ -102,6 +102,9 @@ struct Player {
   // continuous space leaves both zero.
   Vec2 moveTarget{};
   uint16_t moveTicks{0};
+  // v0.57, a pit fall (Tag::Falling): ticks left before LifecycleSystem
+  // eliminates the monkey; 0 while it stands.
+  uint16_t fallTicks{0};
 };
 
 enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded };

@@ -86,6 +86,7 @@ constexpr ContentDB makeDefaultContent() {
   c.player.ammoMax = 1;
   c.player.ammoStart = 1;
   c.player.hitStunTicks = 6;
+  c.player.fallTicks = 36;
   c.player.abilities[kAbilitySlotDash] = static_cast<uint8_t>(AbilityKind::Dash);
   c.player.abilities[kAbilitySlotThrow] = static_cast<uint8_t>(AbilityKind::Throw);
   c.loadouts[0].name = ContentName::of(kBaseLoadoutName);

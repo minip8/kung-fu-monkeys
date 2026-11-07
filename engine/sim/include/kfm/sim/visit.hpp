@@ -224,6 +224,7 @@ void visit(V& v, PlayerDef& d) {
   v.u8(d.ammoMax);
   v.u8(d.ammoStart);
   v.u16(d.hitStunTicks);
+  v.u16(d.fallTicks);  // v0.57
   for (uint8_t& a : d.abilities)
     v.u8(a);
 }
@@ -490,6 +491,7 @@ void visit(V& v, Player& p) {
   v.u16(p.knockbackTicks);
   visit(v, p.moveTarget);  // v0.34: the grid's commitment
   v.u16(p.moveTicks);
+  v.u16(p.fallTicks);  // v0.57: a pit fall
 }
 template <class V>
 void visit(V& v, Boomerang& b) {

@@ -1,6 +1,7 @@
 // Rounds mode (architecture §5.3): the M1 free-for-all. A round ends when at
 // most one monkey is left and at least two slots are present; the survivor
 // (if any) wins it, and the first to roundsToWin round wins takes the match.
+// v0.57: not while a monkey is falling down a pit (anyFalling).
 // Never touches the per-player mode counters (deaths, respawn, spawn protection).
 #include "kfm/sim/modes/modes.hpp"
 #include "modes/mode_flow.hpp"
@@ -12,6 +13,7 @@ namespace kfm::sim {
 
 void roundsOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink) {
   if (std::popcount(static_cast<uint32_t>(s.rules.present)) < 2 || s.players.size() > 1) return;
+  if (anyFalling(s)) return;
   endRound(s, content, soleSurvivor(s), sink);
 }
 
