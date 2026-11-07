@@ -11,9 +11,9 @@
 //     miss a light one), plus the goal of the moment: keep a throwing range
 //     to the target with a banana in hand; empty-handed, meet the own banana
 //     on its way back, else fetch the nearest banana lying around (v0.57:
-//     not one in a pit); power-ups close by; stay off the outer walls; and
-//     (v0.57) a path whose centre ends a tick over a pit outside a dash's
-//     active ticks is a fall, penalised like a hit;
+//     not one deep in a pit); power-ups close by; stay off the outer walls;
+//     and (v0.57) a path that ends a tick with its whole disc over the pits
+//     outside a dash's active ticks is a fall, penalised like a hit;
 //   - dash-catch: with room for a banana, a dash whose perfect window meets
 //     an enemy banana (§5.6, §5.11);
 //   - dodge: when no walk escapes a hit, the safest dash, else the third
@@ -159,9 +159,9 @@ class ReferenceBot final : public IAgent {
   [[nodiscard]] Outcome evaluate(const Observation& obs, const Path& p, uint8_t catchFrom,
                                  uint8_t catchUntil) const;
   // v0.57: the penalty of a path that falls down a pit: the first tick whose
-  // centre is over one outside [airFrom, airUntil) (a dash's active ticks,
-  // which carry the monkey over; airUntil 0 = none), weighted like a hit
-  // (sooner is worse); 0 when it never does.
+  // whole disc is over the pits (the sim's test) outside [airFrom, airUntil)
+  // (a dash's active ticks, which carry the monkey over; airUntil 0 = none),
+  // weighted like a hit (sooner is worse); 0 when it never does.
   [[nodiscard]] static Fixed pitDanger(const Observation& obs, const Path& p, uint8_t airFrom,
                                        uint8_t airUntil);
 

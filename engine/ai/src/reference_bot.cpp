@@ -5,6 +5,7 @@
 
 #include "bot_math.hpp"
 #include "kfm/ai/vision.hpp"
+#include "kfm/sim/content/arena.hpp"
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/tags.hpp"
@@ -159,18 +160,20 @@ struct TieBreak {
   return from;
 }
 
-// Whether a centre lies in one of the arena's pits (the closed box, as the
-// sim tests it: a monkey not dashing there falls, v0.57).
-[[nodiscard]] bool inPit(const Observation& obs, Vec2 c) {
-  for (uint32_t i = 0; i < obs.arena.hazardCount && i < kObsMaxHazards; ++i) {
-    const ObsHazard& h = obs.arena.hazards[i];
-    if (h.kind != static_cast<uint8_t>(ObsHazardKind::Pit)) continue;
-    if (c.x >= Fixed::fromRaw(h.box.minX) && c.x <= Fixed::fromRaw(h.box.maxX) &&
-        c.y >= Fixed::fromRaw(h.box.minY) && c.y <= Fixed::fromRaw(h.box.maxY)) {
-      return true;
-    }
-  }
-  return false;
+// Whether a monkey of radius r at c would fall: its whole disc over the
+// union of the arena's pits, the sim's own test (sim::discWithinBoxes,
+// v0.57; a monkey not dashing there falls).
+[[nodiscard]] bool inPit(const Observation& obs, Vec2 c, Fixed r) {
+  return sim::discWithinBoxes(
+      std::min<uint32_t>(obs.arena.hazardCount, kObsMaxHazards),
+      [&obs](uint32_t i, Vec2& min, Vec2& max) {
+        const ObsHazard& h = obs.arena.hazards[i];
+        if (h.kind != static_cast<uint8_t>(ObsHazardKind::Pit)) return false;
+        min = Vec2{Fixed::fromRaw(h.box.minX), Fixed::fromRaw(h.box.minY)};
+        max = Vec2{Fixed::fromRaw(h.box.maxX), Fixed::fromRaw(h.box.maxY)};
+        return true;
+      },
+      c, r);
 }
 
 // Whether a banana of radius r flies from `from` to `to` clear of the
@@ -278,7 +281,7 @@ void ReferenceBot::prepareGrid(const Observation& obs) {
   for (int32_t row = 0; row < gridRows_; ++row) {
     for (int32_t col = 0; col < gridCols_; ++col) {
       const Vec2 at{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
-      bool free = abs(at.x) <= hx - r && abs(at.y) <= hy - r && !inPit(obs, at);
+      bool free = abs(at.x) <= hx - r && abs(at.y) <= hy - r && !inPit(obs, at, r);
       for (uint32_t w = 0; free && w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
         if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) free = false;
       }
@@ -357,7 +360,7 @@ void ReferenceBot::gridWalkPath(const Observation& obs, uint8_t octant, bool idl
     return Vec2{(c * col) + (c / 2) - hx, hy - (c * row) - (c / 2)};
   };
   const auto free = [&](Vec2 at) {
-    if (abs(at.x) > hx - r || abs(at.y) > hy - r || inPit(obs, at)) return false;
+    if (abs(at.x) > hx - r || abs(at.y) > hy - r || inPit(obs, at, r)) return false;
     for (uint32_t w = 0; w < obs.arena.wallCount && w < kObsMaxWalls; ++w) {
       if (botmath::circleOverlaps(obs.arena.walls[w], at, r)) return false;
     }
@@ -620,9 +623,10 @@ ReferenceBot::Outcome ReferenceBot::evaluate(const Observation& obs, const Path&
 Fixed ReferenceBot::pitDanger(const Observation& obs, const Path& p, uint8_t airFrom,
                               uint8_t airUntil) {
   if (obs.arena.hazardCount == 0) return Fixed{};
+  const Fixed r = Fixed::fromRaw(obs.self.radius);
   for (uint8_t k = 1; k <= kHorizon; ++k) {
     if (k >= airFrom && k < airUntil) continue;
-    if (inPit(obs, p.pos[k])) return kHitPenalty + Fixed::fromInt(16 * (kHorizon - k));
+    if (inPit(obs, p.pos[k], r)) return kHitPenalty + Fixed::fromInt(16 * (kHorizon - k));
   }
   return Fixed{};
 }
@@ -696,9 +700,11 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     }
     if (!haveFetch) {
       for (const ObsPickup& k : obs.pickups) {
-        // v0.57: a banana lying in a pit costs the monkey that fetches it.
+        // v0.57: a banana lying where standing would mean a fall (deep in
+        // a pit) costs the monkey that fetches it; one near the edge is
+        // reached from the floor.
         if (k.valid == 0 || k.kind != static_cast<uint8_t>(ObsPickupKind::Banana) ||
-            inPit(obs, vec(k.posX, k.posY))) {
+            inPit(obs, vec(k.posX, k.posY), Fixed::fromRaw(obs.self.radius))) {
           continue;
         }
         const uint64_t d = lengthSqRaw(vec(k.posX, k.posY) - myPos);
