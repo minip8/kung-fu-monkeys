@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.66 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.67 (2026-11-08). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -925,6 +925,25 @@ Caddy's forwarded address); the default round is 30 minutes (five minutes with 2
 write 17 k replays a day into R2); a public `/privacy` page for Google's consent screen, written
 from what the service stores. Measured: 182 service tests and 57 CLI tests, the CLI run end to
 end against the real service. Not yet done: the deployment and the PyPI trusted publisher.
+
+v0.67 changes: the ladder is deployed (§11, §13.5). `https://bots.kfm.minip8.com` serves the
+portal and API from `kfm-ladder-1` (an `e2-small` in australia-southeast1-b beside the game
+server: Caddy with a Let's Encrypt certificate, the API with the scheduler, Postgres in a
+container with the nightly dump to the bucket, two match workers) and `kfm-build-1` (an
+`e2-medium`, the build worker, Docker's default runtime gVisor's `runsc`, no inbound port);
+the bucket is Cloudflare R2 `kfm-bots` behind a token scoped to it (the token cannot list or
+create buckets, so every tool must skip the bucket check, which the backup script does);
+sign-in through a GitHub OAuth app and a Google OAuth client with `/privacy` as the consent
+screen's policy; the first season `2026-11` runs to 2026-12-01. The bots repository's
+`v0.1.0` built the images and `v0.1.1` the CLI wheels: `kfm-cli 0.1.1` is on PyPI through a
+trusted publisher (`uv tool install kfm-cli` then `kfm seasons` against the live ladder
+checked) and the release updated both VMs through a second Workload Identity provider
+(`github-bots`) on the engine's pool. Lessons: the maturin action adds its own platform tag
+(two is the limit); a Windows step env named `PLATFORM` is lost to MSVC's `Platform` (the
+engine's v0.5.0, now `KFM_`-prefixed); CI's concurrency rule cancels an in-progress re-run when
+main moves. Against the M7 criterion: a bot submitted through the CLI is built and ranked;
+"by an account outside the project" and "replayed in the browser from the ladder's link"
+remain, the second being step (6), the client's replay viewer. No code change here.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4555,9 +4574,10 @@ VMs, the R2 bucket, the GitHub and Google OAuth apps.
 Progress: M7 step (4) landed in v0.65 in the bots repository (bots PR #5; the v0.65 changelog
 line has the decisions and measurements).
 
-Progress: M7 step (5) landed in v0.66 in the bots repository (bots PRs #6 and #7). Next: the
-deployment (the two VMs, R2, the OAuth apps, the PyPI trusted publisher; the runbook is the
-bots repository's `deploy/README.md`), then step (6), the client's replay viewer, here.
+Progress: M7 step (5) landed in v0.66 in the bots repository (bots PRs #6 and #7), and the
+ladder was deployed in v0.67 (`bots.kfm.minip8.com`, `kfm-cli` on PyPI, the first season; the
+v0.67 changelog line has the shape as built). Next: step (6), the client's replay viewer, here,
+and an entrant from outside the project through the whole path.
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
