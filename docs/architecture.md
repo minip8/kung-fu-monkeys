@@ -629,14 +629,17 @@ it went in) with `PlayerFell{player, entity, a = the pit's hazard index}`; the m
 velocity, push, grid commitment and every ability phase are dropped (a charging throw is not
 thrown), InputSystem gives it an idle intent with the aim at its facing, the spaces leave it in
 place, and `kGone` keeps every rule row off it (bananas fly over it, nobody dashes into or
-pushes it, it takes nothing, it holds no zone). `LifecycleSystem` counts the fall down in every
+pushes it, it takes nothing, it holds no zone; bots see bit 10 in `tags`, an append within
+Observation v1). `LifecycleSystem` counts the fall down in every
 phase and on its last tick eliminates it as before (hp 0, `Eliminated`, `PlayerEliminated` with
 killer 0xFF, `onEliminated` with no killer), then despawns it. The round kinds (rounds,
 survival, team rounds) end no round while a monkey is falling (`anyFalling`): a monkey that went
 into a pit is already out, so the last one standing while another falls wins only once that
 fall ends, and if it too is gone by then the round is a draw. The grid falls by the same rule:
 a walk falls where its centre crosses the pit's edge and stays there, a dash's slide is
-`Dashing` throughout and falls only if it ends on a pit cell.
+`Dashing` throughout and falls only if it ends on a pit cell. The reference bot keeps out of
+pits (a fall is scored like a hit), fetches no banana lying in one, ignores a falling enemy and
+dashes across a pit it can clear when that is the way to its goal (§8).
 Replay checksums: changed, corpus regenerated because `Player::fallTicks` and
 `PlayerDef::fallTicks` entered the world state and the content. With both left out of the
 visitors the gate passed on the old `.checksums` for every entry but the two in which a monkey
@@ -3436,7 +3439,14 @@ which the contract needs.
     same bots give 56/54/41/49, p ≈ 0.44), and equal-time Player × Player contacts resolve by
     pool index. Tournaments therefore rotate (`kfm_arena --rotate`): over 40 rotated matches of
     hard, medium, easy, hard the two hard bots win 20 and 19 with mean places 1.62 and 1.77,
-    medium 1 and easy 0. The hard tier keeps zero noise.
+    medium 1 and easy 0. The hard tier keeps zero noise. Pits (v0.57): a path whose centre ends
+    a tick over a pit outside a dash's active ticks is a fall, penalised like a hit (the
+    dash-catch, the dodge, the blink and the dash attack check theirs too); a banana lying in a
+    pit is no fetch point; a falling enemy is no target; and when the walk the goal wants most,
+    pits aside, falls in, a dash the same way that lands clear of the pit and of every banana
+    takes it (continuous space; the grid's walks never enter a pit). Four hard bots on `island`
+    over ten rotated matches: 0 of 162 eliminations were falls, against 78 of 197 with the pit
+    terms off (and one match capped).
 
 Teams, fog and calls (v0.29). The contest shape is a squad: a team of monkeys, each run by its
 own program, seeing a slice of the world and talking through the game. One rule sits behind

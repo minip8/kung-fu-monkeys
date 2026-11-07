@@ -10,8 +10,10 @@
 //     against the predicted bananas (a contact is a heavy penalty, a near
 //     miss a light one), plus the goal of the moment: keep a throwing range
 //     to the target with a banana in hand; empty-handed, meet the own banana
-//     on its way back, else fetch the nearest banana lying around; power-ups
-//     close by; stay off the outer walls;
+//     on its way back, else fetch the nearest banana lying around (v0.57:
+//     not one in a pit); power-ups close by; stay off the outer walls; and
+//     (v0.57) a path whose centre ends a tick over a pit outside a dash's
+//     active ticks is a fall, penalised like a hit;
 //   - dash-catch: with room for a banana, a dash whose perfect window meets
 //     an enemy banana (§5.6, §5.11);
 //   - dodge: when no walk escapes a hit, the safest dash, else the third
@@ -21,6 +23,9 @@
 //     the same tick (unarmed, or its dash busy or cooling down): two strikes
 //     pressed on one tick are resolved in slot order, a coin tossed by slot
 //     index rather than a fight;
+//   - pit crossing (v0.57, continuous space): when the walk the goal wants
+//     most, pits aside, would fall in, a dash the same way that lands clear
+//     of every pit (and of every banana) and scores better takes it;
 //   - throw: a lead shot (intercept of the target's velocity at banana
 //     speed, after the wind-up and the host delay) within the outbound range
 //     and clear of the walls; in a standoff (the target can throw back at
@@ -48,6 +53,8 @@
 // cell, symbol = (col / 2) | (row / 2) << 4, at most once per eight turns;
 // a call on a latch tick also sets the facing to the symbol for that turn,
 // the price of talking.
+// A monkey falling down a pit (v0.57, Tag::Falling) is no target and no
+// threat; falling itself, the bot does nothing.
 // It aims ahead by the observation's inputDelayTicks, presses buttons only
 // as fresh edges (never two ticks in a row) at sub-tick 0, and is
 // deterministic: fixed-point only, its own Rng seeded by init(), no
@@ -151,6 +158,12 @@ class ReferenceBot final : public IAgent {
   // caught, not a hit (catchUntil 0 = no window).
   [[nodiscard]] Outcome evaluate(const Observation& obs, const Path& p, uint8_t catchFrom,
                                  uint8_t catchUntil) const;
+  // v0.57: the penalty of a path that falls down a pit: the first tick whose
+  // centre is over one outside [airFrom, airUntil) (a dash's active ticks,
+  // which carry the monkey over; airUntil 0 = none), weighted like a hit
+  // (sooner is worse); 0 when it never does.
+  [[nodiscard]] static Fixed pitDanger(const Observation& obs, const Path& p, uint8_t airFrom,
+                                       uint8_t airUntil);
 
   ReferenceBotConfig config_;
   Rng rng_{};

@@ -69,9 +69,11 @@ constexpr uint32_t kSweepTurns = 4;
 constexpr uint32_t kTagInvulnerable = 4;  // sim::Tag::Invulnerable
 constexpr uint32_t kTagShielded = 3;      // sim::Tag::Shielded
 constexpr uint32_t kTagFriendlyFire = 8;  // sim::Tag::FriendlyFire (v0.32)
+constexpr uint32_t kTagFalling = 10;      // sim::Tag::Falling (v0.57)
 static_assert(kTagInvulnerable == static_cast<uint32_t>(sim::Tag::Invulnerable));
 static_assert(kTagShielded == static_cast<uint32_t>(sim::Tag::Shielded));
 static_assert(kTagFriendlyFire == static_cast<uint32_t>(sim::Tag::FriendlyFire));
+static_assert(kTagFalling == static_cast<uint32_t>(sim::Tag::Falling));
 
 [[nodiscard]] Fixed distanceBetween(Vec2 a, Vec2 b) {
   return length(b - a);
@@ -112,7 +114,11 @@ struct TieBreak {
   TieBreak tie;
   for (uint32_t i = 0; i < kObsMaxPlayers; ++i) {
     const ObsPlayer& p = obs.players[i];
-    if (p.alive == 0 || p.relation != static_cast<uint8_t>(ObsRelation::Enemy)) continue;
+    // v0.57: a monkey falling down a pit is already out.
+    if (p.alive == 0 || p.relation != static_cast<uint8_t>(ObsRelation::Enemy) ||
+        hasTag(p.tags, kTagFalling)) {
+      continue;
+    }
     const bool prot = hasTag(p.tags, kTagInvulnerable);
     const uint64_t d = lengthSqRaw(posOf(p) - me);
     bool take = (bestProtected && !prot) || (prot == bestProtected && d < bestD);
@@ -153,8 +159,8 @@ struct TieBreak {
   return from;
 }
 
-// Whether a centre lies in one of the arena's pits (a grid walk may step
-// into one, and the monkey falls).
+// Whether a centre lies in one of the arena's pits (the closed box, as the
+// sim tests it: a monkey not dashing there falls, v0.57).
 [[nodiscard]] bool inPit(const Observation& obs, Vec2 c) {
   for (uint32_t i = 0; i < obs.arena.hazardCount && i < kObsMaxHazards; ++i) {
     const ObsHazard& h = obs.arena.hazards[i];
@@ -611,6 +617,16 @@ ReferenceBot::Outcome ReferenceBot::evaluate(const Observation& obs, const Path&
   return o;
 }
 
+Fixed ReferenceBot::pitDanger(const Observation& obs, const Path& p, uint8_t airFrom,
+                              uint8_t airUntil) {
+  if (obs.arena.hazardCount == 0) return Fixed{};
+  for (uint8_t k = 1; k <= kHorizon; ++k) {
+    if (k >= airFrom && k < airUntil) continue;
+    if (inPit(obs, p.pos[k])) return kHitPenalty + Fixed::fromInt(16 * (kHorizon - k));
+  }
+  return Fixed{};
+}
+
 sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   sim::PlayerInput in{};
   const ObsSelf& me = obs.self;
@@ -638,7 +654,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       in.aimDir = static_cast<uint8_t>(((obs.match.tick / (kSweepTurns * turn)) & 3u) * 64u);
     }
   }
-  if (me.alive == 0 || obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) {
+  if (me.alive == 0 || hasTag(me.tags, kTagFalling) ||
+      obs.match.phase != static_cast<uint8_t>(ObsMatchPhase::Playing)) {
     throwHold_ = -1;
     chargeHold_ = 0;
     return in;
@@ -679,7 +696,11 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     }
     if (!haveFetch) {
       for (const ObsPickup& k : obs.pickups) {
-        if (k.valid == 0 || k.kind != static_cast<uint8_t>(ObsPickupKind::Banana)) continue;
+        // v0.57: a banana lying in a pit costs the monkey that fetches it.
+        if (k.valid == 0 || k.kind != static_cast<uint8_t>(ObsPickupKind::Banana) ||
+            inPit(obs, vec(k.posX, k.posY))) {
+          continue;
+        }
         const uint64_t d = lengthSqRaw(vec(k.posX, k.posY) - myPos);
         if (d < best) {
           best = d;
@@ -783,6 +804,10 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   uint8_t bestDir = lastMoveDir_;
   bool bestIdle = true;
   TieBreak moveTie;
+  // v0.57: the walk the goal would want most if it did not fall down a pit.
+  Fixed pitWalkUtil = Fixed::min();
+  uint8_t pitWalkDir = 0;
+  bool pitWalk = false;
   // On the grid: the eight octants (moveDir 32·o is exactly octant o) and idle.
   const uint8_t directions = grid ? sim::grid::kOctants : kDirections;
   for (uint8_t c = 0; c <= directions; ++c) {
@@ -796,6 +821,15 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     const Outcome o = evaluate(obs, path_, 0, 0);
     Fixed util = goal(path_) - o.danger;
     if (!idle && dir == lastMoveDir_) util += kHysteresis;
+    const Fixed fall = pitDanger(obs, path_, 0, 0);
+    if (fall > Fixed{}) {
+      if (!idle && o.danger < kHitThreshold && util > pitWalkUtil) {
+        pitWalkUtil = util;
+        pitWalkDir = dir;
+        pitWalk = true;
+      }
+      util -= fall;
+    }
     bool take = util > bestUtil;
     if (take) {
       moveTie.reset();
@@ -830,6 +864,10 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     return grid ? static_cast<uint8_t>(sim::grid::octantOf(dir) * 32u) : dir;
   };
   bool dashed = false;
+  // A dash's active ticks on its path (dashPath): the press at lead + 1.
+  const auto airFrom = static_cast<uint8_t>(lead + 1);
+  const auto airUntil = static_cast<uint8_t>(
+      std::min<uint32_t>(uint32_t{lead} + 1 + dash.defActiveTicks, uint32_t{kHorizon} + 1));
 
   // --- dash-catch -----------------------------------------------------------
   const auto catchFrom = static_cast<uint8_t>(lead + 1);
@@ -845,7 +883,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         const uint8_t dir = snap(directionTo(myPos, t.pos[aim]));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, catchFrom, catchUntil);
-        if (o.catches && o.danger < catchDanger) {
+        if (o.catches && o.danger < catchDanger &&
+            pitDanger(obs, path_, airFrom, airUntil) == Fixed{}) {
           found = true;
           catchDir = dir;
           catchDanger = o.danger;
@@ -868,7 +907,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         const auto dir = static_cast<uint8_t>(c * (256 / directions));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, canCatch ? catchFrom : 0, canCatch ? catchUntil : 0);
-        if (o.danger < best) {
+        if (o.danger + pitDanger(obs, path_, airFrom, airUntil) < best) {
           best = o.danger;
           bestDash = dir;
           found = true;
@@ -889,7 +928,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
           const auto dir = static_cast<uint8_t>(c * (256 / kDirections));
           blinkPath(obs, dir, path_);
           const Outcome o = evaluate(obs, path_, 0, 0);
-          if (o.danger < best) {
+          if (o.danger + pitDanger(obs, path_, 0, 0) < best) {
             best = o.danger;
             bestBlink = dir;
             found = true;
@@ -915,6 +954,22 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
           }
         }
       }
+    }
+  }
+
+  // --- dash across a pit (v0.57) ---------------------------------------------
+  // The walk the goal wants most would fall in: a dash the same way that
+  // lands clear of every pit and every banana, and scores better than the
+  // walk chosen, takes it. The grid's walks never enter a pit, so this is
+  // the continuous space's.
+  if (!dashed && !grid && dashReady && pitWalk && pitWalkUtil > bestUtil &&
+      bestDanger < kHitThreshold) {
+    dashPath(obs, pitWalkDir, path_);
+    const Outcome o = evaluate(obs, path_, 0, 0);
+    if (o.danger < kHitThreshold && pitDanger(obs, path_, airFrom, airUntil) == Fixed{} &&
+        goal(path_) - o.danger > bestUtil) {
+      press(dash, pitWalkDir);
+      dashed = true;
     }
   }
 
@@ -945,7 +1000,8 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         const Vec2 r = e0 - path_.pos[k - 1];
         const Vec2 d = tv - (path_.pos[k] - path_.pos[k - 1]);
         if (segmentMinSq(r, d) < strikeSq) {
-          found = evaluate(obs, path_, 0, 0).danger < kHitThreshold;
+          found = evaluate(obs, path_, 0, 0).danger < kHitThreshold &&
+                  pitDanger(obs, path_, airFrom, airUntil) == Fixed{};
           strikeDir = dir;
           break;
         }

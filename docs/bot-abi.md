@@ -135,7 +135,7 @@ Units:
 | bam | u16 1/65536 turn, same orientation (a banana's heading, which the sim steers at that precision). |
 | ticks | 60 per second. Tick numbers are the sim's tick counter. |
 | slot | player slot 0..9; `0xFF` = none. |
-| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it), 9 Carrying (architecture v0.33: holds a capture flag; no stat change). |
+| tags | u32 bit set: bit 0 Dashing, 1 PerfectDash, 2 HitStun, 3 Shielded, 4 Invulnerable, 5 Eliminated, 6 Slamming, 7 Parrying, 8 FriendlyFire (architecture v0.32: teammates' bananas, dash attacks and slam pushes reach this monkey; a team mode's baseline grants it), 9 Carrying (architecture v0.33: holds a capture flag; no stat change), 10 Falling (architecture v0.57: going down a pit; its input is ignored, nothing hits it, and it is eliminated by nobody `fall_ticks` (content, 36) ticks after it went in, counting that tick; `alive` stays 1 until then). |
 
 The world: the arena is the box [−halfExtents, +halfExtents] centred on the origin, +x right,
 +y up. Everything is full information unless the mode's vision is a fog (architecture v0.35,
@@ -152,7 +152,7 @@ Enumerations (byte values):
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded |
 | pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
-| hazard kind | 0 Pit (a centre inside is eliminated), 1 Slow (move speed × `speedMul` inside) |
+| hazard kind | 0 Pit (a monkey whose centre ends a tick inside while not Dashing falls: tag Falling for `fall_ticks`, then eliminated by nobody; architecture v0.57), 1 Slow (move speed × `speedMul` inside) |
 
 ### 2.2 Top level
 
@@ -434,7 +434,8 @@ maxY`, 16 bytes); points are i32 Q16.16 `x, y` (8 bytes).
 
 `hazards[i]` (24 bytes; absolute 5044 + 24 i): offset 0 box `box`; 16 i32 `speedMul` (Q16.16,
 Slow); 20 u8 `kind` (hazard kind); 21..23 `pad0..pad2`. A hazard acts on a monkey whose centre is
-inside; it never blocks movement or bananas.
+inside (the closed box); it never blocks movement or bananas. A pit spares a Dashing monkey
+(v0.57): a dash carries it across, and it falls if the dash ends with its centre still inside.
 
 `spawners[i]` (16 bytes; absolute 5428 + 16 i): offset 0 point `pos`; 8 u16 `powerUpSet` (bit j:
 power-up j may spawn, 0 = any); 10 u16 `firstTicks` (Playing tick of the first spawn); 12 u16

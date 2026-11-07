@@ -379,3 +379,68 @@ TEST_CASE("the reference bot ignores a teammate's banana unless friendly fire is
   // With friendly fire the teammate's banana is a threat like any other.
   CHECK_FALSE(decide(PlayerId{2}, true) == decide(PlayerId::invalid(), true));
 }
+
+namespace {
+
+// The dojo with a pit strip running wall to wall at x in [minX, maxX]: the
+// only way across is a dash (v0.57).
+ContentDB pitStripContent(int32_t minX, int32_t maxX) {
+  ContentDB c = defaultContent();
+  ArenaDef& a = c.arenas[0];
+  a.hazards[0] = Hazard{Vec2{Fixed::fromInt(minX), -a.halfExtents.y},
+                        Vec2{Fixed::fromInt(maxX), a.halfExtents.y}, HazardKind::Pit, Fixed::one()};
+  a.hazardCount = 1;
+  return c;
+}
+
+struct PitRun {
+  int fell{0};
+  int dashed{0};
+  int taken{0};
+};
+
+// Slot 0 a hard reference bot without ammo at `from`, slot 1 idle far away
+// without ammo, one banana lying at `banana`.
+PitRun runPitBot(const ContentDB& c, Vec2 from, Vec2 banana, int ticks) {
+  const MatchContent content = matchContent(c, MatchConfig{.seed = 7, .players = 0b11});
+  WorldState s = makePlayingWorld(7, 0b11, c);
+  placePlayer(s, PlayerId{0}, from).ammo = 0;
+  placePlayer(s, PlayerId{1}, Vec2{Fixed::fromInt(-14), Fixed::fromInt(-7)}).ammo = 0;
+  spawnPickup(s, banana);
+  AgentHost host;
+  host.attach(PlayerId{0}, std::make_unique<ReferenceBot>(ReferenceBotConfig::hard()), 1000);
+  EventSink sink;
+  PitRun r;
+  for (int k = 0; k < ticks && r.taken == 0 && r.fell == 0; ++k) {
+    InputFrame f = frameFor(s);
+    host.fill(f, s, content);
+    sink.clear();
+    step(s, f, content, sink);
+    for (const SimEvent& e : sink) {
+      if (e.player != PlayerId{0}) continue;
+      if (e.kind == EventKind::PlayerFell) ++r.fell;
+      if (e.kind == EventKind::PlayerDashed) ++r.dashed;
+      if (e.kind == EventKind::PickupTaken) ++r.taken;
+    }
+  }
+  return r;
+}
+
+}  // namespace
+
+TEST_CASE("the reference bot keeps out of pits and dashes across a narrow one (v0.57)",
+          "[ai][reference_bot][pit]") {
+  SECTION("a 2-unit strip between it and the only banana: it dashes over") {
+    const PitRun r = runPitBot(pitStripContent(-1, 1), Vec2{Fixed::fromInt(-6), Fixed::zero()},
+                               Vec2{Fixed::fromInt(5), Fixed::zero()}, 900);
+    CHECK(r.fell == 0);
+    CHECK(r.dashed >= 1);
+    CHECK(r.taken == 1);
+  }
+  SECTION("a banana lying in a wide pit is not worth a fall") {
+    const PitRun r = runPitBot(pitStripContent(-3, 3), Vec2{Fixed::fromInt(-6), Fixed::zero()},
+                               Vec2{Fixed::zero(), Fixed::zero()}, 600);
+    CHECK(r.fell == 0);
+    CHECK(r.taken == 0);
+  }
+}

@@ -136,7 +136,8 @@ enum {
   KFM_TAG_SLAMMING = 6,
   KFM_TAG_PARRYING = 7,
   KFM_TAG_FRIENDLY_FIRE = 8, /* allies' bananas and dashes hit this monkey (team modes) */
-  KFM_TAG_CARRYING = 9       /* holds a capture flag */
+  KFM_TAG_CARRYING = 9,      /* holds a capture flag */
+  KFM_TAG_FALLING = 10       /* going down a pit: out of control, out of reach, soon out */
 };
 /* header.schemaFlags bit 0 (architecture v0.35): the mode's vision is not
  * "all", so players[i].visible and bananas[i].visible are meaningful; an

@@ -110,6 +110,7 @@ static_assert(KFM_TAG_INVULNERABLE == static_cast<int>(Tag::Invulnerable));
 static_assert(KFM_TAG_PARRYING == static_cast<int>(Tag::Parrying));
 static_assert(KFM_TAG_FRIENDLY_FIRE == static_cast<int>(Tag::FriendlyFire));
 static_assert(KFM_TAG_CARRYING == static_cast<int>(Tag::Carrying));
+static_assert(KFM_TAG_FALLING == static_cast<int>(Tag::Falling));
 static_assert(KFM_SCHEMA_FLAG_FOG == kObsFlagFog);
 static_assert(KFM_NO_CELL == kObsNoCell);
 static_assert(KFM_MODE_CAPTURE == static_cast<int>(ObsModeKind::Capture));
