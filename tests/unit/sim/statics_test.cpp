@@ -170,3 +170,37 @@ TEST_CASE("hazard entry time and the slow multiplier", "[sim][statics]") {
   CHECK(statics::speedMulAt(a, v(fx(1), fx(1))) == Fixed::half());
   CHECK(statics::speedMulAt(a, v(fx(5), fx(1))) == Fixed::one());  // a pit is no slow
 }
+
+TEST_CASE("discOverPits: the whole disc inside the union of the pit boxes (v0.57)",
+          "[sim][statics][pit]") {
+  ArenaDef a;
+  a.halfExtents = v(fx(10), fx(10));
+  // An L of two pit boxes ([0, 4] x [0, 2] and [0, 2] x [2, 4]) and a slow
+  // patch that is no pit.
+  a.hazards[0] = Hazard{v(fx(0), fx(0)), v(fx(4), fx(2)), HazardKind::Pit, Fixed::one()};
+  a.hazards[1] = Hazard{v(fx(0), fx(2)), v(fx(2), fx(4)), HazardKind::Pit, Fixed::one()};
+  a.hazards[2] = Hazard{v(fx(-6), fx(-6)), v(fx(-2), fx(-2)), HazardKind::Slow, Fixed::half()};
+  a.hazardCount = 3;
+  const Fixed r = Fixed::half();
+  // Inside one box, touching its edges from inside: in.
+  CHECK(discOverPits(a, v(fx(1, 2), fx(1, 2)), r));
+  CHECK(discOverPits(a, v(fx(7, 2), fx(1)), r));
+  // Straddling the seam y = 2 of the two boxes: in (a per-box test says no).
+  CHECK(discOverPits(a, v(fx(1), fx(2)), r));
+  // Into the L's notch (x > 2, y > 2 is floor): out, by an exact margin.
+  CHECK_FALSE(discOverPits(a, v(fx(2), fx(2)), fx(1, 10)));
+  CHECK(discOverPits(a, v(fx(3, 2), fx(3, 2)), r));  // diagonal to the notch: clear of it
+  // The notch's corner (2, 2) seen diagonally: (1.6, 1.6) is 0.4 * sqrt(2)
+  // ~ 0.566 from it, so a radius of 0.5 clears it and 0.6 does not (the
+  // disc, not its bounding square).
+  CHECK(discOverPits(a, v(fx(8, 5), fx(8, 5)), r));
+  CHECK_FALSE(discOverPits(a, v(fx(8, 5), fx(8, 5)), fx(3, 5)));
+  // Hanging over the outer edge by an epsilon: out.
+  CHECK_FALSE(discOverPits(a, v(fx(1, 2) - Fixed::epsilon(), fx(1)), r));
+  // Wider than the pit: never in, wherever the centre.
+  CHECK_FALSE(discOverPits(a, v(fx(1), fx(1)), fx(3, 2)));
+  // A slow patch is no pit; radius 0 is the centre point.
+  CHECK_FALSE(discOverPits(a, v(fx(-4), fx(-4)), r));
+  CHECK(discOverPits(a, v(fx(0), fx(0)), Fixed::zero()));
+  CHECK_FALSE(discOverPits(a, v(fx(3), fx(3)), Fixed::zero()));
+}

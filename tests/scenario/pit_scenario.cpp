@@ -1,10 +1,12 @@
 // Pit falls end to end (architecture §5.6, §5.10, v0.57): a monkey whose
-// centre ends a tick over a pit while it is not dashing falls for
-// PlayerDef::fallTicks ticks (counting the tick it went in), out of control
-// and out of reach, and is then eliminated by nobody. A dash carries it over
-// a pit narrower than the dash's reach and drops it into one it cannot
-// clear; the body may overhang the edge as long as the centre does not; a
-// round waits for every fall to end.
+// whole contact disc ends a tick over the arena's pits (their union) while
+// it is not dashing falls for PlayerDef::fallTicks ticks (counting the tick
+// it went in), out of control and out of reach, and is then eliminated by
+// nobody. A dash carries it over a pit narrower than the dash's reach and
+// drops it into one it cannot clear; a body partly over the edge stays up,
+// one straddling two adjoining pit boxes goes, and a pit narrower than the
+// body takes nobody; a round waits for every fall to end. The faller's
+// bananas go down with it and never become pickups.
 #include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -29,6 +31,7 @@ constexpr int32_t kNarrowMinX = -9;  // the narrow pit: x in [-9, -7], 2 units
 constexpr int32_t kNarrowMaxX = -7;
 constexpr int32_t kWideMinX = 3;  // the wide pit: x in [3, 9], 6 units
 constexpr int32_t kWideMaxX = 9;
+constexpr int32_t kSeamX = 13;  // the split pit: [11, 13] and [13, 15], two boxes
 
 Vec2 at(int32_t x, int32_t y) {
   return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)};
@@ -37,35 +40,40 @@ Vec2 atRatio(int32_t num, int32_t den, int32_t y) {
   return Vec2{Fixed::fromRatio(num, den), Fixed::fromInt(y)};
 }
 
-// The default content plus arena 1, "pits": the dojo's box crossed by two
-// pit strips running wall to wall, a narrow one west of the centre and a
-// wide one east of it. A dash (4.4 units) clears the narrow one from beside
-// it and not the wide one.
+// The default content plus arena 1, "pits": the dojo's box crossed by pit
+// strips running wall to wall: a narrow one (index 0) west of the centre, a
+// wide one (1) east of it, one split into two adjoining boxes (2, 3) at the
+// east end, and one narrower than a monkey (4, 0.8 units). A dash (4.4
+// units) clears the narrow one from beside it and not the wide one.
 ContentDB pitContent() {
   ContentDB c = defaultContent();
   ArenaDef& a = c.arenas[1];
   a = c.arenas[0];
   a.name = ContentName::of("pits");
   a.spawnPoints[0] = at(-12, 0);
-  a.spawnPoints[1] = at(12, 0);
+  a.spawnPoints[1] = at(0, 6);
   a.spawnPointCount = 2;
   a.wallCount = 0;
   a.hazards[0] = Hazard{at(kNarrowMinX, -9), at(kNarrowMaxX, 9), HazardKind::Pit, Fixed::one()};
   a.hazards[1] = Hazard{at(kWideMinX, -9), at(kWideMaxX, 9), HazardKind::Pit, Fixed::one()};
-  a.hazardCount = 2;
+  a.hazards[2] = Hazard{at(kSeamX - 2, -9), at(kSeamX, 9), HazardKind::Pit, Fixed::one()};
+  a.hazards[3] = Hazard{at(kSeamX, -9), at(kSeamX + 2, 9), HazardKind::Pit, Fixed::one()};
+  a.hazards[4] = Hazard{atRatio(-22, 5, -9), atRatio(-18, 5, 9), HazardKind::Pit, Fixed::one()};
+  a.hazardCount = 5;
   c.arenaCount = 2;
   return c;
 }
 
 struct Lab {
-  ContentDB db = pitContent();
+  ContentDB db;
   MatchConfig config;
   MatchContent content;
   WorldState s;
   EventLog all;
 
-  explicit Lab(PlayerMask players)
-      : config{.seed = 0x917, .players = players, .arena = 1},
+  explicit Lab(PlayerMask players, ContentDB contentDb = pitContent())
+      : db(contentDb),
+        config{.seed = 0x917, .players = players, .arena = 1},
         content(matchContent(db, config)),
         s(initialWorld(config)) {
     EventLog log;
@@ -87,10 +95,16 @@ struct Lab {
     return log;
   }
   [[nodiscard]] const AbilityDef& dash() const { return db.abilityForSlot(kAbilitySlotDash); }
+  [[nodiscard]] Fixed radius() const { return db.player.radius; }
 };
 
 [[nodiscard]] bool overNarrowPit(Fixed x) {
   return x >= Fixed::fromInt(kNarrowMinX) && x <= Fixed::fromInt(kNarrowMaxX);
+}
+
+// Somewhere clear of every pit for the bystander.
+Vec2 aside() {
+  return at(-14, 7);
 }
 
 }  // namespace
@@ -98,7 +112,7 @@ struct Lab {
 TEST_CASE("a dash carries a monkey across a narrow pit", "[scenario][pit]") {
   Lab lab(0b11);
   placePlayer(lab.s, kP0, at(-6, 0));  // the centre one unit east of the edge
-  placePlayer(lab.s, kP1, at(12, 0));
+  placePlayer(lab.s, kP1, aside());
   lab.step(PlayerInput{kLeft, 255, kLeft, kDash, 0});
   REQUIRE(findEvent(lab.all, EventKind::PlayerDashed) != nullptr);
   int ticksOverPit = 0;
@@ -121,11 +135,12 @@ TEST_CASE("walking into a pit falls out of control, then is eliminated by nobody
           "[scenario][pit]") {
   Lab lab(0b11);
   placePlayer(lab.s, kP0, at(-6, 0));
-  placePlayer(lab.s, kP1, at(12, 0));
+  placePlayer(lab.s, kP1, aside());
   const int fallTicks = lab.db.player.fallTicks;
   REQUIRE(fallTicks > 1);
-  // Walk west holding Throw (a charging wind-up) until the centre crosses
-  // the edge.
+  // Walk west holding Throw (a charging wind-up) until the whole body is
+  // over the pit: the centre a radius past the edge.
+  const Fixed goesAt = Fixed::fromInt(kNarrowMaxX) - lab.radius();
   int fellOn = -1;
   for (int t = 0; t < 60 && fellOn < 0; ++t) {
     const Fixed before = playerAt(lab.s, kP0).transform.pos.x;
@@ -133,8 +148,8 @@ TEST_CASE("walking into a pit falls out of control, then is eliminated by nobody
     if (const SimEvent* e = findEvent(log, EventKind::PlayerFell)) {
       CHECK(e->player == kP0);
       CHECK(e->a == 0);  // the narrow pit's hazard index
-      CHECK(before > Fixed::fromInt(kNarrowMaxX));
-      CHECK(playerAt(lab.s, kP0).transform.pos.x <= Fixed::fromInt(kNarrowMaxX));
+      CHECK(before > goesAt);
+      CHECK(playerAt(lab.s, kP0).transform.pos.x <= goesAt);
       fellOn = t;
     }
   }
@@ -142,13 +157,14 @@ TEST_CASE("walking into a pit falls out of control, then is eliminated by nobody
   const Vec2 wentIn = playerAt(lab.s, kP0).transform.pos;
   CHECK(countEvents(lab.all, EventKind::BoomerangThrown) == 0);
   // The fall: no control (a release, a dash, the stick east), no movement,
-  // and the round goes on until it ends.
+  // the held banana still in hand, and the round goes on until it ends.
   int elapsed = 1;  // the tick it went in counts
   for (; elapsed < fallTicks; ++elapsed) {
     const Player& p = playerAt(lab.s, kP0);
     REQUIRE(p.tags.has(Tag::Falling));
     CHECK(p.transform.pos == wentIn);
     CHECK(p.abilities[kAbilitySlotThrow].phase == AbilityPhase::Idle);
+    CHECK(p.ammo == lab.db.player.ammoStart);
     CHECK(lab.s.rules.phase == MatchPhase::Playing);
     const uint8_t buttons = (elapsed % 2) == 0 ? kDash : uint8_t{0};  // and Throw released
     const EventLog log = lab.step(PlayerInput{kRight, 255, kRight, buttons, 0});
@@ -163,6 +179,7 @@ TEST_CASE("walking into a pit falls out of control, then is eliminated by nobody
   CHECK(out.tick.value == firstEvent(lab.all, EventKind::PlayerFell).tick.value +
                               static_cast<uint32_t>(fallTicks) - 1);
   CHECK(countEvents(lab.all, EventKind::PlayerHit) == 0);
+  CHECK(countEvents(lab.all, EventKind::PickupSpawned) == 0);  // its banana went down too
   CHECK(lab.s.playerBySlot(kP0) == nullptr);
   const SimEvent& ended = firstEvent(lab.all, EventKind::RoundEnded);
   CHECK(ended.player == kP1);
@@ -172,7 +189,7 @@ TEST_CASE("walking into a pit falls out of control, then is eliminated by nobody
 TEST_CASE("a dash that ends over a wide pit falls when the dash ends", "[scenario][pit]") {
   Lab lab(0b11);
   placePlayer(lab.s, kP0, at(2, 0));  // one unit west of the wide pit
-  placePlayer(lab.s, kP1, at(-12, 0));
+  placePlayer(lab.s, kP1, aside());
   lab.step(PlayerInput{kRight, 255, kRight, kDash, 0});
   REQUIRE(findEvent(lab.all, EventKind::PlayerDashed) != nullptr);
   const Tick pressed = firstEvent(lab.all, EventKind::PlayerDashed).tick;
@@ -191,26 +208,52 @@ TEST_CASE("a dash that ends over a wide pit falls when the dash ends", "[scenari
   CHECK(p.transform.pos.x < Fixed::fromInt(kWideMaxX));
 }
 
-TEST_CASE("a monkey falls when its centre is over the pit, not its body", "[scenario][pit]") {
+TEST_CASE("a monkey falls only once its whole body is over the pit", "[scenario][pit]") {
   Lab lab(0b11);
-  placePlayer(lab.s, kP1, at(12, 0));
-  // Three quarters of a unit from the edge: half the radius hangs over it.
-  placePlayer(lab.s, kP0, atRatio(-27, 4, 0));
-  REQUIRE(lab.db.player.radius > Fixed::fromRatio(1, 4));
-  for (int t = 0; t < 60; ++t)
-    lab.step();
-  CHECK(countEvents(lab.all, EventKind::PlayerFell) == 0);
-  // The centre on the edge (the box is closed): it goes.
-  placePlayer(lab.s, kP0, at(kNarrowMaxX, 0));
+  placePlayer(lab.s, kP1, aside());
+  const Fixed edge = Fixed::fromInt(kNarrowMaxX);
+  const auto stays = [&](Fixed x) {
+    placePlayer(lab.s, kP0, Vec2{x, Fixed::zero()});
+    for (int t = 0; t < 30; ++t)
+      lab.step();
+    return countEvents(lab.all, EventKind::PlayerFell) == 0;
+  };
+  CHECK(stays(edge));                                    // the centre on the edge
+  CHECK(stays(edge - (lab.radius() / 2)));               // three quarters of the body over it
+  CHECK(stays(edge - lab.radius() + Fixed::epsilon()));  // a sliver of the disc on the floor
+  // The disc touching the edge from inside (the boxes are closed): it goes.
+  placePlayer(lab.s, kP0, Vec2{edge - lab.radius(), Fixed::zero()});
   const EventLog log = lab.step();
   CHECK(countEvents(log, EventKind::PlayerFell) == 1);
   CHECK(playerAt(lab.s, kP0).tags.has(Tag::Falling));
 }
 
+TEST_CASE("a pit made of adjoining boxes is one pit; one narrower than a monkey takes nobody",
+          "[scenario][pit]") {
+  SECTION("straddling the seam of two pit boxes") {
+    Lab lab(0b11);
+    placePlayer(lab.s, kP1, aside());
+    placePlayer(lab.s, kP0, at(kSeamX, 0));  // half the body over each box
+    const EventLog log = lab.step();
+    const SimEvent* fell = findEvent(log, EventKind::PlayerFell);
+    REQUIRE(fell != nullptr);
+    CHECK((fell->a == 2 || fell->a == 3));
+  }
+  SECTION("0.8 units wide, centred in it") {
+    Lab lab(0b11);
+    placePlayer(lab.s, kP1, aside());
+    REQUIRE(lab.radius() * 2 > Fixed::fromRatio(4, 5));
+    placePlayer(lab.s, kP0, at(-4, 0));
+    for (int t = 0; t < 60; ++t)
+      lab.step();
+    CHECK(countEvents(lab.all, EventKind::PlayerFell) == 0);
+  }
+}
+
 TEST_CASE("a falling monkey is out of reach: bananas fly over it", "[scenario][pit]") {
   Lab lab(0b11);
-  placePlayer(lab.s, kP1, at(12, 0));
-  placePlayer(lab.s, kP0, at(kNarrowMaxX, 0));
+  placePlayer(lab.s, kP1, aside());
+  placePlayer(lab.s, kP0, at(-8, 0));  // the middle of the narrow pit
   lab.step();
   REQUIRE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
   // P1's banana flying west straight through P0's centre.
@@ -222,7 +265,7 @@ TEST_CASE("a falling monkey is out of reach: bananas fly over it", "[scenario][p
     CHECK(countEvents(log, EventKind::PlayerHit) == 0);
     const Boomerang* b = lab.s.boomerangs.get(id);
     if (b != nullptr && lab.s.playerBySlot(kP0) != nullptr &&
-        b->transform.pos.x < Fixed::fromInt(kNarrowMaxX - 1)) {
+        b->transform.pos.x < Fixed::fromInt(-9)) {
       passed = true;
     }
   }
@@ -233,7 +276,7 @@ TEST_CASE("a falling monkey is out of reach: bananas fly over it", "[scenario][p
 TEST_CASE("a round waits for every fall: a doomed last monkey does not win", "[scenario][pit]") {
   Lab lab(0b11);
   // Both walk into a pit, P1 a few ticks after P0.
-  placePlayer(lab.s, kP0, atRatio(-13, 2, 0));  // half a unit from the narrow pit
+  placePlayer(lab.s, kP0, atRatio(-13, 2, 0));  // its body half a unit from the narrow pit
   placePlayer(lab.s, kP1, at(2, 0));            // one unit from the wide pit
   int falls = 0;
   for (int t = 0; t < 200 && lab.s.rules.phase == MatchPhase::Playing; ++t) {
@@ -253,4 +296,89 @@ TEST_CASE("a round waits for every fall: a doomed last monkey does not win", "[s
   CHECK_FALSE(ended.player.isValid());  // a draw
   CHECK(lab.s.rules.scores[0] == 0);
   CHECK(lab.s.rules.scores[1] == 0);
+}
+
+TEST_CASE("a faller's banana in flight turns home and goes down the pit with it",
+          "[scenario][pit][banana]") {
+  Lab lab(0b11);
+  placePlayer(lab.s, kP1, aside());
+  placePlayer(lab.s, kP0, at(-8, 0)).ammo = 0;
+  // Its banana still outbound, three units east and heading back west (a
+  // throw that bounced off something), so it is home well within the fall.
+  const EntityId id = spawnBanana(lab.s, kP0, at(-5, 0), Vec2{-Fixed::fromRatio(4, 15), Fixed{}},
+                                  BoomerangPhase::Outbound, lab.db);
+  lab.s.boomerangs.items[id.index].transform.facing = Angle::fromBam(Angle::kHalf);
+  lab.step();
+  REQUIRE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
+  const Boomerang* b = lab.s.boomerangs.get(id);
+  REQUIRE(b != nullptr);
+  CHECK(b->phase == BoomerangPhase::Returning);  // turned for home at once
+  bool inHand = false;
+  while (lab.s.playerBySlot(kP0) != nullptr) {
+    lab.step();
+    if (const Player* p = lab.s.playerBySlot(kP0); p != nullptr && p->ammo == 1) inHand = true;
+  }
+  const SimEvent& gone = firstEvent(lab.all, EventKind::BoomerangFell);
+  CHECK(gone.player == kP0);
+  CHECK(gone.entity == id);
+  CHECK(gone.a == static_cast<uint32_t>(BananaFall::WithOwner));
+  CHECK(inHand);  // it went down in the hand
+  CHECK(countEvents(lab.all, EventKind::BoomerangFell) == 1);
+  CHECK(countEvents(lab.all, EventKind::BoomerangCaught) == 0);
+  CHECK(countEvents(lab.all, EventKind::BoomerangGrounded) == 0);
+  CHECK(countEvents(lab.all, EventKind::PickupSpawned) == 0);
+  CHECK(lab.s.boomerangs.empty());
+  CHECK(lab.s.pickups.empty());
+
+  // The next round hands out bananas as ever.
+  const uint8_t round = lab.s.rules.round;
+  const auto nextRoundOn = [&] {
+    return lab.s.rules.round > round && lab.s.rules.phase == MatchPhase::Playing;
+  };
+  for (int t = 0; t < 1200 && !nextRoundOn(); ++t)
+    lab.step();
+  REQUIRE(nextRoundOn());
+  CHECK(playerAt(lab.s, kP0).ammo == lab.db.player.ammoStart);
+  CHECK_FALSE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
+}
+
+TEST_CASE("a faller's banana still away when the fall ends is lost, never a pickup",
+          "[scenario][pit][banana]") {
+  ContentDB c = pitContent();
+  c.player.fallTicks = 4;  // too short for the banana to come home
+  Lab lab(0b11, c);
+  placePlayer(lab.s, kP1, aside());
+  placePlayer(lab.s, kP0, at(-8, 0)).ammo = 0;
+  const EntityId id = spawnBanana(lab.s, kP0, at(10, -4), Vec2{Fixed::fromRatio(3, 10), Fixed{}},
+                                  BoomerangPhase::Outbound, lab.db);
+  while (lab.s.playerBySlot(kP0) != nullptr)
+    lab.step();
+  const SimEvent& out = firstEvent(lab.all, EventKind::PlayerEliminated);
+  const SimEvent& gone = firstEvent(lab.all, EventKind::BoomerangFell);
+  CHECK(gone.entity == id);
+  CHECK(gone.player == kP0);
+  CHECK(gone.a == static_cast<uint32_t>(BananaFall::Lost));
+  CHECK(gone.tick == out.tick);  // with the fall's end
+  CHECK(lab.s.boomerangs.get(id) == nullptr);
+  CHECK(countEvents(lab.all, EventKind::PickupSpawned) == 0);
+  CHECK(lab.s.pickups.empty());
+}
+
+TEST_CASE("a faller's banana that grounds is lost, never a pickup", "[scenario][pit][banana]") {
+  Lab lab(0b11);
+  placePlayer(lab.s, kP1, aside());
+  placePlayer(lab.s, kP0, at(-8, 0));
+  lab.step();
+  REQUIRE(playerAt(lab.s, kP0).tags.has(Tag::Falling));
+  // Grounded on the floor (a slam, the return clock): LifecycleSystem would
+  // make it a pickup this tick.
+  const EntityId id = spawnBanana(lab.s, kP0, at(0, -4), Vec2{}, BoomerangPhase::Grounded, lab.db);
+  const EventLog log = lab.step();
+  const SimEvent* gone = findEvent(log, EventKind::BoomerangFell);
+  REQUIRE(gone != nullptr);
+  CHECK(gone->entity == id);
+  CHECK(gone->a == static_cast<uint32_t>(BananaFall::Lost));
+  CHECK(countEvents(log, EventKind::BoomerangGrounded) == 0);
+  CHECK(countEvents(log, EventKind::PickupSpawned) == 0);
+  CHECK(lab.s.pickups.empty());
 }

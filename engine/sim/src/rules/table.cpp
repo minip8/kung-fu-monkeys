@@ -35,6 +35,8 @@ constexpr uint8_t kReach = 1;
 // Player × Hazard (row 60, v0.22) is the pit: a player whose centre is over
 // it starts to fall (v0.57), unless it is Dashing: a dash carries a monkey
 // over a pit, and it falls if its dash ends with the centre still over one.
+// Row 41 (v0.57) is the one row that wants a Falling monkey: its own banana
+// coming home goes down the pit with it instead of being caught.
 // The parry (v0.21, row 15) sits below the perfect catch (both reward
 // timing; the catch also gains a banana at once, so it wins a tie) and above
 // the slam, the shield and damage: a mistimed parry declines and falls
@@ -60,7 +62,7 @@ constexpr uint8_t kEnemy = relationBit(Relation::Enemy);
 constexpr uint8_t kAlly = relationBit(Relation::Ally);
 constexpr Tag kFf = Tag::FriendlyFire;
 
-constexpr std::array<InteractionRule, 21> kRules = {{
+constexpr std::array<InteractionRule, 22> kRules = {{
     // Player[PerfectDash] x Boomerang[InFlight, !own]: perfect catch.
     {10, EntityKind::Player, Tags::of(Tag::PerfectDash), kGone, EntityKind::Boomerang, Tags{},
      Tags{}, kPhaseInFlight, Ownership::NotOwn, &catchBoomerang},
@@ -127,6 +129,9 @@ constexpr std::array<InteractionRule, 21> kRules = {{
     // Player[] x Boomerang[Returning, own]: auto catch.
     {40, EntityKind::Player, Tags{}, kGone, EntityKind::Boomerang, Tags{}, Tags{}, kPhaseReturning,
      Ownership::Own, &autoCatch},
+    // Player[Falling] x Boomerang[Returning, own] (v0.57): it goes down with its owner.
+    {41, EntityKind::Player, Tags::of(Tag::Falling), Tags::of(Tag::Eliminated),
+     EntityKind::Boomerang, Tags{}, Tags{}, kPhaseReturning, Ownership::Own, &bananaFallsWithOwner},
     // Player[] x Pickup[Banana]: take the banana.
     {50, EntityKind::Player, Tags{}, kGone, EntityKind::Pickup, Tags{}, Tags{}, kPhaseAny,
      Ownership::Any, &takePickup, pickupKindBit(PickupKind::Banana)},

@@ -49,8 +49,16 @@ enum class EventKind : uint8_t {
   MonkeyCalled,  // player = caller, entity = caller's player, a = symbol (the aim byte),
                  // b = the call's range (raw Q16.16 bits)
   // v0.57 (pit falls, §5.6):
-  PlayerFell,  // player, entity = player, a = the pit's index in the arena's hazards;
-               // PlayerEliminated (killer 0xFF) follows PlayerDef::fallTicks - 1 ticks later
+  PlayerFell,     // player, entity = player, a = the pit's index in the arena's hazards;
+                  // PlayerEliminated (killer 0xFF) follows PlayerDef::fallTicks - 1 ticks later
+  BoomerangFell,  // player = owner (falling), entity = boomerang, a = BananaFall: a falling
+                  // monkey's banana gone down the pit with it, never a pickup
+};
+
+// BoomerangFell payload `a` (v0.57).
+enum class BananaFall : uint8_t {
+  WithOwner = 0,  // it came home to its falling owner: one more banana in the hand going down
+  Lost = 1,       // still away (or grounded) when the fall ended: it is gone where it was
 };
 
 // BoomerangCaught payload `a`.

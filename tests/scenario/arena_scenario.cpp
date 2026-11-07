@@ -174,10 +174,11 @@ TEST_CASE("walking into a pit eliminates by nobody and ends the round", "[scenar
     const EventLog log = lab.step(PlayerInput{kLeft, 255, kLeft, 0, 0});
     all.insert(all.end(), log.begin(), log.end());
     if (findEvent(log, EventKind::PlayerFell) != nullptr) {
-      // The tick it went in (v0.57: the fall starts), its centre crossed the
-      // edge (x <= -12).
-      CHECK(before > Fixed::fromInt(-12));
-      CHECK(playerAt(lab.s, kP0).transform.pos.x <= Fixed::fromInt(-12));
+      // The tick it went in (v0.57: the fall starts), its whole body came
+      // over the pit (the centre a radius past the edge x = -12).
+      const Fixed goesAt = Fixed::fromInt(-12) - lab.db.player.radius;
+      CHECK(before > goesAt);
+      CHECK(playerAt(lab.s, kP0).transform.pos.x <= goesAt);
     }
   }
   CHECK(firstEvent(all, EventKind::PlayerFell).player == kP0);

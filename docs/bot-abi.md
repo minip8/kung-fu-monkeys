@@ -152,7 +152,7 @@ Enumerations (byte values):
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded |
 | pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
-| hazard kind | 0 Pit (a monkey whose centre ends a tick inside while not Dashing falls: tag Falling for `fall_ticks`, then eliminated by nobody; architecture v0.57), 1 Slow (move speed × `speedMul` inside) |
+| hazard kind | 0 Pit (a monkey whose whole disc ends a tick inside the union of the pit boxes while not Dashing falls: tag Falling for `fall_ticks`, then eliminated by nobody; architecture v0.57), 1 Slow (move speed × `speedMul` inside) |
 
 ### 2.2 Top level
 
@@ -434,8 +434,12 @@ maxY`, 16 bytes); points are i32 Q16.16 `x, y` (8 bytes).
 
 `hazards[i]` (24 bytes; absolute 5044 + 24 i): offset 0 box `box`; 16 i32 `speedMul` (Q16.16,
 Slow); 20 u8 `kind` (hazard kind); 21..23 `pad0..pad2`. A hazard acts on a monkey whose centre is
-inside (the closed box); it never blocks movement or bananas. A pit spares a Dashing monkey
-(v0.57): a dash carries it across, and it falls if the dash ends with its centre still inside.
+inside (the closed box); it never blocks movement or bananas. A pit is the exception (v0.57): a
+monkey falls once its whole contact disc (`self.radius`; touching the edge from inside counts)
+lies inside the union of all the pit boxes, adjoining tilemap boxes counting as one pit, so a
+pit narrower than the body takes nobody. A Dashing monkey is spared: a dash carries it across,
+and it falls if the dash ends with its disc still over the pits. A faller's bananas go down with
+it: never a pickup.
 
 `spawners[i]` (16 bytes; absolute 5428 + 16 i): offset 0 point `pos`; 8 u16 `powerUpSet` (bit j:
 power-up j may spawn, 0 = any); 10 u16 `firstTicks` (Playing tick of the first spawn); 12 u16

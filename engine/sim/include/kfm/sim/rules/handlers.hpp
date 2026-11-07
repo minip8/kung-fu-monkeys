@@ -46,6 +46,11 @@ bool damagePlayer(WorldState& s, const MatchContent& content, EntityId a, Entity
 // Prio 40, rules/auto_catch.cpp: the owner touches its returning banana.
 bool autoCatch(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                const Contact& contact, EventSink& sink);
+// Prio 41, rules/hazard.cpp (v0.57): a falling monkey meets its own returning
+// banana: it goes down the pit with it (ammo + 1 up to ammoMax, so it shows
+// in the hand), BoomerangFell{WithOwner}; never a pickup.
+bool bananaFallsWithOwner(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
+                          const Contact& contact, EventSink& sink);
 // Prio 50, rules/pickup.cpp: a grounded banana restores ammo.
 bool takePickup(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                 const Contact& contact, EventSink& sink);
@@ -58,8 +63,9 @@ bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, Entity
 // taker its carrier).
 bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
               const Contact& contact, EventSink& sink);
-// Prio 60, rules/hazard.cpp (v0.22, v0.57): a player whose centre is in a Pit
-// and that is not Dashing starts to fall (Tag::Falling, PlayerFell);
+// Prio 60, rules/hazard.cpp (v0.22, v0.57): a player whose whole contact disc
+// is over the pits (CollisionSystem, discOverPits) and that is not Dashing
+// starts to fall (Tag::Falling, PlayerFell);
 // LifecycleSystem eliminates it fallTicks later, killer 0xFF. Declines for
 // every other HazardKind. b.index is the hazard's index in
 // content.arena.hazards.

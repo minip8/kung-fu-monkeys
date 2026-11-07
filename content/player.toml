@@ -11,7 +11,7 @@ max_hp = 1                  # one hit and you are out of the round
 ammo_max = 1                # bananas a monkey can hold
 ammo_start = 1              # bananas in hand at round start
 hit_stun_ticks = 6          # 0.1 s stagger after a non-lethal hit
-fall_ticks = 36             # 0.6 s down a pit (centre over it, not dashing) before the monkey is out
+fall_ticks = 36             # 0.6 s down a pit (whole body over it, not dashing) before the monkey is out
 abilities = ["dash", "throw"]   # base kit, loadout 0 "base": [dash button, throw button(, ability button)]; a missing third is "none"
 
 [pickup]
