@@ -617,6 +617,21 @@ changed their content hash only); servers and the page must deploy together (con
 reference-bot strength test's elimination bar went 5x → 3x: a sweep of five seed bases put 5x on
 the noise mean (3.4x to 8.5x per base at either pause). The other three changes are client and
 platform only.
+v0.56 changes: the page's canvas is no longer `desynchronized` (§6.8). The web client still
+flickered after v0.55, most in its first seconds, never natively. Frame-by-frame captures in
+headless Chromium (the drawing buffer read after every `requestAnimationFrame` callback, startup
+and four screen changes, DPR 1 and 1.5) found no wrong frame left by the client: every callback
+ends with a finished picture or draws nothing (a held measuring frame). What remained was the
+desynchronized hint itself: it lets the display read the canvas while a frame is being drawn,
+and every frame starts by clearing it, which Chrome's guidance for the hint names as a flicker
+cause that `preserveDrawingBuffer` does not cover; slow first frames (shader and glyph work)
+widen that window. The default double-buffered canvas shows only finished frames, as the
+native client's swap does; `preserveDrawingBuffer` goes too (only the hint needed it; a
+callback that draws nothing still leaves the previous picture up, checked in Chromium). Cost:
+up to a frame of display latency in Chromium. Bringing the hint back needs each frame drawn
+off screen and copied once into the canvas, and a check on real GPUs (headless Chromium cannot
+show the display's reads). `tools/web/check_browser.py` now fails a desynchronized context.
+Client page only: no sim, content or wire change, replay checksums unchanged.
 v0.57 changes: pit falls, and dry rounds (§5.3, §5.6, §5.7, §5.9, §5.10, §5.12, §7, §8). A pit no longer eliminates a monkey
 on the tick its centre crosses the edge: the monkey **falls**, and only once its **whole body**
 is over the hole. `CollisionSystem` emits the pit contact when the monkey's contact disc (the
@@ -2901,12 +2916,11 @@ C++ server library is mature. The seam makes that swap a contained change.
   measured display rate (EMA of frame intervals) is at least 0.95 × `kTickHz` × time scale (the
   tolerance covers 59.94 Hz displays), otherwise frames interpolate with
   `alpha = accumulator / tickCost`; the overlay can force either.
-- Browser specifics: request the WebGL context with `desynchronized: true` (bypasses the
-  compositor queue in Chromium) and, since v0.55, `preserveDrawingBuffer: true` (Chrome clears a
-  WebGL drawing buffer after each frame, and a desynchronized canvas can be scanned out between
-  that clear and the next frame, which flickers; the client redraws every frame, so preserving
-  the buffer costs a copy at most), read input and step the sim at the top of the
-  `requestAnimationFrame` callback, render the newest predicted tick directly rather than
+- Browser specifics: request the WebGL context double-buffered, without `desynchronized`
+  (v0.56; v0.15-v0.55 asked for it to bypass Chromium's compositor queue, but it lets the
+  display read the canvas mid-frame, and a frame that starts with a clear then flickers; v0.55's
+  `preserveDrawingBuffer` did not cure it and went with it), read input and step the sim at the
+  top of the `requestAnimationFrame` callback, render the newest predicted tick directly rather than
   interpolating, and keep no other compositing layers over the canvas. Expect the browser to cost
   one to two frames over a tuned native client; the netcode hides network latency, not this.
 - Target glass-to-glass for your own actions: ~30–50 ms native, ~50–70 ms in the browser, on a
@@ -3944,8 +3958,8 @@ lives in the bots repository (above) and uses this repository through a pinned r
   when `xvfb-run` exists at configure time. A renderer that cannot create its buffers, shaders
   or pipelines makes the client exit non-zero, so the test fails on a broken renderer; a
   missing character model only warns and draws capsules. The browser page sets
-  `webglContextAttributes` (`desynchronized`, `powerPreference`, no antialias) and, because SDL3
-  creates its context through `emscripten_webgl_create_context` which ignores that setting,
+  `webglContextAttributes` (`powerPreference`, no antialias; v0.56: no `desynchronized`) and,
+  because SDL3 creates its context through `emscripten_webgl_create_context` which ignores that setting,
   also wraps `getContext('webgl2')` to merge the same attributes.
 - Audio and VFX tests (v0.19): `kfm_presentation_tests` checks every event's effects and cue,
   effect lifetimes and expiry, dash and banana trails, entity positions of pickup and landing

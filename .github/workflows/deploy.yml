@@ -168,6 +168,7 @@ jobs:
           grep -q "assets/$hash/kfm_client.js" site/kfm_client.html \
             || { echo "::error::no kfm_client.js script tag in kfm_client.html"; exit 1; }
           cp site/kfm_client.html site/index.html
+          cp "$src/favicon.svg" site/
           if [[ -z "$KFM_LOBBY_URL" ]]; then
             echo "::warning::repository variable KFM_LOBBY_URL is not set"
           fi
@@ -185,6 +186,8 @@ jobs:
           /kfm_client
             Cache-Control: no-cache
           /config.js
+            Cache-Control: no-cache
+          /favicon.svg
             Cache-Control: no-cache
           EOF
           find site -type f | sort
