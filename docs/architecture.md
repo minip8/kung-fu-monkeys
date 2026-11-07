@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.61 (2026-11-07). Working title taken from the repo name.
+Status: proposal v0.62 (2026-11-07). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -849,6 +849,11 @@ never compared it with its source: open, a CI rebuild needs a wasm32 clang on th
 GCC 14.3 cannot build the engine at `-Werror` (a `-Wnull-dereference` false positive in
 libstdc++ reached from the content loader), so the bots repository's CI builds the runner on
 Ubuntu 26.04; whether §9 keeps GCC 14 in the toolchain line is open. No engine code change.
+v0.62 changes: the Linux toolchain floor is GCC 15 (§9). GCC 14 was never in CI and does not
+build the engine at `-Werror` (v0.61), so the claim was nominal; the requirement now matches
+what CI verifies: GCC ≥ 15 or Clang ≥ 19. If a GCC 14 build is ever wanted, the one warning is
+cheap to silence and a CI leg on Ubuntu 24.04 with `gcc-14` is the way to keep it. No code
+change.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4206,7 +4211,7 @@ lives in the bots repository (above) and uses this repository through its tagged
   GCC 15.2, Clang 21.1, MSVC 19.51, Apple Clang 21 and Emscripten 6, and fails on GCC 13.3 (no
   deducing `this`) and Clang 18.1 with libstdc++ 13 (no `std::expected`), which are what Ubuntu
   24.04 ships. Linux CI therefore runs on Ubuntu 26.04. The requirement is a build machine with
-  GCC ≥ 14 or Clang ≥ 19; the dedicated server's deployment is decoupled from the host distro by
+  GCC ≥ 15 or Clang ≥ 19 (v0.62: GCC 14 was never in CI and fails at `-Werror`); the dedicated server's deployment is decoupled from the host distro by
   building in CI and shipping the binary (static libstdc++) or a container, so this is a
   build-machine constraint, not a hosting one. The probe stays in the build as a canary.
 
