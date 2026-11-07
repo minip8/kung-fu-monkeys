@@ -75,7 +75,7 @@ inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<StatKind> = 4;
 template <>
-inline constexpr uint8_t kEnumCount<BoomerangPhase> = 3;
+inline constexpr uint8_t kEnumCount<BoomerangPhase> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<PickupKind> = 3;
 template <>
@@ -94,7 +94,7 @@ template <>
 inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
 static_assert(static_cast<uint8_t>(StatKind::Radius) + 1 == kEnumCount<StatKind>);
-static_assert(static_cast<uint8_t>(BoomerangPhase::Grounded) + 1 == kEnumCount<BoomerangPhase>);
+static_assert(static_cast<uint8_t>(BoomerangPhase::Sinking) + 1 == kEnumCount<BoomerangPhase>);
 static_assert(static_cast<uint8_t>(PickupKind::Flag) + 1 == kEnumCount<PickupKind>);
 static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);
 static_assert(static_cast<uint8_t>(PowerUpShape::Coin) + 1 == kEnumCount<PowerUpShape>);
@@ -211,6 +211,8 @@ void visit(V& v, BoomerangDef& d) {
   visit(v, d.restitution);
   visit(v, d.spawnOffset);
   v.u8(d.damage);
+  visit(v, d.pitSpeed);  // v0.57
+  v.u16(d.pitSinkTicks);
 }
 template <class V>
 void visit(V& v, PickupDef& d) {
@@ -326,6 +328,7 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.vision.focus);
   v.u8(d.vision.hearing);
   v.u8(d.vision.bananaSight);
+  v.u16(d.dryRoundTicks);  // v0.57
 }
 template <class V>
 void visit(V& v, LoadoutDef& d) {
@@ -402,6 +405,7 @@ void visit(V& v, MatchRules& r) {
     v.u16(t);
   for (uint32_t& d : r.modeData)
     v.u32(d);
+  v.u16(r.dryTicks);  // v0.57
 }
 template <class V>
 void visit(V& v, Transform& t) {
@@ -505,6 +509,7 @@ void visit(V& v, Boomerang& b) {
   v.u8(b.damage);
   visit(v, b.speedMul);  // projectile modifiers (§5.8)
   visit(v, b.radiusMul);
+  visit(v, b.target);  // v0.57: a falling owner's pit
 }
 template <class V>
 void visit(V& v, Pickup& p) {

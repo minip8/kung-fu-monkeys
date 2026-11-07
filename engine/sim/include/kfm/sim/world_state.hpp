@@ -107,7 +107,12 @@ struct Player {
   uint16_t fallTicks{0};
 };
 
-enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded };
+// v0.57: ToPit, a falling monkey's banana flying straight to where its owner
+// went in (Boomerang::target); Sinking, arrived and dropping into the hole
+// (BoomerangDef::pitSinkTicks, then LifecycleSystem despawns it). Neither
+// matches any rule row (each Boomerang row names Outbound/Returning), so such
+// a banana hits, catches and is caught by nothing, and it is never a pickup.
+enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded, ToPit, Sinking };
 
 struct Boomerang {
   PlayerId owner{PlayerId::invalid()};
@@ -121,6 +126,13 @@ struct Boomerang {
   // (§5.8): speed and contact radius are the BoomerangDef's times these.
   Fixed speedMul{Fixed::one()};
   Fixed radiusMul{Fixed::one()};
+  // v0.57, ToPit and Sinking: the point its falling owner went in.
+  Vec2 target{};
+
+  // Bound for its owner's pit (or in it): no longer a banana anyone can use.
+  [[nodiscard]] constexpr bool pitBound() const {
+    return phase == BoomerangPhase::ToPit || phase == BoomerangPhase::Sinking;
+  }
 };
 
 // v0.33: Flag, a capture team's flag (modes/capture.cpp); no spawner, no
@@ -166,6 +178,9 @@ struct MatchRules {
   // written only by its ModeBehavior hooks. Cleared at match start, visited
   // unconditionally; the rounds, deathmatch and survival kinds never touch it.
   std::array<uint32_t, kModeDataWords> modeData{};
+  // v0.57: the round kinds' dry clock (modes/mode_flow.hpp roundRanDry):
+  // ticks in a row with no banana left anywhere; 0 while there is one.
+  uint16_t dryTicks{0};
 
   // Any of the mode counters is non-zero.
   [[nodiscard]] constexpr bool hasModeCounters() const {

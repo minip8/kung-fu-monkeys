@@ -104,6 +104,73 @@ bool anyFalling(const WorldState& s) {
   return falling;
 }
 
+namespace {
+
+// A power-up that tops ammo up when taken (rules/powerup.cpp).
+[[nodiscard]] bool laysBananas(const PowerUpDef& def) {
+  for (uint8_t g = 0; g < def.grantCount && g < kMaxPowerUpGrants; ++g) {
+    const PowerUpGrant& grant = def.grants[g];
+    if (grant.kind == GrantKind::Stat && grant.stat.stat == StatKind::AmmoMax &&
+        grant.stat.add > Fixed::zero()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] bool bananaLeft(const WorldState& s, const MatchContent& content) {
+  bool left = false;
+  s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+    if (!p.tags.has(Tag::Eliminated) && p.ammo > 0) left = true;
+  });
+  s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
+    if (!b.pitBound()) left = true;
+  });
+  const ContentDB& db = content.db;
+  s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+    if (k.kind == PickupKind::Banana) left = true;
+    if (k.kind == PickupKind::PowerUp && k.powerUpIndex < db.powerUpCount &&
+        laysBananas(db.powerUpAt(k.powerUpIndex))) {
+      left = true;
+    }
+  });
+  if (left) return true;
+  // A spawner with a beat still to come (LifecycleSystem::runSpawners) that
+  // may draw a power-up laying bananas.
+  const ArenaDef& arena = content.arena;
+  for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {
+    const PickupSpawner& sp = arena.pickupSpawners[i];
+    if (sp.intervalTicks == 0 && s.rules.ticksInPhase > sp.firstTicks) continue;
+    const uint32_t all = db.powerUpCount >= 32 ? UINT32_MAX : (uint32_t{1} << db.powerUpCount) - 1u;
+    const uint32_t set =
+        (sp.powerUpSet == 0 ? all : (uint32_t{sp.powerUpSet} & all)) & content.powerUps;
+    for (uint8_t d = 0; d < db.powerUpCount && d < kMaxPowerUps; ++d) {
+      if ((set & (1u << d)) != 0 && laysBananas(db.powerUpAt(d))) return true;
+    }
+  }
+  return false;
+}
+
+[[nodiscard]] bool arenaHasPit(const ArenaDef& arena) {
+  for (uint8_t i = 0; i < arena.hazardCount && i < kMaxArenaHazards; ++i) {
+    if (arena.hazards[i].kind == HazardKind::Pit) return true;
+  }
+  return false;
+}
+
+}  // namespace
+
+bool roundRanDry(WorldState& s, const MatchContent& content) {
+  uint16_t& dry = s.rules.dryTicks;
+  if (bananaLeft(s, content)) {
+    dry = 0;
+    return false;
+  }
+  const uint16_t grace = arenaHasPit(content.arena) ? content.mode.dryRoundTicks : uint16_t{0};
+  if (dry < grace) ++dry;
+  return dry >= grace;
+}
+
 PlayerId soleSurvivor(const WorldState& s) {
   PlayerId winner = PlayerId::invalid();
   if (s.players.size() != 1) return winner;

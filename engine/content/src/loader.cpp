@@ -676,6 +676,8 @@ class Builder {
     s.fixed("restitution", b.restitution, Fixed::zero(), Fixed::fromInt(4));
     s.fixed("spawn_offset", b.spawnOffset, Fixed::zero(), Fixed::fromInt(16));
     s.integer("damage", b.damage, 0, 255);
+    s.speed("pit_speed", b.pitSpeed);  // v0.57
+    s.integer("pit_sink_ticks", b.pitSinkTicks, 1, 65535);
   }
 
   void parsePickup(Section& s) {
@@ -1350,6 +1352,7 @@ class Builder {
     s.integer("score_to_win", m.scoreToWin, 0, 255);
     s.integer("respawn_ticks", m.respawnTicks, 0, 65535);
     s.integer("respawn_invuln_ticks", m.respawnInvulnTicks, 0, 65535);
+    s.integer("dry_round_ticks", m.dryRoundTicks, 0, 65535);  // v0.57
     // v0.32: teams, the baseline power-up and the roles. Names resolve once
     // every file is read (powerups.toml sorts after modes.toml).
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);

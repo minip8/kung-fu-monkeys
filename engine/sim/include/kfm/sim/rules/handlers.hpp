@@ -46,11 +46,6 @@ bool damagePlayer(WorldState& s, const MatchContent& content, EntityId a, Entity
 // Prio 40, rules/auto_catch.cpp: the owner touches its returning banana.
 bool autoCatch(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                const Contact& contact, EventSink& sink);
-// Prio 41, rules/hazard.cpp (v0.57): a falling monkey meets its own returning
-// banana: it goes down the pit with it (ammo + 1 up to ammoMax, so it shows
-// in the hand), BoomerangFell{WithOwner}; never a pickup.
-bool bananaFallsWithOwner(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
-                          const Contact& contact, EventSink& sink);
 // Prio 50, rules/pickup.cpp: a grounded banana restores ammo.
 bool takePickup(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                 const Contact& contact, EventSink& sink);

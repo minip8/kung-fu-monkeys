@@ -3,8 +3,9 @@
 # one-cell-per-turn walk crosses it in 24 turns (6 s at 15-tick turns). Two
 # spawn groups of five face each other from the west and east edges; two
 # 2 x 2 blocks and a 1 x 4 pillar per side give cover, a 2 x 2 block sits in
-# the middle, and two pits break the centre line at the top and bottom
-# edges. Symmetric under a half turn. Two spawners drop Quick Hands (the
+# the middle, and two 2 x 2 pits break the centre line at the top and bottom
+# edges (v0.57: two rows deep, so a monkey of radius 0.5 can fall in the
+# continuous space too, where a pit must hold its whole body). Symmetric under a half turn. Two spawners drop Quick Hands (the
 # only way to step and throw in one turn) beside the middle block. The grid
 # modes pick it by default (modes.toml `arena`); it plays the continuous
 # space too.
@@ -14,7 +15,7 @@ cell = 1.0
 spawn_groups = 2
 map = [
   "...........~~...........",
-  "........................",
+  "...........~~...........",
   ".0...##..........##...8.",
   ".....##..........##.....",
   "........................",
@@ -25,7 +26,7 @@ map = [
   "........................",
   ".....##..........##.....",
   ".3...##..........##...5.",
-  "........................",
+  "...........~~...........",
   "...........~~...........",
 ]
 spawners = [

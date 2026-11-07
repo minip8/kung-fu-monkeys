@@ -616,7 +616,7 @@ changed their content hash only); servers and the page must deploy together (con
 reference-bot strength test's elimination bar went 5x → 3x: a sweep of five seed bases put 5x on
 the noise mean (3.4x to 8.5x per base at either pause). The other three changes are client and
 platform only.
-v0.57 changes: pit falls (§5.3, §5.6, §5.9, §5.10, §5.12, §7, §8). A pit no longer eliminates a monkey
+v0.57 changes: pit falls, and dry rounds (§5.3, §5.6, §5.7, §5.9, §5.10, §5.12, §7, §8). A pit no longer eliminates a monkey
 on the tick its centre crosses the edge: the monkey **falls**, and only once its **whole body**
 is over the hole. `CollisionSystem` emits the pit contact when the monkey's contact disc (the
 radius stat) lies wholly inside the union of the arena's pit boxes (`discOverPits` over
@@ -627,10 +627,11 @@ doubled midpoint, so no sampling, no float, the same answer on every host and in
 body touching the edge from inside counts as over it; one with a sliver on the floor does not.
 A consequence: a pit narrower than the body (2 × radius) in its narrow dimension takes nobody.
 Shipped arenas: island's shores are 3 to 5 units; outposts' two `~~` pits are 2 × 2 (a monkey of
-radius 0.5 falls with its centre in the middle 1 × 1); courtyard's two `~~` pits are 2 × 1
-against the north and south walls, exactly a body deep, so in the continuous modes a monkey falls
-there only pressed against the wall (its centre clamped to the pit's middle row) and in the grid
-(radius 0.35) as before. Row 60 forbids `Dashing` (and `Falling`, via `kGone`), so a dash
+radius 0.5 falls with its centre in the middle 1 × 1); courtyard's two pits, 2 × 1 against the
+north and south walls (exactly a body deep: in the continuous modes a monkey fell there only
+pressed against the wall), are widened to 2 × 2 (rows 1 and 12 gain `~~`), so they take a
+continuous monkey like outposts' and a grid monkey (radius 0.35) as before; spawns, spawn groups,
+the spawners and `ContentDB::compatible` are untouched. Row 60 forbids `Dashing` (and `Falling`, via `kGone`), so a dash
 carries a monkey over a pit and how wide a pit it clears is the dash's reach (4.4 units), with no
 pit-size check anywhere; a dash that ends over a pit falls on the next tick. The fall is
 `Tag::Falling` (bit 10) plus `Player::fallTicks`, set from the new `PlayerDef::fallTicks`
@@ -645,30 +646,57 @@ before (hp 0, `Eliminated`, `PlayerEliminated` with killer 0xFF, `onEliminated` 
 then despawns it. The round kinds (rounds, survival, team rounds) end no round while a monkey is
 falling (`anyFalling`): a monkey that went into a pit is already out, so the last one standing
 while another falls wins only once that fall ends, and if it too is gone by then the round is a
-draw. **The faller's bananas go down with it and never become pickups**: a banana in its hand
-stays there (and is drawn sinking with it); its bananas still outbound turn for home at once;
-one that reaches it goes into the hand (rule row 41, `Player[Falling] × Boomerang[Returning,
-own]`, the one row that wants a falling monkey: `BoomerangFell{owner, banana, WithOwner}`);
-whatever is still away when the fall ends is lost where it is (`BoomerangFell{.., Lost}`), as is
-one that grounds while its owner falls. Every round and respawn still hands out `ammo_start` as
-before. The grid falls by the same rule: a walk falls once its disc is inside the pit cell (with
+draw. **The faller's bananas go down the pit after it and never become pickups**: a banana in
+its hand stays there (and is drawn sinking with it); every one of its bananas away from it
+(outbound, returning or grounded) turns `BoomerangPhase::ToPit` with `Boomerang::target` = the
+point it went in, flies there in a straight line at `[boomerang] pit_speed` (24 units/s, 1.5 ×
+the flight speed) through walls and the outer box, lands exactly on the point and turns `Sinking`
+(`BoomerangFell{owner, banana}`) for `pit_sink_ticks` (18), then `LifecycleSystem` despawns it.
+Straight and through walls because it must always arrive and arrive soon: the homing turn limit
+takes half a second just to turn a far banana round, a wall could trap it, and 24 units/s
+crosses the largest arena's diagonal in under two seconds. It is a trip to the pit, not play:
+ToPit and Sinking match no rule row (every Boomerang row names Outbound/Returning; a test pins
+it), so on its way it hits, is caught, parried or slammed by nothing, and it flies on in every
+match phase, so one still travelling when the fall (or the round) ends finishes its trip. The
+monkey's elimination stays at the end of `fall_ticks` whether or not its bananas have arrived.
+Every round and respawn still hands out `ammo_start` as before; a round start clears whatever is
+still flying. **A round with no banana left ends** (the parry-then-fall softlock: a monkey that
+parried another's only banana and then fell took both down, leaving the survivors none): in the
+round kinds (rounds, survival, team rounds, which the grid modes are), when no live monkey holds
+a banana, no banana entity is out (in flight, returning or grounded; one bound for a pit counts as
+gone), no banana pickup lies around and no power-up that tops ammo up (an `ammo_max` grant with
+`add` > 0) lies around or can still be laid by a spawner, the round ends as the kind's clock-out
+would: rounds and team rounds a draw, survival its timeout winner. Only bananas hurt (a dash attack
+needs one; hazards other than pits do nothing; a slam only pushes), so on an arena without pits
+nothing can change a dry round and it ends at once; on one with pits a monkey can still walk or
+be slammed in, so it ends after `dry_round_ticks` (ModeDef, `[[mode]] dry_round_ticks`, default
+180: 3 s) dry ticks in a row, counted in the new `MatchRules::dryTicks`. The grid falls by the same rule: a walk falls once its disc is inside the pit cell (with
 radius 0.35 on a 1.0 cell, near the end of the slide; at 1-tick turns, on the step's tick, as
 before), a dash's slide is `Dashing` throughout and falls only if it ends on a pit cell. The
 reference bot scores a fall like a hit with the sim's own disc test, fetches no banana it could
 only reach by falling, ignores a falling enemy and dashes across a pit it can clear when that is
-the way to its goal (§8). The presentation draws the fall from state (§7 "Pit falls"): a
-startled hop, then a drop under the floor (whose depth hides the body) where the monkey stands,
-shrinking, tipping, spinning and darkening with the banana in its hand, its shadow shrinking
-away, its tag and aim bar gone; `PlayerFell` adds a closing ring and a falling slide whistle, a
-banana lost away from its owner vanishes in a puff, and the elimination bursts out of the pit at
-floor level.
+the way to its goal (§8); it treats ToPit and Sinking bananas as harmless (Observation v1's banana
+phase gains 3 and 4, an append). On the grid it now sees that a step into a pit cell is taken (the
+sim lets a walk in), not refused: modelled as staying, such a step tied with standing still and
+the hysteresis could pick it, half the grid bots' deaths on courtyard. The presentation draws
+the fall from state (§7 "Pit falls"): a startled hop, then a drop under the floor (whose depth
+hides the body) where the monkey stands, shrinking, tipping, spinning and darkening with the
+banana in its hand, its shadow shrinking away, its tag and aim bar gone; `PlayerFell` adds a
+closing ring and a falling slide whistle; a banana bound for the pit hops there and sinks into
+the hole with a small ring and a plop; and the elimination bursts out of the pit at floor level.
 Replay checksums: changed, corpus regenerated because `Player::fallTicks` and
 `PlayerDef::fallTicks` entered the world state and the content. With both left out of the
 visitors the gate passed on the old `.checksums` for every entry but the two in which a monkey
 falls (`scripted_4p_island_1800t`, `scripted_10p_grid_rounds_1t_1800t`, whose scripted inputs
 react to the longer rounds); every other `.kfmr` differs only in its content hash. The
-whole-body edge and the faller's bananas (a second regeneration within v0.57) moved only those
-same two entries.
+whole-body edge (a second regeneration within v0.57) moved only those same two entries. The
+third, for the bananas going to the pit, the dry-round rule and courtyard's pits, changed every
+`.checksums` file, because `Boomerang::target` and `MatchRules::dryTicks` entered the world state
+(and `pit_speed`, `pit_sink_ticks` and `dry_round_ticks` the content); with those left out of the
+visitors and courtyard's old map, the gate passed on the previous checksums for every entry but
+the same two pit-fall ones, so no dry round occurs in the corpus. Courtyard's new pits then moved
+the three courtyard entries' inputs (`scripted_4p_grid_rounds_3600t`,
+`scripted_4p_grid_rounds_1t_1800t`, `scripted_10p_grid_rounds_1t_1800t`).
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -930,6 +958,7 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 | `deathmatch` | one round; the first to `scoreToWin` eliminations, or the leader once `timeLimitTicks` of play pass (a tied lead: draw) ends the match (`RoundEnded` + `MatchEnded`) | +1 score for the attacker (`ScoreChanged`), +1 death, respawn due in `respawnTicks` | a present slot without a monkey or a pending respawn (a late joiner) is scheduled like a respawn; a slot that left keeps its monkey until eliminated, then forfeits its score |
 | `survival` | as rounds, plus a per-round `timeLimitTicks`: on timeout the survivor with the most hp wins the round, then the one with the fewest deaths this match, else a draw | +1 death | no respawn within a round |
 | `team_rounds` (v0.32) | monkeys of at most one team left (two or more teams present): that team wins the round (none: draw), credited to its lowest surviving slot; the first team whose slots' round wins sum to `roundsToWin` takes the match | nothing | one team present never ends a round |
+| (v0.57, the round kinds above) | a dry round: no banana in a hand, out (a pit-bound one is gone) or lying around and no ammo power-up to come ends as the clock-out would (rounds, team rounds: a draw; survival: its timeout winner), at once without pits, after `dry_round_ticks` (180) dry ticks with them | | `roundRanDry` in `mode_flow`, `MatchRules::dryTicks`; the parry-then-fall softlock |
 | `team_deathmatch` (v0.32) | one round; the first team whose slots' eliminations sum to `scoreToWin`, or the leading team once `timeLimitTicks` pass (a tied lead: draw); `MatchEnded` names the team's present top scorer | +1 score for an enemy attacker only (an ally's or one's own scores nothing), +1 death, respawn as deathmatch | a slot that leaves keeps its score: it is the team's |
 | `hill` (v0.33) | one round; every Playing tick, if the monkeys in zone 0 are of exactly one team, that team's hold clock advances, and at `hillTicks` the team scores a point (credited to its lowest slot in the zone) and that clock alone restarts; a contested or empty zone holds every clock; the first team to `scoreToWin` points, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch; nobody scores | `HillHolderChanged` when the sole holder changes; a leaver keeps its score |
 | `capture` (v0.33) | one round; team t's flag starts at the centre of zone t; a carrier in its own team's zone while its own flag is home scores a capture (credited to the carrier) and the flag goes home; the first team to `scoreToWin` captures, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch, nobody scores; a carrier drops the flag as a pickup where it stood | a dropped flag no enemy picks up for `flagReturnTicks` goes home; its own team cannot touch it |
@@ -1281,8 +1310,9 @@ order (then earlier dash press, then pool index), and a contact whose entity an 
 despawned is skipped. Every row forbids `Tag::Eliminated` on the player: a player eliminated
 earlier in the same tick stays in the pool until `LifecycleSystem` and must not be hit, catch
 or pick up again. v0.57: the same set (`kGone`) holds `Tag::Falling`, so no row touches a
-monkey falling down a pit either, on whichever side of the pair it is, but row 41, which wants
-one (its own banana coming home goes down the pit with it).
+monkey falling down a pit either, on whichever side of the pair it is; and every Boomerang row
+names an Outbound/Returning phase mask, so no row touches a banana bound for a pit (ToPit,
+Sinking) either.
 
 ```
 prio  A                          B                              handler
@@ -1295,7 +1325,6 @@ prio  A                          B                              handler
  26   Player[Slamming, !HitStun] Player[] (reach)               SlamPushesPlayer
  30   Player[!HitStun]           Boomerang[InFlight, !own]      DamagePlayer
  40   Player[]                   Boomerang[Returning, own]      AutoCatch
- 41   Player[Falling]            Boomerang[Returning, own]      BananaFallsWithOwner (v0.57: into the pit with it)
  50   Player[]                   Pickup[Banana]                 TakePickup (declines at ammoMax)
  51   Player[]                   Pickup[PowerUp]                GrantPowerUp (declines with a full list)
  52   Player[!Carrying]          Pickup[Flag]                   TakeFlag (v0.33; declines for the flag's own team)
@@ -1421,22 +1450,25 @@ reference bot runs the same function over the observation's boxes. A pit narrowe
 §5.8) and otherwise starts the fall: `Tag::Falling`, `Player::fallTicks = PlayerDef::fallTicks`
 (TOML `[player] fall_ticks`, 36; at least 1, counting the tick it went in), the velocity, a
 slam's pending push and a grid commitment cleared, every ability slot back to Idle without
-`onPhaseChange`/`onEnd` (a charging throw is dropped, not thrown), its own bananas still outbound
-turned for home at once, and `PlayerFell{player, entity, a = the hazard index}`. While it falls:
+`onPhaseChange`/`onEnd` (a charging throw is dropped, not thrown), its bananas away from it sent
+to the pit (below), and `PlayerFell{player, entity, a = the hazard index}`. While it falls:
 - InputSystem hands it an idle intent with the aim at its facing (no press reaches a slot, the
   latch keeps the facing); `prevButtons` still follows the input, so no stale edge fires after.
 - The spaces leave it where it went in (velocity zero; the grid drops its commitment and skips
   it at the latch).
 - No rule row touches it (`kGone`): bananas fly over it, a dash attack or a slam push misses
-  it, it takes no pickup and catches nothing; `zoneOccupants` leaves it out. The one exception
-  is row 41, `Player[Falling] × Boomerang[Returning, own]` (`bananaFallsWithOwner`): its own
-  banana coming home goes into its hand (ammo + 1 up to `ammoMax`, drawn sinking with it) and
-  down the pit, `BoomerangFell{owner, banana, WithOwner}`.
-- Its bananas never become pickups: one that grounds while it falls (a slam, the return clock)
-  is lost by `LifecycleSystem` instead of laid (`BoomerangFell{.., Lost}`), and when the fall
-  ends `eliminateFallen` loses every banana it still owns where it is. Held bananas go with the
-  monkey as on any elimination. Round starts and respawns hand out `ammo_start` as ever, so a
-  fall costs the round only the faller's own bananas, like a death holding them.
+  it, it takes no pickup and catches nothing; `zoneOccupants` leaves it out.
+- Its bananas go down the pit after it and never become pickups. The one in its hand stays
+  there and goes with it. Every one away from it (outbound, returning, or grounded this very
+  tick) turns `ToPit` with `Boomerang::target` = where the monkey went in, and ProjectileSystem
+  flies it there (§5.7): a straight line at `BoomerangDef::pitSpeed` through walls, the last step
+  landing exactly on the point, then `Sinking` with `BoomerangFell{owner, banana}` for
+  `pitSinkTicks`, after which `LifecycleSystem` despawns it. It matches no rule row on the way
+  (harmless, uncatchable, unparriable) and keeps going in every match phase, so a banana still
+  travelling when the fall ends finishes its trip: the elimination does not wait for it, nor it
+  for the elimination. Round starts and respawns hand out `ammo_start` as ever (a round start
+  clears what is still flying), so a fall costs the round only the faller's own bananas; when
+  that leaves no banana at all, the dry-round rule (§5.3) ends the round.
 - `LifecycleSystem` counts `fallTicks` down in every match phase (after the respawn timers,
   before the despawns) and at 0 eliminates it by nobody (`rules/fall.hpp`, `eliminateFallen`):
   hp 0, `Eliminated`, `PlayerEliminated` with killer 0xFF and no `PlayerHit`, then the mode's
@@ -1527,6 +1559,11 @@ is a defence only for a player who has thrown.
   current position with a max turn rate. Bounces off arena walls with restitution. Owner
   eliminated → Grounded → becomes a pickup. Hits a player → flies on unchanged (v0.28: no
   `pierce` switch; before v0.27 a hit grounded it at the contact point).
+- v0.57, a falling owner's banana: two more phases, `ToPit` (flying straight to
+  `Boomerang::target`, the point its owner went down a pit, at `BoomerangDef::pitSpeed` through
+  walls and the outer box, the last step landing exactly) and `Sinking` (on the point for
+  `pitSinkTicks`, then despawned by LifecycleSystem; `BoomerangFell` on arrival). Both advance in
+  every match phase, match no rule row, never ground and never become pickups (§5.6 "Pit falls").
 - A throw spawns the banana `spawnOffset` (1.0) ahead of the thrower along the aim, clear of
   the thrower's contact radius (0.5 + 0.35), so no throw starts with a contact against its owner.
 - Caught by a perfect dash (any player) or by touching its owner while returning → `ammo++`.
@@ -1664,9 +1701,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   player where `PlayerHit` carries the banana, and presentation shows both the same way),
   `PlayerEliminated{victim, killer}`, `PlayerFell{victim, entity, a = the pit's hazard index}`
   (v0.57: the start of a pit fall; its `PlayerEliminated` with killer 0xFF follows
-  `fallTicks − 1` ticks later, §5.6), `BoomerangFell{owner, banana, a = BananaFall}` (v0.57: a
-  falling monkey's banana gone down the pit with it, `WithOwner` into its hand or `Lost` where
-  it was; never a pickup),
+  `fallTicks − 1` ticks later, §5.6), `BoomerangFell{owner, banana}` (v0.57: a falling
+  monkey's banana, flown to the point its owner went in, drops into the pit: `Sinking`),
   `RoundEnded{winner}`, `MatchEnded{winner}` (an invalid winner is a draw),
   ... v0.23 (modes): `ScoreChanged{player, score}` (a deathmatch elimination scored; round wins
   are carried by `RoundEnded`), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
@@ -2071,7 +2107,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   toggle for a power-up some mode names as its baseline. The arena is `courtyard` (index 8): a
   24 × 14 tilemap, two groups of five spawn points on the west and east edges, two 2 × 2 blocks
   and a 1 × 4 pillar per side, a 2 × 2 block in the middle, two pits on the centre line at the
-  edges, symmetric under a half turn (7 walls, 2 hazards); `hilltop` and `outposts` suit the
+  edges (v0.57: 2 × 2, so the continuous modes' whole-body rule can take a monkey too; they were
+  2 × 1), symmetric under a half turn (7 walls, 2 hazards); `hilltop` and `outposts` suit the
   grid modes too.
 - Vision (v0.35, `ModeDef::vision`, `VisionDef` in `kfm/sim/content/mode.hpp`): `vision = {
   kind = "all" | "team" | "own", peripheral, cone, focus, hearing, banana_sight }`, an inline
@@ -3173,7 +3210,7 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `PlayerHit`, `PlayerDashHit` | HitFlash 0.2 s, HitSpark 0.25 s (6 sparks in a cone away from the banana or attacker), flash, shake | Hit (thud) |
 | `PlayerEliminated` | EliminationBurst 0.6 s, EliminationPoof 0.7 s (5 smoke puffs), shake; v0.57: at the end of a pit fall both rise from the floor where the body went under (its last drawn position at `kEffectGroundHeight`), not at body height over the edge | Elimination |
 | `PlayerFell` (v0.57) | PitFall 0.45 s: two rings in the slot colour closing in where the monkey went down; the fall itself is drawn from state (below) | Fall (a slide whistle falling from 1.4 kHz to under 300 Hz) |
-| `BoomerangFell` (v0.57) | `WithOwner`: a flash on the falling monkey (the banana is then drawn in its sinking hand); `Lost`: a ThrowPuff 0.35 s where the banana vanished | CatchAuto for `WithOwner`; none for `Lost` |
+| `BoomerangFell` (v0.57) | a small PitFall (`RenderEffect::size` = `kBananaSplashSize`) where the banana drops in; its hop there and its sinking are drawn from state (below) | BananaPlop (a short falling bloop) |
 | `PickupTaken` | PickupSparkle 0.35 s at the pickup; a power-up (v0.20) adds PowerUpBurst 0.5 s (a ring and 8 sparks in the taker's colour) | Pickup; PowerUp (rising arpeggio) for a power-up |
 | `ShieldBroken` (v0.20) | ShieldShatter 0.4 s (a blue ring, flash and 7 shards), flash, shake | ShieldBreak (glassy crack) |
 | `BoomerangGrounded` | GroundDust 0.35 s where it landed | BananaGround |
@@ -3210,9 +3247,11 @@ the centre and slid the drawn body into the pit; that tuck is gone). It shrinks 
 model's side axis), spins `kFallSpinTurns` (0.75) turns as t², darkens toward `kFallShade` by
 `kFallDarken` (0.55) × t, and plays the `hit` clip; its shadow shrinks and fades with 1 − t;
 its HUD tag and aim bar are not drawn, but a banana in its hand is, shrinking with the hand
-as it goes down. A banana of the faller's lost away from it (`BoomerangFell` `Lost`) vanishes in
-a puff where it was (`kBananaLostSeconds`); one coming home into the sinking hand flashes it and
-ticks like a catch. All numbers live in `tuning.hpp`. The body
+as it goes down. A banana of the faller's on its way to the pit (`ToPit`) hops there over its
+straight line (`kBananaPitArcPeak`, from its flight height down to hand height, so it reads as
+lobbed in over walls), then sinks (`Sinking`) from hand height to `kBananaSinkDepth` below the
+floor as t² over `pitSinkTicks`, its shadow shrinking away; the floor's depth hides it as it
+does the monkey. All numbers live in `tuning.hpp`. The body
 is gone well before the sim's last falling tick, and the elimination's burst then rises from the
 pit. `kfm_render_probe --exit-on pit-fall|fall [--fall-at PERCENT]` stops on a fall's first
 frame or once a fall is that far through (the screenshots for this change).
@@ -3523,7 +3562,16 @@ which the contract needs.
     range when a wall blocks the line to its target) now applies in the continuous space too:
     island's ten matches average 2 768 ticks (5 480 before) with 0 falls in 190 eliminations,
     pillars 3 422 (3 839); dojo has no walls and is unchanged; corridors still caps 5 of 10, as
-    it did before.
+    it did before. An armed bot with a wall between it and its target also looks to the end of
+    its horizon (32 ticks, not 16): at 16 no walk leaves a 2-unit block's face band, and two such
+    bots stood still. With both, corridors caps 0 of 10 (mean 6 947 ticks), island averages
+    2 915 with 0 falls in 184 eliminations, pillars 3 311. On the grid the bot now models a step
+    into a pit cell as taken (the sim lets a walk in) for the step it commits to, so pitDanger
+    scores it, where it used to model it as standing still: on courtyard at 1-tick turns, falls
+    went from 51 of 95 deaths (27 of 112 on the old 2 × 1 pits) to 0 of 116. Residual: a
+    deterministic mirror standoff, two hard bots on the same cell or mirrored behind
+    courtyard's pillars, still caps about 1 match in 10 on courtyard in each space (the old map
+    capped 2 of 10 at 1-tick turns); the per-slot tie-breaks do not separate them there.
 
 Teams, fog and calls (v0.29). The contest shape is a squad: a team of monkeys, each run by its
 own program, seeing a slice of the world and talking through the game. One rule sits behind

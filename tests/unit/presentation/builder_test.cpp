@@ -1151,28 +1151,38 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
       soundForEvent(SimEvent{EventKind::PlayerFell, Tick{0}, kP0, EntityId{}, 0, 0});
   CHECK(cue.has_value());
   CHECK(cue.value_or(SoundCue{}).id == SoundId::Fall);
-  // A faller's banana: home into the sinking hand ticks; lost, it only puffs.
-  const auto fellSound = [](BananaFall how) {
-    return soundForEvent(SimEvent{EventKind::BoomerangFell, Tick{0}, kP0, EntityId{},
-                                  static_cast<uint32_t>(how), 0});
-  };
-  CHECK(fellSound(BananaFall::WithOwner).value_or(SoundCue{}).id == SoundId::CatchAuto);
-  CHECK_FALSE(fellSound(BananaFall::Lost).has_value());
+  // A faller's banana dropping into its pit plops.
+  CHECK(soundForEvent(SimEvent{EventKind::BoomerangFell, Tick{0}, kP0, EntityId{}, 0, 0})
+            .value_or(SoundCue{})
+            .id == SoundId::BananaPlop);
   WorldState s = makePlayingWorld(57, 0b11, c);
   placePlayer(s, kP0, Vec2{Fixed::fromInt(-7) - c.player.radius, Fixed::zero()});
   placePlayer(s, kP1, Vec2{Fixed::fromInt(8), Fixed::zero()});
   REQUIRE(playerAt(s, kP0).ammo > 0);
+  // And one of its bananas away from it, over the floor east of the pit: it
+  // hops to the pit and sinks.
+  spawnBanana(s, kP0, Vec2{-Fixed::fromInt(3), Fixed::zero()}, Vec2{}, BoomerangPhase::Outbound, c);
   const float radius = c.player.radius.toFloat();
   PresentationState ps;
   float lastFall = -1.0f;
   float deepest = 0.0f;
   bool sawStart = false;
   bool sawBurst = false;
+  bool bananaHopped = false;
+  bool bananaSank = false;
+  bool plop = false;
   for (int k = 0; k < c.player.fallTicks + 2 && !sawBurst; ++k) {
     const WorldState prev = s;
     EventLog log;
     runTicks(s, frameFor(s), 1, c, log);
     const RenderState rs = buildRenderState(ps, prev, s, 1.0f, log, c, kDt);
+    for (uint16_t i = 0; i < rs.bananaCount; ++i) {
+      const RenderBanana& b = rs.bananas[i];
+      if (b.phase == BananaPhase::ToPit && b.height > kBananaHandHeight) bananaHopped = true;
+      if (b.phase == BananaPhase::Sinking && b.height < 0.0f) bananaSank = true;
+    }
+    for (uint16_t i = 0; i < rs.soundCount; ++i)
+      plop = plop || rs.sounds[i].id == SoundId::BananaPlop;
     if (findEvent(log, EventKind::PlayerFell) != nullptr) {
       sawStart = true;
       CHECK(countEffects(rs, EffectKind::PitFall) == 1);
@@ -1205,6 +1215,9 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
   }
   CHECK(sawStart);
   CHECK(sawBurst);
+  CHECK(bananaHopped);
+  CHECK(bananaSank);
+  CHECK(plop);
   CHECK(lastFall > 0.9f);
   // Deep enough under the floor that the body, scaled down, is gone.
   CHECK(deepest < -radius * kMonkeyHeightOverRadius * kFallEndScale);

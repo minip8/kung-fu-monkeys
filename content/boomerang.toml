@@ -13,3 +13,5 @@ turn_rate_bam = 1200        # ~6.6 degrees per tick of homing while returning
 restitution = 1             # wall bounce keeps all its speed
 spawn_offset = 1            # spawns 1 unit ahead of the thrower: clear of 0.5 + 0.35
 damage = 1                  # one hit eliminates a 1-hp monkey; the banana flies on through it
+pit_speed = 24              # units/s: a falling monkey's bananas fly straight to its pit, over walls
+pit_sink_ticks = 18         # 0.3 s dropping into the hole, then gone (never a pickup)

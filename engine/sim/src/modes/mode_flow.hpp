@@ -34,6 +34,21 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
 // but already out, so the round waits the fall out and then judges.
 [[nodiscard]] bool anyFalling(const WorldState& s);
 
+// The dry-round rule of the round kinds (v0.57). A round is dry while no
+// banana is left: none in a live monkey's hand, no banana entity in flight,
+// returning or grounded (a falling owner's banana bound for its pit counts
+// as gone), no banana pickup, no power-up pickup lying around that tops ammo
+// up (a stat grant on ammo_max with add > 0), and no spawner that can still
+// lay one (a candidate that tops ammo up and a beat still to come). The
+// round kinds then end the round as their clock-out would (rounds and team
+// rounds: a draw; survival: its timeout winner). Bananas are the only thing
+// that hurts (a dash attack needs one), so on an arena without pits nothing
+// can change a dry round and it ends at once; with pits a monkey can still
+// walk or be slammed in, so the round ends only after ModeDef::dryRoundTicks
+// dry ticks in a row (counted in MatchRules::dryTicks; a tick with a banana
+// resets it). Returns true when the round should end now.
+[[nodiscard]] bool roundRanDry(WorldState& s, const MatchContent& content);
+
 // The only monkey left, or invalid when none or several are.
 [[nodiscard]] PlayerId soleSurvivor(const WorldState& s);
 

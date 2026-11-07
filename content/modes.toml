@@ -18,6 +18,10 @@
 #   score_to_win         deathmatch: eliminations that win (at least 1)
 #   respawn_ticks        deathmatch: from an elimination to the respawn (>= 1)
 #   respawn_invuln_ticks deathmatch: spawn protection after a respawn
+#   dry_round_ticks      rounds, survival, team_rounds (v0.57): a round with no
+#                        banana left anywhere ends as its clock-out would, at
+#                        once on an arena without pits, after this many dry
+#                        ticks on one with pits (default 180, 3 s)
 #   teams                0 = free-for-all (default), else 2 to 10 teams the
 #                        hosts split the slots into, round-robin (the team
 #                        kinds need it; such a mode plays only on an arena

@@ -7,9 +7,9 @@
 // Pit falls run in every match phase, after the respawn timers: a falling
 // monkey's fallTicks counts down and at 0 it is eliminated by nobody
 // (rules/fall.hpp), so it despawns in the same pass. A fall that starts on
-// tick T (fallTicks = PlayerDef::fallTicks = N) ends on tick T + N - 1, and
-// takes the faller's bananas still away with it. A banana that grounds while
-// its owner falls is lost too, never a pickup.
+// tick T (fallTicks = PlayerDef::fallTicks = N) ends on tick T + N - 1. A
+// faller's banana that has sunk into its pit for BoomerangDef::pitSinkTicks
+// (v0.57, ProjectileSystem) despawns here, in every phase, never a pickup.
 //
 // Respawns are driven by MatchRules' timers, which only modes that respawn
 // (deathmatch) set, so the code is the same for every mode: during Playing a
@@ -33,6 +33,7 @@
 #include "modes/mode_flow.hpp"
 #include "rules/fall.hpp"
 
+#include <algorithm>
 #include <bit>
 #include <cstdint>
 
@@ -132,13 +133,13 @@ void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink
   // Iterates boomerangs and spawns pickups: a different pool, so the
   // forEachAlive no-spawn rule holds.
   s.boomerangs.forEachAlive([&](EntityId id, const Boomerang& b) {
-    if (b.phase != BoomerangPhase::Grounded) return;
-    // v0.57: a falling monkey's banana goes down the pit with it, never a pickup.
-    if (const Player* owner = s.playerBySlot(b.owner);
-        owner != nullptr && owner->tags.has(Tag::Falling)) {
-      loseBanana(s, id, sink);
+    // v0.57: a falling monkey's banana that has sunk into its pit is gone.
+    if (b.phase == BoomerangPhase::Sinking &&
+        b.ticksInPhase >= std::max<uint16_t>(content.db.boomerang.pitSinkTicks, 1)) {
+      s.boomerangs.despawn(id);
       return;
     }
+    if (b.phase != BoomerangPhase::Grounded) return;
     const Vec2 pos = b.transform.pos;
     s.boomerangs.despawn(id);
     sink.push(SimEvent{EventKind::BoomerangGrounded, s.tick, PlayerId::invalid(), id, 0, 0});

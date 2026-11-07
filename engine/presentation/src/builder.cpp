@@ -180,10 +180,28 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
       return BananaPhase::Outbound;
     case BoomerangPhase::Returning:
       return BananaPhase::Returning;
+    case BoomerangPhase::ToPit:
+      return BananaPhase::ToPit;
+    case BoomerangPhase::Sinking:
+      return BananaPhase::Sinking;
     case BoomerangPhase::Grounded:
       break;
   }
   return BananaPhase::Grounded;
+}
+
+// v0.57: the height of a falling monkey's banana bound for (or in) its pit.
+[[nodiscard]] float bananaPitHeight(const Boomerang& b, float startDistance,
+                                    const ContentDB& content) {
+  if (b.phase == BoomerangPhase::Sinking) {
+    const float total = static_cast<float>(std::max<uint16_t>(content.boomerang.pitSinkTicks, 1));
+    const float t = clamp01(static_cast<float>(b.ticksInPhase) / total);
+    return kBananaHandHeight - ((kBananaHandHeight + kBananaSinkDepth) * t * t);
+  }
+  const float d = length(toFloat(b.target) - toFloat(b.transform.pos));
+  const float u = startDistance > 0.0f ? 1.0f - clamp01(d / startDistance) : 1.0f;
+  return kBananaHandHeight + (kBananaArcPeak * (1.0f - u)) +
+         (kBananaPitArcPeak * std::sin(kPi * u));
 }
 
 [[nodiscard]] HudPhase hudPhase(sim::MatchPhase p) {
@@ -387,6 +405,7 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     BananaTrack& track = ps.bananas[i];
     if (refreshTrack(track.motion, gen)) {
       track.returnStartDistance = -1.0f;
+      track.pitStartDistance = -1.0f;
       track.trailTimer = 0.0f;
     }
     decayOffset(track.motion, dt);
@@ -409,8 +428,25 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
       heading = lerpAngle(simAngleToYaw(pb->transform.facing), heading, alpha);
       spin = lerpAngle(simAngleToYaw(pb->spin), spin, alpha);
     }
-    const float height =
-        cb.phase == BoomerangPhase::Grounded ? kPickupHeight : kBananaHandHeight + arc;
+    float height = cb.phase == BoomerangPhase::Grounded ? kPickupHeight : kBananaHandHeight + arc;
+    // v0.57: bound for its falling owner's pit: a hop there, then down the hole.
+    const bool pitBound = cb.pitBound();
+    float sunk = 0.0f;  // 0..1 of the drop into the hole
+    if (pitBound) {
+      if (track.pitStartDistance < 0.0f) {
+        track.pitStartDistance =
+            std::max(length(toFloat(cb.target) - toFloat(cb.transform.pos)), 0.01f);
+      }
+      const float hCurr = bananaPitHeight(cb, track.pitStartDistance, content);
+      height = lerped && pb->pitBound()
+                   ? lerp(bananaPitHeight(*pb, track.pitStartDistance, content), hCurr, alpha)
+                   : hCurr;
+      if (cb.phase == BoomerangPhase::Sinking) {
+        const float total =
+            static_cast<float>(std::max<uint16_t>(content.boomerang.pitSinkTicks, 1));
+        sunk = clamp01(static_cast<float>(cb.ticksInPhase) / total);
+      }
+    }
 
     const Vec2f drawn = simPos + track.motion.visualOffset;
     track.motion.lastDrawn = drawn;
@@ -425,10 +461,20 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     rb.ownerSlot = slotOrNone(cb.owner);
     // v0.34: the shadow marks the banana's contact radius (big banana, the
     // grid's baseline).
-    pushShadow(out, rb.ground, radius * cb.radiusMul.toFloat(), height, ShadowOwner::Banana);
+    if (sunk > 0.0f) {
+      // Going down the hole: the shadow shrinks away (no lift: it is below).
+      if (out.shadowCount < kMaxRenderShadows) {
+        out.shadows[out.shadowCount++] =
+            RenderShadow{rb.ground, radius * cb.radiusMul.toFloat() * (1.0f - sunk), 1.0f - sunk,
+                         ShadowOwner::Banana};
+      }
+    } else {
+      pushShadow(out, rb.ground, radius * cb.radiusMul.toFloat(), std::max(height, 0.0f),
+                 ShadowOwner::Banana);
+    }
 
     // A short trail behind a flying banana.
-    if (cb.phase != BoomerangPhase::Grounded &&
+    if (cb.phase != BoomerangPhase::Grounded && cb.phase != BoomerangPhase::Sinking &&
         trailDue(track.trailTimer, dt, kBananaTrailInterval)) {
       addEffect(ps, RenderEffect{EffectKind::BananaTrail, rb.ownerSlot, rb.position,
                                  Vec2f{std::cos(heading), std::sin(heading)}, kBananaTrailSeconds,
@@ -558,6 +604,8 @@ float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnSta
       return kBananaArcPeak * std::sin(0.5f * kPi * u);
     }
     case BoomerangPhase::Grounded:
+    case BoomerangPhase::ToPit:  // v0.57: bananaPitHeight
+    case BoomerangPhase::Sinking:
       break;
   }
   return 0.0f;

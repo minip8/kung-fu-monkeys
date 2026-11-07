@@ -93,21 +93,21 @@ TEST_CASE("rules table is sorted and every row ignores eliminated players", "[si
   const auto rules = interactionRules();
   // M1 six + the shield rows and power-ups (v0.20) + the pit (v0.22) + the slam (v0.21)
   // + the parry (v0.21) + seven Ally twins (v0.32) + the capture flag (v0.33)
-  // + a faller's banana (v0.57)
-  REQUIRE(rules.size() == 22);
+  REQUIRE(rules.size() == 21);
   for (size_t i = 0; i < rules.size(); ++i) {
     if (i > 0) CHECK(rules[i - 1].priority < rules[i].priority);
     CHECK(rules[i].kindA == EntityKind::Player);
     CHECK(rules[i].forbidA.has(Tag::Eliminated));
     if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Eliminated));
     CHECK(rules[i].resolve != nullptr);
-    // v0.57: a falling monkey is out of reach; only row 41 (its own banana
-    // coming home) wants it.
-    if (rules[i].priority == 41) {
-      CHECK(rules[i].requireA.has(Tag::Falling));
-    } else {
-      CHECK(rules[i].forbidA.has(Tag::Falling));
-      if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Falling));
+    // v0.57: a falling monkey is out of reach, and so are its bananas bound
+    // for its pit: every Boomerang row names Outbound/Returning only.
+    CHECK(rules[i].forbidA.has(Tag::Falling));
+    if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Falling));
+    if (rules[i].kindB == EntityKind::Boomerang) {
+      CHECK(rules[i].phaseMaskB != kPhaseAny);
+      CHECK_FALSE(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::ToPit));
+      CHECK_FALSE(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::Sinking));
     }
   }
 }

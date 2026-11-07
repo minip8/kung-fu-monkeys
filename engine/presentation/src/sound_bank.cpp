@@ -46,6 +46,7 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.32f, 0.75f},   // Parry
     {0.20f, 0.45f},   // CallPing
     {0.62f, 0.55f},   // Fall
+    {0.20f, 0.45f},   // BananaPlop
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -299,6 +300,15 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         const float wobble = 1.0f + (0.03f * u * std::sin(kTwoPi * 7.0f * t));
         osc.next(hz * wobble, sr);
         v = std::min(clamp01(t / 0.02f), 1.0f - (u * u)) * harmonics(osc.phase(), 0.2f, 0.05f);
+        break;
+      }
+      case SoundId::BananaPlop: {
+        // v0.57: a bloop falling from 900 Hz with a dab of low-passed splash.
+        const float hz = 220.0f + (680.0f * std::exp(-t / 0.05f));
+        svf.step(noise.next(), 1200.0f, sr, 0.7f);
+        osc.next(hz, sr);
+        v = (env(t, 0.004f, 0.06f) * harmonics(osc.phase(), 0.25f, 0.0f)) +
+            (0.25f * env(t, 0.002f, 0.03f) * svf.low());
         break;
       }
       case SoundId::Count:

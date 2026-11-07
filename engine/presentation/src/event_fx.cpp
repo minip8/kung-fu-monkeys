@@ -96,9 +96,8 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
       return cue(SoundId::Elimination);
     case EventKind::PlayerFell:
       return cue(SoundId::Fall);
-    case EventKind::BoomerangFell:  // v0.57: home into a sinking hand ticks like a catch
-      if (e.a == static_cast<uint32_t>(sim::BananaFall::WithOwner)) return cue(SoundId::CatchAuto);
-      break;
+    case EventKind::BoomerangFell:  // v0.57: a faller's banana drops into its pit
+      return cue(SoundId::BananaPlop);
     case EventKind::PickupTaken:
       // A power-up or a capture flag (v0.33) sounds the same.
       return cue(e.a != static_cast<uint32_t>(sim::PickupKind::Banana) ? SoundId::PowerUp
@@ -251,18 +250,16 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       addEffect(ps, makeEffect(EffectKind::PitFall, slot, groundAt(player), kPitFallSeconds));
       soundAt = player;
       break;
-    case EventKind::BoomerangFell:
-      // v0.57: a faller's banana. Home in its hand it goes down with the body
-      // (the held banana is drawn sinking); still away when the fall ended,
-      // it vanishes in a puff where it was.
-      if (e.a == static_cast<uint32_t>(sim::BananaFall::WithOwner)) {
-        flashPlayer(ps, e.player, kAutoCatchFlashSeconds);
-        soundAt = player;
-      } else if (const std::optional<Vec2f> at = bananaPlane(ps, prev, curr, e.entity)) {
-        addEffect(ps, makeEffect(EffectKind::ThrowPuff, slot, simToWorld(*at, kBananaHandHeight),
-                                 kBananaLostSeconds));
-      }
+    case EventKind::BoomerangFell: {
+      // v0.57: a faller's banana reached its pit and drops in (the sinking is
+      // drawn from state): a small ring closing over the spot.
+      const Vec2f at = bananaPlane(ps, prev, curr, e.entity).value_or(player);
+      RenderEffect splash = makeEffect(EffectKind::PitFall, slot, groundAt(at), kPitFallSeconds);
+      splash.size = kBananaSplashSize;
+      addEffect(ps, splash);
+      soundAt = at;
       break;
+    }
     case EventKind::PickupTaken: {
       const Vec2f at = pickupPlane(ps, prev, curr, e.entity).value_or(player);
       addEffect(ps, makeEffect(EffectKind::PickupSparkle, slot, simToWorld(at, kPickupHeight),

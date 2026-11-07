@@ -446,10 +446,12 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   disc is over the union of the pit boxes (`discOverPits` / `discWithinBoxes` in
   `content/arena.hpp`, exact and integer-only; the bot uses the same function). Row 60 forbids
   `Dashing`, so a dash's reach is how wide a pit it clears. `kGone` in `rules/table.cpp` holds
-  `Falling`: a new row that forbids `kGone` is safe against a falling monkey (row 41, the
-  faller's own banana going down with it, is the one row that wants one). A faller's banana is
-  never a pickup (`loseBanana`). A new round-ending rule must wait for falls (`anyFalling`), or a
-  doomed last monkey wins.
+  `Falling`: a new row that forbids `kGone` is safe against a falling monkey. A faller's bananas
+  fly to its pit (`BoomerangPhase::ToPit`, then `Sinking`) and are never pickups; a new Boomerang
+  row must name an Outbound/Returning phase mask so it never touches them (a test pins it). A new
+  round-ending rule must wait for falls (`anyFalling`), or a doomed last monkey wins; the round
+  kinds also end a dry round (no banana left anywhere, `roundRanDry`, `[[mode]]
+  dry_round_ticks`), and anything new that makes bananas must count in `bananaLeft`.
 - A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
   `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
 

@@ -163,6 +163,12 @@ struct ModeDef {
   uint8_t arena{kNoArena};
   // v0.35, the squad contest (§8): what a bot sees. Defaults to everything.
   VisionDef vision{};
+  // v0.57, the round kinds: a round in which no banana is left anywhere (none
+  // in a hand, in flight or lying around, and no spawner that can still lay a
+  // power-up that tops ammo up) ends like a clock-out, at once on an arena
+  // without pits (nothing else can eliminate anyone) or after this many dry
+  // ticks on one with pits (a monkey may still walk or be pushed in).
+  uint16_t dryRoundTicks{180};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }

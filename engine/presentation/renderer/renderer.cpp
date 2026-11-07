@@ -1190,9 +1190,11 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
         // down, the inner one a beat behind.
         const Color c =
             e.slot >= 0 ? mix(playerColor(static_cast<uint32_t>(e.slot)), kWhite, 0.55f) : kWhite;
-        const float rr = r * lerp(2.4f, 0.4f, easeOut(t));
+        // `size` set: a faller's banana dropping in (smaller rings).
+        const float base = e.size > 0.0f ? e.size : r;
+        const float rr = base * lerp(2.4f, 0.4f, easeOut(t));
         d.groundDisc(e.position, kDecalLift, 0.0f, rr, rr, c, 0.85f * fade, DecalMode::Ring, 0.8f);
-        const float inner = r * lerp(1.6f, 0.2f, easeOut(clamp01(t * 1.3f)));
+        const float inner = base * lerp(1.6f, 0.2f, easeOut(clamp01(t * 1.3f)));
         d.groundDisc(e.position, kDecalLift, 0.0f, inner, inner, kWhite, 0.6f * fade,
                      DecalMode::Ring, 0.75f);
         break;
