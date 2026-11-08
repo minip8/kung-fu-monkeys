@@ -166,6 +166,11 @@ if(NOT KFM_HEADLESS)
   if(EMSCRIPTEN)
     target_link_options(kfm_client_tests PRIVATE
       "SHELL:--embed-file \"${kfm_replay_corpus}@/replay-corpus\"")
+    # The embedded corpus is an input of the link: a regenerated replay
+    # relinks the node test (globbed like the determinism gate's).
+    file(GLOB kfm_replay_corpus_files CONFIGURE_DEPENDS
+      "${kfm_replay_corpus}/*.kfmr" "${kfm_replay_corpus}/*.checksums")
+    set_property(TARGET kfm_client_tests APPEND PROPERTY LINK_DEPENDS ${kfm_replay_corpus_files})
     target_compile_definitions(kfm_client_tests PRIVATE KFM_REPLAY_CORPUS_DIR="/replay-corpus")
   else()
     target_compile_definitions(kfm_client_tests PRIVATE

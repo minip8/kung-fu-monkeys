@@ -144,8 +144,11 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
       TIMEOUT 120
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
     # M7 step 6: the replay viewer plays a corpus replay (recorded with the
-    # content built into the client), and a file that is not a replay shows
-    # the error screen and makes the run exit non-zero.
+    # content built into the client) and its exit line names a tick past 0;
+    # a file that is not a replay is refused with its reason and shows the
+    # error screen (the run then exits non-zero, which the regex makes
+    # ctest ignore: the output pins the behaviour, the exit code alone did
+    # not tell a refusal from a crash).
     add_test(NAME client_smoke_replay
       COMMAND ${KFM_XVFB_RUN} -a -s "-screen 0 1280x720x24"
               $<TARGET_FILE:kfm_client>
@@ -159,6 +162,9 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
     set_tests_properties(client_smoke_replay client_smoke_replay_bad PROPERTIES
       TIMEOUT 120
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
-    set_tests_properties(client_smoke_replay_bad PROPERTIES WILL_FAIL TRUE)
+    set_tests_properties(client_smoke_replay PROPERTIES
+      PASS_REGULAR_EXPRESSION "in the replay at tick [1-9][0-9]* of 1800,")
+    set_tests_properties(client_smoke_replay_bad PROPERTIES
+      PASS_REGULAR_EXPRESSION "error: replay [^\n]*corpus\\.txt: not a replay.*the replay could not be shown")
   endif()
 endif()
