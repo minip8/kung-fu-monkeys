@@ -84,9 +84,15 @@ TEST_CASE("clock: time scale", "[client][clock]") {
   CHECK(twice.advance(kT0 + kThreeTicksNs) == 4);  // 6 due, capped at 4
   CHECK(twice.stats().droppedTicks == 2);
 
+  FixedStepClock four;  // the replay viewer's fastest speed
+  four.reset(kT0);
+  four.setMaxTicksPerFrame(16);
+  four.setTimeScale(4.0);
+  CHECK(four.advance(kT0 + kThreeTicksNs) == 12);
+
   FixedStepClock clamped;
   clamped.setTimeScale(10.0);
-  CHECK(clamped.timeScale() == 2.0);
+  CHECK(clamped.timeScale() == 4.0);
   clamped.setTimeScale(0.0);
   CHECK(clamped.timeScale() == 0.25);
 }
