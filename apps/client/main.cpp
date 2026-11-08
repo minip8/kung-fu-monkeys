@@ -195,9 +195,10 @@ enum class Screen : std::uint8_t { Menu = 0, Settings, Online, Play, Replay };
 
 // M7 step 6: where the replay viewer's bytes are.
 enum class ReplayLoad : std::uint8_t { None = 0, Loading, Ready, Failed };
-// The largest replay the viewer takes (the browser's download is cut off
-// past it): 16 MiB, hours of a ten-player match.
-constexpr std::size_t kReplayMaxBytes = std::size_t{16} << 20;
+// The largest replay the viewer takes (readFileBytes refuses a bigger file,
+// the browser's download is cut off past it): 16 MiB, hours of a ten-player
+// match.
+using client::kReplayMaxBytes;
 
 #ifdef __EMSCRIPTEN__
 constexpr bool kQuitItem = false;  // a browser tab is closed by the browser

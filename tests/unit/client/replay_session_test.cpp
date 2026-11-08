@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -143,6 +144,18 @@ struct Driver {
   h.tickCount = ticks;
   return h;
 }
+
+// Advances the session by `n` frames of `periodNs` each from `t`.
+void frames(ReplaySession& s, uint64_t& t, uint64_t periodNs, int n) {
+  for (int i = 0; i < n; ++i) {
+    t += periodNs;
+    s.advance(t);
+  }
+}
+
+constexpr uint64_t k60Hz = 16'666'667;
+constexpr uint64_t k120Hz = 8'333'333;
+constexpr uint64_t k48Hz = 20'833'333;
 
 [[nodiscard]] std::string hex32(uint32_t v) {
   std::array<char, 11> buf{};
@@ -292,6 +305,148 @@ TEST_CASE("replay: seeks land on the recorded state, silently", "[client][replay
   }
 }
 
+TEST_CASE("replay: seeks start from the newest keyframe at or before the target",
+          "[client][replay]") {
+  const std::filesystem::path path = corpus() / "scripted_4p_pillars_1800t.kfmr";
+  const std::vector<std::byte> bytes = readBytes(path);
+  const std::vector<uint32_t> expected = expectedChecksums(path);
+  Driver d;
+  d.load(bytes);
+  ReplaySession& s = *d.s;
+  REQUIRE(s.tickCount() == 1800);
+  REQUIRE(expected.size() == 1801);
+  CHECK(s.keyframeCount() == 0);
+
+  SECTION("with no keyframe yet, a backward seek steps from tick 0") {
+    for (int i = 0; i < 250; ++i)
+      d.frame(2);
+    REQUIRE(s.tick() == 500);
+    CHECK(s.keyframeCount() == 0);
+    s.seek(300, d.now());
+    CHECK(s.lastSeekSteps() == 300);
+    CHECK(s.checksum() == expected[300]);
+    s.seek(0, d.now());
+    CHECK(s.lastSeekSteps() == 0);
+    CHECK(s.checksum() == expected[0]);
+  }
+  SECTION("after playing through, a seek anywhere steps under a keyframe's span") {
+    while (!s.atEnd())
+      d.frame(4);
+    CHECK(s.keyframeCount() == 3);  // ticks 600, 1200 and 1800
+    // From the end back to 1300: from the keyframe at 1200.
+    s.seek(1300, d.now());
+    CHECK(s.lastSeekSteps() == 100);
+    CHECK(s.lastSeekSteps() < client::kReplayKeyframeTicks);
+    CHECK(s.checksum() == expected[1300]);
+    for (const uint32_t target : {0u, 1u, 599u, 600u, 601u, 750u, 1199u, 1200u, 1799u, 1800u}) {
+      INFO("target " << target);
+      s.seek(s.tickCount(), d.now());  // from the end each time
+      CHECK(s.lastSeekSteps() == 0);   // the keyframe at 1800 is the end
+      s.seek(target, d.now());
+      CHECK(s.lastSeekSteps() == target % client::kReplayKeyframeTicks);
+      CHECK(s.tick() == target);
+      CHECK(s.checksum() == expected[target]);
+    }
+    // Playing on from a keyframe is straight play, tick for tick.
+    s.seek(650, d.now());
+    d.rebase();
+    uint32_t mismatches = 0;
+    while (!s.atEnd()) {
+      d.frame(1);
+      if (s.checksum() != expected[s.tick()]) ++mismatches;
+    }
+    CHECK(mismatches == 0);
+  }
+  SECTION("a forward seek records keyframes and starts from one ahead of the current tick") {
+    s.seek(1700, d.now());
+    CHECK(s.lastSeekSteps() == 1700);
+    CHECK(s.keyframeCount() == 2);  // ticks 600 and 1200, recorded on the way
+    CHECK(s.checksum() == expected[1700]);
+    s.seek(100, d.now());  // no keyframe at or before 100: from tick 0
+    CHECK(s.lastSeekSteps() == 100);
+    CHECK(s.checksum() == expected[100]);
+    s.seek(1500, d.now());  // the keyframe at 1200 is ahead of 100
+    CHECK(s.lastSeekSteps() == 300);
+    CHECK(s.checksum() == expected[1500]);
+    s.seek(1550, d.now());  // the current tick is past every keyframe: on from it
+    CHECK(s.lastSeekSteps() == 50);
+    CHECK(s.checksum() == expected[1550]);
+    s.restart(d.now());
+    CHECK(s.checksum() == expected[0]);
+    CHECK(s.keyframeCount() == 2);  // kept across a restart
+  }
+}
+
+TEST_CASE("replay: Auto interpolates below 1x; a paused replay draws its tick",
+          "[client][replay]") {
+  const std::vector<std::byte> bytes = readBytes(shortReplay());
+  const std::vector<uint32_t> expected = expectedChecksums(shortReplay());
+  Driver d;
+  d.load(bytes);
+  ReplaySession& s = *d.s;
+  uint64_t t = d.now();
+  const auto interpolates = [&s] {
+    return !s.rendersNewest() && &s.renderPrev() == &s.prev() &&
+           s.renderAlpha() == s.clock().alpha();
+  };
+
+  SECTION("the speeds on a 60 Hz display") {
+    frames(s, t, k60Hz, 30);
+    CHECK(s.rendersNewest());  // 1x: a tick a frame, the newest
+    s.setSpeed(0.5);
+    frames(s, t, k60Hz, 31);
+    CHECK(interpolates());
+    CHECK(s.renderAlpha() > 0.0f);  // half a tick a frame
+    s.setSpeed(0.25);
+    frames(s, t, k60Hz, 41);
+    CHECK(interpolates());
+    CHECK(s.renderAlpha() > 0.0f);
+    s.setSpeed(2.0);
+    frames(s, t, k60Hz, 30);
+    CHECK(interpolates());  // 120 ticks a second on 60 frames: as MatchSession
+  }
+  SECTION("2x on a 120 Hz display draws the newest, as MatchSession") {
+    s.setSpeed(2.0);
+    frames(s, t, k120Hz, 60);
+    CHECK(s.rendersNewest());
+    s.setSpeed(0.25);  // below 1x it interpolates whatever the display
+    frames(s, t, k120Hz, 61);
+    CHECK(interpolates());
+  }
+  SECTION("paused, and after a single step, the tick the session is at") {
+    s.setSpeed(2.0);
+    frames(s, t, k48Hz, 21);  // 2.5 ticks a frame: half a tick accumulated
+    REQUIRE(interpolates());
+    REQUIRE(s.renderAlpha() > 0.0f);
+    REQUIRE(s.renderAlpha() < 1.0f);
+    s.setPaused(true);
+    CHECK(s.rendersNewest());
+    CHECK(&s.renderPrev() == &s.curr());
+    CHECK(s.renderAlpha() == 1.0f);
+    frames(s, t, k48Hz, 3);
+    CHECK(s.rendersNewest());
+    s.requestSingleStep();
+    frames(s, t, k48Hz, 1);
+    REQUIRE(s.ticksThisFrame() == 1);
+    CHECK(s.rendersNewest());
+    CHECK(s.renderAlpha() == 1.0f);
+    CHECK(sim::checksum(s.renderPrev()) == s.checksum());
+    CHECK(sim::checksum(s.prev()) != s.checksum());  // a blend would show the tick before
+    CHECK(s.checksum() == expected[s.tick()]);
+    s.setPaused(false);
+    frames(s, t, k48Hz, 1);
+    CHECK(interpolates());
+  }
+  SECTION("the overrides still apply while playing") {
+    frames(s, t, k60Hz, 30);
+    s.setInterpolationPolicy(client::InterpolationPolicy::Interpolate);
+    CHECK_FALSE(s.rendersNewest());
+    s.setSpeed(0.25);
+    s.setInterpolationPolicy(client::InterpolationPolicy::Newest);
+    CHECK(s.rendersNewest());
+  }
+}
+
 TEST_CASE("replay: pause, single step and speed", "[client][replay]") {
   const std::vector<std::byte> bytes = readBytes(shortReplay());
   const std::vector<uint32_t> expected = expectedChecksums(shortReplay());
@@ -389,6 +544,18 @@ TEST_CASE("replay: broken and foreign replays are refused", "[client][replay]") 
     CHECK_FALSE(s.load({}, shipped(), kT0));
     CHECK(s.errorKind() == ReplayError::BadHeader);
   }
+  SECTION("a tickCount the data cannot hold is refused before anything is reserved") {
+    sim::ReplayHeader h = idleHeader(3);
+    std::vector<std::byte> b = syntheticReplay(h, false);
+    h.tickCount = 0xFFFFFFFFU;  // over the same three frames
+    BitWriter w(b);
+    sim::writeReplayHeader(w, h);
+    REQUIRE(w.ok());
+    CHECK_FALSE(s.load(b, shipped(), kT0));
+    CHECK(s.errorKind() == ReplayError::BadFrames);
+    CHECK(s.error().find("4294967295") != std::string::npos);
+    CHECK(s.error().find("truncated") != std::string::npos);
+  }
   SECTION("truncated frames") {
     CHECK_FALSE(s.load(std::span(bytes).first(bytes.size() / 2), shipped(), kT0));
     CHECK(s.errorKind() == ReplayError::BadFrames);
@@ -450,4 +617,30 @@ TEST_CASE("replay: readFileBytes", "[client][replay]") {
   REQUIRE(client::readFileBytes(shortReplay().string(), out, error));
   CHECK(error.empty());
   CHECK(out.size() > sim::kReplayHeaderBytes);
+  CHECK(out == readBytes(shortReplay()));
+
+  // A file over the cap is refused from its size, before it is read.
+  std::error_code ec;
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path(ec) /
+      ("kfm_replay_test_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  REQUIRE(std::filesystem::create_directories(dir, ec));
+  const std::filesystem::path big = dir / "big.kfmr";
+  {
+    std::ofstream(big, std::ios::binary).put('K');
+  }
+  std::filesystem::resize_file(big, client::kReplayMaxBytes + 1, ec);  // sparse
+  REQUIRE(!ec);
+  CHECK_FALSE(client::readFileBytes(big.string(), out, error));
+  CHECK(error.find("larger than 16 MiB") != std::string::npos);
+  // The cap is inclusive.
+  std::filesystem::resize_file(big, 100, ec);
+  REQUIRE(!ec);
+  CHECK_FALSE(client::readFileBytes(big.string(), out, error, 99));
+  CHECK(error.find("larger than 99 bytes") != std::string::npos);
+  REQUIRE(client::readFileBytes(big.string(), out, error, 100));
+  CHECK(out.size() == 100);
+  CHECK(out[0] == std::byte{'K'});
+  std::filesystem::remove_all(dir, ec);
 }

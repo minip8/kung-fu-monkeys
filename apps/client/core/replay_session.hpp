@@ -25,11 +25,27 @@
 //
 // Controls: pause and single step (setPaused, requestSingleStep), a speed
 // from kReplaySpeeds (setSpeed, the clock's time scale), restart() and
-// seek(tick). A seek is synchronous: forward it steps from the current
-// tick, backward it re-creates the initial world and steps from tick 0
-// (deterministic, and cheap at tens of thousands of ticks a second). A seek
-// shows the landed state as a still frame: it produces no frameEvents() and
-// resets presentation(), so a jump never sprays effects or sounds.
+// seek(tick). A seek is synchronous and deterministic. Every
+// kReplayKeyframeTicks ticks the session keeps a keyframe, a copy of the
+// world (WorldState is trivially copyable: the copy is the state straight
+// play reaches), recorded the first time playback or a seek steps onto
+// that tick. A seek starts from the newest keyframe at or before its
+// target when the target is behind the current tick or that keyframe is
+// ahead of it, else from the current tick (from the initial world when a
+// backward seek has no keyframe); so once a span has been played or sought
+// through, a seek into it steps fewer than kReplayKeyframeTicks ticks
+// (lastSeekSteps()), which keeps a drag on the timeline smooth over a long
+// replay. A seek shows the landed state as a still frame: it produces no
+// frameEvents() and resets presentation(), so a jump never sprays effects
+// or sounds.
+//
+// Drawing: the newest state alone (renderPrev() = curr(), alpha 1) while
+// still (loaded or sought, nothing stepped since), at the end and while
+// paused (a single step shows the tick it reached). Otherwise per the
+// interpolation policy; Auto interpolates below 1x (the ticks come slower
+// than the display: holding each would show a 0.25x replay at 15 fps) and
+// from 1x up follows MatchSession (the newest tick when the display keeps
+// up with the scaled tick rate).
 //
 // At the end (atEnd(): every recorded frame stepped) the session holds the
 // final state and advance() steps nothing; paused() does not change.
@@ -52,6 +68,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <vector>
@@ -66,11 +83,19 @@ inline constexpr double kDefaultReplaySpeed = 1.0;
 // kDefaultMaxTicksPerFrame; a replay at 4x needs more headroom.)
 inline constexpr uint32_t kReplayMaxTicksPerFrame = 8;
 
+// A keyframe every 10 s of replay: a 16 MiB replay (~300 k ticks) keeps at
+// most ~500 of them, a few MB (sizeof(sim::WorldState) each).
+inline constexpr uint32_t kReplayKeyframeTicks = 10 * sim::kTickHz;
+
+// The largest replay the viewer takes: readFileBytes refuses a bigger file,
+// the browser's download is cut off there.
+inline constexpr std::size_t kReplayMaxBytes = std::size_t{16} << 20;
+
 // Why load() refused a replay.
 enum class ReplayError : uint8_t {
   None = 0,
-  BadHeader,        // not a KFMR file of this version (magic, version, short header)
-  BadFrames,        // a frame is truncated or malformed, or out of tick order
+  BadHeader,  // not a KFMR file of this version (magic, version, short header)
+  BadFrames,  // truncated (fewer bytes than tickCount frames need), malformed, or out of tick order
   ContentMismatch,  // recorded with other content (header contentHash != this content's)
   BadMatchConfig,   // its arena, mode or loadout index is not in the content
   NoTicks,          // a header with tickCount 0: nothing to play
@@ -118,10 +143,15 @@ class ReplaySession {
   [[nodiscard]] std::size_t speedIndex() const;
   // Back to tick 0 and playing (unpaused); speed is kept. Like seek(0).
   void restart(uint64_t nowNs);
-  // Jumps to `tick` (clamped to tickCount()) synchronously; pause and speed
-  // are kept, a pending single step is dropped and the clock restarts at
-  // nowNs. No frameEvents(), and presentation() is reset; prev() = curr().
+  // Jumps to `tick` (clamped to tickCount()) synchronously, from a keyframe
+  // when one helps (header comment); pause and speed are kept, a pending
+  // single step is dropped and the clock restarts at nowNs. No
+  // frameEvents(), and presentation() is reset; prev() = curr().
   void seek(uint32_t tick, uint64_t nowNs);
+  // The ticks the last seek() (or restart()) stepped.
+  [[nodiscard]] uint32_t lastSeekSteps() const { return lastSeekSteps_; }
+  // The keyframes recorded so far (tick 0, the initial world, is never one).
+  [[nodiscard]] std::size_t keyframeCount() const;
 
   // Ticks stepped so far: the index of curr() (0 = the initial world).
   [[nodiscard]] uint32_t tick() const { return tick_; }
@@ -138,9 +168,9 @@ class ReplaySession {
   // The frame the last step ran (default before the first).
   [[nodiscard]] const sim::InputFrame& lastFrame() const { return lastFrame_; }
 
-  // What the builder draws this frame, per the interpolation policy (as
-  // MatchSession). At the end, and after a seek until the next step, the
-  // newest state alone (a still frame).
+  // What the builder draws this frame (the header comment's drawing rule):
+  // the newest state alone while still, at the end or paused, else per the
+  // interpolation policy.
   [[nodiscard]] const sim::WorldState& renderPrev() const;
   [[nodiscard]] float renderAlpha() const;
   [[nodiscard]] bool rendersNewest() const;
@@ -174,6 +204,10 @@ class ReplaySession {
  private:
   void fail(ReplayError kind, std::string message);
   void resetWorld();
+  // The newest keyframe's tick at or before `tick` (0 when none is).
+  [[nodiscard]] uint32_t keyframeAtOrBefore(uint32_t tick) const;
+  // curr() at a keyframe's tick (resetWorld() for 0).
+  void restoreKeyframe(uint32_t tick);
   void stepOnce(sim::EventSink& sink);
   void appendEvents(const sim::EventSink& sink);
 
@@ -182,6 +216,10 @@ class ReplaySession {
   std::string error_;
   sim::ReplayHeader header_{};
   std::vector<sim::InputFrame> frames_;
+  // Slot k is the world at tick k * kReplayKeyframeTicks once recorded
+  // (slot 0 stays empty: initialWorld() rebuilds tick 0).
+  std::vector<std::unique_ptr<sim::WorldState>> keyframes_;
+  uint32_t lastSeekSteps_{0};
 
   sim::ContentDB content_{};
   sim::MatchConfig matchConfig_{};
@@ -204,9 +242,10 @@ class ReplaySession {
 };
 
 // Reads a whole file (a native .kfmr path; the browser fetches its URL in
-// main.cpp instead). False with `error` set ("cannot open PATH", ...) when
-// it cannot be read.
+// main.cpp instead) of at most `maxBytes`. False with `error` set ("cannot
+// open PATH", "PATH is larger than 16 MiB", ...) when it cannot be read or
+// is too large (refused from its size, before reading).
 [[nodiscard]] bool readFileBytes(const std::string& path, std::vector<std::byte>& out,
-                                 std::string& error);
+                                 std::string& error, std::size_t maxBytes = kReplayMaxBytes);
 
 }  // namespace kfm::client
