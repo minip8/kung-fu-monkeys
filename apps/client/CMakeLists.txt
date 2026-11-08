@@ -1,7 +1,7 @@
 # Playable client (architecture §3, §11 M2): SDL3 window, sokol_gfx, Dear ImGui.
 #
 #   kfm_client_core  headless match loop (MatchSession, fixed-step clock, lobby,
-#                    the replay viewer's ReplaySession,
+#                    the replay viewer's ReplaySession and ReplayControls,
 #                    bots through kfm::ai's AgentHost, content tuning, options)
 #                    and network mode
 #                    (NetSession over any ITransport); no SDL, sokol, ImGui or
@@ -24,6 +24,7 @@ add_library(kfm_client_core STATIC
   core/bot_roster.cpp
   core/mouse_aim.cpp
   core/replay_session.cpp
+  core/replay_controls.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
