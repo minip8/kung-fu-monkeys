@@ -143,5 +143,22 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
     set_tests_properties(client_smoke_net PROPERTIES
       TIMEOUT 120
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
+    # M7 step 6: the replay viewer plays a corpus replay (recorded with the
+    # content built into the client), and a file that is not a replay shows
+    # the error screen and makes the run exit non-zero.
+    add_test(NAME client_smoke_replay
+      COMMAND ${KFM_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+              $<TARGET_FILE:kfm_client>
+              --replay "${PROJECT_SOURCE_DIR}/tools/replay-corpus/scripted_10p_contest_1800t.kfmr"
+              --exit-after-frames 60 --no-settings)
+    add_test(NAME client_smoke_replay_bad
+      COMMAND ${KFM_XVFB_RUN} -a -s "-screen 0 1280x720x24"
+              $<TARGET_FILE:kfm_client>
+              --replay "${PROJECT_SOURCE_DIR}/tools/replay-corpus/corpus.txt"
+              --exit-after-frames 60 --no-settings)
+    set_tests_properties(client_smoke_replay client_smoke_replay_bad PROPERTIES
+      TIMEOUT 120
+      ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
+    set_tests_properties(client_smoke_replay_bad PROPERTIES WILL_FAIL TRUE)
   endif()
 endif()
