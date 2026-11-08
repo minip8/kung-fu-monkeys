@@ -156,8 +156,26 @@ if(NOT KFM_HEADLESS)
     client/room_test.cpp
     client/menus_test.cpp
     client/scoreboard_test.cpp
+    client/replay_session_test.cpp
+    client/replay_controls_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
+  # The replay viewer plays the determinism corpus back (tools/replay-corpus):
+  # in place natively, embedded at /replay-corpus under node.
+  set(kfm_replay_corpus "${PROJECT_SOURCE_DIR}/tools/replay-corpus")
+  if(EMSCRIPTEN)
+    target_link_options(kfm_client_tests PRIVATE
+      "SHELL:--embed-file \"${kfm_replay_corpus}@/replay-corpus\"")
+    # The embedded corpus is an input of the link: a regenerated replay
+    # relinks the node test (globbed like the determinism gate's).
+    file(GLOB kfm_replay_corpus_files CONFIGURE_DEPENDS
+      "${kfm_replay_corpus}/*.kfmr" "${kfm_replay_corpus}/*.checksums")
+    set_property(TARGET kfm_client_tests APPEND PROPERTY LINK_DEPENDS ${kfm_replay_corpus_files})
+    target_compile_definitions(kfm_client_tests PRIVATE KFM_REPLAY_CORPUS_DIR="/replay-corpus")
+  else()
+    target_compile_definitions(kfm_client_tests PRIVATE
+      KFM_REPLAY_CORPUS_DIR="${kfm_replay_corpus}")
+  endif()
   if(KFM_WASM_BOTS)
     # Bot modules as local players: the session loads the same fixtures.
     target_compile_definitions(kfm_client_tests PRIVATE

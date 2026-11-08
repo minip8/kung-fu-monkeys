@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.67 (2026-11-08). Working title taken from the repo name.
+Status: proposal v0.68 (2026-11-08). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -945,6 +945,51 @@ main moves. Against the M7 criterion: a bot submitted through the CLI is built a
 "by an account outside the project" and "replayed in the browser from the ladder's link"
 remain, the second being step (6), the client's replay viewer. No code change here.
 
+v0.68 changes: M7 step (6) landed, the client's replay viewer (§7 "Replay viewer", §8 "The
+ladder", §9, §11, §12, §13.5). `kfm_client --replay SRC` opens a replay straight into the viewer
+(no main-menu entry yet), and the page's generic query-to-flag mapping turns `?replay=<url>`
+into the same flag, so the ladder's link `https://kfm.minip8.com/<tag>/?replay=` plus the
+URL-encoded presigned R2 URL needed no page change. `ReplaySession` (headless, beside
+`MatchSession` and `NetSession` with the same render surface) decodes the whole replay up front
+and refuses one whose content hash is not the client's, naming both (the viewer is the client of
+the replay's own release, v0.59); the build hash is shown, not checked (every build writes 0).
+Controls: play/pause, single step, five speeds from 0.25x to 4x (the fixed-step clock's ceiling
+raised from 2x to 4x; local play's overlay slider still stops at 2x), restart and seeking from
+keyframes (a `WorldState` copy every 600 ticks, recorded as playback or a seek first steps onto
+it, so a seek into a span already played or sought through steps fewer than 600 ticks; reaching
+an unvisited span crosses it once, ~45 ms for a whole 10-minute replay at the release bench's
+~820 k ticks/s). Below 1x the viewer always interpolates, and while still, paused or at the end
+it draws the newest state alone. In the browser the file is fetched without blocking (an `EM_JS`
+`fetch` polled once a frame, capped at 16 MiB, aborted when the screen is left), which works
+because the bucket allows a CORS GET from the page's origin; no export or link option changed.
+The screen is a spectator's HUD under a control bar (the headless `ReplayControls` model, keys
+and pads, the bar's one- or two-row layout decided by the timeline's width); a failure says why
+and offers the main menu, and exits 1 under `--exit-after-frames`. A header claiming more ticks
+than its bytes can hold is refused before anything is allocated, and a file over 16 MiB from its
+size before it is read. Tests: every corpus replay (22) plays to its end with each tick's
+checksum equal to its `.checksums`, natively and under node (the corpus embedded), plus keyframe
+seeks, interpolation, speeds, the controls and every refusal; two xvfb ctests that match the
+client's output, `client_smoke_replay` and `client_smoke_replay_bad`. Verified: the `dev` build
+warning-free, `ctest --preset dev -LE 'soak|network'` 40/40, the headless build 38/38, the wasm
+`kfm_client_tests` under node, the four `client_smoke*` tests through a stand-in `xvfb-run` on
+WSLg's display (CI's real xvfb not yet run), native screenshots of playback, the end and the
+error screen, `check_browser.py` on `?replay=` of a locally served corpus replay (renders,
+animates, no console errors), the 404 and unreachable-host paths showing the error screen with
+no uncaught exception, and a Playwright script driving the keys, a timeline click and Main menu;
+the contest corpus replay ends at tick 1800 on its recorded checksum 0x8607c487. A review pass
+then added the keyframes, the interpolation and paused-drawing rules, the allocation caps, the
+width-based bar layout, the focus hand-off from a control that turns disabled, hot reload
+starting when the viewer leaves for the menu, and output-matching smoke tests; verified again
+after it: the `dev` build warning-free, `ctest --preset dev -LE 'soak|network'` 40/40,
+`kfm_client_tests "[replay]"` 17 cases and 1856 assertions, the four `client_smoke*` tests
+through the stand-in display, the wasm `kfm_client` and `kfm_client_tests` built and the node
+run passing, clang-format and clang-tidy clean. Follow-ups (§12): effects and animation in sim
+time at 0.25x and 4x, player names, a menu entry or file picker, seeking with a pad's stick, the
+fog overlay; the bar's two-row layout is unit tested, not seen on screen. Against the M7
+criterion: an account outside the project through the whole path remains, and a tagged engine
+release, since a link reaches the page of its match's tag and matches recorded under v0.5.1 link
+to a page without the viewer, by design (v0.59). Replay checksums: unchanged (no sim change).
+
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
 power-ups are picked up in the arena, and the signature twist is that a perfectly
@@ -1045,7 +1090,8 @@ kung-fu-monkeys/
   apps/
     client/              playable client (also hosts local multiplayer)
     server/              headless dedicated server
-    replay/              replay viewer / analyser
+    replay/              replay recorder / verifier / analyser (`kfm_replay`; the viewer is
+                         the client's `--replay`, v0.68)
     netsim/              N clients + 1 server in one process over an emulated network
     arena/               headless match runner: bot modules in, replay and result line out
   services/
@@ -3062,9 +3108,10 @@ C++ server library is mature. The seam makes that swap a contained change.
   2.0 units between the two ticks (a dash moves about 0.37 per tick), it snaps to the newest
   state, its body yaw resets and any smoothing offset is cleared. The local client's fixed-step
   clock accumulates time in units of ns × `kTickHz` so a tick costs exactly 1e9 units (no drift
-  at 1×; the time scale, clamped to 0.25–2×, scales the units added per frame); at most 4 ticks
-  run per frame (adjustable 1–4) and any further backlog is dropped and counted, never
-  simulated late. Inputs for tick i are sampled over the wall-clock window that tick covers,
+  at 1×; the time scale, clamped to 0.25–2× (0.25–4× since v0.68, for the replay viewer; local
+  play's overlay slider still stops at 2×), scales the units added per frame); at most 4 ticks
+  run per frame (adjustable 1–4; the replay viewer sets 8) and any further backlog is dropped
+  and counted, never simulated late. Inputs for tick i are sampled over the wall-clock window that tick covers,
   immediately before its `step()`; the windows of a frame's batch end at the frame's own
   timestamp (the time up to which events were read) and count back in whole ticks, so the
   leftover accumulator only sets the render alpha and never pushes a press past its tick's
@@ -3363,6 +3410,85 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `NetServer` over WebRTC on one machine (RTT about 3 ms in the browser, roughly 60 rollbacks/s
   of depth ≤ 3 against bots, 0 checksum mismatches); the 3 s real-socket client test
   (`kfm_client_net_tests`, label `network`) syncs in about 185 ms.
+- Replay viewer (v0.68, M7 step 6; `apps/client/core/replay_session.{hpp,cpp}`,
+  `core/replay_controls.{hpp,cpp}`, `Screen::Replay` in `main.cpp`, drawn by `hud.cpp` and
+  `screens.cpp`). Entry: `kfm_client --replay SRC` (a path natively, a URL in the browser, where
+  `?replay=<url>` becomes the flag through `shell.html`'s generic query mapping, beside
+  `config.js`'s `--lobby`) opens the viewer directly; it excludes `--autostart`, `--connect`,
+  `--room`, `--create` and `--screen`, and there is no main-menu entry. Loading: natively
+  `readFileBytes` before the first frame; in the browser an `EM_JS` `fetch(url, {mode: 'cors',
+  credentials: 'omit'})` with an `AbortController`, polled once per frame (nothing blocks, no
+  exported functions or link options), the bytes copied into a buffer C++ allocated; both cap
+  the file at `kReplayMaxBytes` (16 MiB, in `replay_session.hpp`: a larger Content-Length is
+  refused up front and the stream reader cancels past the cap; `readFileBytes` refuses a larger
+  file from its size before reading and reads straight into the `std::byte` vector), and leaving
+  the screen aborts the fetch. The ladder's bucket allows GET from `https://kfm.minip8.com`,
+  which is what lets the page read it (the site sets no COOP/COEP). `ReplaySession` (SDL-free,
+  in `kfm_client_core`): `load()` decodes the header and every `InputFrame` into a vector up
+  front and refuses a bad magic, version or short header, truncated or out-of-order frames, a
+  `tickCount` the remaining bits cannot hold (refused `BadFrames` before anything is allocated,
+  "the replay is truncated: it claims N ticks but holds at most M": the smallest encoded frame
+  is 48 bits, a `u32` tick and a `u16` present mask, so at most `bytes.size() / 6` frames are
+  reserved), out-of-range arena, mode or loadout indices, zero ticks, and a content hash other
+  than the client's `sim::contentHash(content)` (the message names both: the viewer is the
+  client of the replay's own release, v0.59); the build hash is shown, not checked (every build
+  writes 0). Playback exposes the render surface of `MatchSession` and `NetSession` (prev/curr,
+  `renderPrev`, `renderAlpha`, `frameEvents`, the presentation state and its clock), so the
+  builder, the renderer and the fixed camera are a match's. Controls: play/pause, single step,
+  speeds `kReplaySpeeds` {0.25, 0.5, 1, 2, 4} (the clock's time scale;
+  `FixedStepClock::kMaxTimeScale` is 4), restart and `seek(tick)`: forward steps from keyframes:
+  one every `kReplayKeyframeTicks` = 600 ticks (10 s), each a `WorldState` copy of 6096 bytes,
+  recorded the first time playback or a seek steps onto that tick, kept across `restart()` and
+  cleared on `load()` (a 16 MiB replay, ~300 k ticks, holds at most ~500, ~3 MB; a decoded frame
+  costs 56 bytes). A seek starts from the newest keyframe at or before its target when the
+  target is behind the current tick or that keyframe is ahead of it; otherwise it steps on from
+  the current tick, or from tick 0 when no keyframe exists. So once a span has been played or
+  sought through, any seek into it steps `target % 600` ticks (fewer than 600); the first visit
+  of a span costs its length (~45 ms for a whole 10-minute replay at the release bench's ~820 k
+  ticks/s). `lastSeekSteps()` and `keyframeCount()` expose this to tests. A seek emits no
+  events, resets the presentation state and draws a still frame. Interpolation: below 1x the
+  viewer always interpolates (at 0.25x on a 60 Hz display it would otherwise hold each tick for
+  four frames); at 1x and above it follows `MatchSession`'s rule (the newest tick when the
+  display rate is at least 60 × speed × 0.95). While still (just loaded or sought), at the end,
+  or paused (after a single step too) it draws the newest state alone (alpha 1, `renderPrev()`
+  is `curr()`), whatever the policy. Up to `kReplayMaxTicksPerFrame` = 8 ticks run per frame (4x
+  on a 30 Hz display), `kMaxFrameEvents` sized to match; at the end the last state is held. No
+  bot runtime: a replay is inputs. The screen: "Loading replay…" with a spinner and the source
+  over a plain background; on failure "Could not open the replay", the reason, the source and a
+  Main menu button (Enter, Escape and a pad's buttons also go to the menu), and `error: replay
+  SRC: …` on stderr. During playback the HUD is a spectator's: slots "P1" to "P10" in team
+  colours, no "you" marker, no aim bar (replays carry no names); the between-rounds scoreboard
+  moves up and shrinks (to 0.6x) to stay clear of the bar (`HudView::bottomInset`). The control
+  bar along the bottom (ImGui, the `ui_style` palette, `ui::bigButton` / `showsFocus` /
+  `pointerTakesFocus`): the title "Replay: <arena>, <mode>, N players"; Restart, Play/Pause,
+  Step (only while paused and before the end), the speed button ("1x"; a click cycles and
+  wraps), the timeline (a click or drag seeks only when the tick under the pointer changes, and
+  playback holds while the knob is held), "m:ss / m:ss", Main menu. The layout is the headless
+  `replayBarRows(ReplayBarPieces)`: one row when the one-row timeline (the bar's content width
+  less the transport buttons, the time label, Main menu and three gaps) is at least
+  `kReplayMinTimelineWidth` = 240 px, else the timeline takes its own row; in the game font that
+  is one row from about 987 px of display (two rows at 800 and 852 px, one at 1024 and 1280).
+  Keys: Space play/pause, `.` one tick (pausing first), Left/A and Right/D seek 5 s (Shift: 30
+  s, clamped), `[`/`]` speed, Home restart, Escape main menu, Up/W, Down/S and Tab move the
+  focus, Enter activates; pads: South activates, East/Back main menu, Start play/pause, West
+  step, d-pad Left/Right seek, Up/Down focus, the shoulders speed. The SDL glue drops key
+  repeats, so a held key seeks once; shortcuts act at once and the v0.55 highlight rule applies
+  to the focus keys. `ReplayControls::refocus(status)` hands the focus to Play/Pause when the
+  focused control turns disabled (Step while playing or at the end), before the bar is drawn and
+  before a key is applied, and hovering a disabled control does not take the focus.
+  `ReplayControls` holds the focus, the key and pad mapping and the time label, tested
+  headlessly. At the end the last frame stays with the HUD's final banner and scoreboard (hint
+  "End of the replay", no match-over buttons); Play becomes "Watch again" (a restart) and Step
+  is disabled. No pause menu, bots or tuning, and no hot reload inside the viewer: with
+  `--replay` and `--content DIR` the watcher starts when the viewer leaves for the menu
+  (`startHotReload` in `main.cpp`), as it would at startup without `--replay`. F1 opens a
+  read-only overlay with a Replay panel (tick and total, checksum, phase, round, paused, speed,
+  seed, players, arena/mode/loadout, power-ups, the content and build hashes). Leaving drops the
+  replay; nothing in the menu returns to it. At load the client prints `kfm_client: replay SRC:
+  1800 ticks (0:30), arena courtyard, mode contest, loadout base, 10 players`. Exit codes: with
+  `--exit-after-frames` a playing replay exits 0 ("stopped after N frames in the replay at tick
+  T of C, checksum 0x…") and a failed one renders the error screen for the N frames (so
+  `--screenshot` captures it) and exits 1; without it, quitting exits 0. Follow-ups are in §12.
 M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp`:
 - World basis: sim `(x, y)` at cosmetic height `h` is world `(x, h, −y)`, right-handed, +y up.
   The camera sits on world +z (the sim −y side), so with an ordinary right-handed `lookAt` and
@@ -4098,14 +4224,21 @@ lives in the bots repository (above) and uses this repository through its tagged
   for-all slot bias of §12 does not reach the ladder: `--rotate` plays every pair from both sides.
 - **Replays.** A match's `.kfmr` is served with the content of the release it ran under (v0.59;
   its season's until then); the CLI downloads it and prints the viewer URL, and the browser
-  client loads a replay by URL (a client feature of M7: the client has no replay playback as of
-  v0.35; it needs no bot runtime, since a replay is inputs). The viewer is the client of the
+  client plays a replay by URL (v0.68, M7 step 6, §7 "Replay viewer": `?replay=<url>` is the
+  client's `--replay`, fetched with CORS from the bucket, which allows GET from the page's
+  origin; it needs no bot runtime, since a replay is inputs). The viewer is the client of the
   replay's own release (v0.59): a sim change between releases can replay differently even when
   the content hash did not move, and the header carries both the content and the build hash, so
   the release workflow publishes the page under a versioned path per tag (`/v0.60/`) beside the
-  root, which serves the newest for play, and the ladder's link names the match's tag. Fog is a
+  root, which serves the newest for play, and the ladder's link names the match's tag. The
+  viewer refuses a replay whose content hash is not its own and names both; the build hash is
+  shown, not checked, until a build stamps one (v0.60). A page that predates the viewer (every
+  release up to v0.5.1) passes `?replay=` on as well, and its client refuses `--replay` as an
+  unknown argument and exits before the first frame: those matches are not watchable, by
+  design. Fog is a
   projection in the observation builder, so a replay shows the whole arena; a fog overlay in
-  the viewer is a follow-up.
+  the viewer is still a follow-up, and so are the entrants' names (the portal knows them; a
+  `?names=` parameter is the likely shape).
 - **The CLI.** One static binary written in Rust, released as platform wheels through PyPI with
   maturin (`uv tool install kfm-cli`, `uvx --from kfm-cli kfm`; the PyPI project is `kfm-cli`,
   v0.66) and on the bots repository's releases page.
@@ -4113,7 +4246,7 @@ lives in the bots repository (above) and uses this repository through its tagged
   the reference bot through a released headless `kfm_arena`), `submit`, `bots list` and
   `bots activate`, `matches list`, `replay get` and `replay open`.
 - **What this repository contributes.** `kfm_arena` as the engine with its append-only JSON
-  result (`docs/arena-result.md`, normative since v0.60), the `contest` mode in content, the browser client's replay-by-URL viewer, a released
+  result (`docs/arena-result.md`, normative since v0.60), the `contest` mode in content, the browser client's replay-by-URL viewer (v0.68), a released
   headless `kfm_arena` binary per tagged version, and `docs/bot-abi.md` as the normative ABI.
   The portal, the accounts, the build images, the scheduler, the ratings store and the CLI are
   the bots repository's.
@@ -4167,6 +4300,29 @@ lives in the bots repository (above) and uses this repository through its tagged
   keyboard input, screenshots). It is a developer tool, not a CI step: a browser download per
   run and timed waits would make the gate slow and flaky, and `client_smoke` already covers
   rendering on CI.
+- Replay viewer tests (v0.68): `tests/unit/client/replay_session_test.cpp`
+  (`[client][replay]`, in `kfm_client_tests`) plays every corpus replay (22) to its end at one
+  tick per frame with every tick's checksum equal to its `.checksums`; checks that the frame
+  events at three ticks per frame equal a direct step loop's; seeks (forward lands on the
+  recorded checksum, backward then play reaches the same final checksum, past the end clamps,
+  restart); keyframes (seeks from the end to ticks 0, 1, 599, 600, 601, 750, 1199, 1200, 1799
+  and 1800 take exactly `target % 600` steps and land on the `.checksums`, and forward seeks
+  record keyframes); the interpolation policy below and above 1x and the newest-state-alone
+  drawing while still, paused or at the end; pause, step and speed (each speed steps 120 × speed
+  ± 1 ticks over the same wall time); every refusal of `load()`; and `readFileBytes`. 17 cases,
+  1856 assertions under `[replay]`. The corpus path is the `KFM_REPLAY_CORPUS_DIR` compile
+  definition; under Emscripten the corpus is embedded with `--embed-file
+  tools/replay-corpus@/replay-corpus`, so the wasm run under node plays it too, and
+  `kfm_client_tests` has `LINK_DEPENDS` on the corpus (a `CONFIGURE_DEPENDS` glob) so a
+  regeneration relinks it. `replay_controls_test.cpp` covers the key and pad mapping, Shift,
+  clamping, Watch again, Step enabling, the focus wrapping and skipping, `refocus` and hovering
+  a disabled control, `replayBarRows` at 800, 852, 1024 and 1280 px, scrubbing and the labels;
+  `lobby_test.cpp` the `--replay` parsing and its exclusions. Two ctests beside `client_smoke`,
+  registered the same way, both by `PASS_REGULAR_EXPRESSION` (so the exit code is not what they
+  check): `client_smoke_replay` (60 frames of `scripted_10p_contest_1800t.kfmr`; the exit line
+  must match `in the replay at tick [1-9][0-9]* of 1800,`, so the replay advanced) and
+  `client_smoke_replay_bad` (`corpus.txt` as a replay; the output must match `error: replay
+  [^\n]*corpus\.txt: not a replay.*the replay could not be shown`).
 - `kfm_netsim` (v0.17, `apps/netsim`, over the shared `kfm::netsim` harness in
   `engine/net/netsim` that `kfm_netcode_tests` also uses): N clients and a server in one process
   over the loopback emulator, `--clients --rtt --jitter --loss --dup --reorder --seconds --seed
@@ -4286,8 +4442,9 @@ lives in the bots repository (above) and uses this repository through its tagged
   the scenario tests, `kfm_replay record-scripted`, the bench and later the netsim, not an
   `IAgent` (§8); it lives in `engine/sim` only because it is float-free, allocation-free and
   never writes `WorldState`.
-- Replays: `seed + match config + content_hash + input stream`. The `replay` app scrubs via
-  periodic keyframes. Replays attach to bug reports.
+- Replays: `seed + match config + content_hash + input stream`. The client's viewer (v0.68,
+  §7) seeks from periodic keyframes, one every 600 ticks, recorded as it plays. Replays attach
+  to bug reports.
 - Observability: Tracy zones; structured logging; net stats (RTT, jitter, loss, rollback depth,
   mispredictions/s) in the debug overlay; server metrics endpoint later.
 - Code standards: C++23, warnings as errors, clang-format and clang-tidy in CI, ASan/UBSan
@@ -4393,7 +4550,7 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
 | M6a Ship on the web | The client on Cloudflare Pages (v0.39); the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
 | M6b Play with friends | The online room: a waiting state on the server, the host's settings (arena, mode, loadout, power-ups, bots) sent over the wire and a host role that passes on; the code with copy-link and share in the client; every region listed with its availability (lobby protocol v1.1); nicknames on the scoreboard, a between-rounds scoreboard and a match-over screen with play again; a main menu and a game-looking lobby; bots yield slots to joining humans; reconnect from the UI; the lead control checked at high RTT (§6.6, §13.5, "M6b design" below) | A group of friends plays a full evening from one link without help: create, invite, pick the mode, start, play again |
-| M7 The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer, a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, the release tag on every match and replays served with their release's content and client (v0.59), the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
+| M7 The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer (v0.68), a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, the release tag on every match and replays served with their release's content and client (v0.59), the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
 | M8 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
 M6b design (v0.40). A room has three states on the server, kept in the host beside
@@ -4436,8 +4593,8 @@ the JSON result pinned append-only, a tagged release that publishes the headless
 (2) the bots repository created with the SDK moved from `tools/bots/`, the C++ layer and the
 build image, `example_bot_test` kept here against the normative header (landed in v0.61); (3) the service:
 accounts, teams, submissions and the sandboxed build; (4) the scheduler and ratings; (5) the
-CLI on PyPI; (6) the client's replay viewer and the portal's replay links. M8 (Steam) is
-unchanged.
+CLI on PyPI; (6) the client's replay viewer and the portal's replay links (the links landed
+with step (4) in v0.65, the viewer in v0.68). M8 (Steam) is unchanged.
 
 M7 step 3 design (v0.63). The ladder service, `service/` in the bots repository, has the shape
 every hosted bot ladder converges on, sized so that growing is adding workers.
@@ -4489,7 +4646,7 @@ every hosted bot ladder converges on, sized so that growing is adding workers.
   directory), `GET /teams/{t}/submissions`, `GET /submissions/{s}` (state, hash, log URL),
   `POST /teams/{t}/active` (set the active submission); `GET /ladder` (ratings, paged);
   `GET /matches?team=` and `GET /matches/{m}` (the result, the replay URL, the viewer URL
-  `https://kfm.minip8.com/<tag>/?replay=<url>`, the client feature of step 6). The portal is the
+  `https://kfm.minip8.com/<tag>/?replay=<url>`, the client feature of step 6, landed in v0.68). The portal is the
   same routes rendered as HTML by the same binary (askama templates, no frontend framework):
   sign in, tokens, teams, submissions with their logs, the ladder, a match's result.
 - **Retention.** Five submissions per team plus the active one; pruning deletes the source
@@ -4578,6 +4735,18 @@ Progress: M7 step (5) landed in v0.66 in the bots repository (bots PRs #6 and #7
 ladder was deployed in v0.67 (`bots.kfm.minip8.com`, `kfm-cli` on PyPI, the first season; the
 v0.67 changelog line has the shape as built). Next: step (6), the client's replay viewer, here,
 and an entrant from outside the project through the whole path.
+
+Progress: M7 step (6) landed in v0.68 here (`ReplaySession`, `ReplayControls` and the client's
+`--replay` / `?replay=` screen, §7 "Replay viewer"; the v0.68 changelog line has the tests and
+what was verified). The portal's links already point at it (bots repository, v0.65). What
+remains of the M7 criterion: a tagged engine release, because the ladder's
+`/<tag>/?replay=` link reaches the page of the match's tag, and matches recorded under v0.5.1
+link to a page without the viewer, by design (v0.59: the viewer is the release's client), so
+the first replay watchable from the ladder is one played after the ladder runs on a release
+that carries the viewer (a pin bump of the bots repository's `engine.lock` and a bots release,
+v0.64); and a bot submitted by an account outside the project through the whole path, from
+`kfm submit` to its replay in the browser. Not yet run: CI's real xvfb for the two new
+`client_smoke_replay*` tests.
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
@@ -5056,6 +5225,15 @@ baseline moved to C++23 (§9).
   PyPI.
   Open: how long a release's content and page are kept, and whether a fog overlay belongs in
   the viewer.
+- Open (M7 step 6 follow-ups, v0.68, the replay viewer of §7): the first seek across an
+  unvisited span still steps all of it (keyframes are recorded as playback reaches them; ~45 ms
+  for a whole 10-minute replay in Release, more in Debug or on a slow phone), which a background
+  pass could pre-record if it shows; effects and animation run in wall time, so at 0.25x and 4x
+  they are slow or fast against the sim (the sim speed is right); player names in replays (the
+  portal knows the entrants: a `?names=` parameter is the likely shape, since the `.kfmr` format
+  carries none); a main-menu entry or a file picker; seeking with a pad's stick; the fog overlay
+  (above); the bar's two-row layout (below about 987 px of display) is unit tested, not seen on
+  screen, because the native window is 1280×720.
 - Decided (v0.37, M6a): a Rust lobby service in this repository is the only public TCP
   endpoint and owns rooms, tokens, signaling and the server registry; servers dial it; one
   `kfm_server` process per match under systemd; Google Cloud Compute Engine first and
@@ -5154,10 +5332,11 @@ What the browser costs, honestly:
 ### 13.2 Native without Steam: build it, do not ship it
 
 A native client stays in the repo as the development, debugging and profiling build: Tracy,
-sanitizers, `netsim` with ten clients, the replay viewer and the match runner all live there,
-and it is the reference the browser build is checked against. Shipping it without Steam adds
-installers for three OSes, Windows SmartScreen and macOS notarisation (paid certificates),
-auto-update and crash reporting, and buys one to two frames of latency and no audience. For
+sanitizers, `netsim` with ten clients, `kfm_replay` and the match runner all live there (the
+replay viewer is the client's and runs in the browser too, v0.68), and it is the reference
+the browser build is checked against. Shipping it without Steam adds installers for three
+OSes, Windows SmartScreen and macOS notarisation (paid certificates), auto-update and crash
+reporting, and buys one to two frames of latency and no audience. For
 players it is a worse experience than Steam (no overlay, friends, invites, cloud) and a
 higher-friction one than the web. itch.io is the one reasonable non-Steam native channel, as a
 side door, not a launch.
@@ -5315,8 +5494,10 @@ refusal or close in plain words ("Room ABCDE not found", "Room ABCDE is full", "
 available in eu", "Version mismatch: reload the page or update the client", ...); Escape
 returns to the local lobby, whose Start rejoins a room made with `--create` (v0.43: Escape returns
 to the main menu and the Play online screen's code field keeps the room for Join). `shell.html`
-loads `config.js`, adds `--lobby` from it when the query has none and, only with a
-`sentryDsn`, the pinned Sentry browser bundle (subresource integrity, `crossorigin`) wired to
+loads `config.js`, adds `--lobby` from it when the query has none (v0.68: `?replay=<url>` maps
+onto `--replay` by the same generic query-to-flag rule, so the ladder's links needed no page
+change; the page fetches the replay with CORS, and the bucket allows GET from the page's
+origin) and, only with a `sentryDsn`, the pinned Sentry browser bundle (subresource integrity, `crossorigin`) wired to
 `window.onerror`, unhandled rejections and Emscripten's `onAbort`. `IPlatformServices`
 (`kfm/platform/platform_services.hpp`, the SDL-free target `kfm_platform_services`) is the
 minimal seam: a guest id generated once and kept in `guest_id.txt` in SDL's pref dir or

@@ -128,7 +128,8 @@ bool sliderFixed(const char* label, Fixed& v, float lo, float hi) {
   return true;
 }
 
-void performanceSection(const MatchSession& s, const presentation::RendererStats& r,
+template <class Session>
+void performanceSection(const Session& s, const presentation::RendererStats& r,
                         const std::array<float, 240>& frameMs, std::size_t head) {
   const ImGuiIO& io = ImGui::GetIO();
   const FixedStepClock& clock = s.clock();
@@ -217,7 +218,8 @@ void callsSection(const MatchSession& s) {
   }
 }
 
-void interpolationSection(MatchSession& s) {
+template <class Session>
+void interpolationSection(Session& s) {
   int policy = static_cast<int>(s.interpolationPolicy());
   constexpr const char* kPolicies[] = {"Auto", "Interpolate", "Newest tick"};
   if (ImGui::Combo("render policy", &policy, kPolicies, 3)) {
@@ -519,6 +521,32 @@ void audioSection(ClientAudio& a) {
               static_cast<unsigned long long>(a.device().underruns()));
 }
 
+// M7 step 6: the replay viewer's session, read-only.
+void replaySection(const ReplaySession& s) {
+  const sim::ReplayHeader& h = s.header();
+  const sim::ContentDB& c = s.content();
+  const sim::MatchConfig& m = s.matchConfig();
+  ImGui::Text("tick %u / %u%s  checksum 0x%08X", s.tick(), s.tickCount(), s.atEnd() ? " (end)" : "",
+              s.checksum());
+  ImGui::Text("sim phase %s (%u ticks in phase), round %u", phaseName(s.curr().rules.phase),
+              s.curr().rules.ticksInPhase, static_cast<unsigned>(s.curr().rules.round));
+  ImGui::Text("%s, speed %.2fx", s.paused() ? "paused" : "playing", s.speed());
+  ImGui::Text("seed 0x%llX  players 0x%03X", static_cast<unsigned long long>(h.seed),
+              static_cast<unsigned>(m.players));
+  ImGui::Text("arena %s  mode %s  loadout %s", c.arenaAt(m.arena).name.cStr(),
+              c.modeAt(m.mode).name.cStr(), c.loadoutAt(m.loadout).name.cStr());
+  ImGui::Text("power-ups 0x%04X", static_cast<unsigned>(m.powerUps));
+  ImGui::Text("content hash 0x%08X  build hash 0x%08X", h.contentHash, h.buildHash);
+}
+
+// The entity inspector's view of a replay: every slot is a recorded one.
+struct ReplayEntities {
+  const ReplaySession& replay;
+  [[nodiscard]] const sim::WorldState& curr() const { return replay.curr(); }
+  [[nodiscard]] const sim::ContentDB& content() const { return replay.content(); }
+  [[nodiscard]] static SlotOwner owner(PlayerId /*slot*/) { return SlotOwner::Remote; }
+};
+
 }  // namespace
 
 void DebugOverlay::recordFrame(double frameSeconds) {
@@ -575,6 +603,29 @@ void DebugOverlay::draw(NetSession& session, const presentation::RendererStats& 
       netSection(session, rttMs_, depth_, netHead_);
     }
     if (ImGui::CollapsingHeader("Entities")) entitySection(session);
+    if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
+  }
+  ImGui::End();
+  ImGui::PopFont();
+}
+
+}  // namespace kfm::client
+
+namespace kfm::client {
+
+void DebugOverlay::draw(ReplaySession& session, const presentation::RendererStats& renderer) {
+  if (!open) return;
+  ImGui::SetNextWindowPos(ImVec2(12.0f, 70.0f), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowSize(ImVec2(440.0f, 520.0f), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowBgAlpha(0.9f);
+  ImGui::PushFont(ui::debugFont(), kDebugFontSize);
+  if (ImGui::Begin("Debug (F1)", &open)) {
+    if (ImGui::CollapsingHeader("Performance", ImGuiTreeNodeFlags_DefaultOpen)) {
+      performanceSection(session, renderer, frameMs_, frameHead_);
+    }
+    if (ImGui::CollapsingHeader("Replay", ImGuiTreeNodeFlags_DefaultOpen)) replaySection(session);
+    if (ImGui::CollapsingHeader("Interpolation")) interpolationSection(session);
+    if (ImGui::CollapsingHeader("Entities")) entitySection(ReplayEntities{session});
     if (audio != nullptr && ImGui::CollapsingHeader("Audio")) audioSection(*audio);
   }
   ImGui::End();

@@ -4,13 +4,15 @@
 // controls, and feel-tuning sliders over the session's ContentDB copy.
 // In network mode: the net panel (connection, RTT/jitter/loss, lead, rate,
 // rollback depth histogram, mispredictions, checksums, traffic, net graph)
-// instead of the local-only controls and tuning. Both modes show the Audio
+// instead of the local-only controls and tuning; a replay its own read-only
+// panel (M7 step 6). Every mode shows the Audio
 // panel (mute, volume, device status, voices) when `audio` is set.
 #pragma once
 
 #include "client_audio.hpp"
 #include "core/match_session.hpp"
 #include "core/net_session.hpp"
+#include "core/replay_session.hpp"
 #include "kfm/presentation/renderer.hpp"
 
 #include <array>
@@ -31,6 +33,9 @@ class DebugOverlay {
   void draw(MatchSession& session, const presentation::RendererStats& renderer, uint64_t nowNs);
   // Network mode. Also feeds the net graph, so call it every frame.
   void draw(NetSession& session, const presentation::RendererStats& renderer);
+  // M7 step 6: the replay viewer (read-only: performance, the replay's
+  // header and tick, interpolation, entities, audio; no controls or tuning).
+  void draw(ReplaySession& session, const presentation::RendererStats& renderer);
 
  private:
   static constexpr std::size_t kFrameHistory = 240;

@@ -40,4 +40,14 @@ struct OnlineOutcome {
 [[nodiscard]] OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode,
                                              const std::string& lobby);
 
+// M7 step 6: the replay viewer before it plays, on the jungle background
+// (no arena is drawn): "Loading replay…" with `source` small under it while
+// the bytes are on their way (the browser's fetch), or "Could not open the
+// replay" with `error` and a Main menu button (`button` holds the keyboard /
+// pad focus; Escape, Enter or a pad's South / East also leave). True when
+// Main menu was clicked.
+void drawReplayLoading(const std::string& source);
+[[nodiscard]] bool drawReplayError(const std::string& error, const std::string& source,
+                                   ButtonMenu& button);
+
 }  // namespace kfm::client
