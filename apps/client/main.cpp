@@ -120,7 +120,8 @@
 // frame with the final banner and scoreboard (no match-over buttons). No
 // pause menu, no hot reload, no bots; F1 shows a read-only overlay. Main
 // menu (or Escape) drops the replay for the main menu; there is no way
-// back into the viewer from the menu.
+// back into the viewer from the menu. Hot reload (--content DIR) starts
+// there, as it would have at startup without --replay.
 #include "client_audio.hpp"
 #include "core/client_options.hpp"
 #include "core/lobby_menu.hpp"
@@ -911,6 +912,20 @@ bool pauseMenuEvent(App& app, const platform::InputEvent& input) {
   return press;
 }
 
+// Hot reload (natively, content from a directory, not --no-hot-reload):
+// the watcher polls content/ about once a second. Local play's: a replay
+// plays the content it names, so with --replay it starts when the viewer
+// leaves for the menu.
+void startHotReload(App& app) {
+#ifndef __EMSCRIPTEN__
+  if (app.options.hotReload && !app.content.embedded() && !app.contentWatcher.active()) {
+    app.contentWatcher = content::ContentWatcher(app.content.dir);
+  }
+#else
+  static_cast<void>(app);
+#endif
+}
+
 // --- the replay viewer (M7 step 6) ---------------------------------------------------
 
 // The replay cannot be shown: the screen says why. Natively a smoke run
@@ -1005,6 +1020,7 @@ void leaveReplay(App& app) {
   app.screen = Screen::Menu;
   app.leaveReplayRequested = false;
   app.overMenu.setFocus(0);
+  startHotReload(app);  // local play's, from the menu on
   std::printf("kfm_client: back to the menu\n");
   std::fflush(stdout);
 }
@@ -1792,12 +1808,9 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
                 app.services->guestId().c_str());
     std::fflush(stdout);
   }
-#ifndef __EMSCRIPTEN__
-  // Hot reload is local play's: a replay plays the content it names.
-  if (app.options.hotReload && !app.content.embedded() && !app.options.replayMode()) {
-    app.contentWatcher = content::ContentWatcher(app.content.dir);
-  }
-#endif
+  // Hot reload is local play's: a replay plays the content it names (the
+  // watcher starts when the viewer leaves for the menu).
+  if (!app.options.replayMode()) startHotReload(app);
   if (!app.window.init({.title = "Kung Fu Monkeys",
                         .width = 1280,
                         .height = 720,
