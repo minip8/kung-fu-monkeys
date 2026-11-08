@@ -11,6 +11,8 @@
 #include "core/match_session.hpp"
 #include "core/menus.hpp"
 #include "core/net_session.hpp"
+#include "core/replay_controls.hpp"
+#include "core/replay_session.hpp"
 #include "core/scoreboard.hpp"
 #include "kfm/presentation/camera.hpp"
 #include "kfm/presentation/render_state.hpp"
@@ -49,9 +51,17 @@ struct HudView {
   // v0.43: the caller draws the match-over screen (drawMatchOver()), so the
   // HUD draws no match-over banner or scoreboard of its own.
   bool overScreen{false};
+  // M7 step 6: a replay (ReplaySession): every slot is a spectator's view
+  // (P<n>, no "you"), and the match-over banner says the replay ended.
+  bool replay{false};
+  // M7 step 6: the pixels at the bottom a control bar takes (the replay's,
+  // replayBarInset()); the between-rounds scoreboard stays above them.
+  float bottomInset{0.0f};
 };
 [[nodiscard]] HudView hudView(const MatchSession& session);
 [[nodiscard]] HudView hudView(const NetSession& session);
+// The recorded slots as Remote (labelled P<n>: a replay carries no names).
+[[nodiscard]] HudView hudView(const ReplaySession& session);
 // Each slot's label: its nickname, else P<n> / BOT<n> (scoreboard.hpp).
 [[nodiscard]] std::array<std::string, sim::kMaxPlayers> slotLabels(const HudView& view);
 
@@ -139,6 +149,25 @@ struct MatchOverView {
                                           const presentation::RenderState& state);
 // Returns the index of the button clicked.
 [[nodiscard]] std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& menu);
+
+// M7 step 6: the replay viewer's control bar along the bottom (the
+// ReplayControls model): Restart, Play / Pause (Watch again at the end),
+// Step, the speed, the timeline (a click or a drag seeks) with the time
+// "m:ss / m:ss", Main menu; `title` is a small line above them (the
+// replay's arena and mode). Under 820 px the timeline takes a row of its
+// own above the buttons. A window: clicks on it stay the UI's.
+struct ReplayBarView {
+  ReplayStatus status;
+  std::string title;
+};
+// The pixels the bar takes from the bottom of the display (its margin,
+// panel and drop) for a bar with or without its title line.
+[[nodiscard]] float replayBarInset(bool titled);
+struct ReplayBarOutcome {
+  ReplayCommand command;  // a click, or the timeline's seek
+  bool scrubbing{false};  // the timeline is held: the app holds the playback
+};
+[[nodiscard]] ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& view);
 
 // v0.46: the pause menu over a running match, the match dimmed behind it:
 // its buttons in a column (`menu` holds the focus) and a line saying what

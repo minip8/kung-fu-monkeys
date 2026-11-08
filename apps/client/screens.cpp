@@ -319,4 +319,50 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
   return out;
 }
 
+void drawReplayLoading(const std::string& source) {
+  dimBackground();
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (ui::beginScreen("##replay_loading", std::min(560.0f, view.x - 32.0f))) {
+    // A small spinner so a slow download does not look frozen.
+    constexpr const char* kSpin = "|/-\\";
+    const auto spin = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % 4;
+    const std::string title = std::string("Loading replay\u2026  ") + kSpin[spin];
+    ui::heading(title.c_str());
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kCreamDim));
+    ImGui::TextWrapped("%s", source.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    footer("Esc: main menu");
+  }
+  ui::endScreen();
+}
+
+bool drawReplayError(const std::string& error, const std::string& source, ButtonMenu& button) {
+  bool menu = false;
+  button.setCount(1);
+  dimBackground();
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (ui::beginScreen("##replay_error", std::min(640.0f, view.x - 32.0f))) {
+    ui::heading("Could not open the replay", ui::kAlarm);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kCream));
+    ImGui::TextWrapped("%s", error.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kCreamDim));
+    ImGui::TextWrapped("%s", source.c_str());
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    ImGui::Spacing();
+    if (ui::bigButton("Main menu", button.focus() == 0, -1.0f, true, ui::kFontButton,
+                      ui::Tone::Lead)) {
+      menu = true;
+    }
+    (void)ui::pointerTakesFocus();
+    footer("Enter / Esc: main menu");
+  }
+  ui::endScreen();
+  return menu;
+}
+
 }  // namespace kfm::client

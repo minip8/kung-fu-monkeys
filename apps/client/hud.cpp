@@ -12,7 +12,9 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -357,15 +359,19 @@ void drawCrown(ImDrawList* dl, ImVec2 p, float w);
 // score, deaths where the mode counts them), each team's rows under a line
 // with the team's name and score; the winner wears the crown and this
 // client's own rows are outlined. `panel` draws a backing panel (the HUD's
-// between-rounds board). Returns the height used.
-float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboard& b, bool panel) {
-  constexpr float kRowH = 30.0f;
-  constexpr float kPad = 14.0f;
-  constexpr float kText = 20.0f;
-  constexpr float kSmall = 16.0f;
-  const std::size_t teamLines = b.teamCount;
-  const float height =
-      (kPad * 2.0f) + 24.0f + (static_cast<float>(b.rows.size() + teamLines) * kRowH);
+// between-rounds board). `k` scales it (M7 step 6: the replay's board
+// shrinks to stay clear of its control bar). Returns the height used.
+float scoreTableHeight(const Scoreboard& b, float k = 1.0f) {
+  return ((14.0f * 2.0f) + 24.0f + (static_cast<float>(b.rows.size() + b.teamCount) * 30.0f)) * k;
+}
+
+float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboard& b, bool panel,
+                     float k = 1.0f) {
+  const float kRowH = 30.0f * k;
+  const float kPad = 14.0f * k;
+  const float kText = 20.0f * k;
+  const float kSmall = 16.0f * k;
+  const float height = scoreTableHeight(b, k);
   if (panel) {
     ui::card(dl, origin, ImVec2(origin.x + width, origin.y + height), ui::kPanelBg,
              ui::kPanelRounding, ui::kPanelBorder, ui::kPanelDrop);
@@ -380,10 +386,10 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
   };
   float y = origin.y + kPad;
   dl->AddText(font, kSmall, ImVec2(left, y), ui::kCreamDim, "#");
-  dl->AddText(font, kSmall, ImVec2(left + 52.0f, y), ui::kCreamDim, "Player");
+  dl->AddText(font, kSmall, ImVec2(left + (52.0f * k), y), ui::kCreamDim, "Player");
   rightText(kSmall, scoreX, y, ui::kCreamDim, b.scoreLabel);
   if (b.showDeaths) rightText(kSmall, deathsX, y, ui::kCreamDim, "Deaths");
-  y += 24.0f;
+  y += 24.0f * k;
   bool firstRow = true;
   int8_t lastTeam = 0;
   for (const ScoreRow& r : b.rows) {
@@ -409,9 +415,10 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
     std::snprintf(text, sizeof text, "%u.", static_cast<unsigned>(r.place));
     dl->AddText(font, kText, ImVec2(left, ty), ui::kCreamDim, text);
     // The slot's colour as a dot: the label stays cream for contrast.
-    dl->AddCircleFilled(ImVec2(left + 40.0f, y + (kRowH * 0.5f)), 8.0f, ui::kOutline);
-    dl->AddCircleFilled(ImVec2(left + 40.0f, y + (kRowH * 0.5f)), 6.0f, slotColor(r.slot));
-    float nx = left + 52.0f;
+    dl->AddCircleFilled(ImVec2(left + (40.0f * k), y + (kRowH * 0.5f)), 8.0f * k, ui::kOutline);
+    dl->AddCircleFilled(ImVec2(left + (40.0f * k), y + (kRowH * 0.5f)), 6.0f * k,
+                        slotColor(r.slot));
+    float nx = left + (52.0f * k);
     if (r.winner) {
       drawCrown(dl, ImVec2(nx, ty + kText - 3.0f), 16.0f);
       nx += 22.0f;
@@ -444,8 +451,17 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
     const Scoreboard b =
         buildScoreboard(hud, slotLabels(session), onlineLocalMask(session), session.bots);
     const float width = std::min(560.0f, view.x - 32.0f);
-    const float top = centre.y + (hud.phase == HudPhase::MatchEnded ? 120.0f : 90.0f);
-    (void)drawScoreTable(dl, ImVec2((view.x - width) * 0.5f, top), width, b, true);
+    const bool over = hud.phase == HudPhase::MatchEnded;
+    float top = centre.y + (over ? 120.0f : 90.0f);
+    float k = 1.0f;
+    // M7 step 6: clear of the replay's control bar: up under the banner,
+    // then smaller (to 0.6) if it still does not fit.
+    const float bottom = view.y - session.bottomInset - 8.0f;
+    if (session.bottomInset > 0.0f && top + scoreTableHeight(b) > bottom) {
+      top = std::max(bottom - scoreTableHeight(b), centre.y + (over ? 80.0f : 44.0f));
+      k = std::clamp((bottom - top) / scoreTableHeight(b), 0.6f, 1.0f);
+    }
+    (void)drawScoreTable(dl, ImVec2((view.x - width) * 0.5f, top), width, b, true, k);
   }
   char text[64];
   switch (hud.phase) {
@@ -496,8 +512,10 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
                     centre, kWhite, "Draw!");
       }
-      centredText(dl, 20.0f, ImVec2(centre.x, centre.y + 60.0f), kWhite,
-                  session.network ? "Esc: menu (Leave room)" : "Enter / Start: back to the lobby");
+      const char* hint = "Enter / Start: back to the lobby";
+      if (session.network) hint = "Esc: menu (Leave room)";
+      if (session.replay) hint = "End of the replay";
+      centredText(dl, 20.0f, ImVec2(centre.x, centre.y + 60.0f), kWhite, hint);
       if (!session.nextMatch.empty()) {
         centredText(dl, 18.0f, ImVec2(centre.x, centre.y + 88.0f), ui::kSky,
                     session.nextMatch.c_str());
@@ -937,6 +955,16 @@ HudView hudView(const NetSession& session) {
   return v;
 }
 
+HudView hudView(const ReplaySession& session) {
+  HudView v;
+  const sim::PlayerMask present = session.matchConfig().players;
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    v.owners[i] = (present & (1u << i)) != 0 ? SlotOwner::Remote : SlotOwner::None;
+  }
+  v.replay = true;
+  return v;
+}
+
 void drawMatchHud(const HudView& view, const HudInput& in) {
   if (in.state == nullptr || in.camera == nullptr) return;
   // The background list draws over the 3D scene (rendered before ImGui) but under
@@ -1294,6 +1322,193 @@ std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& 
   }
   ui::endScreen();
   return clicked;
+}
+
+namespace {
+
+// The replay's timeline: a track with the played part in mango and a cream
+// knob at the current tick, `w` wide and as tall as the bar's buttons. A
+// click or a drag seeks (ReplayControls::scrubTo); the release seeks once
+// more (endScrub) so the session's clock restarts there.
+void drawReplayTimeline(ReplayControls& controls, const ReplayStatus& s, float w, float faceH,
+                        ReplayBarOutcome& out) {
+  const ImVec2 at = ImGui::GetCursorScreenPos();
+  (void)ImGui::InvisibleButton("##timeline", ImVec2(std::max(w, 1.0f), faceH + ui::kButtonDrop));
+  const bool over = ui::pointerOverItem();
+  if (ui::pointerTakesFocus()) controls.setFocus(ReplayControl::Timeline);
+  constexpr float kKnobR = 10.0f;
+  constexpr float kTrackH = 12.0f;
+  const float x0 = at.x + kKnobR + ui::kFocusRingW;
+  const float trackW = std::max(1.0f, w - (2.0f * (kKnobR + ui::kFocusRingW)));
+  if (ImGui::IsItemActive() && s.tickCount > 0) {
+    controls.setFocus(ReplayControl::Timeline);
+    const float f = (ImGui::GetIO().MousePos.x - x0) / trackW;
+    if (const std::optional<ReplayCommand> cmd = controls.scrubTo(replayTickAt(f, s.tickCount))) {
+      out.command = *cmd;
+    }
+  } else if (const std::optional<ReplayCommand> cmd = controls.endScrub()) {
+    out.command = *cmd;
+  }
+  out.scrubbing = controls.scrubbing();
+  // While held, the knob follows the pointer's tick (sought this frame).
+  const uint32_t shown =
+      out.command.kind == ReplayCommand::Kind::SeekTo ? out.command.tick : s.tick;
+  const float frac =
+      s.tickCount == 0 ? 0.0f : static_cast<float>(shown) / static_cast<float>(s.tickCount);
+  const float cy = at.y + (faceH * 0.5f);
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  if (ui::showsFocus(controls.focus() == ReplayControl::Timeline, over)) {
+    ui::focusRing(ImVec2(at.x, cy - kKnobR - 4.0f), ImVec2(at.x + w, cy + kKnobR + 4.0f),
+                  kKnobR + 4.0f);
+  }
+  const ImVec2 lo{x0, cy - (kTrackH * 0.5f)};
+  const ImVec2 hi{x0 + trackW, cy + (kTrackH * 0.5f)};
+  ui::card(dl, lo, hi, ui::kBarkInset, kTrackH * 0.5f, 2.0f, 0.0f);
+  const float knobX = x0 + (trackW * frac);
+  if (knobX > lo.x + 2.0f) {
+    dl->AddRectFilled(ImVec2(lo.x + 2.0f, lo.y + 2.0f), ImVec2(knobX, hi.y - 2.0f), ui::kMango,
+                      (kTrackH * 0.5f) - 2.0f);
+  }
+  dl->AddCircleFilled(ImVec2(knobX, cy + 2.0f), kKnobR + 2.5f, ui::kOutline);
+  dl->AddCircleFilled(ImVec2(knobX, cy), kKnobR + 2.5f, ui::kOutline);
+  ImU32 knob = over ? ui::kSandLight : ui::kCream;
+  if (ImGui::IsItemActive()) knob = ui::kGold;
+  dl->AddCircleFilled(ImVec2(knobX, cy), kKnobR, knob);
+}
+
+// The bar's geometry on the current display.
+struct ReplayBarLayout {
+  static constexpr float kMargin = 16.0f;
+  static constexpr float kPad = 14.0f;
+  static constexpr float kRowGap = 10.0f;
+  static constexpr float kTwoRowsBelow = 820.0f;
+  static constexpr float kSize = ui::kFontUi + 2.0f;  // the buttons' font
+  float faceH{0.0f};
+  float rowH{0.0f};
+  float width{0.0f};
+  bool twoRows{false};
+  float titleH{0.0f};
+  float height{0.0f};
+};
+
+[[nodiscard]] ReplayBarLayout replayBarLayout(bool titled) {
+  ReplayBarLayout l;
+  const ImVec2 display = ImGui::GetIO().DisplaySize;
+  l.faceH = ui::bigButtonHeight(ReplayBarLayout::kSize);
+  l.rowH = l.faceH + ui::kButtonDrop;
+  l.width = std::max(display.x - (2.0f * ReplayBarLayout::kMargin), 1.0f);
+  l.twoRows = l.width < ReplayBarLayout::kTwoRowsBelow;
+  l.titleH = titled ? ui::kFontSmall + 6.0f : 0.0f;
+  l.height = (2.0f * ReplayBarLayout::kPad) + l.titleH + l.rowH +
+             (l.twoRows ? l.rowH + ReplayBarLayout::kRowGap : 0.0f);
+  return l;
+}
+
+}  // namespace
+
+float replayBarInset(bool titled) {
+  return replayBarLayout(titled).height + ReplayBarLayout::kMargin + ui::kPanelDrop;
+}
+
+ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& view) {
+  ReplayBarOutcome out;
+  const ReplayStatus& s = view.status;
+  const ImVec2 display = ImGui::GetIO().DisplaySize;
+  const ReplayBarLayout layout = replayBarLayout(!view.title.empty());
+  constexpr float kMargin = ReplayBarLayout::kMargin;
+  constexpr float kPad = ReplayBarLayout::kPad;
+  constexpr float kRowGap = ReplayBarLayout::kRowGap;
+  constexpr float kSize = ReplayBarLayout::kSize;
+  const float faceH = layout.faceH;
+  const float rowH = layout.rowH;
+  const float width = layout.width;
+  const bool twoRows = layout.twoRows;
+  const float titleH = layout.titleH;
+  const float height = layout.height;
+  ImGui::SetNextWindowPos(ImVec2(kMargin, display.y - kMargin - ui::kPanelDrop - height),
+                          ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(width, height), ImGuiCond_Always);
+  constexpr ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                      ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                      ImGuiWindowFlags_NoSavedSettings |
+                                      ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoScrollbar |
+                                      ImGuiWindowFlags_NoScrollWithMouse;
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kPad, kPad));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, kRowGap));
+  const bool open = ImGui::Begin("##replay_bar", nullptr, kFlags);
+  {
+    const ImVec2 pos = ImGui::GetWindowPos();
+    const ImVec2 sz = ImGui::GetWindowSize();
+    ui::card(ImGui::GetBackgroundDrawList(), pos, ImVec2(pos.x + sz.x, pos.y + sz.y), ui::kPanelBg,
+             ui::kPanelRounding, ui::kPanelBorder, ui::kPanelDrop);
+  }
+  if (open) {
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    if (!view.title.empty()) {
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      dl->AddText(ImGui::GetFont(), ui::kFontSmall, at, ui::kCreamDim, view.title.c_str());
+      ImGui::Dummy(ImVec2(1.0f, titleH - ImGui::GetStyle().ItemSpacing.y));
+    }
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float padX = std::round(kSize * 0.6f);
+    const auto fit = [&](const char* text) {
+      return textWidth(kSize, text) + (2.0f * (padX + ui::kButtonBorder));
+    };
+    // Fixed widths, so the bar does not shift when a label changes.
+    const float playW = std::max({fit("Watch again"), fit("Pause"), fit("Play")});
+    const float speedW = fit("0.25x");
+    const float menuW = fit("Main menu");
+    const std::string time = replayTimeLabel(s.tick, s.tickCount);
+    const float timeW = textWidth(ui::kFontUi, "00:00 / 00:00");
+    const auto button = [&](ReplayControl c, float w, ui::Tone tone) {
+      if (ui::bigButton(ReplayControls::label(c, s), controls.focus() == c, w,
+                        ReplayControls::enabled(c, s), kSize, tone)) {
+        controls.setFocus(c);
+        out.command = ReplayControls::activate(c, s);
+      }
+      if (ui::pointerTakesFocus()) controls.setFocus(c);
+    };
+    const auto timeText = [&] {
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      ImGui::Dummy(ImVec2(timeW, rowH));
+      const float tw = textWidth(ui::kFontUi, time.c_str());
+      ui::shadowText(dl, ui::kFontUi,
+                     ImVec2(at.x + timeW - tw, at.y + ((faceH - ui::kFontUi) * 0.5f)), ui::kCream,
+                     time.c_str());
+    };
+    const auto transport = [&] {
+      button(ReplayControl::Restart, fit("Restart"), ui::Tone::Plain);
+      ImGui::SameLine();
+      button(ReplayControl::PlayPause, playW, ui::Tone::Lead);
+      ImGui::SameLine();
+      button(ReplayControl::Step, fit("Step"), ui::Tone::Plain);
+      ImGui::SameLine();
+      button(ReplayControl::Speed, speedW, ui::Tone::Second);
+    };
+    if (twoRows) {
+      drawReplayTimeline(controls, s, ImGui::GetContentRegionAvail().x - timeW - gap, faceH, out);
+      ImGui::SameLine();
+      timeText();
+      transport();
+      ImGui::SameLine();
+      const float rest = ImGui::GetContentRegionAvail().x;
+      if (rest > menuW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + rest - menuW);
+      button(ReplayControl::MainMenu, menuW, ui::Tone::Plain);
+    } else {
+      transport();
+      ImGui::SameLine();
+      const float line = ImGui::GetContentRegionAvail().x - timeW - menuW - (2.0f * gap);
+      drawReplayTimeline(controls, s, line, faceH, out);
+      ImGui::SameLine();
+      timeText();
+      ImGui::SameLine();
+      button(ReplayControl::MainMenu, menuW, ui::Tone::Plain);
+    }
+  }
+  ImGui::End();
+  ImGui::PopStyleVar(3);
+  return out;
 }
 
 std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {

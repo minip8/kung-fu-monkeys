@@ -9,6 +9,7 @@
 //              [--mute] [--volume 0..100] [--mouse-aim on|off]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]]
+//              [--replay SRC]
 //
 // Frame: pollEvents (ImGui first, then SDL -> InputEvent into the session)
 // -> MatchSession::advance (0..4 fixed 60 Hz ticks, inputs sampled right
@@ -100,6 +101,26 @@
 // held). In the browser the page never asks for fullscreen, so Escape
 // reaches SDL as any key; were the canvas fullscreen, the browser would take
 // the first Escape to leave fullscreen and the next one opens the menu.
+//
+// The replay viewer (M7 step 6, core/replay_session.hpp,
+// core/replay_controls.hpp): --replay SRC (?replay=URL in the browser)
+// opens it instead of the main menu. Natively the file is read before the
+// first frame; in the browser an asynchronous fetch (CORS, no credentials,
+// at most kReplayMaxBytes) runs while the screen says "Loading replay…",
+// and the frame polls it. A replay that cannot be read, downloaded or
+// played (ReplaySession::load's refusals: not a replay, truncated, other
+// content, ...) shows the reason with a Main menu button; natively with
+// --exit-after-frames it also makes the exit code non-zero, so a broken
+// replay fails a smoke test. A loaded replay is drawn like a match (the
+// same RenderState builder, renderer and arena camera) under a spectator's
+// HUD (P<n> labels, no "you") and the control bar (hud.hpp
+// drawReplayBar): Restart, Play / Pause (Watch again at the end), Step,
+// the speed, the timeline and Main menu, with Space, ., Left / Right
+// (Shift: 30 s), [ / ], Home and Escape. At the end it holds the last
+// frame with the final banner and scoreboard (no match-over buttons). No
+// pause menu, no hot reload, no bots; F1 shows a read-only overlay. Main
+// menu (or Escape) drops the replay for the main menu; there is no way
+// back into the viewer from the menu.
 #include "client_audio.hpp"
 #include "core/client_options.hpp"
 #include "core/lobby_menu.hpp"
@@ -109,6 +130,8 @@
 #include "core/menus.hpp"
 #include "core/net_session.hpp"
 #include "core/online_menu.hpp"
+#include "core/replay_controls.hpp"
+#include "core/replay_session.hpp"
 #include "debug_overlay.hpp"
 #include "hud.hpp"
 #include "kfm/content/app_content.hpp"
@@ -141,7 +164,9 @@
 #include <SDL3/SDL_stdinc.h>
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -166,7 +191,13 @@ using client::SessionPhase;
 
 // Which front-end screen the local frame draws (v0.43); online, the
 // NetSession's phase decides instead.
-enum class Screen : std::uint8_t { Menu = 0, Settings, Online, Play };
+enum class Screen : std::uint8_t { Menu = 0, Settings, Online, Play, Replay };
+
+// M7 step 6: where the replay viewer's bytes are.
+enum class ReplayLoad : std::uint8_t { None = 0, Loading, Ready, Failed };
+// The largest replay the viewer takes (the browser's download is cut off
+// past it): 16 MiB, hours of a ten-player match.
+constexpr std::size_t kReplayMaxBytes = std::size_t{16} << 20;
 
 #ifdef __EMSCRIPTEN__
 constexpr bool kQuitItem = false;  // a browser tab is closed by the browser
@@ -225,8 +256,16 @@ struct App {
   client::GamepadSet pads;
   client::DebugOverlay overlay;
   client::ClientAudio audio;
-  client::LobbyMenu lobby;      // the local lobby's settings panel
-  client::MenuInput menuInput;  // raw input -> lobby menu actions
+  // M7 step 6: the replay viewer (--replay), while its screen is open.
+  std::unique_ptr<client::ReplaySession> replay;
+  ReplayLoad replayState = ReplayLoad::None;
+  std::string replayError;  // why it failed (ReplayLoad::Failed)
+  std::string replayTitle;  // the bar's line: arena, mode, players
+  client::ReplayControls replayControls;
+  bool leaveReplayRequested = false;  // Main menu / Escape: next frame
+  bool drawWorld = true;              // false: the jungle background alone
+  client::LobbyMenu lobby;            // the local lobby's settings panel
+  client::MenuInput menuInput;        // raw input -> lobby menu actions
   // v0.55: the highlight follows the last menu device (mouse: the hovered
   // item; keys / pads: the focus); revealOnly() drops the press that shows it.
   client::MenuHighlight highlight;
@@ -297,6 +336,112 @@ EM_JS(int, kfmShareJs, (const char* title, const char* text, const char* url), {
     return 1;
   } catch (e) {
     return 0;
+  }
+});
+// M7 step 6: the replay viewer's download. kfmReplayFetchJs starts a CORS
+// fetch without credentials (the ladder's presigned R2 URLs allow GET from
+// the page's origin) and keeps the outcome in Module.kfmReplay; the frame
+// polls it (kfmReplayPollJs: -1 still running, -2 failed, else the byte
+// count), copies the bytes into a buffer it allocated (kfmReplayTakeJs) or
+// takes the reason (kfmReplayErrorJs). A body past `cap` bytes is cut off
+// and refused; leaving the screen aborts the fetch (kfmReplayCancelJs).
+// The macro joins the body into one line: every statement ends in a ';'.
+EM_JS_DEPS(kfm_replay, "$stringToNewUTF8,$UTF8ToString");
+EM_JS(void, kfmReplayFetchJs, (const char* url, int cap), {
+  const state = { done: false, bytes: null, error: "", controller: null };
+  Module['kfmReplay'] = state;
+  const fail = (message) => {
+    if (state.done) return;
+    state.done = true;
+    state.bytes = null;
+    state.error = message;
+  };
+  try {
+    const target = UTF8ToString(url);
+    state.controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const options = { mode: 'cors', credentials: 'omit' };
+    if (state.controller) options.signal = state.controller.signal;
+    const tooLarge = 'the replay is larger than ' + (cap >> 20) + ' MiB';
+    fetch(target, options)
+        .then(async (response) => {
+          if (!response.ok) {
+            fail('the server answered HTTP ' + response.status +
+                 (response.statusText ? ' ' + response.statusText : ""));
+            return;
+          }
+          const declared = Number(response.headers.get('Content-Length') || 0);
+          if (declared > cap) {
+            fail(tooLarge);
+            if (state.controller) state.controller.abort();
+            return;
+          }
+          let bytes = null;
+          if (response.body && typeof response.body.getReader === 'function') {
+            const reader = response.body.getReader();
+            const chunks = [];
+            let total = 0;
+            for (;;) {
+              const part = await reader.read();
+              if (part.done) break;
+              total += part.value.length;
+              if (total > cap) {
+                reader.cancel().catch(() => {});
+                fail(tooLarge);
+                return;
+              }
+              chunks.push(part.value);
+            }
+            bytes = new Uint8Array(total);
+            let at = 0;
+            for (const chunk of chunks) {
+              bytes.set(chunk, at);
+              at += chunk.length;
+            }
+          } else {
+            bytes = new Uint8Array(await response.arrayBuffer());
+            if (bytes.length > cap) {
+              fail(tooLarge);
+              return;
+            }
+          }
+          if (state.done) return;
+          state.bytes = bytes;
+          state.done = true;
+        })
+        .catch((e) => {
+          fail('the download failed (' + (e && e.message ? e.message : String(e)) +
+               '): the address is unreachable or does not allow this page (CORS)');
+        });
+  } catch (e) {
+    fail('the download could not start: ' + String(e));
+  }
+});
+EM_JS(int, kfmReplayPollJs, (), {
+  const state = Module['kfmReplay'];
+  if (!state || !state.done) return -1;
+  return state.bytes ? state.bytes.length : -2;
+});
+EM_JS(void, kfmReplayTakeJs, (unsigned char* out), {
+  const state = Module['kfmReplay'];
+  if (state && state.bytes && state.bytes.length > 0) HEAPU8.set(state.bytes, out);
+  Module['kfmReplay'] = null;
+});
+EM_JS(char*, kfmReplayErrorJs, (), {
+  const state = Module['kfmReplay'];
+  Module['kfmReplay'] = null;
+  return stringToNewUTF8(state && state.error ? state.error : 'unknown error');
+});
+EM_JS(void, kfmReplayCancelJs, (), {
+  const state = Module['kfmReplay'];
+  Module['kfmReplay'] = null;
+  if (!state) return;
+  state.done = true;
+  state.bytes = null;
+  if (state.controller) {
+    try {
+      state.controller.abort();
+    } catch (e) {
+    }
   }
 });
 // clang-format on
@@ -765,6 +910,169 @@ bool pauseMenuEvent(App& app, const platform::InputEvent& input) {
   return press;
 }
 
+// --- the replay viewer (M7 step 6) ---------------------------------------------------
+
+// The replay cannot be shown: the screen says why. Natively a smoke run
+// (--exit-after-frames) then exits non-zero.
+void failReplay(App& app, std::string reason) {
+  app.replayState = ReplayLoad::Failed;
+  app.replayError = std::move(reason);
+  app.replay.reset();
+  std::fprintf(stderr, "error: replay %s: %s\n", app.options.replay.c_str(),
+               app.replayError.c_str());
+#ifndef __EMSCRIPTEN__
+  if (app.options.exitAfterFrames != 0) app.exitCode = EXIT_FAILURE;
+#endif
+}
+
+void loadReplay(App& app, std::span<const std::byte> bytes, std::uint64_t now) {
+  if (bytes.size() > kReplayMaxBytes) {
+    failReplay(app, "the replay is larger than 16 MiB");
+    return;
+  }
+  auto replay = std::make_unique<client::ReplaySession>();
+  if (!replay->load(bytes, app.content.db, now)) {
+    failReplay(app, replay->error());
+    return;
+  }
+  const sim::ContentDB& db = replay->content();
+  const sim::MatchConfig& config = replay->matchConfig();
+  const auto players = static_cast<unsigned>(std::popcount(config.players));
+  app.replayTitle = std::string("Replay: ") + db.arenaAt(config.arena).name.cStr() + ", " +
+                    db.modeAt(config.mode).name.cStr() + ", " + std::to_string(players) +
+                    (players == 1 ? " player" : " players");
+  std::printf("kfm_client: replay %s: %u ticks (%s), arena %s, mode %s, loadout %s, %u players\n",
+              app.options.replay.c_str(), replay->tickCount(),
+              client::replayClock(replay->tickCount()).c_str(),
+              db.arenaAt(config.arena).name.cStr(), db.modeAt(config.mode).name.cStr(),
+              db.loadoutAt(config.loadout).name.cStr(), players);
+  std::fflush(stdout);
+  app.replay = std::move(replay);
+  app.replayState = ReplayLoad::Ready;
+  app.replayControls = client::ReplayControls{};
+}
+
+// --replay at startup: natively the file is read at once; in the browser
+// the download starts and pollReplayDownload() picks it up.
+void startReplay(App& app, std::uint64_t now) {
+  app.screen = Screen::Replay;
+  app.replayState = ReplayLoad::Loading;
+#ifdef __EMSCRIPTEN__
+  static_cast<void>(now);
+  std::printf("kfm_client: downloading replay %s\n", app.options.replay.c_str());
+  std::fflush(stdout);
+  kfmReplayFetchJs(app.options.replay.c_str(), static_cast<int>(kReplayMaxBytes));
+#else
+  std::vector<std::byte> bytes;
+  std::string error;
+  if (!client::readFileBytes(app.options.replay, bytes, error)) {
+    failReplay(app, error);
+    return;
+  }
+  loadReplay(app, bytes, now);
+#endif
+}
+
+// The browser's download, polled at the top of the replay frame.
+void pollReplayDownload(App& app,  // NOLINT(misc-const-correctness): written in the browser
+                        std::uint64_t now) {
+#ifdef __EMSCRIPTEN__
+  if (app.replayState != ReplayLoad::Loading) return;
+  const int size = kfmReplayPollJs();
+  if (size == -1) return;
+  if (size < 0) {
+    failReplay(app, "cannot download it: " + takeJsString(kfmReplayErrorJs()));
+    return;
+  }
+  std::vector<std::byte> bytes(static_cast<std::size_t>(size));
+  kfmReplayTakeJs(reinterpret_cast<unsigned char*>(bytes.data()));
+  loadReplay(app, bytes, now);
+#else
+  static_cast<void>(app);
+  static_cast<void>(now);
+#endif
+}
+
+// Main menu or Escape: the viewer closes for good (no way back from the menu).
+void leaveReplay(App& app) {
+#ifdef __EMSCRIPTEN__
+  kfmReplayCancelJs();
+#endif
+  app.replay.reset();
+  app.replayState = ReplayLoad::None;
+  app.replayControls = client::ReplayControls{};
+  app.screen = Screen::Menu;
+  app.leaveReplayRequested = false;
+  app.overMenu.setFocus(0);
+  std::printf("kfm_client: back to the menu\n");
+  std::fflush(stdout);
+}
+
+[[nodiscard]] client::ReplayStatus replayStatus(const client::ReplaySession& r) {
+  return client::ReplayStatus{.tick = r.tick(),
+                              .tickCount = r.tickCount(),
+                              .paused = r.paused(),
+                              .atEnd = r.atEnd(),
+                              .speedIndex = r.speedIndex()};
+}
+
+void applyReplayCommand(App& app, const client::ReplayCommand& command, std::uint64_t now) {
+  using Kind = client::ReplayCommand::Kind;
+  if (command.kind == Kind::MainMenu) {
+    app.leaveReplayRequested = true;
+    return;
+  }
+  if (!app.replay) return;
+  client::ReplaySession& r = *app.replay;
+  switch (command.kind) {
+    case Kind::TogglePause:
+      r.setPaused(!r.paused());
+      break;
+    case Kind::Step:
+      r.setPaused(true);
+      r.requestSingleStep();
+      break;
+    case Kind::SeekTo:
+      r.seek(command.tick, now);
+      break;
+    case Kind::SetSpeed:
+      r.setSpeed(
+          client::kReplaySpeeds[std::min(command.speedIndex, client::kReplaySpeeds.size() - 1)]);
+      break;
+    case Kind::Restart:
+      r.restart(now);
+      break;
+    case Kind::None:
+    case Kind::MainMenu:
+      break;
+  }
+}
+
+// An event on the replay screen: every key and pad press is the viewer's
+// (nothing reaches a session). Before the replay plays, Escape, Enter or a
+// pad's South / East leave for the menu.
+void replayEvent(App& app, const platform::InputEvent& input) {
+  const client::ReplayKey key = app.replayControls.translate(input);
+  if (key == client::ReplayKey::None) return;
+  if (!app.replay) {
+    if (key == client::ReplayKey::MainMenu ||
+        (key == client::ReplayKey::Activate && app.replayState == ReplayLoad::Failed)) {
+      app.audio.click();
+      app.leaveReplayRequested = true;
+    }
+    return;
+  }
+  // v0.55: the focus keys and Enter / South follow the highlight rule; the
+  // shortcuts act at once.
+  if (client::ReplayControls::isMenuPress(key) &&
+      app.highlight.reveal(client::ui::pointerOnFocus())) {
+    return;
+  }
+  if (key == client::ReplayKey::Activate) app.audio.click();
+  applyReplayCommand(app, app.replayControls.apply(key, replayStatus(*app.replay)),
+                     platform::Window::nowNs());
+}
+
 // App shortcuts that are not game bindings.
 void handleShortcut(App& app, const SDL_Event& event) {
   if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
@@ -775,6 +1083,8 @@ void handleShortcut(App& app, const SDL_Event& event) {
     return;
   }
   if (gameInputBlocked()) return;
+  // M7 step 6: the replay screen's keys are its control bar's (replayEvent).
+  if (app.screen == Screen::Replay) return;
   // v0.46: Escape over a running match is the pause menu's (onEvent), and
   // the developer's P / O wait while it is open.
   if (app.pauseMenu.isOpen() || (sc == SDL_SCANCODE_ESCAPE && pauseApplies(app))) return;
@@ -845,6 +1155,10 @@ void onEvent(void* user, const SDL_Event& event) {
   // match-over buttons, the F1 overlay) is the UI's. Releases always go
   // through so nothing is left held.
   if (client::uiCapturesEvent(*input, gameInputBlocked(), platform::debugUiWantsMouse())) return;
+  if (app->screen == Screen::Replay) {
+    replayEvent(*app, *input);
+    return;
+  }
   if (pauseMenuEvent(*app, *input)) return;
   if (app->net) {
     // v0.43: the room's screens. Every device navigates (nothing joins
@@ -893,6 +1207,7 @@ void onEvent(void* user, const SDL_Event& event) {
         }
         break;
       case Screen::Play:
+      case Screen::Replay:
         break;
     }
     if (client::isMenuActivate(*input)) app->menuActivate = true;
@@ -1016,6 +1331,7 @@ void menuFrame(App& app, std::uint64_t now) {
       break;
     }
     case Screen::Play:
+    case Screen::Replay:
       break;
   }
   if (app.lobbyChanged) {
@@ -1253,6 +1569,56 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   return camera;
 }
 
+// M7 step 6: the replay viewer's frame: "Loading replay…" or the reason it
+// failed over the jungle background, then the replay as a spectator sees a
+// match, under the control bar.
+presentation::Camera replayFrame(App& app, std::uint64_t now, double dt, int w, int h,
+                                 float density) {
+  pollReplayDownload(app, now);
+  platform::debugUiNewFrame(w, h, dt, density);
+  if (!app.replay) {
+    app.drawWorld = false;
+    if (app.replayState == ReplayLoad::Failed) {
+      if (client::drawReplayError(app.replayError, app.options.replay, app.overMenu)) {
+        app.audio.click();
+        app.leaveReplayRequested = true;
+      }
+    } else {
+      client::drawReplayLoading(app.options.replay);
+    }
+    return presentation::Camera{};
+  }
+  client::ReplaySession& r = *app.replay;
+  // While the timeline is held the scrub moves the replay, not the clock.
+  if (!app.replayControls.scrubbing()) r.advance(now);
+  presentation::buildRenderState(
+      r.presentation(), r.renderPrev(), r.curr(), r.renderAlpha(), r.frameEvents(),
+      r.matchContent(),
+      static_cast<float>(std::min(r.presentationSeconds(dt), kMaxBuilderDtSeconds)),
+      app.renderState);
+  const presentation::Camera camera = presentation::makeArenaCamera(
+      r.matchContent().arena, static_cast<float>(w), static_cast<float>(h));
+  (void)syncRenderer(app, r.matchContent(), app.content.hash, r.matchConfig().arena);
+  // The HUD of a spectator: P<n> labels, no "you"; at the end its own
+  // banner and final scoreboard (overScreen stays false: no match-over
+  // buttons).
+  client::HudView view = client::hudView(r);
+  view.bottomInset = client::replayBarInset(!app.replayTitle.empty());
+  client::drawMatchHud(
+      view,
+      client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
+  const client::ReplayBarOutcome bar = client::drawReplayBar(
+      app.replayControls,
+      client::ReplayBarView{.status = replayStatus(r), .title = app.replayTitle});
+  if (bar.command.kind != client::ReplayCommand::Kind::None) {
+    if (bar.command.kind != client::ReplayCommand::Kind::SeekTo) app.audio.click();
+    applyReplayCommand(app, bar.command, now);
+  }
+  app.overlay.draw(r, app.renderer.stats());
+  app.audio.frame(app.renderState);
+  return camera;
+}
+
 bool frame(void* user) {
   auto* app = static_cast<App*>(user);
   if (!app->window.pollEvents(onEvent, app)) app->quit = true;
@@ -1275,10 +1641,18 @@ bool frame(void* user) {
   app->pendingRoom.reset();
   if (app->reconnectRequested && app->net) reconnectNetwork(*app, now);
   app->reconnectRequested = false;
-  const presentation::Camera camera =
-      app->net ? netFrame(*app, now, dt, w, h, density) : localFrame(*app, now, dt, w, h, density);
+  app->drawWorld = true;
+  presentation::Camera camera;
+  if (app->net) {
+    camera = netFrame(*app, now, dt, w, h, density);
+  } else if (app->screen == Screen::Replay) {
+    camera = replayFrame(*app, now, dt, w, h, density);
+  } else {
+    camera = localFrame(*app, now, dt, w, h, density);
+  }
   platform::debugUiFlush();
   if (app->leaveRequested && app->net) leaveNetwork(*app);
+  if (app->leaveReplayRequested) leaveReplay(*app);
 
   ++app->frames;
   const bool lastFrame = app->quit || (app->options.exitAfterFrames != 0 &&
@@ -1296,10 +1670,15 @@ bool frame(void* user) {
   }
 
   // Around the arena: the theme's background (v0.52); the jungle's is the
-  // page's and the menus' dark green (ui::kJungle).
-  const presentation::Color bg = app->renderer.look().background;
+  // page's and the menus' dark green (ui::kJungle), which is also all a
+  // replay shows before it plays.
+  presentation::Color bg = app->renderer.look().background;
+  if (!app->drawWorld) {
+    const ImVec4 jungle = client::ui::vec4(client::ui::kJungle);
+    bg = presentation::Color{.r = jungle.x, .g = jungle.y, .b = jungle.z};
+  }
   platform::beginDefaultPass({.r = bg.r, .g = bg.g, .b = bg.b, .a = 1.0F}, w, h);
-  if (app->rendererReady) app->renderer.draw(app->renderState, camera, w, h);
+  if (app->rendererReady && app->drawWorld) app->renderer.draw(app->renderState, camera, w, h);
   platform::debugUiDraw();
   platform::endPass();
   if (lastFrame && !app->options.screenshotPath.empty() &&
@@ -1330,6 +1709,16 @@ void onExit(void* user) {
         static_cast<unsigned long long>(st.checksumMismatches));
     app->net->disconnect();
     app->net.reset();
+  } else if (app->replayState == ReplayLoad::Failed) {
+    std::printf("kfm_client: stopped after %llu frames; the replay could not be shown\n",
+                static_cast<unsigned long long>(app->frames));
+  } else if (app->replay) {
+    std::printf(
+        "kfm_client: stopped after %llu frames in the replay at tick %u of %u, checksum "
+        "0x%08X\n",
+        static_cast<unsigned long long>(app->frames), app->replay->tick(), app->replay->tickCount(),
+        app->replay->checksum());
+    app->replay.reset();
   } else {
     std::printf("kfm_client: stopped after %llu frames at tick %u, checksum 0x%08X\n",
                 static_cast<unsigned long long>(app->frames), app->session->curr().tick.value,
@@ -1403,7 +1792,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     std::fflush(stdout);
   }
 #ifndef __EMSCRIPTEN__
-  if (app.options.hotReload && !app.content.embedded()) {
+  // Hot reload is local play's: a replay plays the content it names.
+  if (app.options.hotReload && !app.content.embedded() && !app.options.replayMode()) {
     app.contentWatcher = content::ContentWatcher(app.content.dir);
   }
 #endif
@@ -1464,7 +1854,9 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   app.audio.init(lobby.mute, lobby.volume);
   app.lobby.settings().bots = app.session->botCount();
   app.lastFrameNs = platform::Window::nowNs();
-  if (online) {
+  if (app.options.replayMode()) {
+    startReplay(app, app.lastFrameNs);  // M7 step 6: straight into the viewer
+  } else if (online) {
     // --connect connects at startup with the devices bound so far (keyboard
     // left: one slot, unless --players); Escape returns to the menu.
     app.screen = Screen::Play;
