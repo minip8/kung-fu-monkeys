@@ -76,7 +76,10 @@ through `IPlatformServices`; a scoreboard view model shown between rounds and on
 screen with Play again), landed in v0.43. Keyboard-and-mouse controls landed in v0.45 (§5.4: the
 primary keyboard profile is keyboard + mouse; the cursor aims from the local monkey, the
 predicted one online, through `feedMouseAim` in `apps/client/core/mouse_aim.hpp`; left click
-throws, right click dashes; clicks over UI windows stay the UI's).
+throws, right click dashes; clicks over UI windows stay the UI's). M7 step 6, the client's
+replay viewer, landed in v0.68 (architecture §7 "Replay viewer"): `kfm_client --replay SRC`, in
+the browser `?replay=<url>` (the ladder's `/<tag>/?replay=` links), over the headless
+`ReplaySession` and `ReplayControls` in `apps/client/core`.
 `docs/architecture.md` is the
 single source of truth for every decision below and is versioned (status line + changelog at the
 top). When a design decision changes, update the doc in the same change, bump its version and add
@@ -164,6 +167,10 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options, menus, scoreboard)
 ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
+build/dev/apps/client/kfm_client --replay tools/replay-corpus/scripted_10p_contest_1800t.kfmr   # the replay viewer (v0.68)
+#   browser ?replay=<url> (CORS fetch, 16 MiB cap, the replay's content hash must be the client's). Space play/pause,
+#   . step, Left/Right 5 s (Shift 30 s), [ ] speed 0.25-4x, Home restart, Esc menu; --exit-after-frames exits 0 while
+#   playing, 1 on a bad replay (the error screen is still rendered); ctests client_smoke_replay, client_smoke_replay_bad
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
 #   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window|charge|
 #   pit-fall|fall|scatter (v0.57: --fall-at PERCENT, default 40, stops once a monkey's pit fall is that far
@@ -422,7 +429,10 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   `deploy/`; kfm_arena baked into the service image); step 4, seasons, the Swiss scheduler, the match
   job and Glicko-2, landed there in v0.65; step 5, the `kfm` CLI (`kfm-cli` on PyPI), in v0.66, with
   replays kept 24 hours and the host `bots.kfm.minip8.com`; deployed in v0.67 (two VMs beside the game
-  server, R2, `kfm-cli` 0.1.1 on PyPI, season `2026-11`); next is step 6, the replay viewer here. v0.59: a
+  server, R2, `kfm-cli` 0.1.1 on PyPI, season `2026-11`); step 6, the client's replay viewer
+  (`--replay`, `?replay=`), landed in v0.68; what remains of M7's criterion is a tagged engine release
+  carrying the viewer (a ladder link opens its match's tag, and v0.5.1's page has none) and an entrant
+  from outside the project through the whole path. v0.59: a
   ladder season is a time window, not a pinned release; every match records its release tag,
   replays are served with their release's content and viewed in that release's client (the page
   under a versioned path per tag), ratings persist across a release. M5b landed in v0.35 (five PRs, one
