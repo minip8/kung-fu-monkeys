@@ -170,7 +170,8 @@ build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   #
 build/dev/apps/client/kfm_client --replay tools/replay-corpus/scripted_10p_contest_1800t.kfmr   # the replay viewer (v0.68)
 #   browser ?replay=<url> (CORS fetch, 16 MiB cap, the replay's content hash must be the client's). Space play/pause,
 #   . step, Left/Right 5 s (Shift 30 s), [ ] speed 0.25-4x, Home restart, Esc menu; --exit-after-frames exits 0 while
-#   playing, 1 on a bad replay (the error screen is still rendered); ctests client_smoke_replay, client_smoke_replay_bad
+#   playing, 1 on a bad replay (the error screen is still rendered); seeks step from a keyframe every 600 ticks;
+#   ctests client_smoke_replay, client_smoke_replay_bad match the client's output (PASS_REGULAR_EXPRESSION)
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
 #   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window|charge|
 #   pit-fall|fall|scatter (v0.57: --fall-at PERCENT, default 40, stops once a monkey's pit fall is that far
