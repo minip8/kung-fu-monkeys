@@ -96,7 +96,8 @@ class ReplayControls {
   // state is tracked from its own key events.
   [[nodiscard]] ReplayKey translate(const platform::InputEvent& event);
   // FocusPrev / FocusNext move the focus over the enabled controls
-  // (wrapping) and ask for nothing; Activate is activate(focused).
+  // (wrapping) and ask for nothing; Activate is activate(focused). The
+  // focus is refocus()ed first.
   [[nodiscard]] ReplayCommand apply(ReplayKey key, const ReplayStatus& status);
   // A click on `control` (or Enter on it); a disabled control asks nothing.
   [[nodiscard]] static ReplayCommand activate(ReplayControl control, const ReplayStatus& status);
@@ -109,6 +110,10 @@ class ReplayControls {
 
   [[nodiscard]] ReplayControl focus() const { return focus_; }
   void setFocus(ReplayControl control) { focus_ = control; }
+  // A focused control that is disabled now (Step once the replay plays or
+  // reaches the end) hands the focus to Play / Pause. hud.cpp calls it
+  // before drawing the bar, apply() before a key.
+  void refocus(const ReplayStatus& status);
 
   // The timeline under the pointer: scrubTo() returns the seek a drag asks
   // for (none while the tick under the pointer is the one already sought),
@@ -127,6 +132,25 @@ class ReplayControls {
   bool shift_{false};
   std::optional<uint32_t> scrub_;
 };
+
+// The bar's rows (hud.cpp measures the pieces in its font and draws them).
+// One row, left to right: the transport (Restart, Play / Pause, Step,
+// Speed), the timeline, the time, Main menu. When the timeline would be
+// narrower than kReplayMinTimelineWidth there, two rows: the timeline and
+// the time above, the transport and Main menu below.
+inline constexpr float kReplayMinTimelineWidth = 240.0f;
+struct ReplayBarPieces {
+  float inner{0.0f};      // the bar's content width (the display less margins and padding)
+  float transport{0.0f};  // the four transport buttons with the gaps between them
+  float time{0.0f};       // the "m:ss / m:ss" label
+  float menu{0.0f};       // Main menu
+  float gap{0.0f};        // between two items on a row
+};
+struct ReplayBarRows {
+  bool twoRows{false};
+  float timeline{0.0f};  // the timeline's width on its row (at least 1)
+};
+[[nodiscard]] ReplayBarRows replayBarRows(const ReplayBarPieces& pieces);
 
 // "m:ss" of `ticks` at 60 a second (whole seconds, rounded down; minutes
 // past 59 keep counting: "75:00").

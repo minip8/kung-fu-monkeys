@@ -223,3 +223,72 @@ TEST_CASE("replay controls: the time and speed labels", "[client][replay]") {
   CHECK(client::replayTickAt(-1.0f, 1800) == 0);
   CHECK(client::replayTickAt(2.0f, 1800) == 1800);
 }
+
+TEST_CASE("replay controls: a focused control that turns disabled hands the focus to Play",
+          "[client][replay]") {
+  ReplayStatus paused = kPlaying;
+  paused.paused = true;
+  ReplayControls c;
+  c.setFocus(ReplayControl::Step);
+  c.refocus(paused);
+  CHECK(c.focus() == ReplayControl::Step);  // enabled: kept
+  SECTION("the replay plays on") {
+    c.refocus(kPlaying);
+    CHECK(c.focus() == ReplayControl::PlayPause);
+  }
+  SECTION("the replay reaches the end, still paused") {
+    ReplayStatus end = paused;
+    end.tick = end.tickCount;
+    end.atEnd = true;
+    c.refocus(end);
+    CHECK(c.focus() == ReplayControl::PlayPause);
+    CHECK(c.apply(ReplayKey::Activate, end) == ReplayCommand{.kind = Kind::Restart});
+  }
+  SECTION("a key refocuses first: Enter on a disabled Step is Pause") {
+    CHECK(c.apply(ReplayKey::Activate, kPlaying) == ReplayCommand{.kind = Kind::TogglePause});
+    CHECK(c.focus() == ReplayControl::PlayPause);
+  }
+  SECTION("other controls are never disabled") {
+    for (const ReplayControl control : ReplayControls::controls()) {
+      if (control == ReplayControl::Step) continue;
+      c.setFocus(control);
+      c.refocus(kPlaying);
+      CHECK(c.focus() == control);
+    }
+  }
+}
+
+TEST_CASE("replay controls: the bar takes two rows when one leaves the timeline short",
+          "[client][replay]") {
+  // The pieces as hud.cpp measures them in the game font at 22 px (Restart
+  // 95, Play / Pause 137, Step 71, 0.25x 82, Main menu 127, the time 116,
+  // 10 px gaps), the bar 16 px in from each side with 14 px of padding.
+  const auto rows = [](float display) {
+    constexpr float kGap = 10.0f;
+    return client::replayBarRows(
+        client::ReplayBarPieces{.inner = display - (2.0f * 16.0f) - (2.0f * 14.0f),
+                                .transport = 95.1f + 136.5f + 71.3f + 81.6f + (3.0f * kGap),
+                                .time = 115.7f,
+                                .menu = 126.5f,
+                                .gap = kGap});
+  };
+  for (const float display : {800.0f, 852.0f, 1024.0f, 1280.0f}) {
+    INFO("display " << display);
+    // Never a timeline under the minimum, one row or two.
+    CHECK(rows(display).timeline >= client::kReplayMinTimelineWidth);
+  }
+  CHECK(rows(800.0f).twoRows);
+  CHECK(rows(852.0f).twoRows);  // one row would leave ~105 px: two
+  CHECK_FALSE(rows(1024.0f).twoRows);
+  CHECK_FALSE(rows(1280.0f).twoRows);
+  // Two rows: the timeline beside the time takes the rest of its row.
+  CHECK(rows(800.0f).timeline == 800.0f - 60.0f - 115.7f - 10.0f);
+  // The switch sits where the one-row timeline reaches the minimum (the
+  // pieces, gaps and padding take 746.7 px).
+  constexpr float kSwitch = 746.7f + client::kReplayMinTimelineWidth;
+  CHECK_FALSE(rows(kSwitch + 0.5f).twoRows);
+  CHECK(rows(kSwitch - 0.5f).twoRows);
+  // A display too narrow for anything still gives the timeline a width.
+  CHECK(rows(10.0f).twoRows);
+  CHECK(rows(10.0f).timeline == 1.0f);
+}

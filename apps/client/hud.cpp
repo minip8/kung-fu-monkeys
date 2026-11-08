@@ -1376,20 +1376,33 @@ void drawReplayTimeline(ReplayControls& controls, const ReplayStatus& s, float w
   dl->AddCircleFilled(ImVec2(knobX, cy), kKnobR, knob);
 }
 
-// The bar's geometry on the current display.
+// The bar's geometry on the current display: the pieces measured in the
+// buttons' font, the rows by replayBarRows (core/replay_controls.hpp).
 struct ReplayBarLayout {
   static constexpr float kMargin = 16.0f;
   static constexpr float kPad = 14.0f;
   static constexpr float kRowGap = 10.0f;
-  static constexpr float kTwoRowsBelow = 820.0f;
+  static constexpr float kGap = 10.0f;                // between items on a row
   static constexpr float kSize = ui::kFontUi + 2.0f;  // the buttons' font
   float faceH{0.0f};
   float rowH{0.0f};
   float width{0.0f};
-  bool twoRows{false};
+  // Fixed widths, so the bar does not shift when a label changes.
+  float restartW{0.0f};
+  float playW{0.0f};
+  float stepW{0.0f};
+  float speedW{0.0f};
+  float menuW{0.0f};
+  float timeW{0.0f};
+  ReplayBarRows rows{};
   float titleH{0.0f};
   float height{0.0f};
 };
+
+[[nodiscard]] float replayButtonWidth(const char* text) {
+  const float padX = std::round(ReplayBarLayout::kSize * 0.6f);
+  return textWidth(ReplayBarLayout::kSize, text) + (2.0f * (padX + ui::kButtonBorder));
+}
 
 [[nodiscard]] ReplayBarLayout replayBarLayout(bool titled) {
   ReplayBarLayout l;
@@ -1397,10 +1410,23 @@ struct ReplayBarLayout {
   l.faceH = ui::bigButtonHeight(ReplayBarLayout::kSize);
   l.rowH = l.faceH + ui::kButtonDrop;
   l.width = std::max(display.x - (2.0f * ReplayBarLayout::kMargin), 1.0f);
-  l.twoRows = l.width < ReplayBarLayout::kTwoRowsBelow;
+  l.restartW = replayButtonWidth("Restart");
+  l.playW = std::max(
+      {replayButtonWidth("Watch again"), replayButtonWidth("Pause"), replayButtonWidth("Play")});
+  l.stepW = replayButtonWidth("Step");
+  l.speedW = replayButtonWidth("0.25x");
+  l.menuW = replayButtonWidth("Main menu");
+  l.timeW = textWidth(ui::kFontUi, "00:00 / 00:00");
+  constexpr float kGap = ReplayBarLayout::kGap;
+  l.rows = replayBarRows(
+      ReplayBarPieces{.inner = l.width - (2.0f * ReplayBarLayout::kPad),
+                      .transport = l.restartW + l.playW + l.stepW + l.speedW + (3.0f * kGap),
+                      .time = l.timeW,
+                      .menu = l.menuW,
+                      .gap = kGap});
   l.titleH = titled ? ui::kFontSmall + 6.0f : 0.0f;
   l.height = (2.0f * ReplayBarLayout::kPad) + l.titleH + l.rowH +
-             (l.twoRows ? l.rowH + ReplayBarLayout::kRowGap : 0.0f);
+             (l.rows.twoRows ? l.rowH + ReplayBarLayout::kRowGap : 0.0f);
   return l;
 }
 
@@ -1413,6 +1439,7 @@ float replayBarInset(bool titled) {
 ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& view) {
   ReplayBarOutcome out;
   const ReplayStatus& s = view.status;
+  controls.refocus(s);  // Step disabled under the focus: Play / Pause has it
   const ImVec2 display = ImGui::GetIO().DisplaySize;
   const ReplayBarLayout layout = replayBarLayout(!view.title.empty());
   constexpr float kMargin = ReplayBarLayout::kMargin;
@@ -1422,7 +1449,7 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
   const float faceH = layout.faceH;
   const float rowH = layout.rowH;
   const float width = layout.width;
-  const bool twoRows = layout.twoRows;
+  const bool twoRows = layout.rows.twoRows;
   const float titleH = layout.titleH;
   const float height = layout.height;
   ImGui::SetNextWindowPos(ImVec2(kMargin, display.y - kMargin - ui::kPanelDrop - height),
@@ -1435,7 +1462,7 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
                                       ImGuiWindowFlags_NoScrollWithMouse;
   ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
   ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(kPad, kPad));
-  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(10.0f, kRowGap));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(ReplayBarLayout::kGap, kRowGap));
   const bool open = ImGui::Begin("##replay_bar", nullptr, kFlags);
   {
     const ImVec2 pos = ImGui::GetWindowPos();
@@ -1450,24 +1477,17 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
       dl->AddText(ImGui::GetFont(), ui::kFontSmall, at, ui::kCreamDim, view.title.c_str());
       ImGui::Dummy(ImVec2(1.0f, titleH - ImGui::GetStyle().ItemSpacing.y));
     }
-    const float gap = ImGui::GetStyle().ItemSpacing.x;
-    const float padX = std::round(kSize * 0.6f);
-    const auto fit = [&](const char* text) {
-      return textWidth(kSize, text) + (2.0f * (padX + ui::kButtonBorder));
-    };
-    // Fixed widths, so the bar does not shift when a label changes.
-    const float playW = std::max({fit("Watch again"), fit("Pause"), fit("Play")});
-    const float speedW = fit("0.25x");
-    const float menuW = fit("Main menu");
+    const float menuW = layout.menuW;
+    const float timeW = layout.timeW;
     const std::string time = replayTimeLabel(s.tick, s.tickCount);
-    const float timeW = textWidth(ui::kFontUi, "00:00 / 00:00");
     const auto button = [&](ReplayControl c, float w, ui::Tone tone) {
-      if (ui::bigButton(ReplayControls::label(c, s), controls.focus() == c, w,
-                        ReplayControls::enabled(c, s), kSize, tone)) {
+      const bool enabled = ReplayControls::enabled(c, s);
+      if (ui::bigButton(ReplayControls::label(c, s), controls.focus() == c, w, enabled, kSize,
+                        tone)) {
         controls.setFocus(c);
         out.command = ReplayControls::activate(c, s);
       }
-      if (ui::pointerTakesFocus()) controls.setFocus(c);
+      if (enabled && ui::pointerTakesFocus()) controls.setFocus(c);
     };
     const auto timeText = [&] {
       const ImVec2 at = ImGui::GetCursorScreenPos();
@@ -1478,16 +1498,16 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
                      time.c_str());
     };
     const auto transport = [&] {
-      button(ReplayControl::Restart, fit("Restart"), ui::Tone::Plain);
+      button(ReplayControl::Restart, layout.restartW, ui::Tone::Plain);
       ImGui::SameLine();
-      button(ReplayControl::PlayPause, playW, ui::Tone::Lead);
+      button(ReplayControl::PlayPause, layout.playW, ui::Tone::Lead);
       ImGui::SameLine();
-      button(ReplayControl::Step, fit("Step"), ui::Tone::Plain);
+      button(ReplayControl::Step, layout.stepW, ui::Tone::Plain);
       ImGui::SameLine();
-      button(ReplayControl::Speed, speedW, ui::Tone::Second);
+      button(ReplayControl::Speed, layout.speedW, ui::Tone::Second);
     };
     if (twoRows) {
-      drawReplayTimeline(controls, s, ImGui::GetContentRegionAvail().x - timeW - gap, faceH, out);
+      drawReplayTimeline(controls, s, layout.rows.timeline, faceH, out);
       ImGui::SameLine();
       timeText();
       transport();
@@ -1498,8 +1518,7 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
     } else {
       transport();
       ImGui::SameLine();
-      const float line = ImGui::GetContentRegionAvail().x - timeW - menuW - (2.0f * gap);
-      drawReplayTimeline(controls, s, line, faceH, out);
+      drawReplayTimeline(controls, s, layout.rows.timeline, faceH, out);
       ImGui::SameLine();
       timeText();
       ImGui::SameLine();

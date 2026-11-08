@@ -115,6 +115,7 @@ ReplayCommand ReplayControls::apply(ReplayKey key, const ReplayStatus& status) {
   using Kind = ReplayCommand::Kind;
   const auto shortTicks = static_cast<int64_t>(kReplaySeekShortTicks);
   const auto longTicks = static_cast<int64_t>(kReplaySeekLongTicks);
+  refocus(status);
   switch (key) {
     case ReplayKey::None:
       return {};
@@ -181,6 +182,10 @@ ReplayCommand ReplayControls::activate(ReplayControl control, const ReplayStatus
   return {};
 }
 
+void ReplayControls::refocus(const ReplayStatus& status) {
+  if (!enabled(focus_, status)) focus_ = ReplayControl::PlayPause;
+}
+
 bool ReplayControls::enabled(ReplayControl control, const ReplayStatus& status) {
   if (control == ReplayControl::Step) return status.paused && !status.atEnd;
   return true;
@@ -219,6 +224,12 @@ const char* ReplayControls::label(ReplayControl control, const ReplayStatus& sta
       return "Main menu";
   }
   return "";
+}
+
+ReplayBarRows replayBarRows(const ReplayBarPieces& p) {
+  const float oneRow = p.inner - p.transport - p.time - p.menu - (3.0f * p.gap);
+  if (oneRow >= kReplayMinTimelineWidth) return {.twoRows = false, .timeline = oneRow};
+  return {.twoRows = true, .timeline = std::max(p.inner - p.time - p.gap, 1.0f)};
 }
 
 std::string replayClock(uint32_t ticks) {
