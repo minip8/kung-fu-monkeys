@@ -8,7 +8,13 @@
 //              [--no-frame-limit] [--mute] [--volume 0..100] [--mouse-aim on|off]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]
-//              [--screen menu|settings|online|local|paused]
+//              [--screen menu|settings|online|local|paused] [--replay SRC]
+//
+// M7 step 6: --replay SRC opens the replay viewer on a .kfmr (natively a
+// file path; in the browser a URL, which the page passes through from
+// ?replay=<url>) instead of the main menu (ReplaySession,
+// replay_session.hpp). It excludes --autostart, --connect, --room, --create
+// and --screen.
 //
 // v0.43: --screen opens the client on that front-end screen instead of the
 // main menu (screenshots and development; --autostart and the network flags
@@ -65,7 +71,7 @@ inline constexpr const char* kUsage =
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
-    "                  [--screen menu|settings|online|local|paused]\n"
+    "                  [--screen menu|settings|online|local|paused] [--replay SRC]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
@@ -122,7 +128,12 @@ inline constexpr const char* kUsage =
     "                         random monkey name picked once)\n"
     "  --screen S             open on this screen instead of the main menu: menu,\n"
     "                         settings, online (Play online), local (the lobby) or\n"
-    "                         paused (a local match under the pause menu)\n";
+    "                         paused (a local match under the pause menu)\n"
+    "replays:\n"
+    "  --replay SRC           watch a replay (.kfmr): a file path natively, a URL in\n"
+    "                         the browser (?replay=URL); it must come from this\n"
+    "                         release's content. Not with --autostart, --connect,\n"
+    "                         --room, --create or --screen\n";
 
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
@@ -162,12 +173,16 @@ struct ClientOptions {
   std::string region{kRegions[0]};  // --region: --create's and the panel's region
   std::string nick;                 // v0.42: --nick, valid (net::validNickname); empty = none yet
   std::string screen{"menu"};       // v0.43: --screen, the first front-end screen
+  std::string replay;               // M7 step 6: --replay, a .kfmr path or URL; empty = none
 
   // --connect, --room or --create: the client plays online from startup and
   // the lobby's Start (re)connects.
   [[nodiscard]] bool networkMode() const { return !connect.empty() || lobbyMode(); }
   // --room or --create (with a lobby URL, which parsing ensures).
   [[nodiscard]] bool lobbyMode() const { return !room.empty() || create; }
+  // --replay: the client opens the replay viewer (never with network mode,
+  // --autostart or --screen, which parsing ensures).
+  [[nodiscard]] bool replayMode() const { return !replay.empty(); }
 };
 
 // The room the options name (--room or --create), or none.

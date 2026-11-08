@@ -751,3 +751,41 @@ TEST_CASE("mouse aim: flag, browser query, settings round trip", "[client][lobby
   client::storeLobbySettings(ls, db, saved);
   CHECK(saved.mouseAim);
 }
+
+TEST_CASE("client flags: --replay and what it excludes", "[client][lobby][options]") {
+  ClientOptions o;
+  std::string error;
+  CHECK_FALSE(o.replayMode());
+  REQUIRE(parse({"--replay", "match.kfmr", "--mute"}, o, error));
+  CHECK(o.replay == "match.kfmr");
+  CHECK(o.replayMode());
+  // The browser passes ?replay=<url> through as --replay <url>.
+  ClientOptions web;
+  REQUIRE(parse({"--replay", "https://bots.kfm.minip8.com/replays/1.kfmr"}, web, error));
+  CHECK(web.replay == "https://bots.kfm.minip8.com/replays/1.kfmr");
+  // --lobby alone (the page's config.js always passes one) is not a room.
+  ClientOptions lobby;
+  REQUIRE(parse({"--lobby", "wss://lobby.example", "--replay", "a.kfmr"}, lobby, error));
+
+  ClientOptions bad;
+  CHECK_FALSE(parse({"--replay"}, bad, error));
+  CHECK(error.find("--replay") != std::string::npos);
+  CHECK_FALSE(parse({"--replay", ""}, bad, error));
+  for (const std::vector<const char*>& other : std::vector<std::vector<const char*>>{
+           {"--autostart"},
+           {"--connect", "ws://127.0.0.1:9000"},
+           {"--lobby", "ws://127.0.0.1:8080", "--room", "ABCDE"},
+           {"--lobby", "ws://127.0.0.1:8080", "--create"},
+           {"--screen", "menu"},
+       }) {
+    std::vector<const char*> argv = other;
+    argv.push_back("--replay");
+    argv.push_back("a.kfmr");
+    ClientOptions c;
+    INFO(other.front());
+    CHECK_FALSE(parse(argv, c, error));
+    CHECK(error.find("--replay") != std::string::npos);
+    CHECK(error.find(other.front() == std::string("--lobby") ? other[2] : other.front()) !=
+          std::string::npos);
+  }
+}

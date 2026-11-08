@@ -172,6 +172,7 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
     return true;
   };
 
+  bool screenSet = false;  // --screen given (it excludes --replay)
   for (std::size_t i = 1; i < args.size(); ++i) {
     const std::string_view arg = args[i];
     if (arg == "--exit-after-frames") {
@@ -373,6 +374,13 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         return false;
       }
       out.screen = v;
+      screenSet = true;
+    } else if (arg == "--replay") {
+      if (i + 1 >= args.size() || std::string_view(args[i + 1]).empty()) {
+        error = "--replay needs a .kfmr path (in the browser, a URL)";
+        return false;
+      }
+      out.replay = args[++i];
     } else if (arg == "--create") {
       out.create = true;
     } else if (arg == "--spectate") {
@@ -387,6 +395,18 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       out.players = static_cast<uint8_t>(n);
     } else {
       error = "unknown argument '" + std::string(arg) + "'";
+      return false;
+    }
+  }
+  if (out.replayMode()) {
+    const char* other = nullptr;
+    if (out.autostart) other = "--autostart";
+    if (!out.connect.empty()) other = "--connect";
+    if (!out.room.empty()) other = "--room";
+    if (out.create) other = "--create";
+    if (screenSet) other = "--screen";
+    if (other != nullptr) {
+      error = std::string("--replay opens the replay viewer: it excludes ") + other;
       return false;
     }
   }
