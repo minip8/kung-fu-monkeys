@@ -1,0 +1,30 @@
+# The contest's hill (architecture v0.69, §8 "The ladder"): the courtyard
+# (arenas/08-courtyard.toml) with its middle 2 x 2 block taken out and the
+# 4 x 2 floor between the two 1 x 4 pillars made zone 0 (glyph a), so the
+# hill is walled to the west and east and open to the north and south. Every
+# other cell, the spawn groups and the Quick Hands spawners are the
+# courtyard's; still symmetric under a half turn. Keys: arenas/06-hilltop.toml.
+[[arena]]
+name = "courtyard_hill"
+cell = 1.0
+spawn_groups = 2
+map = [
+  "...........~~...........",
+  "...........~~...........",
+  ".0...##..........##...8.",
+  ".....##..........##.....",
+  "........................",
+  ".1.......#....#.......7.",
+  ".........#aaaa#.....9...",
+  "...4.....#aaaa#.........",
+  ".2.......#....#.......6.",
+  "........................",
+  ".....##..........##.....",
+  ".3...##..........##...5.",
+  "...........~~...........",
+  "...........~~...........",
+]
+spawners = [
+  { pos = [-0.5, 3.5], power_ups = ["quick_hands"], first_ticks = 600, interval_ticks = 900, max_alive = 1 },
+  { pos = [0.5, -3.5], power_ups = ["quick_hands"], first_ticks = 600, interval_ticks = 900, max_alive = 1 },
+]

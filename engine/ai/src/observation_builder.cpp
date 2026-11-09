@@ -150,6 +150,17 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   static_assert(sim::kModeDataWords <= kObsModeDataWords);
   for (uint8_t i = 0; i < sim::kModeDataWords; ++i)
     m.reservedModeData[i] = r.modeData[i];
+  // bot-abi.md §3, filled since architecture v0.69: the arena's first zones
+  // (the hill is zone 0, a capture team t's home zone t) in the rest.
+  static_assert(sim::kModeDataWords <= kObsZoneWord);
+  for (uint8_t k = 0; k < kObsZones && k < content.arena.zoneCount; ++k) {
+    const sim::Zone& z = content.arena.zones[k];
+    uint32_t* const box = &m.reservedModeData[kObsZoneWord + (4u * k)];
+    box[0] = static_cast<uint32_t>(z.min.x.raw);
+    box[1] = static_cast<uint32_t>(z.min.y.raw);
+    box[2] = static_cast<uint32_t>(z.max.x.raw);
+    box[3] = static_cast<uint32_t>(z.max.y.raw);
+  }
   // bot-abi.md §3, filled since architecture v0.32: every team's score by
   // team index (the slot's own score in a free-for-all, team i = slot i).
   for (uint8_t t = 0; t < sim::kMaxPlayers; ++t)
