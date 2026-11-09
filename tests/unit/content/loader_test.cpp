@@ -1063,8 +1063,7 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
   ContentDB loaded{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, loaded, diag));
-  for (const char* name :
-       {"rounds", "survival", "team_rounds", "grid_rounds", "grid_rounds_1t", "contest"}) {
+  for (const char* name : {"rounds", "survival", "team_rounds", "grid_rounds", "grid_rounds_1t"}) {
     const sim::ModeDef& m = loaded.modes[loaded.findMode(name).value_or(0)];
     CHECK(m.deathBananas == sim::DeathBananas::Drop);
     CHECK(m.catchScore == 0);
@@ -1089,29 +1088,68 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
   }
 }
 
-// M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset
-// and today grid_rounds_1t under another name, so a season's change to the
-// row is a deliberate edit here.
-TEST_CASE("content/ ships contest as grid_rounds_1t renamed (M7)", "[content][loader][modes]") {
+// M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset.
+// Since v0.69 it is king of the hill with grid_rounds_1t's squad: the space,
+// turns, kits, baseline and vision are that row's, the rules hill's, the arena
+// courtyard_hill (the courtyard with the hill in its middle). A season's
+// change to the row is a deliberate edit here.
+TEST_CASE("content/ ships contest as hill with grid_rounds_1t's squad (M7, v0.69)",
+          "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
   const std::optional<uint8_t> contest = db.findMode("contest");
   const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
   const std::optional<uint8_t> courtyard = db.findArena("courtyard");
+  const std::optional<uint8_t> hillArena = db.findArena("courtyard_hill");
   REQUIRE(contest);
   REQUIRE(grid);
   REQUIRE(courtyard);
+  REQUIRE(hillArena);
   const sim::ModeDef& g = db.modes[grid.value_or(0)];
-  sim::ModeDef renamed = db.modes[contest.value_or(0)];
-  CHECK(renamed.name.view() == "contest");
-  renamed.name = g.name;
-  CHECK(bytesOf(renamed) == bytesOf(g));  // every field but the name
-  CHECK(renamed.vision == g.vision);
-  CHECK(renamed.vision.kind == sim::VisionKind::Own);
-  CHECK(db.firstCompatibleArena(contest.value_or(0)) == courtyard);
-  CHECK(db.compatible(courtyard.value_or(0), contest.value_or(0)));
-  CHECK_FALSE(db.compatible(0, contest.value_or(0)));  // the dojo has no cells
+  const sim::ModeDef& m = db.modes[contest.value_or(0)];
+  CHECK(m.kind == sim::ModeKind::Hill);
+  CHECK(m.space == g.space);
+  CHECK(m.turnTicks == g.turnTicks);
+  CHECK(m.dashCells == g.dashCells);
+  CHECK(m.teams == g.teams);
+  CHECK(m.roleCount == g.roleCount);
+  CHECK(m.roles == g.roles);
+  CHECK(m.baseline == g.baseline);
+  CHECK(m.vision == g.vision);
+  CHECK(m.vision.kind == sim::VisionKind::Own);
+  CHECK(m.hillTicks == 60);
+  CHECK(m.scoreToWin == 5);
+  CHECK(m.timeLimitTicks == 3600);
+  CHECK(m.respawnTicks == 120);
+  CHECK(m.deathBananas == sim::DeathBananas::Vanish);
+  CHECK(m.bananaRegrowTicks == 120);
+  CHECK(db.firstCompatibleArena(contest.value_or(0)) == hillArena);
+  CHECK(db.compatible(hillArena.value_or(0), contest.value_or(0)));
+  CHECK_FALSE(db.compatible(courtyard.value_or(0), contest.value_or(0)));  // no zone
+  CHECK_FALSE(db.compatible(0, contest.value_or(0)));                      // the dojo has no cells
+
+  // The arena is the courtyard but for its middle: same box, spawns and
+  // spawners, one zone (4 x 2 cells between the pillars), one wall box fewer.
+  const sim::ArenaDef& a = db.arenas[hillArena.value_or(0)];
+  const sim::ArenaDef& c = db.arenas[courtyard.value_or(0)];
+  CHECK(a.cellSize == c.cellSize);
+  CHECK(a.halfExtents == c.halfExtents);
+  CHECK(a.spawnGroups == c.spawnGroups);
+  CHECK(a.spawnPointCount == c.spawnPointCount);
+  for (uint8_t i = 0; i < c.spawnPointCount; ++i)
+    CHECK(a.spawnPoints[i] == c.spawnPoints[i]);
+  CHECK(a.hazardCount == c.hazardCount);
+  for (uint8_t i = 0; i < c.hazardCount; ++i)
+    CHECK((a.hazards[i].min == c.hazards[i].min && a.hazards[i].max == c.hazards[i].max &&
+           a.hazards[i].kind == c.hazards[i].kind));
+  CHECK(a.pickupSpawnerCount == c.pickupSpawnerCount);
+  for (uint8_t i = 0; i < c.pickupSpawnerCount; ++i)
+    CHECK(bytesOf(a.pickupSpawners[i]) == bytesOf(c.pickupSpawners[i]));
+  CHECK(a.zoneCount == 1);
+  CHECK(a.zones[0].min == Vec2{Fixed::fromInt(-2), Fixed::fromInt(-1)});
+  CHECK(a.zones[0].max == Vec2{Fixed::fromInt(2), Fixed::fromInt(1)});
+  CHECK(a.wallCount + 1 == c.wallCount);
 }
 
 TEST_CASE("content/ ships blink, slam and parry as loadouts (v0.21, v0.31)",

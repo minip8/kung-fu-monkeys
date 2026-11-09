@@ -131,8 +131,9 @@ build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   
 #   grid space: one of eight neighbouring cells per 15-tick turn, a dash 2 cells, a throw costs the next turn, one
 #   catcher per team by role, the grid_base baseline: radius 0.35, bananas 0.15, HP 2) and grid_rounds_1t (the same
 #   at 1-tick turns, for kfm_arena); a grid mode needs an arena with cells (a tilemap) and opens on its own
-#   (modes.toml `arena`: courtyard). v0.60: contest, the bot ladder's row (M7), today grid_rounds_1t renamed; a test
-#   pins the equality, so a season's change to the row is a deliberate edit of both
+#   (modes.toml `arena`: courtyard). v0.60: contest, the bot ladder's row (M7); v0.69: king of the hill with
+#   grid_rounds_1t's squad on courtyard_hill (bots read zones 0-1 in reservedModeData words 8-15); a
+#   loader test pins the row, so a season's change to it is a deliberate edit of both
 #   arenas: content/arenas.toml (dojo) and content/arenas/*.toml, appended by file name; a tilemap arena gives
 #   cell = 1.0 and map = ["..."] (# wall . floor ~ pit : mud 0-9 spawns a-h zones) in place of half_extents/walls/
 #   hazards/spawn_points/zones (format: content/arenas/06-hilltop.toml, architecture §5.10)

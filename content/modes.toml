@@ -223,19 +223,29 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banan
 # M7: the row the bot ladder points at (architecture §8 "The ladder"), the
 # contest knobs in one place (team size, vision, the call range of the kits,
 # turn_ticks, the arena). A season changes this row, not the service, and the
-# row may change between releases inside a season (v0.59). Today it is
-# grid_rounds_1t under another name, the M5b squad shape.
+# row may change between releases inside a season (v0.59). Since v0.69 it is
+# king of the hill on the grid: grid_rounds_1t's squad (1-tick turns, roles,
+# baseline, fog and calls) under hill's rules on courtyard_hill. Counted in
+# 1-tick turns: a monkey crosses the arena in 24, so a point takes 60 turns
+# alone on the hill, a respawn 120 (long enough that a kill costs the team
+# about two points' worth of holding), a match at most 3600.
 [[mode]]
 name = "contest"
-kind = "team_rounds"
+kind = "hill"
 space = "grid"
 turn_ticks = 1
 dash_cells = 2
 teams = 2
 roles = ["catcher_1t", "grid_1t", "grid_1t", "grid_1t", "grid_1t"]
 baseline = "grid_base_1t"
-arena = "courtyard"
-rounds_to_win = 3
+arena = "courtyard_hill"
+hill_ticks = 60             # 60 turns alone on the hill scores a point
+score_to_win = 5            # the first team to five points wins
+time_limit_ticks = 3600     # else the leading team after 3600 turns (a tie is a draw)
+respawn_ticks = 120
+respawn_invuln_ticks = 30
+death_bananas = "vanish"
+banana_regrow_ticks = 120   # an empty hand grows a banana after 120 turns
 round_start_ticks = 60
 round_end_ticks = 180
 vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banana_sight = 1 }

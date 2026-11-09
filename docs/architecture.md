@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.68 (2026-11-08). Working title taken from the repo name.
+Status: proposal v0.69 (2026-11-10). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -989,6 +989,36 @@ fog overlay; the bar's two-row layout is unit tested, not seen on screen. Agains
 criterion: an account outside the project through the whole path remains, and a tagged engine
 release, since a link reaches the page of its match's tag and matches recorded under v0.5.1 link
 to a page without the viewer, by design (v0.59). Replay checksums: unchanged (no sim change).
+
+v0.69 changes: the `contest` row becomes king of the hill (§8 "The ladder", §5.10, bot-abi.md
+§3). Until now the ladder's row was `grid_rounds_1t` renamed, team elimination; it is now
+`kind = "hill"` with that row's squad: the grid space at 1-tick turns, two dash cells, two teams
+of five by role (`catcher_1t` and four `grid_1t`), the `grid_base_1t` baseline, `own` fog and
+calls. Its numbers count 1-tick turns (a monkey crosses the arena in 24): a point per 60 turns
+alone on zone 0, five points win, else the leading team after 3600 (a tied lead is a draw), a
+respawn takes 120 with 30 of protection, a dead monkey's bananas vanish and an empty hand grows
+one after 120. The arena is a new tilemap, `courtyard_hill` (index 9,
+`arenas/09-courtyard_hill.toml`): the courtyard with its middle 2 × 2 block removed and the 4 × 2 floor
+between the two 1 × 4 pillars made zone 0, so the hill is walled west and east and open north and
+south; everything else, the spawn groups and the Quick Hands spawners are the courtyard's, and
+the courtyard itself is unchanged (so are `grid_rounds` and `grid_rounds_1t`). Bots need to know
+where the hill is, and Observation v1 had no zones: they now ride in `match.reservedModeData`
+words 8–15, which v1 reserved and always left 0 (the sim's `modeData` is 8 words), as the arena's
+zones 0 and 1 (closed Q16.16 boxes, all zero for a zone the arena lacks), in every mode and
+unfogged. Filling a reserved field keeps version 1 (bot-abi.md §4), so every submitted module
+keeps loading and running; a new zone table would have been version 2 and broken them all. Two
+zones cover the hill and a two-team capture; a third is not shown. The C SDK seed gains
+`KFM_ZONE_WORD` and `KFM_ZONES` (the bots repository's copy must follow: its CI diffs the header
+byte for byte). The reference bot is unchanged and still ignores zones, by decision: `ref:hard`
+only takes the hill by passing through it, so a hill-aware entrant should beat it. Verified:
+`kfm_arena --mode contest` with five `ref:hard` a side, ten rotated matches, all ended by score
+(five points in 965 to 1594 ticks, no draws, 16 to 28 kills a side), so respawns on the grid and
+the hill's clock work at 1-tick turns. Tests: the loader pins the row (hill rules, the squad
+fields equal to `grid_rounds_1t`'s, the arena equal to the courtyard but for its middle) where it
+used to pin the rename; an observation test checks the zone words. Replay checksums: changed for
+`scripted_10p_contest_1800t` only (now on `courtyard_hill` under the hill rules), corpus
+regenerated; every other entry was re-recorded for the new content hash with its checksums
+unchanged.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -3485,10 +3515,11 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   read-only overlay with a Replay panel (tick and total, checksum, phase, round, paused, speed,
   seed, players, arena/mode/loadout, power-ups, the content and build hashes). Leaving drops the
   replay; nothing in the menu returns to it. At load the client prints `kfm_client: replay SRC:
-  1800 ticks (0:30), arena courtyard, mode contest, loadout base, 10 players`. Exit codes: with
-  `--exit-after-frames` a playing replay exits 0 ("stopped after N frames in the replay at tick
-  T of C, checksum 0x…") and a failed one renders the error screen for the N frames (so
-  `--screenshot` captures it) and exits 1; without it, quitting exits 0. Follow-ups are in §12.
+  1800 ticks (0:30), arena courtyard_hill, mode contest, loadout base, 10 players` (v0.69;
+  `courtyard` before). Exit codes: with `--exit-after-frames` a playing replay exits 0 ("stopped
+  after N frames in the replay at tick T of C, checksum 0x…") and a failed one renders the error
+  screen for the N frames (so `--screenshot` captures it) and exits 1; without it, quitting
+  exits 0. Follow-ups are in §12.
 M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp`:
 - World basis: sim `(x, y)` at cosmetic height `h` is world `(x, h, −y)`, right-handed, +y up.
   The camera sits on world +z (the sim −y side), so with an ordinary right-handed `lookAt` and
@@ -4199,8 +4230,10 @@ lives in the bots repository (above) and uses this repository through its tagged
   module is at most 4 MiB, so the cap is about tidiness, not storage.
 - **The `contest` mode.** The season's ruleset is one mode in the content, `contest`, the
   ladder's row of the contest knobs above (team size, `vision`, call range, `turnTicks`, fuel,
-  memory on respawn) on its arena; today it is `grid_rounds_1t` on `courtyard` under `own` fog
-  with calls, the M5b shape. The ladder points at the name, so a season changes the row, not
+  memory on respawn) on its arena; since v0.69 it is king of the hill (`kind = "hill"`) with
+  `grid_rounds_1t`'s squad on `courtyard_hill` under `own` fog with calls (before it, that row
+  renamed: team elimination on `courtyard`). Bots find the hill in `match.reservedModeData`
+  words 8–15 (the arena's zones 0 and 1, bot-abi.md §3). The ladder points at the name, so a season changes the row, not
   the service, and the row may change between releases inside a season (v0.59). **A season is a
   time window, not a release** (v0.59; until then a season pinned one release and its content
   hash): the ranking freezes at a date, the service runs every match on the current tagged
