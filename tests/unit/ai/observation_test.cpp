@@ -492,3 +492,39 @@ TEST_CASE("a capture flag is a pickup of kind Flag with its team (v0.33)",
   CHECK(k.posX == fx(3).raw);
   CHECK((obs.self.tags & (1u << 9)) != 0);  // Carrying, bit 9
 }
+
+TEST_CASE("the arena's zones 0 and 1 follow the mode's words (v0.69)", "[ai][observation][zones]") {
+  ContentDB c = defaultContent();
+  ArenaDef& zoned = c.arenas[1];
+  zoned = c.arenas[0];
+  zoned.name = ContentName::of("zoned");
+  zoned.zones[0] = Zone{Vec2{fx(-2), fx(-1)}, Vec2{fx(2), fx(1)}};
+  zoned.zones[1] = Zone{Vec2{fx(-15), fx(-2)}, Vec2{fx(-11), fx(5, 2)}};
+  zoned.zones[2] = Zone{Vec2{fx(11), fx(-2)}, Vec2{fx(15), fx(2)}};  // past the two: not shown
+  zoned.zoneCount = 3;
+  c.arenaCount = 2;
+  WorldState s = makePlayingWorld(4, 0b11);
+  s.rules.modeData[0] = 0x12345678;
+  Observation obs{};
+  buildObservation(s, MatchContent(c, 1, 0), kP0, 0, obs);
+  const auto word = [&](uint32_t i) { return static_cast<int32_t>(obs.match.reservedModeData[i]); };
+  CHECK(obs.match.reservedModeData[0] == 0x12345678);  // the mode's own words are untouched
+  CHECK(word(kObsZoneWord + 0) == fx(-2).raw);
+  CHECK(word(kObsZoneWord + 1) == fx(-1).raw);
+  CHECK(word(kObsZoneWord + 2) == fx(2).raw);
+  CHECK(word(kObsZoneWord + 3) == fx(1).raw);
+  CHECK(word(kObsZoneWord + 4) == fx(-15).raw);
+  CHECK(word(kObsZoneWord + 5) == fx(-2).raw);
+  CHECK(word(kObsZoneWord + 6) == fx(-11).raw);
+  CHECK(word(kObsZoneWord + 7) == fx(5, 2).raw);
+
+  // One zone: zone 1's words stay zero, as every zone word does in an arena without.
+  zoned.zoneCount = 1;
+  buildObservation(s, MatchContent(c, 1, 0), kP0, 0, obs);
+  CHECK(word(kObsZoneWord + 3) == fx(1).raw);
+  for (uint32_t i = kObsZoneWord + 4; i < kObsModeDataWords; ++i)
+    CHECK(obs.match.reservedModeData[i] == 0);
+  buildObservation(s, MatchContent(c, 0, 0), kP0, 0, obs);
+  for (uint32_t i = kObsZoneWord; i < kObsModeDataWords; ++i)
+    CHECK(obs.match.reservedModeData[i] == 0);
+}

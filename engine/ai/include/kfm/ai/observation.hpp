@@ -60,6 +60,13 @@ inline constexpr uint32_t kObsMaxHazards = 16;
 inline constexpr uint32_t kObsMaxSpawners = 8;
 inline constexpr uint32_t kObsMaxHeardCalls = 16;
 inline constexpr uint32_t kObsModeDataWords = 16;
+// v0.69: the arena's zones 0 and 1 ride in match.reservedModeData past the
+// mode's own words: zone k is the closed box (minX, minY, maxX, maxY), Q16.16,
+// in words kObsZoneWord + 4k .. +3; all zero when the arena has no zone k
+// (docs/bot-abi.md §3).
+inline constexpr uint32_t kObsZoneWord = 8;
+inline constexpr uint32_t kObsZones = 2;
+static_assert(kObsZoneWord + (4 * kObsZones) == kObsModeDataWords);
 
 // No player in a slot field.
 inline constexpr uint8_t kObsNoSlot = 0xFF;
@@ -152,7 +159,8 @@ struct ObsMatch {
   uint16_t respawnTicks[kObsMaxPlayers];         // ticks until a dead slot respawns, 0 = none due
   int16_t reservedTeamScores[kObsMaxPlayers];    // v0.29: per team index (filled since v0.32;
                                                  // signed since v0.57)
-  uint32_t reservedModeData[kObsModeDataWords];  // v0.29: MatchRules::modeData (v0.31: words 0-7)
+  uint32_t reservedModeData[kObsModeDataWords];  // v0.29: MatchRules::modeData (v0.31: words 0-7;
+                                                 // v0.69: words 8-15 zones 0-1)
 };
 
 // Content constants a bot needs to predict the sim (a flight helper needs

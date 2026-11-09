@@ -1,10 +1,10 @@
 # Kung Fu Monkeys — Bot ABI
 
-Status: normative, ABI and `Observation` version 1 (2026-11-04; every reserved field filled
-since architecture v0.35). The design and its rationale are
-in `docs/architecture.md` §8; this document is what an SDK author implements against. The C++
-source of truth is `engine/ai/include/kfm/ai/observation.hpp`; a unit test
-(`tests/unit/ai/observation_test.cpp`) checks offsets from the tables below against it, and the
+Status: normative, ABI and `Observation` version 1 (2026-11-10; every reserved field filled since
+architecture v0.35, the arena's zones 0 and 1 in `reservedModeData` words 8–15 since v0.69). The
+design and its rationale are in `docs/architecture.md` §8; this document is what an SDK author
+implements against. The C++ source of truth is `engine/ai/include/kfm/ai/observation.hpp`; a unit
+test (`tests/unit/ai/observation_test.cpp`) checks offsets from the tables below against it, and the
 header `static_assert`s every block's size and key offsets. Where this document and the header
 disagree, the header is right and this document has a bug.
 
@@ -213,7 +213,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 54 | u8[10] | `deaths` | per slot: eliminations suffered this match |
 | 64 | u16[10] | `respawnTicks` | per slot: ticks until a dead slot respawns, 0 = none due |
 | 84 | i16[10] | `reservedTeamScores` | §3: per team index (signed since architecture v0.57) |
-| 104 | u32[16] | `reservedModeData` | §3: the mode's own state |
+| 104 | u32[16] | `reservedModeData` | §3: the mode's own state (words 0–7) and the arena's zones 0 and 1 (words 8–15, architecture v0.69) |
 
 ### 2.5 `rules` (offset 184, 44 bytes)
 
@@ -487,7 +487,7 @@ grid fields and `header.schemaFlags` bit 0 (§3.1, §3.2). A field a mode does n
 | `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks from this observation's tick to the next latch: 0 when the input answering this observation is latched; while Playing `(turn − ticksInPhase mod turn) mod turn`, in the countdown `roundStartTicks − ticksInPhase`, between rounds `roundEndTicks − ticksInPhase + roundStartTicks`, before the first round `roundStartTicks`, 0 once the match ended (a round that ends early moves it). Filled since architecture v0.35; both 0 in a continuous mode |
 | `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; since v0.32 the role's in a team mode with `roles`: the slot's position within its team, round-robin) |
 | `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index; filled since architecture v0.32 (in a free-for-all team i is slot i, so entry i equals `scores[i]`) |
-| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`, words 8–15 stay 0. The shipped kinds (rounds, deathmatch, survival) leave all of it 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). The arena's zones are not in v1 (a later version adds them); a capture bot finds the flags in `pickups` |
+| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`. The shipped kinds (rounds, deathmatch, survival) leave words 0–7 at 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). Architecture v0.69: words 8–15 hold the arena's zones 0 and 1 in every mode (zones are arena statics, never fogged): zone k is the closed box `minX`, `minY`, `maxX`, `maxY` (Q16.16, read as i32) in words 8 + 4k to 11 + 4k, all four 0 when the arena has no zone k (a real zone is never all zero: min < max). Before v0.69 these words were always 0, so a bot reading them on an older host sees "no zone". The hill is zone 0 (a monkey whose centre is in the box stands on it), a capture team t's home zone t; zones past 1 are not shown. A capture bot finds the flags in `pickups` |
 | `header.reserved0` | nothing yet |
 
 A field a mode does not use is 0; a module reads every filled field with the meaning above.

@@ -50,6 +50,7 @@ namespace {
 static_assert(sizeof(kfm_observation) == sizeof(Observation));
 static_assert(KFM_OBS_SIZE == sizeof(Observation));
 static_assert(KFM_ABI_VERSION == kObservationVersion);
+static_assert(KFM_ZONE_WORD == kObsZoneWord && KFM_ZONES == kObsZones);  // v0.69
 static_assert(alignof(kfm_observation) == alignof(Observation));
 #define KFM_SAME_AT(ct, cf, cppt) static_assert(offsetof(ct, cf) == offsetof(cppt, cf), #ct "." #cf)
 // The SDK names a filled reserved field without the prefix (v0.35).
