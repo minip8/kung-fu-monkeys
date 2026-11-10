@@ -246,6 +246,9 @@ deploy/README.md                                 # the runbook: images (deploy/D
 #   v0.60: a v* tag is also a GitHub release with the headless kfm_arena for linux-x86_64 (static), macos-arm64 and
 #   windows-x86_64 plus SHA256SUMS, and the page's site tarball; the web job republishes every release's page under
 #   /<tag>/ (a Pages deploy is a full snapshot), the viewer of that release's replays (architecture v0.59)
+#   v0.71: its last job, bots-bump, opens the engine pin bump in the bots repository as a pull request (that
+#   repository's tools/bump_engine.sh, pushed as the kfm-release-bot GitHub App: KFM_RELEASE_BOT_APP_ID variable,
+#   KFM_RELEASE_BOT_PRIVATE_KEY secret); merging it and releasing the ladder stay manual
 #   docker compose -f deploy/docker-compose.yml
 ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)

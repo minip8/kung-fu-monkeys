@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.70 (2026-11-10). Working title taken from the repo name.
+Status: proposal v0.71 (2026-11-10). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -1083,6 +1083,27 @@ tests), Emscripten under node (46 tests), the lobby's Rust suite (47 tests), cla
 and clang-tidy 23.1.4 over the tree; MSVC and Apple Clang are CI's. Replay checksums: unchanged;
 the corpus was re-recorded because `kMaxAbilityDefs` moved the content hash, with every
 `.checksums` file byte-identical.
+
+v0.71 changes: an engine release opens its own pin bump in the bots repository (§8 "The
+ladder", §11; `deploy.yml`, `deploy/README.md`). The ladder runs an engine fix only once the
+bots repository's `engine.lock` moves to the release and that repository is released, and the
+bump was five hand edits someone had to remember (v0.70's fuel fix sat behind exactly that).
+The bots repository gains `tools/bump_engine.sh <tag>`, the mechanical part: the tag's commit
+into `engine.lock`, the SDK header copied byte for byte, `sdk/c/ENGINE_SOURCE.txt` and the
+lines of its docs that name the pin, then `tools/check_header.sh`. `deploy.yml`'s new last job
+`bots-bump` runs it on a `vX.Y.Z` tag once the release has its `kfm_arena` archives and
+`SHA256SUMS`, and pushes `chore/engine-<tag>` there as a pull request. It authenticates as a
+GitHub App, `kfm-release-bot` (Contents and Pull requests write on the bots repository only;
+`KFM_RELEASE_BOT_APP_ID` and `KFM_RELEASE_BOT_PRIVATE_KEY` here), because a commit pushed with
+`GITHUB_TOKEN` starts no workflow and the point is that the bots CI plays the examples with the
+new runner before anyone merges. Decided: the automation stops at the pull request. Merging is
+a person's (the script reports when the header changed, which is when the C++ layer and the
+examples need one), and so is the bots release, which publishes `kfm-cli` to PyPI and restarts
+the ladder's VMs and must not happen as a side effect of a game release. Without the variable
+the job is skipped; a re-run updates the branch and keeps the pull request. Verified: the
+script, run down to v0.6.0 and back, reproduces the v0.7.0 bump's edits to those files byte for
+byte from github.com and from a local clone; the job's shell was dry-run locally with the push
+and the pull request stubbed. Not yet run: the job itself, which first runs on the next tag.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -4917,7 +4938,9 @@ every hosted bot ladder converges on, sized so that growing is adding workers.
   repository's tags, systemd units, Sentry. The engine release the season runs on is the one
   baked into the service image (v0.64; the design said fetched on the workers at start): the
   image's entrypoint pins `KFM_LADDER_ENGINE_TAG` to the baked runner, and a season moves
-  engines by bumping the bots repository's `engine.lock` and releasing.
+  engines by bumping the bots repository's `engine.lock` and releasing (v0.71: the engine's
+  release workflow opens that bump as a pull request, `tools/bump_engine.sh` there; the merge
+  and the bots release stay a person's).
 - **Deferred, on purpose.** Kubernetes, a message broker, microservices, a separate frontend,
   rate limiting beyond a per-token submission cap (one build per team per minute), and
   email. The contest's season rules (prizes, eligibility) are the portal's text, not code.
