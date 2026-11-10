@@ -2192,7 +2192,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   lines and the lobby choose (`ContentDB::findArena` / `findMode` / `findLoadout`); the sim only
   sees indices.
 - Validation: duplicate names, unresolved references, counts against the capacities
-  (`kMaxAbilityDefs` 16 since v0.21, `kMaxArenas` 8, `kMaxModes` 32 since v0.31 (8 before),
+  (`kMaxAbilityDefs` 32 since v0.70 (16 from v0.21, which the 15 shipped defs plus `none`
+  filled; the cap sizes only `ContentDB::abilities`, so raising it moved the content hash and
+  nothing else: def indices are a byte everywhere, in `AbilityState`, loadouts, grants and the
+  bot observation, and the corpus checksums stayed byte-identical), `kMaxArenas` 16 since
+  v0.33 (8 before), `kMaxModes` 32 since v0.31 (8 before),
   `kMaxPowerUps` 16, `kMaxLoadouts` 16 since v0.31; at least one arena and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
   on `defaultContent()` by a test): every loadout (the player's and each `[[loadout]]`) fills

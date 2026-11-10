@@ -186,7 +186,7 @@ TEST_CASE("expired modifiers are dropped, compacting in slot order", "[sim][modi
 TEST_CASE("an ability override swaps the slot while idle and restores it on expiry",
           "[sim][modifier]") {
   ContentDB content = defaultContent();
-  // A faster throw def at index 3 (kMaxAbilityDefs is 4).
+  // A faster throw def at index 3, after none, dash and throw.
   const uint8_t baseThrow = content.player.abilities[kAbilitySlotThrow];
   AbilityDef fast = content.abilities[baseThrow];
   REQUIRE(fast.kind == AbilityKind::Throw);

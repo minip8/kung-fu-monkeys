@@ -79,7 +79,7 @@ void everyFieldReachesTheHash(const std::array<ContentMutation, N>& mutations) {
 
 TEST_CASE("every content field reaches the content hash", "[sim][content]") {
   everyFieldReachesTheHash<ContentDB>(std::to_array<ContentMutation>({
-      [](ContentDB& c) { c.abilities[15].cooldownTicks += 1; },
+      [](ContentDB& c) { c.abilities[kMaxAbilityDefs - 1].cooldownTicks += 1; },
       [](ContentDB& c) { c.abilityCount += 1; },
       [](ContentDB& c) { c.boomerang.damage += 1; },
       [](ContentDB& c) { c.pickup.radius += Fixed::epsilon(); },
