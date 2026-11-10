@@ -35,6 +35,10 @@ struct Flag {
   uint16_t droppedTicks{0};
 };
 
+// Flag t lives in modeData word t for every t below flagCount(), which is at
+// most kMaxArenaZones: a word per possible zone must fit.
+static_assert(kMaxArenaZones <= kModeDataWords, "a modeData word per capture flag");
+
 [[nodiscard]] Flag readFlag(const MatchRules& r, uint8_t t) {
   const uint32_t w = r.modeData[t];
   return Flag{static_cast<FlagState>(w & 0x3u), static_cast<uint8_t>((w >> 8) & 0xFFu),
