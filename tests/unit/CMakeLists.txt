@@ -7,6 +7,7 @@ kfm_add_test_exe(kfm_core_tests
   core/bitstream_test.cpp
   core/rng_test.cpp
   core/hash_test.cpp
+  core/field_count_test.cpp
 )
 target_link_libraries(kfm_core_tests PRIVATE kfm::core)
 

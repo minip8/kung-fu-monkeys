@@ -1224,6 +1224,19 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   system would index or shift by. v0.20 adds a power-up index past `kMaxPowerUps`, a pickup
   spawner past `kMaxPickupSpawners`, a banana `pierce` above 1 (the field is gone since v0.28)
   and `grantedTags` bits above `Tag::kCount`.
+- Every visited field is visited by construction (v0.70): each `visit()` overload in
+  `kfm/sim/visit.hpp`, state and content alike, is followed by a
+  `static_assert(fieldCount<T>() == n)`, where `kfm::fieldCount` (`kfm/core/field_count.hpp`) is
+  the aggregate arity (the largest k for which `T{a0, …, ak-1}` with placeholders that convert to
+  anything is well-formed, probed downwards so no probe leaves a member uninitialised; an array
+  or nested struct is one field). A field added to a serialised struct and forgotten in its
+  `visit()` (which would escape the checksum, snapshots and the content hash at once, and so
+  every desync check) is a compile error until it is visited and the count bumped. A field
+  visited only in part counts once, with a comment saying how: a `Pool`'s dead slots, a
+  `ModifierList`'s tail and an `InputFrame`'s absent inputs are canonicalised, never serialised.
+  The same assert pins `MatchConfig` and `ReplayHeader` to the replay header codec, and the
+  checksum and content-hash mutation tests (`visit_test.cpp`, `content_test.cpp`) carry one
+  mutation per field per struct, their count pinned the same way.
 - Power-up fields (v0.20): a banana's `speedMul` and `radiusMul` (after `damage`; a `pierce` byte
   sat between them until v0.28), a pickup's `spawner` and a player's `grantedTags` are visited unconditionally like
   every other field; adding them changed every world checksum and the corpus was regenerated.
