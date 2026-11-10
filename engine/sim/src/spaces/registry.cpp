@@ -2,6 +2,7 @@
 // in enum order.
 #include "kfm/sim/spaces/registry.hpp"
 
+#include "kfm/core/assert.hpp"
 #include "kfm/core/field_count.hpp"
 #include "spaces/spaces.hpp"
 
@@ -24,8 +25,8 @@ constexpr bool rowComplete(const SpaceBehavior& b) {
   return b.latch != nullptr && b.move != nullptr;
 }
 static_assert(fieldCount<SpaceBehavior>() == 2, "check the new hook in rowComplete");
-static_assert(std::ranges::all_of(kBehaviors, rowComplete),
-              "every Space needs a row with every hook set");
+KFM_STATIC_ASSERT_HOOKS(std::ranges::all_of(kBehaviors, rowComplete),
+                        "every Space needs a row with every hook set");
 
 }  // namespace
 

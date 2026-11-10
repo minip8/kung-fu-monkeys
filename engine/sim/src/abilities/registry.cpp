@@ -2,6 +2,7 @@
 // AbilityKind, in enum order.
 #include "kfm/sim/abilities/registry.hpp"
 
+#include "kfm/core/assert.hpp"
 #include "kfm/core/field_count.hpp"
 #include "kfm/sim/abilities/blink.hpp"
 #include "kfm/sim/abilities/call.hpp"
@@ -48,8 +49,8 @@ constexpr bool rowComplete(const AbilityBehavior& b) {
          b.holdsPhase != nullptr;
 }
 static_assert(fieldCount<AbilityBehavior>() == 7, "check the new hook in rowComplete");
-static_assert(std::ranges::all_of(kBehaviors, rowComplete),
-              "every AbilityKind needs a row with every hook set");
+KFM_STATIC_ASSERT_HOOKS(std::ranges::all_of(kBehaviors, rowComplete),
+                        "every AbilityKind needs a row with every hook set");
 
 }  // namespace
 
