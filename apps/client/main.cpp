@@ -158,7 +158,6 @@
 
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_scancode.h>
 
 #include <algorithm>
 #include <bit>
@@ -813,12 +812,14 @@ void replayEvent(App& app, const platform::InputEvent& input) {
                      platform::Window::nowNs());
 }
 
-// App shortcuts that are not game bindings.
-void handleShortcut(App& app, const SDL_Event& event) {
-  if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
+// App shortcuts that are not game bindings (key presses; repeats never
+// arrive as InputEvents).
+void handleShortcut(App& app, const platform::InputEvent& input) {
+  using platform::Key;
+  if (input.kind != platform::InputEventKind::KeyDown) return;
   MatchSession& s = *app.session;
-  const SDL_Scancode sc = event.key.scancode;
-  if (sc == SDL_SCANCODE_F1) {
+  const Key key = input.key;
+  if (key == Key::F1) {
     app.overlay.open = !app.overlay.open;
     return;
   }
@@ -827,39 +828,39 @@ void handleShortcut(App& app, const SDL_Event& event) {
   if (app.screen == Screen::Replay) return;
   // v0.46: Escape over a running match is the pause menu's (onEvent), and
   // the developer's P / O wait while it is open.
-  if (app.pauseMenu.isOpen() || (sc == SDL_SCANCODE_ESCAPE && pauseApplies(app))) return;
+  if (app.pauseMenu.isOpen() || (key == Key::Escape && pauseApplies(app))) return;
   if (app.net) {
     // Online the server's clock rules: no pause, step or bot keys.
-    if (sc == SDL_SCANCODE_ESCAPE) leaveNetwork(app);
+    if (key == Key::Escape) leaveNetwork(app);
     return;
   }
   if (app.screen != Screen::Play) {
-    if (sc == SDL_SCANCODE_ESCAPE) menuBack(app);
+    if (key == Key::Escape) menuBack(app);
     return;
   }
-  switch (sc) {
-    case SDL_SCANCODE_ESCAPE:
+  switch (key) {
+    case Key::Escape:
       if (s.phase() == SessionPhase::Match) {
         s.returnToLobby();
       } else {
         app.screen = Screen::Menu;
       }
       break;
-    case SDL_SCANCODE_P:
+    case Key::P:
       if (s.phase() == SessionPhase::Match) s.setPaused(!s.paused());
       break;
-    case SDL_SCANCODE_O:
+    case Key::O:
       if (s.phase() == SessionPhase::Match) {
         s.setPaused(true);
         s.requestSingleStep();
       }
       break;
-    case SDL_SCANCODE_MINUS:
+    case Key::Minus:
       if (s.phase() == SessionPhase::Lobby && s.botCount() > 0) {
         s.setBotCount(static_cast<std::uint8_t>(s.botCount() - 1));
       }
       break;
-    case SDL_SCANCODE_EQUALS:
+    case Key::Equals:
       if (s.phase() == SessionPhase::Lobby) {
         s.setBotCount(static_cast<std::uint8_t>(s.botCount() + 1));
       }
@@ -886,9 +887,9 @@ void onEvent(void* user, const SDL_Event& event) {
   auto* app = static_cast<App*>(user);
   if (isGesture(event)) app->audio.onUserGesture();
   app->pads.onEvent(event);
-  handleShortcut(*app, event);
   const auto input = client::translateSdlEvent(event);
   if (!input) return;
+  handleShortcut(*app, *input);
   app->highlight.onEvent(*input);  // v0.55: mouse motion and clicks: pointer mode
   // While a debug text field has the keyboard, key presses stay out of the
   // game; v0.45: a click on a window (the menus, the lobby panel, the
