@@ -754,6 +754,20 @@ TEST_CASE("humanLeadTicks is the median lead of the peers that hold slots", "[ne
   }
   CHECK(rig.server->humanLeadTicks() == 5);
 
+  // v0.70: an acknowledgement that stops moving (the frames stopped
+  // arriving: an outage) is no round trip; the estimate holds.
+  const Tick stale = rig.server->nextTick().plus(-7);
+  for (int i = 0; i < 200; ++i) {
+    for (auto [r, slot] : {std::pair{&a, 0b001}, std::pair{&b, 0b010}, std::pair{&c, 0b100}}) {
+      InputMsg m = inputFor(static_cast<sim::PlayerMask>(slot), rig.server->nextTick().plus(2), 1);
+      m.lastAuthTick = stale;
+      r->unreliable(m);
+    }
+    rig.pump();
+    rig.tick();
+  }
+  CHECK(rig.server->humanLeadTicks() == 5);
+
   // Peers that leave stop counting; a late one (negative lead) clamps to 0.
   b.reliable(DisconnectMsg{DisconnectReason::Quit});
   c.reliable(DisconnectMsg{DisconnectReason::Quit});

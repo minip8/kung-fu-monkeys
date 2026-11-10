@@ -3,6 +3,7 @@
 # The 60 s soaks are tagged [soak]; they run in the same executable.
 kfm_add_test_exe(kfm_netcode_tests
   netcode_test.cpp
+  outage_test.cpp
   session_test.cpp
 )
 target_link_libraries(kfm_netcode_tests PRIVATE kfm::netsim)

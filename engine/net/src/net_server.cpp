@@ -687,8 +687,11 @@ void NetServer::onInput(Peer& p, const Packet& packet) {
     p.info.marginEmaQ8 =
         p.info.inputMsgs <= 1 ? q8 : p.info.marginEmaQ8 + (q8 - p.info.marginEmaQ8) / 8;
     // Lead = margin + rtt/2, the round trip from the frame it acknowledges
-    // (sent when nextTick() was ack + 1); see the header comment.
-    if (m.lastAuthTick) {
+    // (sent when nextTick() was ack + 1); see the header comment. Only a
+    // message whose acknowledgement moved on measures a round trip: a stale
+    // one (frames lost or late, an outage) only says how long it went stale.
+    if (m.lastAuthTick && (!p.leadAckTick || *m.lastAuthTick > *p.leadAckTick)) {
+      p.leadAckTick = m.lastAuthTick;
       const int32_t rtt = std::max<int32_t>(nextTick().minus(*m.lastAuthTick) - 1, 0);
       const int32_t leadQ8 = q8 + rtt * 128;
       p.info.leadEmaQ8 =

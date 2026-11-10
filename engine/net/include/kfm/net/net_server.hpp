@@ -45,9 +45,11 @@
 // authoritative frame A (sent when the server's next tick was A + 1) and the
 // message arrived when it is S, so rtt ≈ S − A − 1 ticks and lead ≈
 // (N − S) + (S − A − 1) / 2 for its newest input tick N, smoothed (EMA, gain
-// 1/8, Q8). humanLeadTicks() is the median over the active peers holding
-// slots, rounded and clamped to kMaxHumanLeadTicks, 0 when there are none:
-// the delay the host gives its bots in a mixed match.
+// 1/8, Q8), from the messages whose acknowledgement is newer than the last
+// sample's only (v0.70: a stale one, during loss or an outage, would read as
+// a round trip growing a tick per tick). humanLeadTicks() is the median over the active peers
+// holding slots, rounded and clamped to kMaxHumanLeadTicks, 0 when there are none: the delay the
+// host gives its bots in a mixed match.
 //
 // Abuse resistance (§6.7): inputs are accepted only for slots the sending
 // peer owns, buttons are range-checked, ticks must lie in the assembler's
@@ -335,6 +337,7 @@ class NetServer {
     uint64_t lastResyncNs{0};
     bool hasResynced{false};
     std::optional<int8_t> marginSinceSend;  // min since the last AuthInputs
+    std::optional<Tick> leadAckTick;        // the acknowledgement of the last lead sample
     std::array<std::byte, kMaxTokenBytes> token{};
     uint8_t tokenLength{0};
     Nickname nickname{};

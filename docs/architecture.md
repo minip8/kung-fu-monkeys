@@ -2778,7 +2778,9 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
-consecutive packets vanish. Unreliable messages stay under 1200 bytes so they never fragment;
+consecutive packets vanish. A longer burst (an outage of the server-to-client direction past the
+16-frame window) leaves frames no later message carries; the client repairs that gap with a
+snapshot (v0.70, §6.6 "A gap in the authoritative stream"). Unreliable messages stay under 1200 bytes so they never fragment;
 snapshots go over the reliable lane, where the transport fragments and reassembles them.
 
 Bandwidth at 60 packets/s with 10 players, including transport overhead (GNS ≈ 30–50 bytes per
@@ -2852,7 +2854,11 @@ Implementations, in priority order:
   `poll(now)` at or after its delivery time, ordered by (delivery time, send order), and
   `receivedNs` is that delivery time raised to the receiver's previous poll. Connected is seen
   after the reliable latency on each side; `cut()` emulates a timeout on both. Client PeerIds
-  start at 1 and are never reused; the receive queue holds 8192 messages.
+  start at 1 and are never reused; the receive queue holds 8192 messages. `setOutage(client,
+  toServer, Outage{from, until, reliable})` (v0.70) blacks one direction out without
+  disconnecting: unreliable messages sent in `[from, until)` of the sender's clock are lost, and
+  with `reliable` the reliable lane's are delivered no earlier than `until` + its latency, in
+  order, as a retransmission after the outage; the random draws are the same as without it.
   The contract suite (`tests/unit/net/transport_contract.hpp`, target
   `kfm::transport_contract`) takes a harness (server, client, optional extra client, clock,
   advance, timeout) and generates eleven cases: connect, both lanes both ways, reliable order and
@@ -3005,6 +3011,31 @@ C++ server library is mature. The seam makes that swap a contained change.
   every `checksumEveryTicks` = 10 ticks, the checksum of the world after the newest frame.
 - Checksum mismatch: the client sends `ResyncRequest{tick, its checksum}` (reliable); the server
   answers with a fresh `Snapshot`, at most once per 250 ms per peer.
+- A gap in the authoritative stream (v0.70): `AuthInputs` resends at most 16 frames, back to the
+  peer's acknowledgement, so a server-to-client outage longer than about 16 ticks (shorter than
+  the 5 s timeout) leaves frames that no later message carries. Before v0.70 nothing repaired
+  that by design: the client's confirmed and verified ticks stuck at the gap, so no checksum was
+  compared again, a player predicted on unverified until a misprediction fell out of the 128-tick
+  frame history (≈ 1.8 s after the outage, the rollback-overflow resync), and a spectator, which
+  steps only authoritative frames, froze for good (`tests/netcode/outage_test.cpp` reproduced all
+  three for 0.4, 1 and 3 s outages). The repair is explicit and client-side, so it covers
+  spectators, which never acknowledge anything: the client keeps the latest first tick of the
+  `AuthInputs` windows it has received (the server's windows only move forward); once that is
+  past the first frame it lacks (`confirmed + 1`), no later message will bring that frame, and
+  after `ClientConfig::gapResyncNs` (150 ms, for copies reordered behind the window) it sends a
+  `ResyncRequest` like a checksum mismatch does (the 250 ms server limit and the 1 s client retry
+  apply; `ClientNetStats::gapResyncs` counts them). Not while it holds for the room: the resumed
+  match's snapshot is coming anyway. The snapshot loads as any resync; frames after its tick are
+  in the client's 128-tick frame history or still being sent, since the server's window moves on
+  from its tick. Measured over a 40 ± 5 ms link: the client asks about 200 ms after the outage
+  ends and agrees again (frames confirmed to within a few ticks of the server, checksums compared
+  and matching, a spectator on the server's state) about 0.3–0.4 s after it, for 0.4, 1 and 3 s
+  outages, of one lane or both; a 150 ms outage (inside the window) needs no snapshot. The
+  rollback-overflow resync stays as the backstop. The emulator gained `LoopbackNetwork::setOutage`
+  for this (§6.4). The server's lead estimate (§8 human-likeness) also counted the outage: a stale
+  acknowledgement reads as a round trip growing one tick per tick, and before v0.70 a 3 s outage
+  pushed that peer's estimate to 146 ticks (`humanLeadTicks()` clamps to 60, so a mixed match's bot
+  delay went to its clamp); it now samples only messages whose acknowledgement moved on.
 - Reconnect: a peer that drops (transport close or 5 s without a packet) while holding slots and a
   non-empty token leaves them reserved for `reconnectGraceTicks` (10 s): still present, fed an idle
   input (not "repeat last", so a held stick does not run the monkey into a wall). A `Hello` with
