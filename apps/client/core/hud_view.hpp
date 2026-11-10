@@ -14,6 +14,9 @@
 //                          scoreboard and typed buttons (MatchOverAction),
 //                          locally (Play again, Back to lobby) and in an
 //                          online room (the host's Play again, Leave).
+//   LostConnectionAction   the lost-connection screen's typed buttons
+//                          (Reconnect, Leave), offered while the session
+//                          canReconnect() (v0.44), none otherwise.
 //   roomBotPreview()       the slots the room's bots will take at Start.
 #pragma once
 
@@ -123,6 +126,21 @@ struct MatchOverView {
 [[nodiscard]] MatchOverView roomMatchOverView(const HudView& view,
                                               const presentation::RenderHud& hud, bool host,
                                               std::string_view hostName);
+
+// --- the lost-connection screen (v0.44) --------------------------------------------
+
+// The buttons of the connection status screen (drawNetStatus()) once a
+// session is lost: Reconnect (the same server with the same token, or a
+// lobby rejoin) and Leave. Neither a label nor a focus index is the
+// contract: the screen reports the action, Enter looks it up by focus.
+enum class LostConnectionAction : uint8_t { Reconnect = 0, Leave };
+[[nodiscard]] const char* lostConnectionLabel(LostConnectionAction action);
+// The screen's buttons, in order, from NetSession::canReconnect(): with it
+// Reconnect and Leave; without it none (Esc goes back to the menu).
+[[nodiscard]] std::span<const LostConnectionAction> lostConnectionActions(bool canReconnect);
+// The action at `index` of `actions` (a button's index, the menu's focus).
+[[nodiscard]] std::optional<LostConnectionAction> lostConnectionActionAt(
+    std::span<const LostConnectionAction> actions, std::size_t index);
 
 // --- the online room's waiting screen (v0.42) -------------------------------------
 

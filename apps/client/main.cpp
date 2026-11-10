@@ -1292,13 +1292,21 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
     const client::NetStatusOutcome out = client::drawNetStatus(n, share, app.overMenu);
     applyShare(app, out.share, share, now);
     // v0.44: Reconnect / Leave, by click or Enter on the focused one.
-    const bool activate = std::exchange(app.overActivate, false) && n.canReconnect();
-    if (out.reconnect || (activate && app.overMenu.focus() == 0)) {
+    std::optional<client::LostConnectionAction> pick = out.action;
+    if (std::exchange(app.overActivate, false) && !pick) {
+      pick = client::lostConnectionActionAt(client::lostConnectionActions(n.canReconnect()),
+                                            app.overMenu.focus());
+    }
+    if (pick) {
       app.audio.click();
-      app.reconnectRequested = true;
-    } else if (out.leave || (activate && app.overMenu.focus() == 1)) {
-      app.audio.click();
-      app.leaveRequested = true;
+      switch (*pick) {
+        case client::LostConnectionAction::Reconnect:
+          app.reconnectRequested = true;
+          break;
+        case client::LostConnectionAction::Leave:
+          app.leaveRequested = true;
+          break;
+      }
     }
   }
   app.overlay.draw(n, app.renderer.stats());
