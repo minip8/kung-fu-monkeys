@@ -826,9 +826,9 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     powerUpColumn = 0;
     const float x0 = ImGui::GetCursorPosX();
     const ImVec2 min = ImGui::GetCursorScreenPos();
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_Header, ui::vec4(ui::kTransparent));
     // v0.55: no hover tint of its own: the focus bar is the highlight.
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::kTransparent));
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::withAlpha(ui::kMango, 140)));
     if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
                           ImVec2(0.0f, frameH))) {
