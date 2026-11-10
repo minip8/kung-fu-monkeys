@@ -198,6 +198,7 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
     s.acts = stats.acts;
     s.substitutions = stats.substitutions;
     s.paused = stats.paused;
+    s.heard = stats.heard;
 #ifdef KFM_WASM_BOTS
     if (wasm[i] != nullptr) {
       const ai::WasmAgentStats& w = wasm[i]->stats();

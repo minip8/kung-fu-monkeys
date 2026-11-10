@@ -64,9 +64,7 @@ MatchResult playMatch(uint64_t seed, PlayerMask players, PlayerMask bots,
   EventSink sink;
   for (int k = 0; k < maxTicks && s.rules.phase != MatchPhase::MatchEnded; ++k) {
     InputFrame f = scriptedFrame(scripted, s, content);
-    host.fill(f, s, content);
-    sink.clear();
-    step(s, f, content, sink);
+    host.step(s, f, content, sink);
     REQUIRE(sink.dropped == 0);
     for (const SimEvent& e : sink) {
       ++r.events[e.kind];
@@ -322,9 +320,7 @@ TEST_CASE("an unarmed reference bot fetches a banana lying inside the wall band"
   bool roundEnded = false;
   for (int k = 0; k < 1800 && !roundEnded; ++k) {
     InputFrame f = frameFor(s);
-    host.fill(f, s, content);
-    sink.clear();
-    step(s, f, content, sink);
+    host.step(s, f, content, sink);
     for (const SimEvent& e : sink) {
       if (e.kind == EventKind::PickupTaken) ++taken;
       if (e.kind == EventKind::RoundEnded) roundEnded = true;
@@ -413,9 +409,7 @@ PitRun runPitBot(const ContentDB& c, Vec2 from, Vec2 banana, int ticks) {
   PitRun r;
   for (int k = 0; k < ticks && r.taken == 0 && r.fell == 0; ++k) {
     InputFrame f = frameFor(s);
-    host.fill(f, s, content);
-    sink.clear();
-    step(s, f, content, sink);
+    host.step(s, f, content, sink);
     for (const SimEvent& e : sink) {
       if (e.player != PlayerId{0}) continue;
       if (e.kind == EventKind::PlayerFell) ++r.fell;

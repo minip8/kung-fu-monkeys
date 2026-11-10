@@ -60,16 +60,14 @@ class EchoAgent final : public IAgent {
   PlayerId slot_{PlayerId::invalid()};
 };
 
-// Fills and steps `ticks` ticks, returning the input written for `slot` on each.
+// Fills, steps and observes `ticks` ticks, returning the input written for `slot` on each.
 std::vector<PlayerInput> run(AgentHost& host, WorldState& s, PlayerId slot, int ticks) {
   std::vector<PlayerInput> out;
   EventSink sink;
   for (int k = 0; k < ticks; ++k) {
     InputFrame f = frameFor(s);
-    host.fill(f, s, defaultContent());
+    host.step(s, f, defaultContent(), sink);  // fill, step, observe
     out.push_back(f.inputs[slot.value]);
-    sink.clear();
-    step(s, f, defaultContent(), sink);
   }
   return out;
 }
@@ -284,4 +282,88 @@ TEST_CASE("the content hash is cached and recomputed after an invalidation", "[a
   c.player.hitStunTicks = static_cast<uint16_t>(stun + 1);
   host.attach(PlayerId{1}, std::make_unique<EchoAgent>(log), 3);
   CHECK(fillOnce(c) == edited);
+}
+
+TEST_CASE("fill() counts a step that was not observed, and step() never misses one",
+          "[ai][host][observe]") {
+  std::vector<Call> log;
+  WorldState s = makePlayingWorld(5, 0b11);
+  AgentHost host;
+  host.setAssertOnMissedObserve(false);  // count only: this test misses on purpose
+  host.attach(PlayerId{0}, std::make_unique<EchoAgent>(log), 1);
+  EventSink sink;
+  const auto fill = [&] {
+    InputFrame f = frameFor(s);
+    host.fill(f, s, defaultContent());
+    return f;
+  };
+  const auto stepBare = [&](const InputFrame& f) {
+    sink.clear();
+    step(s, f, defaultContent(), sink);
+  };
+
+  // Fill, step, observe: nothing missed; the same tick filled again is fine.
+  InputFrame f = fill();
+  stepBare(f);
+  host.observe(sink, s, defaultContent());
+  static_cast<void>(fill());
+  static_cast<void>(fill());
+  CHECK(host.missedObserves() == 0);
+
+  // A step without observe() is caught at the next fill().
+  stepBare(frameFor(s));
+  static_cast<void>(fill());
+  CHECK(host.missedObserves() == 1);
+  // Observing the world before the step (not the one it left) is a miss too.
+  f = fill();
+  const WorldState before = s;
+  stepBare(f);
+  host.observe(sink, before, defaultContent());
+  static_cast<void>(fill());
+  CHECK(host.missedObserves() == 2);
+
+  // Ticks stepped and observed without a fill (no agent present) are fine.
+  for (int k = 0; k < 3; ++k) {
+    stepBare(frameFor(s));
+    host.observe(sink, s, defaultContent());
+  }
+  static_cast<void>(fill());
+  CHECK(host.missedObserves() == 2);
+
+  // A world that went back (a new match, a restart) starts over.
+  stepBare(frameFor(s));  // and is never observed
+  s = makePlayingWorld(6, 0b11);
+  static_cast<void>(fill());
+  CHECK(host.missedObserves() == 2);
+
+  // clear() forgets the last fill.
+  stepBare(frameFor(s));
+  host.clear();
+  host.attach(PlayerId{0}, std::make_unique<EchoAgent>(log), 1);
+  static_cast<void>(fill());
+  CHECK(host.missedObserves() == 2);
+
+  // step() fills, steps and observes: never a miss.
+  for (int k = 0; k < 30; ++k) {
+    InputFrame g = frameFor(s);
+    host.step(s, g, defaultContent(), sink);
+    CHECK(g.inputs[0].moveMag == 255);  // the frame keeps the inputs the step ran with
+  }
+  CHECK(host.missedObserves() == 2);
+}
+
+TEST_CASE("observe() counts the calls that enter a slot's window", "[ai][host][observe]") {
+  std::vector<Call> log;
+  const WorldState s = makePlayingWorld(5, 0b111);
+  AgentHost host;
+  for (uint8_t i = 0; i < 3; ++i)
+    host.attach(PlayerId{i}, std::make_unique<EchoAgent>(log), i);
+  EventSink sink;
+  // Slot 1 calls with an arena-wide range: slots 0 and 2 hear it, not 1 itself.
+  sink.push(SimEvent{EventKind::MonkeyCalled, s.tick, PlayerId{1}, s.players.idAt(1), 7,
+                     static_cast<uint32_t>(Fixed::fromInt(100).raw)});
+  host.observe(sink, s, defaultContent());
+  CHECK(host.stats(PlayerId{0}).heard == 1);
+  CHECK(host.stats(PlayerId{1}).heard == 0);
+  CHECK(host.stats(PlayerId{2}).heard == 1);
 }

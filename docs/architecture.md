@@ -4138,7 +4138,14 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   after each `step`: `kfm_arena` and the client's `MatchSession` through `AgentHost::step`
   (fill, `sim::step`, observe in one call, so they cannot step without it), `kfm_server` from
   its per-tick hook after `NetServer::tick` (whose `botInputs` callback is the fill); netsim and
-  `kfm_replay` run no agents. A `MonkeyCalled` whose caller is still in the world is
+  `kfm_replay` run no agents. `fill` checks it: when the world has moved past the previous
+  fill's tick, the last `observe` must have been handed the world at this tick (the one the
+  step left); a miss is counted (`missedObserves()`) and aborts a build with asserts. Filling a
+  tick again, a world that went back (a new match, a restart), ticks stepped and observed
+  without a fill (no agent present), paused slots and ticks a host does not run (the room's
+  Waiting and Over) never trip it. Each slot's `AgentSlotStats::heard` counts the calls that
+  entered its window, and one host test per host (`kfm_arena`, `ServerHost`, `MatchSession`)
+  plays a `grid_rounds_1t` squad of reference bots and requires that they hear some. A `MonkeyCalled` whose caller is still in the world is
   heard by every other slot with a live (not paused) agent whose monkey stands within the call's
   range, Chebyshev between the centres in units, after the step; it enters that slot's window
   (16 at most, later ones dropped), so a call made on tick T is in the observations of T + 1 up

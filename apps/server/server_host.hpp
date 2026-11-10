@@ -197,6 +197,8 @@ class ServerHost {
   [[nodiscard]] uint8_t botDelayTicks() const;
   // The bot spec in a slot (nullopt: not a host bot).
   [[nodiscard]] std::optional<ai::BotSpec> botSpec(PlayerId slot) const;
+  // The AgentHost counters of a host bot's slot (zero for any other slot).
+  [[nodiscard]] ai::AgentSlotStats agentStats(PlayerId slot) const;
   // The line format of the periodic stats, for a final summary.
   void logStats(uint64_t nowNs);
   // One line in the host's log format (time and tick prefix), for adapters.

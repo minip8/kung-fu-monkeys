@@ -224,9 +224,7 @@ ChaserMatch playChaserMatch(const WasmModule& chaser, uint64_t seed, int maxTick
     InputFrame f;
     f.tick = s.tick;
     f.present = s.rules.present;
-    host.fill(f, s, content);
-    sink.clear();
-    step(s, f, content, sink);
+    host.step(s, f, content, sink);
     REQUIRE(sink.dropped == 0);
     for (const SimEvent& e : sink) {
       const bool byChaser = e.player.isValid() && isChaser(e.player.value);
@@ -377,9 +375,7 @@ TEST_CASE("the C SDK's flight step is the sim's ProjectileSystem", "[ai][sdk]") 
       InputFrame f;
       f.tick = s.tick;
       f.present = s.rules.present;
-      host.fill(f, s, content);
-      sink.clear();
-      step(s, f, content, sink);
+      host.step(s, f, content, sink);
       buildObservation(s, content, PlayerId{0}, 0, after);
       for (uint32_t i = 0; i < kObsMaxBananas; ++i) {
         const ObsBanana& b0 = before.bananas[i];

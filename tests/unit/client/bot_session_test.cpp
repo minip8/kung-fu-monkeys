@@ -4,7 +4,9 @@
 #include "core/bot_roster.hpp"
 #include "core/client_options.hpp"
 #include "core/match_session.hpp"
+#include "kfm/ai/agent_host.hpp"
 #include "kfm/ai/bot_spec.hpp"
+#include "kfm/content/app_content.hpp"
 #include "kfm/platform/input_event.hpp"
 #include "kfm/sim/events.hpp"
 #include "kfm/sim/input.hpp"
@@ -14,6 +16,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -89,6 +92,30 @@ struct Bots {
 }
 
 }  // namespace
+
+TEST_CASE("bots: local bots hear their team's calls in a squad match", "[client][bots][calls]") {
+  // MatchSession steps through AgentHost::step, which observes every step:
+  // without it no bot ever hears a call.
+  content::LoadedContent loaded;
+  content::Diagnostics diag;
+  REQUIRE(content::loadAppContent("", {}, loaded, diag));
+  const std::optional<uint8_t> mode = loaded.db.findMode("grid_rounds_1t");
+  REQUIRE(mode);
+  SessionConfig cfg = botsOnly(4, ai::ReferenceTier::Hard);
+  cfg.content = &loaded.db;
+  cfg.mode = mode.value_or(0);
+  cfg.arena = loaded.db.firstCompatibleArena(mode.value_or(0)).value_or(0);
+  Bots b(cfg);
+  b.start();
+  REQUIRE(b.s->botMask() == 0b1111);
+  for (int t = 0; t < 60 * 60; ++t)
+    b.tick();
+  uint32_t heard = 0;
+  for (uint8_t i = 0; i < 4; ++i)
+    heard += b.s->agents().stats(PlayerId{i}).heard;
+  CHECK(heard > 0);
+  CHECK(b.s->agents().missedObserves() == 0);
+}
 
 TEST_CASE("bots: the casual default is the medium reference bot", "[client][bots]") {
   const MatchSession s{SessionConfig{}};

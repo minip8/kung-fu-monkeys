@@ -42,6 +42,21 @@
 // the observation of the next tick and of every tick up to the next latch
 // lists it.
 //
+// The observe check: a host that steps the world without passing the step
+// to observe() delivers no calls, silently. step() does all three (fill,
+// sim::step, observe) for a host that steps the world itself; a host whose
+// world is stepped elsewhere (kfm_server: NetServer steps, its botInputs
+// callback is the fill) calls fill() and observe() itself, and fill()
+// checks it did: when the world has moved past the previous fill()'s tick,
+// the last observe() must have been handed the world at this tick (the one
+// the step left). A miss is counted (missedObserves()) and, in a build with
+// asserts, aborts. Filling the same tick again, a world that went back (a
+// new match, a restart, a rollback) and ticks stepped and observed without
+// a fill (no agent present) are all fine, as are paused slots and ticks the
+// host does not run at all (the room's Waiting and Over); clear() forgets
+// both ticks. Each slot's `heard` counter counts the calls that entered its
+// window, so a host test can see its bots hear.
+//
 // The content hash in the observation (Observation::match.contentHash) is
 // sim::contentHash(content.db), which serialises the whole ContentDB: far too
 // slow for every tick. The host caches it: computed at the first fill() after
@@ -96,6 +111,7 @@ struct AgentSlotStats {
   uint32_t acts{0};           // act() calls (one per present tick with a monkey, v0.35)
   uint32_t substitutions{0};  // of them, the ones that returned nullopt (repeat last input)
   uint32_t paused{0};         // v0.35: present ticks sat out without a monkey (the lifecycle)
+  uint32_t heard{0};          // calls (MonkeyCalled) that entered the slot's turn window
 };
 
 class AgentHost {
@@ -157,6 +173,12 @@ class AgentHost {
   void step(sim::WorldState& world, sim::InputFrame& frame, const sim::MatchContent& content,
             sim::EventSink& sink);
 
+  // The observe check (see the header comment): fills that found the step
+  // before them not observed. With setAssertOnMissedObserve(false) a miss is
+  // only counted, never an abort (tests of the check itself).
+  [[nodiscard]] uint32_t missedObserves() const { return missedObserves_; }
+  void setAssertOnMissedObserve(bool on) { assertOnMissedObserve_ = on; }
+
   // Whether the slot is paused (its monkey eliminated, see the header).
   [[nodiscard]] bool paused(PlayerId slot) const;
   // Re-inits on a resume under RespawnMemory::Wipe, since attach.
@@ -198,6 +220,12 @@ class AgentHost {
   // The content hash cache: hash_ is contentHash(*hashFor_) while hashFor_ is set.
   const sim::ContentDB* hashFor_{nullptr};
   uint32_t hash_{0};
+  // The observe check: the world tick of the last fill() and the tick of the
+  // world the last observe() was handed.
+  std::optional<Tick> filledAt_;
+  std::optional<Tick> observedAt_;
+  uint32_t missedObserves_{0};
+  bool assertOnMissedObserve_{true};
 };
 
 }  // namespace kfm::ai

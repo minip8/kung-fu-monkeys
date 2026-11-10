@@ -696,6 +696,26 @@ TEST_CASE("reference bots finish grid matches under fog (v0.35)", "[arena][teams
   }
 }
 
+TEST_CASE("bots in a squad match hear their team's calls", "[arena][teams][grid][calls]") {
+  // runMatch must pass every step to AgentHost::observe (it steps through
+  // AgentHost::step): without it no bot ever hears a call.
+  BotFactory factory;
+  const sim::ContentDB& db = gameContent().db;
+  const std::optional<uint8_t> mode = db.findMode("grid_rounds_1t");
+  REQUIRE(mode);
+  MatchSetup setup;
+  setup.config.seed = 1;
+  setup.config.mode = mode.value_or(0);
+  setup.config.arena = db.firstCompatibleArena(mode.value_or(0)).value_or(0);
+  setup.teams = {{spec("ref:hard"), spec("ref:hard")}, {spec("ref:hard"), spec("ref:hard")}};
+  setup.tickCap = 3600;
+  const MatchResult r = play(setup, factory);
+  uint32_t heard = 0;
+  for (const SlotResult& s : r.slots)
+    heard += s.heard;
+  CHECK(heard > 0);
+}
+
 TEST_CASE("team places: the winner's team, then team score, then fewer deaths", "[arena][teams]") {
   MatchResult r;
   r.slots = {slotWith(0, 0, 3), slotWith(1, 1, 0), slotWith(2, 0, 1), slotWith(3, 0, 0)};

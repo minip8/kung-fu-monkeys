@@ -234,7 +234,7 @@ if(TARGET kfm::server_host)
     server/room_test.cpp
     server/room_flow_test.cpp
   )
-  target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim)
+  target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim kfm::content)
   if(KFM_WASM_BOTS)
     # The host's wasm bots on the fixture modules (echo, trap, abi_mismatch).
     target_compile_definitions(kfm_server_tests PRIVATE KFM_SERVER_TEST_WASM=1

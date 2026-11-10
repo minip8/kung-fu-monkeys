@@ -98,6 +98,7 @@ struct SlotResult {
   uint32_t acts{0};    // AgentHost counters (acts: ticks with a monkey, v0.35)
   uint32_t substitutions{0};
   uint32_t paused{0};  // v0.35: ticks the slot sat out eliminated (acts + paused = ticks)
+  uint32_t heard{0};   // calls that entered the bot's window (AgentSlotStats; not printed)
   // Module only (WasmAgentStats):
   uint64_t traps{0};
   uint64_t overBudget{0};

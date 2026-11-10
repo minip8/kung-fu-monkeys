@@ -220,6 +220,10 @@ std::optional<ai::BotSpec> ServerHost::botSpec(PlayerId slot) const {
   return bots_->specs[slot.value];
 }
 
+ai::AgentSlotStats ServerHost::agentStats(PlayerId slot) const {
+  return bots_->agents.stats(slot);
+}
+
 void ServerHost::fillBots(const sim::WorldState& world, const sim::MatchContent& content,
                           sim::InputFrame& frame) {
   Bots& b = *bots_;
