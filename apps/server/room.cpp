@@ -22,6 +22,17 @@ net::RoomSettings roomSettingsOf(const sim::MatchConfig& config, uint8_t bots) {
                            .bots = bots};
 }
 
+sim::PlayerMask roomBotSlots(sim::PlayerMask free, uint8_t count) {
+  sim::PlayerMask out = 0;
+  uint8_t left = count;
+  for (uint8_t s = 0; s < sim::kMaxPlayers && left > 0; ++s) {
+    if (!sim::maskHas(free, PlayerId{s})) continue;
+    out = static_cast<sim::PlayerMask>(out | (1u << s));
+    --left;
+  }
+  return out;
+}
+
 Room::Room(const sim::ContentDB& content, uint8_t maxPlayers, const net::RoomSettings& settings)
     : content_(&content), maxPlayers_(maxPlayers), settings_(settings) {}
 

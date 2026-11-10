@@ -1165,3 +1165,29 @@ hundred scripted ticks (88 contacts over 11 ticks in the test's match); the test
 line, both exit statuses, and that the shipped content prints nothing. It depends on shipped
 tuning: if that changes enough that the crowd stops overflowing, the test fails rather than
 passing silently.
+
+v0.75 changes: the server sends where the room's bots will go, protocol version 7 (§6.3, §6.6,
+§7; issue #68). The waiting screen previewed the bots' slots with a copy of the server's rule
+("lowest free slots"), but the client does not know the server's `--max-players`, so with
+fewer free slots than bots asked for it showed bots the server would never place: a cap of
+three with two humans and two bots asked for showed two bots to come where Start places one.
+Decided: the issue's second option. `RoomState` gains the bots' placement, a third slot mask;
+while the room waits it is the slots the settings' bots take if the host starts now, and in
+Playing and Over the slots bots hold. One function, `server::roomBotSlots(free, count)`,
+decides the slots, and both the Waiting `RoomState` and `placeRoomBots` at Start are given its
+answer, so the preview and the placement cannot disagree; the client's `roomBotPreview` and
+the test that pinned its copy of the rule are deleted, and `roomSlots()` in
+`core/hud_view.hpp` draws what the server sent. Carrying the cap instead (the first option)
+would have kept two copies of the rule. `kProtocolVersion` goes from 6 to 7 with no
+compatibility path: a peer of another build is refused already (the build id, v0.70), so the
+bump costs nothing a release does not. `RoomState` is at most 178 B. Not changed: the client
+still does not know the cap, so the waiting room shows ten slots and the ones above the cap
+read "open, send the link". No sim change; replay checksums unchanged. Tests: the room flow
+checks the placement in its four existing cases (the preview before Start, the bots' slots in
+Playing and Over, a bot that yields leaving both masks) and a new case at a cap of four with
+three bots walks a join, two settings changes, another join and a leave before Start places
+exactly the previewed slots; the message round-trips the mask and refuses one that overlaps
+the humans. Verified on GCC: headless Debug 45 of 45, the `dev` preset 47 of 47, the
+`server-headless` Release preset with the soak and real-socket gates 52 of 52, and through
+real binaries: `kfm_server --max-players 3 --bots 3` with two
+clients shows "Bots 2" and one bot to come.

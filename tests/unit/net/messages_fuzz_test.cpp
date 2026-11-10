@@ -206,11 +206,18 @@ TEST_CASE("Room decoders survive arbitrary bytes", "[net][messages][fuzz][room]"
   r.settings = RoomSettings{1, 2, 0, 0xFFFF, 3};
   r.humans = 0b1100;
   r.bots = 0b0011;
+  r.botPlacement = 0b0011;
   r.winner = PlayerId{3};
   r.names[2] = Nickname::from("Gibbon");
   r.names[3] = Nickname::from("\xC3\xA9t\xC3\xA9");
-  const Tally t =
-      fuzz(MessageType::RoomState, std::vector<RoomStateMsg>{r, RoomStateMsg{}}, 20'000, 18);
+  RoomStateMsg waiting;  // v7: a placement previewed while Waiting
+  waiting.host = PlayerId{1};
+  waiting.humans = 0b10;
+  waiting.settings = RoomSettings{0, 0, 0, 0xFFFF, 2};
+  waiting.botPlacement = 0b101;
+  waiting.names[1] = Nickname::from("Mandrill");
+  const Tally t = fuzz(MessageType::RoomState,
+                       std::vector<RoomStateMsg>{r, waiting, RoomStateMsg{}}, 20'000, 18);
   CHECK(t.accepted > 0);
   CHECK(t.rejected > 0);
 }

@@ -347,7 +347,7 @@ bool HelloMsg::operator==(const HelloMsg& o) const {
 
 bool RoomStateMsg::operator==(const RoomStateMsg& o) const {
   if (phase != o.phase || host != o.host || settings != o.settings || humans != o.humans ||
-      bots != o.bots || winner != o.winner) {
+      bots != o.bots || botPlacement != o.botPlacement || winner != o.winner) {
     return false;
   }
   for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
@@ -759,7 +759,8 @@ size_t encode(const RoomStateMsg& m, std::span<std::byte> out) {
     const bool hasHost = m.host.isValid();
     const bool hasWinner = m.winner.isValid();
     if (phase >= kRoomPhaseCount || !validSettings(m.settings) || !validMask(m.humans) ||
-        !validMask(m.bots) || (m.humans & m.bots) != 0 ||
+        !validMask(m.bots) || (m.humans & m.bots) != 0 || !validMask(m.botPlacement) ||
+        (m.humans & m.botPlacement) != 0 ||
         (hasHost && (m.host.value >= sim::kMaxPlayers || !hasSlot(m.humans, m.host.value))) ||
         (hasWinner && m.winner.value >= sim::kMaxPlayers)) {
       return false;
@@ -770,6 +771,7 @@ size_t encode(const RoomStateMsg& m, std::span<std::byte> out) {
     writeSettings(w, m.settings);
     writeMask(w, m.humans);
     writeMask(w, m.bots);
+    writeMask(w, m.botPlacement);
     w.writeBool(hasWinner);
     if (hasWinner) w.writeBits(m.winner.value, kSlotBits);
     for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
@@ -791,9 +793,11 @@ DecodeResult decode(std::span<const std::byte> bytes, RoomStateMsg& out) {
     readSettings(r, out.settings);
     out.humans = readMask(r);
     out.bots = readMask(r);
+    out.botPlacement = readMask(r);
     out.winner = PlayerId::invalid();
     if (r.readBool()) out.winner = PlayerId{static_cast<PlayerId::rep>(r.readBits(kSlotBits))};
     if (phase >= kRoomPhaseCount || !validSettings(out.settings) || (out.humans & out.bots) != 0 ||
+        (out.humans & out.botPlacement) != 0 ||
         (out.host.isValid() &&
          (out.host.value >= sim::kMaxPlayers || !hasSlot(out.humans, out.host.value))) ||
         (out.winner.isValid() && out.winner.value >= sim::kMaxPlayers)) {

@@ -182,14 +182,17 @@ MatchOverView roomMatchOverView(const HudView& view, const presentation::RenderH
   return v;
 }
 
-sim::PlayerMask roomBotPreview(const net::RoomStateMsg& room) {
-  if (room.bots != 0) return 0;
-  sim::PlayerMask out = 0;
-  uint8_t toCome = room.settings.bots;
-  for (uint8_t i = 0; i < sim::kMaxPlayers && toCome > 0; ++i) {
-    if (sim::maskHas(room.humans, PlayerId{i})) continue;
-    out = static_cast<sim::PlayerMask>(out | (1u << i));
-    --toCome;
+std::array<RoomSlot, sim::kMaxPlayers> roomSlots(const net::RoomStateMsg& room) {
+  std::array<RoomSlot, sim::kMaxPlayers> out{};
+  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    const PlayerId slot{i};
+    if (sim::maskHas(room.humans, slot)) {
+      out[i] = RoomSlot::Human;
+    } else if (sim::maskHas(room.bots, slot)) {
+      out[i] = RoomSlot::Bot;
+    } else if (sim::maskHas(room.botPlacement, slot)) {
+      out[i] = RoomSlot::BotAtStart;
+    }
   }
   return out;
 }

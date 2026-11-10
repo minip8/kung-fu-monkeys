@@ -47,8 +47,10 @@ namespace kfm::net {
 // v2 (M4): MatchConfig in Welcome, Snapshot and MatchConfig carries arena
 // and mode. v3 (M4 lobby): and the per-match power-up set. v4 (v0.31): and
 // the loadout. v5 (v0.32): and the team of every slot. v6 (v0.42, M6b):
-// the room (RoomSettings, RoomState, Start) and a nickname in Hello.
-inline constexpr uint16_t kProtocolVersion = 6;
+// the room (RoomSettings, RoomState, Start) and a nickname in Hello. v7:
+// RoomState carries the bots' placement (botPlacement), so the waiting room
+// shows the slots the server will put its bots in (issue #68).
+inline constexpr uint16_t kProtocolVersion = 7;
 
 // Inputs per Input / AuthInputs message: the newest tick and up to 15 before
 // it (§6.3: the last 8–16 are resent every packet).
@@ -301,8 +303,16 @@ struct RoomStateMsg {
   RoomPhase phase{RoomPhase::Waiting};
   PlayerId host{PlayerId::invalid()};  // a human slot, or invalid: no host
   RoomSettings settings{};
-  sim::PlayerMask humans{0};             // slots held by peers (reserved ones too)
-  sim::PlayerMask bots{0};               // server-side bot slots, disjoint from humans
+  sim::PlayerMask humans{0};  // slots held by peers (reserved ones too)
+  sim::PlayerMask bots{0};    // server-side bot slots, disjoint from humans
+  // v7: where the room's bots are, disjoint from humans. Waiting: the slots
+  // the settings' bots take if the host starts now (the server decides
+  // them with the function that places the bots at Start, apps/server
+  // roomBotSlots(): the lowest free slots under its player cap, so fewer
+  // than settings.bots when fewer are free); no bot holds a slot yet.
+  // Playing and Over: the slots bots hold, equal to `bots` (a bot that
+  // yields its slot to a joiner leaves both).
+  sim::PlayerMask botPlacement{0};
   PlayerId winner{PlayerId::invalid()};  // Over: the match's winner, invalid on a draw
   std::array<Nickname, sim::kMaxPlayers> names{};
   [[nodiscard]] bool operator==(const RoomStateMsg& o) const;
@@ -330,7 +340,7 @@ inline constexpr size_t kRoomSettingsBits = 8 + 8 + 8 + 16 + 4;
 inline constexpr size_t kRoomSettingsMsgBytes = (8 + kRoomSettingsBits + 7) / 8;
 inline constexpr size_t kStartMsgBytes = 1;
 inline constexpr size_t kRoomStateMsgMaxBytes =
-    (8 + 2 + 1 + 4 + kRoomSettingsBits + (2 * size_t{sim::kMaxPlayers}) + 1 + 4 +
+    (8 + 2 + 1 + 4 + kRoomSettingsBits + (3 * size_t{sim::kMaxPlayers}) + 1 + 4 +
      size_t{sim::kMaxPlayers} * (5 + kMaxNicknameBytes * 8) + 7) /
     8;
 static_assert(kRoomSettingsMsgBytes <= kMaxUnreliableBytes);

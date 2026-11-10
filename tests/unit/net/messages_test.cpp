@@ -402,7 +402,7 @@ TEST_CASE("Snapshot round-trips and stays far below the reliable limit", "[net][
   CHECK(decode({buf.data(), worst - 1}, *back).error() == DecodeError::Truncated);
 }
 
-// --- protocol 6: the room and nicknames (v0.42) -------------------------------------
+// --- protocol 6: the room and nicknames (v0.42); v7: the bots' placement -----------
 
 namespace {
 
@@ -420,6 +420,7 @@ RoomStateMsg fullRoom() {
   m.settings = RoomSettings{.arena = 4, .mode = 2, .loadout = 1, .powerUps = 0x0F0F, .bots = 7};
   m.humans = 0b11'1111'1000;
   m.bots = 0b111;
+  m.botPlacement = 0b111;  // Over: where the bots are
   m.winner = PlayerId{1};
   for (uint8_t s = 3; s < sim::kMaxPlayers; ++s)
     m.names[s] = nick("ABCDEFGHIJKLMNOP");  // 16 bytes each: the worst case
@@ -454,7 +455,7 @@ TEST_CASE("Nicknames: validation and sanitising", "[net][messages][room]") {
 }
 
 TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
-  CHECK(kProtocolVersion == 6);
+  CHECK(kProtocolVersion == 7);  // v7: RoomState's botPlacement
   HelloMsg h;
   h.contentHash = 5;
   h.requestedSlots = 2;
@@ -480,6 +481,16 @@ TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
   CHECK(n <= kRoomStateMsgMaxBytes);
   CHECK(back.names[5].view() == "ABCDEFGHIJKLMNOP");
   CHECK(back.names[0].empty());  // a bot slot carries no name
+  CHECK(back.botPlacement == 0b111);
+
+  // v7: Waiting previews the bots' slots before any bot holds one.
+  RoomStateMsg waiting;
+  waiting.host = PlayerId{0};
+  waiting.humans = 0b1;
+  waiting.settings.bots = 3;
+  waiting.botPlacement = 0b10'0000'0110;
+  waiting.names[0] = nick("h");
+  CHECK(roundTrip(waiting).botPlacement == 0b10'0000'0110);
 
   RoomStateMsg playing;
   playing.phase = RoomPhase::Playing;
@@ -502,6 +513,12 @@ TEST_CASE("Protocol 6 encoders refuse invalid messages", "[net][messages][room]"
   CHECK(encode(m, buf) == 0);
   m = fullRoom();
   m.bots = 0b1000;  // overlaps the humans
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.botPlacement = 0b1001;  // v7: overlaps the humans
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.botPlacement = static_cast<sim::PlayerMask>(1u << sim::kMaxPlayers);  // past the slots
   CHECK(encode(m, buf) == 0);
   m = fullRoom();
   m.winner = PlayerId{sim::kMaxPlayers};
@@ -540,6 +557,32 @@ TEST_CASE("Protocol 6 decoders reject bad nicknames and ranges", "[net][messages
   w.align();
   RoomSettingsMsg rs;
   CHECK(decode({buf.data(), w.bytesWritten()}, rs).error() == DecodeError::OutOfRange);
+
+  // v7: a RoomState whose botPlacement overlaps its humans.
+  const auto roomWithPlacement = [&](sim::PlayerMask placement) {
+    BitWriter rw(buf);
+    rw.writeU8(static_cast<uint8_t>(MessageType::RoomState));
+    rw.writeBits(0, 2);   // Waiting
+    rw.writeBool(false);  // no host
+    rw.writeU8(0);
+    rw.writeU8(0);
+    rw.writeU8(0);
+    rw.writeU16(0);
+    rw.writeBits(1, 4);     // one bot
+    rw.writeBits(0b1, 10);  // humans
+    rw.writeBits(0, 10);    // bots
+    rw.writeBits(placement, 10);
+    rw.writeBool(false);  // no winner
+    rw.writeBits(0, 5);   // slot 0's empty nickname
+    rw.align();
+    return rw.bytesWritten();
+  };
+  RoomStateMsg room;
+  n = roomWithPlacement(0b10);
+  REQUIRE(decode({buf.data(), n}, room).has_value());
+  CHECK(room.botPlacement == 0b10);
+  n = roomWithPlacement(0b11);
+  CHECK(decode({buf.data(), n}, room).error() == DecodeError::OutOfRange);
 
   // A Start with a trailing byte.
   n = encode(StartMsg{}, buf);

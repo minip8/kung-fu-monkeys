@@ -859,6 +859,7 @@ TEST_CASE("RoomSettings and Start become events; RoomState reaches everyone and 
   RoomStateMsg state;
   state.host = PlayerId{0};
   state.humans = 0b1;
+  state.botPlacement = 0b110;  // v7: carried as the host set it
   state.names[0] = Nickname::from("Host");
   rig.server->setRoomState(state);
   rig.pump();

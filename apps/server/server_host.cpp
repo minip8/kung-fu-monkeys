@@ -459,6 +459,9 @@ void ServerHost::broadcastRoom() {
   m.settings = room_->settings();
   m.humans = server_->humanSlots();
   m.bots = server_->bots();
+  // v7 (issue #68): Waiting previews where Start puts the bots; later
+  // the bots are placed and botPlacement is where they are.
+  m.botPlacement = room_->phase() == net::RoomPhase::Waiting ? roomBotSlotsNow() : m.bots;
   m.winner = room_->winner();
   for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
     if (sim::maskHas(m.humans, PlayerId{s})) m.names[s] = server_->nickname(PlayerId{s});
@@ -467,14 +470,20 @@ void ServerHost::broadcastRoom() {
   server_->setRoomState(m);
 }
 
-void ServerHost::placeRoomBots(uint8_t count) {
+sim::PlayerMask ServerHost::roomBotSlotsNow() const {
+  return roomBotSlots(server_->freeSlots(), room_->settings().bots);
+}
+
+void ServerHost::placeRoomBots(sim::PlayerMask slots) {
   Bots& b = *bots_;
-  for (uint8_t k = 0; k < count; ++k) {
-    const sim::PlayerMask free = server_->freeSlots();
-    if (free == 0) break;
-    const PlayerId slot{static_cast<uint8_t>(std::countr_zero(static_cast<uint32_t>(free)))};
+  size_t k = 0;
+  for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
+    const PlayerId slot{s};
+    if (!sim::maskHas(slots, slot)) continue;
+    // A free slot below the cap: setBot() accepts it.
     if (!server_->setBot(slot, true)) break;
     const ai::BotSpec spec = k < config_.bots.size() ? config_.bots[k] : ai::BotSpec{};
+    ++k;
     b.specs[slot.value] = spec;
     b.lastStats[slot.value] = {};
     b.agents.attach(slot, b.make(spec, slot), ai::agentSeed(botSeed_, slot), b.delay);
@@ -544,7 +553,7 @@ void ServerHost::removeRoomBots() {
 
 void ServerHost::startRoomMatch() {
   const net::RoomSettings& r = room_->settings();
-  placeRoomBots(r.bots);
+  placeRoomBots(roomBotSlotsNow());
   sim::MatchConfig c = server_->matchConfig();
   c.seed = nextMatchSeed(c.seed);
   c.arena = r.arena;
