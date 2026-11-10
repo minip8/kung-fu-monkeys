@@ -403,3 +403,44 @@ TEST_CASE("Emulator outage of the reliable lane delays it in order", "[net][loop
   CHECK(net.emulatorStats(c.self(), true).reliableHeld == 500);
   CHECK(c.isConnected(kServerPeer));
 }
+
+TEST_CASE("Emulator outage of the reliable lane alone leaves the unreliable lane flowing",
+          "[net][loopback][emulator]") {
+  LoopbackNetwork net(15);
+  LoopbackTransport& c = connected(net, LinkConditions::uniform(20 * kMs));
+  LoopbackTransport& server = net.server();
+  const uint64_t t0 = c.nowNs();
+  net.setOutage(c.self(), true, Outage{t0, t0 + 100 * kMs, true, false});
+  std::vector<std::pair<uint32_t, uint64_t>> reliable;
+  uint32_t unreliable = 0;
+  for (uint64_t now = t0; now < t0 + 300 * kMs; now += kMs) {
+    ConnectionEvents ev;
+    c.poll(now, ev);
+    server.poll(now, ev);
+    Packet p;
+    while (server.recv(p)) {
+      if (p.lane == Lane::Reliable) {
+        reliable.emplace_back(contract::seqOf(p.data), p.receivedNs);
+      } else {
+        // On time: sent at the previous poll's clock, 20 ms ago.
+        CHECK(p.receivedNs == t0 + (contract::seqOf(p.data) + 20) * kMs);
+        ++unreliable;
+      }
+    }
+    const auto i = static_cast<uint32_t>((now - t0) / kMs);
+    if (i < 200 && i % 50 == 0) c.sendReliable(kServerPeer, contract::payload(i, 8));
+    if (i < 200) c.sendUnreliable(kServerPeer, contract::payload(i, 8));
+  }
+  CHECK(unreliable == 200);
+  REQUIRE(reliable.size() == 4);
+  // Sent at 0 and 50 ms, inside the hold: delivered at its end plus the
+  // latency; 100 and 150 ms on time.
+  CHECK(reliable[0] == std::pair<uint32_t, uint64_t>{0, t0 + 120 * kMs});
+  CHECK(reliable[1] == std::pair<uint32_t, uint64_t>{50, t0 + 120 * kMs});
+  CHECK(reliable[2] == std::pair<uint32_t, uint64_t>{100, t0 + 120 * kMs});
+  CHECK(reliable[3] == std::pair<uint32_t, uint64_t>{150, t0 + 170 * kMs});
+  const EmulatorStats st = net.emulatorStats(c.self(), true);
+  CHECK(st.unreliableBlackedOut == 0);
+  CHECK(st.unreliableLost == 0);
+  CHECK(st.reliableHeld == 2);
+}
