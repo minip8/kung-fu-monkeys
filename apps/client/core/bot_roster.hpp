@@ -5,26 +5,23 @@
 // per bot slot at every match start.
 //
 // A spec is an ai::BotSpec: the reference bot at a difficulty tier (casual
-// lobbies, default medium), or a .wasm bot module. A module is read from
-// disk and validated once by configure() and cached; make() then gives every
-// bot slot its own WasmAgent (own instance and linear memory) over it. A
-// module that cannot be loaded (missing file, refused by the loader, or a
-// build without KFM_WASM_BOTS, e.g. the browser) falls back to the reference
-// bot at the spec's tier, and configure() reports why: the client always
-// starts.
+// lobbies, default medium), or a .wasm bot module. The agents come from
+// every host's ai::BotFactory (kfm/ai/bot_factory.hpp): a module is read
+// from disk and validated once by configure() and cached; make() then gives
+// every bot slot its own WasmAgent (own instance and linear memory) over it.
+// The client's policy on a module that cannot be loaded (missing file,
+// refused by the loader, or a build without KFM_WASM_BOTS, e.g. the
+// browser): fall back to the reference bot at the spec's tier, with
+// configure() reporting why, so the client always starts.
 #pragma once
 
 #include "kfm/ai/agent.hpp"
+#include "kfm/ai/bot_factory.hpp"
 #include "kfm/ai/bot_spec.hpp"
 
 #include <cstdint>
 #include <memory>
 #include <string>
-
-namespace kfm::ai {
-class WasmModule;
-class WasmRuntime;
-}  // namespace kfm::ai
 
 namespace kfm::client {
 
@@ -52,12 +49,7 @@ struct BotSlotStats {
 
 class BotRoster {
  public:
-  BotRoster();
-  ~BotRoster();
-  BotRoster(const BotRoster&) = delete;
-  BotRoster& operator=(const BotRoster&) = delete;
-  BotRoster(BotRoster&&) noexcept;
-  BotRoster& operator=(BotRoster&&) noexcept;
+  BotRoster() = default;
 
   // Makes `spec` the spec of the next agents. A module spec reads and loads
   // the file unless it is the module already loaded. False (with `error`)
@@ -72,7 +64,7 @@ class BotRoster {
   [[nodiscard]] std::string describe() const;
 
   // A fresh, uninitialised agent (AgentHost::attach calls init()).
-  [[nodiscard]] std::unique_ptr<ai::IAgent> make() const;
+  [[nodiscard]] std::unique_ptr<ai::IAgent> make();
 
   // The module counters of an agent make() returned while moduleActive()
   // (no RTTI: the caller remembers which agents are modules). Fills the
@@ -81,9 +73,8 @@ class BotRoster {
 
  private:
   ai::BotSpec spec_{.kind = ai::BotKind::Reference, .tier = kDefaultBotTier, .path = {}};
-  std::unique_ptr<ai::WasmRuntime> runtime_;
-  std::unique_ptr<ai::WasmModule> module_;  // set while a module spec is loaded
-  std::string modulePath_;                  // the path module_ was loaded from
+  ai::BotFactory factory_;    // the module cache (one WasmModule per path loaded so far)
+  bool moduleActive_{false};  // spec_ is a module that loaded
 };
 
 }  // namespace kfm::client

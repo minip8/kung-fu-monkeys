@@ -7,9 +7,19 @@
 //   void u8(uint8_t&); void u16(uint16_t&); void u32(uint32_t&);
 //   void u64(uint64_t&); void i32(int32_t&); void boolean(bool&);
 // Reading visitors overwrite the reference; others only read it.
+//
+// Every overload is followed by a static_assert that its struct has exactly
+// the number of fields the overload handles (kfm::fieldCount, the aggregate
+// arity). Adding a field to a visited struct therefore fails to compile here
+// until it is visited and the count bumped. A field the overload handles only
+// in part still counts once, with a comment saying how (the dead slots of a
+// Pool, a ModifierList's tail and an InputFrame's absent inputs are
+// canonicalised, never serialised); a nested struct visited inline (a
+// ModeDef's vision) gets an assert of its own.
 #pragma once
 
 #include "kfm/core/bitstream.hpp"
+#include "kfm/core/field_count.hpp"
 #include "kfm/core/fixed.hpp"
 #include "kfm/core/hash.hpp"
 #include "kfm/core/pool.hpp"
@@ -42,33 +52,40 @@ template <class V>
 void visit(V& v, Tick& t) {
   v.u32(t.value);
 }
+static_assert(fieldCount<Tick>() == 1, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PlayerId& p) {
   v.u8(p.value);
 }
+static_assert(fieldCount<PlayerId>() == 1, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, EntityId& e) {
   v.u16(e.index);
   v.u16(e.generation);
 }
+static_assert(fieldCount<EntityId>() == 2, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Fixed& f) {
   v.i32(f.raw);
 }
+static_assert(fieldCount<Fixed>() == 1, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Angle& a) {
   v.u16(a.bam);
 }
+static_assert(fieldCount<Angle>() == 1, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Vec2& p) {
   visit(v, p.x);
   visit(v, p.y);
 }
+static_assert(fieldCount<Vec2>() == 2, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Rng& r) {
   for (uint32_t& word : r.s)
     v.u32(word);
 }
+static_assert(fieldCount<Rng>() == 1, "visit the new field, then update the count");
 
 // Number of valid values of each visited enum (values are 0..count-1). A
 // reader rejects anything at or above it: a snapshot from the network must
@@ -143,6 +160,9 @@ void validatePlayerRef(V& v, PlayerId& p) {
 // garbage left in dead slots compare equal.
 template <class V, class T, uint16_t N>
 void visit(V& v, Pool<T, N>& pool) {
+  // items (the alive ones; dead slots canonicalised), generation, aliveBits,
+  // aliveCount.
+  static_assert(fieldCount<Pool<T, N>>() == 4, "visit the new field, then update the count");
   for (uint64_t& word : pool.aliveBits)
     v.u64(word);
   for (uint16_t& g : pool.generation)
@@ -178,6 +198,7 @@ void visit(V& v, Tags& t) {
     }
   }
 }
+static_assert(fieldCount<Tags>() == 1, "visit the new field, then update the count");
 
 // --- content (hashed for content_hash, architecture §5.10) ------------------
 
@@ -196,6 +217,7 @@ void visit(V& v, ContentName& n) {
     }
   }
 }
+static_assert(fieldCount<ContentName>() == 1, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, AbilityDef& d) {
   visit(v, d.name);
@@ -213,6 +235,7 @@ void visit(V& v, AbilityDef& d) {
   visit(v, d.tagsRecovery);
   v.u8(d.rootPhases);  // v0.34
 }
+static_assert(fieldCount<AbilityDef>() == 14, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, BoomerangDef& d) {
   visit(v, d.radius);
@@ -225,10 +248,12 @@ void visit(V& v, BoomerangDef& d) {
   v.u8(d.damage);
   v.u16(d.pitSinkTicks);  // v0.57
 }
+static_assert(fieldCount<BoomerangDef>() == 9, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PickupDef& d) {
   visit(v, d.radius);
 }
+static_assert(fieldCount<PickupDef>() == 1, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PlayerDef& d) {
   visit(v, d.radius);
@@ -241,6 +266,7 @@ void visit(V& v, PlayerDef& d) {
   for (uint8_t& a : d.abilities)
     v.u8(a);
 }
+static_assert(fieldCount<PlayerDef>() == 8, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PickupSpawner& d) {
   visit(v, d.pos);
@@ -249,18 +275,21 @@ void visit(V& v, PickupSpawner& d) {
   v.u16(d.intervalTicks);
   v.u8(d.maxAlive);
 }
+static_assert(fieldCount<PickupSpawner>() == 5, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, StatModifier& m) {
   visit(v, m.stat);
   visit(v, m.mul);
   visit(v, m.add);
 }
+static_assert(fieldCount<StatModifier>() == 3, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, ProjectileModifier& m) {
   visit(v, m.speedMul);
   visit(v, m.radiusMul);
   v.u8(m.damageAdd);
 }
+static_assert(fieldCount<ProjectileModifier>() == 3, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PowerUpGrant& g) {
   visit(v, g.kind);
@@ -270,6 +299,7 @@ void visit(V& v, PowerUpGrant& g) {
   visit(v, g.projectile);
   visit(v, g.tag);
 }
+static_assert(fieldCount<PowerUpGrant>() == 6, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PowerUpDef& d) {
   visit(v, d.name);
@@ -280,6 +310,8 @@ void visit(V& v, PowerUpDef& d) {
     visit(v, g);
   v.u8(d.grantCount);
 }
+static_assert(fieldCount<PowerUpVisual>() == 2, "visit the new field, then update the count");
+static_assert(fieldCount<PowerUpDef>() == 5, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, ArenaDef& d) {
   visit(v, d.name);
@@ -310,6 +342,10 @@ void visit(V& v, ArenaDef& d) {
   v.u8(d.zoneCount);
   visit(v, d.cellSize);
 }
+static_assert(fieldCount<Wall>() == 2, "visit the new field, then update the count");
+static_assert(fieldCount<Hazard>() == 4, "visit the new field, then update the count");
+static_assert(fieldCount<Zone>() == 2, "visit the new field, then update the count");
+static_assert(fieldCount<ArenaDef>() == 14, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, ModeDef& d) {
   visit(v, d.name);
@@ -345,18 +381,22 @@ void visit(V& v, ModeDef& d) {
   visitI8(v, d.suicideScore);
   v.u16(d.bananaRegrowTicks);
 }
+static_assert(fieldCount<VisionDef>() == 6, "visit the new field, then update the count");
+static_assert(fieldCount<ModeDef>() == 25, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, LoadoutDef& d) {
   visit(v, d.name);
   for (uint8_t& a : d.abilities)
     v.u8(a);
 }
+static_assert(fieldCount<LoadoutDef>() == 2, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, DashAttackDef& d) {
   v.u8(d.damage);
   v.u8(d.minAmmo);
   v.u8(d.consumesAmmo);
 }
+static_assert(fieldCount<DashAttackDef>() == 3, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, ContentDB& c) {
   for (AbilityDef& d : c.abilities)
@@ -379,6 +419,7 @@ void visit(V& v, ContentDB& c) {
     visit(v, d);
   v.u8(c.loadoutCount);
 }
+static_assert(fieldCount<ContentDB>() == 14, "visit the new field, then update the count");
 
 // --- input and state ---------------------------------------------------------
 
@@ -390,6 +431,7 @@ void visit(V& v, PlayerInput& in) {
   v.u8(in.buttons);
   v.u8(in.subTick);
 }
+static_assert(fieldCount<PlayerInput>() == 5, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, InputFrame& f) {
   visit(v, f.tick);
@@ -402,6 +444,8 @@ void visit(V& v, InputFrame& f) {
     }
   }
 }
+// tick, inputs (the present slots only; absent ones canonicalised), present.
+static_assert(fieldCount<InputFrame>() == 3, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, MatchRules& r) {
   visit(v, r.phase);
@@ -422,6 +466,7 @@ void visit(V& v, MatchRules& r) {
     v.u32(d);
   v.u16(r.dryTicks);  // v0.57
 }
+static_assert(fieldCount<MatchRules>() == 11, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Transform& t) {
   visit(v, t.pos);
@@ -429,6 +474,7 @@ void visit(V& v, Transform& t) {
   visit(v, t.vel);
   visit(v, t.facing);
 }
+static_assert(fieldCount<Transform>() == 4, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Stats& st) {
   visit(v, st.moveSpeed);
@@ -436,6 +482,7 @@ void visit(V& v, Stats& st) {
   v.u8(st.ammoMax);
   visit(v, st.radius);  // v0.34
 }
+static_assert(fieldCount<Stats>() == 4, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, ActiveModifier& m) {
   v.u8(m.powerUp);
@@ -447,6 +494,7 @@ void visit(V& v, ActiveModifier& m) {
   }
   v.u16(m.ticksLeft);
 }
+static_assert(fieldCount<ActiveModifier>() == 2, "visit the new field, then update the count");
 // Only the live prefix is visited; slots past count are canonicalised on
 // read so garbage there never reaches a checksum or the wire.
 template <class V>
@@ -467,6 +515,8 @@ void visit(V& v, ModifierList& m) {
     }
   }
 }
+// items (the live prefix only; the tail canonicalised), count.
+static_assert(fieldCount<ModifierList>() == 2, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Intent& in) {
   visit(v, in.move);
@@ -475,6 +525,7 @@ void visit(V& v, Intent& in) {
   v.u8(in.held);
   v.u8(in.subTick);
 }
+static_assert(fieldCount<Intent>() == 5, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, AbilityState& a) {
   v.u8(a.defIndex);
@@ -491,6 +542,7 @@ void visit(V& v, AbilityState& a) {
   v.u8(a.activatedSubTick);
   visit(v, a.dir);
 }
+static_assert(fieldCount<AbilityState>() == 7, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Player& p) {
   visit(v, p.id);
@@ -513,6 +565,7 @@ void visit(V& v, Player& p) {
   v.u16(p.fallTicks);  // v0.57: a pit fall
   v.u16(p.regrowTicks);
 }
+static_assert(fieldCount<Player>() == 18, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Boomerang& b) {
   visit(v, b.owner);
@@ -526,6 +579,7 @@ void visit(V& v, Boomerang& b) {
   visit(v, b.speedMul);  // projectile modifiers (§5.8)
   visit(v, b.radiusMul);
 }
+static_assert(fieldCount<Boomerang>() == 9, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, Pickup& p) {
   visit(v, p.kind);
@@ -541,6 +595,7 @@ void visit(V& v, Pickup& p) {
     }
   }
 }
+static_assert(fieldCount<Pickup>() == 5, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, WorldState& s) {
   visit(v, s.tick);
@@ -561,6 +616,7 @@ void visit(V& v, WorldState& s) {
   visit(v, s.boomerangs);
   visit(v, s.pickups);
 }
+static_assert(fieldCount<WorldState>() == 6, "visit the new field, then update the count");
 
 // --- visitors ---------------------------------------------------------------
 

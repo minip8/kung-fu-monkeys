@@ -10,8 +10,9 @@
 // MatchEnded or at the tick cap.
 //
 // Seeds: the world seed is MatchSetup::config.seed (the CLI's match k uses
-// --seed + k); slot i's agent is init()ed with slotSeed(world seed, i), a
-// fixed formula so a module's seed is reproducible from the result line.
+// --seed + k); slot i's agent is init()ed with ai::agentSeed(world seed, i),
+// the hosts' shared formula (kfm/ai/agent_host.hpp), so a module's seed is
+// reproducible from the result line.
 //
 // Placements: the MatchEnded winner first, then by final score (round wins
 // or points, MatchRules::scores) descending, then by fewer
@@ -33,6 +34,7 @@
 
 #include "kfm/ai/agent.hpp"
 #include "kfm/ai/agent_host.hpp"
+#include "kfm/ai/bot_factory.hpp"
 #include "kfm/ai/bot_spec.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/sim/content.hpp"
@@ -45,63 +47,24 @@
 #include <string>
 #include <vector>
 
-namespace kfm::ai {
-class WasmAgent;
-}
-
 namespace kfm::arena {
 
 inline constexpr uint32_t kDefaultTickCap = 36'000;  // 10 minutes at 60 Hz
 inline constexpr uint32_t kDefaultFuelPerTick = 100'000;
 inline constexpr uint64_t kDefaultSeed = 1;
 
-// The seed slot `slot` is init()ed with: the world seed mixed with the
-// golden-ratio constant times (slot + 1), so slots differ and slot 0 does not
-// get the world seed itself.
-[[nodiscard]] constexpr uint64_t slotSeed(uint64_t matchSeed, uint8_t slot) {
-  return matchSeed ^ (0x9E3779B97F4A7C15ULL * (uint64_t{slot} + 1));
-}
+// Agents from specs: every host's ai::BotFactory (kfm/ai/bot_factory.hpp),
+// one module cache for the tournament (each module read and loaded once,
+// one instance per slot). The arena's policy on its errors: Io exits 4,
+// Load and Unsupported exit 3 (main.cpp).
+using BotFactory = ai::BotFactory;
+using BotError = ai::BotError;
+using BotErrorKind = ai::BotErrorKind;
 
 // Whether this build runs bot modules (KFM_WASM_BOTS).
-[[nodiscard]] bool wasmBotsAvailable();
-
-enum class BotErrorKind : uint8_t {
-  Io,           // the module file could not be read
-  Load,         // WasmModule::load refused it (message: the LoadError)
-  Unsupported,  // a module spec in a build without KFM_WASM_BOTS
-};
-
-struct BotError {
-  BotErrorKind kind{BotErrorKind::Load};
-  std::string message;  // one line
-};
-
-// Builds agents from specs. A module file is read and WasmModule::load()ed
-// once per distinct path (the cache); every agent made from it gets its own
-// instance and linear memory. Owns the WasmRuntime while modules are loaded.
-class BotFactory {
- public:
-  explicit BotFactory(uint32_t fuelPerTick = kDefaultFuelPerTick);
-  ~BotFactory();
-  BotFactory(const BotFactory&) = delete;
-  BotFactory& operator=(const BotFactory&) = delete;
-  BotFactory(BotFactory&&) = delete;
-  BotFactory& operator=(BotFactory&&) = delete;
-
-  // Loads a module spec's file into the cache (a reference spec: nothing to do).
-  [[nodiscard]] std::expected<void, BotError> prepare(const ai::BotSpec& spec);
-
-  struct Made {
-    std::unique_ptr<ai::IAgent> agent;
-    ai::WasmAgent* wasm{nullptr};  // the same agent when it is a module, for its stats
-  };
-  // A fresh agent for the spec (prepare()s a module first).
-  [[nodiscard]] std::expected<Made, BotError> make(const ai::BotSpec& spec);
-
- private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
-};
+[[nodiscard]] inline bool wasmBotsAvailable() {
+  return ai::botModulesAvailable();
+}
 
 struct MatchSetup {
   // seed, arena, mode, loadout and powerUps; players is set by runMatch from bots.
@@ -135,6 +98,7 @@ struct SlotResult {
   uint32_t acts{0};    // AgentHost counters (acts: ticks with a monkey, v0.35)
   uint32_t substitutions{0};
   uint32_t paused{0};  // v0.35: ticks the slot sat out eliminated (acts + paused = ticks)
+  uint32_t heard{0};   // calls that entered the bot's window (AgentSlotStats; not printed)
   // Module only (WasmAgentStats):
   uint64_t traps{0};
   uint64_t overBudget{0};
@@ -175,7 +139,7 @@ struct MatchResult {
   std::vector<std::byte> replay;  // the .kfmr bytes when recordReplay
   // v0.60: the replay header's two hashes, set whether or not a replay is
   // recorded: sim::contentHash of the match's content, and the build hash
-  // (0: no build stamps one yet, as in every replay header).
+  // (kfm::kBuildId, KFM_BUILD_ID: 0 for an unstamped build, v0.70).
   uint32_t contentHash{0};
   uint32_t buildHash{0};
 };

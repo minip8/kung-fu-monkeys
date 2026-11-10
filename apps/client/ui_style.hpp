@@ -64,7 +64,10 @@ inline constexpr ImU32 kPanelBg = kBark;
 inline constexpr ImU32 kOutline = kInk;  // borders, drop shadows, text outlines
 inline constexpr ImU32 kFocusRing = kCream;
 inline constexpr ImU32 kTitle = kGold;
-inline constexpr ImU32 kScrim = IM_COL32(0, 0, 0, 150);  // over a paused match
+inline constexpr ImU32 kScrim = IM_COL32(0, 0, 0, 150);      // over a paused match
+inline constexpr ImU32 kTransparent = IM_COL32(0, 0, 0, 0);  // a widget's own fill switched off
+inline constexpr ImU32 kWarning = kMango;  // the F1 overlay's notices (a tuned value)
+inline constexpr ImU32 kError = kAlarm;    // ... and its failures (a bot module fell back)
 // The arena preview's marks: objective zones, power-up spawners.
 inline constexpr ImU32 kPreviewZone = IM_COL32(255, 255, 255, 50);
 inline constexpr ImU32 kPreviewZoneRim = IM_COL32(255, 255, 255, 190);

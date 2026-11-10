@@ -38,6 +38,19 @@
 #      kfm_wamr_default_instruction_limit instead of -1 (unmetered), so the
 #      start function and __wasm_call_ctors that wasm_runtime_instantiate
 #      runs on its own internal exec_env are metered too.
+#   3. core/iwasm/interpreter/wasm_interp_classic.c: an opcode whose host
+#      work grows with an operand pays for it (docs/bot-abi.md §1.4). WAMR
+#      meters one unit per opcode, so a 16 MiB memory.fill would cost what an
+#      i32.add costs. KFM_CHARGE_FUEL(n) takes n more units from the budget
+#      before the work runs; when fewer than n are left the op does not run
+#      and the call ends exactly as an exhausted budget does ("instruction
+#      limit exceeded", nothing left). The extra cost, a pure function of
+#      the operands:
+#        memory.fill / memory.copy / memory.init   len / 8 (bytes, rounded down)
+#        table.fill / table.copy / table.init      n (elements)
+#        table.grow (when it can succeed)          n (elements)
+#        memory.grow (when it can succeed)         8192 per page (= filling it)
+#      charged after the bounds checks, so an out-of-bounds op still traps.
 
 if(NOT KFM_WAMR_SOURCE_DIR)
   message(FATAL_ERROR "third_party/wamr: KFM_WAMR_SOURCE_DIR is not set")
@@ -95,6 +108,76 @@ ${kfm_write_back}        return;
     FETCH_OPCODE_AND_DISPATCH();
 #endif
 }")
+# 3. Operand-sized work pays for itself (see the header). A CMake quoted
+# argument turns a backslash before a newline into a line continuation, so
+# the macro's continuations are written as "\\".
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"#else
+#define CHECK_INSTRUCTION_LIMIT() (void)0
+#endif
+"
+"#else
+#define CHECK_INSTRUCTION_LIMIT() (void)0
+#endif
+
+#if WASM_ENABLE_INSTRUCTION_METERING != 0 /* kfm patch: operand-sized work pays */
+#define KFM_CHARGE_FUEL(cost)                                             \\
+    do {                                                                  \\
+        uint64 kfm_cost = (uint64)(cost);                                 \\
+        if (instructions_left >= 0 && kfm_cost > 0) {                     \\
+            if (kfm_cost > (uint64)instructions_left) {                   \\
+                instructions_left = 0;                                    \\
+                wasm_set_exception(module, \"instruction limit exceeded\"); \\
+                goto got_exception;                                       \\
+            }                                                             \\
+            instructions_left -= (int)kfm_cost;                           \\
+        }                                                                 \\
+    } while (0)
+#else
+#define KFM_CHARGE_FUEL(cost) (void)0
+#endif
+")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                        bh_memcpy_s(maddr, (uint32)(linear_mem_size - addr),"
+"                        KFM_CHARGE_FUEL(bytes >> 3); /* kfm patch: memory.init */
+                        bh_memcpy_s(maddr, (uint32)(linear_mem_size - addr),")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                        if (len && mdst != msrc) {"
+"                        KFM_CHARGE_FUEL((uint64)len >> 3); /* kfm patch: memory.copy */
+                        if (len && mdst != msrc) {")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                        memset(mdst, fill_val, len);"
+"                        KFM_CHARGE_FUEL((uint64)len >> 3); /* kfm patch: memory.fill */
+                        memset(mdst, fill_val, len);")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                        table_elems = tbl_inst->elems + d;"
+"                        KFM_CHARGE_FUEL(n); /* kfm patch: table.init */
+                        table_elems = tbl_inst->elems + d;")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                        bh_memmove_s((uint8 *)dst_tbl_inst"
+"                        KFM_CHARGE_FUEL(n); /* kfm patch: table.copy */
+                        bh_memmove_s((uint8 *)dst_tbl_inst")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                        orig_tbl_sz = tbl_inst->cur_size;"
+"                        orig_tbl_sz = tbl_inst->cur_size;
+                        /* kfm patch: table.grow pays for the elements it fills
+                           when it can succeed (a refused grow returns -1) */
+                        if ((uint64)(*(frame_sp - 1))
+                            <= (uint64)(tbl_inst->max_size - tbl_inst->cur_size))
+                            KFM_CHARGE_FUEL(*(frame_sp - 1));")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                        for (; n != 0; elem_idx++, n--) {"
+"                        KFM_CHARGE_FUEL(n); /* kfm patch: table.fill */
+                        for (; n != 0; elem_idx++, n--) {")
+kfm_wamr_patch(core/iwasm/interpreter/wasm_interp_classic.c
+"                delta = POP_PAGE_COUNT();"
+"                delta = POP_PAGE_COUNT();
+                /* kfm patch: memory.grow pays for the pages it adds when it
+                   can succeed (a refused grow returns -1) */
+                if ((uint64)delta
+                    <= (uint64)(memory->max_page_count - memory->cur_page_count))
+                    KFM_CHARGE_FUEL((uint64)delta * 8192);")
+
 kfm_wamr_patch(core/iwasm/common/wasm_exec_env.c
 "WASMExecEnv *
 wasm_exec_env_create_internal("

@@ -64,6 +64,8 @@ void NetClient::resetSession() {
   nextPingNs_ = 0;
   firstAuthTick_.reset();
   newestAuthPacketTick_.reset();
+  windowStart_.reset();
+  gapSinceNs_.reset();
   authPacketsSinceFirst_ = 0;
   pong_ = {};
   world_ = sim::WorldState{};
@@ -312,6 +314,7 @@ void NetClient::onAuthInputs(const Packet& packet) {
   }
   for (uint8_t i = 0; i < m.count; ++i)
     static_cast<void>(auth_.put(m.frames[i]));
+  if (!windowStart_ || m.startTick > *windowStart_) windowStart_ = m.startTick;
 
   if (m.arrivalMargin) {
     stats_.arrivalMargin = *m.arrivalMargin;
@@ -447,6 +450,11 @@ void NetClient::loadSnapshot(Tick runTo) {
   ++stats_.snapshotsLoaded;
   report_.snapshotLoaded = true;
   report_.rolledBack = true;
+  // Unsigned: a tick far enough away would wrap Tick::minus.
+  if (runTo > world_.tick && runTo.value - world_.tick.value > uint32_t{kMaxRunForwardTicks}) {
+    runTo = world_.tick.plus(kMaxRunForwardTicks);
+    ++stats_.runForwardClamped;
+  }
   while (world_.tick < runTo)
     stepOne();
   advanceVerified();
@@ -633,6 +641,7 @@ void NetClient::reconcile() {
   }
   advanceVerified();
   checkChecksums();
+  checkGap();
   // Events of verified ticks, and of ticks no rollback can reach, are final.
   const int64_t ringFloor = int64_t{world_.tick.value} - 1 - kRollbackWindow;
   const int64_t fin = std::max<int64_t>(int64_t{verified_.value} - 1, ringFloor);
@@ -668,6 +677,20 @@ void NetClient::checkChecksums() {
     if (desyncHook_) desyncHook_(DesyncInfo{c.tick, c.sum, local, s});
     requestResync(c.tick, local);
   }
+}
+
+void NetClient::checkGap() {
+  // advanceConfirmed() stopped at the first frame the client lacks; no
+  // later message carries it once a window starts past it.
+  const Tick need = confirmed_ ? confirmed_->plus(1) : base_;
+  if (holding() || !windowStart_ || *windowStart_ <= need) {
+    gapSinceNs_.reset();
+    return;
+  }
+  if (!gapSinceNs_) gapSinceNs_ = nowNs_;
+  if (awaitingResync_ || nowNs_ - *gapSinceNs_ < config_.gapResyncNs) return;
+  ++stats_.gapResyncs;
+  requestResync(need, 0);
 }
 
 void NetClient::requestResync(Tick tick, uint32_t localSum) {
@@ -743,7 +766,13 @@ void NetClient::promote(uint64_t nowNs) {
   const Tick server = estimatedServerTick(nowNs).value_or(world_.tick);
   const Tick target = server.plus(targetLeadTicks(rtt_) - static_cast<int32_t>(inputDelay()));
   if (target > world_.tick) {
-    fastForward(target.minus(world_.tick), true);
+    int32_t ticks = kMaxRunForwardTicks;
+    if (target.value - world_.tick.value > uint32_t{kMaxRunForwardTicks}) {
+      ++stats_.runForwardClamped;
+    } else {
+      ticks = target.minus(world_.tick);
+    }
+    fastForward(ticks, true);
     ++stats_.hardJumps;
   }
   marginFrom_ = world_.tick.plus(static_cast<int32_t>(inputDelay()));

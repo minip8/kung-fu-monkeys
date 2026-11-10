@@ -8,6 +8,9 @@
 # machine's real interfaces and no UDP ports need mapping (Linux; Docker
 # Desktop needs host networking turned on in its settings).
 #
+# The shared secret goes through the environment (KFM_LOBBY_SECRET), as on the
+# VMs (deploy/vm/*.service), never the command line.
+#
 # Point a native client at it: the lobby URL is ws://127.0.0.1:8080 (plain ws,
 # no Caddy in development), e.g.
 #   build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE
@@ -23,6 +26,8 @@ x-server: &server
     dockerfile: deploy/Dockerfile.server
   image: kfm-server:dev
   network_mode: host
+  environment:
+    KFM_LOBBY_SECRET: dev
   depends_on: [lobby]
   restart: unless-stopped
 
@@ -33,15 +38,19 @@ services:
       dockerfile: deploy/Dockerfile.lobby
     image: kfm-lobby:dev
     network_mode: host
-    command: ["--listen", "0.0.0.0:8080", "--secret", "dev"]
+    environment:
+      KFM_LOBBY_SECRET: dev
+    # No proxy in development: clients count by their own address, and every
+    # local client shares 127.0.0.1's limits (docs/lobby-protocol.md §7).
+    command: ["--listen", "0.0.0.0:8080"]
     restart: unless-stopped
 
   server-1:
     <<: *server
-    command: ["--lobby", "ws://127.0.0.1:8080", "--lobby-secret", "dev",
+    command: ["--lobby", "ws://127.0.0.1:8080",
               "--region", "eu", "--name", "dev:1", "--bots", "3"]
 
   server-2:
     <<: *server
-    command: ["--lobby", "ws://127.0.0.1:8080", "--lobby-secret", "dev",
+    command: ["--lobby", "ws://127.0.0.1:8080",
               "--region", "eu", "--name", "dev:2", "--bots", "3"]

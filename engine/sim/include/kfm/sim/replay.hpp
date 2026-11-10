@@ -14,6 +14,7 @@
 #pragma once
 
 #include "kfm/core/bitstream.hpp"
+#include "kfm/core/field_count.hpp"
 #include "kfm/sim/input.hpp"
 #include "kfm/sim/world_state.hpp"
 
@@ -54,6 +55,10 @@ struct ReplayHeader {
     teams = c.teams;
   }
 };
+// The header carries every MatchConfig field (matchConfig, setMatchConfig)
+// and its codec in replay.cpp every header field: a new field fails here.
+static_assert(fieldCount<MatchConfig>() == 7, "carry the new field in ReplayHeader");
+static_assert(fieldCount<ReplayHeader>() == 10, "encode the new field in replay.cpp");
 
 // Upper bound on the encoded size of a replay with the given header.
 [[nodiscard]] constexpr size_t replayMaxBytes(const ReplayHeader& h) {

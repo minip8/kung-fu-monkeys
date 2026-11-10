@@ -10,20 +10,39 @@
 //     which acceptsToken() then accepts (ServerConfig::acceptToken);
 //   - `signal` from the lobby: deliverSignaling() to that peer; the
 //     transport's takeOutgoingSignaling() goes back as `signal` envelopes;
-//   - `peer_gone` from the lobby: closeExternalPeer(), the token is void;
+//   - `peer_gone` from the lobby: closeExternalPeer(), and acceptsToken()
+//     stops accepting its token (the lobby keeps it for a rejoin, spec §2,
+//     and announces it again in a new `peer` when the player comes back);
 //     a peer the transport dropped itself (takeDroppedExternalPeers(): a
 //     kick, a failure, a timeout) is sent to the lobby as `peer_gone`;
 //   - `room` / `room_closed`: the room code (room()); the host decides what
 //     a new room means (kfm_server restarts the match when no human is
 //     connected, spec §6 point 5);
-//   - setCapacity() sends `capacity` when the value changes.
+//   - setCapacity() sends `capacity` when the value changes;
+//   - v1.3: `register` carries `version`; when the lobby's `registered` names
+//     1.3 or later, the link reports `players` (the room's lobby peers with
+//     both data channels open) whenever that count changes, which the lobby
+//     uses to hold the room and to release one no game connection reached.
+// Once registered, a frame it cannot use (over the size limit, not a flat
+// object of strings, a known message missing a key) is ignored and counted
+// (ignoredFrames()), never a reason to drop the link: the lobby is trusted
+// and such a frame concerns one peer at most (spec §7). Before `registered`
+// it is a protocol error like any other.
 // If the socket closes, fails, or does not open and register within
-// openTimeoutMs, every lobby peer is closed on the transport, the tokens and
-// the room are forgotten (the lobby has closed them on its side), and the
-// link reconnects after a backoff that starts at reconnectMinMs, doubles per
-// failed attempt up to reconnectMaxMs and resets once registered. A
+// openTimeoutMs, the link reconnects after a backoff that starts at
+// reconnectMinMs, doubles per failed attempt up to reconnectMaxMs (5 s at
+// most while it holds a room or kept peers) and resets once registered. A
 // `refused` reply (bad secret) is reported and retried the same way: the
-// process stays up.
+// process stays up. v1.3 (spec §0, §5): a lost socket does not end the match.
+// Peers whose data channels are open are kept (keptPeerCount(); no lobby
+// peer id any more, counted in `players`, reported PeerGone when the
+// transport drops them), the others are closed, and the room is kept: the
+// next `register` claims it back with its tokens (every token announced for
+// it, oldest first, at most 128) and its players. A `registered` that names
+// the room means the lobby adopted it (RoomAdopted); one that does not (a
+// v1.2 lobby, or the code is taken there) closes the room (RoomClosed) while
+// the kept peers play on, and the link offers capacity 0 until they have
+// gone (holding()).
 //
 // Threading: the socket's callbacks (libdatachannel threads) only append to a
 // mutex-guarded queue; poll() does everything on the caller's thread,
@@ -72,10 +91,11 @@ enum class LobbyEventKind : uint8_t {
   Registered = 0,  // the lobby accepted the registration
   Refused,         // text = the reason (bad_secret, bad_request)
   RoomAssigned,    // text = the room code
-  RoomClosed,      // text = the room code (also when the link is lost)
+  RoomClosed,      // text = the room code (also when a claim was not adopted)
   PeerJoined,      // peer + lobbyPeer: a client was announced
   PeerGone,        // peer + lobbyPeer; byServer: we dropped it, else the lobby said so
   LinkLost,        // text = why; retryInMs = the backoff before the next attempt
+  RoomAdopted,     // v1.3: text = the room code the lobby took back after a reconnect
 };
 
 struct LobbyEvent {
@@ -106,8 +126,9 @@ class LobbyLink {
   // Does the link's work (see the header comment) and returns what happened
   // since the last call, in order. nowNs: the caller's monotonic clock.
   [[nodiscard]] std::vector<LobbyEvent> poll(uint64_t nowNs);
-  // The human slots still free; sent as `capacity` when it changes (and
-  // with every `register`).
+  // The total of human slots the process offers (spec §5: never net of the
+  // humans connected, the lobby counts occupancy itself); sent as `capacity`
+  // when it changes (and with every `register`).
   void setCapacity(uint16_t capacity);
 
   // A token of a peer the lobby announced and that has not gone since (the
@@ -115,10 +136,17 @@ class LobbyLink {
   [[nodiscard]] bool acceptsToken(std::span<const std::byte> token) const;
 
   [[nodiscard]] LobbyLinkState state() const;
+  // The lobby's `registered` said v1.3 or later (it takes `players`).
+  [[nodiscard]] bool lobbySpeaksV13() const;
   // The room this server hosts now, if any.
   [[nodiscard]] std::optional<std::string> room() const;
-  // Lobby peers mapped to transport peers now.
+  // Peers of the room now: the lobby's (mapped to transport peers) and the
+  // ones kept across a lost link.
   [[nodiscard]] size_t peerCount() const;
+  // v1.3: of those, the ones kept across a lost link (no lobby peer id).
+  [[nodiscard]] size_t keptPeerCount() const;
+  // v1.3: a claim the lobby did not adopt; capacity 0 until the kept peers go.
+  [[nodiscard]] bool holding() const;
   [[nodiscard]] uint16_t capacity() const;
   // Connection attempts after the first.
   [[nodiscard]] uint32_t reconnects() const;
@@ -127,6 +155,10 @@ class LobbyLink {
   [[nodiscard]] std::string statusText(uint64_t nowNs) const;
   // The last socket or protocol error, for logs.
   [[nodiscard]] std::string lastError() const;
+  // Frames from the lobby ignored once registered (over the size limit, not a
+  // flat object of strings, a known message without its keys; spec §7), plus
+  // outgoing messages dropped for their size.
+  [[nodiscard]] uint32_t ignoredFrames() const;
   // The URL actually dialled (with /server).
   [[nodiscard]] std::string url() const;
 

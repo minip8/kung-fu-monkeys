@@ -68,17 +68,23 @@ void LobbyAdapter::frame(uint64_t nowNs) {
         break;
       }
       case net::LobbyEventKind::RoomClosed:
-        host_.logLine(std::format("lobby room {} closed", e.text));
+        host_.logLine(std::format("lobby room {} closed{}", e.text,
+                                  link_.holding() ? " (its connected players play on)" : ""));
         break;
       case net::LobbyEventKind::PeerJoined:
         host_.logLine(std::format("lobby peer {} announced as peer={}", e.lobbyPeer, e.peer.value));
         break;
       case net::LobbyEventKind::PeerGone:
-        host_.logLine(std::format("lobby peer {} (peer={}) gone: {}", e.lobbyPeer, e.peer.value,
+        host_.logLine(std::format("lobby peer {} (peer={}) gone: {}",
+                                  e.lobbyPeer.empty() ? "-" : e.lobbyPeer, e.peer.value,
                                   e.byServer ? "dropped by the server" : "left the lobby"));
         break;
       case net::LobbyEventKind::LinkLost:
         host_.logLine(std::format("lobby link lost: {}; retry in {} ms", e.text, e.retryInMs));
+        break;
+      case net::LobbyEventKind::RoomAdopted:
+        host_.logLine(std::format("lobby room {} adopted again after reconnecting ({} peers kept)",
+                                  e.text, link_.keptPeerCount()));
         break;
     }
   }

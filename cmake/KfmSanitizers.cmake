@@ -16,5 +16,8 @@ if(KFM_SANITIZE)
       add_link_options(-fno-sanitize=vptr)
     endif()
   endif()
+  # A sanitized GCC cannot fold some address comparisons at compile time
+  # (kfm/core/assert.hpp, KFM_STATIC_ASSERT_HOOKS).
+  add_compile_definitions(KFM_SANITIZE_BUILD=1)
   message(STATUS "KFM: sanitizers enabled: ${KFM_SANITIZE}")
 endif()

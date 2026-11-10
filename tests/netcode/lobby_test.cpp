@@ -5,6 +5,7 @@
 #include "fake_lobby.hpp"
 #include "kfm/net/lobby_link.hpp"
 #include "kfm/net/net_client.hpp"
+#include "kfm/net/webrtc_signaling.hpp"
 #include "kfm/net/webrtc_transport.hpp"
 #include "kfm/sim/content.hpp"
 #include "server_host.hpp"
@@ -12,6 +13,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <format>
@@ -221,10 +223,39 @@ TEST_CASE("lobby: the server registers and a created room plays", "[lobby][webrt
   CHECK(w.server->link->peerCount() == 2);
   CHECK(w.server->adapter->restarts() == 1);
 
+  // v1.3: the server named its version, and reports its connected players
+  // to a lobby that takes them.
+  CHECK(w.lobby.serverVersion() == "1.3");
+  CHECK(w.server->link->lobbySpeaksV13());
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "2"; }));
+
   // The stats line carries the lobby state.
   w.server->host->logStats(nowNs());
   CHECK(w.server->lines.back().find("| lobby registered room=ABCDE peers=2 capacity=3") !=
         std::string::npos);
+}
+
+TEST_CASE("lobby: players follow the game connections; a v1.2 lobby hears none (v1.3)",
+          "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  w.startRoom();
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "1"; }));
+  const int sent = w.lobby.playersMessages();
+  w.runFor(200'000'000);
+  CHECK(w.lobby.playersMessages() == sent);  // only on a change
+  w.clients[0].reset();
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "0"; }));
+
+  // An older lobby gets no `players` (it would take the type as a protocol
+  // error), and the link says so.
+  World old;
+  old.lobby.asLegacyLobby();
+  old.startRoom();
+  CHECK_FALSE(old.server->link->lobbySpeaksV13());
+  old.runFor(300'000'000);
+  CHECK(old.lobby.playersMessages() == 0);
+  CHECK(old.server->link->state() == LobbyLinkState::Registered);
 }
 
 TEST_CASE("lobby: a refused join is Disconnected with the reason", "[lobby][webrtc]") {
@@ -393,18 +424,22 @@ TEST_CASE("lobby: a new room after room_closed restarts the match", "[lobby][web
   CHECK(w.server->log().find("new match: room FGHJK") != std::string::npos);
 }
 
-TEST_CASE("lobby: the link reconnects after the lobby drops it", "[lobby][webrtc]") {
+namespace {
+[[nodiscard]] std::string tokenOf(const LobbyClient& c) {
+  const std::span<const std::byte> t = c.transport->connectionToken();
+  return {reinterpret_cast<const char*>(t.data()), t.size()};
+}
+}  // namespace
+
+TEST_CASE("lobby: the server's lost link ends no match; it claims its room back (v1.3)",
+          "[lobby][webrtc]") {
   WebRtcTransport::initLogging(WebRtcLogLevel::Error);
   World w;
   LobbyClient& c = w.startRoom();
   w.lobby.dropServer();
-  // The client hears server_gone; the server forgets peer and room and
-  // registers again after the backoff.
-  REQUIRE(w.runUntil([&] { return c.client->state() == ClientState::Disconnected; }));
-  // The lobby's `closed` frame leaves before the server even hears of the
-  // drop, but a data channel closing first would be just as valid.
-  const std::string err = c.transport->lastError();
-  CHECK((err == "lobby closed: server_gone" || err.empty()));
+  // The lobby closes the client's socket with server_gone; the client's data
+  // channels are open, so it plays on, and so does the server, which keeps
+  // the peer and registers again after the backoff, claiming its room.
   REQUIRE(w.runUntil([&] {
     return w.lobby.registrations() == 2 && w.server->link->state() == LobbyLinkState::Registered;
   }));
@@ -413,15 +448,154 @@ TEST_CASE("lobby: the link reconnects after the lobby drops it", "[lobby][webrtc
   // so it may be more than one. registrations() == 2 above pins that the
   // lobby saw exactly one new registration.
   CHECK(w.server->link->reconnects() >= 1);
-  CHECK(w.server->link->peerCount() == 0);
-  CHECK_FALSE(w.server->link->room().has_value());
+  CHECK(w.lobby.claims() == 1);
+  CHECK(w.lobby.claimedRoom() == "ABCDE");
+  CHECK(w.lobby.claimedTokens() == tokenOf(c));
+  CHECK(w.lobby.claimedPlayers() == "1");
+  CHECK(w.server->link->room() == std::optional<std::string>("ABCDE"));
+  CHECK(w.server->link->peerCount() == 1);
+  CHECK(w.server->link->keptPeerCount() == 1);
   CHECK(w.server->log().find("lobby link lost") != std::string::npos);
-  REQUIRE(w.runUntil([&] { return w.server->host->server().peers().empty(); }));
+  CHECK(w.server->log().find("1 connected peer(s) kept") != std::string::npos);
+  CHECK(w.server->log().find("lobby room ABCDE adopted again") != std::string::npos);
+  w.runFor(300'000'000);
+  CHECK(c.client->running());
+  CHECK(c.transport->lastError().empty());  // server_gone is no error once connected
+  CHECK(w.server->host->server().peers().size() == 1);
 
-  // And serves a new room.
+  // The kept player leaving is reported as players 0; then the room can
+  // close and the server serves a new one.
   w.clients.clear();
+  REQUIRE(w.runUntil([&] { return w.server->host->server().peers().empty(); }));
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "0"; }));
+  CHECK(w.server->link->keptPeerCount() == 0);
+  w.lobby.closeRoom();
+  REQUIRE(w.runUntil([&] { return !w.server->link->room().has_value(); }));
   LobbyClient& d = w.create();
   REQUIRE(w.runUntil([&] { return d.client->running(); }));
+}
+
+TEST_CASE("lobby: a lobby restart under a live room; the match plays on and rejoins work (v1.3)",
+          "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  LobbyClient& c = w.startRoom();
+  LobbyClient& d = w.join("ABCDE");
+  REQUIRE(w.runUntil([&] { return d.client->running(); }));
+  const std::string tokenC = tokenOf(c);
+  const std::string tokenD = tokenOf(d);
+  const sim::PlayerMask slotsC = c.client->localSlots();
+
+  // Every socket drops at once, no `closed` message: the process died.
+  w.lobby.restart();
+  REQUIRE(w.runUntil([&] {
+    return w.lobby.registrations() == 2 && w.server->link->state() == LobbyLinkState::Registered;
+  }));
+  CHECK(w.lobby.claimedRoom() == "ABCDE");
+  std::string bothTokens = tokenC;
+  bothTokens += ',';
+  bothTokens += tokenD;
+  CHECK(w.lobby.claimedTokens() == bothTokens);  // oldest first
+  CHECK(w.lobby.claimedPlayers() == "2");
+  CHECK(w.lobby.room() == std::optional<std::string>("ABCDE"));
+  CHECK(w.server->link->keptPeerCount() == 2);
+  w.runFor(300'000'000);
+  CHECK(c.client->running());
+  CHECK(d.client->running());
+  CHECK(w.server->host->server().peers().size() == 2);
+  CHECK(c.transport->lastError().empty());
+
+  // The room takes a new player by its code again...
+  LobbyClient& e = w.join("ABCDE");
+  REQUIRE(w.runUntil([&] { return e.client->running(); }));
+  CHECK(w.server->host->server().peers().size() == 3);
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "3"; }));
+
+  // ... and Reconnect from the UI still works: a kept player whose link dies
+  // later rejoins with its token, which the claim re-announced.
+  w.clients[0].reset();
+  REQUIRE(w.runUntil([&] { return w.server->host->server().peers().size() == 2; }));
+  CHECK(w.server->link->keptPeerCount() == 1);
+  LobbyRequest r;
+  r.kind = LobbyRequest::Kind::Join;
+  r.code = "ABCDE";
+  r.token = tokenC;
+  w.clients.push_back(std::make_unique<LobbyClient>(w.lobby.url(), r));
+  LobbyClient& again = *w.clients.back();
+  REQUIRE(w.runUntil([&] { return again.client->running(); }));
+  CHECK(tokenOf(again) == tokenC);
+  CHECK(again.client->localSlots() == slotsC);
+  CHECK(w.server->host->server().stats().reconnects == 1);
+}
+
+TEST_CASE("lobby: a claim an old lobby does not adopt keeps the players until they leave (v1.3)",
+          "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  for (const bool legacy : {true, false}) {
+    INFO((legacy ? "a v1.2 lobby" : "a v1.3 lobby that refuses the claim"));
+    World w;
+    LobbyClient& c = w.startRoom();
+    REQUIRE(w.runUntil([&] { return w.lobby.players() == "1"; }));
+    const int playersBefore = w.lobby.playersMessages();
+    if (legacy) {
+      w.lobby.asLegacyLobby();
+    } else {
+      w.lobby.refuseClaims();
+    }
+    w.lobby.restart();
+    REQUIRE(w.runUntil([&] {
+      return w.lobby.registrations() == 2 && w.server->link->state() == LobbyLinkState::Registered;
+    }));
+    // Not adopted: the room is closed for the lobby, the match is not, and
+    // the server offers no slot while its players are still here.
+    REQUIRE(w.runUntil([&] { return w.lobby.serverCapacity() == "0"; }));
+    CHECK_FALSE(w.server->link->room().has_value());
+    CHECK(w.server->link->holding());
+    CHECK(w.server->log().find("lobby room ABCDE closed (its connected players play on)") !=
+          std::string::npos);
+    w.runFor(300'000'000);
+    CHECK(c.client->running());
+    // A v1.2 lobby hears no `players` (it would be a protocol error there).
+    if (legacy) CHECK(w.lobby.playersMessages() == playersBefore);
+
+    // The last one leaves: the real capacity is back and the server is free.
+    w.clients.clear();
+    REQUIRE(w.runUntil([&] { return w.lobby.serverCapacity() == "3"; }));
+    CHECK_FALSE(w.server->link->holding());
+    CHECK(w.server->link->peerCount() == 0);
+    LobbyClient& d = w.create();
+    REQUIRE(w.runUntil([&] { return d.client->running(); }));
+    CHECK(w.server->adapter->restarts() == 2);  // a fresh match for the new room
+  }
+}
+
+TEST_CASE("lobby: a frame the server cannot use is ignored, the room plays on", "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  LobbyClient& c = w.startRoom();
+  LobbyClient& d = w.join("ABCDE");
+  REQUIRE(w.runUntil([&] { return d.client->running(); }));
+
+  // An oversized frame (a v1.2 lobby could relay one), one that is not a flat
+  // object, and known messages missing their keys: each concerns one peer at
+  // most, so none drops the link and every player with it.
+  w.lobby.sendServerRaw(signaling::encodeObject(std::array<signaling::Field, 3>{
+      signaling::Field{"type", "signal"}, signaling::Field{"peer", "1"},
+      signaling::Field{"msg", std::string(size_t{100} * 1024, 'v')}}));
+  w.lobby.sendServerRaw(R"({"type":"signal","peer":"1","msg":"{\"type\":\"offer\",)");
+  w.lobby.sendServerRaw(R"({"type":"signal","peer":"1"})");
+  w.lobby.sendServerRaw(R"({"type":"peer","peer":"9"})");
+  REQUIRE(w.runUntil([&] { return w.server->link->ignoredFrames() == 4; }));
+  w.runFor(300'000'000);
+  CHECK(w.server->link->state() == LobbyLinkState::Registered);
+  CHECK(w.server->link->reconnects() == 0);
+  CHECK(w.lobby.registrations() == 1);
+  CHECK(w.server->link->room() == std::optional<std::string>("ABCDE"));
+  CHECK(w.server->link->peerCount() == 2);
+  CHECK(c.client->running());
+  CHECK(d.client->running());
+  CHECK(w.server->host->server().peers().size() == 2);
+  CHECK(w.server->link->lastError().starts_with("ignored a lobby frame"));
 }
 
 TEST_CASE("lobby: a wrong secret is refused and retried", "[lobby][webrtc]") {

@@ -188,6 +188,34 @@ TEST_CASE("WebRtcTransport: reliable lane is ordered and carries 60 KB", "[net][
   CHECK(f.client(c).stats().sendErrors == 0);
 }
 
+TEST_CASE("WebRtcTransport: a peer whose reliable backlog outgrows the cap is dropped",
+          "[net][webrtc]") {
+  WebRtcServerConfig sc;
+  sc.maxReliableBufferedBytes = size_t{256} * 1024;
+  WebRtcFixture f(sc);
+  REQUIRE(f.ok());
+  const auto [c, peer] = join(f);
+
+  // Far more than the link drains between two sends, with nobody polling:
+  // the backlog passes the cap and the server lets the peer go instead of
+  // buffering all of it.
+  const auto big = pattern(kMaxReliableBytes, 5);
+  uint32_t sent = 0;
+  for (; sent < 2048 && f.server().isConnected(peer); ++sent)
+    f.endpoint(0).sendReliable(peer, big);
+  INFO("sent " << sent << " messages of 64 KB");
+  CHECK_FALSE(f.server().isConnected(peer));
+  CHECK(sent < 2048);
+  CHECK(f.server().lastError().find("reliable bytes waiting to be sent") != std::string::npos);
+  CHECK(f.server().stats().sendErrors >= 1);
+  // Reported at the next poll, and the client sees the connection end.
+  REQUIRE(f.waitUntil([&] {
+    return f.inbox(0).count(ConnectionEventKind::Disconnected) == 1 &&
+           f.inbox(c).count(ConnectionEventKind::Disconnected) == 1;
+  }));
+  CHECK(f.inbox(0).lastPeer(ConnectionEventKind::Disconnected) == peer);
+}
+
 TEST_CASE("WebRtcTransport: size limits and unknown peers count as send errors", "[net][webrtc]") {
   WebRtcFixture f;
   REQUIRE(f.ok());

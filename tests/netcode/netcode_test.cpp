@@ -69,7 +69,7 @@ SoakReport soak(const char* name, uint32_t clients, uint64_t oneWayNs, uint64_t 
   CHECK(r.mismatches == 0);
   CHECK(r.resyncs == 0);
   CHECK(r.overflows == 0);
-  CHECK(r.compared > 0);
+  CHECK(r.minCompared > 0);  // every client, not only in sum
   CHECK(r.maxDepth < kRollbackWindow);
   return r;
 }

@@ -248,7 +248,8 @@ void StatsCollector::beginContacts(const WorldState& s) {
       [&](EntityId id, const Boomerang& b) { ownerBefore_[keyOf(id)] = b.owner; });
 }
 
-void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
+void StatsCollector::observeContact(const WorldState& s, const MatchContent& content,
+                                    const Contact& c) {
   if (c.kindA == EntityKind::Player && c.kindB == EntityKind::Player) {
     // Row 25 of the rules table (rules/table.cpp), as InteractionSystem sees it.
     const Player* attacker = s.players.get(c.a);
@@ -263,7 +264,7 @@ void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
     const std::pair<uint8_t, uint32_t> dash{
         static_cast<uint8_t>(attacker->id.value),
         attacker->abilities[kAbilitySlotDash].activatedTick.value};
-    if (attacker->ammo >= defaultContent().dashAttack.minAmmo) {
+    if (attacker->ammo >= content.db.dashAttack.minAmmo) {
       dashAttackWithAmmo_.insert(dash);
     } else {
       dashAttackWithoutAmmo_.insert(dash);
@@ -275,7 +276,6 @@ void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
   const Boomerang* b = s.boomerangs.get(c.b);
   if (p == nullptr || b == nullptr || p->tags.has(Tag::Eliminated)) return;
   if (b->phase == BoomerangPhase::Grounded) return;
-  const ContentDB& content = defaultContent();
   const bool own = b->owner == p->id;
   const AbilityState& dash = p->abilities[kAbilitySlotDash];
   const double delta = static_cast<double>(s.tick.value) + c.tHit.toDouble() - pressTime(dash);
@@ -283,7 +283,7 @@ void StatsCollector::observeContact(const WorldState& s, const Contact& c) {
   // Rows 10 and 11 of the rules table (rules/table.cpp).
   const bool catchable = !own || b->phase == BoomerangPhase::Returning;
   if (catchable && p->tags.has(Tag::PerfectDash)) {
-    const uint16_t window = content.abilityAt(dash.defIndex).perfectWindowTicks;
+    const uint16_t window = content.db.abilityAt(dash.defIndex).perfectWindowTicks;
     const bool inWindow = delta >= 0.0 && delta < static_cast<double>(window);
     if (p->ammo >= p->stats.ammoMax) {  // the catch declines first on ammo (rules/catch.cpp)
       ++stats_.fullAmmoDeclined;
@@ -549,7 +549,7 @@ void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content,
   if (s.rules.phase == MatchPhase::Playing) {
     for (const Contact& c : interactionOrder(s, contacts)) {
       if (!entityAlive(s, c.kindA, c.a) || !entityAlive(s, c.kindB, c.b)) continue;
-      collector.observeContact(s, c);
+      collector.observeContact(s, content, c);
       interactionResolveContact(s, content, c, sink);
     }
   }
@@ -577,10 +577,9 @@ void printMatchLine(uint32_t index, uint64_t seed, uint64_t inputSeed, const Sta
       static_cast<unsigned long long>(st.dashHits));
 }
 
-void printSummary(const Stats& st, uint32_t players) {
+void printSummary(const Stats& st, uint32_t players, const MatchContent& content) {
   const auto u = [](uint64_t v) { return static_cast<unsigned long long>(v); };
-  const ContentDB& content = defaultContent();
-  const AbilityDef& dash = content.abilityForSlot(kAbilitySlotDash);
+  const AbilityDef& dash = content.db.abilityAt(content.loadout()[kAbilitySlotDash]);
   const double rounds = static_cast<double>(std::max<size_t>(st.roundSeconds.size(), 1));
   size_t within5 = 0;
   size_t under3 = 0;

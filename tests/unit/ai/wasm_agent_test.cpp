@@ -94,8 +94,10 @@ TEST_CASE("WasmModule needs a live WasmRuntime", "[ai][wasm]") {
 
 TEST_CASE("WasmModule loads the valid fixtures", "[ai][wasm]") {
   const WasmRuntime runtime;
-  for (const char* name : {"idle", "echo", "reads_obs", "counter", "work", "trap", "spin", "logger",
-                           "grow", "bad_return", "init_trap", "init_spin", "leaky"}) {
+  for (const char* name :
+       {"idle",      "echo",       "reads_obs",  "counter",    "work",       "trap",    "spin",
+        "logger",    "grow",       "bad_return", "init_trap",  "init_spin",  "leaky",   "bulk_fill",
+        "bulk_copy", "table_fill", "table_copy", "table_init", "table_grow", "mem_grow"}) {
     INFO(name);
     CHECK(WasmModule::load(readFixture(name)).has_value());
   }
@@ -116,6 +118,7 @@ TEST_CASE("WasmModule refuses bad modules with the right error", "[ai][wasm]") {
         Case{"bad_signature", LoadErrorKind::BadSignature},
         Case{"no_act", LoadErrorKind::MissingExport}, Case{"no_memory", LoadErrorKind::NoMemory},
         Case{"bad_obs_buffer", LoadErrorKind::BadObsBuffer},
+        Case{"big_table", LoadErrorKind::TableTooLarge},
         Case{"start_spin", LoadErrorKind::Instantiate}}) {
     INFO(c.fixture);
     auto module = WasmModule::load(readFixture(c.fixture));
@@ -246,6 +249,118 @@ TEST_CASE("WasmAgent meters fuel per tick", "[ai][wasm]") {
     CHECK(agent.stats().overBudget == 2);
     CHECK(agent.stats().fuelTotal == 2ull * config.fuelPerTick + recovered);
     CHECK(agent.stats().fuelMax == config.fuelPerTick);
+  }
+}
+
+TEST_CASE("WasmAgent charges bulk and table ops for their length", "[ai][wasm]") {
+  // The fuel of an op whose host work grows with an operand must grow with it, so a
+  // metered budget bounds host work, not only the opcode count (docs/bot-abi.md §1.4).
+  const WasmRuntime runtime;
+
+  // One act() per n; the fuel of that act. The fixture does base work plus one bulk/table
+  // op of length n, so fuel(n) - fuel(0) is the op's charge for n.
+  const auto fuelCurve = [](const char* fixture, const std::vector<uint32_t>& ns,
+                            const WasmAgentConfig& config) {
+    WasmAgent agent = makeAgent(fixture, config);
+    std::vector<uint32_t> fuel;
+    for (const uint32_t n : ns) {
+      REQUIRE(agent.act(Observation{}, Tick{n}).has_value());
+      fuel.push_back(agent.stats().fuelLast);
+    }
+    return fuel;
+  };
+
+  WasmAgentConfig wide;
+  wide.fuelPerTick = 1'000'000;
+
+  SECTION("memory.copy costs one unit per eight bytes, and a small copy still works") {
+    const std::vector<uint32_t> fuel = fuelCurve("bulk_copy", {0, 800, 1600, 8000}, wide);
+    CHECK(fuel[1] - fuel[0] == 100);   // 800 bytes / 8
+    CHECK(fuel[2] - fuel[1] == 100);   // 1600 - 800 = 800 bytes / 8
+    CHECK(fuel[3] - fuel[0] == 1000);  // 8000 bytes / 8
+    CHECK(fuel[0] < 100);              // the base work alone is a handful of opcodes
+  }
+  SECTION("table.fill costs one unit per element") {
+    const std::vector<uint32_t> fuel = fuelCurve("table_fill", {0, 100, 200, 1000}, wide);
+    CHECK(fuel[1] - fuel[0] == 100);
+    CHECK(fuel[2] - fuel[1] == 100);
+    CHECK(fuel[3] - fuel[0] == 1000);
+  }
+  SECTION("table.copy costs one unit per element") {
+    const std::vector<uint32_t> fuel = fuelCurve("table_copy", {0, 100, 200, 1000}, wide);
+    CHECK(fuel[1] - fuel[0] == 100);
+    CHECK(fuel[2] - fuel[1] == 100);
+    CHECK(fuel[3] - fuel[0] == 1000);
+  }
+  SECTION("table.init costs one unit per element") {
+    const std::vector<uint32_t> fuel = fuelCurve("table_init", {0, 2, 4, 8}, wide);
+    CHECK(fuel[1] - fuel[0] == 2);
+    CHECK(fuel[2] - fuel[1] == 2);
+    CHECK(fuel[3] - fuel[0] == 8);
+  }
+  SECTION("table.grow charges for the elements it adds") {
+    // Cumulative on one instance, so compare fresh instances (init wipes the table).
+    WasmAgent zero = makeAgent("table_grow", wide);
+    WasmAgent many = makeAgent("table_grow", wide);
+    REQUIRE(zero.act(Observation{}, Tick{0}).has_value());
+    REQUIRE(many.act(Observation{}, Tick{10'000}).has_value());
+    CHECK(many.stats().fuelLast - zero.stats().fuelLast == 10'000);
+  }
+  SECTION("table.grow past the maximum does no work and is not charged") {
+    WasmAgent agent = makeAgent("table_grow", wide);
+    // A grow that cannot fit the table's maximum returns -1 and fills nothing.
+    const PlayerInput in = mustAct(agent, Observation{}, Tick{100'000});
+    CHECK(kfm::ai::packInput(in) == 0xFFFFFFFFu);
+    CHECK(agent.stats().fuelLast < 100);
+  }
+  SECTION("memory.grow charges for the pages it adds") {
+    WasmAgent one = makeAgent("mem_grow", wide);
+    WasmAgent ten = makeAgent("mem_grow", wide);
+    REQUIRE(one.act(Observation{}, Tick{1}).has_value());
+    REQUIRE(ten.act(Observation{}, Tick{10}).has_value());
+    CHECK(ten.stats().fuelLast - one.stats().fuelLast == 9u * 8192u);
+  }
+  SECTION("memory.grow past the cap does no work and is not charged") {
+    WasmAgent agent = makeAgent("mem_grow", wide);
+    const PlayerInput in = mustAct(agent, Observation{}, Tick{1000});  // 1000 > 254 free pages
+    CHECK(kfm::ai::packInput(in) == 0xFFFFFFFFu);
+    CHECK(agent.stats().fuelLast < 100);
+  }
+}
+
+TEST_CASE("WasmAgent bounds a bulk-op flood with the budget", "[ai][wasm]") {
+  // A module that loops maximal fills/copies goes over budget after bounded work, rather
+  // than driving hundreds of GiB of memset under a handful of opcodes.
+  const WasmRuntime runtime;
+
+  SECTION("a 16 MiB memory.fill loop is over budget after no work (per tick)") {
+    // Each fill would charge 16 MiB / 8 = 2 Mi units, more than a whole tick's budget, so
+    // the first fill never runs: the budget is spent, the agent survives, and the test
+    // returns at once instead of memset-ing for seconds.
+    WasmAgent agent = makeAgent("bulk_fill");  // default fuelPerTick = 100k
+    CHECK_FALSE(agent.act(Observation{}, Tick{0}).has_value());
+    CHECK(agent.lastFault() == AgentFault::OverBudget);
+    CHECK(agent.stats().fuelLast == agent.stats().fuelMax);
+    CHECK(agent.stats().fuelLast == 100'000u);  // exactly the budget, like any over-budget tick
+    CHECK(agent.stats().overBudget == 1);
+    CHECK(agent.alive());
+  }
+  SECTION("a full-table table.fill loop is over budget after bounded work") {
+    WasmAgentConfig config;
+    config.fuelPerTick = 50'000;  // a 65536-element fill charges 65536, more than this
+    WasmAgent agent = makeAgent("table_fill", config);
+    CHECK_FALSE(agent.act(Observation{}, Tick{65'536}).has_value());
+    CHECK(agent.lastFault() == AgentFault::OverBudget);
+    CHECK(agent.stats().fuelLast == config.fuelPerTick);
+  }
+  SECTION("a 16 MiB memory.fill loop in kfm_init is bounded by the init budget") {
+    WasmAgentConfig config;
+    config.fuelInit = 5'000'000;  // a few 2 Mi-unit fills, then over budget: the agent dies
+    WasmAgent agent{loadFixture("init_bulk", config)};
+    agent.init(1, PlayerId{0});
+    CHECK_FALSE(agent.alive());
+    CHECK(agent.deathCause() == AgentFault::InitOverBudget);
+    CHECK(agent.stats().fuelInit == config.fuelInit);
   }
 }
 

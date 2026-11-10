@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.69 (2026-11-10). Working title taken from the repo name.
+Status: proposal v0.70 (2026-11-10). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -1020,6 +1020,70 @@ used to pin the rename; an observation test checks the zone words. Replay checks
 regenerated; every other entry was re-recorded for the new content hash with its checksums
 unchanged.
 
+v0.70 changes: the fixes of an architecture audit of the whole tree, none of them a gameplay
+change (§5.1, §5.2, §5.3, §5.10, §6.3, §6.4, §6.6, §6.7, §7, §8, §9, §13.4, §13.5; bot-abi.md
+§1.4, lobby-protocol.md v1.3, arena-result.md). Bots: the WAMR fuel patch charges bulk-memory and
+table ops, and memory and table growth, extra fuel in proportion to their operand (len / 8 per
+byte op, one per element, 8192 per grown page), taken before the work, so a metered budget bounds
+host work and not only the opcode count; a table is capped at 65536 elements at load
+(`maxTableElements`, `LoadErrorKind::TableTooLarge`). Before this one `memory.fill` of 16 MiB cost
+one unit. Netcode: a burst of lost authoritative frames is repaired explicitly: the client keeps
+the latest first tick of the `AuthInputs` windows it has received and, once that is past the
+first frame it lacks, asks for a resync after 150 ms (`gapResyncNs`), as a player or a
+spectator; measured before the fix, a player waited about 1.8 s for the rollback-overflow resync
+and a spectator froze for good. The loopback emulator gains `setOutage()` (one direction blacks
+out without a disconnect, same random draws); the server's human-lead estimate samples only
+messages whose acknowledgement moved on (a stale ack had pushed it to 146 ticks after a 3 s
+outage); the netsim soak gates require a compared checksum from every client; `JoinMatch` gets a
+per-peer bucket of 2 per second, a peer without an accepted `Hello` is dropped after 10 s, and a
+client's forward run after a snapshot load or a promotion is capped at 300 ticks whatever the
+`Pong` tick says. The build id is real: `KFM_BUILD_ID` (default 0 = an unstamped development
+build) is compiled into every host through `kfm::build_id`, release artefacts carry the first 8
+hex digits of the tagged commit, and a refused client is told to reload the page; before this
+every build sent 0 and "peers must match `build_id`" compared 0 with 0. Lobby protocol v1.3: a
+seated client's signaling frame whose `signal` envelope would pass 64 KiB is that client's
+protocol error (it used to truncate at the server and close the whole room), and a registered
+`LobbyLink` ignores a bad lobby frame instead of dropping every peer; the lobby limits each
+client address (open sockets, rooms held, create/join rate, failed joins: refused `limited`),
+reading the address from `X-Forwarded-For` only behind a configured `--trusted-proxy`; a room
+keeps at most 128 tokens; servers report `players`, so a room no game connection reaches is
+released after a minute while used rooms keep the full TTL; the reliable lane drops a peer with
+more than 1 MiB unsent. A running match no longer depends on the lobby: a server that loses its
+lobby link keeps its connected peers and its room and claims the room back, with its tokens,
+when it re-registers, and a client whose data channels are open plays on when its lobby socket
+closes (a deploy still ends matches: `update.sh` restarts the servers). The lobby secret reaches
+`kfm_server` through the environment in the units. Sim: every `visit()` overload is followed by
+a `static_assert` on its struct's aggregate arity (`kfm::fieldCount`,
+`kfm/core/field_count.hpp`), so a field missing from the visitor is a compile error, and the
+checksum and content-hash mutation tests carry one mutation per field, pinned the same way; the
+ability, mode and space registries `static_assert` that every row has every hook; capture's
+`modeData` layout is guarded like hill's; `kMaxAbilityDefs` rises from 16 to 32 (the 15 shipped
+defs plus `none` had filled it); `kfm_content_tests` checks the scenario tests' hand copies of
+shipped defs against the TOML (it found `throw_fast` charging at half its shipped rate, the
+power-ups without their visuals and the call def off `grid_call`, all fixed in the copies);
+`kfm_corpus_tests` plays every corpus entry and asserts the events its name promises; `step()`
+takes an optional `StepStats&` that reports contact-list overflow. Hosts: one `ai::agentSeed`
+and one `ai::BotFactory` (`kfm::ai_bots`, which alone links `kfm::ai_wasm`) replace three
+copies, each host keeping its own error policy; `AgentHost::step` runs fill, step and observe
+for hosts that step the world themselves, and `fill()` checks that the previous step was
+observed, so a host can no longer silently drop its bots' heard calls; `kfm_replay stats` reads
+its thresholds from the match's content; `MatchSession::content()` is const and `editContent()`
+is the explicit edit. Client: `IPlatformServices` carries everything that differs between the
+browser and a native build (preference texts, the page URL, the replay download, `canQuit`,
+`localFiles`) through one `PlatformHooks` value built in `apps/client/client_platform_native.cpp`
+or `client_platform_web.cpp`, and `main.cpp` has no `EM_JS` and no `__EMSCRIPTEN__` branch; the
+HUD's view models (`HudView`, the winner's title, the clock's urgent threshold, the match-over
+screen's typed actions, the room's bot-slot preview) moved from `hud.cpp` to
+`apps/client/core/hud_view.hpp` with unit tests. The renderer's look numbers (about 130: lights, glows, effect
+rings and spark bursts as `EffectDisc` / `SparkLook` constants) moved from `renderer.cpp` into
+`tuning.hpp`, with 30 probe renders byte-identical before and after. §6.3's message table no longer
+lists an LZ4-compressed snapshot or a Chat message (neither was built). Verified on GCC 15 Debug
+(dev, 45 tests), the headless Release server build with the soak and real-socket gates (50
+tests), Emscripten under node (46 tests), the lobby's Rust suite (47 tests), clang-format 23.1.3
+and clang-tidy 23.1.4 over the tree; MSVC and Apple Clang are CI's. Replay checksums: unchanged;
+the corpus was re-recorded because `kMaxAbilityDefs` moved the content hash, with every
+`.checksums` file byte-identical.
+
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
 power-ups are picked up in the arena, and the signature twist is that a perfectly
@@ -1160,6 +1224,25 @@ Dependency rules (enforced via CMake target link visibility):
 - `Rng` lives inside `WorldState` and is seeded per match.
 - Content definitions are immutable per match and hashed (`content_hash`); peers must also
   match `build_id`. Both are exchanged at connect.
+  The build id as built (v0.70; before it every build sent 0, so a change to sim code alone
+  passed the handshake and a stale cached page looped on checksum resyncs against a newer
+  server): one CMake cache variable, `KFM_BUILD_ID` (1–8 hex digits, `cmake/KfmBuildId.cmake`),
+  compiled into the generated `<kfm/build_id.hpp>` (`kfm::kBuildId`, target `kfm::build_id`)
+  that every host reads: the client's `Hello` and lobby request, the server's `Hello` check and
+  lobby `register`, `kfm_replay`'s and `kfm_arena`'s replay header (`buildHash`) and
+  `kfm_arena`'s JSON (`build_hash`). The engine keeps taking it as configuration
+  (`ClientConfig`/`ServerConfig::buildId`, default 0), so its tests are the same in any build.
+  The default, 0, is an unstamped development build: local builds match each other, and the
+  replay corpus (headers of 0) is regenerated from unstamped builds only. It is never derived
+  from the working tree, so a normal build never changes it. A release stamps it: the deploy
+  workflow configures the server image, the page and the `kfm_arena` archives of a run with the
+  first 8 hex digits of the commit it builds (`00000001` should those all be zero), so every
+  artefact of a tag carries the same non-zero id; from the commit rather than the tag name,
+  because the id must change whenever the code does and a manual run has no tag. A client
+  refused for it says "version mismatch (reload the page or update the client)" (the
+  `Reject{BuildMismatch}` of a direct connect; the lobby refuses `mismatch`, shown as "Version
+  mismatch: reload the page or update the client"). The replay viewer shows a replay's build
+  hash and never checks it (§7).
 - Enforcement: a replay corpus is run in CI on Linux, Windows and macOS, Debug and Release;
   per-tick checksums must be identical. This is a merge gate, not a nice-to-have.
   `tools/ci/check_sim_no_float.sh` (lint job) rejects float types, float literals, the `Fixed`
@@ -1178,10 +1261,10 @@ struct WorldState {
   Rng         rng;
   MatchRules  rules;                               // mode, phase, scores, timers
   Pool<Player,    kMaxPlayers>    players;         // 10
-  Pool<Boomerang, kMaxBoomerangs> boomerangs;      // e.g. 64
-  Pool<Pickup,    kMaxPickups>    pickups;         // e.g. 32
-  Pool<Hazard,    kMaxHazards>    hazards;
-  // Arena geometry is immutable content referenced by index; not part of state.
+  Pool<Boomerang, kMaxBoomerangs> boomerangs;      // 64
+  Pool<Pickup,    kMaxPickups>    pickups;         // 32
+  // Arena geometry (walls, hazards, zones, spawners) is immutable content: the
+  // arena the match selected (MatchContent::arena), never part of state.
 };
 static_assert(std::is_trivially_copyable_v<WorldState>);
 ```
@@ -1205,6 +1288,19 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
   system would index or shift by. v0.20 adds a power-up index past `kMaxPowerUps`, a pickup
   spawner past `kMaxPickupSpawners`, a banana `pierce` above 1 (the field is gone since v0.28)
   and `grantedTags` bits above `Tag::kCount`.
+- Every visited field is visited by construction (v0.70): each `visit()` overload in
+  `kfm/sim/visit.hpp`, state and content alike, is followed by a
+  `static_assert(fieldCount<T>() == n)`, where `kfm::fieldCount` (`kfm/core/field_count.hpp`) is
+  the aggregate arity (the largest k for which `T{a0, …, ak-1}` with placeholders that convert to
+  anything is well-formed, probed downwards so no probe leaves a member uninitialised; an array
+  or nested struct is one field). A field added to a serialised struct and forgotten in its
+  `visit()` (which would escape the checksum, snapshots and the content hash at once, and so
+  every desync check) is a compile error until it is visited and the count bumped. A field
+  visited only in part counts once, with a comment saying how: a `Pool`'s dead slots, a
+  `ModifierList`'s tail and an `InputFrame`'s absent inputs are canonicalised, never serialised.
+  The same assert pins `MatchConfig` and `ReplayHeader` to the replay header codec, and the
+  checksum and content-hash mutation tests (`visit_test.cpp`, `content_test.cpp`) carry one
+  mutation per field per struct, their count pinned the same way.
 - Power-up fields (v0.20): a banana's `speedMul` and `radiusMul` (after `damage`; a `pierce` byte
   sat between them until v0.28), a pickup's `spawner` and a player's `grantedTags` are visited unconditionally like
   every other field; adding them changed every world checksum and the corpus was regenerated.
@@ -1217,7 +1313,8 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
 ### 5.3 Tick pipeline
 
 ```
-step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& events):
+step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& events
+     [, StepStats& stats]):
    1. RulesSystem::preTick      round start/end, spawn waves
    2. InputSystem               decode PlayerInput → Intent; press-edge detection; space.latch (facing, grid commitments)
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
@@ -1237,12 +1334,23 @@ snapshots). Moving entities are inserted by their swept AABB (start, end, radius
 pairs are deduplicated and sorted by `(kindA, indexA, kindB, indexB)` before the narrowphase,
 so contact order does not depend on cell layout. Contacts are Player × Boomerang,
 Player × Pickup and (v0.16) Player × Player; a player pair is listed once with
-`indexA < indexB`, both players moving, radii from `PlayerDef::radius`, and its contact point is
+`indexA < indexB`, both players moving, radii from `Stats::radius` (v0.34; base `PlayerDef::radius`), and its contact point is
 the midpoint of the two centres at `tHit` so it reads the same from either side. Player pairs are
 purely geometric: every touching pair is a contact whatever its tags (at most 45 with 10
 players), and the rules table decides what a touch means. A brute-force all-pairs broadphase stays in
 the tests as the oracle: a property test asserts both produce the same pair set. A banana's
 contact radius is `BoomerangDef::radius × Boomerang::radiusMul` (v0.20, §5.8).
+
+Scratch capacities (v0.70). The candidate list holds every possible pair (`kMaxCandidatePairs`
+1024 ≥ 10 × (64 + 32) + 45, a `static_assert`), so a push past it is asserted, never counted. The
+contact list (`kMaxContacts` 256) is not the worst case: every candidate pair can be a contact and
+a player in every hazard adds one per hazard, 1165 in all, which a unit test builds (every
+entity on one spot). Sizing the list for it cost about 1 µs a tick (+50% in `kfm_replay bench`)
+for the per-tick clears alone, so instead the overflow stays counted (`Contacts::dropped`) and
+`step()` reports it through an optional `StepStats& stats` (`contactsDropped`; derived, never
+state, never read by the sim). A dropped contact is a hit, catch or pickup that did not happen,
+deterministically on every peer; `kfm_corpus_tests` asserts no corpus tick drops one. A tool
+that wants it (`kfm_replay bench`/`verify`, the arena runner) reads `StepStats` the same way.
 
 Power-up spawners (v0.20) run at the end of `LifecycleSystem`, not in `RulesSystem::preTick`:
 entity creation and removal already live there (grounded bananas become pickups in the same
@@ -1542,7 +1650,11 @@ current tick's, so rotation never costs anything (§5.12).
   the current phase going past its duration, `buttonHeld` being the slot's button in this
   tick's intent; `phaseTicks` saturates at 65535, so a phase held for good never wraps. The table is a `constexpr`
   array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
-  a scenario test.
+  a scenario test. Every hook is called unconditionally, so the registry `static_assert`s that
+  every row (one per `AbilityKind::kCount`) has every hook set, with the hook count pinned by
+  `fieldCount<AbilityBehavior>()` (v0.70): a forgotten row or hook is a compile error, not a
+  null call at the first dispatch. The mode (`ModeBehavior`, §5.3) and space
+  (`SpaceBehavior`, §5.12) registries assert the same.
 - Players have N ability slots. Base kit is {Dash, Throw}. Buttons belong to slots, not to
   kinds (v0.21, `slotButton()`): slot 0 fires on `Button::Dash`, slot 1 on `Button::Throw`,
   whatever kind the slot runs. The catch rule and the tie-break (§5.11) read the press time of
@@ -2156,7 +2268,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   lines and the lobby choose (`ContentDB::findArena` / `findMode` / `findLoadout`); the sim only
   sees indices.
 - Validation: duplicate names, unresolved references, counts against the capacities
-  (`kMaxAbilityDefs` 16 since v0.21, `kMaxArenas` 8, `kMaxModes` 32 since v0.31 (8 before),
+  (`kMaxAbilityDefs` 32 since v0.70 (16 from v0.21, which the 15 shipped defs plus `none`
+  filled; the cap sizes only `ContentDB::abilities`, so raising it moved the content hash and
+  nothing else: def indices are a byte everywhere, in `AbilityState`, loadouts, grants and the
+  bot observation, and the corpus checksums stayed byte-identical), `kMaxArenas` 16 since
+  v0.33 (8 before), `kMaxModes` 32 since v0.31 (8 before),
   `kMaxPowerUps` 16, `kMaxLoadouts` 16 since v0.31; at least one arena and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
   on `defaultContent()` by a test): every loadout (the player's and each `[[loadout]]`) fills
@@ -2191,7 +2307,13 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   field by field (through the visitor) on the singletons, the abilities `defaultContent()`
   defines, arena 0 and mode 0, so the default match stays the fixture's; it does not compare the
   whole-DB hashes. A new field of an existing def struct still gets its default value in
-  `defaultContent()`, because the struct changes anyway.
+  `defaultContent()`, because the struct changes anyway. The scenario tests' hand copies of
+  shipped defs (`tests/scenario/loadout_util.hpp`: blink, slam, parry, `grid_call` and the
+  ability loadouts; `powerup_util.hpp`: `throw_fast` and the five M4 power-ups) are checked
+  against the loaded TOML the same way (v0.70, `tests/unit/content/mirror_test.cpp`), indices
+  compared by the name they resolve to; it found the copy of `throw_fast` charging at the
+  throw's rate rather than twice it (`charge_ticks` 20) and the power-ups without their
+  visuals, both fixed in the copies.
 - Adding content (any def, an arena or mode included) changes the content hash, which every
   replay carries, so it is followed by `regen-replay-corpus`; the existing `.checksums` must stay
   identical, because added content never changes the default match.
@@ -2769,8 +2891,8 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 |---|---|---|---|
 | `Input` | C→S, every tick | unreliable; last 8–16 inputs resent each packet | `startTick`, `count`, inputs (RLE-coded, they rarely change), last auth tick received |
 | `AuthInputs` | S→C, every tick | unreliable; redundant | `startTick`, `count`, present-mask, inputs for all players, `arrivalMargin` for this client, state checksum every N ticks |
-| `Snapshot` | S→C | reliable (transport fragments) | full `WorldState` via visitor, LZ4-compressed, plus tick |
-| Control | both | reliable | Hello/Connect (token), ContentHash/BuildId, JoinMatch, PlayerJoined/Left, MatchConfig, Chat, Disconnect |
+| `Snapshot` | S→C | reliable (transport fragments) | full `WorldState` via visitor plus tick (uncompressed: LZ4 is deferred, see below) |
+| Control | both | reliable | Hello/Connect (token), ContentHash/BuildId, JoinMatch, PlayerJoined/Left, MatchConfig, Disconnect |
 | Ping | both | transport stats plus our own tick-stamped ping | — |
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 | `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
@@ -2778,7 +2900,9 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
-consecutive packets vanish. Unreliable messages stay under 1200 bytes so they never fragment;
+consecutive packets vanish. A longer burst (an outage of the server-to-client direction past the
+16-frame window) leaves frames no later message carries; the client repairs that gap with a
+snapshot (v0.70, §6.6 "A gap in the authoritative stream"). Unreliable messages stay under 1200 bytes so they never fragment;
 snapshots go over the reliable lane, where the transport fragments and reassembles them.
 
 Bandwidth at 60 packets/s with 10 players, including transport overhead (GNS ≈ 30–50 bytes per
@@ -2805,8 +2929,8 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   through the visitor; the reader checks both the visitor's validation and the checksum.
   Measured 4 740 B with every pool full and at most 1 308 B in a scripted 10-player match, so
   LZ4 (§10) is deferred: uncompressed is under 1/13 of `kMaxReliableBytes`.
-- Control: `Hello` (version, `contentHash`, `buildId`, a token of up to 64 bytes, requested slot
-  count with 0 = spectate), `Welcome` (assigned slots, `MatchConfig`, server tick), `Reject`
+- Control: `Hello` (version, `contentHash`, `buildId` (0 unless the build was stamped, §5.1
+  v0.70), a token of up to 64 bytes, requested slot count with 0 = spectate), `Welcome` (assigned slots, `MatchConfig`, server tick), `Reject`
   (protocol, content or build mismatch, bad token, match full, shutting down), `JoinMatch`,
   `PlayerJoined`, `PlayerLeft`, `MatchConfig` (with its start tick), `Disconnect` (quit, kicked,
   timeout, protocol error, shutting down). `Ping{sendNs, tick}` / `Pong{echo, tick, holdNs}`.
@@ -2852,7 +2976,11 @@ Implementations, in priority order:
   `poll(now)` at or after its delivery time, ordered by (delivery time, send order), and
   `receivedNs` is that delivery time raised to the receiver's previous poll. Connected is seen
   after the reliable latency on each side; `cut()` emulates a timeout on both. Client PeerIds
-  start at 1 and are never reused; the receive queue holds 8192 messages.
+  start at 1 and are never reused; the receive queue holds 8192 messages. `setOutage(client,
+  toServer, Outage{from, until, reliable})` (v0.70) blacks one direction out without
+  disconnecting: unreliable messages sent in `[from, until)` of the sender's clock are lost, and
+  with `reliable` the reliable lane's are delivered no earlier than `until` + its latency, in
+  order, as a retransmission after the outage; the random draws are the same as without it.
   The contract suite (`tests/unit/net/transport_contract.hpp`, target
   `kfm::transport_contract`) takes a harness (server, client, optional extra client, clock,
   advance, timeout) and generates eleven cases: connect, both lanes both ways, reliable order and
@@ -3005,6 +3133,31 @@ C++ server library is mature. The seam makes that swap a contained change.
   every `checksumEveryTicks` = 10 ticks, the checksum of the world after the newest frame.
 - Checksum mismatch: the client sends `ResyncRequest{tick, its checksum}` (reliable); the server
   answers with a fresh `Snapshot`, at most once per 250 ms per peer.
+- A gap in the authoritative stream (v0.70): `AuthInputs` resends at most 16 frames, back to the
+  peer's acknowledgement, so a server-to-client outage longer than about 16 ticks (shorter than
+  the 5 s timeout) leaves frames that no later message carries. Before v0.70 nothing repaired
+  that by design: the client's confirmed and verified ticks stuck at the gap, so no checksum was
+  compared again, a player predicted on unverified until a misprediction fell out of the 128-tick
+  frame history (≈ 1.8 s after the outage, the rollback-overflow resync), and a spectator, which
+  steps only authoritative frames, froze for good (`tests/netcode/outage_test.cpp` reproduced all
+  three for 0.4, 1 and 3 s outages). The repair is explicit and client-side, so it covers
+  spectators, which never acknowledge anything: the client keeps the latest first tick of the
+  `AuthInputs` windows it has received (the server's windows only move forward); once that is
+  past the first frame it lacks (`confirmed + 1`), no later message will bring that frame, and
+  after `ClientConfig::gapResyncNs` (150 ms, for copies reordered behind the window) it sends a
+  `ResyncRequest` like a checksum mismatch does (the 250 ms server limit and the 1 s client retry
+  apply; `ClientNetStats::gapResyncs` counts them). Not while it holds for the room: the resumed
+  match's snapshot is coming anyway. The snapshot loads as any resync; frames after its tick are
+  in the client's 128-tick frame history or still being sent, since the server's window moves on
+  from its tick. Measured over a 40 ± 5 ms link: the client asks about 200 ms after the outage
+  ends and agrees again (frames confirmed to within a few ticks of the server, checksums compared
+  and matching, a spectator on the server's state) about 0.3–0.4 s after it, for 0.4, 1 and 3 s
+  outages, of one lane or both; a 150 ms outage (inside the window) needs no snapshot. The
+  rollback-overflow resync stays as the backstop. The emulator gained `LoopbackNetwork::setOutage`
+  for this (§6.4). The server's lead estimate (§8 human-likeness) also counted the outage: a stale
+  acknowledgement reads as a round trip growing one tick per tick, and before v0.70 a 3 s outage
+  pushed that peer's estimate to 146 ticks (`humanLeadTicks()` clamps to 60, so a mixed match's bot
+  delay went to its clamp); it now samples only messages whose acknowledgement moved on.
 - Reconnect: a peer that drops (transport close or 5 s without a packet) while holding slots and a
   non-empty token leaves them reserved for `reconnectGraceTicks` (10 s): still present, fed an idle
   input (not "repeat last", so a held stick does not run the monkey into a wall). A `Hello` with
@@ -3124,6 +3277,17 @@ C++ server library is mature. The seam makes that swap a contained change.
   (`roomMsgsPerSecond`; excess ones dropped and counted); before the handshake they are protocol
   errors like any other message. Only the host's requests take effect, decided by the host's
   `Room`, never by `NetServer`.
+- v0.70: `JoinMatch` passes its own per-peer bucket of 2 per second with a one-second burst
+  (`joinMsgsPerSecond`; excess ones dropped and counted in `joinRateLimited`), since every one
+  that changes the roster fans `PlayerJoined`/`PlayerLeft` out to every peer and spawns or
+  removes monkeys. A connected peer that has not had a `Hello` accepted within 10 s
+  (`helloTimeoutNs`) is disconnected (`helloTimeouts`): `Ping` is answered before the handshake
+  (the client measures its RTT while it waits), so without a deadline a peer that only pings
+  held one of the `kMaxPeers` entries for good. The client in turn never believes a server
+  tick blindly: a snapshot load (initial sync, resync, resume) or a promotion runs forward at
+  most `kMaxRunForwardTicks` (5 s) past the snapshot's tick, whatever the `Pong` tick said
+  (`runForwardClamped`); a client cut short lags and catches up through the lead controller's
+  forward jump (§6.2).
 
 ### 6.8 Perceived latency budget (local actions)
 
@@ -3390,7 +3554,10 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
 
 - The front end (v0.43, M6b step 3; `apps/client/ui_style.{hpp,cpp}`, `screens.{hpp,cpp}`,
   `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
-  `core/scoreboard.hpp`). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
+  `core/scoreboard.hpp`, and since the architecture audit `core/hud_view.hpp`: `HudView`, the
+  winner's title and colour, the clock's urgent threshold, the match-over screen's typed
+  `MatchOverAction` buttons and the room's bot-slot preview, which mirrors the server's "lowest
+  free slots" rule in `ServerHost::placeRoomBots`). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
   `assets/fonts/` with its licence), compiled in by `cmake/EmbedFile.cmake`, loaded once by
   `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
   1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette
@@ -3448,7 +3615,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `--room`, `--create` and `--screen`, and there is no main-menu entry. Loading: natively
   `readFileBytes` before the first frame; in the browser an `EM_JS` `fetch(url, {mode: 'cors',
   credentials: 'omit'})` with an `AbortController`, polled once per frame (nothing blocks, no
-  exported functions or link options), the bytes copied into a buffer C++ allocated; both cap
+  exported functions or link options), the bytes copied into a buffer C++ allocated (both behind
+  `IPlatformServices::startDownload` / `pollDownload`, §13.4); both cap
   the file at `kReplayMaxBytes` (16 MiB, in `replay_session.hpp`: a larger Content-Length is
   refused up front and the stream reader cancels past the cap; `readFileBytes` refuses a larger
   file from its size before reading and reads straight into the `std::byte` vector), and leaving
@@ -3810,8 +3978,8 @@ which the contract needs.
   winner first, then higher final score, fewer deaths, lower slot, all distinct; kills and deaths come from `PlayerEliminated` (a self-elimination is a
   death, not a kill); the final checksum lets a replay be checked against its line. Exit codes:
   0, 2 bad arguments or content, 3 a module refused at load (or a module spec in a build without
-  `KFM_WASM_BOTS`), 4 I/O. `kfm_arena_core` (`runMatch`, placements, formatting, the module
-  cache) is the library under test; the CLI is a thin wrapper, and it builds under Emscripten
+  `KFM_WASM_BOTS`), 4 I/O. `kfm_arena_core` (`runMatch`, placements, formatting) is the library
+  under test, its agents from the hosts' shared `BotFactory` (below); the CLI is a thin wrapper, and it builds under Emscripten
   as a node CLI with reference bots only. Release, this machine: a 4-bot reference tournament
   runs about 40–50 k ticks/s, dominated by the bot's own evaluation (20 k before the content
   hash was cached), four `echo.wasm` modules about 8× that, and `kfm_replay bench` steps the
@@ -3821,7 +3989,7 @@ which the contract needs.
   the bot slots present, called once per tick before assembly, after a restart has been
   applied, so it sees the fresh world and the new `botSeed()`); unset, `NetServer` keeps the
   scripted generator, which is what netsim and the netcode tests still run. `ServerHost` owns an
-  `AgentHost` and a `WasmRuntime`, takes `--bot SPEC` (repeatable), `--bots N` (pads with
+  `AgentHost` and a `BotFactory`, takes `--bot SPEC` (repeatable), `--bots N` (pads with
   `ref:hard`), `--bot-delay auto|N` and `--fuel N`, re-inits every agent on the first tick of
   each match (bot seed B₀ = `--bots-seed`, Bₖ₊₁ = splitmix64(Bₖ), slot seed from the shared
   formula; a module gets a fresh instance), refuses to start on a module that fails to load,
@@ -3875,7 +4043,23 @@ which the contract needs.
     pin changes. `kfm_ai_wasm` is a separate target so `kfm_ai` never sees WAMR; the option
     `KFM_WASM_BOTS` (default on natively, off under Emscripten) builds without it. A fuel unit is
     one executed opcode plus one per function entry, as WAMR meters it; fuel use is exact and
-    deterministic (limit minus remaining), and an over-budget tick uses exactly the limit.
+    deterministic (limit minus remaining), and an over-budget tick uses exactly the limit. WAMR
+    meters one unit per opcode regardless of its operands, so the few opcodes whose host work
+    grows with an operand would be metering holes: a 16 MiB `memory.fill` (a single `memset`) or
+    `memory.copy`/`memory.init` the same, and `table.fill`/`copy`/`init`/`grow` and `memory.grow`
+    their counterparts, cost one unit but hundreds of GiB of host work in a tight loop. The same
+    configure-time patch therefore charges each extra fuel in proportion to its operand — ⌊len/8⌋
+    units for a bulk-memory op (`len` bytes, about a compiled word loop), one per element for a
+    table op, 8192 per page for `memory.grow` — as a pure integer function of the operands (so a
+    match still reproduces bit for bit), taken before the work so an op that cannot afford it does
+    not run and the tick is over budget; the charge sits after the op's bounds check, so an
+    out-of-range op still traps. Turning bulk memory and reference types off was the alternative,
+    but `docs/bot-abi.md` accepts them and current Rust toolchains emit them, so charging keeps
+    existing modules working. Instantiation fills declared data, element and table segments outside
+    any instruction budget, so a table is capped at 65 536 elements at load (`maxTableElements`)
+    beside the 16 MiB memory and 4 MiB module caps; the extended-const-expr init exprs WAMR enables
+    are evaluated once at load and are size-bounded by the module, not a hole. See
+    `docs/bot-abi.md` §1.4 for the normative cost rule.
     Measured (Release, this machine): about 820 M instructions/s on an integer loop and 600 M on
     a float-heavy C bot, so a full 100 k budget costs about 0.12 ms and ten bots at full budget
     about 1.2 ms per tick, roughly 14× real time per core worst case; a `-O2` C bot that
@@ -3885,8 +4069,10 @@ which the contract needs.
   - *Numbers.* `WasmAgentConfig`: `fuelPerTick` 100 000 instructions, `fuelInit` 10 000 000
     (applied separately to instantiation, i.e. `start` and constructors, and to `kfm_init`),
     `maxModuleBytes` 4 MiB, `maxMemoryBytes` 16 MiB (a declared minimum above it is refused, the
-    maximum is clamped, `memory.grow` past it returns −1 and never traps), interpreter stack
-    64 KiB, host heap 0, `kfm_log` capture 4 KiB tail per agent. All host knobs (`--fuel`).
+    maximum is clamped, `memory.grow` past it returns −1 and never traps), `maxTableElements`
+    65 536 (a module whose tables would allocate more, counting a growable table's maximum, is
+    refused at load), interpreter stack 64 KiB, host heap 0, `kfm_log` capture 4 KiB tail per
+    agent. All host knobs (`--fuel`).
   - *ABI as built.* The exports are wasm `i32`/`i64` (`kfm_abi_version() -> i32`,
     `kfm_obs_buffer() -> i32`, `kfm_init(i64, i32)`, `kfm_act(i32) -> i64`); the only import
     allowed is `env.kfm_log(i32, i32)`, and importing memory is refused. Load validates size,
@@ -3930,9 +4116,17 @@ which the contract needs.
     its content in place): hashing every tick had been 60 % of a reference tournament and 95 %
     of a module run; `fill` is now allocation-free and O(agents). The reference bot's reaction delay
     is on top of the host delay and not compensated. Every host names bots by one grammar,
-    `BotSpec`: `ref`, `ref:easy|medium|hard` or a `.wasm` path (`engine/ai` parses, the app reads
-    the file), and seeds slot `s` of a match with seed `S` as `S ^ (0x9E3779B97F4A7C15 · (s + 1))`
-    so an arena run and a server match with the same seeds agree.
+    `BotSpec`: `ref`, `ref:easy|medium|hard` or a `.wasm` path, and turns a spec into an agent
+    through one `ai::BotFactory` (`kfm/ai/bot_factory.hpp`, its own target `kfm::ai_bots` so
+    `kfm_ai` never sees WAMR: it links `kfm::ai_wasm` privately with `KFM_WASM_BOTS` and is
+    otherwise reference bots only, a module spec an `Unsupported` error with no file opened). It
+    reads each distinct module path once (at most `maxModuleBytes` + 1 bytes), loads it under the
+    `WasmRuntime` it owns and gives every slot its own instance; the only knob is the per-tick
+    fuel. What a factory error means stays the host's: `kfm_arena` exits 3 (4 for I/O),
+    `kfm_server` refuses to start, the client falls back to the reference bot. Every host seeds
+    slot `s` of a match with seed `S` as `S ^ (0x9E3779B97F4A7C15 · (s + 1))` so an arena run and
+    a server match with the same seeds agree (`ai::agentSeed` in `agent_host.hpp`, the one copy
+    every host calls).
   - *Reference bot.* Scores sixteen walking directions plus idle over a 32-tick horizon with
     enemy bananas predicted by the sim's own flight rule and the outer-box bounce, then takes,
     when they score, a dash-catch in the perfect window, a dodge (dash, then blink, parry or
@@ -4127,8 +4321,17 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   carries everything seen since the previous latch and a one-tick turn is the current tick.
   `buildObservation` without a context projects the tick alone (tests, tools).
 - **Calls.** Every host calls `AgentHost::observe(events, the world after the step, content)`
-  after each `step` (`kfm_arena`, `kfm_server`'s per-tick hook, the client's `MatchSession`;
-  netsim and `kfm_replay` run no agents). A `MonkeyCalled` whose caller is still in the world is
+  after each `step`: `kfm_arena` and the client's `MatchSession` through `AgentHost::step`
+  (fill, `sim::step`, observe in one call, so they cannot step without it), `kfm_server` from
+  its per-tick hook after `NetServer::tick` (whose `botInputs` callback is the fill); netsim and
+  `kfm_replay` run no agents. `fill` checks it: when the world has moved past the previous
+  fill's tick, the last `observe` must have been handed the world at this tick (the one the
+  step left); a miss is counted (`missedObserves()`) and aborts a build with asserts. Filling a
+  tick again, a world that went back (a new match, a restart), ticks stepped and observed
+  without a fill (no agent present), paused slots and ticks a host does not run (the room's
+  Waiting and Over) never trip it. Each slot's `AgentSlotStats::heard` counts the calls that
+  entered its window, and one host test per host (`kfm_arena`, `ServerHost`, `MatchSession`)
+  plays a `grid_rounds_1t` squad of reference bots and requires that they hear some. A `MonkeyCalled` whose caller is still in the world is
   heard by every other slot with a live (not paused) agent whose monkey stands within the call's
   range, Chebyshev between the centres in units, after the step; it enters that slot's window
   (16 at most, later ones dropped), so a call made on tick T is in the observations of T + 1 up
@@ -4326,7 +4529,12 @@ lives in the bots repository (above) and uses this repository through its tagged
   contact at a time in `InteractionSystem`'s order, judging each against the state the rules
   table sees (a contact whose banana or player an earlier contact of the tick removed or
   eliminated is not counted, and nothing counts outside `Playing`); a shadow world advanced by `step()` is compared by checksum every tick so
-  the mirror cannot drift from the sim, and no instrumentation lives in `engine/sim`.
+  the mirror cannot drift from the sim, and no instrumentation lives in `engine/sim`. The
+  thresholds the tool reads (the dash attack's `min_ammo`, each dash's perfect window, the
+  summary's window label from the match loadout's dash) come from the match's content, so
+  `--content` and edited TOML are measured with their own numbers; four `replay_stats_smoke*`
+  ctests (a free-for-all, power-ups with slam in deathmatch, `island`'s pits and the `contest`
+  squad) run the shadow check in CI.
 - Browser check (v0.15): `tools/web/serve.py` serves the wasm build (`--page`, optional
   COOP/COEP headers) and `tools/web/check_browser.py` drives it in headless Chromium through
   Playwright (page loads, no console errors, WebGL2 context attributes, frame intervals,
@@ -4419,7 +4627,17 @@ lives in the bots repository (above) and uses this repository through its tagged
   `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
   the corpus is re-recorded; the checksums of existing entries must stay identical, because
   content that is only added never changes the default match (a scenario test asserts this for
-  extra arenas and modes). v0.22 adds one 4-player scripted replay per walled arena
+  extra arenas and modes). v0.70: the gate proves an entry reproduces, not that it still
+  exercises what it is in the corpus for, and the corpus is scripted input a seed or content
+  change can quietly move. `kfm_corpus_tests` (`tests/determinism/corpus_events_test.cpp`,
+  label `determinism`) plays every manifest entry against the embedded content and asserts the
+  events its name promises (the island entry a `PlayerFell`, blink/slam/parry their ability's
+  event, the power-up entries a power-up taken and the powerset one only its two power-ups
+  spawned, deathmatch and team deathmatch a scoring elimination and a respawn, the team and
+  round entries a round won, hill and contest the hill held and a point, capture a flag taken
+  and a capture, the grid squad and contest a call, the empty entries no action at all) and no
+  `EventSink` overflow; a manifest line without a row there fails, so a new entry states what it
+  is for. v0.22 adds one 4-player scripted replay per walled arena
   (`scripted_4p_pillars_1800t`, `scripted_4p_corridors_1800t`, `scripted_4p_island_1800t`), so
   wall slides, bounces, pit falls and slow patches are under the cross-platform gate. The
   embedded content depends on the globbed file list as well as the files (a list file rewritten
@@ -5416,7 +5634,15 @@ directory, invites, presence, achievements, cloud). Nothing else knows which pla
 `null` implementation serves tests and the headless server. v0.43: `IPlatformServices` also copies
 text to the clipboard (`copyText`) and offers a link to the share sheet (`canShare`, `share`):
 SDL's clipboard natively, `navigator.clipboard` and the Web Share API (touch devices only) in
-the browser, through hooks the app injects so `kfm_platform_services` stays SDL-free.
+the browser, through hooks the app injects so `kfm_platform_services` stays SDL-free. Since the
+architecture audit the seam also holds everything else in the client that differs between the
+two: named preference texts (`loadPref`/`savePref`: the settings and the guest id), the page's
+address (`pageUrl`, for invite links), the replay viewer's download (`startDownload`,
+`pollDownload`, `cancelDownload`: a local file natively, a CORS fetch in the browser), and two
+traits, `canQuit` (no Quit in a browser tab) and `localFiles` (hot reload natively only).
+`LocalPlatformServices` takes them as one `PlatformHooks` value, which the client builds in
+`apps/client/client_platform_native.cpp` (SDL) or `client_platform_web.cpp` (`EM_JS`), CMake
+compiling one of the two; `main.cpp` holds no `EM_JS` and no `__EMSCRIPTEN__` branch.
 
 ### 13.5 Hosting: dedicated servers, decided
 
@@ -5534,7 +5760,8 @@ origin) and, only with a `sentryDsn`, the pinned Sentry browser bundle (subresou
 `window.onerror`, unhandled rejections and Emscripten's `onAbort`. `IPlatformServices`
 (`kfm/platform/platform_services.hpp`, the SDL-free target `kfm_platform_services`) is the
 minimal seam: a guest id generated once and kept in `guest_id.txt` in SDL's pref dir or
-`kfm.guest_id` in localStorage (per run under `--no-settings`), and the lobby URL; `Null`
+`kfm.guest_id` in localStorage (per run under `--no-settings`), and the lobby URL (§13.4 lists
+what it holds since); `Null`
 serves tests. The guest id is sent nowhere yet; M6b's nicknames ride beside it and M7 binds it to an account.
 Deployment as built: the VMs run Ubuntu 24.04 LTS and only containers (correcting v0.37's
 Debian), so the host compiler is irrelevant; the units run the GHCR images with host
@@ -5574,6 +5801,49 @@ still seated under the token (its owner noticed the drop first) is closed with
 refused `bad_token`. Re-signaling to the server directly was the alternative and is not
 taken: a server in lobby mode has no public signaling socket, and a second path would bypass
 the lobby's token set. A v1.1 lobby ignores the key and seats the client as a new player.
+Lobby protocol v1.3, part one (v0.70, the audit's abuse limits): `create` is unauthenticated
+and reserves a whole server process, and a room code is the only admission control, so the
+lobby now limits each client address (an open-socket cap, a cap on live rooms it created, a
+token bucket on `create`/`join` and a separate one on joins refused `unknown_code` or
+`bad_token`, which bounds code guessing), refused with the new reason `limited`; the address
+is the TCP peer unless that peer is a configured `--trusted-proxy` (Caddy on 127.0.0.1, whose
+`X-Forwarded-For` it then reads, last entry only). A room keeps at most 128 tokens, evicting
+the oldest unseated one. A v1.3 server names its version in `register`, learns the lobby's from
+`registered`, and reports `players` (its room's peers with both data channels open) on every
+change; the lobby holds a room while that is above zero, counts it toward `full`, and holds a
+room no game connection ever reached for one minute instead of ten, from its creation as well
+as from its last socket, so a create that never plays frees its server quickly while a running
+match keeps the full TTL for rejoins. Rooms of an older server keep the v1.2 hold. The
+reliable data channel lane also gained a send-buffer cap (1 MiB by default,
+`WebRtcServerConfig::maxReliableBufferedBytes`): a peer past it is dropped, so one that stops
+reading cannot grow the server's memory. The limits are flags with these defaults
+(`docs/lobby-protocol.md` §7-§8); the deploy units pass `--trusted-proxy 127.0.0.1` and Caddy
+sets `X-Forwarded-For` itself.
+Lobby protocol v1.3, part two (v0.70): the lobby stops being a liveness dependency of running
+matches (correcting v0.37's "a server that drops off the socket leaves the registry and its
+rooms close", which still holds at the lobby but no longer ends the match). The lobby admits
+players and relays the signaling that opens their data channels; after that a match needs only
+the client and its server, yet a lobby restart, deploy or blip used to end every match in every
+region, because `LobbyLink` closed every peer with its socket and the client transport ended
+the session with its lobby socket. Now `LobbyLink` keeps the peers whose data channels are open
+(detached: no lobby peer id) and the room, retries every 1 s doubling to 5 s while it holds
+one, and claims the room back in its next `register` (`room`, `tokens`: every token announced
+for the room, oldest first, at most 128, and `players`). A v1.3 lobby adopts the claim unless
+the code is live there (only if it was reassigned meanwhile) or the room cap is reached, and
+says so with `room` in `registered`; the room is then live again under the same code with the
+tokens re-announced, so a join by code and the v1.2 rejoin both work after a restart and
+Reconnect needs no fallback. A claim that is not adopted (that, or a v1.2 lobby, which ignores
+the keys) leaves the kept players playing while the server offers capacity 0 until they have
+gone. On the client, once both data channels are open the lobby socket's close and a `closed`
+`server_gone` end nothing; `kicked`, `replaced` and `room_closed` still label the session's end
+for the UI, and the client never redials the lobby (the server's `players` counts it). The
+lobby's state stays memory-only: the servers are its source of truth for live rooms.
+Alternatives not taken: persisting the lobby's state (a database for a few hundred bytes per
+room, and a second source of truth that can disagree with the servers'), and clients
+re-seating themselves on a restarted lobby (a browser change and a reconnect storm of every
+player at once, where one claim per server suffices). What is still unavailable while the
+lobby is down: creating, joining and rejoining. Deploys still end matches, because
+`update.sh` restarts the server processes themselves.
 
 ### 13.6 Sequencing
 

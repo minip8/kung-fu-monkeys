@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -501,7 +503,7 @@ TEST_CASE("session: restart turns a dropped slot into a bot", "[client][session]
 
 TEST_CASE("session: after the match ends, Enter returns to the lobby", "[client][session]") {
   Driver d(SessionConfig{.seed = 8, .bots = 3});
-  d.s->content().modes[0].roundsToWin = 1;
+  d.s->editContent().modes[0].roundsToWin = 1;
   d.start();
   // Enter does nothing while the match is running.
   d.push(key(Key::Enter, true));
@@ -524,12 +526,12 @@ TEST_CASE("session: after the match ends, Enter returns to the lobby", "[client]
 TEST_CASE("session: a deathmatch ends on its clock, restarts, and Enter returns to the lobby",
           "[client][session][modes]") {
   Driver d(SessionConfig{.seed = 8, .bots = 3});
-  sim::ModeDef& dm = d.s->content().modes[1];
+  sim::ModeDef& dm = d.s->editContent().modes[1];
   dm.name = sim::ContentName::of("deathmatch");
   dm.kind = sim::ModeKind::Deathmatch;
   dm.timeLimitTicks = 20 * sim::kTickHz;
   dm.scoreToWin = 50;  // the clock decides
-  d.s->content().modeCount = 2;
+  d.s->editContent().modeCount = 2;
   d.s->setMode(1);
   REQUIRE(d.s->mode() == 1);
   d.start();
@@ -585,11 +587,34 @@ TEST_CASE("session: interpolation policy", "[client][session]") {
 TEST_CASE("session: content edits apply live and reset", "[client][session]") {
   Driver d(SessionConfig{.seed = 2, .bots = 1});
   CHECK(d.s->contentIsDefault());
-  d.s->content().player.moveSpeed = Fixed::fromRaw(sim::defaultContent().player.moveSpeed.raw * 2);
+  d.s->editContent().player.moveSpeed =
+      Fixed::fromRaw(sim::defaultContent().player.moveSpeed.raw * 2);
   CHECK_FALSE(d.s->contentIsDefault());
   CHECK(d.s->contentHash() != sim::contentHash(sim::defaultContent()));
   d.s->resetContent();
   CHECK(d.s->contentIsDefault());
+}
+
+TEST_CASE("session: readers get the content const; editContent() reaches the bots",
+          "[client][session][bots]") {
+  // Drawing code holds a mutable session (drawLobby, the overlay): content()
+  // must be const there too, so a read can never mark anything stale.
+  STATIC_REQUIRE(
+      std::is_same_v<decltype(std::declval<MatchSession&>().content()), const sim::ContentDB&>);
+  STATIC_REQUIRE(
+      std::is_same_v<decltype(std::declval<MatchSession&>().editContent()), sim::ContentDB&>);
+  Driver d(SessionConfig{.seed = 2, .bots = 1, .bindKeyboardToSlot0 = false});
+  d.start();
+  d.frame(1);
+  const PlayerId bot{0};
+  REQUIRE(d.s->agents().has(bot));
+  CHECK(d.s->agents().lastObservation().match.contentHash == d.s->contentHash());
+  // The live edit (the overlay's tuning) is seen by the bot's next observation.
+  d.s->editContent().player.moveSpeed =
+      Fixed::fromRaw(sim::defaultContent().player.moveSpeed.raw * 2);
+  REQUIRE(d.s->contentHash() != sim::contentHash(sim::defaultContent()));
+  d.frame(1);
+  CHECK(d.s->agents().lastObservation().match.contentHash == d.s->contentHash());
 }
 
 namespace {
@@ -642,7 +667,7 @@ TEST_CASE("session: replaceContent (hot reload) restarts with the new content",
   d.start();
   for (int i = 0; i < 200; ++i)
     d.frame(1);
-  d.s->content().player.moveSpeed = Fixed::one();  // a live edit, dropped by the reload
+  d.s->editContent().player.moveSpeed = Fixed::one();  // a live edit, dropped by the reload
   const sim::ContentDB content = twoArenas();
   d.s->replaceContent(content, d.now());
   d.rebase();

@@ -350,6 +350,7 @@ TEST_CASE("AgentHost ORs visibility over a turn and folds the calls in", "[ai][v
     InputFrame f = frameFor(s);
     host.fill(f, s, mc);
     s.tick = s.tick.plus(1);
+    host.observe(EventSink{}, s, mc);  // a step without calls
   };
   fillAt(1);  // window ticks 1, 2, 3 (the latch)
   REQUIRE(log.size() == 1);
@@ -415,6 +416,7 @@ TEST_CASE("AgentHost pauses an eliminated slot and wipes it on respawn if asked"
       f.inputs[1].moveMag = 77;  // a stale value the host must overwrite
       host.fill(f, s, defaultContent());
       s.tick = s.tick.plus(1);
+      host.observe(EventSink{}, s, defaultContent());  // a step without calls
       return f.inputs[1];
     };
     fillOnce();

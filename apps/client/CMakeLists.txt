@@ -8,7 +8,9 @@
 #                    WebRTC, so tests/unit/client exercises it without a window.
 #   kfm_client_sdl   SDL_Event -> platform::InputEvent translation and gamepad
 #                    lifetime (tested too: it is pure apart from SDL headers).
-#   kfm_client       the executable: frame wiring, HUD, lobby, debug overlay.
+#   kfm_client       the executable: frame wiring, HUD, lobby, debug overlay,
+#                    and the platform hooks behind IPlatformServices
+#                    (client_platform_native.cpp: SDL; _web.cpp: EM_JS).
 add_library(kfm_client_core STATIC
   core/fixed_step_clock.cpp
   core/match_session.cpp
@@ -21,6 +23,7 @@ add_library(kfm_client_core STATIC
   core/menu_highlight.cpp
   core/online_menu.cpp
   core/scoreboard.cpp
+  core/hud_view.cpp
   core/bot_roster.cpp
   core/mouse_aim.cpp
   core/replay_session.cpp
@@ -29,7 +32,7 @@ add_library(kfm_client_core STATIC
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kfm_client_core
-  PUBLIC kfm::sim kfm::ai kfm::net kfm::presentation kfm::platform_input
+  PUBLIC kfm::sim kfm::ai kfm::ai_bots kfm::net kfm::presentation kfm::platform_input
   PRIVATE kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client_core)
 # M6a: the lobby a build points at by default (--lobby, the browser page's
@@ -74,10 +77,17 @@ add_custom_command(
   COMMENT "Embedding the UI font"
   VERBATIM)
 
+# The platform seam's hooks (client_platform.hpp): one file per platform, so
+# neither holds an #ifdef.
+if(EMSCRIPTEN)
+  set(kfm_client_platform_cpp client_platform_web.cpp)
+else()
+  set(kfm_client_platform_cpp client_platform_native.cpp)
+endif()
 add_executable(kfm_client main.cpp hud.cpp screens.cpp ui_style.cpp debug_overlay.cpp
-  client_audio.cpp "${kfm_client_font_cpp}")
+  client_audio.cpp client_platform.cpp ${kfm_client_platform_cpp} "${kfm_client_font_cpp}")
 target_link_libraries(kfm_client PRIVATE
-  kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
+  kfm::build_id kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
   kfm::platform_services kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client)
 set_target_properties(kfm_client PROPERTIES FOLDER apps)

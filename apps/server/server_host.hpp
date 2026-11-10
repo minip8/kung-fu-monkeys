@@ -57,8 +57,8 @@
 // NetServer's default for kfm_netsim and the netcode tests).
 //   - Seeds: match k's bot seed is B_0 = server.botSeed, B_k+1 =
 //     nextMatchSeed(B_k) (passed to restartMatch); the agent in slot s gets
-//     agentSeed(B_k, s) = B_k ^ (0x9E3779B97F4A7C15 · (s + 1)), kfm_arena's
-//     formula, so a server match and an arena match with the same seeds
+//     ai::agentSeed(B_k, s) = B_k ^ (0x9E3779B97F4A7C15 · (s + 1)), every
+//     host's formula, so a server match and an arena match with the same seeds
 //     agree. Every agent is re-initialised (a wasm module: a fresh instance)
 //     on the first tick of each new match, before it acts on the new world.
 //   - Delay (human-likeness): botDelayTicks fixed, or auto (nullopt): once
@@ -66,10 +66,11 @@
 //     median estimated lead of the peers holding slots, 0 when none does
 //     (bot versus bot: no delay). See ai::AgentHost::setDelay for how a
 //     change is absorbed.
-//   - Modules: create() reads each distinct .wasm path once (the cache lives
-//     in the host, one WasmModule per path, one instance per slot) under a
-//     WasmRuntime it owns; a module that fails to load fails create(). Needs
-//     KFM_WASM_BOTS (otherwise a module spec is that error).
+//   - Modules: create() prepares every spec in the host's ai::BotFactory
+//     (kfm/ai/bot_factory.hpp: each distinct .wasm path read and loaded
+//     once, one instance per slot, under the factory's WasmRuntime); a module
+//     that fails to load fails create(). Needs KFM_WASM_BOTS (otherwise a
+//     module spec is that error).
 //   - The stats line ends with the bot delay and one "bot S SPEC acts=+N
 //     subst=+M" group per bot, modules adding traps, over-budget ticks and
 //     the mean fuel per act over the period.
@@ -142,11 +143,6 @@ struct HostStats {
 
 // The seed of the match after one played with `seed` (splitmix64).
 [[nodiscard]] uint64_t nextMatchSeed(uint64_t seed);
-// The seed the agent in `slot` is initialised with in a match whose bot seed
-// is `botSeed` (shared with kfm_arena).
-[[nodiscard]] constexpr uint64_t agentSeed(uint64_t botSeed, PlayerId slot) {
-  return botSeed ^ (0x9E3779B97F4A7C15ull * (uint64_t{slot.value} + 1));
-}
 // `count` reference bots at the hard tier (kfm_server --bots N).
 [[nodiscard]] std::vector<ai::BotSpec> referenceBots(uint8_t count);
 
@@ -201,6 +197,8 @@ class ServerHost {
   [[nodiscard]] uint8_t botDelayTicks() const;
   // The bot spec in a slot (nullopt: not a host bot).
   [[nodiscard]] std::optional<ai::BotSpec> botSpec(PlayerId slot) const;
+  // The AgentHost counters of a host bot's slot (zero for any other slot).
+  [[nodiscard]] ai::AgentSlotStats agentStats(PlayerId slot) const;
   // The line format of the periodic stats, for a final summary.
   void logStats(uint64_t nowNs);
   // One line in the host's log format (time and tick prefix), for adapters.

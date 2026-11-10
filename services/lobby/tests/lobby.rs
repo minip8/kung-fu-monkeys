@@ -254,6 +254,22 @@ async fn register_with_good_and_bad_secret() {
 }
 
 #[tokio::test]
+async fn a_full_registry_refuses_bad_request() {
+    let mut config = config();
+    config.max_servers = 2;
+    let addr = start(config).await;
+    let _a = register(addr, "eu-1", "eu", "4").await;
+    let b = register(addr, "eu-2", "eu", "4").await;
+    let mut c = connect(addr, "/server").await;
+    send(&mut c, register_msg("eu-3", "eu", "4")).await;
+    expect_refused(&mut c, "bad_request").await;
+    // A slot that comes free takes a registration again.
+    drop(b);
+    wait_health(addr, |h| h["servers"] == 1).await;
+    let _c = register(addr, "eu-3", "eu", "4").await;
+}
+
+#[tokio::test]
 async fn regions_lists_every_region_and_the_free_ones() {
     let addr = start(config()).await;
     assert_eq!(regions(addr).await, pair("", ""));
@@ -839,6 +855,84 @@ async fn frame_size_limit() {
     assert_eq!(recv(&mut server).await["type"], "peer_gone");
 }
 
+/// The `signal` envelope the lobby wraps a client's frame in, as the server
+/// receives it (same encoder, so the same length).
+fn envelope(peer: &str, frame: &str) -> String {
+    json(&[("type", "signal"), ("peer", peer), ("msg", frame)])
+}
+
+#[tokio::test]
+async fn a_frame_whose_envelope_outgrows_the_limit_costs_only_its_client() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut a, _) = create(addr, "eu").await;
+    let (code, peer_a, _) = expect_room(&mut server).await;
+    let (mut b, _) = join(addr, &code).await;
+    let (peer_b, _) = expect_peer(&mut server).await;
+
+    // Under the inbound limit, but escaping it into `msg` doubles every
+    // quote and backslash: the envelope would be about twice the limit.
+    let frame = json(&[("type", "offer"), ("sdp", &"\"".repeat(30 * 1024))]);
+    assert!(frame.len() <= 64 * 1024);
+    assert!(envelope(&peer_b, &frame).len() > 64 * 1024);
+    send(&mut b, frame).await;
+    assert_eq!(expect_close(&mut b).await, Some(1002));
+    // The server hears only that b left; nothing oversized reaches it.
+    let gone = recv(&mut server).await;
+    assert_eq!(
+        (gone["type"].as_str(), gone["peer"].as_str()),
+        ("peer_gone", peer_b.as_str())
+    );
+
+    // The room and a's relay live on, and an envelope of exactly the
+    // limit still goes through.
+    let base = envelope(&peer_a, &json(&[("type", "offer"), ("sdp", "")])).len();
+    let sdp = "v".repeat(64 * 1024 - base);
+    let fits = json(&[("type", "offer"), ("sdp", &sdp)]);
+    assert_eq!(envelope(&peer_a, &fits).len(), 64 * 1024);
+    send(&mut a, fits.clone()).await;
+    let text = recv_text(&mut server).await;
+    assert_eq!(text.len(), 64 * 1024);
+    let signal: Fields = serde_json::from_str(&text).unwrap();
+    assert_eq!(signal["peer"], peer_a);
+    assert_eq!(signal["msg"], fits);
+    // One byte more is a's protocol error, not the server's.
+    let over = json(&[("type", "offer"), ("sdp", &format!("{sdp}v"))]);
+    send(&mut a, over).await;
+    assert_eq!(expect_close(&mut a).await, Some(1002));
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+    assert_eq!(healthz(addr).await["servers"], 1);
+    let (_c, joined) = join(addr, &code).await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut server).await;
+}
+
+#[tokio::test]
+async fn the_regions_reply_fits_a_frame_at_the_region_limit() {
+    let addr = start(config()).await;
+    let mut servers = Vec::new();
+    for i in 0..64 {
+        // 32-character labels, the longest valid ones.
+        let region = format!("{i:0>32}");
+        servers.push(register(addr, &format!("s-{i}"), &region, "4").await);
+    }
+    // A 65th distinct region is refused; another server in a known one is not.
+    let mut extra = connect(addr, "/server").await;
+    send(&mut extra, register_msg("s-64", &"x".repeat(32), "4")).await;
+    expect_refused(&mut extra, "bad_request").await;
+    servers.push(register(addr, "s-65", &format!("{:0>32}", 0), "4").await);
+
+    let mut ws = connect(addr, "/client").await;
+    send(&mut ws, json(&[("type", "regions")])).await;
+    let text = recv_text(&mut ws).await;
+    assert!(text.len() <= 64 * 1024, "{} bytes", text.len());
+    let reply: Fields = serde_json::from_str(&text).unwrap();
+    assert_eq!(reply["list"].split(',').count(), 64);
+    assert_eq!(reply["free"].split(',').count(), 64);
+    // The bound itself: the configured maximum always fits.
+    assert!(kfm_lobby::protocol::max_regions_in_a_frame(64 * 1024) >= 64);
+}
+
 #[tokio::test]
 async fn first_message_timeout() {
     let timeout = Duration::from_millis(200);
@@ -897,4 +991,413 @@ fn close_codes_are_the_documented_ones() {
         u16::from(CloseCode::Protocol),
         kfm_lobby::protocol::CLOSE_PROTOCOL_ERROR
     );
+}
+
+// --- abuse limits (v1.3, §7) -----------------------------------------------
+
+/// A `/client` socket that the lobby, trusting 127.0.0.1 as its proxy, sees
+/// as coming from `ip`.
+async fn connect_as(addr: SocketAddr, ip: &str) -> Ws {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = format!("ws://{addr}/client").into_client_request().unwrap();
+    request.headers_mut().insert(
+        "x-forwarded-for",
+        format!("10.9.9.9, {ip}").parse().unwrap(),
+    );
+    let (ws, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    ws
+}
+
+async fn request_as(addr: SocketAddr, ip: &str, pairs: &[(&str, &str)]) -> (Ws, Fields) {
+    let mut ws = connect_as(addr, ip).await;
+    send(&mut ws, json(pairs)).await;
+    let reply = recv(&mut ws).await;
+    (ws, reply)
+}
+
+fn create_msg(region: &str) -> [(&str, &str); 4] {
+    [
+        ("type", "create"),
+        ("region", region),
+        ("build", BUILD),
+        ("content", CONTENT),
+    ]
+}
+
+fn join_msg(code: &str) -> [(&str, &str); 4] {
+    [
+        ("type", "join"),
+        ("code", code),
+        ("build", BUILD),
+        ("content", CONTENT),
+    ]
+}
+
+fn proxied() -> LobbyConfig {
+    config().with_trusted_proxies(vec!["127.0.0.1".parse().unwrap()])
+}
+
+/// A v1.3 server: its `register` carries `version`, so it reports `players`.
+async fn register_v13(addr: SocketAddr, name: &str, capacity: &str) -> Ws {
+    let mut ws = connect(addr, "/server").await;
+    let mut fields: Fields = serde_json::from_str(&register_msg(name, "eu", capacity)).unwrap();
+    fields.insert("version".into(), "1.3".into());
+    send(&mut ws, serde_json::to_string(&fields).unwrap()).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(reply["type"], "registered", "{reply:?}");
+    assert_eq!(reply["version"], "1.3");
+    ws
+}
+
+#[tokio::test]
+async fn registered_names_the_lobby_version() {
+    let addr = start(config()).await;
+    let mut ws = connect(addr, "/server").await;
+    send(&mut ws, register_msg("eu-1", "eu", "4")).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(reply["type"], "registered");
+    assert_eq!(reply["version"], "1.3");
+}
+
+#[tokio::test]
+async fn open_sockets_are_capped_per_client_address() {
+    let mut config = proxied();
+    config.max_connections_per_address = 2;
+    let addr = start(config).await;
+    let a = connect_as(addr, "192.0.2.1").await;
+    let _b = connect_as(addr, "192.0.2.1").await;
+    // The third from that address is refused at once, without a request.
+    let mut c = connect_as(addr, "192.0.2.1").await;
+    expect_refused(&mut c, "limited").await;
+    // Another address is not affected, and a closed socket frees a place.
+    let (_, reply) = request_as(addr, "192.0.2.2", &[("type", "regions")]).await;
+    assert_eq!(reply["type"], "regions");
+    drop(a);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let (_, reply) = request_as(addr, "192.0.2.1", &[("type", "regions")]).await;
+    assert_eq!(reply["type"], "regions");
+}
+
+#[tokio::test]
+async fn forwarded_for_counts_only_from_a_trusted_proxy() {
+    let mut config = config(); // no trusted proxy
+    config.max_connections_per_address = 2;
+    let addr = start(config).await;
+    let _a = connect_as(addr, "192.0.2.1").await;
+    let _b = connect_as(addr, "192.0.2.2").await;
+    // Both counted as 127.0.0.1, whatever their header says.
+    let mut c = connect_as(addr, "192.0.2.3").await;
+    expect_refused(&mut c, "limited").await;
+}
+
+#[tokio::test]
+async fn rooms_held_are_capped_per_client_address() {
+    let mut config = proxied().with_room_ttl(Duration::from_millis(200));
+    config.max_rooms_per_address = 1;
+    let addr = start(config).await;
+    let mut s1 = register(addr, "eu-1", "eu", "4").await;
+    let mut s2 = register(addr, "eu-2", "eu", "4").await;
+    let (first, joined) = request_as(addr, "192.0.2.1", &create_msg("eu")).await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut s1).await;
+    // A free server is left, but this address already holds a room.
+    let (_, reply) = request_as(addr, "192.0.2.1", &create_msg("eu")).await;
+    assert_eq!(reply["reason"], "limited");
+    let (_other, joined) = request_as(addr, "192.0.2.2", &create_msg("eu")).await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut s2).await;
+    // Once its room closes the address may create again.
+    drop(first);
+    assert_eq!(recv(&mut s1).await["type"], "peer_gone");
+    assert_eq!(recv(&mut s1).await["type"], "room_closed");
+    let (_again, joined) = request_as(addr, "192.0.2.1", &create_msg("eu")).await;
+    assert_eq!(joined["type"], "joined");
+}
+
+#[tokio::test]
+async fn create_and_join_requests_are_rate_limited_per_address() {
+    let mut config = proxied();
+    config.requests_per_minute = 1.0;
+    config.requests_burst = 3.0;
+    let addr = start(config).await;
+    for _ in 0..3 {
+        let (_, reply) = request_as(addr, "192.0.2.1", &create_msg("mars")).await;
+        assert_eq!(reply["reason"], "no_server");
+    }
+    let (_, reply) = request_as(addr, "192.0.2.1", &join_msg("ZZZZZ")).await;
+    assert_eq!(reply["reason"], "limited");
+    // A regions query is no request, and other addresses have their own.
+    let (_, reply) = request_as(addr, "192.0.2.1", &[("type", "regions")]).await;
+    assert_eq!(reply["type"], "regions");
+    let (_, reply) = request_as(addr, "192.0.2.2", &create_msg("mars")).await;
+    assert_eq!(reply["reason"], "no_server");
+}
+
+#[tokio::test]
+async fn failed_joins_run_out_per_address() {
+    let mut config = proxied();
+    config.failed_joins_burst = 2.0;
+    config.failed_joins_per_minute = 0.0;
+    let addr = start(config).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (_host, _) = request_as(addr, "192.0.2.9", &create_msg("eu")).await;
+    let (code, _, _) = expect_room(&mut server).await;
+    let (_, reply) = request_as(addr, "192.0.2.1", &join_msg("ZZZZZ")).await;
+    assert_eq!(reply["reason"], "unknown_code");
+    let bad_token = [
+        ("type", "join"),
+        ("code", code.as_str()),
+        ("token", "0123456789abcdef0123456789abcdef"),
+    ];
+    let (_, reply) = request_as(addr, "192.0.2.1", &bad_token).await;
+    assert_eq!(reply["reason"], "bad_token");
+    // Out of guesses: even the right code is refused, before any lookup.
+    let (_, reply) = request_as(addr, "192.0.2.1", &join_msg(&code)).await;
+    assert_eq!(reply["reason"], "limited");
+    expect_silence(&mut server, Duration::from_millis(100)).await;
+    // A successful join spends no guess.
+    let (_ok, reply) = request_as(addr, "192.0.2.2", &join_msg(&code)).await;
+    assert_eq!(reply["type"], "joined");
+    let (_ok2, reply) = request_as(addr, "192.0.2.2", &join_msg(&code)).await;
+    assert_eq!(reply["type"], "joined");
+}
+
+#[tokio::test]
+async fn a_room_keeps_a_bounded_set_of_tokens() {
+    let mut config = config();
+    config.max_clients_per_room = 2;
+    config.max_tokens_per_room = 2;
+    let addr = start(config).await;
+    let mut server = register(addr, "eu-1", "eu", "8").await;
+    let (_a, created) = create(addr, "eu").await;
+    let (code, _, token_a) = expect_room(&mut server).await;
+    assert_eq!(created["token"], token_a);
+    let (b, _) = join(addr, &code).await;
+    let (_, token_b) = expect_peer(&mut server).await;
+    drop(b);
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+    // A third player: the room is at its two tokens, so b's (unseated, the
+    // oldest such) makes way; a's, still seated, stays.
+    let (_c, joined) = join(addr, &code).await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut server).await;
+    let (_, reply) = rejoin(addr, &code, &token_b).await;
+    assert_eq!(reply["reason"], "bad_token");
+    let (_a2, again) = rejoin(addr, &code, &token_a).await;
+    assert_eq!(again["type"], "joined", "{again:?}");
+}
+
+#[tokio::test]
+async fn a_room_no_game_connection_reaches_is_released_early() {
+    let unused = Duration::from_millis(300);
+    let addr = start(config().with_unused_room_ttl(unused)).await;
+    let mut server = register_v13(addr, "eu-1", "4").await;
+
+    // The creator keeps its socket open but never connects: released.
+    let (mut idle, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut server).await;
+    let closed = recv(&mut idle).await;
+    assert_eq!(
+        (closed["type"].as_str(), closed["reason"].as_str()),
+        ("closed", "room_closed")
+    );
+    assert_eq!(expect_close(&mut idle).await, Some(1000));
+    let msg = recv(&mut server).await;
+    // (No peer_gone for the closed socket: the room went first.)
+    assert_eq!(
+        (msg["type"].as_str(), msg["code"].as_str()),
+        ("room_closed", code.as_str())
+    );
+    assert_eq!(healthz(addr).await["rooms"], 0);
+
+    // A room whose server reports a player is held past the short hold, and
+    // then on the full TTL after everyone has gone.
+    let (mut player, _) = create(addr, "eu").await;
+    expect_room(&mut server).await;
+    send(&mut server, json(&[("type", "players"), ("count", "1")])).await;
+    expect_silence(&mut server, unused * 2).await;
+    player.close(None).await.unwrap();
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+    // Still a player on its game connection: no expiry at all.
+    expect_silence(&mut server, unused * 2).await;
+    send(&mut server, json(&[("type", "players"), ("count", "0")])).await;
+    // The full TTL (600 s here): nothing within the short hold.
+    expect_silence(&mut server, unused * 2).await;
+    assert_eq!(healthz(addr).await["rooms"], 1);
+}
+
+#[tokio::test]
+async fn an_older_server_keeps_the_full_hold() {
+    let unused = Duration::from_millis(200);
+    let addr = start(config().with_unused_room_ttl(unused)).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await; // no `version`
+    let (mut a, _) = create(addr, "eu").await;
+    expect_room(&mut server).await;
+    expect_silence(&mut a, unused * 2).await;
+    expect_silence(&mut server, Duration::from_millis(10)).await;
+    assert_eq!(healthz(addr).await["rooms"], 1);
+}
+
+// --- room claims (v1.3, §5) -------------------------------------------------
+
+const TOKEN_1: &str = "11111111111111111111111111111111";
+const TOKEN_2: &str = "22222222222222222222222222222222";
+
+/// A v1.3 `register` claiming `code` with these tokens and players.
+fn claim_msg(name: &str, capacity: &str, code: &str, tokens: &str, players: &str) -> String {
+    let mut fields: Fields = serde_json::from_str(&register_msg(name, "eu", capacity)).unwrap();
+    for (k, v) in [
+        ("version", "1.3"),
+        ("room", code),
+        ("tokens", tokens),
+        ("players", players),
+    ] {
+        fields.insert(k.into(), v.into());
+    }
+    serde_json::to_string(&fields).unwrap()
+}
+
+async fn register_claiming(
+    addr: SocketAddr,
+    name: &str,
+    code: &str,
+    tokens: &str,
+    players: &str,
+) -> (Ws, Fields) {
+    let mut ws = connect(addr, "/server").await;
+    send(&mut ws, claim_msg(name, "4", code, tokens, players)).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(reply["type"], "registered", "{reply:?}");
+    (ws, reply)
+}
+
+#[tokio::test]
+async fn a_server_claims_its_room_back_after_a_lobby_restart() {
+    // A fresh lobby, as after a restart: it knows nothing until the server
+    // registers with the room it still hosts.
+    let addr = start(config()).await;
+    let (mut server, reply) =
+        register_claiming(addr, "eu-1", "ABCDE", &format!("{TOKEN_1},{TOKEN_2}"), "2").await;
+    assert_eq!(reply["room"], "ABCDE");
+    assert_eq!(reply["version"], "1.3");
+    // No `room` message for an adopted claim, and the server is busy.
+    expect_silence(&mut server, Duration::from_millis(100)).await;
+    assert_eq!(
+        healthz(addr).await,
+        serde_json::json!({"servers": 1, "rooms": 1, "regions": []})
+    );
+
+    // Its players rejoin under their tokens, and others join by the code.
+    let (_a, again) = rejoin(addr, "abcde", TOKEN_1).await;
+    assert_eq!(again["type"], "joined", "{again:?}");
+    assert_eq!(again["token"], TOKEN_1);
+    let (peer, token) = expect_peer(&mut server).await;
+    assert_eq!(token, TOKEN_1);
+    assert_eq!(peer, "1");
+    let (_b, joined) = join(addr, "ABCDE").await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut server).await;
+    let (_, reply) = rejoin(addr, "ABCDE", "33333333333333333333333333333333").await;
+    assert_eq!(reply["reason"], "bad_token");
+
+    // Reported players count toward full: 4 connected (the 2 kept and the 2
+    // who came back) with 2 sockets is the capacity of 4.
+    send(&mut server, json(&[("type", "players"), ("count", "4")])).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_, reply) = join(addr, "ABCDE").await;
+    assert_eq!(reply["reason"], "full");
+}
+
+#[tokio::test]
+async fn an_adopted_room_without_players_expires_like_any_empty_room() {
+    let ttl = Duration::from_millis(300);
+    let addr = start(config().with_room_ttl(ttl)).await;
+    let (mut server, reply) = register_claiming(addr, "eu-1", "ABCDE", TOKEN_1, "0").await;
+    assert_eq!(reply["room"], "ABCDE");
+    let closed = recv(&mut server).await;
+    assert_eq!(
+        (closed["type"].as_str(), closed["code"].as_str()),
+        ("room_closed", "ABCDE")
+    );
+    // Then free for a create.
+    let (_c, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut server).await;
+}
+
+#[tokio::test]
+async fn a_claim_on_a_live_code_is_refused_and_the_server_stays_busy() {
+    let addr = start(config()).await;
+    let mut first = register(addr, "eu-1", "eu", "4").await;
+    let (_host, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut first).await;
+
+    // Another server claims that code (it was away while the code moved on).
+    let (mut second, reply) = register_claiming(addr, "eu-2", &code, TOKEN_1, "1").await;
+    assert!(!reply.contains_key("room"), "{reply:?}");
+    assert_eq!(reply["version"], "1.3");
+    // Registered at capacity 0: no create lands on it under its players.
+    assert_eq!(regions(addr).await, pair("eu", ""));
+    let (_, reply) = create(addr, "eu").await;
+    assert_eq!(reply["reason"], "no_server");
+    // Its players gone, it says so with its capacity and is free again.
+    send(
+        &mut second,
+        json(&[("type", "capacity"), ("capacity", "4")]),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_c, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut second).await;
+    // The first room was never touched.
+    let (_d, joined) = join(addr, &code).await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut first).await;
+}
+
+#[tokio::test]
+async fn claims_are_checked_and_need_a_version() {
+    let addr = start(config()).await;
+    for (code, tokens, players) in [
+        ("abcde", TOKEN_1, "1"), // codes are upper case
+        ("ABCD", TOKEN_1, "1"),
+        ("ABCDE", "not-a-token", "1"),
+        ("ABCDE", TOKEN_1, "many"),
+    ] {
+        let mut ws = connect(addr, "/server").await;
+        send(&mut ws, claim_msg("eu-1", "4", code, tokens, players)).await;
+        expect_refused(&mut ws, "bad_request").await;
+    }
+    // Claim keys from a server that names no version are ignored.
+    let mut fields: Fields = serde_json::from_str(&register_msg("eu-1", "eu", "4")).unwrap();
+    fields.insert("room".into(), "ABCDE".into());
+    fields.insert("tokens".into(), TOKEN_1.into());
+    let mut ws = connect(addr, "/server").await;
+    send(&mut ws, serde_json::to_string(&fields).unwrap()).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(reply["type"], "registered");
+    assert!(!reply.contains_key("room"));
+    assert_eq!(healthz(addr).await["rooms"], 0);
+}
+
+#[tokio::test]
+async fn reported_players_count_toward_full() {
+    let addr = start(config()).await;
+    let mut server = register_v13(addr, "eu-1", "2").await;
+    let (_a, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut server).await;
+    // One socket, but the server has two players on their game connection.
+    send(&mut server, json(&[("type", "players"), ("count", "2")])).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_, reply) = join(addr, &code).await;
+    assert_eq!(reply["reason"], "full");
+    send(&mut server, json(&[("type", "players"), ("count", "1")])).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_b, reply) = join(addr, &code).await;
+    assert_eq!(reply["type"], "joined");
+    expect_peer(&mut server).await;
+    // A malformed count is the server's protocol error.
+    send(&mut server, json(&[("type", "players"), ("count", "lots")])).await;
+    assert_eq!(expect_close(&mut server).await, Some(1002));
 }

@@ -144,11 +144,14 @@ Report summarise(const NetSim& s, double seconds, const LeadSampler& lead, uint6
   uint64_t rollbacks = 0;
   uint64_t up = 0;
   uint64_t down = 0;
+  bool first = true;
   for (const ClientRig& rig : s.rigs()) {
     const ClientNetStats& st = rig.client->netStats();
     r.mismatches += st.checksumMismatches;
     r.resyncs += st.resyncRequests;
     r.compared += st.checksumsCompared;
+    r.minCompared = first ? st.checksumsCompared : std::min(r.minCompared, st.checksumsCompared);
+    first = false;
     r.overflows += st.rollbackOverflows;
     r.hardJumps += st.hardJumps;
     r.snapshotsLoaded += st.snapshotsLoaded;

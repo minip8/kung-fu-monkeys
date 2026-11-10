@@ -18,6 +18,7 @@
 #include <exception>
 #include <expected>
 #include <format>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -273,6 +274,7 @@ struct WebRtcTransport::Impl {
   bool iceUdpMux{false};
   uint16_t maxPeers{kMaxPeers};
   uint64_t connectTimeoutNs{kDefaultWebRtcConnectTimeoutMs * kNsPerMs};
+  size_t maxReliableBuffered{kDefaultMaxReliableBufferedBytes};
   std::vector<std::byte> token;
   uint16_t listenPort{0};
   bool externalSignaling{false};        // server: the host relays signaling
@@ -575,7 +577,16 @@ struct WebRtcTransport::Impl {
       // Plain signaling, or the lobby's `closed` notice.
       const auto o = signaling::decodeObject(text);
       if (o && o->get("type") == std::optional<std::string_view>("closed")) {
-        lastError = "lobby closed: " + std::string(o->get("reason").value_or("unknown"));
+        const std::string reason(o->get("reason").value_or("unknown"));
+        if (peer.connected) {
+          // v1.3: the data channels are open and alone decide the session.
+          // `server_gone` only means the server lost its own lobby socket,
+          // which a v1.3 server survives; the others are kept for the UI
+          // (the server closes a kicked or replaced peer's channels itself).
+          if (reason != "server_gone") lastError = "lobby closed: " + reason;
+          return;
+        }
+        lastError = "lobby closed: " + reason;
         dropPeer(peer.id.value, nowNs, &events);
         return;
       }
@@ -684,7 +695,13 @@ struct WebRtcTransport::Impl {
         }
         // After Connected the socket has done its job; before it, the
         // handshake cannot finish. A lobby socket is the room membership
-        // (docs/lobby-protocol.md §3): its close always ends the session.
+        // (docs/lobby-protocol.md §3), but since v1.3 only until the data
+        // channels are open: then the lobby going away (a restart, a blip)
+        // ends nothing, and the channels alone decide the session.
+        if (lobbyPhase == LobbyPhase::Joined && peer.connected) {
+          if (gVerbose) std::fprintf(stderr, "kfm_net_webrtc: lobby socket closed; playing on\n");
+          break;
+        }
         if (lobbyPhase != LobbyPhase::Off) {
           if (!lobbyRegions && (lastError.empty() || !lastError.starts_with("lobby")))
             lastError = "lobby connection closed";
@@ -812,6 +829,15 @@ struct WebRtcTransport::Impl {
         ++stats.sendErrors;
         return;
       }
+      if (lane == Lane::Reliable && dc->bufferedAmount() > maxReliableBuffered) {
+        // A reliable message cannot be dropped and the peer is not draining:
+        // let it go before its backlog grows without bound.
+        lastError = std::format("peer {}: over {} reliable bytes waiting to be sent; dropped",
+                                peer.value, maxReliableBuffered);
+        ++stats.sendErrors;
+        dropPeer(peer.value, lastPollNs, nullptr);
+        return;
+      }
       const bool ok = dc->send(data.data(), data.size());
 #ifdef __EMSCRIPTEN__
       // datachannel-wasm: false means the browser refused the message.
@@ -850,6 +876,7 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
     impl->iceUdpMux = config.iceUdpMux;
     impl->maxPeers = std::min(config.maxPeers, kMaxPeers);
     impl->connectTimeoutNs = uint64_t{config.connectTimeoutMs} * kNsPerMs;
+    impl->maxReliableBuffered = config.maxReliableBufferedBytes;
     impl->externalSignaling = config.externalSignaling;
     if (config.externalSignaling) return std::make_unique<WebRtcTransport>(std::move(impl));
 
@@ -910,6 +937,10 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
     initLoggerOnce(WebRtcLogLevel::Warning);
     auto impl = std::make_unique<Impl>();
     impl->server = false;
+    // The reliable-lane cap protects a server from a peer that stops
+    // reading. A client's backlog toward its one server costs only itself,
+    // and dropping the link would lose what it still has to say.
+    impl->maxReliableBuffered = std::numeric_limits<size_t>::max();
     impl->stunServer = config.stunServer;
     impl->connectTimeoutNs = uint64_t{config.connectTimeoutMs} * kNsPerMs;
     if (config.lobby) {

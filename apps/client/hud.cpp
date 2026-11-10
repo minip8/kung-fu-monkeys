@@ -113,7 +113,7 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
   if (!hud.hasClock) return;
   char clock[16];
   clockText(hud.clockSeconds, clock);
-  const bool urgent = hud.phase == HudPhase::Playing && hud.clockSeconds <= 10.0f;
+  const bool urgent = clockUrgent(hud);
   const float pop = presentation::bannerScale(state, EffectKind::TimerBanner);
   centredText(dl, 26.0f * pop, ImVec2(viewW * 0.5f, y + 24.0f), urgent ? ui::kAlarm : kWhite,
               clock);
@@ -272,21 +272,6 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
   drawModeLine(dl, state, viewW, y + h + 14.0f);
 }
 
-// The banner title of a round or match winner: "Team 2" in a team mode, the
-// slot's label otherwise, with the colour to draw it in.
-void winnerText(const HudView& session, const presentation::RenderHud& hud, uint8_t winner,
-                char (&out)[kLabelBytes], ImU32& color) {
-  if (hud.teamCount > 0 && winner < sim::kMaxPlayers) {
-    std::snprintf(out, sizeof out, "Team %u", static_cast<unsigned>(hud.teams[winner]) + 1U);
-    color = teamColor(hud.teams[winner]);
-    return;
-  }
-  char label[kLabelBytes];
-  slotLabel(session, winner, label);
-  std::snprintf(out, sizeof out, "%s", label);
-  color = slotColor(winner);
-}
-
 // Over each monkey a compact row of the same timer pies (no seconds: the
 // card has them), under the ammo pips.
 void drawPowerUpDots(ImDrawList* dl, const presentation::RenderPlayer& p, ImVec2 centre) {
@@ -340,19 +325,6 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
 }
 
 void drawCrown(ImDrawList* dl, ImVec2 p, float w);
-
-// The rows the scoreboard marks "you": this client's slots online; none in
-// local play, where several players share the screen.
-[[nodiscard]] sim::PlayerMask onlineLocalMask(const HudView& view) {
-  if (!view.network) return 0;
-  sim::PlayerMask m = 0;
-  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
-    if (view.owners[i] == SlotOwner::Local || view.owners[i] == SlotOwner::Dropped) {
-      m = static_cast<sim::PlayerMask>(m | (1u << i));
-    }
-  }
-  return m;
-}
 
 // v0.43: the scoreboard (core/scoreboard.hpp) as a table at `origin`,
 // `width` wide: a header line, then a row per slot (place, colour, label,
@@ -489,24 +461,18 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
       if (hud.lastRoundWinner == kNoSlot) {
         centredText(dl, 56.0f * pop, centre, kWhite, "Draw!");
       } else {
-        const auto w = static_cast<uint8_t>(hud.lastRoundWinner);
-        char label[kLabelBytes];
-        ImU32 color = kWhite;
-        winnerText(session, hud, w, label, color);
-        std::snprintf(text, sizeof text, "Round won by %s", label);
-        centredText(dl, 56.0f * pop, centre, color, text);
+        const WinnerTitle w = winnerTitle(session, hud, static_cast<uint8_t>(hud.lastRoundWinner));
+        std::snprintf(text, sizeof text, "Round won by %s", w.text.c_str());
+        centredText(dl, 56.0f * pop, centre, slotColor(w.colorIndex), text);
       }
       break;
     }
     case HudPhase::MatchEnded: {
       if (hud.matchWinner != kNoSlot) {
-        const auto w = static_cast<uint8_t>(hud.matchWinner);
-        char label[kLabelBytes];
-        ImU32 color = kWhite;
-        winnerText(session, hud, w, label, color);
-        std::snprintf(text, sizeof text, "%s wins the match!", label);
+        const WinnerTitle w = winnerTitle(session, hud, static_cast<uint8_t>(hud.matchWinner));
+        std::snprintf(text, sizeof text, "%s wins the match!", w.text.c_str());
         centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
-                    centre, color, text);
+                    centre, slotColor(w.colorIndex), text);
       } else {
         // A tied lead when a mode's clock ran out (deathmatch).
         centredText(dl, 64.0f * presentation::bannerScale(state, EffectKind::MatchEndBanner),
@@ -826,9 +792,9 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     powerUpColumn = 0;
     const float x0 = ImGui::GetCursorPosX();
     const ImVec2 min = ImGui::GetCursorScreenPos();
-    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_Header, ui::vec4(ui::kTransparent));
     // v0.55: no hover tint of its own: the focus bar is the highlight.
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::kTransparent));
     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::withAlpha(ui::kMango, 140)));
     if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
                           ImVec2(0.0f, frameH))) {
@@ -904,66 +870,6 @@ ShareOutcome drawShare(const ShareView& share) {
 }
 
 }  // namespace
-
-std::array<std::string, sim::kMaxPlayers> slotLabels(const HudView& view) {
-  std::array<std::string, sim::kMaxPlayers> l;
-  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
-    l[i] = client::slotLabel(view.names[i], view.owners[i], i);
-  return l;
-}
-
-HudView hudView(const MatchSession& session) {
-  HudView v;
-  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
-    v.owners[i] = session.owner(PlayerId{i});
-    if (v.owners[i] == SlotOwner::Bot) v.bots = static_cast<sim::PlayerMask>(v.bots | (1u << i));
-  }
-  v.dropped = static_cast<sim::PlayerMask>(session.droppedMask() & session.localMask());
-  v.paused = session.paused();
-  return v;
-}
-
-HudView hudView(const NetSession& session) {
-  HudView v;
-  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i)
-    v.owners[i] = session.owner(PlayerId{i});
-  v.dropped = session.droppedMask();
-  v.network = true;
-  v.statusLine = session.statusText();
-  if (session.room())
-    v.roomLine = "Room " + session.room()->code + " (" + session.room()->region + ")";
-  // v0.42: the room's nicknames, v0.43 its bots by name too; a room shows
-  // its own match over (no server-chosen next match).
-  const std::optional<net::RoomStateMsg>& room = session.roomState();
-  if (room) {
-    v.bots = room->bots;
-    for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
-      const PlayerId slot{i};
-      if (sim::maskHas(room->humans, slot) || sim::maskHas(room->bots, slot)) {
-        v.names[i] = session.slotName(slot);
-      }
-    }
-  }
-  if (session.configKnown() && !room) {
-    const sim::MatchConfig& next = session.client().matchConfig();
-    const sim::ContentDB& db = session.content();
-    v.nextMatch = std::string("Next match: ") + db.arenaAt(next.arena).name.cStr() + ", " +
-                  db.modeAt(next.mode).name.cStr() + ", loadout " +
-                  db.loadoutAt(next.loadout).name.cStr() +
-                  ", power-ups: " + content::powerUpListText(db, next.powerUps);
-  }
-  return v;
-}
-
-HudView hudView(const ReplaySession& session) {
-  HudView v;
-  const sim::PlayerMask present = session.matchConfig().players;
-  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
-    v.owners[i] = (present & (1u << i)) != 0 ? SlotOwner::Remote : SlotOwner::None;
-  }
-  v.replay = true;
-  return v;
-}
 
 void drawMatchHud(const HudView& view, const HudInput& in) {
   if (in.state == nullptr || in.camera == nullptr) return;
@@ -1177,11 +1083,11 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     ImGui::Spacing();
 
     // The roster: the humans by name (the host's crown, you), the bots the
-    // host asked for in the lowest open slots (where the server puts them
-    // at the start), then the open slots.
+    // host asked for where the server puts them at the start
+    // (roomBotPreview()), then the open slots.
     std::array<LobbyCard, sim::kMaxPlayers> cards{};
     const net::RoomSettings& r = room->settings;
-    uint8_t botsToCome = r.bots;
+    const sim::PlayerMask botsToCome = roomBotPreview(*room);
     for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
       const PlayerId slot{i};
       LobbyCard& c = cards[i];
@@ -1198,8 +1104,7 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
       } else if (bot) {
         c.title = session.slotName(slot);
         std::snprintf(c.sub, sizeof c.sub, "bot");
-      } else if (room->bots == 0 && botsToCome > 0) {
-        --botsToCome;
+      } else if (sim::maskHas(botsToCome, slot)) {
         c.filled = true;
         c.alpha = 150;
         c.title = "BOT" + std::to_string(i + 1);
@@ -1267,31 +1172,15 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
   return out;
 }
 
-MatchOverView matchOverView(const HudView& view, const presentation::RenderState& state) {
-  MatchOverView v;
-  const presentation::RenderHud& hud = state.hud;
-  v.board = buildScoreboard(hud, slotLabels(view), onlineLocalMask(view), view.bots);
-  v.title = "Draw!";
-  v.color = kWhite;
-  if (hud.matchWinner >= 0 && std::cmp_less(hud.matchWinner, sim::kMaxPlayers)) {
-    const auto w = static_cast<uint8_t>(hud.matchWinner);
-    char label[kLabelBytes];
-    ImU32 color = kWhite;
-    winnerText(view, hud, w, label, color);
-    v.title = std::string(label) + " wins the match!";
-    v.color = color;
-  }
-  return v;
-}
-
-std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& menu) {
-  std::optional<std::size_t> clicked;
-  menu.setCount(view.buttons.size());
+std::optional<MatchOverAction> drawMatchOver(const MatchOverView& view, ButtonMenu& menu) {
+  std::optional<MatchOverAction> clicked;
+  menu.setCount(view.actions.size());
   if (ui::beginScreen("##match_over", 640.0f)) {
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextDisabled("Match over");
     ImGui::PopFont();
-    ui::heading(view.title.c_str(), view.color, ui::kFontHeading + 6.0f);
+    ui::heading(view.title.c_str(), view.colorIndex ? slotColor(*view.colorIndex) : kWhite,
+                ui::kFontHeading + 6.0f);
     ImGui::Spacing();
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
@@ -1302,17 +1191,17 @@ std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& 
       ImGui::TextColored(ui::vec4(ui::kGold), "%s", view.waiting.c_str());
       ImGui::PopFont();
     }
-    const std::size_t n = view.buttons.size();
+    const std::size_t n = view.actions.size();
     const float gap = ImGui::GetStyle().ItemSpacing.x;
     const float bw =
         n == 0 ? 0.0f : (width - (static_cast<float>(n - 1) * gap)) / static_cast<float>(n);
     for (std::size_t i = 0; i < n; ++i) {
       if (i > 0) ImGui::SameLine();
       // The first button is the screen's lead (Play again).
-      if (ui::bigButton(view.buttons[i].c_str(), i == menu.focus(), bw, true, ui::kFontButton,
-                        i == 0 ? ui::Tone::Lead : ui::Tone::Plain)) {
+      if (ui::bigButton(matchOverLabel(view.actions[i]), i == menu.focus(), bw, true,
+                        ui::kFontButton, i == 0 ? ui::Tone::Lead : ui::Tone::Plain)) {
         menu.setFocus(i);
-        clicked = i;
+        clicked = view.actions[i];
       }
       if (ui::pointerTakesFocus()) menu.setFocus(i);
     }

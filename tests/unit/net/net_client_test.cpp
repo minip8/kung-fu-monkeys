@@ -137,6 +137,29 @@ TEST_CASE("the client syncs on Welcome, snapshot and RTT, then leads the server"
   CHECK(fs.client->confirmedTick() == std::nullopt);
 }
 
+TEST_CASE("a server tick far ahead of the snapshot runs the client forward a bounded way",
+          "[net][client]") {
+  // A broken or hostile server's Pong: the client would step billions of
+  // ticks to reach it (v0.70).
+  FakeServer fs;
+  const sim::WorldState w0 = sim::initialWorld(kConfig);
+  fs.client->connect(*fs.clientT, fs.now);
+  fs.pump();
+  fs.pump();
+  REQUIRE(fs.hellos == 1);
+  fs.reliable(WelcomeMsg{0b01, kConfig, Tick{0}});
+  SnapshotMsg snap;
+  snap.config = kConfig;
+  snap.world = w0;
+  fs.reliable(snap);
+  for (int i = 0; i < 3; ++i)
+    fs.unreliable(PongMsg{fs.pings.at(0).sendNs, Tick{0xFFFF'FF00u}, 0});
+  fs.pump();
+  REQUIRE(fs.client->running());
+  CHECK(fs.client->localTick() == Tick{static_cast<uint32_t>(kMaxRunForwardTicks)});
+  CHECK(fs.client->netStats().runForwardClamped == 1);
+}
+
 TEST_CASE("a misprediction restores the saved state and re-simulates with the corrected inputs",
           "[net][client]") {
   FakeServer fs;

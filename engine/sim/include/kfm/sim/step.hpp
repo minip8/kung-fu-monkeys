@@ -18,6 +18,19 @@ namespace kfm::sim {
 // match. Events for the tick are appended to sink (the caller clears it).
 void step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink);
 
+// What one tick's fixed-capacity scratch had to drop (v0.70): derived like
+// the scratch itself, never part of WorldState, never read by the sim. The
+// contact list (kMaxContacts) is the one list a dense enough world can
+// overflow; a dropped contact is a hit, catch or pickup that silently did
+// not happen. Tools and tests read it; the drop itself is deterministic.
+struct StepStats {
+  uint16_t contactsDropped{0};
+};
+
+// step() that also reports the tick's StepStats (overwritten, not summed).
+void step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink,
+          StepStats& stats);
+
 // Per-tick state checksum through the visitor.
 [[nodiscard]] uint32_t checksum(const WorldState& s);
 

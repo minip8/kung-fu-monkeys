@@ -61,6 +61,18 @@
 // reset, clock restarted; counted as a hard jump). While the room holds,
 // the resume sets the lead instead.
 //
+// A gap in the authoritative stream (v0.70, §6.6): the server resends at
+// most authRedundancy frames per AuthInputs, back to the newest frame the
+// client acknowledged, so an outage longer than that leaves frames no later
+// message carries. The client tells such a gap from loss redundancy will
+// still cover: the oldest frame of the newest window it received is past the
+// first frame it lacks. After gapResyncNs (copies reordered behind the
+// window may still be in flight) it asks for a snapshot, as on a checksum
+// mismatch (ResyncRequest, the server's 250 ms limit and the 1 s retry
+// apply), player and spectator alike (a spectator steps only authoritative
+// frames and would otherwise freeze at the gap). Not while it holds: the
+// resumed match's snapshot is on its way anyway.
+//
 // Events (§5.9) pass through an EventJournal: re-emitted events of a
 // re-simulation are deduplicated, abandoned undelivered ones dropped, events
 // of verified ticks are final.
@@ -89,6 +101,10 @@ namespace kfm::net {
 // Saved states for rollback (§6.1: 32 ticks ≈ 530 ms).
 inline constexpr uint32_t kRollbackWindow = 32;
 inline constexpr uint8_t kMaxInputDelayTicks = 3;
+// A snapshot load (initial sync, resync, resume) or a promotion runs forward
+// at most this many ticks (v0.70): the target comes from the server's Pong
+// tick, which a broken or hostile server could set anywhere.
+inline constexpr int32_t kMaxRunForwardTicks = 5 * sim::kTickHz;
 // Rollback depth histogram buckets: depths 0..62, the last bucket is >= 63.
 inline constexpr uint32_t kRollbackDepthBuckets = 64;
 
@@ -108,6 +124,9 @@ struct ClientConfig {
   uint64_t syncPingIntervalNs{50'000'000ull};  // until the session runs
   uint64_t serverTimeoutNs{5'000'000'000ull};
   uint64_t resyncRetryNs{1'000'000'000ull};
+  // An authoritative frame no later message will carry (see "A gap" above)
+  // is waited for this long before a resync repairs it.
+  uint64_t gapResyncNs{150'000'000ull};
   // RTT samples needed before the initial sync sets the lead.
   uint32_t syncRttSamples{3};
   // Ticks ticksDue() returns at most per call; a larger backlog is dropped.
@@ -162,12 +181,14 @@ struct ClientNetStats {
   int32_t arrivalMarginQ8{0};  // smoothed
   uint32_t ratePpm{kRateOnePpm};
   uint64_t hardJumps{0};
+  uint64_t runForwardClamped{0};  // forward runs cut to kMaxRunForwardTicks (v0.70)
   uint64_t clockDroppedTicks{0};
   // Consistency.
   uint64_t checksumsCompared{0};
   uint64_t checksumsSkipped{0};
   uint64_t checksumMismatches{0};
   uint64_t resyncRequests{0};
+  uint64_t gapResyncs{0};  // resyncs asked for to fill a gap in the stream (v0.70)
   uint64_t snapshotsLoaded{0};
   uint64_t matchRestarts{0};  // snapshots of an announced new match loaded
   // Traffic.
@@ -319,6 +340,7 @@ class NetClient {
   void adoptRestart();
   void advanceConfirmed();
   void checkChecksums();
+  void checkGap();
   void requestResync(Tick tick, uint32_t localSum);
   void sendInputs();
   void sendPing(uint64_t nowNs);
@@ -373,6 +395,10 @@ class NetClient {
   uint64_t nowNs_{0};
   std::optional<Tick> firstAuthTick_;
   std::optional<Tick> newestAuthPacketTick_;
+  // The latest first tick of an AuthInputs window received (the server's
+  // windows only move forward) and since when a frame before it is missing.
+  std::optional<Tick> windowStart_;
+  std::optional<uint64_t> gapSinceNs_;
   uint64_t authPacketsSinceFirst_{0};
   struct LastPong {
     Tick tick{};

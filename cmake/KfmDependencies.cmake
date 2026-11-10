@@ -167,6 +167,18 @@ if(KFM_WEBRTC)
           set_target_properties(${t} PROPERTIES FOLDER third_party)
         endif()
       endforeach()
+      # libdatachannel writes a WebSocket frame's 16- and 64-bit lengths
+      # through unaligned pointers (wstransport.cpp): harmless on every
+      # target here, but UBSan's alignment check aborts a sanitized test
+      # that sends a frame of 64 KiB or more. Third-party code is not what
+      # the sanitizer build is for.
+      if(KFM_SANITIZE MATCHES "undefined")
+        foreach(t datachannel datachannel-static)
+          if(TARGET ${t})
+            target_compile_options(${t} PRIVATE -fno-sanitize=alignment)
+          endif()
+        endforeach()
+      endif()
     endif()
   endif()
 endif()

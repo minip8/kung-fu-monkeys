@@ -46,16 +46,19 @@
 //           becomes the room's token, lobbyRoom() the code and region, and only then the peer
 //           connection is created and the offer sent) or `refused`
 //           (Disconnected, lastError() "lobby refused: <reason>"). After
-//           `joined` the socket carries plain signaling; a `closed` frame
-//           or the socket closing at any time is Disconnected, lastError()
-//           "lobby closed: <reason>" or "lobby connection closed". The socket
-//           stays open for the transport's lifetime (the lobby counts a
-//           room's occupancy by it). The connect timeout covers the lobby
-//           reply too. The message layer's token: the NetClient's Hello goes
-//           out once the transport is Connected, which is after `joined`, so
-//           a client hands the token over with NetClient::setToken(
-//           transport.connectionToken()) before its first pump() after
-//           lobbyRoom() appears (or builds the NetClient only then).
+//           `joined` the socket carries plain signaling; until Connected, a
+//           `closed` frame or the socket closing is Disconnected, lastError()
+//           "lobby closed: <reason>" or "lobby connection closed". Once
+//           Connected (lobby protocol v1.3) neither ends anything: the data
+//           channels alone decide, so a lobby restart leaves the match be; a
+//           `closed` other than `server_gone` still sets lastError() for the
+//           UI. The socket stays open for the transport's lifetime unless the
+//           lobby closes it (the lobby counts a room's occupancy by it, and by
+//           the server's `players` once it is gone); it is never redialled. The connect timeout
+//           covers the lobby reply too. The message layer's token: the NetClient's Hello goes out
+//           once the transport is Connected, which is after `joined`, so a client hands the token
+//           over with NetClient::setToken( transport.connectionToken()) before its first pump()
+//           after lobbyRoom() appears (or builds the NetClient only then).
 //
 // Threading: libdatachannel calls back on its own threads (in the browser on
 // the main thread). Callbacks only append to a mutex-guarded queue; poll()
@@ -68,6 +71,13 @@
 // and catches everything at the boundary (lastError() keeps the message),
 // so callers built with -fno-exceptions can use it. This header includes
 // nothing from rtc::.
+//
+// Send buffers: the unreliable lane drops a message once 64 KB wait to be
+// sent; the reliable lane cannot drop one, so a server disconnects a peer
+// with more than maxReliableBufferedBytes waiting (lastError() says so) and
+// reports it at the next poll(), which bounds what a peer that stops reading
+// costs the server. A client has no such cap: its backlog toward its one
+// server costs only itself.
 //
 // The connection token (§6.7) is held for the message layer, which sends it
 // in its first reliable message; the transport never validates it.
@@ -92,6 +102,11 @@ namespace kfm::net {
 enum class WebRtcLogLevel : uint8_t { None = 0, Fatal, Error, Warning, Info, Debug, Verbose };
 
 inline constexpr uint32_t kDefaultWebRtcConnectTimeoutMs = 10'000;
+// The reliable lane's send buffer per peer: a peer with more than this still
+// unsent (it stopped reading, or its link cannot keep up) is dropped rather
+// than left to grow the sender's memory. A match sends ~100 KB/s and a full
+// snapshot is at most kMaxReliableBytes, so this is seconds of backlog.
+inline constexpr size_t kDefaultMaxReliableBufferedBytes = size_t{1024} * 1024;
 
 struct WebRtcServerConfig {
   uint16_t signalingPort{
@@ -111,6 +126,10 @@ struct WebRtcServerConfig {
   // The host relays signaling (see "Lobby modes" above): no WebSocket server
   // is created and signalingPort/signalingBindAddress are ignored.
   bool externalSignaling{false};
+  // Reliable bytes a peer may have waiting to be sent; past it the peer is
+  // dropped (Disconnected; an external peer is reported by
+  // takeDroppedExternalPeers()). See kDefaultMaxReliableBufferedBytes.
+  size_t maxReliableBufferedBytes{kDefaultMaxReliableBufferedBytes};
 };
 
 // A client's request to the lobby (docs/lobby-protocol.md §3): create a room

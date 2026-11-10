@@ -1,10 +1,11 @@
 // Power-ups end to end (architecture §5.8): pickups through the rules table,
 // grants resolved by ModifierSystem, projectile modifiers riding on the
 // banana, the shield rows, arena spawners and the scripted bots. One test
-// per shipped power-up; the defs below mirror content/powerups.toml (the sim
+// per shipped power-up; the defs (powerup_util.hpp) mirror content/powerups.toml (the sim
 // tests never depend on the loader; tests/unit/content checks the TOML).
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
+#include "powerup_util.hpp"
 #include "scenario_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
@@ -26,38 +27,6 @@ constexpr uint8_t kAimRight = 0;
 const PlayerId kP0{0};
 const PlayerId kP1{1};
 const PlayerId kP2{2};
-
-// Indices of the shipped power-ups, in powerups.toml order.
-constexpr uint8_t kSpeed = 0;
-constexpr uint8_t kBig = 1;
-constexpr uint8_t kTriple = 2;
-constexpr uint8_t kShield = 3;
-constexpr uint8_t kFastHands = 4;
-
-// defaultContent() plus the throw_fast ability and the five power-ups.
-ContentDB powerUpContent() {
-  ContentDB c = defaultContent();
-  AbilityDef fast = c.abilities[c.player.abilities[kAbilitySlotThrow]];
-  fast.name = ContentName::of("throw_fast");
-  fast.cooldownTicks = 8;
-  fast.startupTicks = 1;
-  fast.activeTicks = 1;
-  fast.recoveryTicks = 3;
-  const uint8_t fastIndex = c.abilityCount++;
-  c.abilities[fastIndex] = fast;
-
-  ProjectileModifier big;
-  big.radiusMul = Fixed::fromInt(2);
-  big.speedMul = Fixed::fromRatio(85, 100);
-  addPowerUp(c, "speed_boost", 480,
-             {statGrant(StatKind::MoveSpeed, Fixed::fromRatio(3, 2), Fixed::zero())});
-  addPowerUp(c, "big_banana", 600, {projectileGrant(big)});
-  addPowerUp(c, "triple_banana", 900,
-             {statGrant(StatKind::AmmoMax, Fixed::one(), Fixed::fromInt(2))});
-  addPowerUp(c, "shield", 900, {tagGrant(Tag::Shielded)});
-  addPowerUp(c, "fast_hands", 600, {abilityGrant(kAbilitySlotThrow, fastIndex)});
-  return c;
-}
 
 Vec2 at(int32_t x, int32_t y) {
   return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)};

@@ -5,6 +5,7 @@
 #include "kfm/ai/vision.hpp"
 #include "kfm/core/assert.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
+#include "kfm/sim/step.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -58,6 +59,8 @@ void AgentHost::clear() {
   for (Slot& s : slots_)
     s = Slot{};
   invalidateContentHash();
+  filledAt_.reset();
+  observedAt_.reset();
 }
 
 void AgentHost::reinit(PlayerId slot, uint64_t seed) {
@@ -113,6 +116,15 @@ uint32_t AgentHost::wipes(PlayerId slot) const {
 void AgentHost::fill(sim::InputFrame& frame, const sim::WorldState& world,
                      const sim::MatchContent& content) {
   KFM_ASSERT(frame.tick == world.tick);
+  // The observe check (see the header): the world moved on since the last
+  // fill(), so the step that left it must have been observed.
+  if (filledAt_.has_value() && world.tick > *filledAt_ && observedAt_ != world.tick) {
+    ++missedObserves_;
+    KFM_ASSERT_MSG(!assertOnMissedObserve_,
+                   "AgentHost: the world was stepped since the last fill() without observe() "
+                   "(its bots hear no calls); call observe() after every step, or use step()");
+  }
+  filledAt_ = world.tick;
   const bool fog = content.mode.vision.fog();
   const bool windowEnds = turnWindowEnds(world, content);
   bool sightsReady = false;
@@ -184,6 +196,7 @@ void AgentHost::fill(sim::InputFrame& frame, const sim::WorldState& world,
 
 void AgentHost::observe(const sim::EventSink& events, const sim::WorldState& after,
                         const sim::MatchContent& content) {
+  observedAt_ = after.tick;
   const sim::ArenaDef& arena = content.arena;
   for (const sim::SimEvent& e : events) {
     if (e.kind != sim::EventKind::MonkeyCalled) continue;
@@ -204,9 +217,20 @@ void AgentHost::observe(const sim::EventSink& events, const sim::WorldState& aft
       if (listener == nullptr) continue;
       const Vec2 d = listener->transform.pos - from;
       if (abs(d.x) > range || abs(d.y) > range) continue;
-      if (s.heardCount < s.heard.size()) s.heard[s.heardCount++] = call;
+      if (s.heardCount < s.heard.size()) {
+        s.heard[s.heardCount++] = call;
+        ++s.stats.heard;
+      }
     }
   }
+}
+
+void AgentHost::step(sim::WorldState& world, sim::InputFrame& frame,
+                     const sim::MatchContent& content, sim::EventSink& sink) {
+  fill(frame, world, content);
+  sink.clear();
+  sim::step(world, frame, content, sink);
+  observe(sink, world, content);
 }
 
 }  // namespace kfm::ai

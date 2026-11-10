@@ -140,6 +140,7 @@ struct Report {
   uint64_t mismatches{0};
   uint64_t resyncs{0};
   uint64_t compared{0};
+  uint64_t minCompared{0};  // the fewest checksums any one client compared
   uint64_t overflows{0};
   uint64_t hardJumps{0};
   uint64_t anchorRollbacks{0};

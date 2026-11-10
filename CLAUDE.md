@@ -204,7 +204,8 @@ build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --ma
 #   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
 #   v0.60: the --json objects are an append-only contract (docs/arena-result.md, normative; a test freezes every key,
 #   its order and type: a new key is appended to the code, the doc and the test, never inserted or renamed); the match
-#   object carries content_hash and build_hash (zero until a build stamps one)
+#   object carries content_hash and build_hash (the build id: 0 unless configured with -DKFM_BUILD_ID=<hex>, as
+#   releases are; v0.70: peers of different build ids are refused and told to reload)
 build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5   # v0.34: the grid at 1-tick turns (courtyard)
 build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
 #   v0.35: one --team LIST per team of a team mode (no --bot/--bots): the specs fill that team's slots in order, the
@@ -443,10 +444,12 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   spawn-order slot bias of §12 is still open (tournaments rotate).
 - The client UI (v0.43): Dear ImGui with the game font and the palette of `apps/client/ui_style.hpp`
   (no colour literals in the HUD or screens); screen state lives in headless models in
-  `apps/client/core` (`menus.hpp`, `online_menu.hpp`, `scoreboard.hpp`), tested without a window;
+  `apps/client/core` (`menus.hpp`, `online_menu.hpp`, `scoreboard.hpp`, `hud_view.hpp`), tested without a window;
   hud.cpp / screens.cpp only draw them. `assets/fonts/` holds source assets with their licence and
-  is compiled in (never read at run time: the browser has no filesystem). Clipboard and sharing
-  go through `IPlatformServices` (`ShareHooks` injected by main.cpp), never SDL or JS directly.
+  is compiled in (never read at run time: the browser has no filesystem). Clipboard, sharing,
+  saved preferences, the page URL and the replay download go through `IPlatformServices`
+  (v0.70: one `PlatformHooks` value built in `apps/client/client_platform_native.cpp` or
+  `client_platform_web.cpp`), never SDL or JS directly: `main.cpp` has no `EM_JS`.
   v0.55: what is highlighted follows the last menu device (`core/menu_highlight.hpp`): mouse mode
   highlights only the hovered item, keys/pad mode the focus, and the first key press from mouse
   mode only reveals it. Draw menu buttons and rows through `ui::bigButton` / `ui::showsFocus` /
@@ -457,7 +460,10 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   (`round_end_ticks`).
 - Fog lives in `engine/ai`, never in the sim: a `vision` change is content hash only, and the
   `all` vision must stay the pre-fog observation byte for byte (a test pins it). Hosts call
-  `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls.
+  `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls
+  (v0.70: a host that steps the world itself calls `AgentHost::step`, which does fill, step and
+  observe; `fill()` asserts the previous step was observed). Agents are made by `ai::BotFactory`
+  (`kfm::ai_bots`) and seeded by `ai::agentSeed`, never by a per-host copy.
 - Teams never enter `WorldState`: a free-for-all config (slot i = team i) must keep every
   checksum. New rows that hurt or push get an Enemy row and an Ally twin needing
   `Tag::FriendlyFire` on the receiving monkey (a test pins the twins); hosts fill
@@ -492,6 +498,16 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
   round-ending rule must wait for falls (`anyFalling`), or a doomed last monkey wins; the round
   kinds also end a dry round (no banana left anywhere, `roundRanDry`, `[[mode]]
   dry_round_ticks`), and anything new that makes bananas must count in `bananaLeft`.
+- Serialised structs (v0.70): every `visit()` overload in `kfm/sim/visit.hpp` is followed by a
+  `static_assert(fieldCount<T>() == n)`; a new field means the visitor line, the count and a
+  mutation in `visit_test.cpp` / `content_test.cpp` (the tests pin their count the same way). A
+  new corpus entry needs an expectation row in `tests/determinism/corpus_events_test.cpp`. The
+  scenario tests' hand copies of shipped defs are checked against the TOML by
+  `tests/unit/content/mirror_test.cpp`: edit both.
+- Lobby protocol v1.3 (v0.70): a running match does not depend on the lobby (a server keeps its
+  peers and room across a lost link and claims the room back at `register`; a client with open
+  data channels ignores its lobby socket closing). The lobby never emits a frame over 64 KiB;
+  per-address limits refuse `limited`; the units pass the lobby secret through the environment.
 - A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
   `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
 

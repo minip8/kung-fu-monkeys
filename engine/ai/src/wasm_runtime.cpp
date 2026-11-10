@@ -413,6 +413,14 @@ std::expected<WasmModule, LoadError> WasmModule::load(std::span<const std::byte>
                                                    std::to_string(config.maxMemoryBytes));
   }
 
+  // Tables: instantiation allocates and fills them outside any budget.
+  const uint64_t tableElements = kfm_wamr_module_table_elements(impl->module);
+  if (tableElements > config.maxTableElements) {
+    return fail(LoadErrorKind::TableTooLarge, "tables allocate " + std::to_string(tableElements) +
+                                                  " elements, the cap is " +
+                                                  std::to_string(config.maxTableElements));
+  }
+
   // A probe instance: runs the start function under fuelInit and asks the
   // module for its ABI version and observation buffer, so a bad module is
   // refused here rather than in the middle of a match.
@@ -619,6 +627,8 @@ std::string_view toString(LoadErrorKind kind) {
       return "abi-mismatch";
     case LoadErrorKind::BadObsBuffer:
       return "bad-obs-buffer";
+    case LoadErrorKind::TableTooLarge:
+      return "table-too-large";
   }
   return "unknown";
 }

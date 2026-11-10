@@ -123,6 +123,7 @@
 // back into the viewer from the menu. Hot reload (--content DIR) starts
 // there, as it would have at startup without --replay.
 #include "client_audio.hpp"
+#include "client_platform.hpp"
 #include "core/client_options.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
@@ -135,6 +136,7 @@
 #include "core/replay_session.hpp"
 #include "debug_overlay.hpp"
 #include "hud.hpp"
+#include "kfm/build_id.hpp"
 #include "kfm/content/app_content.hpp"
 #include "kfm/content/loader.hpp"
 #include "kfm/platform/debug_ui.hpp"
@@ -154,15 +156,8 @@
 #include "kfm/net/webrtc_transport.hpp"
 #endif
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten/em_js.h>
-#endif
-
-#include <SDL3/SDL_clipboard.h>
 #include <SDL3/SDL_events.h>
 #include <SDL3/SDL_filesystem.h>
-#include <SDL3/SDL_scancode.h>
-#include <SDL3/SDL_stdinc.h>
 
 #include <algorithm>
 #include <bit>
@@ -201,12 +196,6 @@ enum class ReplayLoad : std::uint8_t { None = 0, Loading, Ready, Failed };
 // match.
 using client::kReplayMaxBytes;
 
-#ifdef __EMSCRIPTEN__
-constexpr bool kQuitItem = false;  // a browser tab is closed by the browser
-#else
-constexpr bool kQuitItem = true;
-#endif
-
 constexpr std::uint32_t kPauseSoonTicks = 90;           // --screen paused: the monkeys are out
 constexpr std::uint64_t kCopiedShowNs = 2'500'000'000;  // "Copied" after Copy link
 
@@ -235,7 +224,7 @@ struct App {
   // v0.43: the front end. The keyboard and pads reach the menus through
   // onEvent(); what they asked for is acted on in the frame.
   Screen screen = Screen::Menu;
-  client::MainMenu mainMenu{kQuitItem};
+  client::MainMenu mainMenu;  // made again once the services say whether Quit applies
   client::SettingsMenu settingsMenu;
   client::OnlineMenu onlineMenu;
   client::ButtonMenu overMenu;  // the match-over screen's buttons
@@ -253,8 +242,10 @@ struct App {
 #endif
   bool regionsQueried = false;  // asked once per visit to the Play online screen
   bool roomAnnounced = false;   // the session's room was printed
+  // The platform seam (client_platform.hpp): preferences, the clipboard and
+  // share sheet, the replay download, the page, Quit and hot reload.
   std::unique_ptr<platform::IPlatformServices> services;
-  std::string pageUrl;  // the browser's window.location.href; empty natively
+  std::string pageUrl;  // services->pageUrl(): the browser's address; natively KFM_PAGE_URL
   client::GamepadSet pads;
   client::DebugOverlay overlay;
   client::ClientAudio audio;
@@ -285,255 +276,10 @@ App gApp;
 
 // --- saved lobby settings (lobby_settings.hpp) ------------------------------------
 
-#ifdef __EMSCRIPTEN__
-EM_JS_DEPS(kfm_settings, "$stringToNewUTF8,$UTF8ToString");
-// localStorage can be missing or throw (privacy modes, sandboxed frames): the
-// settings are then simply not remembered. (JavaScript: clang-format would
-// break its operators.)
-// clang-format off
-EM_JS(char*, kfmLoadPrefJs, (const char* key), {
-  try {
-    const s = window.localStorage.getItem(UTF8ToString(key));
-    return s === null ? 0 : stringToNewUTF8(s);
-  } catch (e) {
-    return 0;
-  }
-});
-EM_JS(void, kfmSavePrefJs, (const char* key, const char* text), {
-  try {
-    window.localStorage.setItem(UTF8ToString(key), UTF8ToString(text));
-  } catch (e) {
-  }
-});
-// The page's address, for a room's invite link.
-EM_JS(char*, kfmPageUrlJs, (), {
-  try {
-    return stringToNewUTF8(String(window.location.href));
-  } catch (e) {
-    return 0;
-  }
-});
-// v0.43: Copy link and Share. Both need the page's transient activation,
-// which the click (one frame earlier) gives; a refusal is silent.
-EM_JS(int, kfmCopyTextJs, (const char* text), {
-  try {
-    if (!navigator.clipboard || !navigator.clipboard.writeText) return 0;
-    navigator.clipboard.writeText(UTF8ToString(text)).catch(() => {});
-    return 1;
-  } catch (e) {
-    return 0;
-  }
-});
-EM_JS(int, kfmCanShareJs, (), {
-  try {
-    return typeof navigator.share === 'function' && navigator.maxTouchPoints > 0 ? 1 : 0;
-  } catch (e) {
-    return 0;
-  }
-});
-EM_JS(int, kfmShareJs, (const char* title, const char* text, const char* url), {
-  try {
-    navigator.share({ title: UTF8ToString(title), text: UTF8ToString(text), url: UTF8ToString(url) })
-        .catch(() => {});
-    return 1;
-  } catch (e) {
-    return 0;
-  }
-});
-// M7 step 6: the replay viewer's download. kfmReplayFetchJs starts a CORS
-// fetch without credentials (the ladder's presigned R2 URLs allow GET from
-// the page's origin) and keeps the outcome in Module.kfmReplay; the frame
-// polls it (kfmReplayPollJs: -1 still running, -2 failed, else the byte
-// count), copies the bytes into a buffer it allocated (kfmReplayTakeJs) or
-// takes the reason (kfmReplayErrorJs). A body past `cap` bytes is cut off
-// and refused; leaving the screen aborts the fetch (kfmReplayCancelJs).
-// The macro joins the body into one line: every statement ends in a ';'.
-EM_JS_DEPS(kfm_replay, "$stringToNewUTF8,$UTF8ToString");
-EM_JS(void, kfmReplayFetchJs, (const char* url, int cap), {
-  const state = { done: false, bytes: null, error: "", controller: null };
-  Module['kfmReplay'] = state;
-  const fail = (message) => {
-    if (state.done) return;
-    state.done = true;
-    state.bytes = null;
-    state.error = message;
-  };
-  try {
-    const target = UTF8ToString(url);
-    state.controller = typeof AbortController === 'function' ? new AbortController() : null;
-    const options = { mode: 'cors', credentials: 'omit' };
-    if (state.controller) options.signal = state.controller.signal;
-    const tooLarge = 'the replay is larger than ' + (cap >> 20) + ' MiB';
-    fetch(target, options)
-        .then(async (response) => {
-          if (!response.ok) {
-            fail('the server answered HTTP ' + response.status +
-                 (response.statusText ? ' ' + response.statusText : ""));
-            return;
-          }
-          const declared = Number(response.headers.get('Content-Length') || 0);
-          if (declared > cap) {
-            fail(tooLarge);
-            if (state.controller) state.controller.abort();
-            return;
-          }
-          let bytes = null;
-          if (response.body && typeof response.body.getReader === 'function') {
-            const reader = response.body.getReader();
-            const chunks = [];
-            let total = 0;
-            for (;;) {
-              const part = await reader.read();
-              if (part.done) break;
-              total += part.value.length;
-              if (total > cap) {
-                reader.cancel().catch(() => {});
-                fail(tooLarge);
-                return;
-              }
-              chunks.push(part.value);
-            }
-            bytes = new Uint8Array(total);
-            let at = 0;
-            for (const chunk of chunks) {
-              bytes.set(chunk, at);
-              at += chunk.length;
-            }
-          } else {
-            bytes = new Uint8Array(await response.arrayBuffer());
-            if (bytes.length > cap) {
-              fail(tooLarge);
-              return;
-            }
-          }
-          if (state.done) return;
-          state.bytes = bytes;
-          state.done = true;
-        })
-        .catch((e) => {
-          fail('the download failed (' + (e && e.message ? e.message : String(e)) +
-               '): the address is unreachable or does not allow this page (CORS)');
-        });
-  } catch (e) {
-    fail('the download could not start: ' + String(e));
-  }
-});
-EM_JS(int, kfmReplayPollJs, (), {
-  const state = Module['kfmReplay'];
-  if (!state || !state.done) return -1;
-  return state.bytes ? state.bytes.length : -2;
-});
-EM_JS(void, kfmReplayTakeJs, (unsigned char* out), {
-  const state = Module['kfmReplay'];
-  if (state && state.bytes && state.bytes.length > 0) HEAPU8.set(state.bytes, out);
-  Module['kfmReplay'] = null;
-});
-EM_JS(char*, kfmReplayErrorJs, (), {
-  const state = Module['kfmReplay'];
-  Module['kfmReplay'] = null;
-  return stringToNewUTF8(state && state.error ? state.error : 'unknown error');
-});
-EM_JS(void, kfmReplayCancelJs, (), {
-  const state = Module['kfmReplay'];
-  Module['kfmReplay'] = null;
-  if (!state) return;
-  state.done = true;
-  state.bytes = null;
-  if (state.controller) {
-    try {
-      state.controller.abort();
-    } catch (e) {
-    }
-  }
-});
-// clang-format on
-
-// localStorage keys: "kfm.settings", "kfm.guest_id".
-[[nodiscard]] std::string prefKey(const char* name) {
-  return std::string("kfm.") + name;
-}
-
-[[nodiscard]] std::string takeJsString(char* text) {
-  if (text == nullptr) return {};
-  std::string s(text);
-  std::free(text);  // NOLINT(cppcoreguidelines-no-malloc): allocated by stringToNewUTF8
-  return s;
-}
-#else
-// Files in SDL's preference directory: "settings.txt", "guest_id.txt".
-[[nodiscard]] std::filesystem::path prefPath(const char* name) {
-  char* dir = SDL_GetPrefPath("kfm", "kung-fu-monkeys");  // created if missing
-  if (dir == nullptr) return {};
-  std::filesystem::path p = std::filesystem::path(dir) / (std::string(name) + ".txt");
-  SDL_free(dir);
-  return p;
-}
-#endif
-
-[[nodiscard]] std::string loadPrefText(const char* name) {
-#ifdef __EMSCRIPTEN__
-  return takeJsString(kfmLoadPrefJs(prefKey(name).c_str()));
-#else
-  const std::filesystem::path path = prefPath(name);
-  if (path.empty()) return {};
-  const std::ifstream in(path, std::ios::binary);
-  if (!in) return {};
-  std::ostringstream text;
-  text << in.rdbuf();
-  return text.str();
-#endif
-}
-
-void savePrefText(const char* name, std::string_view text) {
-#ifdef __EMSCRIPTEN__
-  kfmSavePrefJs(prefKey(name).c_str(), std::string(text).c_str());
-#else
-  const std::filesystem::path path = prefPath(name);
-  if (path.empty()) return;
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  out << text;
-  if (!out) std::fprintf(stderr, "warning: cannot save %s\n", path.string().c_str());
-#endif
-}
-
-[[nodiscard]] std::string loadSettingsText() {
-  return loadPrefText("settings");
-}
-
-void saveSettingsText(const std::string& text) {
-  savePrefText("settings", text);
-}
-
-// IPlatformServices (M6a): the guest id kept beside the settings (made per
-// run under --no-settings, which stores nothing), the options' lobby as the
-// session directory; v0.43: the clipboard and the share sheet (SDL's
-// clipboard natively, navigator.clipboard / navigator.share in the browser).
-[[nodiscard]] std::unique_ptr<platform::IPlatformServices> makePlatformServices(
-    const client::ClientOptions& options) {
-  platform::GuestIdStore store;
-  if (options.settings) {
-    store.load = [] { return loadPrefText("guest_id"); };
-    store.save = [](std::string_view id) { savePrefText("guest_id", id); };
-  }
-  std::random_device device;
-  const auto clock = static_cast<std::uint64_t>(
-      std::chrono::high_resolution_clock::now().time_since_epoch().count());
-  const std::uint64_t a = (std::uint64_t{device()} << 32) | device();
-  platform::ShareHooks share;
-#ifdef __EMSCRIPTEN__
-  share.copy = [](std::string_view text) { return kfmCopyTextJs(std::string(text).c_str()) != 0; };
-  share.canShare = [] { return kfmCanShareJs() != 0; };
-  share.share = [](std::string_view title, std::string_view text, std::string_view url) {
-    return kfmShareJs(std::string(title).c_str(), std::string(text).c_str(),
-                      std::string(url).c_str()) != 0;
-  };
-#else
-  share.copy = [](std::string_view text) {
-    return SDL_SetClipboardText(std::string(text).c_str());
-  };
-#endif
-  return std::make_unique<platform::LocalPlatformServices>(std::move(store), options.lobby, a,
-                                                           clock, std::move(share));
+// The lobby settings and the name, kept as the "settings" preference unless
+// --no-settings.
+void saveSettings(App& app) {
+  if (app.options.settings) app.services->savePref("settings", client::settingsText(app.options));
 }
 
 // The lobby's settings changed (panel or keys): apply them to the lobby's
@@ -557,7 +303,7 @@ void applyLobbySettings(App& app) {
   s.sampler().setMouseAimEnabled(ls.mouseAim);
   if (app.net) app.net->sampler().setMouseAimEnabled(ls.mouseAim);
   client::storeLobbySettings(ls, app.content.db, app.options);
-  if (app.options.settings) saveSettingsText(client::settingsText(app.options));
+  saveSettings(app);
 }
 
 // What changed outside the panel (the - / = keys, joins taking bot slots,
@@ -574,14 +320,11 @@ void syncLobbySettings(App& app) {
 constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-forward effects
 
 // The rigged character model: generated by the build next to the executable
-// natively (kfm_use_test_rig), embedded at a fixed path under Emscripten.
+// natively (kfm_use_test_rig), embedded under Emscripten at
+// /content/models/test_rig.glb, where SDL's base path is "/".
 [[nodiscard]] std::string characterModelPath() {
-#ifdef __EMSCRIPTEN__
-  return "/content/models/test_rig.glb";
-#else
   const char* base = SDL_GetBasePath();  // owned by SDL, ends with a separator
   return std::string(base != nullptr ? base : "") + "content/models/test_rig.glb";
-#endif
 }
 
 // (Re)initialises the renderer when the match's arena or the loaded
@@ -707,6 +450,7 @@ ClientTransport makeTransport(const App& app, const client::NetSessionConfig& co
 void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
                   std::optional<client::LobbyTarget> room = std::nullopt) {
   client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  config.buildId = kfm::kBuildId;  // the server's Hello check and the lobby's
   if (app.options.verbose)
     std::fprintf(stderr, "kfm_client: startNetwork atStartup=%d\n", int{atStartup});
   if (room) {
@@ -759,7 +503,7 @@ void pollRegions(App& app, std::uint64_t now) {
                                  .region = {},
                                  .code = {},
                                  .token = {},
-                                 .buildId = client::netSessionConfig(app.options, false).buildId,
+                                 .buildId = kfm::kBuildId,
                                  .contentHash = app.content.hash};
     if (auto t = net::WebRtcTransport::createClient(wc)) app.regionsQuery = std::move(*t);
     return;
@@ -841,7 +585,7 @@ void chooseMainItem(App& app, client::MainMenuItem item) {
 // Escape (or a pad's Back) on a menu screen.
 void menuBack(App& app) {
   if (app.screen == Screen::Menu) {
-    if (kQuitItem) app.quit = true;
+    if (app.services->canQuit()) app.quit = true;
     return;
   }
   app.screen = Screen::Menu;
@@ -912,33 +656,29 @@ bool pauseMenuEvent(App& app, const platform::InputEvent& input) {
   return press;
 }
 
-// Hot reload (natively, content from a directory, not --no-hot-reload):
-// the watcher polls content/ about once a second. Local play's: a replay
-// plays the content it names, so with --replay it starts when the viewer
-// leaves for the menu.
+// Hot reload (natively: the services' localFiles(); content from a
+// directory, not --no-hot-reload): the watcher polls content/ about once a
+// second. Local play's: a replay plays the content it names, so with
+// --replay it starts when the viewer leaves for the menu.
 void startHotReload(App& app) {
-#ifndef __EMSCRIPTEN__
-  if (app.options.hotReload && !app.content.embedded() && !app.contentWatcher.active()) {
+  if (app.services->localFiles() && app.options.hotReload && !app.content.embedded() &&
+      !app.contentWatcher.active()) {
     app.contentWatcher = content::ContentWatcher(app.content.dir);
   }
-#else
-  static_cast<void>(app);
-#endif
 }
 
 // --- the replay viewer (M7 step 6) ---------------------------------------------------
 
-// The replay cannot be shown: the screen says why. Natively a smoke run
-// (--exit-after-frames) then exits non-zero.
+// The replay cannot be shown: the screen says why. A smoke run
+// (--exit-after-frames) then exits non-zero (natively: a browser's main()
+// never returns).
 void failReplay(App& app, std::string reason) {
   app.replayState = ReplayLoad::Failed;
   app.replayError = std::move(reason);
   app.replay.reset();
   std::fprintf(stderr, "error: replay %s: %s\n", app.options.replay.c_str(),
                app.replayError.c_str());
-#ifndef __EMSCRIPTEN__
   if (app.options.exitAfterFrames != 0) app.exitCode = EXIT_FAILURE;
-#endif
 }
 
 void loadReplay(App& app, std::span<const std::byte> bytes, std::uint64_t now) {
@@ -968,52 +708,34 @@ void loadReplay(App& app, std::span<const std::byte> bytes, std::uint64_t now) {
   app.replayControls = client::ReplayControls{};
 }
 
-// --replay at startup: natively the file is read at once; in the browser
-// the download starts and pollReplayDownload() picks it up.
+// The replay's download (IPlatformServices: natively the file, read at
+// once; in the browser a fetch), polled at the top of the replay frame.
+void pollReplayDownload(App& app, std::uint64_t now) {
+  if (app.replayState != ReplayLoad::Loading) return;
+  const platform::Download d = app.services->pollDownload();
+  if (d.state == platform::Download::State::Failed) {
+    failReplay(app, d.error);
+  } else if (d.state == platform::Download::State::Done) {
+    loadReplay(app, d.bytes, now);
+  }
+}
+
+// --replay at startup: natively the file is read before the first frame; in
+// the browser the download starts and the replay frame picks it up.
 void startReplay(App& app, std::uint64_t now) {
   app.screen = Screen::Replay;
   app.replayState = ReplayLoad::Loading;
-#ifdef __EMSCRIPTEN__
-  static_cast<void>(now);
-  std::printf("kfm_client: downloading replay %s\n", app.options.replay.c_str());
-  std::fflush(stdout);
-  kfmReplayFetchJs(app.options.replay.c_str(), static_cast<int>(kReplayMaxBytes));
-#else
-  std::vector<std::byte> bytes;
-  std::string error;
-  if (!client::readFileBytes(app.options.replay, bytes, error)) {
-    failReplay(app, error);
-    return;
+  app.services->startDownload(app.options.replay, kReplayMaxBytes);
+  pollReplayDownload(app, now);
+  if (app.replayState == ReplayLoad::Loading) {
+    std::printf("kfm_client: downloading replay %s\n", app.options.replay.c_str());
+    std::fflush(stdout);
   }
-  loadReplay(app, bytes, now);
-#endif
-}
-
-// The browser's download, polled at the top of the replay frame.
-void pollReplayDownload(App& app,  // NOLINT(misc-const-correctness): written in the browser
-                        std::uint64_t now) {
-#ifdef __EMSCRIPTEN__
-  if (app.replayState != ReplayLoad::Loading) return;
-  const int size = kfmReplayPollJs();
-  if (size == -1) return;
-  if (size < 0) {
-    failReplay(app, "cannot download it: " + takeJsString(kfmReplayErrorJs()));
-    return;
-  }
-  std::vector<std::byte> bytes(static_cast<std::size_t>(size));
-  kfmReplayTakeJs(reinterpret_cast<unsigned char*>(bytes.data()));
-  loadReplay(app, bytes, now);
-#else
-  static_cast<void>(app);
-  static_cast<void>(now);
-#endif
 }
 
 // Main menu or Escape: the viewer closes for good (no way back from the menu).
 void leaveReplay(App& app) {
-#ifdef __EMSCRIPTEN__
-  kfmReplayCancelJs();
-#endif
+  app.services->cancelDownload();
   app.replay.reset();
   app.replayState = ReplayLoad::None;
   app.replayControls = client::ReplayControls{};
@@ -1090,12 +812,14 @@ void replayEvent(App& app, const platform::InputEvent& input) {
                      platform::Window::nowNs());
 }
 
-// App shortcuts that are not game bindings.
-void handleShortcut(App& app, const SDL_Event& event) {
-  if (event.type != SDL_EVENT_KEY_DOWN || event.key.repeat) return;
+// App shortcuts that are not game bindings (key presses; repeats never
+// arrive as InputEvents).
+void handleShortcut(App& app, const platform::InputEvent& input) {
+  using platform::Key;
+  if (input.kind != platform::InputEventKind::KeyDown) return;
   MatchSession& s = *app.session;
-  const SDL_Scancode sc = event.key.scancode;
-  if (sc == SDL_SCANCODE_F1) {
+  const Key key = input.key;
+  if (key == Key::F1) {
     app.overlay.open = !app.overlay.open;
     return;
   }
@@ -1104,39 +828,39 @@ void handleShortcut(App& app, const SDL_Event& event) {
   if (app.screen == Screen::Replay) return;
   // v0.46: Escape over a running match is the pause menu's (onEvent), and
   // the developer's P / O wait while it is open.
-  if (app.pauseMenu.isOpen() || (sc == SDL_SCANCODE_ESCAPE && pauseApplies(app))) return;
+  if (app.pauseMenu.isOpen() || (key == Key::Escape && pauseApplies(app))) return;
   if (app.net) {
     // Online the server's clock rules: no pause, step or bot keys.
-    if (sc == SDL_SCANCODE_ESCAPE) leaveNetwork(app);
+    if (key == Key::Escape) leaveNetwork(app);
     return;
   }
   if (app.screen != Screen::Play) {
-    if (sc == SDL_SCANCODE_ESCAPE) menuBack(app);
+    if (key == Key::Escape) menuBack(app);
     return;
   }
-  switch (sc) {
-    case SDL_SCANCODE_ESCAPE:
+  switch (key) {
+    case Key::Escape:
       if (s.phase() == SessionPhase::Match) {
         s.returnToLobby();
       } else {
         app.screen = Screen::Menu;
       }
       break;
-    case SDL_SCANCODE_P:
+    case Key::P:
       if (s.phase() == SessionPhase::Match) s.setPaused(!s.paused());
       break;
-    case SDL_SCANCODE_O:
+    case Key::O:
       if (s.phase() == SessionPhase::Match) {
         s.setPaused(true);
         s.requestSingleStep();
       }
       break;
-    case SDL_SCANCODE_MINUS:
+    case Key::Minus:
       if (s.phase() == SessionPhase::Lobby && s.botCount() > 0) {
         s.setBotCount(static_cast<std::uint8_t>(s.botCount() - 1));
       }
       break;
-    case SDL_SCANCODE_EQUALS:
+    case Key::Equals:
       if (s.phase() == SessionPhase::Lobby) {
         s.setBotCount(static_cast<std::uint8_t>(s.botCount() + 1));
       }
@@ -1163,9 +887,9 @@ void onEvent(void* user, const SDL_Event& event) {
   auto* app = static_cast<App*>(user);
   if (isGesture(event)) app->audio.onUserGesture();
   app->pads.onEvent(event);
-  handleShortcut(*app, event);
   const auto input = client::translateSdlEvent(event);
   if (!input) return;
+  handleShortcut(*app, *input);
   app->highlight.onEvent(*input);  // v0.55: mouse motion and clicks: pointer mode
   // While a debug text field has the keyboard, key presses stay out of the
   // game; v0.45: a click on a window (the menus, the lobby panel, the
@@ -1249,7 +973,9 @@ void onEvent(void* user, const SDL_Event& event) {
     const client::MenuAction action = app->menuInput.translate(*input, bound);
     if (revealOnly(*app, action, client::isActivateEvent(*input, bound))) return;
     app->overMenu.apply(action);
-    if (client::isActivateEvent(*input, bound) && app->overMenu.focus() == 0) {
+    if (client::isActivateEvent(*input, bound) &&
+        client::matchOverActionAt(client::localMatchOverActions(), app->overMenu.focus()) ==
+            client::MatchOverAction::PlayAgain) {
       s.restart(platform::Window::nowNs(), true);
       return;
     }
@@ -1311,7 +1037,7 @@ void menuFrame(App& app, std::uint64_t now) {
         app.audio.click();
         std::printf("kfm_client: name %s\n", app.options.nick.c_str());
         std::fflush(stdout);
-        if (app.options.settings) saveSettingsText(client::settingsText(app.options));
+        saveSettings(app);
       }
       if (out.back) menuBack(app);
       break;
@@ -1417,13 +1143,13 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
     }
     if (view.overScreen) {
       // v0.43: the match-over screen: Play again (a new seed) or the lobby.
-      client::MatchOverView over = client::matchOverView(view, app.renderState);
-      over.buttons = {"Play again", "Back to lobby"};
-      std::optional<std::size_t> pick = client::drawMatchOver(over, app.overMenu);
-      if (std::exchange(app.overActivate, false) && !pick) pick = app.overMenu.focus();
+      const client::MatchOverView over = client::localMatchOverView(view, app.renderState.hud);
+      std::optional<client::MatchOverAction> pick = client::drawMatchOver(over, app.overMenu);
+      if (std::exchange(app.overActivate, false) && !pick)
+        pick = over.actionAt(app.overMenu.focus());
       if (pick) {
         app.audio.click();
-        if (*pick == 0) {
+        if (*pick == client::MatchOverAction::PlayAgain) {
           s.restart(now, true);
         } else {
           s.returnToLobby();
@@ -1461,20 +1187,14 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
   const std::optional<net::RoomStateMsg>& room = n.roomState();
   if (!room) return;
   if (room->phase == net::RoomPhase::Over) {
-    client::MatchOverView over = client::matchOverView(view, app.renderState);
-    if (n.isHost()) {
-      over.buttons = {"Play again", "Leave"};
-    } else {
-      over.buttons = {"Leave"};
-      over.waiting = "Waiting for " +
-                     (room->host.isValid() ? n.slotName(room->host) : std::string("the host")) +
-                     " to play again";
-    }
-    std::optional<std::size_t> pick = client::drawMatchOver(over, app.overMenu);
-    if (std::exchange(app.overActivate, false) && !pick) pick = app.overMenu.focus();
+    const client::MatchOverView over =
+        client::roomMatchOverView(view, app.renderState.hud, n.isHost(),
+                                  room->host.isValid() ? n.slotName(room->host) : std::string());
+    std::optional<client::MatchOverAction> pick = client::drawMatchOver(over, app.overMenu);
+    if (std::exchange(app.overActivate, false) && !pick) pick = over.actionAt(app.overMenu.focus());
     if (pick) {
       app.audio.click();
-      if (over.buttons[*pick] == "Play again") {
+      if (*pick == client::MatchOverAction::PlayAgain) {
         n.start();
       } else {
         app.leaveRequested = true;
@@ -1753,6 +1473,12 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     std::fprintf(stderr, "error: %s\n%s", error.c_str(), client::kUsage);
     return EXIT_FAILURE;
   }
+  // The platform seam first: the saved settings are its preferences. (The
+  // settings text never holds the lobby, so the first parse's is the one.)
+  app.services = client::makeClientPlatformServices(
+      client::ClientPlatformConfig{.lobbyUrl = app.options.lobby, .persist = app.options.settings});
+  app.mainMenu = client::MainMenu{app.services->canQuit()};
+  app.pageUrl = app.services->pageUrl();  // usually empty natively: Copy link copies the code
   {
     content::Diagnostics diag;
     const char* base = SDL_GetBasePath();  // owned by SDL; null under Emscripten is fine
@@ -1770,7 +1496,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   // Saved lobby settings first, then the command line (or URL) again on top,
   // so a flag always wins for this run.
   if (app.options.settings) {
-    const std::string saved = loadSettingsText();
+    const std::string saved = app.services->loadPref("settings");
     if (!saved.empty()) {
       client::ClientOptions merged;
       std::vector<std::string> warnings;
@@ -1784,7 +1510,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   if (app.options.nick.empty()) {
     app.options.nick = client::randomMonkeyName(
         static_cast<std::uint64_t>(std::chrono::system_clock::now().time_since_epoch().count()));
-    if (app.options.settings) saveSettingsText(client::settingsText(app.options));
+    saveSettings(app);
   }
   client::LobbySettings lobby;
   if (!client::lobbySettingsFrom(app.options, app.content.db, lobby, error)) {
@@ -1795,14 +1521,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   app.lobby.settings() = lobby;
   app.roomMenu.setRoomRows(true);
   app.onlineMenu.setRegion(lobby.region);
-  app.services = makePlatformServices(app.options);
   app.mainMenu.setOnlineAvailable(!app.services->lobbyUrl().empty() ||
                                   !app.options.connect.empty());
-#ifdef __EMSCRIPTEN__
-  app.pageUrl = takeJsString(kfmPageUrlJs());
-#else
-  app.pageUrl = client::defaultPageUrl();  // usually empty: Copy link copies the code
-#endif
   if (!app.services->lobbyUrl().empty()) {
     std::printf("kfm_client: lobby %s, guest %.8s\n", app.services->lobbyUrl().c_str(),
                 app.services->guestId().c_str());

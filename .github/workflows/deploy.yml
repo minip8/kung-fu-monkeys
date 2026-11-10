@@ -18,6 +18,18 @@ name: Deploy
 # creates the pool, provider and service account and prints the variables).
 # Without KFM_VMS the job is skipped and the VMs are updated by hand.
 #
+# The build id (architecture §5.1, v0.70; cmake/KfmBuildId.cmake): every
+# artefact of a run is configured with -DKFM_BUILD_ID set to the first 8 hex
+# digits of the commit it builds (00000001 in the 1-in-4-billion case where
+# those are all zero, since 0 means an unstamped build): the server image,
+# the page and the three kfm_arena archives of a tag carry the same non-zero
+# id, which the servers check in Hello and the lobby in create/join, and
+# kfm_arena writes into its replays and JSON (build_hash). From the commit
+# rather than the tag name: the id must change whenever the code does, a
+# manual run has no tag, and a moved tag must not pass old code as new.
+# A manual run is stamped the same way, so its images and preview page match
+# each other (and, like any other build, not a different release's servers).
+#
 # M7 step 1 (architecture §8 "The ladder", §11; v0.59): a tag is also a
 # GitHub release. The `release` job creates it (once; a re-run finds it) and
 # two jobs upload to it with --clobber, so a re-run replaces its own assets:
@@ -143,10 +155,20 @@ jobs:
       - uses: lukka/get-cmake@latest
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
+      - name: Build id
+        # The first 8 hex digits of the commit (see the header comment).
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="${GITHUB_SHA::8}"
+          if [[ "$id" =~ ^0+$ ]]; then id=00000001; fi
+          echo "KFM_BUILD_ID=$id" >> "$GITHUB_ENV"
+          echo "build id $id"
       - name: Configure
         run: >-
           cmake --preset server-headless -DKFM_USE_VCPKG=OFF -DKFM_WEBRTC=OFF
-          -DKFM_BUILD_TESTS=OFF -DKFM_CXX23_PROBE=OFF ${{ matrix.cmake_args }}
+          -DKFM_BUILD_TESTS=OFF -DKFM_CXX23_PROBE=OFF -DKFM_BUILD_ID=${{ env.KFM_BUILD_ID }}
+          ${{ matrix.cmake_args }}
       - name: Build kfm_arena
         run: cmake --build --preset server-headless --target kfm_arena
       - name: Smoke (reference bots, then a wasm module)
@@ -156,6 +178,10 @@ jobs:
           arena=build/server-headless/apps/arena/kfm_arena
           "$arena" --bots 4 --ticks 600 --quiet
           "$arena" --bot tests/fixtures/bots/echo.wasm --bots 2 --ticks 300 --quiet
+          # Stamped: the JSON names this build.
+          "$arena" --bots 2 --ticks 60 --json | tee arena.json
+          grep -q "\"build_hash\":\"$KFM_BUILD_ID\"" arena.json \
+            || { echo "::error::kfm_arena does not carry build id $KFM_BUILD_ID"; exit 1; }
       - name: Package
         id: package
         shell: bash
@@ -199,7 +225,8 @@ jobs:
           kfm_arena $ver ($KFM_PLATFORM)
 
           The headless match runner of Kung Fu Monkeys, built from
-          $GITHUB_SERVER_URL/$GITHUB_REPOSITORY at $GITHUB_SHA.
+          $GITHUB_SERVER_URL/$GITHUB_REPOSITORY at $GITHUB_SHA
+          (build id $KFM_BUILD_ID: the build_hash of its replays and --json).
           Bots are wasm modules (the ABI is docs/bot-abi.md at the same tag) or the
           built-in reference bot; the game content is compiled in (--content DIR
           overrides it).
@@ -284,6 +311,15 @@ jobs:
           - { image: kfm-lobby,  dockerfile: deploy/Dockerfile.lobby }
     steps:
       - uses: actions/checkout@v4
+      - name: Build id
+        # The first 8 hex digits of the commit (see the header comment).
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="${GITHUB_SHA::8}"
+          if [[ "$id" =~ ^0+$ ]]; then id=00000001; fi
+          echo "KFM_BUILD_ID=$id" >> "$GITHUB_ENV"
+          echo "build id $id"
       - name: Image name and tags
         id: meta
         run: |
@@ -308,6 +344,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          # Read by Dockerfile.server only (the lobby has no build id).
+          build-args: |
+            KFM_BUILD_ID=${{ env.KFM_BUILD_ID }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -378,8 +417,17 @@ jobs:
       - uses: mymindstorm/setup-emsdk@v14
         with:
           version: latest
+      - name: Build id
+        # The first 8 hex digits of the commit (see the header comment).
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="${GITHUB_SHA::8}"
+          if [[ "$id" =~ ^0+$ ]]; then id=00000001; fi
+          echo "KFM_BUILD_ID=$id" >> "$GITHUB_ENV"
+          echo "build id $id"
       - name: Configure
-        run: cmake --preset wasm
+        run: cmake --preset wasm -DKFM_BUILD_ID=${{ env.KFM_BUILD_ID }}
       - name: Build kfm_client (html + js + wasm)
         run: cmake --build --preset wasm --target kfm_client
       - name: Assemble this release's page

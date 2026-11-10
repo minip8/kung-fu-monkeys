@@ -1,9 +1,22 @@
-//! Wire helpers for lobby protocol v1.2 (docs/lobby-protocol.md §1-§2): every
+//! Wire helpers for lobby protocol v1.3 (docs/lobby-protocol.md §1-§2): every
 //! frame is a flat JSON object whose values are all strings.
 
 use std::collections::HashMap;
 
 use rand::Rng;
+
+/// The protocol version this lobby speaks (`registered`'s `version`, v1.3).
+pub const VERSION: &str = "1.3";
+
+/// Whether a `version` value ("1.3", "1.10", "2.0") is 1.3 or later.
+pub fn at_least_v1_3(version: &str) -> bool {
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(major), Some(minor)) => (major, minor) >= (1, 3),
+        (Some(major), None) => major >= 2,
+        _ => false,
+    }
+}
 
 /// Alphabet of room codes: no I, O, 0 or 1.
 pub const CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -11,6 +24,16 @@ pub const CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 pub const CODE_LEN: usize = 5;
 /// Largest frame either side accepts (`kfm::net::signaling::kMaxMessageBytes`).
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
+
+/// Longest region label (`valid_region`).
+pub const MAX_REGION_BYTES: usize = 32;
+
+/// The most distinct regions whose `regions` reply (every region in `list`
+/// and again in `free`, comma-separated) fits in a frame of `max_frame_bytes`.
+pub const fn max_regions_in_a_frame(max_frame_bytes: usize) -> usize {
+    // {"free":"…","list":"…","type":"regions"} is 42 bytes around the lists.
+    max_frame_bytes.saturating_sub(64) / (2 * (MAX_REGION_BYTES + 1))
+}
 
 /// WebSocket close code after a `refused` or `closed` message.
 pub const CLOSE_NORMAL: u16 = 1000;
@@ -46,6 +69,11 @@ pub fn closed(reason: &str) -> String {
     encode(&[("type", "closed"), ("reason", reason)])
 }
 
+/// A room code's shape: `CODE_LEN` characters of `CODE_ALPHABET` (upper case).
+pub fn valid_code(code: &str) -> bool {
+    code.len() == CODE_LEN && code.bytes().all(|b| CODE_ALPHABET.contains(&b))
+}
+
 /// A fresh room code (uniqueness among live rooms is the caller's job).
 pub fn random_code() -> String {
     let mut rng = rand::rng();
@@ -73,7 +101,7 @@ pub fn valid_token(token: &str) -> bool {
 /// comma-separated.
 pub fn valid_region(region: &str) -> bool {
     !region.is_empty()
-        && region.len() <= 32
+        && region.len() <= MAX_REGION_BYTES
         && region
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
@@ -124,6 +152,18 @@ mod tests {
         let text = encode(&[("type", "signal"), ("msg", r#"{"type":"offer"}"#)]);
         let fields = parse(&text).unwrap();
         assert_eq!(fields["msg"], r#"{"type":"offer"}"#);
+    }
+
+    #[test]
+    fn versions_compare() {
+        assert!(at_least_v1_3("1.3"));
+        assert!(at_least_v1_3("1.10"));
+        assert!(at_least_v1_3("2.0"));
+        assert!(at_least_v1_3("2"));
+        assert!(!at_least_v1_3("1.2"));
+        assert!(!at_least_v1_3("1"));
+        assert!(!at_least_v1_3(""));
+        assert!(!at_least_v1_3("x.y"));
     }
 
     #[test]

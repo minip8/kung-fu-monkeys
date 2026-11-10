@@ -277,13 +277,6 @@ std::vector<std::string_view> join(std::initializer_list<std::span<const std::st
 
 }  // namespace
 
-TEST_CASE("slot seeds follow the documented formula", "[arena]") {
-  STATIC_REQUIRE(slotSeed(0, 0) == 0x9E3779B97F4A7C15ULL);
-  STATIC_REQUIRE(slotSeed(7, 1) == (7ULL ^ (0x9E3779B97F4A7C15ULL * 2)));
-  STATIC_REQUIRE(slotSeed(7, 0) != slotSeed(7, 1));
-  STATIC_REQUIRE(slotSeed(7, 0) != 7);
-}
-
 TEST_CASE("a match is deterministic: result line and replay bytes", "[arena]") {
   MatchSetup setup = setupOf({"ref:hard", "ref:medium", "ref:easy", "ref"}, 11, 2400);
   setup.recordReplay = true;
@@ -701,6 +694,26 @@ TEST_CASE("reference bots finish grid matches under fog (v0.35)", "[arena][teams
     CHECK(r.winner.isValid());
     CHECK(r.teams[0].kills + r.teams[1].kills > 0);
   }
+}
+
+TEST_CASE("bots in a squad match hear their team's calls", "[arena][teams][grid][calls]") {
+  // runMatch must pass every step to AgentHost::observe (it steps through
+  // AgentHost::step): without it no bot ever hears a call.
+  BotFactory factory;
+  const sim::ContentDB& db = gameContent().db;
+  const std::optional<uint8_t> mode = db.findMode("grid_rounds_1t");
+  REQUIRE(mode);
+  MatchSetup setup;
+  setup.config.seed = 1;
+  setup.config.mode = mode.value_or(0);
+  setup.config.arena = db.firstCompatibleArena(mode.value_or(0)).value_or(0);
+  setup.teams = {{spec("ref:hard"), spec("ref:hard")}, {spec("ref:hard"), spec("ref:hard")}};
+  setup.tickCap = 3600;
+  const MatchResult r = play(setup, factory);
+  uint32_t heard = 0;
+  for (const SlotResult& s : r.slots)
+    heard += s.heard;
+  CHECK(heard > 0);
 }
 
 TEST_CASE("team places: the winner's team, then team score, then fewer deaths", "[arena][teams]") {

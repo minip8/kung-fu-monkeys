@@ -42,7 +42,7 @@ Conventions:
 | Key | Type | Present | Meaning |
 |---|---|---|---|
 | `match` | number | always | The match index k, 0-based (`--matches M`: 0..M-1). |
-| `seed` | number | always | The world seed (u64): `--seed` + k. Slot i's bot is seeded with `slotSeed(seed, i)` (`apps/arena/arena_core.hpp`). |
+| `seed` | number | always | The world seed (u64): `--seed` + k. Slot i's bot is seeded with `ai::agentSeed(seed, i)` (`engine/ai/include/kfm/ai/agent_host.hpp`), every host's formula. |
 | `ticks` | number | always | Sim ticks run, the replay's `tickCount`. |
 | `checksum` | hash | always | `sim::checksum` of the final state: what replaying the match's `.kfmr` reaches. |
 | `result` | string | always | `"ended"` (the sim's `MatchEnded`) or `"cap"` (the `--ticks` cap came first). |
@@ -51,7 +51,7 @@ Conventions:
 | `teams` | array of team (§2.1) | team mode | One entry per team, by team index. |
 | `slots` | array of slot (§2.2) | always | One entry per slot, by slot. |
 | `content_hash` | hash | always (v0.60) | `sim::contentHash` of the match's content: the replay header's `contentHash`. |
-| `build_hash` | hash | always (v0.60) | The replay header's `buildHash`. `"00000000"` until a build stamps one. |
+| `build_hash` | hash | always (v0.60) | The replay header's `buildHash`: the build id of the `kfm_arena` that ran the match (architecture §5.1). `"00000000"` for an unstamped development build; since v0.70 a release's binaries carry the first 8 hex digits of the tagged commit (never zero), the same id as that release's server and page. |
 
 A team mode is one run with `--team` (a mode with two or more teams); without it `winner_team`,
 `teams` and the slots' `team` are absent.
@@ -175,6 +175,7 @@ before the first match, a module or replay failure (3, 4) during a match leaves 
 |---|---|
 | v0.36 | The match and summary objects declared append-only (as built in v0.30, teams added in v0.35). |
 | v0.60 | `content_hash` and `build_hash` appended to the match object; this document and the frozen-key test. |
+| v0.70 | No key changes: a release's `kfm_arena` stamps `build_hash` (its build id) instead of `"00000000"`. |
 
 ## 6. Example
 

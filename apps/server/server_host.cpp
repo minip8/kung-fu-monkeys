@@ -2,7 +2,7 @@
 
 #include "kfm/ai/agent.hpp"
 #include "kfm/ai/agent_host.hpp"
-#include "kfm/ai/reference_bot.hpp"
+#include "kfm/ai/bot_factory.hpp"
 #include "kfm/sim/events.hpp"
 #include "kfm/sim/world_state.hpp"
 
@@ -15,7 +15,6 @@
 #include <bit>
 #include <cstddef>
 #include <cstdio>
-#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -93,43 +92,17 @@ constexpr uint64_t kNsPerSecond = 1'000'000'000ull;
   return text;
 }
 
-#ifdef KFM_SERVER_WASM_BOTS
-// The whole file, at most `cap` + 1 bytes (one more than the cap makes the
-// module loader refuse it as too large).
-[[nodiscard]] std::expected<std::vector<std::byte>, std::string> readFile(const std::string& path,
-                                                                          size_t cap) {
-  std::ifstream f(path, std::ios::binary);
-  if (!f) return std::unexpected(std::format("cannot open {}", path));
-  std::vector<std::byte> out;
-  std::array<char, 16384> chunk{};
-  while (out.size() <= cap && f) {
-    f.read(chunk.data(), static_cast<std::streamsize>(chunk.size()));
-    const auto n = static_cast<size_t>(f.gcount());
-    for (size_t i = 0; i < n; ++i)
-      out.push_back(static_cast<std::byte>(chunk[i]));
-  }
-  if (f.bad()) return std::unexpected(std::format("cannot read {}", path));
-  if (out.size() > cap + 1) out.resize(cap + 1);
-  return out;
-}
-#endif
-
 }  // namespace
 
-// The host's bots: the agents in their slots, their specs, the stats of the
-// last stats line and, with KFM_WASM_BOTS, the runtime and the module cache.
+// The host's bots: the factory (and its module cache), the agents in their
+// slots, their specs, the stats of the last stats line and, with
+// KFM_WASM_BOTS, the module agents for their stats.
 struct ServerHost::Bots {
+  explicit Bots(uint32_t fuelPerTick) : factory(fuelPerTick) {}
+  ai::BotFactory factory;
 #ifdef KFM_SERVER_WASM_BOTS
-  std::optional<ai::WasmRuntime> runtime;
-  std::vector<std::pair<std::string, ai::WasmModule>> modules;  // one per distinct path
-  std::array<ai::WasmAgent*, sim::kMaxPlayers> wasm{};          // owned by `agents`
+  std::array<ai::WasmAgent*, sim::kMaxPlayers> wasm{};  // owned by `agents`
   std::array<ai::WasmAgentStats, sim::kMaxPlayers> lastWasm{};
-
-  [[nodiscard]] const ai::WasmModule* module(std::string_view path) const {
-    for (const auto& [p, m] : modules)
-      if (p == path) return &m;
-    return nullptr;
-  }
 #endif
   ai::AgentHost agents;
   std::array<std::optional<ai::BotSpec>, sim::kMaxPlayers> specs{};
@@ -137,21 +110,17 @@ struct ServerHost::Bots {
   uint32_t matchIndex{0};  // the NetServer match the agents were initialised for
   uint8_t delay{0};
 
-  // The agent for `spec` (null for a module that is not loaded).
+  // The agent for `spec` (null for one the factory cannot make; create()
+  // prepared every configured spec, so that does not happen).
   [[nodiscard]] std::unique_ptr<ai::IAgent> make(const ai::BotSpec& spec, PlayerId slot) {
-    if (spec.kind == ai::BotKind::Reference) {
-      return std::make_unique<ai::ReferenceBot>(spec.referenceConfig());
-    }
+    std::expected<ai::BotFactory::Made, ai::BotError> made = factory.make(spec);
+    if (!made) return nullptr;
 #ifdef KFM_SERVER_WASM_BOTS
-    if (const ai::WasmModule* m = module(spec.path)) {
-      auto agent = std::make_unique<ai::WasmAgent>(*m);
-      wasm[slot.value] = agent.get();
-      return agent;
-    }
+    wasm[slot.value] = made->wasm;
 #else
     static_cast<void>(slot);
 #endif
-    return nullptr;
+    return std::move(made->agent);
   }
 };
 
@@ -161,30 +130,12 @@ std::vector<ai::BotSpec> referenceBots(uint8_t count) {
 
 std::expected<std::unique_ptr<ServerHost>, std::string> ServerHost::create(
     net::ITransport& transport, const sim::ContentDB& content, HostConfig config, uint64_t nowNs) {
-  auto bots = std::make_unique<Bots>();
+  auto bots = std::make_unique<Bots>(config.botFuelPerTick);
+  // Every module loads before the server starts: one that does not refuses it.
   for (const ai::BotSpec& spec : config.bots) {
-    if (spec.kind != ai::BotKind::Module) continue;
-#ifdef KFM_SERVER_WASM_BOTS
-    if (!bots->runtime) {
-      const ai::WasmRuntime& runtime = bots->runtime.emplace();
-      if (!runtime.ok()) return std::unexpected(std::string("the wasm runtime failed"));
+    if (std::expected<void, ai::BotError> ok = bots->factory.prepare(spec); !ok) {
+      return std::unexpected(std::format("bot module: {}", ok.error().message));
     }
-    if (bots->module(spec.path) != nullptr) continue;
-    ai::WasmAgentConfig wc;
-    if (config.botFuelPerTick != 0) wc.fuelPerTick = config.botFuelPerTick;
-    const std::expected<std::vector<std::byte>, std::string> bytes =
-        readFile(spec.path, wc.maxModuleBytes);
-    if (!bytes) return std::unexpected(std::format("bot module {}: {}", spec.path, bytes.error()));
-    std::expected<ai::WasmModule, ai::LoadError> m = ai::WasmModule::load(*bytes, wc);
-    if (!m) {
-      return std::unexpected(std::format("bot module {}: {} ({})", spec.path, m.error().message,
-                                         ai::toString(m.error().kind)));
-    }
-    bots->modules.emplace_back(spec.path, std::move(*m));
-#else
-    return std::unexpected(std::format(
-        "bot module {}: this build has no wasm bot runtime (KFM_WASM_BOTS=OFF)", spec.path));
-#endif
   }
   return std::make_unique<ServerHost>(Key{}, transport, content, std::move(config), nowNs,
                                       std::move(bots));
@@ -235,7 +186,7 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
     if (s == sim::kMaxPlayers) break;
     const PlayerId slot{s++};
     b.specs[slot.value] = spec;
-    b.agents.attach(slot, b.make(spec, slot), agentSeed(config_.server.botSeed, slot), b.delay);
+    b.agents.attach(slot, b.make(spec, slot), ai::agentSeed(config_.server.botSeed, slot), b.delay);
     ++placed;
     if (!specs.empty()) specs += ',';
     specs += specName(spec);
@@ -269,6 +220,10 @@ std::optional<ai::BotSpec> ServerHost::botSpec(PlayerId slot) const {
   return bots_->specs[slot.value];
 }
 
+ai::AgentSlotStats ServerHost::agentStats(PlayerId slot) const {
+  return bots_->agents.stats(slot);
+}
+
 void ServerHost::fillBots(const sim::WorldState& world, const sim::MatchContent& content,
                           sim::InputFrame& frame) {
   Bots& b = *bots_;
@@ -277,7 +232,7 @@ void ServerHost::fillBots(const sim::WorldState& world, const sim::MatchContent&
     b.matchIndex = server_->matchIndex();
     for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
       const PlayerId slot{s};
-      if (b.agents.has(slot)) b.agents.reinit(slot, agentSeed(server_->botSeed(), slot));
+      if (b.agents.has(slot)) b.agents.reinit(slot, ai::agentSeed(server_->botSeed(), slot));
     }
     logDeadBots();
   }
@@ -522,7 +477,7 @@ void ServerHost::placeRoomBots(uint8_t count) {
     const ai::BotSpec spec = k < config_.bots.size() ? config_.bots[k] : ai::BotSpec{};
     b.specs[slot.value] = spec;
     b.lastStats[slot.value] = {};
-    b.agents.attach(slot, b.make(spec, slot), agentSeed(botSeed_, slot), b.delay);
+    b.agents.attach(slot, b.make(spec, slot), ai::agentSeed(botSeed_, slot), b.delay);
   }
 }
 

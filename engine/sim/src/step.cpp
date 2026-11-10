@@ -10,14 +10,21 @@
 namespace kfm::sim {
 
 void step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink) {
+  StepStats stats;
+  step(s, in, content, sink, stats);
+}
+
+void step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink,
+          StepStats& stats) {
   KFM_ASSERT(in.tick == s.tick);
-  rulesPreTick(s, content, sink);                 // 1
-  inputSystem(s, content, in);                    // 2
-  abilitySystem(s, content, sink);                // 3
-  movementSystem(s, content);                     // 4
-  projectileSystem(s, content, sink);             // 5
-  Contacts contacts;                              // derived, never part of WorldState
-  collisionSystem(s, content, contacts);          // 6
+  rulesPreTick(s, content, sink);         // 1
+  inputSystem(s, content, in);            // 2
+  abilitySystem(s, content, sink);        // 3
+  movementSystem(s, content);             // 4
+  projectileSystem(s, content, sink);     // 5
+  Contacts contacts;                      // derived, never part of WorldState
+  collisionSystem(s, content, contacts);  // 6
+  stats.contactsDropped = contacts.dropped;
   interactionSystem(s, content, contacts, sink);  // 7
   modifierSystem(s, content);                     // 8
   lifecycleSystem(s, content, sink);              // 9

@@ -38,3 +38,17 @@ uint32_t kfm_wamr_module_memory(wasm_module_t module, uint64_t* init_bytes, uint
   *max_bytes = (uint64_t)mem->max_page_count * mem->num_bytes_per_page;
   return m->import_memory_count + m->memory_count;
 }
+
+uint64_t kfm_wamr_module_table_elements(wasm_module_t module) {
+  const WASMModule* m = (const WASMModule*)module;
+  uint64_t total = 0;
+  for (uint32_t i = 0; i < m->import_table_count; ++i) {
+    const WASMTableType* t = &m->import_tables[i].u.table.table_type;
+    total += t->possible_grow ? t->max_size : t->init_size;
+  }
+  for (uint32_t i = 0; i < m->table_count; ++i) {
+    const WASMTableType* t = &m->tables[i].table_type;
+    total += t->possible_grow ? t->max_size : t->init_size;
+  }
+  return total;
+}

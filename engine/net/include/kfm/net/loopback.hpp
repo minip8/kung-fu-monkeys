@@ -36,6 +36,15 @@
 // latency, behind every reliable message sent before it. cut() severs a link
 // at once on both sides, as a timeout would. PeerIds of clients start at 1 and
 // are never reused.
+//
+// Outages (v0.70): setOutage() blacks one direction of a link out for a span
+// of the sender's clock without disconnecting it, the burst loss a real path
+// shows when a Wi-Fi roam or a congested hop drops everything for a second.
+// Every unreliable message sent in [fromNs, untilNs) is lost; with `reliable`
+// the reliable lane's messages sent in it are delivered no earlier than
+// untilNs + the lane's latency, as a retransmission after the outage would
+// (still in order). The emulator draws its random numbers for those messages
+// as usual, so an outage never shifts the rest of the link's draws.
 #pragma once
 
 #include "kfm/core/rng.hpp"
@@ -80,6 +89,14 @@ struct LinkConditions {
 
 inline constexpr uint32_t kPpmOne = 1'000'000;
 
+// A blackout of one direction of a link, in the sender's clock (see the
+// header comment). untilNs <= fromNs is no outage.
+struct Outage {
+  uint64_t fromNs{0};
+  uint64_t untilNs{0};
+  bool reliable{false};  // the reliable lane waits for the end too
+};
+
 // What the emulator did to the traffic of one link direction.
 struct EmulatorStats {
   uint64_t unreliableSent{0};
@@ -88,6 +105,8 @@ struct EmulatorStats {
   uint64_t unreliableHeldBack{0};
   uint64_t reliableSent{0};
   uint64_t reliableRetransmits{0};
+  uint64_t unreliableBlackedOut{0};  // lost to an outage (also counted in unreliableLost)
+  uint64_t reliableHeld{0};          // reliable messages an outage delayed
 };
 
 class LoopbackNetwork;
@@ -195,6 +214,10 @@ class LoopbackNetwork {
   // their next poll() and everything in flight is dropped.
   void cut(PeerId client);
 
+  // Replaces the outage of one direction of a link (toServer: client to
+  // server). Unknown clients are ignored; Outage{} clears it.
+  void setOutage(PeerId client, bool toServer, const Outage& outage);
+
   [[nodiscard]] size_t clientCount() const { return links_.size(); }
   // The client endpoint with the given PeerId, or nullptr.
   [[nodiscard]] LoopbackTransport* client(PeerId id);
@@ -206,6 +229,7 @@ class LoopbackNetwork {
 
   struct Direction {
     LinkConditions conditions{};
+    Outage outage{};
     Rng rng{};
     EmulatorStats stats{};
   };

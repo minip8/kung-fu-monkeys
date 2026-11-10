@@ -48,9 +48,9 @@ static_assert(kAbilitySlots == 3);
   }
   return 0;
 }
-inline constexpr uint8_t kMaxAbilityDefs = 16;
-inline constexpr uint8_t kMaxArenas = 16;  // v0.33 (8 before: the objective arenas filled it)
-inline constexpr uint8_t kMaxModes = 32;   // v0.31 (8 before)
+inline constexpr uint8_t kMaxAbilityDefs = 32;  // v0.70 (16 before: content/ filled it)
+inline constexpr uint8_t kMaxArenas = 16;       // v0.33 (8 before: the objective arenas filled it)
+inline constexpr uint8_t kMaxModes = 32;        // v0.31 (8 before)
 
 enum class AbilityKind : uint8_t {
   None = 0,
@@ -77,12 +77,18 @@ struct AbilityDef {
   uint16_t activeTicks{0};
   uint16_t recoveryTicks{0};
   uint16_t perfectWindowTicks{0};  // Dash: first N active ticks grant Tag::PerfectDash
-  Fixed speed{};  // Dash: dash speed; Blink: distance per active tick (units/tick). Throw: unused
+  // Dash: dash speed; Blink: distance per active tick (units/tick). Throw
+  // (v0.48): the charge rate, the speed multiplier gained per tick held past
+  // the startup (0 = no charge; abilities/throw.hpp throwCharges).
+  Fixed speed{};
   // kind-specific numeric params. Slam: reach (radius from its centre). Call
   // (v0.35): range in units (TOML `range`), the Chebyshev distance between
-  // centres within which a monkey hears it
+  // centres within which a monkey hears it. Throw (v0.48): the speed
+  // multiplier of a tap (TOML charge_min).
   Fixed param0{};
-  Fixed param1{};      // Slam: push distance, spread over activeTicks
+  // Slam: push distance, spread over activeTicks. Throw (v0.48): the speed
+  // multiplier of a full charge (charge_max).
+  Fixed param1{};
   Tags tagsStartup{};  // tags granted during each phase
   Tags tagsActive{};
   Tags tagsRecovery{};

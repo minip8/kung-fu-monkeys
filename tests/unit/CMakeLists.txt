@@ -7,6 +7,7 @@ kfm_add_test_exe(kfm_core_tests
   core/bitstream_test.cpp
   core/rng_test.cpp
   core/hash_test.cpp
+  core/field_count_test.cpp
 )
 target_link_libraries(kfm_core_tests PRIVATE kfm::core)
 
@@ -33,6 +34,7 @@ target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 kfm_add_test_exe(kfm_content_tests
   content/decimal_test.cpp
   content/loader_test.cpp
+  content/mirror_test.cpp
   content/tilemap_test.cpp
 )
 target_link_libraries(kfm_content_tests PRIVATE kfm::content)
@@ -74,8 +76,14 @@ kfm_add_test_exe(kfm_ai_tests
   ai/agent_host_test.cpp
   ai/reference_bot_test.cpp
   ai/vision_test.cpp
+  ai/bot_factory_test.cpp
 )
-target_link_libraries(kfm_ai_tests PRIVATE kfm::ai)
+target_link_libraries(kfm_ai_tests PRIVATE kfm::ai kfm::ai_bots)
+target_compile_definitions(kfm_ai_tests PRIVATE
+  KFM_BOT_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
+if(KFM_WASM_BOTS)
+  target_compile_definitions(kfm_ai_tests PRIVATE KFM_AI_TEST_WASM_BOTS=1)
+endif()
 
 if(KFM_WASM_BOTS)
   # WasmAgent over WAMR (§8), on the hand-written modules in tests/fixtures/bots
@@ -156,6 +164,7 @@ if(NOT KFM_HEADLESS)
     client/room_test.cpp
     client/menus_test.cpp
     client/scoreboard_test.cpp
+    client/hud_view_test.cpp
     client/replay_session_test.cpp
     client/replay_controls_test.cpp
   )
@@ -228,7 +237,7 @@ if(TARGET kfm::server_host)
     server/room_test.cpp
     server/room_flow_test.cpp
   )
-  target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim)
+  target_link_libraries(kfm_server_tests PRIVATE kfm::server_host kfm::netsim kfm::content)
   if(KFM_WASM_BOTS)
     # The host's wasm bots on the fixture modules (echo, trap, abi_mismatch).
     target_compile_definitions(kfm_server_tests PRIVATE KFM_SERVER_TEST_WASM=1

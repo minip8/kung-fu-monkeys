@@ -59,10 +59,12 @@ class WebRtcFixture {
   // machines under load (sanitizers, parallel ctest) can be slow.
   static constexpr std::chrono::milliseconds kDefaultTimeout{20'000};
 
-  WebRtcFixture() {
+  WebRtcFixture() : WebRtcFixture(WebRtcServerConfig{}) {}
+
+  // The server with `config`, its signaling socket on an ephemeral port.
+  explicit WebRtcFixture(WebRtcServerConfig config) {
     // Expected teardown noise (TCP lost, SCTP reset) is logged at Warning.
     WebRtcTransport::initLogging(WebRtcLogLevel::Error);
-    WebRtcServerConfig config;
     config.signalingPort = 0;  // ephemeral, no clashes between parallel runs
     config.signalingBindAddress = "127.0.0.1";
     auto server = WebRtcTransport::createServer(config);

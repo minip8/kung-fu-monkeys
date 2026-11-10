@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 
@@ -222,35 +223,124 @@ TEST_CASE("write/read round-trips every M1 state type", "[sim][visit]") {
   CHECK(p.abilities[1].activatedSubTick == 99);
 }
 
-TEST_CASE("every new state field reaches the checksum", "[sim][visit]") {
+namespace {
+// One mutation per field of T, in declaration order, each of which must move
+// the checksum. The count is pinned to fieldCount<T>() like the visit()
+// overloads are, so a new field of a state struct fails to compile here too
+// until it has a mutation (an array or a nested struct is one field: one
+// element or one member of it is enough).
+// The mutations are separate arguments, each converted to a function pointer
+// inside: MSVC 19.51 will not deduce an array bound from a braced list of
+// lambdas (std::to_array or an array-reference parameter), it wants the
+// element type to match exactly.
+using StateMutation = void (*)(WorldState&);
+template <class T, class... Mutations>
+void everyFieldReachesTheChecksum(const WorldState& base, Mutations... mutations) {
+  static_assert(sizeof...(Mutations) == fieldCount<T>(), "one mutation per field");
+  const std::array<StateMutation, sizeof...(Mutations)> list{mutations...};
+  const uint32_t before = checksum(base);
+  for (size_t i = 0; i < list.size(); ++i) {
+    WorldState s = base;  // NOLINT(misc-const-correctness): mutated through the pointer
+    list[i](s);
+    INFO("field " << i);
+    CHECK(checksum(s) != before);
+  }
+}
+}  // namespace
+
+TEST_CASE("every state field reaches the checksum", "[sim][visit]") {
   const WorldState a = richWorld();
-  const uint32_t base = checksum(a);
-  const auto changed = [&](auto mutate) {
-    WorldState b = a;
-    mutate(b);
-    return checksum(b) != base;
-  };
-  CHECK(changed([](WorldState& s) { s.players.items[0].transform.prevPos.x += 1_fx; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].intent.subTick += 1; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].prevButtons ^= 1; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].stats.ammoMax += 1; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].hp += 1; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].tags.set(Tag::Shielded); }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].modifiers.items[1].ticksLeft -= 1; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].abilities[0].cooldownTicks = 9; }));
-  CHECK(changed([](WorldState& s) { s.boomerangs.items[0].spin += Angle::fromBam(1); }));
-  CHECK(changed([](WorldState& s) { s.pickups.items[0].powerUpIndex = 1; }));
-  CHECK(changed([](WorldState& s) { s.pickups.items[1].spawner = 3; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].modifiers.items[0].powerUp = 5; }));
-  CHECK(changed([](WorldState& s) { s.boomerangs.items[1].radiusMul = 3_fx; }));
-  CHECK(changed([](WorldState& s) { s.boomerangs.items[1].speedMul = 1_fx; }));
-  CHECK(changed([](WorldState& s) { s.boomerangs.items[0].speedMul = 2_fx; }));
-  CHECK(changed([](WorldState& s) { s.pickups.items[0].spawner = 1; }));
-  CHECK(changed([](WorldState& s) { s.players.items[0].grantedTags.set(Tag::Shielded); }));
-  CHECK(changed([](WorldState& s) { s.rules.round += 1; }));
-  CHECK(changed([](WorldState& s) { s.rules.deaths[9] = 1; }));
-  CHECK(changed([](WorldState& s) { s.rules.respawnTicks[0] = 1; }));
-  CHECK(changed([](WorldState& s) { s.rules.invulnTicks[4] = 1; }));
+  // Slot 0 is alive, and so are boomerangs 0-1 and pickups 0-1 (richWorld).
+  everyFieldReachesTheChecksum<WorldState>(
+      a, [](WorldState& s) { ++s.tick; }, [](WorldState& s) { s.rng.s[2] ^= 1u; },
+      [](WorldState& s) { s.rules.round += 1; }, [](WorldState& s) { s.players.items[0].hp += 1; },
+      [](WorldState& s) { s.boomerangs.items[0].damage += 1; },
+      [](WorldState& s) { s.pickups.items[0].count += 1; });
+  everyFieldReachesTheChecksum<Rng>(a, [](WorldState& s) { s.rng.s[3] += 1u; });
+  everyFieldReachesTheChecksum<Pool<Player, kMaxPlayers>>(
+      a, [](WorldState& s) { s.players.items[1].ammo += 1; },
+      [](WorldState& s) { s.players.generation[9] += 1; },  // dead slots' too
+      [](WorldState& s) { s.players.aliveBits[0] ^= 1u << 5; },
+      [](WorldState& s) { s.players.aliveCount += 1; });
+  everyFieldReachesTheChecksum<MatchRules>(
+      a, [](WorldState& s) { s.rules.phase = MatchPhase::MatchEnded; },
+      [](WorldState& s) { s.rules.present ^= 1u << 9; },
+      [](WorldState& s) { s.rules.ticksInPhase += 1; }, [](WorldState& s) { s.rules.round += 1; },
+      [](WorldState& s) { s.rules.scores[9] = -1; },
+      [](WorldState& s) { s.rules.lastRoundWinner = PlayerId{1}; },
+      [](WorldState& s) { s.rules.deaths[9] = 1; },
+      [](WorldState& s) { s.rules.respawnTicks[0] = 1; },
+      [](WorldState& s) { s.rules.invulnTicks[4] = 1; },
+      [](WorldState& s) { s.rules.modeData[7] = 1; }, [](WorldState& s) { s.rules.dryTicks += 1; });
+  everyFieldReachesTheChecksum<Player>(
+      a, [](WorldState& s) { s.players.items[0].id = PlayerId{4}; },
+      [](WorldState& s) { s.players.items[0].transform.vel.y += 1_fx; },
+      [](WorldState& s) { s.players.items[0].intent.held ^= 1; },
+      [](WorldState& s) { s.players.items[0].prevButtons ^= 1; },
+      [](WorldState& s) { s.players.items[0].stats.maxHp += 1; },
+      [](WorldState& s) { s.players.items[0].modifiers.count = 1; },
+      [](WorldState& s) { s.players.items[0].hp += 1; },
+      [](WorldState& s) { s.players.items[0].ammo += 1; },
+      [](WorldState& s) { s.players.items[0].tags.set(Tag::Shielded); },
+      [](WorldState& s) { s.players.items[0].hitStunTicks += 1; },
+      [](WorldState& s) { s.players.items[0].grantedTags.set(Tag::Shielded); },
+      [](WorldState& s) { s.players.items[0].abilities[2].cooldownTicks += 1; },
+      [](WorldState& s) { s.players.items[0].knockback.y += 1_fx; },
+      [](WorldState& s) { s.players.items[0].knockbackTicks += 1; },
+      [](WorldState& s) { s.players.items[0].moveTarget.x += 1_fx; },
+      [](WorldState& s) { s.players.items[0].moveTicks += 1; },
+      [](WorldState& s) { s.players.items[0].fallTicks += 1; },
+      [](WorldState& s) { s.players.items[0].regrowTicks += 1; });
+  everyFieldReachesTheChecksum<Transform>(
+      a, [](WorldState& s) { s.players.items[0].transform.pos.x += 1_fx; },
+      [](WorldState& s) { s.players.items[0].transform.prevPos.x += 1_fx; },
+      [](WorldState& s) { s.players.items[0].transform.vel.x += 1_fx; },
+      [](WorldState& s) { s.players.items[0].transform.facing += Angle::fromBam(1); });
+  everyFieldReachesTheChecksum<Vec2>(
+      a, [](WorldState& s) { s.boomerangs.items[1].transform.pos.x += 1_fx; },
+      [](WorldState& s) { s.boomerangs.items[1].transform.pos.y += 1_fx; });
+  everyFieldReachesTheChecksum<Intent>(
+      a, [](WorldState& s) { s.players.items[0].intent.move.x += Fixed::epsilon(); },
+      [](WorldState& s) { s.players.items[0].intent.aim += Angle::fromBam(1); },
+      [](WorldState& s) { s.players.items[0].intent.pressed ^= 1; },
+      [](WorldState& s) { s.players.items[0].intent.held ^= 2; },
+      [](WorldState& s) { s.players.items[0].intent.subTick += 1; });
+  everyFieldReachesTheChecksum<Stats>(
+      a, [](WorldState& s) { s.players.items[0].stats.moveSpeed += Fixed::epsilon(); },
+      [](WorldState& s) { s.players.items[0].stats.maxHp += 1; },
+      [](WorldState& s) { s.players.items[0].stats.ammoMax += 1; },
+      [](WorldState& s) { s.players.items[0].stats.radius += Fixed::epsilon(); });
+  // Only the live prefix (count = 2) is visited.
+  everyFieldReachesTheChecksum<ModifierList>(
+      a, [](WorldState& s) { s.players.items[0].modifiers.items[1].ticksLeft -= 1; },
+      [](WorldState& s) { s.players.items[0].modifiers.count = 3; });
+  everyFieldReachesTheChecksum<ActiveModifier>(
+      a, [](WorldState& s) { s.players.items[0].modifiers.items[0].powerUp = 5; },
+      [](WorldState& s) { s.players.items[0].modifiers.items[0].ticksLeft += 1; });
+  everyFieldReachesTheChecksum<AbilityState>(
+      a, [](WorldState& s) { s.players.items[0].abilities[0].defIndex ^= 1; },
+      [](WorldState& s) { s.players.items[0].abilities[0].phase = AbilityPhase::Startup; },
+      [](WorldState& s) { s.players.items[0].abilities[0].phaseTicks += 1; },
+      [](WorldState& s) { s.players.items[0].abilities[0].cooldownTicks = 9; },
+      [](WorldState& s) { ++s.players.items[0].abilities[0].activatedTick; },
+      [](WorldState& s) { s.players.items[0].abilities[0].activatedSubTick += 1; },
+      [](WorldState& s) { s.players.items[0].abilities[0].dir.y += 1_fx; });
+  everyFieldReachesTheChecksum<Boomerang>(
+      a, [](WorldState& s) { s.boomerangs.items[0].owner = PlayerId{2}; },
+      [](WorldState& s) { s.boomerangs.items[0].phase = BoomerangPhase::Grounded; },
+      [](WorldState& s) { s.boomerangs.items[0].transform.prevPos.y += 1_fx; },
+      [](WorldState& s) { s.boomerangs.items[0].spin += Angle::fromBam(1); },
+      [](WorldState& s) { s.boomerangs.items[0].ticksAlive += 1; },
+      [](WorldState& s) { s.boomerangs.items[0].ticksInPhase += 1; },
+      [](WorldState& s) { s.boomerangs.items[0].damage += 1; },
+      [](WorldState& s) { s.boomerangs.items[0].speedMul = 2_fx; },
+      [](WorldState& s) { s.boomerangs.items[1].radiusMul = 3_fx; });
+  everyFieldReachesTheChecksum<Pickup>(
+      a, [](WorldState& s) { s.pickups.items[0].kind = PickupKind::Flag; },
+      [](WorldState& s) { s.pickups.items[0].pos.y += 1_fx; },
+      [](WorldState& s) { s.pickups.items[0].powerUpIndex = 1; },
+      [](WorldState& s) { s.pickups.items[1].spawner = 3; },
+      [](WorldState& s) { s.pickups.items[0].count += 1; });
 }
 
 TEST_CASE("write/read round-trips the per-player mode counters", "[sim][visit]") {

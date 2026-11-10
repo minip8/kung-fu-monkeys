@@ -403,7 +403,9 @@ TEST_CASE("a server that refuses the build shows the reject reason", "[client][n
   REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Rejected; }, 2 * kSec));
   CHECK(s.client().rejectReason() == net::RejectReason::BuildMismatch);
   CHECK(s.statusText().find("Rejected") != std::string::npos);
-  CHECK(s.statusText().find("build mismatch") != std::string::npos);
+  // v0.70: a stale browser page is told what to do about it.
+  CHECK(s.statusText().find("version mismatch (reload the page or update the client)") !=
+        std::string::npos);
   CHECK(!s.everRan());
   CHECK(s.ticksThisFrame() == 0);
 }

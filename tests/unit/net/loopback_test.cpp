@@ -4,8 +4,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -339,4 +341,65 @@ TEST_CASE("Loopback receive queue is bounded", "[net][loopback]") {
   net.server().poll(c.nowNs() + kMs, ev);
   CHECK(net.server().stats().recvDropped == 10);
   CHECK(net.server().stats().packetsReceived == LoopbackTransport::kRecvQueueCapacity);
+}
+
+TEST_CASE("Emulator outage drops one direction for a span without disconnecting",
+          "[net][loopback][emulator]") {
+  LoopbackNetwork net(13);
+  const LinkConditions jittery = LinkConditions::uniform(10 * kMs, 4 * kMs);
+  LoopbackTransport& c = connected(net, jittery, jittery);
+  const uint64_t t0 = c.nowNs();
+  // Unreliable client → server messages sent in [t0 + 100, t0 + 400) ms are lost.
+  net.setOutage(c.self(), true, Outage{t0 + 100 * kMs, t0 + 400 * kMs, false});
+  const auto got = runUnreliable(net, c, 1'000);
+  CHECK(got.size() == 700);
+  for (const Arrival& a : got) {
+    CHECK((a.sentNs < t0 + 100 * kMs || a.sentNs >= t0 + 400 * kMs));
+  }
+  CHECK(c.isConnected(kServerPeer));
+  const EmulatorStats st = net.emulatorStats(c.self(), true);
+  CHECK(st.unreliableBlackedOut == 300);
+  CHECK(st.unreliableLost == 300);
+
+  // The draws are the same as without the outage: the messages after it
+  // arrive exactly when they would have.
+  LoopbackNetwork plain(13);
+  LoopbackTransport& d = connected(plain, jittery, jittery);
+  const auto all = runUnreliable(plain, d, 1'000);
+  std::vector<uint64_t> kept;
+  for (const Arrival& a : all)
+    if (a.sentNs < t0 + 100 * kMs || a.sentNs >= t0 + 400 * kMs)
+      kept.push_back(a.receivedNs * 10'000 + a.seq);
+  std::vector<uint64_t> seen;
+  seen.reserve(got.size());
+  for (const Arrival& a : got)
+    seen.push_back(a.receivedNs * 10'000 + a.seq);
+  CHECK(seen == kept);
+}
+
+TEST_CASE("Emulator outage of the reliable lane delays it in order", "[net][loopback][emulator]") {
+  LoopbackNetwork net(14);
+  LoopbackTransport& c = connected(net, LinkConditions::uniform(20 * kMs));
+  LoopbackTransport& server = net.server();
+  const uint64_t t0 = c.nowNs();
+  net.setOutage(c.self(), true, Outage{t0, t0 + 500 * kMs, true});
+  std::vector<std::pair<uint32_t, uint64_t>> seen;
+  for (uint64_t now = t0; now < t0 + 1'000 * kMs; now += kMs) {
+    ConnectionEvents ev;
+    c.poll(now, ev);
+    server.poll(now, ev);
+    Packet p;
+    while (server.recv(p))
+      seen.emplace_back(contract::seqOf(p.data), p.receivedNs);
+    const auto i = static_cast<uint32_t>((now - t0) / kMs);
+    if (i < 600) c.sendReliable(kServerPeer, contract::payload(i, 8));
+  }
+  REQUIRE(seen.size() == 600);
+  for (uint32_t i = 0; i < 600; ++i) {
+    CHECK(seen[i].first == i);
+    // Held until the outage ends plus the latency, then on time again.
+    CHECK(seen[i].second == std::max(t0 + 520 * kMs, t0 + i * kMs + 20 * kMs));
+  }
+  CHECK(net.emulatorStats(c.self(), true).reliableHeld == 500);
+  CHECK(c.isConnected(kServerPeer));
 }

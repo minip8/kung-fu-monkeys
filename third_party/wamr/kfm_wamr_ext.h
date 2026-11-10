@@ -1,4 +1,4 @@
-/* kfm_wamr_ext: the three things the kfm wasm bot host (engine/ai,
+/* kfm_wamr_ext: the four things the kfm wasm bot host (engine/ai,
  * WasmAgent) needs from WAMR that its public API (wasm_export.h) does not
  * offer. Compiled into kfm_wamr with WAMR's own configuration macros, so it
  * may read WAMR's internal structs; callers see only this header. Two of
@@ -37,6 +37,14 @@ void kfm_wamr_set_default_instruction_limit(int limit);
  * instantiation, so a module asking for more than the host's cap is refused
  * without allocating anything. */
 uint32_t kfm_wamr_module_memory(wasm_module_t module, uint64_t* init_bytes, uint64_t* max_bytes);
+
+/* The number of table elements an instance of the module allocates, summed
+ * over every table (imported or defined): a table's initial size, or its
+ * maximum when the module can grow it (WAMR allocates that up front and
+ * fills it at instantiation, outside any instruction budget). Read before
+ * instantiation, so a module declaring a huge table is refused without
+ * allocating it. */
+uint64_t kfm_wamr_module_table_elements(wasm_module_t module);
 
 #ifdef __cplusplus
 }

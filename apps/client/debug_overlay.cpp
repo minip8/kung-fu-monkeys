@@ -168,7 +168,7 @@ void matchSection(const MatchSession& s) {
   ImGui::Text("content hash 0x%08X", s.contentHash());
   ImGui::SameLine();
   if (tuned) {
-    ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.1f, 1.0f), "(TUNED: differs from the default)");
+    ImGui::TextColored(ui::vec4(ui::kWarning), "(TUNED: differs from the default)");
   } else {
     ImGui::TextDisabled("(default)");
   }
@@ -181,8 +181,7 @@ void botsSection(const MatchSession& s) {
   ImGui::Text("bots: %s%s", roster.describe().c_str(),
               roster.moduleActive() ? "  (wasm module)" : "  (reference bot)");
   if (!s.botSpecError().empty()) {
-    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.3f, 1.0f), "module fell back: %s",
-                       s.botSpecError().c_str());
+    ImGui::TextColored(ui::vec4(ui::kError), "module fell back: %s", s.botSpecError().c_str());
   }
   if (s.phase() != SessionPhase::Match || s.botMask() == 0) {
     ImGui::TextDisabled("no bot slots in play");
@@ -304,7 +303,7 @@ void entitySection(const Session& s) {
 }
 
 void tuningSection(MatchSession& s, std::string& printed) {
-  sim::ContentDB& c = s.content();
+  sim::ContentDB& c = s.editContent();  // live tuning: the one mutable path
   sim::AbilityDef& dash = c.abilities[c.player.abilities[sim::kAbilitySlotDash]];
   sim::AbilityDef& thr = c.abilities[c.player.abilities[sim::kAbilitySlotThrow]];
   ImGui::TextDisabled("Edits apply live (content is passed to step() every tick).");
@@ -320,7 +319,7 @@ void tuningSection(MatchSession& s, std::string& printed) {
   sliderPerSecond("dash speed", dash.speed, 4.0f, 60.0f);
   if (dash.startupTicks != 0) {
     ImGui::TextColored(
-        ImVec4(1, 0.6f, 0.1f, 1),
+        ui::vec4(ui::kWarning),
         "startup > 0 breaks content.cpp's static_assert (PerfectDash from the press tick)");
   }
 

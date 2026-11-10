@@ -6,7 +6,9 @@
 // lead. Time is a deterministic 1 ms step loop, as in tests/netcode.
 #include "server_host.hpp"
 
+#include "kfm/ai/agent_host.hpp"
 #include "kfm/ai/bot_spec.hpp"
+#include "kfm/content/app_content.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/net/loopback.hpp"
 #include "kfm/net/messages.hpp"
@@ -441,6 +443,28 @@ TEST_CASE("ServerHost's bots take the humans' lead as their delay, once a second
   }
 }
 
+TEST_CASE("ServerHost's bots hear their team's calls in a squad match", "[server][bots][calls]") {
+  // NetServer steps and the botInputs callback fills; the host must pass
+  // every tick's events to AgentHost::observe, or no bot ever hears a call
+  // (AgentHost's observe check would also abort a Debug build on the
+  // second tick).
+  content::LoadedContent loaded;
+  content::Diagnostics diag;
+  REQUIRE(content::loadAppContent("", {}, loaded, diag));
+  server::HostConfig cfg = botConfig(4);
+  std::string error;
+  REQUIRE(content::resolveMatchNames(loaded.db, "", "grid_rounds_1t", cfg.server.match, error));
+  cfg.server.match.teams = sim::teamsFor(loaded.db.modeAt(cfg.server.match.mode), 0b1111);
+  Rig rig(cfg, loaded.db);
+  REQUIRE(rig.host->server().bots() == 0b1111);
+  rig.runFor(60 * kSec);
+  uint32_t heard = 0;
+  for (uint8_t s = 0; s < 4; ++s)
+    heard += rig.host->agentStats(PlayerId{s}).heard;
+  CHECK(heard > 0);
+  CHECK(rig.host->agentStats(PlayerId{4}).heard == 0);  // not a bot
+}
+
 TEST_CASE("ServerHost refuses a bot module that does not load", "[server][bots]") {
   server::HostConfig cfg = botConfig(1);
   cfg.bots.push_back(
@@ -517,7 +541,7 @@ TEST_CASE("ServerHost re-initialises its wasm bots with the next match's seeds",
     INFO("slot " << int{s});
     CHECK(first->inputs[s].moveDir == 1);
     CHECK(first->inputs[s].moveMag == s);
-    CHECK(first->inputs[s].aimDir == (server::agentSeed(0x1234, PlayerId{s}) & 0xFFu));
+    CHECK(first->inputs[s].aimDir == (ai::agentSeed(0x1234, PlayerId{s}) & 0xFFu));
   }
   // One act per tick while its monkey stands (v0.35: an eliminated slot is
   // paused, and the reference bots get the first counter after tick 200).
@@ -541,9 +565,9 @@ TEST_CASE("ServerHost re-initialises its wasm bots with the next match's seeds",
     INFO("slot " << int{s});
     CHECK(before->inputs[s].moveDir != 1);
     CHECK(start.inputs[s].moveDir == 1);  // a fresh instance
-    CHECK(start.inputs[s].aimDir == (server::agentSeed(seed2, PlayerId{s}) & 0xFFu));
+    CHECK(start.inputs[s].aimDir == (ai::agentSeed(seed2, PlayerId{s}) & 0xFFu));
   }
-  CHECK(server::agentSeed(seed2, PlayerId{3}) != server::agentSeed(0x1234, PlayerId{3}));
+  CHECK(ai::agentSeed(seed2, PlayerId{3}) != ai::agentSeed(0x1234, PlayerId{3}));
 }
 
 TEST_CASE("ServerHost counts a trapping module's substitutions and refuses a bad one",
