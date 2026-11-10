@@ -1118,3 +1118,26 @@ the version in the status line and appends an entry here, in one commit. `CLAUDE
 milestone history (the "Project state" narrative and the "Next milestone" bullet, both of which
 restated §11 and this file) and the per-version annotations on its commands; the rules, the
 commands and the CI lessons stay.
+
+v0.73 changes: a release builds the page beside the images and publishes it right after the
+VMs (§9; `deploy.yml`, `deploy/README.md`; issue #65). Since v0.70 a client whose build id
+differs from the server's is refused and told to reload, so between the first server's
+restart and the new page going up, a player on the old page reloads into the old page. The
+`web` job ran entirely after `vms`, build included. Measured on the four releases v0.5.1 to
+v0.8.0: the page was published 1 min 39 s to 2 min 44 s after the VMs finished (the issue's
+guess of 10 to 20 minutes was wrong: the wasm build is about a minute and a half), on top of
+the VM update's own 1 min 25 s or so. `web` is now two jobs: `web-build` (no dependency; the
+steps up to the assembled page, packed as the run's `kfm_client-site` artifact) and `web`
+(needs `web-build`, `images`, `vms` and `release`: it unpacks the artifact, uploads it
+unchanged as the release's site asset, assembles the earlier releases' paths and publishes).
+In the v0.8.0 run the steps that remain in `web` took 25 s. Decided: the order stays VMs
+then page (the servers must answer the new build before the page serves it); the site is
+still assembled after the VMs, not in `web-build`, so its list of earlier releases is as
+fresh as before; the VM update itself, the larger part of what is left, is unchanged.
+Verified: the workflow parses and its job graph is as described; the pack, unpack and site
+assembly steps were run locally for a tag and for a manual run (the page round-trips byte for
+byte, the earlier releases' paths are served), and a manual run of the workflow from the
+branch passed: `web-build` finished 2 min after the start, beside the images, and `web`
+published the preview 36 s after its last dependency finished (the job itself 46 s), with the
+root and `/v0.5.0/` to `/v0.8.0/` served. Not yet run: a tag, where `web` also waits for
+`vms` and uploads the release's site asset.

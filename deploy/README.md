@@ -107,7 +107,11 @@ room.
 Tag a release (`v0.2.0`) and the deploy workflow does the rest: it pushes the images, then
 its `vms` job ships `deploy/vm/` to every VM in the repository variable `KFM_VMS` over an IAP
 SSH tunnel and runs `update.sh v0.2.0` on each (in the listed order: lobby VM last), and only
-then publishes the page, so a browser never meets a server of another build. `update.sh`
+then publishes the page, so a browser never meets a server of another build. The page is
+built meanwhile (the `web-build` job, beside the images) and the `web` job after the VMs only
+publishes it: a client of another build id is refused and told to reload, so from the first
+server's restart until the new page is up a player on the old page reloads into the old page,
+and that window should be the VM update and little more. `update.sh`
 pulls the tag, refreshes the units and the Caddyfile from the shipped copy, writes the tag
 into `kfm.env`, restarts the lobby and then the servers one at a time, at once: a match in
 progress ends with its server's restart. The lobby's own restart ends no match (lobby protocol
@@ -156,7 +160,7 @@ and two jobs upload to it with `--clobber`, so re-running a deploy replaces its 
 | `kfm_arena-<tag>-macos-arm64.tar.gz` | `arena` job, macos-latest, Apple Clang | needs the macOS the runner built for (its `minos` is in README.txt); not notarised |
 | `kfm_arena-<tag>-windows-x86_64.zip` | `arena` job, windows-latest, MSVC | static CRT: no Visual C++ redistributable |
 | `SHA256SUMS` | `arena-sums` job | `sha256sum` format over the three archives (`sha256sum -c SHA256SUMS`) |
-| `kfm_client-site-<tag>.tar.gz` | `web` job | this release's page: `index.html`, `kfm_client.html`, `config.js`, `favicon.svg`, `assets/<hash>/` (no `_headers`) |
+| `kfm_client-site-<tag>.tar.gz` | `web-build` job packs it, `web` uploads it | this release's page: `index.html`, `kfm_client.html`, `config.js`, `favicon.svg`, `assets/<hash>/` (no `_headers`) |
 
 Each `kfm_arena` archive holds `kfm_arena` (`kfm_arena.exe`), `README.txt` (the tag, the
 commit, the usage line, what the host needs) and `LICENSE` once the repository has one, all at
@@ -191,7 +195,8 @@ re-run of the workflow updates the branch and keeps the open pull request.
 site serves every release under its tag, `https://play.example.com/v0.60/` (keep the trailing
 slash: the page's references are relative), beside the root, which serves the release being
 deployed. A Pages deployment is a full snapshot of `site/`, so the `web` job rebuilds every
-versioned path each time: it uploads this release's site asset first, then unpacks the site
+versioned path each time: it uploads this release's site asset (as `web-build` packed it)
+first, then unpacks the site
 asset of every earlier non-draft `v*` release under `site/<tag>/`, adds this release under
 `site/<tag>/`, and writes `_headers` with `/:version/...` rules beside the root's (assets
 immutable, the page, `config.js` and `favicon.svg` revalidated). A release without a site asset
@@ -218,6 +223,8 @@ gh release upload v0.58 kfm_client-site-v0.58.tar.gz --clobber
 
 To serve it at once rather than at the next tag, re-run only the `web` job of the newest tag's
 Deploy run (Actions → the run → `web` → Re-run this job: the images and VMs are not touched).
+It publishes the page `web-build` left as the run's `kfm_client-site` artifact, which is kept
+14 days; after that, re-run `web-build` instead, and `web` runs again behind it.
 A manual run of the workflow from a branch other than `main` is a preview of that branch; one
 from `main` publishes to production, as before. Deleting a release's site asset (or the release) drops `/<tag>/` at the next deploy.
 

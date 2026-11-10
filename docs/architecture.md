@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.72 (2026-11-10), a living document: it describes the system as built and deployed,
+Status: v0.73 (2026-11-10), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -3537,7 +3537,10 @@ lives in the bots repository (above) and uses this repository through its tagged
   from the workflow: `vms` runs between the images and the page, ships `deploy/vm/` to each VM
   named in `KFM_VMS` over an IAP tunnel and runs `update.sh TAG` (a rolling restart at
   once; `--drain` is opt-in), authenticated through Workload Identity Federation rather than a stored key, so
-  the page never serves a build the servers refuse; a manual run skips the VMs.
+  the page never serves a build the servers refuse; a manual run skips the VMs. Since v0.73
+  the page is built beside the images (`web-build`) and `web`, after the VMs, only publishes
+  it: a client of another build id is refused and told to reload (v0.70), so until the new
+  page is up a player on the old page reloads into the old page.
 - Determinism gate in CI: replay corpus → identical per-tick checksums across Linux, Windows,
   macOS, Debug and Release. A replay carries the content hash and `kfm_replay` refuses one whose
   hash differs from the build's (no legacy exemption), so the corpus is defined by a checked-in

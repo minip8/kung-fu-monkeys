@@ -8,7 +8,11 @@ name: Deploy
 #
 # On a tag the VMs are updated between the images and the page (the `vms`
 # job): a client is refused when its build id differs from the server's, so
-# the servers must answer the new build before the page serves it. The job
+# the servers must answer the new build before the page serves it. Until it
+# does, a player on the old page is refused and told to reload, and reloads
+# into the old page: that window is the VM update plus whatever the page
+# still has to do after it, so the page is built beforehand (`web-build`,
+# beside the images) and `web` only publishes it. The `vms` job
 # ships deploy/vm to each VM over an IAP SSH tunnel and runs update.sh TAG,
 # which restarts the pool one process at a time at once (a running match
 # ends; update.sh --drain exists for a by-hand update that waits for the
@@ -33,7 +37,7 @@ name: Deploy
 # M7 step 1 (architecture §8 "The ladder", §11; v0.59): a tag is also a
 # GitHub release. The `release` job creates it (once; a re-run finds it) and
 # two jobs upload to it with --clobber, so a re-run replaces its own assets:
-#   arena  (parallel to images/vms/web, never waiting on them) builds the
+#   arena  (parallel to images/vms/web-build/web, never waiting on them) builds the
 #          headless Release kfm_arena with the wasm bot runtime on the three
 #          ci.yml OSes, smoke-runs it (reference bots, then the echo.wasm
 #          fixture) and uploads
@@ -45,7 +49,8 @@ name: Deploy
 #          The ladder's CLI and scheduler download these by name.
 #   arena-sums  then uploads SHA256SUMS (sha256sum format) over the three.
 #   web    uploads kfm_client-site-<tag>.tar.gz, this release's page (the
-#          files below without _headers), before it publishes the site.
+#          files below without _headers, packed by web-build), before it
+#          publishes the site.
 # A Pages deployment is a full snapshot, so the web job rebuilds every
 # versioned path on every deploy: it unpacks the site asset of every earlier
 # non-draft v* release under site/<tag>/ (a release without one, v0.1.0 to
@@ -56,8 +61,9 @@ name: Deploy
 # references assets/, config.js and favicon.svg relatively) and carries the
 # config.js of its release, i.e. the lobby URL at that release.
 # The run graph: release -> arena -> arena-sums -> bots-bump; images -> vms ->
-# web, where web also needs release (it uploads the site asset before
-# publishing). bots-bump (v0.71) opens the engine pin bump in the bots
+# web, where web also needs web-build (which needs nothing and runs beside
+# the images) and release (it uploads the site asset before publishing).
+# bots-bump (v0.71) opens the engine pin bump in the bots
 # repository as a pull request once the release has its kfm_arena archives.
 # A manual run creates no release and uploads no release asset: arena and
 # arena-sums keep their archives as workflow artifacts (sha-<short> in the
@@ -399,24 +405,17 @@ jobs:
             echo "::endgroup::"
           done
 
-  web:
-    name: browser client to Cloudflare Pages
-    needs: [images, vms, release]
-    # Runs after the VMs (or at once when the vms job is skipped: a manual
-    # run, or no KFM_VMS), never after a failed one; the release exists by
-    # then on a tag (a manual run skips it).
-    if: >-
-      !cancelled() && needs.images.result == 'success'
-      && (needs.vms.result == 'success' || needs.vms.result == 'skipped')
-      && (needs.release.result == 'success' || needs.release.result == 'skipped')
+  web-build:
+    # The page of this run, built beside the images (it needs nothing from
+    # them) and handed to `web` as a workflow artifact, so that publishing
+    # after the VMs is a download and an upload rather than a build (the
+    # header comment has the reason). It publishes nothing and reads no
+    # secret; the lobby URL and the Sentry DSN it writes are public.
+    name: browser client build
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      contents: write   # read the releases' site assets, upload this one's
-      deployments: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      GH_REPO: ${{ github.repository }}
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: lukka/get-cmake@latest
@@ -469,17 +468,72 @@ jobs:
             "$KFM_LOBBY_URL" "$KFM_SENTRY_DSN" > release-site/config.js
           find release-site -type f | sort
           cat release-site/config.js
+      - name: Pack the page
+        # The archive `web` publishes from and, on a tag, uploads unchanged as
+        # the release's site asset (sha-<short> stands for the tag on a manual
+        # run, as in the kfm_arena archives).
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then ver="$GITHUB_REF_NAME"; else ver="sha-${GITHUB_SHA::7}"; fi
+          asset="kfm_client-site-$ver.tar.gz"
+          mkdir -p dist
+          tar -czf "dist/$asset" --owner=0 --group=0 -C release-site .
+          tar -tzf "dist/$asset"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kfm_client-site
+          path: dist/kfm_client-site-*.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  web:
+    name: browser client to Cloudflare Pages
+    needs: [web-build, images, vms, release]
+    # Runs after the VMs (or at once when the vms job is skipped: a manual
+    # run, or no KFM_VMS), never after a failed one; the release exists by
+    # then on a tag (a manual run skips it). Everything slow happened in
+    # web-build: keep this job to what must follow the VMs.
+    if: >-
+      !cancelled() && needs.web-build.result == 'success'
+      && needs.images.result == 'success'
+      && (needs.vms.result == 'success' || needs.vms.result == 'skipped')
+      && (needs.release.result == 'success' || needs.release.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write   # read the releases' site assets, upload this one's
+      deployments: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # As before the split: wrangler runs inside a checkout of the commit it
+      # deploys.
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kfm_client-site
+          path: dist
+      - name: Unpack this run's page
+        id: page
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then ver="$GITHUB_REF_NAME"; else ver="sha-${GITHUB_SHA::7}"; fi
+          asset="dist/kfm_client-site-$ver.tar.gz"
+          [[ -f "$asset" ]] || { echo "::error::web-build left no $asset"; ls -l dist; exit 1; }
+          rm -rf release-site && mkdir -p release-site
+          tar -xzf "$asset" --no-same-owner -C release-site
+          [[ -f release-site/index.html && -f release-site/config.js ]] \
+            || { echo "::error::$asset is not a page"; tar -tzf "$asset"; exit 1; }
+          find release-site -type f | sort
+          echo "asset=$asset" >> "$GITHUB_OUTPUT"
       - name: Upload the page as the release's site asset
         # Before publishing, so every /<tag>/ the site serves can be rebuilt by
         # the next deploy.
         if: github.ref_type == 'tag'
-        run: |
-          set -euo pipefail
-          asset="kfm_client-site-$GITHUB_REF_NAME.tar.gz"
-          mkdir -p dist
-          tar -czf "dist/$asset" --owner=0 --group=0 -C release-site .
-          tar -tzf "dist/$asset"
-          gh release upload "$GITHUB_REF_NAME" "dist/$asset" --clobber
+        env:
+          ASSET: ${{ steps.page.outputs.asset }}
+        run: gh release upload "$GITHUB_REF_NAME" "$ASSET" --clobber
       - name: Assemble the site (the root and every release under /<tag>/)
         # A Pages deployment is a full snapshot: each deploy brings back the
         # site asset of every earlier non-draft v* release under site/<tag>/.
