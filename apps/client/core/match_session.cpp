@@ -120,15 +120,12 @@ void MatchSession::stepOnce(uint64_t tickStartNs, uint64_t tickWallNs, uint64_t 
       frame.inputs[i] = lastInputs_[i];  // dropped pad: repeat last input
     }
   }
-  // The bots' slots (and only theirs), in slot order, from this tick's world.
-  agents_.fill(frame, curr_, matchContent());
+  // The bots' slots (and only theirs), in slot order, from this tick's world,
+  // then the step, then the calls the bots hear (v0.35): one AgentHost call.
+  prev_ = curr_;
+  agents_.step(curr_, frame, matchContent(), sink_);
   lastInputs_ = frame.inputs;
   lastFrame_ = frame;
-
-  prev_ = curr_;
-  sink_.clear();
-  sim::step(curr_, frame, matchContent(), sink_);
-  agents_.observe(sink_, curr_, matchContent());  // v0.35: the calls the bots hear
   appendEvents(sink_);
   ++ticksThisFrame_;
 }

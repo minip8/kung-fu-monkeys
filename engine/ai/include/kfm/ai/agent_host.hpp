@@ -148,6 +148,15 @@ class AgentHost {
   void observe(const sim::EventSink& events, const sim::WorldState& after,
                const sim::MatchContent& content);
 
+  // One tick of a host that steps the world itself (kfm_arena, the client's
+  // MatchSession): fill(frame, world, content), then sink.clear() and
+  // sim::step(world, frame, content, sink), then observe(sink, world,
+  // content), so a host cannot step without its bots hearing the calls.
+  // `frame` (tick, present and the non-agent slots set by the caller) is
+  // left holding the inputs the step ran with, for the host to record.
+  void step(sim::WorldState& world, sim::InputFrame& frame, const sim::MatchContent& content,
+            sim::EventSink& sink);
+
   // Whether the slot is paused (its monkey eliminated, see the header).
   [[nodiscard]] bool paused(PlayerId slot) const;
   // Re-inits on a resume under RespawnMemory::Wipe, since attach.

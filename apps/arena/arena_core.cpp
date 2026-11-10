@@ -167,11 +167,9 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
     InputFrame frame;
     frame.tick = world->tick;
     frame.present = world->rules.present;
-    host.fill(frame, *world, match);
+    // fill, step, observe (v0.35: the calls each bot hears) in one call.
+    host.step(*world, frame, match, sink);
     if (setup.recordReplay) frames.push_back(frame);
-    sink.clear();
-    step(*world, frame, match, sink);
-    host.observe(sink, *world, match);  // v0.35: the calls each bot hears
     ++result.ticks;
     bool ended = false;
     for (const SimEvent& e : sink) {

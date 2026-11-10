@@ -5,6 +5,7 @@
 #include "kfm/ai/vision.hpp"
 #include "kfm/core/assert.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
+#include "kfm/sim/step.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -207,6 +208,14 @@ void AgentHost::observe(const sim::EventSink& events, const sim::WorldState& aft
       if (s.heardCount < s.heard.size()) s.heard[s.heardCount++] = call;
     }
   }
+}
+
+void AgentHost::step(sim::WorldState& world, sim::InputFrame& frame,
+                     const sim::MatchContent& content, sim::EventSink& sink) {
+  fill(frame, world, content);
+  sink.clear();
+  sim::step(world, frame, content, sink);
+  observe(sink, world, content);
 }
 
 }  // namespace kfm::ai

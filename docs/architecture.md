@@ -4135,8 +4135,10 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   carries everything seen since the previous latch and a one-tick turn is the current tick.
   `buildObservation` without a context projects the tick alone (tests, tools).
 - **Calls.** Every host calls `AgentHost::observe(events, the world after the step, content)`
-  after each `step` (`kfm_arena`, `kfm_server`'s per-tick hook, the client's `MatchSession`;
-  netsim and `kfm_replay` run no agents). A `MonkeyCalled` whose caller is still in the world is
+  after each `step`: `kfm_arena` and the client's `MatchSession` through `AgentHost::step`
+  (fill, `sim::step`, observe in one call, so they cannot step without it), `kfm_server` from
+  its per-tick hook after `NetServer::tick` (whose `botInputs` callback is the fill); netsim and
+  `kfm_replay` run no agents. A `MonkeyCalled` whose caller is still in the world is
   heard by every other slot with a live (not paused) agent whose monkey stands within the call's
   range, Chebyshev between the centres in units, after the step; it enters that slot's window
   (16 at most, later ones dropped), so a call made on tick T is in the observations of T + 1 up
