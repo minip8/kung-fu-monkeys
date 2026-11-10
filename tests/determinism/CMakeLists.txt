@@ -27,6 +27,24 @@ foreach(replay IN LISTS KFM_CORPUS_REPLAYS)
   set_tests_properties(determinism_${name} PROPERTIES LABELS determinism)
 endforeach()
 
+# What each corpus entry exercises (v0.70): plays every replay against the
+# embedded content and asserts the events its name promises. The corpus is
+# read in place natively, embedded at /replay-corpus under node.
+kfm_add_test_exe(kfm_corpus_tests corpus_events_test.cpp)
+target_link_libraries(kfm_corpus_tests PRIVATE kfm::content)
+set_tests_properties(kfm_corpus_tests PROPERTIES LABELS determinism)
+if(EMSCRIPTEN)
+  target_link_options(kfm_corpus_tests PRIVATE
+    "SHELL:--embed-file \"${KFM_REPLAY_CORPUS_DIR}@/replay-corpus\"")
+  file(GLOB kfm_corpus_files CONFIGURE_DEPENDS
+    "${KFM_REPLAY_CORPUS_DIR}/*.kfmr" "${KFM_REPLAY_CORPUS_DIR}/corpus.txt")
+  set_property(TARGET kfm_corpus_tests APPEND PROPERTY LINK_DEPENDS ${kfm_corpus_files})
+  target_compile_definitions(kfm_corpus_tests PRIVATE KFM_REPLAY_CORPUS_DIR="/replay-corpus")
+else()
+  target_compile_definitions(kfm_corpus_tests PRIVATE
+    KFM_REPLAY_CORPUS_DIR="${KFM_REPLAY_CORPUS_DIR}")
+endif()
+
 # Re-records every replay listed in tools/replay-corpus/corpus.txt and
 # regenerates its expected checksum file from the current build. Run only
 # after an intentional gameplay or content change, and say so in the commit

@@ -4551,7 +4551,17 @@ lives in the bots repository (above) and uses this repository through its tagged
   `--content` says otherwise. Adding any def (an arena included) changes the content hash, so
   the corpus is re-recorded; the checksums of existing entries must stay identical, because
   content that is only added never changes the default match (a scenario test asserts this for
-  extra arenas and modes). v0.22 adds one 4-player scripted replay per walled arena
+  extra arenas and modes). v0.70: the gate proves an entry reproduces, not that it still
+  exercises what it is in the corpus for, and the corpus is scripted input a seed or content
+  change can quietly move. `kfm_corpus_tests` (`tests/determinism/corpus_events_test.cpp`,
+  label `determinism`) plays every manifest entry against the embedded content and asserts the
+  events its name promises (the island entry a `PlayerFell`, blink/slam/parry their ability's
+  event, the power-up entries a power-up taken and the powerset one only its two power-ups
+  spawned, deathmatch and team deathmatch a scoring elimination and a respawn, the team and
+  round entries a round won, hill and contest the hill held and a point, capture a flag taken
+  and a capture, the grid squad and contest a call, the empty entries no action at all) and no
+  `EventSink` overflow; a manifest line without a row there fails, so a new entry states what it
+  is for. v0.22 adds one 4-player scripted replay per walled arena
   (`scripted_4p_pillars_1800t`, `scripted_4p_corridors_1800t`, `scripted_4p_island_1800t`), so
   wall slides, bounces, pit falls and slow patches are under the cross-platform gate. The
   embedded content depends on the globbed file list as well as the files (a list file rewritten
