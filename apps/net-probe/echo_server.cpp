@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -19,6 +20,10 @@ std::expected<std::unique_ptr<EchoServer>, std::string> EchoServer::create(
   net::WebRtcServerConfig config;
   config.signalingPort = port;
   config.signalingBindAddress = bindAddress;
+  // The probe measures throughput: it echoes megabytes of reliable data in
+  // a burst, which a game server never sends, so the backlog cap that drops
+  // a peer that is not draining (1 MiB by default) is off here.
+  config.maxReliableBufferedBytes = std::numeric_limits<size_t>::max();
   auto transport = net::WebRtcTransport::createServer(config);
   if (!transport) return std::unexpected(transport.error());
   return std::make_unique<EchoServer>(std::move(*transport));

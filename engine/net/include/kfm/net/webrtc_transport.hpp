@@ -73,10 +73,11 @@
 // nothing from rtc::.
 //
 // Send buffers: the unreliable lane drops a message once 64 KB wait to be
-// sent; the reliable lane cannot drop one, so a peer with more than
-// maxReliableBufferedBytes waiting is disconnected (lastError() says so) and
-// reported at the next poll(), which bounds what a peer that stops reading
-// costs the sender.
+// sent; the reliable lane cannot drop one, so a server disconnects a peer
+// with more than maxReliableBufferedBytes waiting (lastError() says so) and
+// reports it at the next poll(), which bounds what a peer that stops reading
+// costs the server. A client has no such cap: its backlog toward its one
+// server costs only itself.
 //
 // The connection token (§6.7) is held for the message layer, which sends it
 // in its first reliable message; the transport never validates it.

@@ -18,6 +18,7 @@
 #include <exception>
 #include <expected>
 #include <format>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -936,6 +937,10 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
     initLoggerOnce(WebRtcLogLevel::Warning);
     auto impl = std::make_unique<Impl>();
     impl->server = false;
+    // The reliable-lane cap protects a server from a peer that stops
+    // reading. A client's backlog toward its one server costs only itself,
+    // and dropping the link would lose what it still has to say.
+    impl->maxReliableBuffered = std::numeric_limits<size_t>::max();
     impl->stunServer = config.stunServer;
     impl->connectTimeoutNs = uint64_t{config.connectTimeoutMs} * kNsPerMs;
     if (config.lobby) {
