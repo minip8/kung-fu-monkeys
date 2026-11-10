@@ -35,7 +35,7 @@ namespace detail {
 template <std::size_t I>
 struct AnyField {
   template <class T>
-  // NOLINTNEXTLINE(google-explicit-constructor,hicpp-explicit-conversions)
+  // NOLINTNEXTLINE(misc-explicit-constructor): converting to anything is the point
   constexpr operator T() const noexcept;
 };
 
@@ -71,9 +71,9 @@ constexpr std::size_t countFieldsDownFrom() {
 template <class T>
 [[nodiscard]] consteval std::size_t fieldCount() {
   static_assert(std::is_aggregate_v<T>, "fieldCount needs an aggregate");
-  constexpr std::size_t n = detail::countFieldsDownFrom<T, detail::kMaxProbedFields>();
-  static_assert(n < detail::kMaxProbedFields, "more fields than fieldCount probes");
-  return n;
+  constexpr std::size_t kCount = detail::countFieldsDownFrom<T, detail::kMaxProbedFields>();
+  static_assert(kCount < detail::kMaxProbedFields, "more fields than fieldCount probes");
+  return kCount;
 }
 
 }  // namespace kfm

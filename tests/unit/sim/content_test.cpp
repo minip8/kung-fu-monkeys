@@ -69,7 +69,7 @@ void everyFieldReachesTheHash(const std::array<ContentMutation, N>& mutations) {
   const ContentDB& base = defaultContent();
   const uint32_t before = contentHash(base);
   for (size_t i = 0; i < N; ++i) {
-    ContentDB c = base;
+    ContentDB c = base;  // NOLINT(misc-const-correctness): mutated through the pointer
     mutations[i](c);
     INFO("field " << i);
     CHECK(contentHash(c) != before);

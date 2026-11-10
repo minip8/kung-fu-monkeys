@@ -236,7 +236,7 @@ void everyFieldReachesTheChecksum(const WorldState& base,
   static_assert(N == fieldCount<T>(), "one mutation per field");
   const uint32_t before = checksum(base);
   for (size_t i = 0; i < N; ++i) {
-    WorldState s = base;
+    WorldState s = base;  // NOLINT(misc-const-correctness): mutated through the pointer
     mutations[i](s);
     INFO("field " << i);
     CHECK(checksum(s) != before);
