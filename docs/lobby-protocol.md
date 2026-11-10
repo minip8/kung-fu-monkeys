@@ -89,8 +89,8 @@ and is closed, and the server gets `peer_gone` for its peer, before anything els
 any join, `peer` (a new peer id, the same token) goes to the server and `joined` (the same
 token) to the client. A token the room never issued is refused `bad_token`.
 
-Refusal reasons: `unknown_code` (no live room), `full` (the room's server has no free human
-slot), `no_server` (no free server in that region, or the region is unknown), `mismatch`
+Refusal reasons: `unknown_code` (no live room), `full` (the room's open client sockets reached
+its server's `capacity`), `no_server` (no free server in that region, or the region is unknown), `mismatch`
 (`build`/`content` differ from the server's), `bad_request` (malformed, wrong first message,
 or a second request on the same socket), `server_gone` (the room's server dropped while the
 join was in flight), `bad_token` (v1.2: a rejoin with a token this room never issued).
@@ -147,7 +147,7 @@ Then, lobby → server:
 | `{"type":"room","code":"ABCDE"}` | A room is now hosted by this server. A server holds at most one room at a time; the lobby only assigns to a server with no room. |
 | `{"type":"peer","peer":"7","token":"<32 hex>"}` | A client joined the room; `token` is what its `Hello` will carry. The server must accept it. Sent before any `signal` for that peer. |
 | `{"type":"signal","peer":"7","msg":"<signaling JSON as a string>"}` | A signaling message from that client. |
-| `{"type":"peer_gone","peer":"7"}` | The client's lobby socket closed (it left). The token is void. |
+| `{"type":"peer_gone","peer":"7"}` | The client's lobby socket closed (it left). The server forgets the peer and stops accepting its token, but the token stays the room's: a rejoin presents it and the lobby announces it again in a new `peer` (§2, §3). |
 | `{"type":"room_closed","code":"ABCDE"}` | The room expired (ten minutes after its last peer left) or every peer is gone and the lobby released it. The server is free for a new `room`. |
 
 Server → lobby:
@@ -184,7 +184,7 @@ Server → lobby:
 - Rate limit per socket: 60 messages per second with a burst of 120; beyond it the socket is
   closed. (Signaling is a few dozen messages per join.)
 - At most 64 open client sockets per room (the server's `capacity` is the real cap), at most
-  1024 servers, at most 4096 rooms; beyond those the request is refused `no_server`.
+  1024 servers, at most 4096 rooms; beyond those the request is refused as below.
 - Every close initiated by the lobby uses WebSocket close code 1000 after the `refused` or
   `closed` message; protocol errors use 1002 with no message. A frame that is not a flat object
   of strings, a frame over the size limit, the rate limit and the first-message timeout are

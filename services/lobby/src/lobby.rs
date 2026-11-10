@@ -182,8 +182,8 @@ impl Lobby {
     pub(crate) fn register(&self, tx: Tx, reg: Registration) -> Result<u64, Refusal> {
         let mut state = self.lock();
         if state.servers.len() >= self.config.max_servers {
-            warn!(event = "refuse", socket = "server", reason = "no_server", name = %reg.name, "server limit reached");
-            return Err(Refusal::NoServer);
+            warn!(event = "refuse", socket = "server", reason = "bad_request", name = %reg.name, "server limit reached");
+            return Err(Refusal::BadRequest);
         }
         let new_region = !state.servers.values().any(|s| s.reg.region == reg.region);
         if new_region && state.all_regions().len() >= self.config.max_regions {
@@ -232,7 +232,8 @@ impl Lobby {
         }
     }
 
-    /// Updates a server's free human slots.
+    /// Updates the total of human slots a server offers (§5 `capacity`:
+    /// never net of joined humans; occupancy is counted here, by sockets).
     pub(crate) fn set_capacity(&self, id: u64, capacity: u32) {
         let mut state = self.lock();
         if let Some(server) = state.servers.get_mut(&id) {

@@ -10,7 +10,9 @@
 //     which acceptsToken() then accepts (ServerConfig::acceptToken);
 //   - `signal` from the lobby: deliverSignaling() to that peer; the
 //     transport's takeOutgoingSignaling() goes back as `signal` envelopes;
-//   - `peer_gone` from the lobby: closeExternalPeer(), the token is void;
+//   - `peer_gone` from the lobby: closeExternalPeer(), and acceptsToken()
+//     stops accepting its token (the lobby keeps it for a rejoin, spec §2,
+//     and announces it again in a new `peer` when the player comes back);
 //     a peer the transport dropped itself (takeDroppedExternalPeers(): a
 //     kick, a failure, a timeout) is sent to the lobby as `peer_gone`;
 //   - `room` / `room_closed`: the room code (room()); the host decides what
@@ -111,8 +113,9 @@ class LobbyLink {
   // Does the link's work (see the header comment) and returns what happened
   // since the last call, in order. nowNs: the caller's monotonic clock.
   [[nodiscard]] std::vector<LobbyEvent> poll(uint64_t nowNs);
-  // The human slots still free; sent as `capacity` when it changes (and
-  // with every `register`).
+  // The total of human slots the process offers (spec §5: never net of the
+  // humans connected, the lobby counts occupancy itself); sent as `capacity`
+  // when it changes (and with every `register`).
   void setCapacity(uint16_t capacity);
 
   // A token of a peer the lobby announced and that has not gone since (the

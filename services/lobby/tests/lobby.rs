@@ -254,6 +254,22 @@ async fn register_with_good_and_bad_secret() {
 }
 
 #[tokio::test]
+async fn a_full_registry_refuses_bad_request() {
+    let mut config = config();
+    config.max_servers = 2;
+    let addr = start(config).await;
+    let _a = register(addr, "eu-1", "eu", "4").await;
+    let b = register(addr, "eu-2", "eu", "4").await;
+    let mut c = connect(addr, "/server").await;
+    send(&mut c, register_msg("eu-3", "eu", "4")).await;
+    expect_refused(&mut c, "bad_request").await;
+    // A slot that comes free takes a registration again.
+    drop(b);
+    wait_health(addr, |h| h["servers"] == 1).await;
+    let _c = register(addr, "eu-3", "eu", "4").await;
+}
+
+#[tokio::test]
 async fn regions_lists_every_region_and_the_free_ones() {
     let addr = start(config()).await;
     assert_eq!(regions(addr).await, pair("", ""));
