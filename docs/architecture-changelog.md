@@ -1136,5 +1136,8 @@ still assembled after the VMs, not in `web-build`, so its list of earlier releas
 fresh as before; the VM update itself, the larger part of what is left, is unchanged.
 Verified: the workflow parses and its job graph is as described; the pack, unpack and site
 assembly steps were run locally for a tag and for a manual run (the page round-trips byte for
-byte, the earlier releases' paths are served). Not yet run: the workflow itself, which first
-runs on the next tag or manual dispatch.
+byte, the earlier releases' paths are served), and a manual run of the workflow from the
+branch passed: `web-build` finished 2 min after the start, beside the images, and `web`
+published the preview 36 s after its last dependency finished (the job itself 46 s), with the
+root and `/v0.5.0/` to `/v0.8.0/` served. Not yet run: a tag, where `web` also waits for
+`vms` and uploads the release's site asset.
