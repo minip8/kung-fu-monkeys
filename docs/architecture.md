@@ -1197,10 +1197,10 @@ struct WorldState {
   Rng         rng;
   MatchRules  rules;                               // mode, phase, scores, timers
   Pool<Player,    kMaxPlayers>    players;         // 10
-  Pool<Boomerang, kMaxBoomerangs> boomerangs;      // e.g. 64
-  Pool<Pickup,    kMaxPickups>    pickups;         // e.g. 32
-  Pool<Hazard,    kMaxHazards>    hazards;
-  // Arena geometry is immutable content referenced by index; not part of state.
+  Pool<Boomerang, kMaxBoomerangs> boomerangs;      // 64
+  Pool<Pickup,    kMaxPickups>    pickups;         // 32
+  // Arena geometry (walls, hazards, zones, spawners) is immutable content: the
+  // arena the match selected (MatchContent::arena), never part of state.
 };
 static_assert(std::is_trivially_copyable_v<WorldState>);
 ```
@@ -1249,7 +1249,8 @@ static_assert(std::is_trivially_copyable_v<WorldState>);
 ### 5.3 Tick pipeline
 
 ```
-step(WorldState& s, const InputFrame& in, const ContentDB& content, EventSink& events):
+step(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& events
+     [, StepStats& stats]):
    1. RulesSystem::preTick      round start/end, spawn waves
    2. InputSystem               decode PlayerInput → Intent; press-edge detection; space.latch (facing, grid commitments)
    3. AbilitySystem             activation, phase state machines, cooldowns (Dash, Throw, …)
@@ -1269,12 +1270,23 @@ snapshots). Moving entities are inserted by their swept AABB (start, end, radius
 pairs are deduplicated and sorted by `(kindA, indexA, kindB, indexB)` before the narrowphase,
 so contact order does not depend on cell layout. Contacts are Player × Boomerang,
 Player × Pickup and (v0.16) Player × Player; a player pair is listed once with
-`indexA < indexB`, both players moving, radii from `PlayerDef::radius`, and its contact point is
+`indexA < indexB`, both players moving, radii from `Stats::radius` (v0.34; base `PlayerDef::radius`), and its contact point is
 the midpoint of the two centres at `tHit` so it reads the same from either side. Player pairs are
 purely geometric: every touching pair is a contact whatever its tags (at most 45 with 10
 players), and the rules table decides what a touch means. A brute-force all-pairs broadphase stays in
 the tests as the oracle: a property test asserts both produce the same pair set. A banana's
 contact radius is `BoomerangDef::radius × Boomerang::radiusMul` (v0.20, §5.8).
+
+Scratch capacities (v0.70). The candidate list holds every possible pair (`kMaxCandidatePairs`
+1024 ≥ 10 × (64 + 32) + 45, a `static_assert`), so a push past it is asserted, never counted. The
+contact list (`kMaxContacts` 256) is not the worst case: every candidate pair can be a contact and
+a player in every hazard adds one per hazard, 1165 in all, which a unit test builds (every
+entity on one spot). Sizing the list for it cost about 1 µs a tick (+50% in `kfm_replay bench`)
+for the per-tick clears alone, so instead the overflow stays counted (`Contacts::dropped`) and
+`step()` reports it through an optional `StepStats& stats` (`contactsDropped`; derived, never
+state, never read by the sim). A dropped contact is a hit, catch or pickup that did not happen,
+deterministically on every peer; `kfm_corpus_tests` asserts no corpus tick drops one. A tool
+that wants it (`kfm_replay bench`/`verify`, the arena runner) reads `StepStats` the same way.
 
 Power-up spawners (v0.20) run at the end of `LifecycleSystem`, not in `RulesSystem::preTick`:
 entity creation and removal already live there (grounded bananas become pickups in the same

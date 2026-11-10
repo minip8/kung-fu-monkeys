@@ -77,12 +77,18 @@ struct AbilityDef {
   uint16_t activeTicks{0};
   uint16_t recoveryTicks{0};
   uint16_t perfectWindowTicks{0};  // Dash: first N active ticks grant Tag::PerfectDash
-  Fixed speed{};  // Dash: dash speed; Blink: distance per active tick (units/tick). Throw: unused
+  // Dash: dash speed; Blink: distance per active tick (units/tick). Throw
+  // (v0.48): the charge rate, the speed multiplier gained per tick held past
+  // the startup (0 = no charge; abilities/throw.hpp throwCharges).
+  Fixed speed{};
   // kind-specific numeric params. Slam: reach (radius from its centre). Call
   // (v0.35): range in units (TOML `range`), the Chebyshev distance between
-  // centres within which a monkey hears it
+  // centres within which a monkey hears it. Throw (v0.48): the speed
+  // multiplier of a tap (TOML charge_min).
   Fixed param0{};
-  Fixed param1{};      // Slam: push distance, spread over activeTicks
+  // Slam: push distance, spread over activeTicks. Throw (v0.48): the speed
+  // multiplier of a full charge (charge_max).
+  Fixed param1{};
   Tags tagsStartup{};  // tags granted during each phase
   Tags tagsActive{};
   Tags tagsRecovery{};

@@ -4,8 +4,9 @@
 // leave, say, the capture entry without a single capture and it would pass
 // the gate forever. This test plays every entry of
 // tools/replay-corpus/corpus.txt against the embedded content and asserts
-// the events its name promises (architecture §9). Every corpus line needs a
-// row here: a new entry states what it is for.
+// the events its name promises (architecture §9), and that no tick overflowed
+// the event or contact lists. Every corpus line needs a row here: a new
+// entry states what it is for.
 #include "kfm/content/app_content.hpp"
 #include "kfm/core/bitstream.hpp"
 #include "kfm/sim/events.hpp"
@@ -41,6 +42,7 @@ struct Tally {
   uint32_t perfectCatches{0};
   uint32_t powerUpsSpawned{0};  // bit i: power-up i was laid by a spawner
   uint32_t eventsDropped{0};    // EventSink overflow, summed over the ticks
+  uint32_t contactsDropped{0};  // StepStats: contact-list overflow, summed
   MatchPhase finalPhase{MatchPhase::Lobby};
 
   [[nodiscard]] uint32_t of(EventKind k) const { return kinds[static_cast<size_t>(k)]; }
@@ -113,7 +115,9 @@ Tally play(const std::string& name) {
     InputFrame frame;
     REQUIRE(readReplayFrame(r, frame));
     sink.clear();
-    step(world, frame, content, sink);
+    StepStats stats;
+    step(world, frame, content, sink, stats);
+    t.contactsDropped += stats.contactsDropped;
     t.eventsDropped += sink.dropped;
     for (const SimEvent& e : sink) {
       const auto k = static_cast<size_t>(e.kind);
@@ -272,6 +276,7 @@ TEST_CASE("every corpus entry exercises what its name promises", "[determinism][
     const Tally t = play(name);
     INFO(describe(t));
     CHECK(t.eventsDropped == 0);
+    CHECK(t.contactsDropped == 0);
     for (const Expectation& x : entry->expect) {
       INFO("expects " << x.what);
       CHECK(x.holds(t, embedded().db));

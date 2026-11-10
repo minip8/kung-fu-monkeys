@@ -429,8 +429,6 @@ TEST_CASE("grid broadphase equals brute force on random worlds", "[sim][collisio
     collisionBroadphaseGrid(s, c, grid);
     collisionBroadphaseBruteForce(s, c, brute);
     INFO("world " << world);
-    REQUIRE(grid.dropped == 0);
-    REQUIRE(brute.dropped == 0);
     REQUIRE(samePairs(grid, brute));
     REQUIRE(std::ranges::is_sorted(grid));
     REQUIRE(std::ranges::adjacent_find(grid) == grid.end());
@@ -492,4 +490,52 @@ TEST_CASE("collisionSystem is deterministic and reads state only", "[sim][collis
   CHECK(sameContacts(first, second));
   CHECK(checksum(s) == before);
   CHECK(checksum(s) == checksum(copy));
+}
+
+// The densest world (contacts.hpp): every slot, every boomerang and every
+// pickup on one spot, inside every hazard of an arena whose hazard table is
+// full (one pit, which is reported once, and slow floors). Every pair
+// touches. The candidate list holds every pair by construction; the
+// contact list does not, and what it drops is counted and reaches
+// StepStats.
+TEST_CASE("the densest world fills the candidate list and overflows the contacts countably",
+          "[sim][collision]") {
+  ContentDB c = defaultContent();
+  ArenaDef& arena = c.arenas[0];
+  for (uint8_t i = 0; i < kMaxArenaHazards; ++i) {
+    arena.hazards[i] =
+        Hazard{v(-2, -2), v(2, 2), i == 0 ? HazardKind::Pit : HazardKind::Slow, Fixed::half()};
+  }
+  arena.hazardCount = kMaxArenaHazards;
+  WorldState s{};
+  for (uint16_t slot = 0; slot < kMaxPlayers; ++slot)
+    putPlayer(s, slot, v(0, 0), v(0, 0));
+  for (uint16_t i = 0; i < kMaxBoomerangs; ++i)
+    spawnBanana(s, kP0, v(0, 0), Vec2::zero());
+  for (uint16_t i = 0; i < kMaxPickups; ++i)
+    spawnPickup(s, v(0, 0));
+
+  CandidatePairs pairs;
+  collisionBroadphaseGrid(s, c, pairs);
+  const uint32_t everyPair =
+      (uint32_t{kMaxPlayers} * (kMaxBoomerangs + kMaxPickups)) + kMaxPlayerPairs;
+  CHECK(pairs.count == everyPair);
+  Contacts contacts;
+  collisionSystem(s, c, contacts);
+  const uint32_t everyContact = everyPair + (uint32_t{kMaxPlayers} * kMaxArenaHazards);
+  REQUIRE(everyContact > kMaxContacts);
+  CHECK(contacts.count == kMaxContacts);
+  CHECK(contacts.count + uint32_t{contacts.dropped} == everyContact);
+
+  // step() reports it: the same world mid-round, idle, so every entity is
+  // still on the spot when collision runs.
+  s.rules.phase = MatchPhase::Playing;
+  s.rules.present = 0b1111111111;
+  StepStats stats;
+  EventSink sink;
+  InputFrame f;
+  f.tick = s.tick;
+  f.present = s.rules.present;
+  step(s, f, c, sink, stats);
+  CHECK(stats.contactsDropped > 0);
 }

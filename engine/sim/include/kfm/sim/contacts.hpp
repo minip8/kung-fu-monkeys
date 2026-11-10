@@ -3,6 +3,7 @@
 // scope, never in WorldState.
 #pragma once
 
+#include "kfm/core/assert.hpp"
 #include "kfm/core/fixed.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/core/vec2.hpp"
@@ -14,6 +15,14 @@
 
 namespace kfm::sim {
 
+// Not the worst case: every candidate pair (below) can be a contact, and a
+// player in every hazard adds one per hazard, so a dense enough clump (ten
+// monkeys on one spot among dozens of bananas) overflows it. The overflow is
+// counted (Contacts::dropped) and reported by step() through
+// StepStats::contactsDropped (v0.70); the corpus asserts it never happens
+// in play. Sizing it for the worst case (1165) was measured at about +1 us
+// a tick (+50% in kfm_replay bench), the clears of it and of
+// InteractionSystem's sort keys that scale with it.
 inline constexpr uint16_t kMaxContacts = 256;
 // Unordered player pairs: the Player × Player contacts (v0.16).
 inline constexpr uint16_t kMaxPlayerPairs = kMaxPlayers * (kMaxPlayers - 1) / 2;
@@ -94,18 +103,13 @@ struct CandidatePair {
 struct CandidatePairs {
   std::array<CandidatePair, kMaxCandidatePairs> items{};
   uint16_t count{0};
-  uint16_t dropped{0};
 
-  constexpr void clear() {
-    count = 0;
-    dropped = 0;
-  }
+  constexpr void clear() { count = 0; }
+  // Sized for every pair (the static_assert above; the broadphases list each
+  // pair once), so a push past capacity is a broken bound, not an overflow.
   constexpr void push(const CandidatePair& p) {
-    if (count < kMaxCandidatePairs) {
-      items[count++] = p;
-    } else {
-      ++dropped;
-    }
+    KFM_ASSERT(count < kMaxCandidatePairs);
+    if (count < kMaxCandidatePairs) items[count++] = p;
   }
   [[nodiscard]] constexpr const CandidatePair* begin() const { return items.data(); }
   [[nodiscard]] constexpr const CandidatePair* end() const { return items.data() + count; }
