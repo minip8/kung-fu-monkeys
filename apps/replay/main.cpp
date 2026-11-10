@@ -366,7 +366,7 @@ int cmdRecordScripted(const Args& a) {
   if (rc == 0 && stats) {
     if (!stats->ok()) return 1;
     stats->collector.finish(world);
-    replay::printSummary(stats->collector.stats(), a.players);
+    replay::printSummary(stats->collector.stats(), a.players, content);
   }
   return rc;
 }
@@ -443,7 +443,7 @@ int cmdStats(const Args& a) {
     if (!a.quiet) replay::printMatchLine(m, seed, inputSeed, run->collector.stats());
     total.merge(run->collector.stats());
   }
-  replay::printSummary(total, a.players);
+  replay::printSummary(total, a.players, content);
   return 0;
 }
 

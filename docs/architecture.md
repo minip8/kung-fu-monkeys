@@ -4343,7 +4343,12 @@ lives in the bots repository (above) and uses this repository through its tagged
   contact at a time in `InteractionSystem`'s order, judging each against the state the rules
   table sees (a contact whose banana or player an earlier contact of the tick removed or
   eliminated is not counted, and nothing counts outside `Playing`); a shadow world advanced by `step()` is compared by checksum every tick so
-  the mirror cannot drift from the sim, and no instrumentation lives in `engine/sim`.
+  the mirror cannot drift from the sim, and no instrumentation lives in `engine/sim`. The
+  thresholds the tool reads (the dash attack's `min_ammo`, each dash's perfect window, the
+  summary's window label from the match loadout's dash) come from the match's content, so
+  `--content` and edited TOML are measured with their own numbers; four `replay_stats_smoke*`
+  ctests (a free-for-all, power-ups with slam in deathmatch, `island`'s pits and the `contest`
+  squad) run the shadow check in CI.
 - Browser check (v0.15): `tools/web/serve.py` serves the wasm build (`--page`, optional
   COOP/COEP headers) and `tools/web/check_browser.py` drives it in headless Chromium through
   Playwright (page loads, no console errors, WebGL2 context attributes, frame intervals,

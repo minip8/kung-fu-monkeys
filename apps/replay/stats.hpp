@@ -131,7 +131,10 @@ class StatsCollector {
  public:
   // Records the pre-interaction state afterStep() compares against.
   void beginContacts(const sim::WorldState& s);
-  void observeContact(const sim::WorldState& s, const sim::Contact& c);
+  // `content` is the match's (the one statsStep() steps with), so the
+  // thresholds read are those of the loaded and selected content.
+  void observeContact(const sim::WorldState& s, const sim::MatchContent& content,
+                      const sim::Contact& c);
   void afterStep(const sim::WorldState& s, const sim::EventSink& sink);
   void finish(const sim::WorldState& s);
   [[nodiscard]] const Stats& stats() const { return stats_; }
@@ -171,7 +174,8 @@ void statsStep(sim::WorldState& s, const sim::InputFrame& in, const sim::MatchCo
 
 // One line per match.
 void printMatchLine(uint32_t index, uint64_t seed, uint64_t inputSeed, const Stats& st);
-// The aggregate block.
-void printSummary(const Stats& st, uint32_t players);
+// The aggregate block; the perfect window it labels is the dash of the
+// match's loadout in `content` (the content the matches ran).
+void printSummary(const Stats& st, uint32_t players, const sim::MatchContent& content);
 
 }  // namespace kfm::replay
