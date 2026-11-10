@@ -42,7 +42,8 @@
 // mismatches, resyncs, lead against target, server substitutions/s, bytes/s
 // up and down per client before transport overhead) and "KFM_NETSIM PASS" or
 // "KFM_NETSIM FAIL: ..."; exits non-zero on any checksum mismatch, resync,
-// rollback overflow, a run without a compared checksum, or a client that is
+// rollback overflow, a client (player or spectator) that compared no
+// checksum (v0.70: per client, not summed over the run), or a client that is
 // not running at the end, so it doubles as a CI gate.
 #include "kfm/content/app_content.hpp"
 #include "kfm/net/netsim.hpp"
@@ -410,9 +411,12 @@ class CsvWriter {
   if (r.mismatches != 0) fail(std::to_string(r.mismatches) + " checksum mismatches");
   if (r.resyncs != 0) fail(std::to_string(r.resyncs) + " resyncs");
   if (r.overflows != 0) fail(std::to_string(r.overflows) + " rollback overflows");
-  if (r.compared == 0) fail("no checksum compared");
+  // Per client: one client that never verifies a checksum fails the gate
+  // even when the others compared plenty.
   for (size_t i = 0; i < s.rigs().size(); ++i) {
     if (!s.rigs()[i].client->running()) fail("client " + std::to_string(i) + " not running");
+    if (s.rigs()[i].client->netStats().checksumsCompared == 0)
+      fail("client " + std::to_string(i) + " compared no checksum");
   }
   if (failure.empty()) {
     std::printf("KFM_NETSIM PASS\n");
