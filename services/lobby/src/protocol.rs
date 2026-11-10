@@ -12,6 +12,16 @@ pub const CODE_LEN: usize = 5;
 /// Largest frame either side accepts (`kfm::net::signaling::kMaxMessageBytes`).
 pub const MAX_FRAME_BYTES: usize = 64 * 1024;
 
+/// Longest region label (`valid_region`).
+pub const MAX_REGION_BYTES: usize = 32;
+
+/// The most distinct regions whose `regions` reply (every region in `list`
+/// and again in `free`, comma-separated) fits in a frame of `max_frame_bytes`.
+pub const fn max_regions_in_a_frame(max_frame_bytes: usize) -> usize {
+    // {"free":"…","list":"…","type":"regions"} is 42 bytes around the lists.
+    max_frame_bytes.saturating_sub(64) / (2 * (MAX_REGION_BYTES + 1))
+}
+
 /// WebSocket close code after a `refused` or `closed` message.
 pub const CLOSE_NORMAL: u16 = 1000;
 /// WebSocket close code of a protocol error (no message precedes it).
@@ -73,7 +83,7 @@ pub fn valid_token(token: &str) -> bool {
 /// comma-separated.
 pub fn valid_region(region: &str) -> bool {
     !region.is_empty()
-        && region.len() <= 32
+        && region.len() <= MAX_REGION_BYTES
         && region
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')

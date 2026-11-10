@@ -185,6 +185,11 @@ impl Lobby {
             warn!(event = "refuse", socket = "server", reason = "no_server", name = %reg.name, "server limit reached");
             return Err(Refusal::NoServer);
         }
+        let new_region = !state.servers.values().any(|s| s.reg.region == reg.region);
+        if new_region && state.all_regions().len() >= self.config.max_regions {
+            warn!(event = "refuse", socket = "server", reason = "bad_request", name = %reg.name, region = %reg.region, "region limit reached");
+            return Err(Refusal::BadRequest);
+        }
         state.next_server += 1;
         let id = state.next_server;
         info!(
@@ -387,23 +392,31 @@ impl Lobby {
     }
 
     /// Client → server: wraps a signaling frame in a `signal` envelope.
-    pub(crate) fn forward_to_server(&self, seat: &Seat, text: &str) {
+    /// `false` when the envelope would exceed the frame limit (§7): escaping
+    /// the frame into `msg` can grow it up to sixfold, and the server's socket
+    /// accepts no more than any other, so such a frame is the client's
+    /// protocol error and never reaches the server.
+    pub(crate) fn forward_to_server(&self, seat: &Seat, text: &str) -> bool {
+        let msg = protocol::encode(&[
+            ("type", "signal"),
+            ("peer", &seat.peer.to_string()),
+            ("msg", text),
+        ]);
+        if msg.len() > self.config.max_frame_bytes {
+            return false;
+        }
         let state = self.lock();
         let seated = state
             .rooms
             .get(&seat.code)
             .is_some_and(|r| r.server == seat.server && r.clients.contains_key(&seat.peer));
         if !seated {
-            return;
+            return true;
         }
         if let Some(server) = state.servers.get(&seat.server) {
-            let msg = protocol::encode(&[
-                ("type", "signal"),
-                ("peer", &seat.peer.to_string()),
-                ("msg", text),
-            ]);
             let _ = server.tx.send(Out::Text(msg));
         }
+        true
     }
 
     /// Server → client: unwraps a `signal` envelope.

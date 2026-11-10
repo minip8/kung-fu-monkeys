@@ -41,6 +41,7 @@ class FakeLobby {
     rtc::WebSocketServer::Configuration c;
     c.port = 0;
     c.bindAddress = "127.0.0.1";
+    c.maxMessageSize = size_t{1024} * 1024;  // sendServerRaw() may send more than 64 KiB
     server_ = std::make_unique<rtc::WebSocketServer>(c);
     server_->onClient([this](const std::shared_ptr<rtc::WebSocket>& ws) { onSocket(ws); });
   }
@@ -120,6 +121,14 @@ class FakeLobby {
   void answerRegions(std::string list, std::optional<std::string> free) {
     const std::scoped_lock lock(mutex_);
     regionsReply_ = std::pair{std::move(list), std::move(free)};
+  }
+  // A raw text frame to the server's socket, whatever it holds.
+  void sendServerRaw(const std::string& text) {
+    const std::scoped_lock lock(mutex_);
+    try {
+      if (serverWs_ && serverWs_->isOpen()) serverWs_->send(text);
+    } catch (...) {  // NOLINT(bugprone-empty-catch): the socket went away
+    }
   }
   // The lobby drops the server's socket (as on a lobby restart).
   void dropServer() {

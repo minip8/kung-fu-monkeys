@@ -839,6 +839,84 @@ async fn frame_size_limit() {
     assert_eq!(recv(&mut server).await["type"], "peer_gone");
 }
 
+/// The `signal` envelope the lobby wraps a client's frame in, as the server
+/// receives it (same encoder, so the same length).
+fn envelope(peer: &str, frame: &str) -> String {
+    json(&[("type", "signal"), ("peer", peer), ("msg", frame)])
+}
+
+#[tokio::test]
+async fn a_frame_whose_envelope_outgrows_the_limit_costs_only_its_client() {
+    let addr = start(config()).await;
+    let mut server = register(addr, "eu-1", "eu", "4").await;
+    let (mut a, _) = create(addr, "eu").await;
+    let (code, peer_a, _) = expect_room(&mut server).await;
+    let (mut b, _) = join(addr, &code).await;
+    let (peer_b, _) = expect_peer(&mut server).await;
+
+    // Under the inbound limit, but escaping it into `msg` doubles every
+    // quote and backslash: the envelope would be about twice the limit.
+    let frame = json(&[("type", "offer"), ("sdp", &"\"".repeat(30 * 1024))]);
+    assert!(frame.len() <= 64 * 1024);
+    assert!(envelope(&peer_b, &frame).len() > 64 * 1024);
+    send(&mut b, frame).await;
+    assert_eq!(expect_close(&mut b).await, Some(1002));
+    // The server hears only that b left; nothing oversized reaches it.
+    let gone = recv(&mut server).await;
+    assert_eq!(
+        (gone["type"].as_str(), gone["peer"].as_str()),
+        ("peer_gone", peer_b.as_str())
+    );
+
+    // The room and a's relay live on, and an envelope of exactly the
+    // limit still goes through.
+    let base = envelope(&peer_a, &json(&[("type", "offer"), ("sdp", "")])).len();
+    let sdp = "v".repeat(64 * 1024 - base);
+    let fits = json(&[("type", "offer"), ("sdp", &sdp)]);
+    assert_eq!(envelope(&peer_a, &fits).len(), 64 * 1024);
+    send(&mut a, fits.clone()).await;
+    let text = recv_text(&mut server).await;
+    assert_eq!(text.len(), 64 * 1024);
+    let signal: Fields = serde_json::from_str(&text).unwrap();
+    assert_eq!(signal["peer"], peer_a);
+    assert_eq!(signal["msg"], fits);
+    // One byte more is a's protocol error, not the server's.
+    let over = json(&[("type", "offer"), ("sdp", &format!("{sdp}v"))]);
+    send(&mut a, over).await;
+    assert_eq!(expect_close(&mut a).await, Some(1002));
+    assert_eq!(recv(&mut server).await["type"], "peer_gone");
+    assert_eq!(healthz(addr).await["servers"], 1);
+    let (_c, joined) = join(addr, &code).await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut server).await;
+}
+
+#[tokio::test]
+async fn the_regions_reply_fits_a_frame_at_the_region_limit() {
+    let addr = start(config()).await;
+    let mut servers = Vec::new();
+    for i in 0..64 {
+        // 32-character labels, the longest valid ones.
+        let region = format!("{i:0>32}");
+        servers.push(register(addr, &format!("s-{i}"), &region, "4").await);
+    }
+    // A 65th distinct region is refused; another server in a known one is not.
+    let mut extra = connect(addr, "/server").await;
+    send(&mut extra, register_msg("s-64", &"x".repeat(32), "4")).await;
+    expect_refused(&mut extra, "bad_request").await;
+    servers.push(register(addr, "s-65", &format!("{:0>32}", 0), "4").await);
+
+    let mut ws = connect(addr, "/client").await;
+    send(&mut ws, json(&[("type", "regions")])).await;
+    let text = recv_text(&mut ws).await;
+    assert!(text.len() <= 64 * 1024, "{} bytes", text.len());
+    let reply: Fields = serde_json::from_str(&text).unwrap();
+    assert_eq!(reply["list"].split(',').count(), 64);
+    assert_eq!(reply["free"].split(',').count(), 64);
+    // The bound itself: the configured maximum always fits.
+    assert!(kfm_lobby::protocol::max_regions_in_a_frame(64 * 1024) >= 64);
+}
+
 #[tokio::test]
 async fn first_message_timeout() {
     let timeout = Duration::from_millis(200);

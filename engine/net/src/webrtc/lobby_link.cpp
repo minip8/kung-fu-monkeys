@@ -31,6 +31,11 @@ namespace kfm::net {
 namespace {
 
 constexpr uint64_t kNsPerMs = 1'000'000;
+// What the lobby socket accepts before libdatachannel truncates a message:
+// well above the protocol's limit, so an oversized frame arrives whole and is
+// ignored as such (docs/lobby-protocol.md §7) instead of reaching the decoder
+// cut short. Sends are held to signaling::kMaxMessageBytes by send().
+constexpr size_t kSocketMessageLimit = size_t{1024} * 1024;
 
 enum class SocketEventKind : uint8_t { Open = 0, Closed, Text };
 
@@ -81,6 +86,7 @@ struct LobbyLink::Impl {
   std::map<uint16_t, std::string> byTransport;  // ours -> lobby peer id
   std::optional<std::string> room;
   std::string lastError;
+  uint32_t ignoredFrames{0};
   std::vector<LobbyEvent> out;
 
   Impl() = default;
@@ -111,7 +117,7 @@ struct LobbyLink::Impl {
     deadlineNs = nowNs + uint64_t{config.openTimeoutMs} * kNsPerMs;
     sentCapacity.reset();
     rtc::WebSocket::Configuration wsConfig;
-    wsConfig.maxMessageSize = signaling::kMaxMessageBytes;
+    wsConfig.maxMessageSize = kSocketMessageLimit;
     ws = std::make_shared<rtc::WebSocket>(wsConfig);
     const std::weak_ptr<SocketQueue> weak = queue;
     const uint32_t gen = generation;
@@ -133,7 +139,24 @@ struct LobbyLink::Impl {
 
   void send(std::span<const signaling::Field> fields) {
     if (!ws || !ws->isOpen()) return;
-    ws->send(signaling::encodeObject(fields));
+    std::string text = signaling::encodeObject(fields);
+    // The lobby closes a socket that sends a frame over the limit (spec §1):
+    // a message that large (none of ours is) is dropped here instead.
+    if (text.size() > signaling::kMaxMessageBytes) {
+      lastError = "dropped an outgoing lobby message over the size limit";
+      ++ignoredFrames;
+      return;
+    }
+    ws->send(std::move(text));
+  }
+
+  // Registered: a frame from the lobby we cannot use. The lobby is trusted and
+  // the frame most likely one meant for a single peer (a `signal`), so it is
+  // ignored rather than taken as a reason to drop the link and every peer with
+  // it (spec §7); that peer's handshake times out on its own.
+  void ignore(std::string_view what) {
+    lastError = "ignored a lobby frame: " + std::string(what);
+    ++ignoredFrames;
   }
 
   void sendPeerGone(const std::string& lobbyPeer) {
@@ -207,9 +230,17 @@ struct LobbyLink::Impl {
   }
 
   void handleText(uint64_t nowNs, const std::string& text) {
+    if (state == LobbyLinkState::Registered && text.size() > signaling::kMaxMessageBytes) {
+      ignore("over the size limit");
+      return;
+    }
     const auto o = signaling::decodeObject(text);
     if (!o) {
-      protocolError(nowNs, "not a flat object of strings");
+      if (state == LobbyLinkState::Registered) {
+        ignore("not a flat object of strings");
+      } else {
+        protocolError(nowNs, "not a flat object of strings");
+      }
       return;
     }
     const std::string_view type = o->get("type").value_or("");
@@ -236,7 +267,7 @@ struct LobbyLink::Impl {
     if (type == "room") {
       const auto code = need("code");
       if (!code) {
-        protocolError(nowNs, "room without code");
+        ignore("room without code");
         return;
       }
       room = *code;
@@ -245,7 +276,7 @@ struct LobbyLink::Impl {
       const auto peer = need("peer");
       const auto token = need("token");
       if (!peer || !token) {
-        protocolError(nowNs, "peer without peer or token");
+        ignore("peer without peer or token");
         return;
       }
       if (byLobby.contains(*peer)) return;  // announced twice: keep the first
@@ -262,7 +293,7 @@ struct LobbyLink::Impl {
       const auto peer = need("peer");
       const auto msg = need("msg");
       if (!peer || !msg) {
-        protocolError(nowNs, "signal without peer or msg");
+        ignore("signal without peer or msg");
         return;
       }
       const auto it = byLobby.find(*peer);
@@ -272,7 +303,7 @@ struct LobbyLink::Impl {
     } else if (type == "peer_gone") {
       const auto peer = need("peer");
       if (!peer) {
-        protocolError(nowNs, "peer_gone without peer");
+        ignore("peer_gone without peer");
         return;
       }
       const auto it = byLobby.find(*peer);
@@ -457,6 +488,10 @@ std::string LobbyLink::statusText(uint64_t nowNs) const {
 
 std::string LobbyLink::lastError() const {
   return impl_->lastError;
+}
+
+uint32_t LobbyLink::ignoredFrames() const {
+  return impl_->ignoredFrames;
 }
 
 std::string LobbyLink::url() const {

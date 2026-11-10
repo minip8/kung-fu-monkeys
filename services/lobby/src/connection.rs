@@ -269,7 +269,11 @@ async fn relay_client(lobby: &Arc<Lobby>, conn: &mut Conn, seat: &Seat) -> Endin
                     return Ending::ProtocolError("not a flat object of strings");
                 };
                 match get(&fields, "type") {
-                    Some("offer" | "candidate") => lobby.forward_to_server(seat, &text),
+                    Some("offer" | "candidate") => {
+                        if !lobby.forward_to_server(seat, &text) {
+                            return Ending::ProtocolError("signal envelope too large");
+                        }
+                    }
                     // A second request on the same socket.
                     Some("regions" | "create" | "join") => {
                         return Ending::Refuse(Refusal::BadRequest)

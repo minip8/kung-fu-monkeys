@@ -105,7 +105,11 @@ After `joined`:
 
 - Client → lobby: exactly the signaling messages of `kfm/net/webrtc_signaling.hpp`
   (`offer`, `candidate`), unchanged. The lobby forwards each to the room's server inside a
-  `signal` envelope (§5).
+  `signal` envelope (§5). The envelope, not only the frame, must fit the frame limit: escaping
+  the frame into `msg` grows it (every `"` and `\` doubles, a control character becomes six
+  bytes), and the server's socket accepts no more than 64 KiB either. A frame whose envelope
+  would exceed the limit is that client's protocol error (close 1002, `peer_gone` to the
+  server); it never reaches the server, and the room and its other clients are untouched.
 - Lobby → client: the server's `answer` and `candidate` messages, unwrapped, unchanged; or
   `{"type":"closed","reason":"server_gone"|"kicked"|"room_closed"|"replaced"}` followed by the
   socket closing (`replaced`, v1.2: a rejoin under this socket's token took its place). (A transport treats the close itself as Disconnected; the message is for the UI.)
@@ -190,6 +194,18 @@ Server → lobby:
   joined client socket, which is refused `bad_request`. The 4096-room cap refuses `no_server`
   on create, the 1024-server cap refuses `bad_request` on register, and the 64-sockets-per-room
   cap refuses `full`. A `build` or `content` key that is absent skips that half of the check.
+- Every frame the lobby emits fits its receiver's limit: replies and notices are a few
+  dozen bytes; a `signal` envelope to a server is checked (§3, "After `joined`"); a server's
+  `signal` is unwrapped for its client, so it only shrinks; and the `regions` reply, which
+  names every region twice, is bounded by a cap of 64 distinct regions (32 bytes each at
+  most): a `register` that would add a 65th is refused `bad_request`.
+- A game server is robust to a bad frame from the lobby once it is registered: a frame over
+  the size limit, one that is not a flat object of strings, and a known message missing a
+  required key are ignored and logged, not a protocol error that drops the socket (and with
+  it every peer of the room). The lobby is trusted, and such a frame concerns
+  one peer at most (a `signal`), whose handshake then times out on the server's side and is
+  reported `peer_gone` as usual. A server also never sends a frame over the limit (it drops
+  such a message instead). Before `registered`, a bad frame is a protocol error as above.
 - The lobby logs one line per register, unregister, room open, room close, join, refuse and
   peer loss, and exposes counts on `/healthz`. It keeps nothing on disk.
 

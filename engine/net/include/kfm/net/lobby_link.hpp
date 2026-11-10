@@ -17,6 +17,11 @@
 //     a new room means (kfm_server restarts the match when no human is
 //     connected, spec §6 point 5);
 //   - setCapacity() sends `capacity` when the value changes.
+// Once registered, a frame it cannot use (over the size limit, not a flat
+// object of strings, a known message missing a key) is ignored and counted
+// (ignoredFrames()), never a reason to drop the link: the lobby is trusted
+// and such a frame concerns one peer at most (spec §7). Before `registered`
+// it is a protocol error like any other.
 // If the socket closes, fails, or does not open and register within
 // openTimeoutMs, every lobby peer is closed on the transport, the tokens and
 // the room are forgotten (the lobby has closed them on its side), and the
@@ -127,6 +132,10 @@ class LobbyLink {
   [[nodiscard]] std::string statusText(uint64_t nowNs) const;
   // The last socket or protocol error, for logs.
   [[nodiscard]] std::string lastError() const;
+  // Frames from the lobby ignored once registered (over the size limit, not a
+  // flat object of strings, a known message without its keys; spec §7), plus
+  // outgoing messages dropped for their size.
+  [[nodiscard]] uint32_t ignoredFrames() const;
   // The URL actually dialled (with /server).
   [[nodiscard]] std::string url() const;
 

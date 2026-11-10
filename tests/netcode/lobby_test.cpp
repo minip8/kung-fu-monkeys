@@ -5,6 +5,7 @@
 #include "fake_lobby.hpp"
 #include "kfm/net/lobby_link.hpp"
 #include "kfm/net/net_client.hpp"
+#include "kfm/net/webrtc_signaling.hpp"
 #include "kfm/net/webrtc_transport.hpp"
 #include "kfm/sim/content.hpp"
 #include "server_host.hpp"
@@ -12,6 +13,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <format>
@@ -422,6 +424,35 @@ TEST_CASE("lobby: the link reconnects after the lobby drops it", "[lobby][webrtc
   w.clients.clear();
   LobbyClient& d = w.create();
   REQUIRE(w.runUntil([&] { return d.client->running(); }));
+}
+
+TEST_CASE("lobby: a frame the server cannot use is ignored, the room plays on", "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  LobbyClient& c = w.startRoom();
+  LobbyClient& d = w.join("ABCDE");
+  REQUIRE(w.runUntil([&] { return d.client->running(); }));
+
+  // An oversized frame (a v1.2 lobby could relay one), one that is not a flat
+  // object, and known messages missing their keys: each concerns one peer at
+  // most, so none drops the link and every player with it.
+  w.lobby.sendServerRaw(signaling::encodeObject(std::array<signaling::Field, 3>{
+      signaling::Field{"type", "signal"}, signaling::Field{"peer", "1"},
+      signaling::Field{"msg", std::string(100 * 1024, 'v')}}));
+  w.lobby.sendServerRaw(R"({"type":"signal","peer":"1","msg":"{\"type\":\"offer\",)");
+  w.lobby.sendServerRaw(R"({"type":"signal","peer":"1"})");
+  w.lobby.sendServerRaw(R"({"type":"peer","peer":"9"})");
+  REQUIRE(w.runUntil([&] { return w.server->link->ignoredFrames() == 4; }));
+  w.runFor(300'000'000);
+  CHECK(w.server->link->state() == LobbyLinkState::Registered);
+  CHECK(w.server->link->reconnects() == 0);
+  CHECK(w.lobby.registrations() == 1);
+  CHECK(w.server->link->room() == std::optional<std::string>("ABCDE"));
+  CHECK(w.server->link->peerCount() == 2);
+  CHECK(c.client->running());
+  CHECK(d.client->running());
+  CHECK(w.server->host->server().peers().size() == 2);
+  CHECK(w.server->link->lastError().starts_with("ignored a lobby frame"));
 }
 
 TEST_CASE("lobby: a wrong secret is refused and retried", "[lobby][webrtc]") {

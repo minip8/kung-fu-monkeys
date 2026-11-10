@@ -45,6 +45,9 @@ pub struct LobbyConfig {
     pub max_servers: usize,
     /// Live rooms (§7; 4096).
     pub max_rooms: usize,
+    /// Distinct regions among the registered servers (§7; 64). Bounds the
+    /// `regions` reply, which lists them twice, well under `max_frame_bytes`.
+    pub max_regions: usize,
 }
 
 impl LobbyConfig {
@@ -60,6 +63,7 @@ impl LobbyConfig {
             max_clients_per_room: 64,
             max_servers: 1024,
             max_rooms: 4096,
+            max_regions: 64,
         }
     }
 
@@ -81,7 +85,11 @@ impl LobbyConfig {
 }
 
 /// The lobby's routes: `/client`, `/server` (WebSockets) and `/healthz`.
-pub fn router(config: LobbyConfig) -> Router {
+pub fn router(mut config: LobbyConfig) -> Router {
+    // No setting may make a reply outgrow what its receiver accepts (§7).
+    config.max_regions = config
+        .max_regions
+        .min(protocol::max_regions_in_a_frame(config.max_frame_bytes));
     let lobby = Lobby::new(config);
     Router::new()
         .route("/client", get(client_socket))
