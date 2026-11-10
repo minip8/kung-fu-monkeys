@@ -2,99 +2,55 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project state
+## Project
 
 Kung Fu Monkeys is an online 2–10 player arena brawler (Boomerang Fu-inspired: monkeys throw
 bananas that fly like boomerangs; dash is the base ability; a perfectly timed dash catches a
-banana). C++23 engine, deterministic simulation, rollback netcode, browser as the primary shipping
-client, with a public bot API (sandboxed wasm modules, any language) planned.
+banana). C++23 engine, deterministic simulation, rollback netcode, the browser as the primary
+shipping client, and a public bot API (sandboxed wasm modules, any language).
 
-Milestones M0 (skeleton), M1 (headless sim), M2 (playable local client), M3 (netcode) and M4
-(content) have landed: build system, `engine/core`, the
-full `engine/sim` tick pipeline (modes, Dash, Throw, Blink, Slam, Parry, banana flight and
-return, swept collision against entities and arena statics, the interaction rules table,
-power-ups and modifiers, lifecycle) over `ContentDB`, a scripted input generator, `kfm_replay`
-(record, verify, bench) and the determinism gate over a corpus of empty and scripted replays;
-`engine/content` (the TOML loader behind `content/`, embedded into every binary, hot reload);
-`engine/platform` (SDL3 window + GL context, audio device, sokol_gfx, Dear ImGui, the SDL-free
-input sampler), `engine/presentation` (float math, fixed arena camera, RenderState builder,
-event-driven effects and procedural sound, procedural meshes, skinning, the sokol renderer) and
-`apps/client` (local play with the lobby settings panel, bots, HUD, F1 overlay, the browser
-page); `engine/net` (`ITransport`, loopback + emulator, message layer, `NetServer`, `NetClient`
-with rollback and clock sync, `WebRtcTransport`), `apps/server`, `apps/netsim`, `apps/net-probe`
-and the client's `--connect` mode; `engine/ai` (`IAgent`, `Observation` v1 and its fixed-point
-builder, `AgentHost`, the reference bot, `BotSpec`, `WasmAgent` over WAMR with instruction
-metering), `apps/arena` (`kfm_arena`, the headless match runner), bots on the server and in the
-client lobby, and the C SDK seed with an example bot under `tools/bots/` (M5, architecture
-v0.30; the SDKs themselves live in a separate bots repository). M5b landed in v0.35 (teams and
-relations, the five mode seams, the loadout axis, zones and tilemap arenas, the `grid` space and
-the squad contest shape with fog and calls; designed in architecture v0.29, §5.3, §5.10, §5.12,
-§8; the human playtest of `hill` and a 15-tick grid round is pending): step 1, mode foundations (32 mode slots, the `[[loadout]]` axis picked by
-`MatchConfig::loadout`, the `onRoundStart`/`onPickupTaken` hooks and `MatchRules::modeData`), landed
-in v0.31; step 2, teams (`MatchConfig::teams` → `MatchContent::relation`, the rules table's
-Ally rows behind `Tag::FriendlyFire`, the mode baseline power-up and roles, arena spawn groups
-and `ContentDB::compatible`, `team_rounds`/`team_deathmatch` on the `standoff` arena), landed in
-v0.32; step 3, objectives (arena zones and `zoneOccupants()`, tilemap arenas, `hill` and
-`capture` with the flag pickup and `Tag::Carrying`, the `hilltop` and `outposts` arenas), landed
-in v0.33; step 4, the `grid` space (the `SpaceBehavior` table behind `InputSystem`'s latch and
-`MovementSystem`'s move, cell commitments per turn of `turnTicks` with contested cells, the
-dash as a commitment of `dashCells`, `AbilityDef::rootPhases`, the radius stat, the catcher
-role, `grid_rounds`/`grid_rounds_1t` on the `courtyard` arena), landed in v0.34; step 5, the
-squad contest (the `call` ability and `MonkeyCalled`, `ModeDef::vision` and fog as a projection
-in `buildObservation` (`kfm/ai/vision.hpp`), the turn window, heard calls and per-instance
-lifecycle in `AgentHost`, the filled Observation v1 fields, `kfm_arena --team` and
-`--memory-on-respawn`, a grid- and fog-aware reference bot), landed in v0.35. M6 was split in
-v0.36 into M6a (ship on the web: hosting, the lobby service, regional servers) and the bot
-ladder (accounts and teams, source-only C++ submissions built in a sandbox, ratings, replays, a
-Rust CLI; the service lives in the bots repository, architecture §8 "The ladder"), which v0.40
-renumbered to M7 behind a new M6b, "Play with friends" (the online room and the UI pass; Steam
-is M8). M6a's shape
-was decided in v0.37 and its code landed in v0.38 (§13.5, `docs/lobby-protocol.md`): the Rust
-lobby service in `services/lobby/` owns rooms, tokens, signaling and the server registry;
-servers dial it (`kfm_server --lobby`, `LobbyLink`, external signaling on `WebRtcTransport`);
-clients create or join rooms (`--lobby/--room/--create`, `?room=`); one `kfm_server` per match
-under systemd; `deploy/` holds the images, units and VM scripts; Google Cloud Compute Engine
-then Hetzner, Cloudflare Pages for the page (v0.39), Caddy, Sentry. Deployed: `kfm.minip8.com` (the page) and
-`lobby.kfm.minip8.com` (the VM `kfm-au-1`, australia-southeast1, `v0.1.0`). M6b, "Play with
-friends", has its code landed in v0.41-v0.44 (lobby protocol v1.1's region availability; the
-online room's Waiting/Playing/Over with the host's settings, protocol 6 and nicknames; the main
-menu, waiting screen, scoreboards and match-over; bots yielding their slots to joining humans,
-Reconnect from the UI through lobby protocol v1.2's rejoin, the jitter-aware lead band checked to
-500 ms RTT); the friends playtest against its criterion was played and M6b landed in v0.58. M6b step 1, lobby protocol v1.1 (the `regions` reply's `list` is every
-registered region and `free` the ones with a free server; the client's Create room row marks a
-busy region "(no server)"), landed in v0.41. M6b step 2, the online room (protocol 6:
-`RoomSettings`/`RoomState`/`Start` and a nickname in `Hello`; `apps/server/room.hpp` beside
-`ServerHost`: Waiting and Over never tick the `NetServer`, the host is the first then the
-longest-present human slot, its Start places the bots and restarts the match with its
-settings; `NetClient` holds its timeline outside Playing; a functional waiting / match-over
-screen and nicknames on the HUD; `kfm_server` runs the room unless `--auto-start`), landed in
-v0.42. M6b step 3, the client's front end (the game font Lilita One under `assets/fonts/`,
-compiled in by `cmake/EmbedFile.cmake`; one palette and ImGui theme in `apps/client/ui_style.hpp`;
-a main menu with Play online / Play local / Settings; the Play online screen that replaced the
-lobby panel's Online section; the room's waiting screen with the code large, Copy link and Share
-through `IPlatformServices`; a scoreboard view model shown between rounds and on a match-over
-screen with Play again), landed in v0.43. Keyboard-and-mouse controls landed in v0.45 (§5.4: the
-primary keyboard profile is keyboard + mouse; the cursor aims from the local monkey, the
-predicted one online, through `feedMouseAim` in `apps/client/core/mouse_aim.hpp`; left click
-throws, right click dashes; clicks over UI windows stay the UI's). M7 step 6, the client's
-replay viewer, landed in v0.68 (architecture §7 "Replay viewer"): `kfm_client --replay SRC`, in
-the browser `?replay=<url>` (the ladder's `/<tag>/?replay=` links), over the headless
-`ReplaySession` and `ReplayControls` in `apps/client/core`.
-`docs/architecture.md` is the
-single source of truth for every decision below and is versioned (status line + changelog at the
-top). When a design decision changes, update the doc in the same change, bump its version and add
-a changelog line. Do not let code and doc disagree silently.
+What is in the tree:
+
+- `engine/core` (fixed point, pools, bit streams, RNG), `engine/sim` (the tick pipeline over
+  `ContentDB`), `engine/content` (the TOML loader behind `content/`, embedded into every binary),
+  `engine/net` (transports, message layer, `NetServer`, `NetClient`), `engine/ai` (`IAgent`,
+  `Observation`, `AgentHost`, the reference bot, `WasmAgent`), `engine/presentation` and
+  `engine/platform` (renderer, SDL3, Dear ImGui).
+- `apps/`: `client` (`kfm_client`, native and browser), `server` (`kfm_server`), `replay`
+  (`kfm_replay`), `arena` (`kfm_arena`, the headless bot match runner), `netsim`, `net-probe`,
+  `render-probe`.
+- `services/lobby/` (the Rust lobby service: rooms, tokens, signaling, the server registry),
+  `deploy/` (images, units, VM scripts; `deploy/README.md` is the runbook), `tools/`, `tests/`.
+- The bot SDKs, example bots and the ladder service live in a separate repository,
+  `minip8/kung-fu-monkeys-bots`, which pins an engine release in its `engine.lock`.
+- Deployed: `kfm.minip8.com` (the page, Cloudflare Pages), `lobby.kfm.minip8.com` (the VM
+  `kfm-au-1`, australia-southeast1), `bots.kfm.minip8.com` (the ladder).
+
+Milestones M0 to M6b have landed and M7, the bot ladder, is the current one (M8, a Steam build,
+is optional). What each milestone holds and where it stands is in `docs/architecture.md` §11;
+what changed in each architecture version is in `docs/architecture-changelog.md`. Neither is
+restated here: this file holds only what changes how code is written.
+
+`docs/architecture.md` is the single source of truth for every decision below and is versioned:
+its status line carries the version, and `docs/architecture-changelog.md` has one entry per
+version, oldest first. When a design decision changes, update the document's body, bump the
+version in its status line and append a changelog entry, in the same change. Do not let code
+and doc disagree silently. Three more documents are normative for their contracts:
+`docs/bot-abi.md` (the bot ABI and Observation v1), `docs/lobby-protocol.md` and
+`docs/arena-result.md` (`kfm_arena --json`).
 
 ## Commands
 
 Toolchain: CMake ≥ 3.25, Ninja, a C++23 compiler: GCC ≥ 15 or Clang ≥ 19 on Linux (Ubuntu
-24.04's GCC 13 and Clang 18 do not work; GCC 14 fails at -Werror, v0.62), MSVC 2022, Apple Clang 16+, Emscripten 4+; verified on
-GCC 15, Clang 21, MSVC 19.51, Apple Clang 21, Emscripten 6. Optional: vcpkg (`VCPKG_ROOT`; without it
-every dependency is fetched at configure time at the same pinned version) and emsdk (`EMSDK`, set by
-`source ~/emsdk/emsdk_env.sh`) for the `wasm` preset. Build directories are `build/<preset>`.
-The client needs no system GL headers (GL is loaded through the vendored glad loader in
-`third_party/glad`); building SDL3 on Linux needs the X11/Wayland dev packages listed in
-`.github/workflows/ci.yml`.
+24.04's GCC 13 and Clang 18 do not work; GCC 14 fails at -Werror), MSVC 2022, Apple Clang 16+,
+Emscripten 4+; verified on GCC 15, Clang 21, MSVC 19.51, Apple Clang 21, Emscripten 6. Optional:
+vcpkg (`VCPKG_ROOT`; without it every dependency is fetched at configure time at the same pinned
+version) and emsdk (`EMSDK`, set by `source ~/emsdk/emsdk_env.sh`) for the `wasm` preset. Build
+directories are `build/<preset>`. The client needs no system GL headers (GL is loaded through
+the vendored glad loader in `third_party/glad`); building SDL3 on Linux needs the X11/Wayland
+dev packages listed in `.github/workflows/ci.yml`.
+
+### Build, test, lint
 
 ```sh
 cmake --preset dev                      # configure; presets: dev, release, asan, server-headless, wasm
@@ -103,164 +59,178 @@ ctest --preset dev                      # unit tests + determinism corpus + C++2
 cmake --workflow --preset dev           # configure + build + test in one go
 ctest --preset dev -R kfm_core_tests    # one test executable (kfm_core_tests, kfm_sim_tests, kfm_scenario_tests, determinism_*)
 build/dev/tests/unit/kfm_core_tests "[fixed]"      # one Catch2 tag or test name
-cmake --build --preset dev --target regen-replay-corpus   # after an intentional gameplay/content change only
-# (re-run `cmake --preset dev` after adding a .kfmr: the gate globs the corpus at configure time)
-tools/ci/check_sim_no_float.sh          # no float/double in engine/sim
+ctest --preset dev -R kfm_client_tests  # headless client core (clock, session, lobby, options, menus, scoreboard)
+ctest --preset dev -R kfm_content_tests # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
+ctest --preset dev -R 'kfm_ai|arena'    # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena
+ctest --preset dev -L soak              # the netsim gates (10 clients at 100 ms / 2%, 300 ms / 10%, 500 ms ±30 ms / 5%)
+ctest --preset dev -L network           # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
+cmake --workflow --preset server-headless   # headless Release build of kfm_server + tests (no SDL)
+cmake --preset dev -DKFM_WASM_BOTS=OFF  # build without WAMR (reference bots only; a module spec exits 3)
+cmake --preset dev -DKFM_WEBRTC=OFF     # build without libdatachannel / datachannel-wasm (no WebRTC transport, no network tests)
+tools/ci/check_sim_no_float.sh          # no float/double in engine/sim (and engine/ai)
 clang-format -i $(find engine apps tests tools -name '*.cpp' -o -name '*.hpp' | grep -v sin_table)
 clang-tidy -p build/dev $(find engine apps tests -name '*.cpp')
-build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|verify ...  # replay tool
-build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
-#   record-*/bench/stats take --arena NAME --mode NAME --loadout NAME; every command takes --content DIR (default:
-#   the content compiled into the binary); `info` prints the replay's arena/mode/loadout and both content hashes
-build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
 python3 tools/codegen/gen_sin_table.py > engine/core/include/kfm/core/sin_table.inc  # trig LUT
-build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay] [--mute] [--volume 0..100]   # playable client
-#   v0.54: where vsync cannot be set (X11 under WSLg) the native client paces itself at the display's refresh rate;
-#   --no-frame-limit runs unpaced (use it for long --exit-after-frames runs, which otherwise take N/60 seconds).
-#   A moving monkey glides in its idle pose: the run clip is off behind kMonkeyRunCycle (presentation/tuning.hpp)
-build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # edit content/*.toml while it
-#   runs: local play hot-reloads the directory (~1 s) and restarts the match (--no-hot-reload to stop it).
-#   Without --content: content/ next to the executable (copied by the build), else the built-in copy.
-#   modes (content/modes.toml): rounds (default), deathmatch (respawns, score, clock), survival (rounds on a clock),
-#   team_rounds and team_deathmatch (2 teams, balanced over the joined slots; v0.32). A team mode needs an arena with a
-#   spawn group per team (spawn_groups, ContentDB::compatible): without --arena every host picks the first that suits
-#   (standoff), a named arena that does not suit is a configuration error (non-zero exit); no friendly fire unless the mode's
-#   `baseline` power-up grants tag friendly_fire. v0.33: hill (hold zone 0 alone, a point per hill_ticks; on hilltop)
-#   and capture (carry the enemy flag into your zone while yours is home; a zone per team: outposts), both 2 teams
-#   with deathmatch's clock and respawns; compatible() also needs their zones. v0.34: grid_rounds (team rounds in the
-#   grid space: one of eight neighbouring cells per 15-tick turn, a dash 2 cells, a throw costs the next turn, one
-#   catcher per team by role, the grid_base baseline: radius 0.35, bananas 0.15, HP 2) and grid_rounds_1t (the same
-#   at 1-tick turns, for kfm_arena); a grid mode needs an arena with cells (a tilemap) and opens on its own
-#   (modes.toml `arena`: courtyard). v0.60: contest, the bot ladder's row (M7); v0.69: king of the hill with
-#   grid_rounds_1t's squad on courtyard_hill (bots read zones 0-1 in reservedModeData words 8-15); a
-#   loader test pins the row, so a season's change to it is a deliberate edit of both
-#   arenas: content/arenas.toml (dojo) and content/arenas/*.toml, appended by file name; a tilemap arena gives
-#   cell = 1.0 and map = ["..."] (# wall . floor ~ pit : mud 0-9 spawns a-h zones) in place of half_extents/walls/
-#   hazards/spawn_points/zones (format: content/arenas/06-hilltop.toml, architecture §5.10)
-#   loadouts (content/loadouts.toml, --loadout NAME): base (default, [player] abilities), blink, slam, parry;
-#   v0.34 grid, catcher, grid_1t, catcher_1t (the grid modes hand them out by role)
-#   v0.43 front end: the client opens on the main menu (Play online, Play local, Settings, Quit natively) unless
-#   --autostart / --connect / --room / --create (or ?autostart, ?connect=, ?room=, ?create); --screen
-#   menu|settings|online|local|paused opens another screen (screenshots; paused: a local match under the pause menu). Menus: arrows/WASD, any pad's d-pad/stick, the
-#   mouse; Enter/Space or a pad's South/Start selects, Esc or a pad's East/Back goes back (the menu quits natively).
-#   Settings: name (--nick, ?nick=, saved `nick`), volume, sound, bot difficulty, arena theme, mouse aim
-#   (v0.55: --mouse-aim on|off, ?mouse_aim=, saved `mouse_aim`; off: the movement aims as before v0.45, clicks
-#   still throw/dash). Play online: region (with "(no
-#   server)"), Create room, room code + Join. Esc from the lobby or any online screen returns to the menu
-#   lobby: Enter/Start begins; press throw/dash (or click) on a free device to join; -/= bots. F1 overlay, Esc menu
-#   keys: left side = keyboard + mouse (WASD move, the mouse aims once it moves unless Settings > Mouse aim is off, left click/J/Space throw, right
-#   click/K/LShift dash, L/E ability; v0.45), right side = arrows ./RCtrl throw //RShift dash ;/' ability
-#   v0.48 charged throw: Throw is hold and release; the hold scales the banana's speed and so its reach (x0.6
-#   for a tap to x1.5 after 40 ticks: abilities.toml charge_min/charge_max/charge_ticks); the aim bar grows,
-#   the monkey winds up (v0.53: the rig's `charge` clip, scrubbed by the charge) and strains at full charge.
-#   Grid throws do not charge
-#   v0.46 pause menu: Esc (or a bound pad's Start) in a running match: locally the match pauses (Resume, Back to
-#   lobby, Main menu); online it runs on and your slots send idle input (Resume, Leave room: one Esc never leaves);
-#   Esc / a pad's East, Back or Start resumes. P pause and O single step stay developer keys (no menu)
-#   match over: Play again / Back to lobby (Left/Right + Enter, or the mouse); online the host's Play again / Leave
-#   lobby settings panel: arrows/WASD or a joined pad's d-pad/stick (Up/Down choose, Left/Right change) or the mouse:
-#   arena (with preview; only arenas that suit the mode), mode, teams (read-only, from the mode), loadout, power-up
-#   toggles, bots, volume, mute; saved between runs (SDL pref dir /
-#   browser localStorage), flags win: --arena NAME --mode NAME --loadout NAME --powerups all|none|a,b ;
-#   --no-settings ignores the saved file
-#   browser: kfm_client.html?arena=pillars&mode=deathmatch&loadout=slam&powerups=shield,big_banana (?mode=team_rounds)
-#   audio: procedural sounds, silent without a device (F1 > Audio: mute, volume); browser: ?mute&volume=50
-ctest --preset dev -R kfm_client_tests                 # headless client core (clock, session, lobby, options, menus, scoreboard)
-ctest --preset dev -R kfm_content_tests                # TOML loader, decimal conversion, base kit, arena 0, mode 0 == defaultContent()
-build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm   # headless render check
-build/dev/apps/client/kfm_client --replay tools/replay-corpus/scripted_10p_contest_1800t.kfmr   # the replay viewer (v0.68)
-#   browser ?replay=<url> (CORS fetch, 16 MiB cap, the replay's content hash must be the client's). Space play/pause,
-#   . step, Left/Right 5 s (Shift 30 s), [ ] speed 0.25-4x, Home restart, Esc menu; --exit-after-frames exits 0 while
-#   playing, 1 on a bad replay (the error screen is still rendered); seeks step from a keyframe every 600 ticks;
-#   ctests client_smoke_replay, client_smoke_replay_bad match the client's output (PASS_REGULAR_EXPRESSION)
-build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
-#   renders a scripted match; --exit-on: dash-ring|perfect-catch|auto-catch|hit|throw|elimination|catch-window|charge|
-#   pit-fall|fall|scatter (v0.57: --fall-at PERCENT, default 40, stops once a monkey's pit fall is that far
-#   through; scatter: a few frames after a dead monkey's held bananas scattered)
-#   --arena pillars|corridors|island draws an arena with walls / pits / mud (content/arenas/*.toml)
-build/dev/apps/client/kfm_client --capsules                # placeholder capsules instead of the skinned test rig
-#   (the rig is generated by the build from tools/assets/gen_test_rig.py; never commit exported glTF)
-build/dev/apps/replay/kfm_replay stats --players 4 --matches 20   # feel-tuning stats over scripted matches
-build/dev/apps/client/kfm_client --arena dojo_powerups --bots 3   # power-ups: the dojo plus four spawners (content/powerups.toml)
-source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py [--page kfm_render_probe.html]
-#   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
-python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
-build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]   # dedicated server
-#   v0.42: a room that waits (no ticks) for its host (the first client) to pick the match and Start; --arena/--mode/
-#   --loadout/--powerups/--bots are its defaults; --auto-start (implied by --exit-after-matches) keeps the M3 back-to-back
-#   matches with every bot from the start
-#   bots: --bot SPEC (repeatable, slot order; SPEC = ref | ref:easy|medium|hard | path.wasm), --bots N pads with
-#   ref:hard, --bot-delay auto|N (auto = the humans' lead, 0 bot vs bot), --fuel N (instructions per tick, default 100000)
-#   also --content DIR --arena NAME --mode NAME --loadout NAME (kfm_netsim and kfm_render_probe take the same four)
-#   and --powerups all|none|name,name (the power-up set of every match; kfm_replay record-*/bench/stats too)
-build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # soak over the emulator; exits non-zero on any desync
-build/dev/apps/netsim/kfm_netsim --clients 6 --mode team_deathmatch --rtt 100 --jitter 10 --loss 2 --seconds 20   # a team mode (teams ride in MatchConfig, protocol 5)
-ctest --preset dev -L soak                     # the netsim gates (10 clients at 100 ms / 2%, 300 ms / 10%, v0.44 500 ms ±30 ms / 5%)
-#   the high-RTT table of architecture §6.2 (v0.44): kfm_netsim --rtt 200|300|500 --jitter 20|30 --loss 2|5 --seconds 60 --csv
-build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]   # headless bot matches
-#   --rotate moves every bot through every slot across the tournament (the sim's spawn order favours some slots)
-#   [--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR] [--fuel N] [--delay T] [--replay out.kfmr | --replay-dir DIR]
-#   [--result FILE] [--json] [--quiet] [--log]: one result line per match (places, scores, kills, deaths, acts,
-#   substitutions, per-module traps/over-budget/fuel) and a summary; exit 0 ok, 2 args, 3 module refused, 4 I/O
-#   v0.60: the --json objects are an append-only contract (docs/arena-result.md, normative; a test freezes every key,
-#   its order and type: a new key is appended to the code, the doc and the test, never inserted or renamed); the match
-#   object carries content_hash and build_hash (the build id: 0 unless configured with -DKFM_BUILD_ID=<hex>, as
-#   releases are; v0.70: peers of different build ids are refused and told to reload)
-build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5   # v0.34: the grid at 1-tick turns (courtyard)
-build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
-#   v0.35: one --team LIST per team of a team mode (no --bot/--bots): the specs fill that team's slots in order, the
-#   last repeating; --rotate moves entrants across sides; team segments, winner_team and per-entrant totals in the
-#   result; --memory-on-respawn keep|wipe (kfm_server too): an eliminated bot is paused, wipe re-inits it on respawn
-#   fog and calls: content/modes.toml `vision = { kind = "own", ... }` (bots only; humans see everything),
-#   abilities.toml `kind = "call"` + `range`; what a bot sees and hears: docs/bot-abi.md §3.1-3.2
-build/dev/apps/client/kfm_client --mode grid_rounds --bots 3   # the grid at 15-tick turns: the stick picks a neighbour cell per turn
-ctest --preset dev -R 'kfm_ai|arena'           # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena
-build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]   # lobby bots (saved: bot_difficulty)
-#   browser: kfm_client.html?autostart&bots=3&bot=easy (modules are native only: the browser has no runtime yet)
-tools/bots/build_example.sh                    # compile tools/bots/examples/*.c against the C SDK seed with the emsdk clang
-tools/bots/build_fixtures.sh                   # re-assemble tests/fixtures/bots/*.wat with wat2wasm (the .wasm are checked in)
-cmake --preset dev -DKFM_WASM_BOTS=OFF         # build without WAMR (reference bots only; a module spec exits 3)
-cmake --workflow --preset server-headless      # headless Release build of kfm_server + tests (no SDL)
-build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL] [--nick NAME]   # join a server
-#   --nick (?nick=, saved as nick=; default a random monkey name picked once): the name the room and the HUD show
-#   browser: kfm_client.html?connect=ws://host:9000&token=T ; Esc leaves (in a running match: the pause menu's
-#   Leave room); pause/step/time scale/tuning are off online
-cargo run --manifest-path services/lobby/Cargo.toml -- --listen 127.0.0.1:8080 --secret dev   # the lobby service (M6a,
-#   docs/lobby-protocol.md); cargo test/fmt/clippy there; curl 127.0.0.1:8080/healthz
-build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev --region eu --bots 3 [--ice-ports 40000-40099]
-#   lobby mode: dials URL/server, no --port/--bind/--token (secret also from env KFM_LOBBY_SECRET); one room per process
-build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
-build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE              # join it (any case); -DKFM_LOBBY_URL=...
-#   bakes a default; browser: kfm_client.html?lobby=ws://127.0.0.1:8080&create or ?room=CODE (config.js next to the page
-#   supplies lobbyUrl and sentryDsn in production); the menu's Play online screen does the same; Esc leaves
-#   (in a running match: the pause menu's Leave room);
-#   waiting screen: the code large, Copy link (the page's ?room=CODE link; natively -DKFM_PAGE_URL=... or the code)
-#   and Share on touch browsers; the host's rows take arrows/WASD/pads, Enter starts
-#   --verbose prints the transport's log (ICE, DTLS, the lobby socket, every dropped peer). v0.44: a lost link offers
-#   Reconnect (the same server with the same token, or a lobby rejoin of the room: lobby protocol v1.2 `join` + `token`);
-#   a full room queues a joiner as a spectator until a bot yields its slot (round end, or a bot off the field). A real-link check needs
-#   --exit-after-frames in the thousands with --no-frame-limit: unpaced, the client runs hundreds of frames a second
-deploy/README.md                                 # the runbook: images (deploy/Dockerfile.*), VM units, gcloud scripts, release
-#   workflow (.github/workflows/deploy.yml on a v* tag: GHCR images, then update.sh on every VM in the KFM_VMS
-#   variable over IAP, restarting at once (v0.47; deploy/gcp/setup_deploy_identity.sh once), then Cloudflare Pages);
-#   v0.60: a v* tag is also a GitHub release with the headless kfm_arena for linux-x86_64 (static), macos-arm64 and
-#   windows-x86_64 plus SHA256SUMS, and the page's site tarball; the web job republishes every release's page under
-#   /<tag>/ (a Pages deploy is a full snapshot), the viewer of that release's replays (architecture v0.59)
-#   v0.71: its last job, bots-bump, opens the engine pin bump in the bots repository as a pull request (that
-#   repository's tools/bump_engine.sh, pushed as the kfm-release-bot GitHub App: KFM_RELEASE_BOT_APP_ID variable,
-#   KFM_RELEASE_BOT_PRIVATE_KEY secret); merging it and releasing the ladder stay manual
-#   docker compose -f deploy/docker-compose.yml
-ctest --preset dev -L network                  # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
-build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
-build/dev/apps/net-probe/kfm_net_probe --connect ws://127.0.0.1:9123 --messages 300   # native end-to-end check
-python3 tools/web/check_webrtc.py --messages 200   # browser WebRtcTransport (datachannel-wasm) against the native probe server, headless Chromium
-cmake --preset dev -DKFM_WEBRTC=OFF             # build without libdatachannel / datachannel-wasm (no WebRTC transport, no network tests)
+cmake --build --preset dev --target regen-replay-corpus   # after an intentional gameplay/content change only
+# (re-run `cmake --preset dev` after adding a .kfmr: the gate globs the corpus at configure time)
 ```
 
 The `wasm` preset runs the same tests under node and builds `kfm_client.html`. CI runs the lint
 job, the four native toolchains in Debug and Release (Linux on Ubuntu 26.04, where a
 `client_smoke` ctest renders 60 frames of a bot match under xvfb), ASan+UBSan and wasm
 (`.github/workflows/ci.yml`). clang-format and clang-tidy never run over `third_party/`.
+
+### Replays
+
+```sh
+build/dev/apps/replay/kfm_replay record-empty|record-scripted|info|checksums|verify ...
+build/dev/apps/replay/kfm_replay record-scripted out.kfmr --ticks 3600 --players 10 --seed S --input-seed I
+build/release/apps/replay/kfm_replay bench --ticks 36000 --players 10   # ticks/s of a scripted match
+build/dev/apps/replay/kfm_replay stats --players 4 --matches 20         # feel-tuning stats over scripted matches
+```
+
+`record-*`, `bench` and `stats` take `--arena NAME --mode NAME --loadout NAME --powerups
+all|none|a,b`; every command takes `--content DIR` (default: the content compiled into the
+binary). `info` prints the replay's arena, mode, loadout and both content hashes.
+
+### Client
+
+```sh
+build/dev/apps/client/kfm_client [--autostart] [--bots N] [--seed S] [--overlay] [--mute] [--volume 0..100]
+build/dev/apps/client/kfm_client --content content --arena dojo --mode rounds   # hot-reloads content/ (~1 s) and restarts the match
+build/dev/apps/client/kfm_client --arena dojo_powerups --bots 3                 # power-ups: the dojo plus four spawners
+build/dev/apps/client/kfm_client --mode grid_rounds --bots 3                    # the grid at 15-tick turns
+build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]
+build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm    # headless render check
+build/dev/apps/client/kfm_client --replay tools/replay-corpus/scripted_10p_contest_1800t.kfmr   # the replay viewer
+build/dev/apps/client/kfm_client --capsules      # placeholder capsules instead of the skinned test rig
+build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
+source ~/emsdk/emsdk_env.sh && cmake --workflow --preset wasm && python3 tools/web/serve.py [--page kfm_render_probe.html]
+#   then open http://127.0.0.1:8000/kfm_client.html?autostart&bots=3 (browser build of the same client)
+python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autostart&bots=3&overlay' --out shots  # Playwright check
+```
+
+- The client opens on the main menu unless `--autostart` / `--connect` / `--room` / `--create`
+  (browser: `?autostart`, `?connect=`, `?room=`, `?create`). `--screen
+  menu|settings|online|local|paused` opens another screen (for screenshots; `paused` is a local
+  match under the pause menu).
+- Match selection: `--arena NAME --mode NAME --loadout NAME --powerups all|none|a,b`. Settings
+  are saved between runs (SDL pref dir / browser localStorage); flags win; `--no-settings`
+  ignores the saved file. Other saved settings with a flag: `--nick NAME` (`?nick=`),
+  `--mouse-aim on|off` (`?mouse_aim=`), `--bot-difficulty` (`?bot=easy`).
+- Browser: `kfm_client.html?arena=pillars&mode=deathmatch&loadout=slam&powerups=shield,big_banana`,
+  `?mute&volume=50`. Bot modules are native only (the browser has no wasm runtime for them).
+- Content: without `--content`, `content/` next to the executable (copied by the build), else
+  the built-in copy. `--no-hot-reload` stops the reload.
+- Pacing: where vsync cannot be set (X11 under WSLg) the native client paces itself at the
+  display's refresh rate. `--no-frame-limit` runs unpaced: use it for long `--exit-after-frames`
+  runs, which otherwise take N/60 seconds.
+- Developer keys: F1 overlay (audio, tuning), P pause, O single step, Esc the pause menu.
+  Pause, step, time scale and tuning are off online. The controls are in architecture §5.4.
+- A moving monkey glides in its idle pose on purpose: the run clip is off behind
+  `kMonkeyRunCycle` (`presentation/tuning.hpp`). The rig is generated by the build from
+  `tools/assets/gen_test_rig.py`; never commit exported glTF.
+- Replay viewer: `--replay SRC`, in the browser `?replay=<url>` (CORS fetch, 16 MiB cap, the
+  replay's content hash must be the client's). `--exit-after-frames` exits 0 while playing and
+  1 on a bad replay (the error screen is still rendered); seeks step from a keyframe every 600
+  ticks. The ctests `client_smoke_replay` and `client_smoke_replay_bad` match the client's
+  output (`PASS_REGULAR_EXPRESSION`).
+- `kfm_render_probe` renders a scripted match. `--exit-on`: `dash-ring|perfect-catch|auto-catch|
+  hit|throw|elimination|catch-window|charge|pit-fall|fall|scatter` (`--fall-at PERCENT`, default
+  40, stops once a monkey's pit fall is that far through). `--arena pillars|corridors|island`
+  draws an arena with walls / pits / mud. It takes `--content --arena --mode --loadout` too.
+
+### Content names
+
+- Modes (`content/modes.toml`): `rounds` (default), `deathmatch`, `survival`, `team_rounds`,
+  `team_deathmatch`, `hill`, `capture`, `grid_rounds`, `grid_rounds_1t` (the grid at 1-tick
+  turns, for `kfm_arena`), `contest` (the bot ladder's row: a loader test pins it, so a season's
+  change to it is a deliberate edit of both).
+- A team mode needs an arena with a spawn group per team, `hill` and `capture` need their
+  zones, a grid mode needs an arena with cells (a tilemap): `ContentDB::compatible`. Without
+  `--arena` every host picks the first arena that suits; a named arena that does not suit is a
+  configuration error (non-zero exit).
+- Arenas: `content/arenas.toml` (dojo) and `content/arenas/*.toml`, appended by file name. A
+  tilemap arena gives `cell = 1.0` and `map = ["..."]` (`#` wall, `.` floor, `~` pit, `:` mud,
+  `0-9` spawns, `a-h` zones) in place of `half_extents`/`walls`/`hazards`/`spawn_points`/`zones`
+  (format: `content/arenas/06-hilltop.toml`, architecture §5.10).
+- Loadouts (`content/loadouts.toml`): `base` (default), `blink`, `slam`, `parry`, and `grid`,
+  `catcher`, `grid_1t`, `catcher_1t` (the grid modes hand those out by role).
+- Fog and calls are content: `modes.toml` `vision = { kind = "own", ... }` (bots only; humans
+  see everything), `abilities.toml` `kind = "call"` + `range`. What a bot sees and hears:
+  `docs/bot-abi.md` §3.1-3.2.
+
+### Server, netsim, online play
+
+```sh
+build/dev/apps/server/kfm_server --port 9000 --bots 3 [--token T] [--max-players N] [--exit-after-seconds N] [--stats-every S]
+build/dev/apps/client/kfm_client --connect ws://127.0.0.1:9000 [--token T] [--spectate] [--players N] [--stun URL] [--nick NAME]
+build/dev/apps/netsim/kfm_netsim --clients 10 --rtt 100 --jitter 10 --loss 2 --seconds 30 [--csv run.csv]   # exits non-zero on any desync
+build/dev/apps/netsim/kfm_netsim --clients 6 --mode team_deathmatch --rtt 100 --jitter 10 --loss 2 --seconds 20
+build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
+build/dev/apps/net-probe/kfm_net_probe --connect ws://127.0.0.1:9123 --messages 300   # native end-to-end check
+python3 tools/web/check_webrtc.py --messages 200   # browser WebRtcTransport against the native probe server, headless Chromium
+cargo run --manifest-path services/lobby/Cargo.toml -- --listen 127.0.0.1:8080 --secret dev   # the lobby service
+build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev --region eu --bots 3 [--ice-ports 40000-40099]
+build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
+build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE              # join it (any case)
+```
+
+- `kfm_server` runs a room that waits (no ticks) for its host, the first client, to pick the
+  match and Start; `--arena/--mode/--loadout/--powerups/--bots` are its defaults. `--auto-start`
+  (implied by `--exit-after-matches`) plays back-to-back matches with every bot from the start.
+- Server bots: `--bot SPEC` (repeatable, slot order; SPEC = `ref | ref:easy|medium|hard |
+  path.wasm`), `--bots N` pads with `ref:hard`, `--bot-delay auto|N` (auto = the humans' lead, 0
+  bot vs bot), `--fuel N` (instructions per tick, default 100000), `--memory-on-respawn
+  keep|wipe`. `kfm_server` and `kfm_netsim` take `--content DIR` like every other host.
+- Lobby mode (`--lobby`): the server dials URL/server and takes no `--port/--bind/--token` (the
+  secret also comes from env `KFM_LOBBY_SECRET`); one room per process. `cargo test/fmt/clippy`
+  in `services/lobby`; `curl 127.0.0.1:8080/healthz`.
+- Client: `-DKFM_LOBBY_URL=...` bakes a default lobby and `-DKFM_PAGE_URL=...` the page that
+  Copy link points at; in the browser `kfm_client.html?lobby=ws://127.0.0.1:8080&create` or
+  `?room=CODE`, and `config.js` next to the page supplies `lobbyUrl` and `sentryDsn` in
+  production. `--verbose` prints the transport's log (ICE, DTLS, the lobby socket, every dropped
+  peer).
+- A real-link check needs `--exit-after-frames` in the thousands with `--no-frame-limit`:
+  unpaced, the client runs hundreds of frames a second.
+- The high-RTT table of architecture §6.2: `kfm_netsim --rtt 200|300|500 --jitter 20|30 --loss
+  2|5 --seconds 60 --csv`.
+
+### Bots and the arena runner
+
+```sh
+build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]
+build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5
+build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
+tools/bots/build_example.sh      # compile tools/bots/examples/*.c against the C SDK seed with the emsdk clang
+tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wat2wasm (the .wasm are checked in)
+```
+
+- `--rotate` moves every bot through every slot across the tournament (the sim's spawn order
+  favours some slots). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
+  fill that team's slots in order, the last repeating, and `--rotate` moves entrants across
+  sides.
+- Also `--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR`, `--fuel N`,
+  `--delay T`, `--memory-on-respawn keep|wipe`, `--replay out.kfmr | --replay-dir DIR`,
+  `--result FILE`, `--json`, `--quiet`, `--log`. One result line per match and a summary; exit
+  0 ok, 2 args, 3 module refused, 4 I/O.
+- The `--json` objects are an append-only contract (`docs/arena-result.md`, normative; a test
+  freezes every key, its order and type): a new key is appended to the code, the doc and the
+  test, never inserted or renamed. The match object carries `content_hash` and `build_hash`
+  (the build id: 0 unless configured with `-DKFM_BUILD_ID=<hex>`, as releases are; peers of
+  different build ids are refused and told to reload).
+
+### Releases
+
+`deploy/README.md` is the runbook. A `v*` tag runs `.github/workflows/deploy.yml`: GHCR images,
+then `update.sh` on every VM in the `KFM_VMS` variable over IAP (restarting at once), then
+Cloudflare Pages. The tag is also a GitHub release with the headless `kfm_arena` for
+linux-x86_64 (static), macos-arm64 and windows-x86_64 plus `SHA256SUMS`, and the page's site
+tarball; the `web` job republishes every release's page under `/<tag>/` (a Pages deploy is a
+full snapshot), the viewer of that release's replays. Its last job, `bots-bump`, opens the
+engine pin bump in the bots repository as a pull request (as the `kfm-release-bot` GitHub App:
+`KFM_RELEASE_BOT_APP_ID` variable, `KFM_RELEASE_BOT_PRIVATE_KEY` secret); merging it and
+releasing the ladder stay manual. Local stack: `docker compose -f deploy/docker-compose.yml`.
 
 ## Architecture in one screen
 
@@ -292,7 +262,8 @@ A replay corpus with per-tick checksums is the CI merge gate across Linux/Window
 Debug/Release. Any sim change that alters checksums is either a bug or an intentional gameplay
 change that regenerates the corpus; say which. The corpus is listed in
 `tools/replay-corpus/corpus.txt`; `regen-replay-corpus` re-records every entry (replays carry the
-content hash) and rewrites the `.checksums`. A new corpus replay needs a manifest line.
+content hash) and rewrites the `.checksums`. A new corpus replay needs a manifest line and an
+expectation row in `tests/determinism/corpus_events_test.cpp`.
 
 **Content is data (§5.10).** `content/*.toml` (loaded by `engine/content`, toml++) is the source
 of truth; `defaultContent()` in `engine/sim/src/content.cpp` is the minimal sim-test fixture
@@ -341,7 +312,7 @@ are `LoopbackTransport` + `NetEmulator` (all netcode tests run here), `WebRtcTra
 Steam is optional. Only `ITransport` and `IPlatformServices` may know which platform they are on.
 The browser client is single-threaded by design; do not introduce threads into the client path.
 
-**Presentation and platform (§7, v0.15).** `presentation` is float code over sim state: sim
+**Presentation and platform (§7).** `presentation` is float code over sim state: sim
 `(x, y)` is world `(x, h, −y)`, +y up, sim +x is screen right and sim +y screen up; the camera is
 fixed per arena. `kfm_presentation` (RenderState builder, camera, meshes) is headless and unit
 tested; `kfm_renderer` (sokol_gfx, GL backends only, hand-written GLSL with a `#version` prefix
@@ -358,17 +329,17 @@ clock; over budget or a trap means "repeat last input" for that tick). `IAgent` 
 (`WasmAgent`) and the built-in reference bot alike; agents live outside the sim and server-side
 bots write into the authoritative frame directly. Helpers (nearest banana, time to impact) go
 in the SDKs, not the host ABI. Human-likeness is a host setting: input delay equal to the
-human lead in mixed matches, none bot versus bot. SDKs, example bots and the contest live in a
-separate repository; this repo ships no training tooling (no ONNX, no nanobind, no Python env).
-`kfm_arena` is the headless match runner (modules in, replay and result line out). As built
-(v0.30): the runtime is WAMR 2.4.5's classic interpreter (`kfm::wamr`, FetchContent only,
-patched at configure time to read the remaining budget back; `KFM_WASM_BOTS=OFF` builds without
-it, and Emscripten never builds it), `kfm_ai_wasm` is a separate target so `kfm_ai` never sees
-WAMR, the budgets are 100 k instructions per tick and 10 M for instantiation and `kfm_init`,
-modules are at most 4 MiB with 16 MiB of memory, and `docs/bot-abi.md` is the normative ABI and
-Observation v1 layout. `engine/ai` is fixed-point only (the no-float check covers it): a bot
-match reproduces bit for bit on every host. Every host names bots through `BotSpec` and seeds
-slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot hook is
+human lead in mixed matches, none bot versus bot. SDKs, example bots and the contest live in the
+bots repository; this repo ships no training tooling (no ONNX, no nanobind, no Python env).
+The runtime is WAMR 2.4.5's classic interpreter (`kfm::wamr`, FetchContent only, patched at
+configure time to read the remaining budget back; `KFM_WASM_BOTS=OFF` builds without it, and
+Emscripten never builds it). `kfm_ai_wasm` is a separate target so `kfm_ai` never sees WAMR.
+The budgets are 100 k instructions per tick and 10 M for instantiation and `kfm_init`; modules
+are at most 4 MiB with 16 MiB of memory. `docs/bot-abi.md` is the normative ABI and Observation
+v1 layout, and `tools/bots/sdk-c/kfm_bot.h` is copied byte for byte by the bots repository.
+`engine/ai` is fixed-point only (the no-float check covers it): a bot match reproduces bit for
+bit on every host. Every host names bots through `BotSpec` and seeds slot s with
+`seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot hook is
 `ServerConfig::botInputs`, and `net` and `ai` never link each other.
 
 ## Working conventions specific to this repo
@@ -381,6 +352,109 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - Glossary for terms used in code and docs (tick, lead, rollback, authoritative frame, confirmed
   tick, misprediction, sub-tick timestamp, lane): `docs/architecture.md` Appendix B.
 
+## Rules by area
+
+**Sim**
+
+- Teams never enter `WorldState`: a free-for-all config (slot i = team i) must keep every
+  checksum. New rows that hurt or push get an Enemy row and an Ally twin needing
+  `Tag::FriendlyFire` on the receiving monkey (a test pins the twins); hosts fill
+  `MatchConfig::teams` with `sim::teamsFor(mode, present)` (or through `resolveMatchNames`).
+  There is no friendly fire unless the mode's `baseline` power-up grants tag `friendly_fire`.
+- Objective kinds keep their state in `MatchRules::modeData` (layouts in `src/modes/hill.cpp`,
+  `capture.cpp` and `docs/bot-abi.md` §3), never in a new world-state field; a capture flag is a
+  `PickupKind::Flag` pickup whose `spawner` byte is its team. The scripted generator's objective
+  steering must stay Rng-free and keyed on the mode kind, or every other corpus entry moves.
+- Spaces: how monkeys move is `spaceBehaviorFor(mode.space)` (`src/spaces/`), nothing else;
+  the continuous row must stay the sim as built bit for bit. Cells come only from
+  `kfm/sim/spaces/grid_cells.hpp` (column 0 west, row 0 north, a cell centre = a tilemap spawn
+  point). The grid latch reads the frame and the world state only (rollback-exact); contested
+  cells are not rule rows. Grid content counts in turns: a grid throw's recovery equals
+  `turn_ticks` and roots, a grid dash's active ticks are the slide; a mode's numbers that must
+  scale with the turn need their own defs (the `_1t` twins). The contact radius is
+  `Stats::radius`, never `PlayerDef::radius`, in sim code.
+- Pits: a pit starts a fall (`Tag::Falling`, `Player::fallTicks` from `[player]
+  fall_ticks`, `PlayerFell`), never an elimination on the spot, and only once the whole contact
+  disc is over the union of the pit boxes (`discOverPits` / `discWithinBoxes` in
+  `content/arena.hpp`, exact and integer-only; the bot uses the same function). Row 60 forbids
+  `Dashing`, so a dash's reach is how wide a pit it clears. `kGone` in `rules/table.cpp` holds
+  `Falling`: a new row that forbids `kGone` is safe against a falling monkey.
+- Bananas never disappear: a dead (or newly falling) monkey's bananas in flight are released at
+  once (`releaseBananasOf`: dropped as pickups, or gone in a mode whose `death_bananas` is
+  vanish), and held ones at a non-pit death in a drop mode, a catch past `ammoMax` and a full
+  pickup pool all drop or stack (`rules/bananas.hpp`). A new path that would destroy a banana
+  must drop it instead; the exceptions are a vanish mode's death and an ammo power-up's extra
+  bananas when it runs out. A grounded banana wholly over a pit sinks instead
+  (`BoomerangPhase::Sinking`, never a pickup); a new Boomerang row must name an
+  Outbound/Returning phase mask so it never touches a sinking one (a test pins it).
+- A new round-ending rule must wait for falls (`anyFalling`), or a doomed last monkey wins; the
+  round kinds also end a dry round (no banana left anywhere, `roundRanDry`, `[[mode]]
+  dry_round_ticks`), and anything new that makes bananas must count in `bananaLeft`.
+- Serialised structs: every `visit()` overload in `kfm/sim/visit.hpp` is followed by a
+  `static_assert(fieldCount<T>() == n)`; a new field means the visitor line, the count and a
+  mutation in `visit_test.cpp` / `content_test.cpp` (the tests pin their count the same way).
+  The scenario tests' hand copies of shipped defs are checked against the TOML by
+  `tests/unit/content/mirror_test.cpp`: edit both.
+- A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
+  `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
+- Spawn groups fixed the side bias between teams only: the free-for-all spawn-order slot bias
+  of §12 is still open (tournaments rotate).
+
+**Bots**
+
+- Fog lives in `engine/ai`, never in the sim: a `vision` change is content hash only, and the
+  `all` vision must stay the pre-fog observation byte for byte (a test pins it). Hosts call
+  `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls
+  (a host that steps the world itself calls `AgentHost::step`, which does fill, step and
+  observe; `fill()` asserts the previous step was observed). Agents are made by `ai::BotFactory`
+  (`kfm::ai_bots`) and seeded by `ai::agentSeed`, never by a per-host copy.
+
+**Server and lobby**
+
+- The room: room state never enters `WorldState` or `NetServer` (which only reports
+  `RoomSettings`/`Start` events and sends the `RoomState` the host sets); policy is
+  `apps/server/room.hpp` driven by `ServerHost`. Waiting and Over mean the host does not call
+  `NetServer::tick()` at all (the sim leaves `MatchPhase::Lobby` on its first step); clients
+  hold (`NetClient::holding()`) while their `RoomState` is not Playing. Tests and `kfm_netsim`
+  that drive `NetServer` directly, and `HostConfig{}` (room off), keep the back-to-back flow.
+  A full room queues a joiner as a spectator until a bot yields its slot (round end, or a bot
+  off the field).
+- Lobby protocol changes go to `docs/lobby-protocol.md` first; the Rust suite, `kfm_lobby_tests`
+  (label `network`, a fake lobby in-process) and the client's session test all pin it. Every
+  envelope is a flat JSON object of strings (nested signaling rides as a string in `msg`) so
+  the engine's hand-written decoder reads it. `ServerHost` must stay lobby-agnostic: the wiring
+  is `LobbyAdapter` in apps/server. Additions stay backward compatible (a new key beside the
+  old ones; a reader treats a missing key as the older lobby's meaning, as a missing `free`
+  means "every listed region free"); `/healthz`'s shape is unchanged.
+- A running match does not depend on the lobby (a server keeps its peers and room across a
+  lost link and claims the room back at `register`; a client with open data channels ignores
+  its lobby socket closing). The lobby never emits a frame over 64 KiB; per-address limits
+  refuse `limited`; the units pass the lobby secret through the environment.
+
+**Client**
+
+- The UI is Dear ImGui with the game font and the palette of `apps/client/ui_style.hpp` (no
+  colour literals in the HUD or screens); screen state lives in headless models in
+  `apps/client/core` (`menus.hpp`, `online_menu.hpp`, `scoreboard.hpp`, `hud_view.hpp`), tested
+  without a window; hud.cpp / screens.cpp only draw them. `assets/fonts/` holds source assets
+  with their licence and is compiled in (never read at run time: the browser has no
+  filesystem).
+- Clipboard, sharing, saved preferences, the page URL and the replay download go through
+  `IPlatformServices` (one `PlatformHooks` value built in
+  `apps/client/client_platform_native.cpp` or `client_platform_web.cpp`), never SDL or JS
+  directly: `main.cpp` has no `EM_JS`.
+- What is highlighted follows the last menu device (`core/menu_highlight.hpp`): mouse mode
+  highlights only the hovered item, keys/pad mode the focus, and the first key press from mouse
+  mode only reveals it. Draw menu buttons and rows through `ui::bigButton` / `ui::showsFocus` /
+  `ui::pointerTakesFocus`, never from `focus()` alone.
+- A frame in which a new ImGui window measures itself is not presented
+  (`debugUiMeasuring()`); a screen's panel card drawn outside its window must not be relied on
+  in that frame.
+- The between-rounds scoreboard shows in RoundEnded and at match end only, never over the next
+  countdown; a round's pause is 180 ticks (`round_end_ticks`).
+- The mouse aims from the local monkey (the predicted one online) through `feedMouseAim` in
+  `apps/client/core/mouse_aim.hpp`; clicks over UI windows stay the UI's.
+
 ## Lessons from CI (keep a local pass a CI pass)
 
 - Fast iteration: `cmake -S . -B build/headless -G Ninja -DCMAKE_BUILD_TYPE=Debug -DKFM_HEADLESS=ON
@@ -391,128 +465,17 @@ slot s with `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot ho
 - CI's lint job pins clang-format 23.1.3 and clang-tidy 23.1.4 (PyPI wheels: `pip install
   clang-format==23.1.3 clang-tidy==23.1.4`); run those exact versions locally, over the whole
   tree the way `.github/workflows/ci.yml` does, and count both `error` and `warning` lines.
-  The versions are recorded in architecture v0.30 (§9); bump both together.
+  The versions are recorded in architecture §9; bump both together.
 - MSVC `/W4 /WX` differs from GCC: a `return` after Catch2's `FAIL(...)` is unreachable code
   (C4702), so write `if (!opt) FAIL(...); return opt.value_or(...)` rather than `{ FAIL(); return
   {}; }`; `size_t` passed to a `uint32_t` parameter warns (C4267) even when the value is a
   constant GCC can prove fits. clang-tidy's `bugprone-unchecked-optional-access` does not treat
   `REQUIRE(opt)` as a guard; use `if (!opt) { FAIL(); return; }` in a `void` test or `value_or`.
+- GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>` as a null dereference (`-Werror` on
+  the Release legs): move instead.
 - Third-party sources fetched into `build/<preset>/_deps` may ship their own `.clang-tidy`;
   clang-tidy reads the nearest config for every file a diagnostic lands in, headers included,
   so `third_party/wamr/CMakeLists.txt` overwrites WAMR's with one that disables every check.
-- The room (v0.42): room state never enters `WorldState` or `NetServer` (which only reports
-  `RoomSettings`/`Start` events and sends the `RoomState` the host sets); policy is
-  `apps/server/room.hpp` driven by `ServerHost`. Waiting and Over mean the host does not call
-  `NetServer::tick()` at all (the sim leaves `MatchPhase::Lobby` on its first step); clients
-  hold (`NetClient::holding()`) while their `RoomState` is not Playing. Tests and `kfm_netsim`
-  that drive `NetServer` directly, and `HostConfig{}` (room off), keep the M3 flow.
-- Lobby protocol changes go to `docs/lobby-protocol.md` first; the Rust suite, `kfm_lobby_tests`
-  (label `network`, a fake lobby in-process) and the client's session test all pin it. Every
-  envelope is a flat JSON object of strings (nested signaling rides as a string in `msg`) so
-  the engine's hand-written decoder reads it. `ServerHost` must stay lobby-agnostic: the wiring
-  is `LobbyAdapter` in apps/server. Additions stay backward compatible (v1.1, v0.41: a new key
-  beside the old ones; a reader treats a missing key as the older lobby's meaning, as a missing
-  `free` means "every listed region free"); `/healthz`'s shape is unchanged. GCC 15 at -O3 flags copy-assigning a `vector<shared_ptr>`
-  as a null dereference (`-Werror` on the Release legs): move instead.
-- Next milestone: M7, the bot ladder (architecture §11 "M7 sequencing"; steps 1 and 2 landed in v0.60 and v0.61). M6b
-  "Play with friends" (architecture v0.40, §11 "M6b design") landed in v0.58: step 1,
-  lobby protocol v1.1 (`regions` lists every region plus `free`), landed in v0.41; step 2, the
-  online room (Waiting/Playing/Over beside `ServerHost`, `RoomSettings`/`RoomState`/`Start`,
-  nicknames, protocol 6), landed in v0.42; step 3, the client's front end (main menu, Settings,
-  Play online, the waiting screen with Copy link / Share, scoreboards, match-over), landed in
-  v0.43; step 4, bots yielding (`ServerConfig::queueForBotSlots`, the room's yield rule),
-  Reconnect from the UI (lobby protocol v1.2's rejoin) and the high-RTT lead check (the
-  jitter-aware band, a 500 ms soak gate), landed in v0.44; the pause menu on Escape (local
-  pause, online idle input and Leave room) landed in v0.46; the friends playtest (step 5) was played and
-  M6b landed in v0.58. Next is M7, not started. The bot
-  ladder is M7 (unchanged in content); its first steps in this repo are the `contest` mode, the
-  append-only `kfm_arena` JSON result and a tagged release of the headless `kfm_arena` (step 1,
-  landed in v0.60); step 2, the bots repository `minip8/kung-fu-monkeys-bots` (the C header copied
-  byte for byte and diffed by its CI, the C++ layer, examples, the recipe and image, the engine
-  pin in its `engine.lock`), landed in v0.61; step 3, the service, is designed in v0.63 (§11 "M7
-  step 3 design": Rust/axum/sqlx, Postgres, S3-compatible blobs, a jobs table as the queue, GitHub or
-  Google OAuth, gVisor on a build VM, Swiss rounds under Glicko-2) and landed there in v0.64 (`service/`,
-  `deploy/`; kfm_arena baked into the service image); step 4, seasons, the Swiss scheduler, the match
-  job and Glicko-2, landed there in v0.65; step 5, the `kfm` CLI (`kfm-cli` on PyPI), in v0.66, with
-  replays kept 24 hours and the host `bots.kfm.minip8.com`; deployed in v0.67 (two VMs beside the game
-  server, R2, `kfm-cli` 0.1.1 on PyPI, season `2026-11`); step 6, the client's replay viewer
-  (`--replay`, `?replay=`), landed in v0.68; what remains of M7's criterion is a tagged engine release
-  carrying the viewer (a ladder link opens its match's tag, and v0.5.1's page has none) and an entrant
-  from outside the project through the whole path. v0.59: a
-  ladder season is a time window, not a pinned release; every match records its release tag,
-  replays are served with their release's content and viewed in that release's client (the page
-  under a versioned path per tag), ratings persist across a release. M5b landed in v0.35 (five PRs, one
-  architecture version each, v0.31 to v0.35); its human playtest (`hill`, a 15-tick grid round)
-  is pending. Spawn groups fixed the side bias between teams only: the free-for-all
-  spawn-order slot bias of §12 is still open (tournaments rotate).
-- The client UI (v0.43): Dear ImGui with the game font and the palette of `apps/client/ui_style.hpp`
-  (no colour literals in the HUD or screens); screen state lives in headless models in
-  `apps/client/core` (`menus.hpp`, `online_menu.hpp`, `scoreboard.hpp`, `hud_view.hpp`), tested without a window;
-  hud.cpp / screens.cpp only draw them. `assets/fonts/` holds source assets with their licence and
-  is compiled in (never read at run time: the browser has no filesystem). Clipboard, sharing,
-  saved preferences, the page URL and the replay download go through `IPlatformServices`
-  (v0.70: one `PlatformHooks` value built in `apps/client/client_platform_native.cpp` or
-  `client_platform_web.cpp`), never SDL or JS directly: `main.cpp` has no `EM_JS`.
-  v0.55: what is highlighted follows the last menu device (`core/menu_highlight.hpp`): mouse mode
-  highlights only the hovered item, keys/pad mode the focus, and the first key press from mouse
-  mode only reveals it. Draw menu buttons and rows through `ui::bigButton` / `ui::showsFocus` /
-  `ui::pointerTakesFocus`, never from `focus()` alone. A frame in which a new ImGui window
-  measures itself is not presented (`debugUiMeasuring()`); a screen's panel card drawn outside
-  its window must not be relied on in that frame. The between-rounds scoreboard shows in
-  RoundEnded and at match end only, never over the next countdown; a round's pause is 180 ticks
-  (`round_end_ticks`).
-- Fog lives in `engine/ai`, never in the sim: a `vision` change is content hash only, and the
-  `all` vision must stay the pre-fog observation byte for byte (a test pins it). Hosts call
-  `AgentHost::observe(sink, world, content)` after every `step`, or their bots hear no calls
-  (v0.70: a host that steps the world itself calls `AgentHost::step`, which does fill, step and
-  observe; `fill()` asserts the previous step was observed). Agents are made by `ai::BotFactory`
-  (`kfm::ai_bots`) and seeded by `ai::agentSeed`, never by a per-host copy.
-- Teams never enter `WorldState`: a free-for-all config (slot i = team i) must keep every
-  checksum. New rows that hurt or push get an Enemy row and an Ally twin needing
-  `Tag::FriendlyFire` on the receiving monkey (a test pins the twins); hosts fill
-  `MatchConfig::teams` with `sim::teamsFor(mode, present)` (or through `resolveMatchNames`).
-- Objective kinds keep their state in `MatchRules::modeData` (layouts in `src/modes/hill.cpp`,
-  `capture.cpp` and `docs/bot-abi.md` §3), never in a new world-state field; a capture flag is a
-  `PickupKind::Flag` pickup whose `spawner` byte is its team. The scripted generator's objective
-  steering must stay Rng-free and keyed on the mode kind, or every other corpus entry moves.
-- Spaces (v0.34): how monkeys move is `spaceBehaviorFor(mode.space)` (`src/spaces/`), nothing else;
-  the continuous row must stay the sim as built bit for bit. Cells come only from
-  `kfm/sim/spaces/grid_cells.hpp` (column 0 west, row 0 north, a cell centre = a tilemap spawn
-  point). The grid latch reads the frame and the world state only (rollback-exact); contested
-  cells are not rule rows. Grid content counts in turns: a grid throw's recovery equals
-  `turn_ticks` and roots, a grid dash's active ticks are the slide; a mode's numbers that must
-  scale with the turn need their own defs (the `_1t` twins). The contact radius is
-  `Stats::radius`, never `PlayerDef::radius`, in sim code.
-- Pits (v0.57): a pit starts a fall (`Tag::Falling`, `Player::fallTicks` from `[player]
-  fall_ticks`, `PlayerFell`), never an elimination on the spot, and only once the whole contact
-  disc is over the union of the pit boxes (`discOverPits` / `discWithinBoxes` in
-  `content/arena.hpp`, exact and integer-only; the bot uses the same function). Row 60 forbids
-  `Dashing`, so a dash's reach is how wide a pit it clears. `kGone` in `rules/table.cpp` holds
-  `Falling`: a new row that forbids `kGone` is safe against a falling monkey. A dead (or newly
-  falling) monkey's bananas in flight are released at once (`releaseBananasOf`: dropped as
-  pickups, or gone in a mode whose `death_bananas` is vanish), and otherwise bananas never
-  disappear (`rules/bananas.hpp`: held ones at a non-pit death in a drop mode, a catch past
-  `ammoMax`, a full pickup pool all drop or stack; a new path that would destroy a banana must
-  drop it instead; the exceptions are a vanish mode's death and an ammo power-up's extra
-  bananas when it runs out); a
-  grounded banana wholly over a pit sinks instead (`BoomerangPhase::Sinking`, never a pickup); a
-  new Boomerang row must name an Outbound/Returning phase mask so it never touches a sinking one
-  (a test pins it). A new
-  round-ending rule must wait for falls (`anyFalling`), or a doomed last monkey wins; the round
-  kinds also end a dry round (no banana left anywhere, `roundRanDry`, `[[mode]]
-  dry_round_ticks`), and anything new that makes bananas must count in `bananaLeft`.
-- Serialised structs (v0.70): every `visit()` overload in `kfm/sim/visit.hpp` is followed by a
-  `static_assert(fieldCount<T>() == n)`; a new field means the visitor line, the count and a
-  mutation in `visit_test.cpp` / `content_test.cpp` (the tests pin their count the same way). A
-  new corpus entry needs an expectation row in `tests/determinism/corpus_events_test.cpp`. The
-  scenario tests' hand copies of shipped defs are checked against the TOML by
-  `tests/unit/content/mirror_test.cpp`: edit both.
-- Lobby protocol v1.3 (v0.70): a running match does not depend on the lobby (a server keeps its
-  peers and room across a lost link and claims the room back at `register`; a client with open
-  data channels ignores its lobby socket closing). The lobby never emits a frame over 64 KiB;
-  per-address limits refuse `limited`; the units pass the lobby secret through the environment.
-- A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
-  `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
 
 ## Git workflow
 
@@ -522,8 +485,9 @@ logical unit is a system, a rule, a transport, a content def with its test, a do
 mix a refactor with a behaviour change. Do not leave finished work uncommitted at the end of a
 turn; if something is deliberately left uncommitted (broken, half-done, exploratory), say so.
 `main` stays green. Work on a branch (`feat/<topic>`, `fix/<topic>`, `docs/<topic>`), never
-directly on `main`; create the branch before the first commit of a task. A design decision and
-the `docs/architecture.md` update that records it go in the same commit.
+directly on `main`; create the branch before the first commit of a task. A design decision, the
+`docs/architecture.md` update that records it and its `docs/architecture-changelog.md` entry go
+in the same commit.
 
 **Pushing and pull requests.** Push the working branch to `origin` whenever it is green locally
 (configures, builds, passes `ctest`, lint clean), and open a pull request against `main` with
