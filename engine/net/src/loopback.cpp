@@ -183,8 +183,8 @@ LoopbackTransport& LoopbackNetwork::connectClient(uint64_t nowNs, const LinkCond
   Link link;
   link.client =
       std::make_unique<LoopbackTransport>(LoopbackTransport::Key{}, *this, false, id, nowNs);
-  link.toServer = Direction{toServer, directionRng(seed_, id, true), {}};
-  link.toClient = Direction{toClient, directionRng(seed_, id, false), {}};
+  link.toServer = Direction{toServer, {}, directionRng(seed_, id, true), {}};
+  link.toClient = Direction{toClient, {}, directionRng(seed_, id, false), {}};
   LoopbackTransport& client = *link.client;
   links_.push_back(std::move(link));
 
@@ -232,6 +232,12 @@ void LoopbackNetwork::cut(PeerId client) {
   server_->markClosed(client, server_->nowNs_);
 }
 
+void LoopbackNetwork::setOutage(PeerId client, bool toServer, const Outage& outage) {
+  Link* l = findLink(client);
+  if (l == nullptr) return;
+  (toServer ? l->toServer : l->toClient).outage = outage;
+}
+
 EmulatorStats LoopbackNetwork::emulatorStats(PeerId client, bool toServer) const {
   const Link* l = findLink(client);
   if (l == nullptr) return {};
@@ -247,6 +253,7 @@ void LoopbackNetwork::route(LoopbackTransport& from, PeerId to, Lane lane, bool 
   LoopbackTransport& receiver = from.isServer_ ? *link->client : *server_;
   const PeerId seenAs = from.isServer_ ? kServerPeer : from.self_;
   const uint64_t sendNs = from.nowNs_;
+  const bool blackedOut = sendNs >= dir.outage.fromNs && sendNs < dir.outage.untilNs;
 
   const auto enqueue = [&](uint64_t deliverAtNs) {
     LoopbackTransport::InFlight m;
@@ -268,10 +275,18 @@ void LoopbackNetwork::route(LoopbackTransport& from, PeerId to, Lane lane, bool 
       ++dir.stats.unreliableLost;
       return;
     }
-    if (duplicated) ++dir.stats.unreliableDuplicated;
+    if (blackedOut) {
+      ++dir.stats.unreliableLost;
+      ++dir.stats.unreliableBlackedOut;
+    } else if (duplicated) {
+      ++dir.stats.unreliableDuplicated;
+    }
     for (int copy = 0; copy < (duplicated ? 2 : 1); ++copy) {
+      // Drawn for a blacked-out message too: the outage shifts no later draw.
       uint64_t delay = c.latencyNs + uniformNs(dir.rng, c.jitterNs);
-      if (chance(dir.rng, c.reorderPpm)) {
+      const bool heldBack = chance(dir.rng, c.reorderPpm);
+      if (blackedOut) continue;
+      if (heldBack) {
         ++dir.stats.unreliableHeldBack;
         delay += c.reorderDelayNs;
       }
@@ -290,6 +305,13 @@ void LoopbackNetwork::route(LoopbackTransport& from, PeerId to, Lane lane, bool 
   LoopbackTransport::Peer* senderPeer = from.findPeer(to);
   KFM_ASSERT(senderPeer != nullptr);
   uint64_t deliverAtNs = sendNs + delay;
+  if (blackedOut && dir.outage.reliable) {
+    const uint64_t after = dir.outage.untilNs + c.latencyNs;
+    if (after > deliverAtNs) {
+      deliverAtNs = after;
+      ++dir.stats.reliableHeld;
+    }
+  }
   if (senderPeer != nullptr) {
     deliverAtNs = std::max(deliverAtNs, senderPeer->lastReliableDeliverNs);
     senderPeer->lastReliableDeliverNs = deliverAtNs;
