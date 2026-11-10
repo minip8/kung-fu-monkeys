@@ -17,6 +17,8 @@ namespace {
 
 constexpr std::array kLocalMatchOverActions{MatchOverAction::PlayAgain,
                                             MatchOverAction::BackToLobby};
+constexpr std::array kLostConnectionActions{LostConnectionAction::Reconnect,
+                                            LostConnectionAction::Leave};
 
 }  // namespace
 
@@ -122,6 +124,27 @@ std::span<const MatchOverAction> localMatchOverActions() {
 
 std::optional<MatchOverAction> matchOverActionAt(std::span<const MatchOverAction> actions,
                                                  std::size_t index) {
+  if (index >= actions.size()) return std::nullopt;
+  return actions[index];
+}
+
+const char* lostConnectionLabel(LostConnectionAction action) {
+  switch (action) {
+    case LostConnectionAction::Reconnect:
+      return "Reconnect";
+    case LostConnectionAction::Leave:
+      return "Leave";
+  }
+  return "";
+}
+
+std::span<const LostConnectionAction> lostConnectionActions(bool canReconnect) {
+  if (!canReconnect) return {};
+  return kLostConnectionActions;
+}
+
+std::optional<LostConnectionAction> lostConnectionActionAt(
+    std::span<const LostConnectionAction> actions, std::size_t index) {
   if (index >= actions.size()) return std::nullopt;
   return actions[index];
 }

@@ -1,8 +1,8 @@
 // The HUD's and the match-over screen's view models (core/hud_view.hpp,
 // architecture §7): hudView() of a local match, the "you" rows online, the
 // winner's title and colour, the clock's last seconds, the match-over
-// screen's typed buttons locally and in an online room, and where the
-// room's bots join at the start.
+// screen's typed buttons locally and in an online room, the lost-connection
+// screen's typed buttons, and where the room's bots join at the start.
 #include "core/hud_view.hpp"
 
 #include "core/match_session.hpp"
@@ -14,11 +14,13 @@
 #include <bit>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 using namespace kfm;
 using client::HudView;
+using client::LostConnectionAction;
 using client::MatchOverAction;
 using client::SlotOwner;
 using presentation::HudPhase;
@@ -156,6 +158,28 @@ TEST_CASE("match over: typed buttons locally and in an online room", "[client][h
   CHECK(std::string(client::matchOverLabel(MatchOverAction::PlayAgain)) == "Play again");
   CHECK(std::string(client::matchOverLabel(MatchOverAction::BackToLobby)) == "Back to lobby");
   CHECK(std::string(client::matchOverLabel(MatchOverAction::Leave)) == "Leave");
+}
+
+TEST_CASE("lost connection: Reconnect and Leave only while the session can reconnect",
+          "[client][hud][lost]") {
+  const std::span<const LostConnectionAction> lost = client::lostConnectionActions(true);
+  CHECK(std::vector<LostConnectionAction>(lost.begin(), lost.end()) ==
+        std::vector<LostConnectionAction>{LostConnectionAction::Reconnect,
+                                          LostConnectionAction::Leave});
+  // netFrame's Enter on the focused button reads the same list.
+  CHECK(client::lostConnectionActionAt(lost, 0) == LostConnectionAction::Reconnect);
+  CHECK(client::lostConnectionActionAt(lost, 1) == LostConnectionAction::Leave);
+  CHECK_FALSE(client::lostConnectionActionAt(lost, 2).has_value());
+
+  // Connecting, rejected or failed: no buttons (Esc goes back to the menu),
+  // so Enter picks nothing whatever the focus.
+  const std::span<const LostConnectionAction> none = client::lostConnectionActions(false);
+  CHECK(none.empty());
+  CHECK_FALSE(client::lostConnectionActionAt(none, 0).has_value());
+  CHECK_FALSE(client::lostConnectionActionAt(none, 1).has_value());
+
+  CHECK(std::string(client::lostConnectionLabel(LostConnectionAction::Reconnect)) == "Reconnect");
+  CHECK(std::string(client::lostConnectionLabel(LostConnectionAction::Leave)) == "Leave");
 }
 
 // The server places a room's bots in the lowest free slots at Start

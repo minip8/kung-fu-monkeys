@@ -910,16 +910,21 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
     if (lost) {
       ImGui::Spacing();
       ImGui::TextUnformatted("Your place in the match is kept for a few seconds.");
-      static constexpr std::array<const char*, 2> kButtons = {"Reconnect", "Leave"};
-      buttons.setCount(kButtons.size());
+      const std::span<const LostConnectionAction> actions = lostConnectionActions(lost);
+      const std::size_t n = actions.size();
+      buttons.setCount(n);
       const float gap = ImGui::GetStyle().ItemSpacing.x;
-      const float bw = (ImGui::GetContentRegionAvail().x - gap) / 2.0f;
-      for (std::size_t i = 0; i < kButtons.size(); ++i) {
+      const float bw =
+          n == 0 ? 0.0f
+                 : (ImGui::GetContentRegionAvail().x - (static_cast<float>(n - 1) * gap)) /
+                       static_cast<float>(n);
+      for (std::size_t i = 0; i < n; ++i) {
         if (i > 0) ImGui::SameLine();
-        if (ui::bigButton(kButtons[i], i == buttons.focus(), bw, true, ui::kFontButton,
-                          i == 0 ? ui::Tone::Lead : ui::Tone::Plain)) {
+        // The first button is the screen's lead (Reconnect).
+        if (ui::bigButton(lostConnectionLabel(actions[i]), i == buttons.focus(), bw, true,
+                          ui::kFontButton, i == 0 ? ui::Tone::Lead : ui::Tone::Plain)) {
           buttons.setFocus(i);
-          (i == 0 ? out.reconnect : out.leave) = true;
+          out.action = actions[i];
         }
         if (ui::pointerTakesFocus()) buttons.setFocus(i);
       }

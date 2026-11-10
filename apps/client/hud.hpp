@@ -67,12 +67,11 @@ struct ShareOutcome {
 // get back to the menu. M6a: in a room, its code large with Copy link /
 // Share; a lobby refusal shows in plain words (NetSession::statusText()).
 // v0.44: a lost session that canReconnect() offers Reconnect and Leave
-// (`buttons` holds the keyboard / pad focus); after a Reconnect the screen
-// says it is reconnecting.
+// (core/hud_view.hpp lostConnectionActions(); `buttons` holds the keyboard /
+// pad focus); after a Reconnect the screen says it is reconnecting.
 struct NetStatusOutcome {
   ShareOutcome share;
-  bool reconnect{false};
-  bool leave{false};
+  std::optional<LostConnectionAction> action;  // the button clicked
 };
 [[nodiscard]] NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share,
                                              ButtonMenu& buttons);
