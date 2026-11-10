@@ -973,7 +973,9 @@ void onEvent(void* user, const SDL_Event& event) {
     const client::MenuAction action = app->menuInput.translate(*input, bound);
     if (revealOnly(*app, action, client::isActivateEvent(*input, bound))) return;
     app->overMenu.apply(action);
-    if (client::isActivateEvent(*input, bound) && app->overMenu.focus() == 0) {
+    if (client::isActivateEvent(*input, bound) &&
+        client::matchOverActionAt(client::localMatchOverActions(), app->overMenu.focus()) ==
+            client::MatchOverAction::PlayAgain) {
       s.restart(platform::Window::nowNs(), true);
       return;
     }
@@ -1141,13 +1143,13 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
     }
     if (view.overScreen) {
       // v0.43: the match-over screen: Play again (a new seed) or the lobby.
-      client::MatchOverView over = client::matchOverView(view, app.renderState);
-      over.buttons = {"Play again", "Back to lobby"};
-      std::optional<std::size_t> pick = client::drawMatchOver(over, app.overMenu);
-      if (std::exchange(app.overActivate, false) && !pick) pick = app.overMenu.focus();
+      const client::MatchOverView over = client::localMatchOverView(view, app.renderState.hud);
+      std::optional<client::MatchOverAction> pick = client::drawMatchOver(over, app.overMenu);
+      if (std::exchange(app.overActivate, false) && !pick)
+        pick = over.actionAt(app.overMenu.focus());
       if (pick) {
         app.audio.click();
-        if (*pick == 0) {
+        if (*pick == client::MatchOverAction::PlayAgain) {
           s.restart(now, true);
         } else {
           s.returnToLobby();
@@ -1185,20 +1187,14 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
   const std::optional<net::RoomStateMsg>& room = n.roomState();
   if (!room) return;
   if (room->phase == net::RoomPhase::Over) {
-    client::MatchOverView over = client::matchOverView(view, app.renderState);
-    if (n.isHost()) {
-      over.buttons = {"Play again", "Leave"};
-    } else {
-      over.buttons = {"Leave"};
-      over.waiting = "Waiting for " +
-                     (room->host.isValid() ? n.slotName(room->host) : std::string("the host")) +
-                     " to play again";
-    }
-    std::optional<std::size_t> pick = client::drawMatchOver(over, app.overMenu);
-    if (std::exchange(app.overActivate, false) && !pick) pick = app.overMenu.focus();
+    const client::MatchOverView over =
+        client::roomMatchOverView(view, app.renderState.hud, n.isHost(),
+                                  room->host.isValid() ? n.slotName(room->host) : std::string());
+    std::optional<client::MatchOverAction> pick = client::drawMatchOver(over, app.overMenu);
+    if (std::exchange(app.overActivate, false) && !pick) pick = over.actionAt(app.overMenu.focus());
     if (pick) {
       app.audio.click();
-      if (over.buttons[*pick] == "Play again") {
+      if (*pick == client::MatchOverAction::PlayAgain) {
         n.start();
       } else {
         app.leaveRequested = true;

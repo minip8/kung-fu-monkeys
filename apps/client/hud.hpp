@@ -7,6 +7,7 @@
 // before play are screens.hpp.
 #pragma once
 
+#include "core/hud_view.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/match_session.hpp"
 #include "core/menus.hpp"
@@ -32,38 +33,6 @@ struct HudInput {
   const presentation::Camera* camera{nullptr};  // framebuffer pixels
   float uiScale{1.0f};                          // ImGui units per framebuffer pixel
 };
-
-// What the HUD needs to know about the slots, from either session.
-struct HudView {
-  std::array<SlotOwner, sim::kMaxPlayers> owners{};
-  sim::PlayerMask dropped{0};  // local slots whose controller is gone
-  sim::PlayerMask bots{0};     // v0.43: slots a bot drives (locally or on the server)
-  bool paused{false};
-  bool network{false};     // a networked match: no "back to the lobby" by Enter
-  std::string statusLine;  // network: a small connection status line
-  std::string roomLine;    // M6a: "Room ABCDE (eu)", drawn large above the status line
-  std::string shareLine;   // M6a: the invite ("Invite: https://.../?room=ABCDE")
-  // Network: the server's announced next match (arena, mode, power-ups),
-  // shown under the match-over banner.
-  std::string nextMatch;
-  // v0.42, online: each slot's nickname (empty: the slot label).
-  std::array<std::string, sim::kMaxPlayers> names{};
-  // v0.43: the caller draws the match-over screen (drawMatchOver()), so the
-  // HUD draws no match-over banner or scoreboard of its own.
-  bool overScreen{false};
-  // M7 step 6: a replay (ReplaySession): every slot is a spectator's view
-  // (P<n>, no "you"), and the match-over banner says the replay ended.
-  bool replay{false};
-  // M7 step 6: the pixels at the bottom a control bar takes (the replay's,
-  // replayBarInset()); the between-rounds scoreboard stays above them.
-  float bottomInset{0.0f};
-};
-[[nodiscard]] HudView hudView(const MatchSession& session);
-[[nodiscard]] HudView hudView(const NetSession& session);
-// The recorded slots as Remote (labelled P<n>: a replay carries no names).
-[[nodiscard]] HudView hudView(const ReplaySession& session);
-// Each slot's label: its nickname, else P<n> / BOT<n> (scoreboard.hpp).
-[[nodiscard]] std::array<std::string, sim::kMaxPlayers> slotLabels(const HudView& view);
 
 // Scores, round, countdown, round/match banners, per-player labels and ammo
 // pips (nicknames online, P<n> / BOT<n> locally), dropped-controller and
@@ -135,20 +104,11 @@ struct RoomOutcome {
                                          const ShareView& share);
 
 // v0.43: the match-over screen, locally and in an online room: the winner
-// in their colour, the final scoreboard and a row of buttons (`menu` holds
-// the focus); `waiting` is a line above them ("Waiting for Bonobo 42 to play
-// again").
-struct MatchOverView {
-  std::string title;
-  uint32_t color{0xFFFFFFFFu};  // ImU32
-  Scoreboard board;
-  std::vector<std::string> buttons;
-  std::string waiting;
-};
-[[nodiscard]] MatchOverView matchOverView(const HudView& view,
-                                          const presentation::RenderState& state);
-// Returns the index of the button clicked.
-[[nodiscard]] std::optional<std::size_t> drawMatchOver(const MatchOverView& view, ButtonMenu& menu);
+// in their colour, the final scoreboard and a row of buttons (the view's
+// actions; `menu` holds the focus); the view's `waiting` line above them
+// (core/hud_view.hpp MatchOverView). Returns the action clicked.
+[[nodiscard]] std::optional<MatchOverAction> drawMatchOver(const MatchOverView& view,
+                                                           ButtonMenu& menu);
 
 // M7 step 6: the replay viewer's control bar along the bottom (the
 // ReplayControls model): Restart, Play / Pause (Watch again at the end),

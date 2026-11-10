@@ -23,6 +23,7 @@ add_library(kfm_client_core STATIC
   core/menu_highlight.cpp
   core/online_menu.cpp
   core/scoreboard.cpp
+  core/hud_view.cpp
   core/bot_roster.cpp
   core/mouse_aim.cpp
   core/replay_session.cpp

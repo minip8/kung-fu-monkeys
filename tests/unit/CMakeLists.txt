@@ -162,6 +162,7 @@ if(NOT KFM_HEADLESS)
     client/room_test.cpp
     client/menus_test.cpp
     client/scoreboard_test.cpp
+    client/hud_view_test.cpp
     client/replay_session_test.cpp
     client/replay_controls_test.cpp
   )

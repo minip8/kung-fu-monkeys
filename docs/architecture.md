@@ -3451,7 +3451,10 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
 
 - The front end (v0.43, M6b step 3; `apps/client/ui_style.{hpp,cpp}`, `screens.{hpp,cpp}`,
   `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
-  `core/scoreboard.hpp`). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
+  `core/scoreboard.hpp`, and since the architecture audit `core/hud_view.hpp`: `HudView`, the
+  winner's title and colour, the clock's urgent threshold, the match-over screen's typed
+  `MatchOverAction` buttons and the room's bot-slot preview, which mirrors the server's "lowest
+  free slots" rule in `ServerHost::placeRoomBots`). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
   `assets/fonts/` with its licence), compiled in by `cmake/EmbedFile.cmake`, loaded once by
   `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
   1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette
