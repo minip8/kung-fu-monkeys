@@ -1,32 +1,51 @@
 // IPlatformServices (M6a, architecture §13.4/§13.5): the null services and
 // LocalPlatformServices' guest id, made once and kept in an injected store
-// (the client's settings storage).
+// (the client's settings storage), and the hooks the client injects per
+// platform: preferences, sharing, downloads, the page and the traits.
 #include "kfm/platform/platform_services.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cstddef>
+#include <map>
 #include <string>
 #include <string_view>
+#include <vector>
 
-using kfm::platform::GuestIdStore;
+using kfm::platform::Download;
 using kfm::platform::isGuestId;
 using kfm::platform::LocalPlatformServices;
 using kfm::platform::makeGuestId;
 using kfm::platform::NullPlatformServices;
+using kfm::platform::PlatformHooks;
+using kfm::platform::PrefStore;
 
 namespace {
 
-// An in-memory stand-in for the settings storage (file / localStorage).
+// An in-memory stand-in for the preference storage (files / localStorage):
+// `text` is the guest id's, every other name lives in `others`.
 struct MemoryStore {
   std::string text;
   int saves{0};
-  [[nodiscard]] GuestIdStore store() {
-    return GuestIdStore{.load = [this] { return text; },
-                        .save =
-                            [this](std::string_view t) {
-                              text = t;
-                              ++saves;
-                            }};
+  std::map<std::string, std::string, std::less<>> others;
+  [[nodiscard]] PlatformHooks store() {
+    PlatformHooks hooks;
+    hooks.prefs = PrefStore{.load =
+                                [this](std::string_view name) {
+                                  if (name == "guest_id") return text;
+                                  const auto it = others.find(name);
+                                  return it == others.end() ? std::string{} : it->second;
+                                },
+                            .save =
+                                [this](std::string_view name, std::string_view t) {
+                                  if (name == "guest_id") {
+                                    text = t;
+                                    ++saves;
+                                  } else {
+                                    others[std::string(name)] = t;
+                                  }
+                                }};
+    return hooks;
   }
 };
 
@@ -84,7 +103,7 @@ TEST_CASE("the guest id is made once, saved, and read back on the next run",
 }
 
 TEST_CASE("without storage the guest id lives for the run only", "[platform][services]") {
-  LocalPlatformServices services(GuestIdStore{}, "", 7, 8);
+  LocalPlatformServices services(PlatformHooks{}, "", 7, 8);
   const std::string id = services.guestId();
   CHECK(isGuestId(id));
   CHECK(services.guestId() == id);
@@ -107,17 +126,17 @@ TEST_CASE("clipboard and share: null has neither, local goes through its hooks (
   std::string copied;
   std::string shared;
   bool touch = false;
-  kfm::platform::ShareHooks hooks;
-  hooks.copy = [&](std::string_view t) {
+  PlatformHooks hooks;
+  hooks.share.copy = [&](std::string_view t) {
     copied = t;
     return true;
   };
-  hooks.canShare = [&] { return touch; };
-  hooks.share = [&](std::string_view title, std::string_view text, std::string_view url) {
+  hooks.share.canShare = [&] { return touch; };
+  hooks.share.share = [&](std::string_view title, std::string_view text, std::string_view url) {
     shared = std::string(title) + "|" + std::string(text) + "|" + std::string(url);
     return true;
   };
-  LocalPlatformServices local({}, {}, 1, 2, hooks);
+  LocalPlatformServices local(hooks, {}, 1, 2);
   CHECK(local.copyText("https://kfm.example/?room=ABCDE"));
   CHECK(copied == "https://kfm.example/?room=ABCDE");
   // A desktop browser (no touch): no share sheet, nothing shared.
@@ -128,4 +147,96 @@ TEST_CASE("clipboard and share: null has neither, local goes through its hooks (
   CHECK(local.canShare());
   CHECK(local.share("Kung Fu Monkeys", "Join my room", "https://kfm.example/?room=ABCDE"));
   CHECK(shared == "Kung Fu Monkeys|Join my room|https://kfm.example/?room=ABCDE");
+}
+
+TEST_CASE("preferences: named texts through the store, none without one", "[platform][services]") {
+  MemoryStore disk;
+  LocalPlatformServices services(disk.store(), "", 1, 2);
+  CHECK(services.loadPref("settings").empty());
+  services.savePref("settings", "arena=dojo\n");
+  CHECK(disk.others["settings"] == "arena=dojo\n");
+  CHECK(services.loadPref("settings") == "arena=dojo\n");
+  // The guest id is the "guest_id" preference beside it.
+  const std::string id = services.guestId();
+  CHECK(services.loadPref("guest_id") == id);
+
+  // --no-settings: no store, nothing read or kept.
+  LocalPlatformServices bare(PlatformHooks{}, "", 1, 2);
+  bare.savePref("settings", "arena=dojo\n");
+  CHECK(bare.loadPref("settings").empty());
+  NullPlatformServices null;
+  null.savePref("settings", "x");
+  CHECK(null.loadPref("settings").empty());
+}
+
+TEST_CASE("the page and the traits come from the hooks", "[platform][services]") {
+  NullPlatformServices null;
+  CHECK(null.pageUrl().empty());
+  CHECK(null.canQuit());
+  CHECK_FALSE(null.localFiles());
+
+  LocalPlatformServices native(PlatformHooks{}, "", 1, 2);
+  CHECK(native.pageUrl().empty());
+  CHECK(native.canQuit());  // the defaults: a native build without a page
+  CHECK_FALSE(native.localFiles());
+
+  PlatformHooks web;
+  web.pageUrl = "https://kfm.example/?arena=dojo";
+  web.canQuit = false;
+  LocalPlatformServices browser(web, "", 1, 2);
+  CHECK(browser.pageUrl() == "https://kfm.example/?arena=dojo");
+  CHECK_FALSE(browser.canQuit());
+}
+
+TEST_CASE("downloads: refused without hooks, else the hooks' outcome once",
+          "[platform][services]") {
+  NullPlatformServices null;
+  CHECK(null.pollDownload().state == Download::State::None);
+  null.startDownload("https://kfm.example/r.kfmr", 100);
+  const Download refused = null.pollDownload();
+  CHECK(refused.state == Download::State::Failed);
+  CHECK_FALSE(refused.error.empty());
+  CHECK(null.pollDownload().state == Download::State::None);
+
+  LocalPlatformServices bare(PlatformHooks{}, "", 1, 2);
+  bare.startDownload("r.kfmr", 100);
+  CHECK(bare.pollDownload().state == Download::State::Failed);
+  CHECK(bare.pollDownload().state == Download::State::None);
+
+  // A fake fetch: pending for one poll, then the bytes; cancel drops it.
+  std::string started;
+  std::size_t cap = 0;
+  int polls = 0;
+  bool cancelled = false;
+  PlatformHooks hooks;
+  hooks.download.start = [&](std::string_view source, std::size_t maxBytes) {
+    started = source;
+    cap = maxBytes;
+    polls = 0;
+  };
+  hooks.download.poll = [&] {
+    if (started.empty()) return Download{};
+    if (polls++ == 0) return Download{.state = Download::State::Pending, .bytes = {}, .error = {}};
+    started.clear();
+    return Download{.state = Download::State::Done,
+                    .bytes = std::vector<std::byte>(3, std::byte{7}),
+                    .error = {}};
+  };
+  hooks.download.cancel = [&] {
+    cancelled = true;
+    started.clear();
+  };
+  LocalPlatformServices local(hooks, "", 1, 2);
+  local.startDownload("https://kfm.example/r.kfmr", 16);
+  CHECK(started == "https://kfm.example/r.kfmr");
+  CHECK(cap == 16);
+  CHECK(local.pollDownload().state == Download::State::Pending);
+  const Download done = local.pollDownload();
+  CHECK(done.state == Download::State::Done);
+  CHECK(done.bytes.size() == 3);
+  CHECK(local.pollDownload().state == Download::State::None);
+  local.startDownload("again", 16);
+  local.cancelDownload();
+  CHECK(cancelled);
+  CHECK(local.pollDownload().state == Download::State::None);
 }

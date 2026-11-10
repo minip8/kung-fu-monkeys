@@ -3509,7 +3509,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `--room`, `--create` and `--screen`, and there is no main-menu entry. Loading: natively
   `readFileBytes` before the first frame; in the browser an `EM_JS` `fetch(url, {mode: 'cors',
   credentials: 'omit'})` with an `AbortController`, polled once per frame (nothing blocks, no
-  exported functions or link options), the bytes copied into a buffer C++ allocated; both cap
+  exported functions or link options), the bytes copied into a buffer C++ allocated (both behind
+  `IPlatformServices::startDownload` / `pollDownload`, §13.4); both cap
   the file at `kReplayMaxBytes` (16 MiB, in `replay_session.hpp`: a larger Content-Length is
   refused up front and the stream reader cancels past the cap; `readFileBytes` refuses a larger
   file from its size before reading and reads straight into the `std::byte` vector), and leaving
@@ -5517,7 +5518,15 @@ directory, invites, presence, achievements, cloud). Nothing else knows which pla
 `null` implementation serves tests and the headless server. v0.43: `IPlatformServices` also copies
 text to the clipboard (`copyText`) and offers a link to the share sheet (`canShare`, `share`):
 SDL's clipboard natively, `navigator.clipboard` and the Web Share API (touch devices only) in
-the browser, through hooks the app injects so `kfm_platform_services` stays SDL-free.
+the browser, through hooks the app injects so `kfm_platform_services` stays SDL-free. Since the
+architecture audit the seam also holds everything else in the client that differs between the
+two: named preference texts (`loadPref`/`savePref`: the settings and the guest id), the page's
+address (`pageUrl`, for invite links), the replay viewer's download (`startDownload`,
+`pollDownload`, `cancelDownload`: a local file natively, a CORS fetch in the browser), and two
+traits, `canQuit` (no Quit in a browser tab) and `localFiles` (hot reload natively only).
+`LocalPlatformServices` takes them as one `PlatformHooks` value, which the client builds in
+`apps/client/client_platform_native.cpp` (SDL) or `client_platform_web.cpp` (`EM_JS`), CMake
+compiling one of the two; `main.cpp` holds no `EM_JS` and no `__EMSCRIPTEN__` branch.
 
 ### 13.5 Hosting: dedicated servers, decided
 
@@ -5635,7 +5644,8 @@ origin) and, only with a `sentryDsn`, the pinned Sentry browser bundle (subresou
 `window.onerror`, unhandled rejections and Emscripten's `onAbort`. `IPlatformServices`
 (`kfm/platform/platform_services.hpp`, the SDL-free target `kfm_platform_services`) is the
 minimal seam: a guest id generated once and kept in `guest_id.txt` in SDL's pref dir or
-`kfm.guest_id` in localStorage (per run under `--no-settings`), and the lobby URL; `Null`
+`kfm.guest_id` in localStorage (per run under `--no-settings`), and the lobby URL (§13.4 lists
+what it holds since); `Null`
 serves tests. The guest id is sent nowhere yet; M6b's nicknames ride beside it and M7 binds it to an account.
 Deployment as built: the VMs run Ubuntu 24.04 LTS and only containers (correcting v0.37's
 Debian), so the host compiler is irrelevant; the units run the GHCR images with host

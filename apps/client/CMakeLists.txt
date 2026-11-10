@@ -8,7 +8,9 @@
 #                    WebRTC, so tests/unit/client exercises it without a window.
 #   kfm_client_sdl   SDL_Event -> platform::InputEvent translation and gamepad
 #                    lifetime (tested too: it is pure apart from SDL headers).
-#   kfm_client       the executable: frame wiring, HUD, lobby, debug overlay.
+#   kfm_client       the executable: frame wiring, HUD, lobby, debug overlay,
+#                    and the platform hooks behind IPlatformServices
+#                    (client_platform_native.cpp: SDL; _web.cpp: EM_JS).
 add_library(kfm_client_core STATIC
   core/fixed_step_clock.cpp
   core/match_session.cpp
@@ -74,8 +76,15 @@ add_custom_command(
   COMMENT "Embedding the UI font"
   VERBATIM)
 
+# The platform seam's hooks (client_platform.hpp): one file per platform, so
+# neither holds an #ifdef.
+if(EMSCRIPTEN)
+  set(kfm_client_platform_cpp client_platform_web.cpp)
+else()
+  set(kfm_client_platform_cpp client_platform_native.cpp)
+endif()
 add_executable(kfm_client main.cpp hud.cpp screens.cpp ui_style.cpp debug_overlay.cpp
-  client_audio.cpp "${kfm_client_font_cpp}")
+  client_audio.cpp client_platform.cpp ${kfm_client_platform_cpp} "${kfm_client_font_cpp}")
 target_link_libraries(kfm_client PRIVATE
   kfm::build_id kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
   kfm::platform_services kfm::warnings)
