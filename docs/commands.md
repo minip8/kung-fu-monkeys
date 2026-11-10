@@ -186,7 +186,8 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
 
 `deploy/README.md` is the runbook. A `v*` tag runs `.github/workflows/deploy.yml`: GHCR images,
 then `update.sh` on every VM in the `KFM_VMS` variable over IAP (restarting at once), then
-Cloudflare Pages. The tag is also a GitHub release with the headless `kfm_arena` for
+Cloudflare Pages (the page is built beside the images by `web-build`; `web` publishes it after
+the VMs). The tag is also a GitHub release with the headless `kfm_arena` for
 linux-x86_64 (static), macos-arm64 and windows-x86_64 plus `SHA256SUMS`, and the page's site
 tarball; the `web` job republishes every release's page under `/<tag>/` (a Pages deploy is a
 full snapshot), the viewer of that release's replays. Its last job, `bots-bump`, opens the
