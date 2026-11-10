@@ -76,6 +76,16 @@ std::vector<PlayerInput> run(AgentHost& host, WorldState& s, PlayerId slot, int 
 
 }  // namespace
 
+TEST_CASE("agentSeed is the documented formula every host seeds its agents with", "[ai][host]") {
+  // kfm_arena, kfm_server and the client all seed slot s of a match with
+  // seed S as S ^ (0x9E3779B97F4A7C15 * (s + 1)) (architecture §8).
+  STATIC_REQUIRE(agentSeed(0, PlayerId{0}) == 0x9E3779B97F4A7C15ULL);
+  STATIC_REQUIRE(agentSeed(7, PlayerId{1}) == (7ULL ^ (0x9E3779B97F4A7C15ULL * 2)));
+  STATIC_REQUIRE(agentSeed(0xB07, PlayerId{9}) == (0xB07ULL ^ (0x9E3779B97F4A7C15ULL * 10)));
+  STATIC_REQUIRE(agentSeed(7, PlayerId{0}) != agentSeed(7, PlayerId{1}));
+  STATIC_REQUIRE(agentSeed(7, PlayerId{0}) != 7);
+}
+
 TEST_CASE("attach initialises the agent with its seed and slot", "[ai][host]") {
   std::vector<Call> log;
   AgentHost host;

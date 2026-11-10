@@ -235,7 +235,7 @@ ServerHost::ServerHost(Key /*key*/, net::ITransport& transport, const sim::Conte
     if (s == sim::kMaxPlayers) break;
     const PlayerId slot{s++};
     b.specs[slot.value] = spec;
-    b.agents.attach(slot, b.make(spec, slot), agentSeed(config_.server.botSeed, slot), b.delay);
+    b.agents.attach(slot, b.make(spec, slot), ai::agentSeed(config_.server.botSeed, slot), b.delay);
     ++placed;
     if (!specs.empty()) specs += ',';
     specs += specName(spec);
@@ -277,7 +277,7 @@ void ServerHost::fillBots(const sim::WorldState& world, const sim::MatchContent&
     b.matchIndex = server_->matchIndex();
     for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
       const PlayerId slot{s};
-      if (b.agents.has(slot)) b.agents.reinit(slot, agentSeed(server_->botSeed(), slot));
+      if (b.agents.has(slot)) b.agents.reinit(slot, ai::agentSeed(server_->botSeed(), slot));
     }
     logDeadBots();
   }
@@ -522,7 +522,7 @@ void ServerHost::placeRoomBots(uint8_t count) {
     const ai::BotSpec spec = k < config_.bots.size() ? config_.bots[k] : ai::BotSpec{};
     b.specs[slot.value] = spec;
     b.lastStats[slot.value] = {};
-    b.agents.attach(slot, b.make(spec, slot), agentSeed(botSeed_, slot), b.delay);
+    b.agents.attach(slot, b.make(spec, slot), ai::agentSeed(botSeed_, slot), b.delay);
   }
 }
 

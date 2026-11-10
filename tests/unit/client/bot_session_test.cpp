@@ -90,12 +90,6 @@ struct Bots {
 
 }  // namespace
 
-TEST_CASE("bots: the agent seed is the arena's and the server's derivation", "[client][bots]") {
-  CHECK(client::botAgentSeed(0, PlayerId{0}) == 0x9E3779B97F4A7C15ULL);
-  CHECK(client::botAgentSeed(5, PlayerId{1}) == (5ULL ^ (0x9E3779B97F4A7C15ULL * 2)));
-  CHECK(client::botAgentSeed(0xB07, PlayerId{3}) != client::botAgentSeed(0xB07, PlayerId{4}));
-}
-
 TEST_CASE("bots: the casual default is the medium reference bot", "[client][bots]") {
   const MatchSession s{SessionConfig{}};
   CHECK(s.botSpec().kind == ai::BotKind::Reference);

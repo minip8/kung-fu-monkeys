@@ -57,8 +57,8 @@
 // NetServer's default for kfm_netsim and the netcode tests).
 //   - Seeds: match k's bot seed is B_0 = server.botSeed, B_k+1 =
 //     nextMatchSeed(B_k) (passed to restartMatch); the agent in slot s gets
-//     agentSeed(B_k, s) = B_k ^ (0x9E3779B97F4A7C15 · (s + 1)), kfm_arena's
-//     formula, so a server match and an arena match with the same seeds
+//     ai::agentSeed(B_k, s) = B_k ^ (0x9E3779B97F4A7C15 · (s + 1)), every
+//     host's formula, so a server match and an arena match with the same seeds
 //     agree. Every agent is re-initialised (a wasm module: a fresh instance)
 //     on the first tick of each new match, before it acts on the new world.
 //   - Delay (human-likeness): botDelayTicks fixed, or auto (nullopt): once
@@ -142,11 +142,6 @@ struct HostStats {
 
 // The seed of the match after one played with `seed` (splitmix64).
 [[nodiscard]] uint64_t nextMatchSeed(uint64_t seed);
-// The seed the agent in `slot` is initialised with in a match whose bot seed
-// is `botSeed` (shared with kfm_arena).
-[[nodiscard]] constexpr uint64_t agentSeed(uint64_t botSeed, PlayerId slot) {
-  return botSeed ^ (0x9E3779B97F4A7C15ull * (uint64_t{slot.value} + 1));
-}
 // `count` reference bots at the hard tier (kfm_server --bots N).
 [[nodiscard]] std::vector<ai::BotSpec> referenceBots(uint8_t count);
 

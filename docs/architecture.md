@@ -3932,7 +3932,8 @@ which the contract needs.
     is on top of the host delay and not compensated. Every host names bots by one grammar,
     `BotSpec`: `ref`, `ref:easy|medium|hard` or a `.wasm` path (`engine/ai` parses, the app reads
     the file), and seeds slot `s` of a match with seed `S` as `S ^ (0x9E3779B97F4A7C15 · (s + 1))`
-    so an arena run and a server match with the same seeds agree.
+    so an arena run and a server match with the same seeds agree (`ai::agentSeed` in
+    `agent_host.hpp`, the one copy every host calls).
   - *Reference bot.* Scores sixteen walking directions plus idle over a 32-tick horizon with
     enemy bananas predicted by the sim's own flight rule and the outer-box bounce, then takes,
     when they score, a dash-catch in the perfect window, a dodge (dash, then blink, parry or

@@ -21,7 +21,7 @@
 //          InputSampler; bot slots are agents (§8) in an ai::AgentHost: the
 //          reference bot at the lobby's difficulty tier, or a bot module
 //          (BotRoster), attached afresh at every match start and restart
-//          with seed botAgentSeed(botSeed, slot) and no input delay (local
+//          with seed ai::agentSeed(botSeed, slot) and no input delay (local
 //          play has no lead); a local
 //          slot whose pad was removed is driven by "repeat last input" until
 //          any unbound device presses a button (it is rebound to the lowest
@@ -82,12 +82,6 @@ inline constexpr double kNewestTickRateTolerance = 0.95;
 // world's.
 inline constexpr uint64_t kDefaultBotSeed = 0x5C121DULL;
 
-// The seed AgentHost::attach() gives the agent in `slot`: the same derivation
-// as kfm_arena and kfm_server, so one bot seed means the same bots everywhere.
-[[nodiscard]] constexpr uint64_t botAgentSeed(uint64_t botSeed, PlayerId slot) {
-  return botSeed ^ (0x9E3779B97F4A7C15ULL * (uint64_t{slot.value} + 1));
-}
-
 struct SessionConfig {
   uint64_t seed{1};                      // world seed (MatchConfig::seed)
   uint8_t arena{0};                      // MatchConfig::arena / ::mode: indices into
@@ -97,7 +91,7 @@ struct SessionConfig {
   // The loaded content (content/*.toml); nullptr = sim::defaultContent().
   // Copied: the session owns its content.
   const sim::ContentDB* content{nullptr};
-  uint64_t botSeed{kDefaultBotSeed};  // the agents' seeds (botAgentSeed)
+  uint64_t botSeed{kDefaultBotSeed};  // the agents' seeds (ai::agentSeed)
   uint8_t bots{0};                    // lobby bot count
   // What the bots are: the reference bot at a tier (default medium, the
   // casual lobby's), or a .wasm module (native only; one that cannot be

@@ -222,7 +222,7 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
     if (!made) return std::unexpected(std::move(made.error()));
     const auto slot = static_cast<uint8_t>(i);
     wasm[i] = made->wasm;
-    host.attach(PlayerId{slot}, std::move(made->agent), slotSeed(config.seed, slot),
+    host.attach(PlayerId{slot}, std::move(made->agent), ai::agentSeed(config.seed, PlayerId{slot}),
                 setup.delayTicks);
   }
 

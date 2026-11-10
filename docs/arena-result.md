@@ -42,7 +42,7 @@ Conventions:
 | Key | Type | Present | Meaning |
 |---|---|---|---|
 | `match` | number | always | The match index k, 0-based (`--matches M`: 0..M-1). |
-| `seed` | number | always | The world seed (u64): `--seed` + k. Slot i's bot is seeded with `slotSeed(seed, i)` (`apps/arena/arena_core.hpp`). |
+| `seed` | number | always | The world seed (u64): `--seed` + k. Slot i's bot is seeded with `ai::agentSeed(seed, i)` (`engine/ai/include/kfm/ai/agent_host.hpp`), every host's formula. |
 | `ticks` | number | always | Sim ticks run, the replay's `tickCount`. |
 | `checksum` | hash | always | `sim::checksum` of the final state: what replaying the match's `.kfmr` reaches. |
 | `result` | string | always | `"ended"` (the sim's `MatchEnded`) or `"cap"` (the `--ticks` cap came first). |

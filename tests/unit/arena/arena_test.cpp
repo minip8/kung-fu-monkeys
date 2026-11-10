@@ -277,13 +277,6 @@ std::vector<std::string_view> join(std::initializer_list<std::span<const std::st
 
 }  // namespace
 
-TEST_CASE("slot seeds follow the documented formula", "[arena]") {
-  STATIC_REQUIRE(slotSeed(0, 0) == 0x9E3779B97F4A7C15ULL);
-  STATIC_REQUIRE(slotSeed(7, 1) == (7ULL ^ (0x9E3779B97F4A7C15ULL * 2)));
-  STATIC_REQUIRE(slotSeed(7, 0) != slotSeed(7, 1));
-  STATIC_REQUIRE(slotSeed(7, 0) != 7);
-}
-
 TEST_CASE("a match is deterministic: result line and replay bytes", "[arena]") {
   MatchSetup setup = setupOf({"ref:hard", "ref:medium", "ref:easy", "ref"}, 11, 2400);
   setup.recordReplay = true;

@@ -335,7 +335,7 @@ void MatchSession::beginMatch(sim::PlayerMask present, sim::PlayerMask local, ui
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     if (!has(botMask_, i)) continue;
     const PlayerId slot{i};
-    agents_.attach(slot, roster_.make(), botAgentSeed(botSeed_, slot), 0);
+    agents_.attach(slot, roster_.make(), ai::agentSeed(botSeed_, slot), 0);
     if (modules) moduleMask_ = static_cast<sim::PlayerMask>(moduleMask_ | bit(i));
   }
   lastInputs_ = {};

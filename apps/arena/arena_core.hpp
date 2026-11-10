@@ -10,8 +10,9 @@
 // MatchEnded or at the tick cap.
 //
 // Seeds: the world seed is MatchSetup::config.seed (the CLI's match k uses
-// --seed + k); slot i's agent is init()ed with slotSeed(world seed, i), a
-// fixed formula so a module's seed is reproducible from the result line.
+// --seed + k); slot i's agent is init()ed with ai::agentSeed(world seed, i),
+// the hosts' shared formula (kfm/ai/agent_host.hpp), so a module's seed is
+// reproducible from the result line.
 //
 // Placements: the MatchEnded winner first, then by final score (round wins
 // or points, MatchRules::scores) descending, then by fewer
@@ -54,13 +55,6 @@ namespace kfm::arena {
 inline constexpr uint32_t kDefaultTickCap = 36'000;  // 10 minutes at 60 Hz
 inline constexpr uint32_t kDefaultFuelPerTick = 100'000;
 inline constexpr uint64_t kDefaultSeed = 1;
-
-// The seed slot `slot` is init()ed with: the world seed mixed with the
-// golden-ratio constant times (slot + 1), so slots differ and slot 0 does not
-// get the world seed itself.
-[[nodiscard]] constexpr uint64_t slotSeed(uint64_t matchSeed, uint8_t slot) {
-  return matchSeed ^ (0x9E3779B97F4A7C15ULL * (uint64_t{slot} + 1));
-}
 
 // Whether this build runs bot modules (KFM_WASM_BOTS).
 [[nodiscard]] bool wasmBotsAvailable();

@@ -517,7 +517,7 @@ TEST_CASE("ServerHost re-initialises its wasm bots with the next match's seeds",
     INFO("slot " << int{s});
     CHECK(first->inputs[s].moveDir == 1);
     CHECK(first->inputs[s].moveMag == s);
-    CHECK(first->inputs[s].aimDir == (server::agentSeed(0x1234, PlayerId{s}) & 0xFFu));
+    CHECK(first->inputs[s].aimDir == (ai::agentSeed(0x1234, PlayerId{s}) & 0xFFu));
   }
   // One act per tick while its monkey stands (v0.35: an eliminated slot is
   // paused, and the reference bots get the first counter after tick 200).
@@ -541,9 +541,9 @@ TEST_CASE("ServerHost re-initialises its wasm bots with the next match's seeds",
     INFO("slot " << int{s});
     CHECK(before->inputs[s].moveDir != 1);
     CHECK(start.inputs[s].moveDir == 1);  // a fresh instance
-    CHECK(start.inputs[s].aimDir == (server::agentSeed(seed2, PlayerId{s}) & 0xFFu));
+    CHECK(start.inputs[s].aimDir == (ai::agentSeed(seed2, PlayerId{s}) & 0xFFu));
   }
-  CHECK(server::agentSeed(seed2, PlayerId{3}) != server::agentSeed(0x1234, PlayerId{3}));
+  CHECK(ai::agentSeed(seed2, PlayerId{3}) != ai::agentSeed(0x1234, PlayerId{3}));
 }
 
 TEST_CASE("ServerHost counts a trapping module's substitutions and refuses a bad one",

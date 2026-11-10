@@ -79,6 +79,16 @@ namespace kfm::ai {
 // beyond any lead the client runs at (§6.2).
 inline constexpr uint8_t kMaxAgentDelayTicks = 120;
 
+// The seed every host init()s the agent in `slot` with, from the match's bot
+// seed (kfm_arena: the world seed; kfm_server: its per-match bot seed; the
+// client: --players-seed): the seed mixed with the golden-ratio constant
+// times (slot + 1), so slots differ and slot 0 does not get the seed itself.
+// One formula for every host, so one seed means the same bots everywhere
+// and a module's seed is reproducible from an arena result line (§8).
+[[nodiscard]] constexpr uint64_t agentSeed(uint64_t seed, PlayerId slot) {
+  return seed ^ (0x9E3779B97F4A7C15ULL * (uint64_t{slot.value} + 1));
+}
+
 // What an agent remembers across its monkey's elimination (memory_on_respawn).
 enum class RespawnMemory : uint8_t { Keep = 0, Wipe = 1 };
 
