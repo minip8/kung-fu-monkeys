@@ -235,14 +235,17 @@ class MatchSession {
   [[nodiscard]] presentation::PresentationState& presentation() { return presentation_; }
 
   // The live content copy (edited by the debug UI) and the loaded content
-  // it started from (its defaults). The mutable accessor marks the agents'
-  // cached content hash stale (AgentHost caches it per ContentDB object and
-  // this one is edited in place).
-  [[nodiscard]] sim::ContentDB& content() {
+  // it started from (its defaults). content() is the readers' path, const
+  // even on a mutable session, so drawing never invalidates anything.
+  // editContent() is the one way to edit the copy in place (the debug
+  // overlay's live tuning): it marks the agents' cached content hash stale
+  // (AgentHost caches it per ContentDB object), so call it for the edit
+  // only, not to read.
+  [[nodiscard]] const sim::ContentDB& content() const { return content_; }
+  [[nodiscard]] sim::ContentDB& editContent() {
     agents_.invalidateContentHash();
     return content_;
   }
-  [[nodiscard]] const sim::ContentDB& content() const { return content_; }
   [[nodiscard]] const sim::ContentDB& loadedContent() const { return loaded_; }
   void resetContent();
   [[nodiscard]] uint32_t contentHash() const;

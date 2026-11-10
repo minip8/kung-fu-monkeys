@@ -304,7 +304,7 @@ void entitySection(const Session& s) {
 }
 
 void tuningSection(MatchSession& s, std::string& printed) {
-  sim::ContentDB& c = s.content();
+  sim::ContentDB& c = s.editContent();  // live tuning: the one mutable path
   sim::AbilityDef& dash = c.abilities[c.player.abilities[sim::kAbilitySlotDash]];
   sim::AbilityDef& thr = c.abilities[c.player.abilities[sim::kAbilitySlotThrow]];
   ImGui::TextDisabled("Edits apply live (content is passed to step() every tick).");
