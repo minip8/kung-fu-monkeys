@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: proposal v0.69 (2026-11-10). Working title taken from the repo name.
+Status: proposal v0.70 (2026-11-10). Working title taken from the repo name.
 
 v0.2 changes: 60 Hz tick with sub-tick input timestamps (§5.11); GameNetworkingSockets for native
 clients plus a WebRTC transport for a planned browser client (§6.3–6.4); 2.5D pre-rendered sprites (§7).
@@ -1019,6 +1019,70 @@ used to pin the rename; an observation test checks the zone words. Replay checks
 `scripted_10p_contest_1800t` only (now on `courtyard_hill` under the hill rules), corpus
 regenerated; every other entry was re-recorded for the new content hash with its checksums
 unchanged.
+
+v0.70 changes: the fixes of an architecture audit of the whole tree, none of them a gameplay
+change (§5.1, §5.2, §5.3, §5.10, §6.3, §6.4, §6.6, §6.7, §7, §8, §9, §13.4, §13.5; bot-abi.md
+§1.4, lobby-protocol.md v1.3, arena-result.md). Bots: the WAMR fuel patch charges bulk-memory and
+table ops, and memory and table growth, extra fuel in proportion to their operand (len / 8 per
+byte op, one per element, 8192 per grown page), taken before the work, so a metered budget bounds
+host work and not only the opcode count; a table is capped at 65536 elements at load
+(`maxTableElements`, `LoadErrorKind::TableTooLarge`). Before this one `memory.fill` of 16 MiB cost
+one unit. Netcode: a burst of lost authoritative frames is repaired explicitly: the client keeps
+the latest first tick of the `AuthInputs` windows it has received and, once that is past the
+first frame it lacks, asks for a resync after 150 ms (`gapResyncNs`), as a player or a
+spectator; measured before the fix, a player waited about 1.8 s for the rollback-overflow resync
+and a spectator froze for good. The loopback emulator gains `setOutage()` (one direction blacks
+out without a disconnect, same random draws); the server's human-lead estimate samples only
+messages whose acknowledgement moved on (a stale ack had pushed it to 146 ticks after a 3 s
+outage); the netsim soak gates require a compared checksum from every client; `JoinMatch` gets a
+per-peer bucket of 2 per second, a peer without an accepted `Hello` is dropped after 10 s, and a
+client's forward run after a snapshot load or a promotion is capped at 300 ticks whatever the
+`Pong` tick says. The build id is real: `KFM_BUILD_ID` (default 0 = an unstamped development
+build) is compiled into every host through `kfm::build_id`, release artefacts carry the first 8
+hex digits of the tagged commit, and a refused client is told to reload the page; before this
+every build sent 0 and "peers must match `build_id`" compared 0 with 0. Lobby protocol v1.3: a
+seated client's signaling frame whose `signal` envelope would pass 64 KiB is that client's
+protocol error (it used to truncate at the server and close the whole room), and a registered
+`LobbyLink` ignores a bad lobby frame instead of dropping every peer; the lobby limits each
+client address (open sockets, rooms held, create/join rate, failed joins: refused `limited`),
+reading the address from `X-Forwarded-For` only behind a configured `--trusted-proxy`; a room
+keeps at most 128 tokens; servers report `players`, so a room no game connection reaches is
+released after a minute while used rooms keep the full TTL; the reliable lane drops a peer with
+more than 1 MiB unsent. A running match no longer depends on the lobby: a server that loses its
+lobby link keeps its connected peers and its room and claims the room back, with its tokens,
+when it re-registers, and a client whose data channels are open plays on when its lobby socket
+closes (a deploy still ends matches: `update.sh` restarts the servers). The lobby secret reaches
+`kfm_server` through the environment in the units. Sim: every `visit()` overload is followed by
+a `static_assert` on its struct's aggregate arity (`kfm::fieldCount`,
+`kfm/core/field_count.hpp`), so a field missing from the visitor is a compile error, and the
+checksum and content-hash mutation tests carry one mutation per field, pinned the same way; the
+ability, mode and space registries `static_assert` that every row has every hook; capture's
+`modeData` layout is guarded like hill's; `kMaxAbilityDefs` rises from 16 to 32 (the 15 shipped
+defs plus `none` had filled it); `kfm_content_tests` checks the scenario tests' hand copies of
+shipped defs against the TOML (it found `throw_fast` charging at half its shipped rate, the
+power-ups without their visuals and the call def off `grid_call`, all fixed in the copies);
+`kfm_corpus_tests` plays every corpus entry and asserts the events its name promises; `step()`
+takes an optional `StepStats&` that reports contact-list overflow. Hosts: one `ai::agentSeed`
+and one `ai::BotFactory` (`kfm::ai_bots`, which alone links `kfm::ai_wasm`) replace three
+copies, each host keeping its own error policy; `AgentHost::step` runs fill, step and observe
+for hosts that step the world themselves, and `fill()` checks that the previous step was
+observed, so a host can no longer silently drop its bots' heard calls; `kfm_replay stats` reads
+its thresholds from the match's content; `MatchSession::content()` is const and `editContent()`
+is the explicit edit. Client: `IPlatformServices` carries everything that differs between the
+browser and a native build (preference texts, the page URL, the replay download, `canQuit`,
+`localFiles`) through one `PlatformHooks` value built in `apps/client/client_platform_native.cpp`
+or `client_platform_web.cpp`, and `main.cpp` has no `EM_JS` and no `__EMSCRIPTEN__` branch; the
+HUD's view models (`HudView`, the winner's title, the clock's urgent threshold, the match-over
+screen's typed actions, the room's bot-slot preview) moved from `hud.cpp` to
+`apps/client/core/hud_view.hpp` with unit tests. The renderer's look numbers (about 130: lights, glows, effect
+rings and spark bursts as `EffectDisc` / `SparkLook` constants) moved from `renderer.cpp` into
+`tuning.hpp`, with 30 probe renders byte-identical before and after. §6.3's message table no longer
+lists an LZ4-compressed snapshot or a Chat message (neither was built). Verified on GCC 15 Debug
+(dev, 45 tests), the headless Release server build with the soak and real-socket gates (50
+tests), Emscripten under node (46 tests), the lobby's Rust suite (47 tests), clang-format 23.1.3
+and clang-tidy 23.1.4 over the tree; MSVC and Apple Clang are CI's. Replay checksums: unchanged;
+the corpus was re-recorded because `kMaxAbilityDefs` moved the content hash, with every
+`.checksums` file byte-identical.
 
 A top-down online arena brawler inspired by Boomerang Fu. Monkeys throw bananas
 that fly like boomerangs and return. Movement, throw and dash are the base verbs,
@@ -2827,8 +2891,8 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 |---|---|---|---|
 | `Input` | C→S, every tick | unreliable; last 8–16 inputs resent each packet | `startTick`, `count`, inputs (RLE-coded, they rarely change), last auth tick received |
 | `AuthInputs` | S→C, every tick | unreliable; redundant | `startTick`, `count`, present-mask, inputs for all players, `arrivalMargin` for this client, state checksum every N ticks |
-| `Snapshot` | S→C | reliable (transport fragments) | full `WorldState` via visitor, LZ4-compressed, plus tick |
-| Control | both | reliable | Hello/Connect (token), ContentHash/BuildId, JoinMatch, PlayerJoined/Left, MatchConfig, Chat, Disconnect |
+| `Snapshot` | S→C | reliable (transport fragments) | full `WorldState` via visitor plus tick (uncompressed: LZ4 is deferred, see below) |
+| Control | both | reliable | Hello/Connect (token), ContentHash/BuildId, JoinMatch, PlayerJoined/Left, MatchConfig, Disconnect |
 | Ping | both | transport stats plus our own tick-stamped ping | — |
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 | `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
