@@ -101,6 +101,10 @@ namespace kfm::net {
 // Saved states for rollback (§6.1: 32 ticks ≈ 530 ms).
 inline constexpr uint32_t kRollbackWindow = 32;
 inline constexpr uint8_t kMaxInputDelayTicks = 3;
+// A snapshot load (initial sync, resync, resume) or a promotion runs forward
+// at most this many ticks (v0.70): the target comes from the server's Pong
+// tick, which a broken or hostile server could set anywhere.
+inline constexpr int32_t kMaxRunForwardTicks = 5 * sim::kTickHz;
 // Rollback depth histogram buckets: depths 0..62, the last bucket is >= 63.
 inline constexpr uint32_t kRollbackDepthBuckets = 64;
 
@@ -177,6 +181,7 @@ struct ClientNetStats {
   int32_t arrivalMarginQ8{0};  // smoothed
   uint32_t ratePpm{kRateOnePpm};
   uint64_t hardJumps{0};
+  uint64_t runForwardClamped{0};  // forward runs cut to kMaxRunForwardTicks (v0.70)
   uint64_t clockDroppedTicks{0};
   // Consistency.
   uint64_t checksumsCompared{0};

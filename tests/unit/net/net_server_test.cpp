@@ -909,3 +909,46 @@ TEST_CASE("room messages are rate-limited and refused before the handshake",
   rig.pump();
   CHECK(rig.server->stats().protocolErrors == 1);
 }
+
+// --- abuse resistance (v0.70) ------------------------------------------------------
+
+TEST_CASE("JoinMatch is rate-limited per peer", "[net][server][abuse]") {
+  Rig rig;
+  const Raw& a = rig.join(1);
+  Raw& s = rig.join(0);
+  const size_t joined0 = a.count(MessageType::PlayerJoined);
+  // A burst of toggles in one millisecond: the bucket holds two.
+  for (int i = 0; i < 10; ++i)
+    s.reliable(JoinMatchMsg{static_cast<uint8_t>(i % 2 == 0 ? 1 : 0)});
+  rig.pump();
+  CHECK(rig.server->stats().joinRateLimited == 8);
+  CHECK(a.count(MessageType::PlayerJoined) == joined0 + 1);
+  CHECK(a.count(MessageType::PlayerLeft) == 1);
+  CHECK(rig.server->present() == 0b01);
+  // Refilled at joinMsgsPerSecond: one more after half a second.
+  for (int i = 0; i < 500; ++i)
+    rig.pump();
+  s.reliable(JoinMatchMsg{1});
+  s.reliable(JoinMatchMsg{0});
+  rig.pump();
+  CHECK(rig.server->present() == 0b11);
+  CHECK(rig.server->stats().joinRateLimited == 9);
+}
+
+TEST_CASE("a peer that never completes its Hello is dropped at the deadline",
+          "[net][server][abuse]") {
+  ServerConfig cfg;
+  cfg.helloTimeoutNs = 1'000 * kMs;
+  Rig rig(cfg);
+  Raw& silent = rig.client();  // pings, never says Hello
+  const Raw& a = rig.join(1);
+  for (int i = 0; i < 1'200; ++i) {
+    if (i % 100 == 0) silent.unreliable(PingMsg{rig.now, Tick{0}});
+    rig.pump();
+  }
+  CHECK(silent.count(MessageType::Pong) > 0);  // answered while it lasted
+  CHECK(silent.closed);
+  CHECK(rig.server->stats().helloTimeouts == 1);
+  CHECK(rig.server->peers().size() == 1);
+  CHECK(!a.closed);  // the one that said Hello stays
+}

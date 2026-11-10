@@ -3155,6 +3155,17 @@ C++ server library is mature. The seam makes that swap a contained change.
   (`roomMsgsPerSecond`; excess ones dropped and counted); before the handshake they are protocol
   errors like any other message. Only the host's requests take effect, decided by the host's
   `Room`, never by `NetServer`.
+- v0.70: `JoinMatch` passes its own per-peer bucket of 2 per second with a one-second burst
+  (`joinMsgsPerSecond`; excess ones dropped and counted in `joinRateLimited`), since every one
+  that changes the roster fans `PlayerJoined`/`PlayerLeft` out to every peer and spawns or
+  removes monkeys. A connected peer that has not had a `Hello` accepted within 10 s
+  (`helloTimeoutNs`) is disconnected (`helloTimeouts`): `Ping` is answered before the handshake
+  (the client measures its RTT while it waits), so without a deadline a peer that only pings
+  held one of the `kMaxPeers` entries for good. The client in turn never believes a server
+  tick blindly: a snapshot load (initial sync, resync, resume) or a promotion runs forward at
+  most `kMaxRunForwardTicks` (5 s) past the snapshot's tick, whatever the `Pong` tick said
+  (`runForwardClamped`); a client cut short lags and catches up through the lead controller's
+  forward jump (§6.2).
 
 ### 6.8 Perceived latency budget (local actions)
 

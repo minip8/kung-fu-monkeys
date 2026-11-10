@@ -53,6 +53,17 @@ constexpr uint8_t kValidButtons = 0x1F;
                                                  std::numeric_limits<int8_t>::max()));
 }
 
+// A token bucket in ns × messages: `rate` messages per second with a
+// one-second burst. Takes one message's worth when there is one.
+[[nodiscard]] bool takeToken(uint64_t& bucketNs, uint64_t& atNs, uint32_t rate, uint64_t nowNs) {
+  const uint64_t now = std::max(nowNs, atNs);
+  bucketNs = std::min(uint64_t{rate} * kNsPerSecond, bucketNs + (now - atNs) * rate);
+  atNs = now;
+  if (bucketNs < kNsPerSecond) return false;
+  bucketNs -= kNsPerSecond;
+  return true;
+}
+
 [[nodiscard]] bool sameToken(std::span<const std::byte> a, std::span<const std::byte> b) {
   return a.size() == b.size() && std::equal(a.begin(), a.end(), b.begin());
 }
@@ -236,6 +247,9 @@ NetServer::Peer* NetServer::addPeer(PeerId id, uint64_t nowNs) {
     p.errorWindowStartNs = nowNs;
     p.roomBucketNs = uint64_t{config_.roomMsgsPerSecond} * kNsPerSecond;
     p.roomBucketAtNs = nowNs;
+    p.joinBucketNs = uint64_t{config_.joinMsgsPerSecond} * kNsPerSecond;
+    p.joinBucketAtNs = nowNs;
+    p.connectedNs = nowNs;
     return &p;
   }
   return nullptr;
@@ -445,7 +459,12 @@ void NetServer::pump(uint64_t nowNs) {
   }
 
   for (Peer& p : peers_) {
-    if (!p.used || nowNs - p.lastRecvNs <= config_.peerTimeoutNs) continue;
+    if (!p.used) continue;
+    const bool silent = nowNs - p.lastRecvNs > config_.peerTimeoutNs;
+    const bool noHello =
+        p.info.state == PeerState::AwaitingHello && nowNs - p.connectedNs > config_.helloTimeoutNs;
+    if (!silent && !noHello) continue;
+    if (!silent) ++stats_.helloTimeouts;
     transport_->disconnect(p.info.peer);
     emit(ServerEventKind::PeerLeft, p.info.peer, p.info.slots,
          static_cast<uint8_t>(DisconnectReason::Timeout));
@@ -703,6 +722,10 @@ void NetServer::onInput(Peer& p, const Packet& packet) {
 }
 
 void NetServer::onJoinMatch(Peer& p, const Packet& packet) {
+  if (!takeToken(p.joinBucketNs, p.joinBucketAtNs, config_.joinMsgsPerSecond, packet.receivedNs)) {
+    ++stats_.joinRateLimited;
+    return;
+  }
   JoinMatchMsg m;
   if (!decode(packet.data, m)) {
     protocolError(p, nowNs_);

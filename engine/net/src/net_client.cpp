@@ -450,6 +450,11 @@ void NetClient::loadSnapshot(Tick runTo) {
   ++stats_.snapshotsLoaded;
   report_.snapshotLoaded = true;
   report_.rolledBack = true;
+  // Unsigned: a tick far enough away would wrap Tick::minus.
+  if (runTo > world_.tick && runTo.value - world_.tick.value > uint32_t{kMaxRunForwardTicks}) {
+    runTo = world_.tick.plus(kMaxRunForwardTicks);
+    ++stats_.runForwardClamped;
+  }
   while (world_.tick < runTo)
     stepOne();
   advanceVerified();
@@ -761,7 +766,13 @@ void NetClient::promote(uint64_t nowNs) {
   const Tick server = estimatedServerTick(nowNs).value_or(world_.tick);
   const Tick target = server.plus(targetLeadTicks(rtt_) - static_cast<int32_t>(inputDelay()));
   if (target > world_.tick) {
-    fastForward(target.minus(world_.tick), true);
+    int32_t ticks = kMaxRunForwardTicks;
+    if (target.value - world_.tick.value > uint32_t{kMaxRunForwardTicks}) {
+      ++stats_.runForwardClamped;
+    } else {
+      ticks = target.minus(world_.tick);
+    }
+    fastForward(ticks, true);
     ++stats_.hardJumps;
   }
   marginFrom_ = world_.tick.plus(static_cast<int32_t>(inputDelay()));

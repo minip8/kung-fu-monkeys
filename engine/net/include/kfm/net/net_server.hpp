@@ -54,7 +54,12 @@
 // Abuse resistance (§6.7): inputs are accepted only for slots the sending
 // peer owns, buttons are range-checked, ticks must lie in the assembler's
 // window, Input messages are rate-limited per peer (token bucket), and a peer
-// that keeps sending malformed or foreign messages is kicked.
+// that keeps sending malformed or foreign messages is kicked. JoinMatch has
+// its own bucket (joinMsgsPerSecond; v0.70: every one that changes the
+// roster fans out to every peer and spawns or removes monkeys), and a peer
+// that has not completed its Hello within helloTimeoutNs of connecting is
+// dropped (it answers pings before that, which would otherwise hold its
+// peer entry for good).
 //
 // Reconnect (§6.6): when a peer that holds slots and presented a token drops,
 // its slots stay reserved (present, idle) for reconnectGraceTicks; a Hello
@@ -160,6 +165,11 @@ struct ServerConfig {
   uint8_t maxPlayers{sim::kMaxPlayers};
   // RoomSettings and Start messages per second per peer (v0.42).
   uint32_t roomMsgsPerSecond{20};
+  // JoinMatch messages per second per peer, a one-second burst (v0.70).
+  uint32_t joinMsgsPerSecond{2};
+  // A connected peer that has not sent an accepted Hello by then is
+  // disconnected (v0.70).
+  uint64_t helloTimeoutNs{10'000'000'000ull};
   // v0.44: a joiner that only bots' slots could fit waits as a spectator
   // instead of being rejected (see "Waiting for a slot" above).
   bool queueForBotSlots{false};
@@ -199,6 +209,8 @@ struct ServerStats {
   uint64_t rejectedInputs{0};   // messages or slot-ticks refused (§6.7)
   uint64_t rateLimited{0};      // Input messages over the rate limit
   uint64_t roomRateLimited{0};  // RoomSettings / Start messages over their limit
+  uint64_t joinRateLimited{0};  // JoinMatch messages over their limit (v0.70)
+  uint64_t helloTimeouts{0};    // peers dropped for no Hello in time (v0.70)
   uint64_t protocolErrors{0};
   uint64_t kicks{0};
   uint64_t joins{0};
@@ -343,8 +355,11 @@ class NetServer {
     Nickname nickname{};
     uint64_t roomBucketNs{0};  // token bucket of room messages, in ns × messages
     uint64_t roomBucketAtNs{0};
-    uint8_t queued{0};      // v0.44: slots it waits for
-    uint64_t queuedSeq{0};  // ... since this request (lower = older)
+    uint64_t joinBucketNs{0};  // token bucket of JoinMatch messages (v0.70)
+    uint64_t joinBucketAtNs{0};
+    uint64_t connectedNs{0};  // when the transport reported it connected
+    uint8_t queued{0};        // v0.44: slots it waits for
+    uint64_t queuedSeq{0};    // ... since this request (lower = older)
   };
   struct Reservation {
     bool used{false};
