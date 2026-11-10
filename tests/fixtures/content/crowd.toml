@@ -1,0 +1,56 @@
+# Test content (apps/replay/CMakeLists.txt, replay_contact_drops): added to a
+# copy of content/ so that a scripted match overflows the contact list
+# (kMaxContacts, sim/contacts.hpp) and kfm_replay's contact-drop report and
+# `verify --fail-on-dropped-contacts` can be checked end to end. Never shipped.
+#
+# Every monkey stands in every hazard (16 x 10 = 160 Player x Hazard
+# contacts a tick, pushed after the others), and the baseline grows the
+# monkeys to a radius of 2.5 in a 6 x 6 box, so they always touch each other
+# (45 pairs) and most bananas in flight; invulnerable, so nobody leaves and
+# the bananas keep flying. Ten monkeys overflow the list within a few
+# hundred ticks of a scripted match.
+
+[[powerup]]
+name = "crowd_base"
+duration_ticks = 1
+color = 8
+shape = "orb"
+grants = [
+  { kind = "stat", stat = "radius", add = 2 },
+  { kind = "tag", tag = "invulnerable" },
+]
+
+[[arena]]
+name = "crowd"
+half_extents = [3, 3]
+spawn_points = [
+  [-2, -2], [2, 2], [-2, 2], [2, -2], [0, -2],
+  [0, 2], [-2, 0], [2, 0], [-1, -1], [1, 1],
+]
+hazards = [
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 1 },
+]
+
+[[mode]]
+name = "crowd"
+kind = "rounds"
+rounds_to_win = 3
+round_start_ticks = 60
+round_end_ticks = 180
+baseline = "crowd_base"
+arena = "crowd"

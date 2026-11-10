@@ -255,6 +255,14 @@ if(TARGET kfm::server_host)
   endif()
 endif()
 
+if(TARGET kfm::replay_core)
+  # apps/replay's contact-drop accounting (bench, verify and stats).
+  kfm_add_test_exe(kfm_replay_tests
+    replay/contact_drops_test.cpp
+  )
+  target_link_libraries(kfm_replay_tests PRIVATE kfm::replay_core)
+endif()
+
 if(TARGET kfm::arena_core)
   # apps/arena's match runner (§8, §9): determinism, placements, the result
   # line and JSON, replays; with KFM_WASM_BOTS the module path over the

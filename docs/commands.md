@@ -55,6 +55,21 @@ build/dev/apps/replay/kfm_replay stats --players 4 --matches 20         # feel-t
 all|none|a,b`; every command takes `--content DIR` (default: the content compiled into the
 binary). `info` prints the replay's arena, mode, loadout and both content hashes.
 
+`bench`, `verify`, `stats` and `record-scripted --stats` count the contacts the per-tick
+contact list (`kMaxContacts`) dropped (`sim::StepStats`). When any were, they write one line
+to stderr after their usual output, `--quiet` included; nothing is printed when none were:
+
+```text
+warning: contact list overflow (kMaxContacts 256): 206 contacts dropped over 21 ticks, worst tick 570 with 17
+```
+
+`bench` and `stats` name the worst tick's match (`worst match 1 tick 570`: match k is the one
+with seed S + k). `verify --fail-on-dropped-contacts` makes any drop fatal: the line starts with
+`error:`, the `OK` line is not printed and the exit status is 1, as for a checksum mismatch;
+without the flag the exit status is unchanged. The corpus gate does not pass it
+(`kfm_corpus_tests` asserts zero drops); `replay_contact_drops` checks the line on a test arena
+that overflows (`tests/fixtures/content/crowd.toml`).
+
 ## Client
 
 ```sh

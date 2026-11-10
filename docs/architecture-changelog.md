@@ -1141,3 +1141,27 @@ branch passed: `web-build` finished 2 min after the start, beside the images, an
 published the preview 36 s after its last dependency finished (the job itself 46 s), with the
 root and `/v0.5.0/` to `/v0.8.0/` served. Not yet run: a tag, where `web` also waits for
 `vms` and uploads the release's site asset.
+
+v0.74 changes: `kfm_replay` reports contact-list overflow (§5.3 "Scratch capacities";
+`apps/replay`, `docs/commands.md`; issue #70). v0.70 made the overflow countable
+(`StepStats::contactsDropped`) but only tests read it, so a tuning or content change that
+started dropping contacts in real matches would have gone unnoticed outside the corpus.
+`bench`, `verify`, `stats` and `record-scripted --stats` now sum it over the run (one helper,
+`apps/replay/contact_drops.hpp`, in a small `kfm_replay_core` library so a unit test links
+it) and, when any contact was dropped, write one line to stderr after their usual output: the
+total, the ticks that dropped any and the worst tick (with its match where a command runs
+several). Decided: stderr, and `--quiet` does not hide it, because stdout is the data
+(checksums, the stats table, the `OK` line) and a warning a quiet run hides is no warning;
+nothing is printed when nothing was dropped, so existing output is unchanged byte for byte;
+`verify --fail-on-dropped-contacts` turns the line into an error and the exit status to 1, as
+for a checksum mismatch, and is off in the corpus gate, where `kfm_corpus_tests` already
+asserts zero. `stats` does not call `step()`: its copy of the pipeline (`statsStep`) reports
+its own contact list's count, and its shadow check now also fails when that count differs
+from the shadow `step()`'s. No sim change; replay checksums unchanged. Tested end to end
+through content alone: `tests/fixtures/content/crowd.toml`, added to a copy of `content/` by
+the `replay_contact_drops` ctest, is an arena of sixteen stacked hazards with a baseline that
+grows ten invulnerable monkeys until they all touch, which overflows the list within a few
+hundred scripted ticks (88 contacts over 11 ticks in the test's match); the test checks the
+line, both exit statuses, and that the shipped content prints nothing. It depends on shipped
+tuning: if that changes enough that the crowd stops overflowing, the test fails rather than
+passing silently.

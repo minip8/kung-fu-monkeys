@@ -530,7 +530,7 @@ void StatsCollector::finish(const WorldState& s) {
 }
 
 void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content, EventSink& sink,
-               StatsCollector& collector) {
+               StatsCollector& collector, StepStats& stepStats) {
   // The order of step() (step.cpp, architecture §5.3); callers compare the
   // checksum with a step() shadow every tick.
   rulesPreTick(s, content, sink);
@@ -540,6 +540,7 @@ void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content,
   projectileSystem(s, content, sink);
   Contacts contacts;
   collisionSystem(s, content, contacts);
+  stepStats.contactsDropped = contacts.dropped;
   collector.beginContacts(s);
   // InteractionSystem one oriented contact at a time, in its resolution order, so each
   // contact is judged against the state the rules table would see: a contact

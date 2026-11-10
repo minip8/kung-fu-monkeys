@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.73 (2026-11-10), a living document: it describes the system as built and deployed,
+Status: v0.74 (2026-11-11), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -272,8 +272,11 @@ entity on one spot). Sizing the list for it cost about 1 µs a tick (+50% in `kf
 for the per-tick clears alone, so instead the overflow stays counted (`Contacts::dropped`) and
 `step()` reports it through an optional `StepStats& stats` (`contactsDropped`; derived, never
 state, never read by the sim). A dropped contact is a hit, catch or pickup that did not happen,
-deterministically on every peer; `kfm_corpus_tests` asserts no corpus tick drops one. A tool
-that wants it (`kfm_replay bench`/`verify`, the arena runner) reads `StepStats` the same way.
+deterministically on every peer; `kfm_corpus_tests` asserts no corpus tick drops one. Since
+v0.74 `kfm_replay bench`, `verify`, `stats` and `record-scripted --stats` read it too and say
+so on stderr when a run dropped any (the total, the ticks affected, the worst tick), and
+`verify --fail-on-dropped-contacts` makes a drop an error; another tool that wants it (the
+arena runner) reads `StepStats` the same way.
 
 Power-up spawners (v0.20) run at the end of `LifecycleSystem`, not in `RulesSystem::preTick`:
 entity creation and removal already live there (grounded bananas become pickups in the same
