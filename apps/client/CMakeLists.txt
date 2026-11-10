@@ -77,7 +77,7 @@ add_custom_command(
 add_executable(kfm_client main.cpp hud.cpp screens.cpp ui_style.cpp debug_overlay.cpp
   client_audio.cpp "${kfm_client_font_cpp}")
 target_link_libraries(kfm_client PRIVATE
-  kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
+  kfm::build_id kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
   kfm::platform_services kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client)
 set_target_properties(kfm_client PROPERTIES FOLDER apps)

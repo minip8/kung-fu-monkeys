@@ -63,6 +63,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(KfmWarnings)
 include(KfmSanitizers)
 include(KfmDependencies)
+include(KfmBuildId)
 
 if(KFM_BUILD_TESTS)
   include(CTest)

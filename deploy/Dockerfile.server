@@ -9,6 +9,11 @@
 #   docker run --rm --network host kfm-server --help
 #
 # Built from the repository root (see /.dockerignore).
+#
+# KFM_BUILD_ID (architecture §5.1, v0.70): the build id the server checks in
+# Hello and registers with the lobby. The deploy workflow passes the tagged
+# commit's (`--build-arg KFM_BUILD_ID=<8 hex>`); the default 0 is an
+# unstamped build, which only unstamped clients may join.
 
 # --- builder -----------------------------------------------------------------
 # Ubuntu 26.04, as CI: the C++23 baseline needs GCC >= 14 (architecture §9),
@@ -28,7 +33,8 @@ COPY . .
 
 # Build parallelism; empty = Ninja's default. Lower it on a small builder.
 ARG KFM_BUILD_JOBS=
-RUN cmake --preset server-headless -DKFM_USE_VCPKG=OFF \
+ARG KFM_BUILD_ID=0
+RUN cmake --preset server-headless -DKFM_USE_VCPKG=OFF -DKFM_BUILD_ID=${KFM_BUILD_ID} \
  && cmake --build --preset server-headless --target kfm_server kfm_arena \
       ${KFM_BUILD_JOBS:+--parallel ${KFM_BUILD_JOBS}} \
  && build/server-headless/apps/server/kfm_server --help \

@@ -66,9 +66,11 @@ const char* rejectReasonText(net::RejectReason reason) {
     case net::RejectReason::ProtocolMismatch:
       return "protocol version mismatch";
     case net::RejectReason::ContentMismatch:
-      return "content mismatch (different game data)";
+      return "content mismatch (different game data: reload the page or update the client)";
     case net::RejectReason::BuildMismatch:
-      return "build mismatch (update the client)";
+      // A browser tab on a cached page older (or newer) than the server's
+      // release (v0.70: every release stamps its build id).
+      return "version mismatch (reload the page or update the client)";
     case net::RejectReason::BadToken:
       return "invalid connection token";
     case net::RejectReason::MatchFull:

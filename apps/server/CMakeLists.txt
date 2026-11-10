@@ -41,7 +41,7 @@ kfm_no_exceptions_rtti(kfm_server_lobby)
 set_target_properties(kfm_server_lobby PROPERTIES FOLDER apps)
 
 add_executable(kfm_server main.cpp)
-target_link_libraries(kfm_server PRIVATE kfm::server_host kfm::server_lobby kfm::net_webrtc
+target_link_libraries(kfm_server PRIVATE kfm::build_id kfm::server_host kfm::server_lobby kfm::net_webrtc
   kfm::net kfm::sim
   kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_server)

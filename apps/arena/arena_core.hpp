@@ -139,7 +139,7 @@ struct MatchResult {
   std::vector<std::byte> replay;  // the .kfmr bytes when recordReplay
   // v0.60: the replay header's two hashes, set whether or not a replay is
   // recorded: sim::contentHash of the match's content, and the build hash
-  // (0: no build stamps one yet, as in every replay header).
+  // (kfm::kBuildId, KFM_BUILD_ID: 0 for an unstamped build, v0.70).
   uint32_t contentHash{0};
   uint32_t buildHash{0};
 };

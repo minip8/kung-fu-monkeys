@@ -15,7 +15,8 @@
 add_library(kfm_arena_core STATIC arena_core.cpp)
 add_library(kfm::arena_core ALIAS kfm_arena_core)
 target_include_directories(kfm_arena_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(kfm_arena_core PUBLIC kfm::ai kfm::ai_bots kfm::sim PRIVATE kfm::warnings)
+target_link_libraries(kfm_arena_core PUBLIC kfm::ai kfm::ai_bots kfm::sim
+  PRIVATE kfm::build_id kfm::warnings)
 if(KFM_WASM_BOTS)
   target_link_libraries(kfm_arena_core PRIVATE kfm::ai_wasm)
   target_compile_definitions(kfm_arena_core PRIVATE KFM_WASM_BOTS=1)

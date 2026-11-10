@@ -25,6 +25,7 @@
 //   --content DIR (any command): load content/*.toml from DIR instead of the
 //     copy built into the binary (architecture §5.10). Recording stores the
 //     content hash; playback refuses a replay recorded with other content.
+#include "kfm/build_id.hpp"
 #include "kfm/content/app_content.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/scripted_inputs.hpp"
@@ -244,7 +245,7 @@ ReplayHeader headerFor(const Args& a) {
   ReplayHeader h;
   h.seed = a.seed;
   h.contentHash = gContent.hash;
-  h.buildHash = 0;
+  h.buildHash = kfm::kBuildId;  // KFM_BUILD_ID: 0 unless a release stamped it
   h.players = static_cast<PlayerMask>((1u << a.players) - 1u);
   h.arena = gMatch.arena;
   h.mode = gMatch.mode;

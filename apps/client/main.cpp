@@ -135,6 +135,7 @@
 #include "core/replay_session.hpp"
 #include "debug_overlay.hpp"
 #include "hud.hpp"
+#include "kfm/build_id.hpp"
 #include "kfm/content/app_content.hpp"
 #include "kfm/content/loader.hpp"
 #include "kfm/platform/debug_ui.hpp"
@@ -707,6 +708,7 @@ ClientTransport makeTransport(const App& app, const client::NetSessionConfig& co
 void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
                   std::optional<client::LobbyTarget> room = std::nullopt) {
   client::NetSessionConfig config = client::netSessionConfig(app.options, atStartup);
+  config.buildId = kfm::kBuildId;  // the server's Hello check and the lobby's
   if (app.options.verbose)
     std::fprintf(stderr, "kfm_client: startNetwork atStartup=%d\n", int{atStartup});
   if (room) {
@@ -759,7 +761,7 @@ void pollRegions(App& app, std::uint64_t now) {
                                  .region = {},
                                  .code = {},
                                  .token = {},
-                                 .buildId = client::netSessionConfig(app.options, false).buildId,
+                                 .buildId = kfm::kBuildId,
                                  .contentHash = app.content.hash};
     if (auto t = net::WebRtcTransport::createClient(wc)) app.regionsQuery = std::move(*t);
     return;

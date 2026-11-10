@@ -1160,6 +1160,25 @@ Dependency rules (enforced via CMake target link visibility):
 - `Rng` lives inside `WorldState` and is seeded per match.
 - Content definitions are immutable per match and hashed (`content_hash`); peers must also
   match `build_id`. Both are exchanged at connect.
+  The build id as built (v0.70; before it every build sent 0, so a change to sim code alone
+  passed the handshake and a stale cached page looped on checksum resyncs against a newer
+  server): one CMake cache variable, `KFM_BUILD_ID` (1–8 hex digits, `cmake/KfmBuildId.cmake`),
+  compiled into the generated `<kfm/build_id.hpp>` (`kfm::kBuildId`, target `kfm::build_id`)
+  that every host reads: the client's `Hello` and lobby request, the server's `Hello` check and
+  lobby `register`, `kfm_replay`'s and `kfm_arena`'s replay header (`buildHash`) and
+  `kfm_arena`'s JSON (`build_hash`). The engine keeps taking it as configuration
+  (`ClientConfig`/`ServerConfig::buildId`, default 0), so its tests are the same in any build.
+  The default, 0, is an unstamped development build: local builds match each other, and the
+  replay corpus (headers of 0) is regenerated from unstamped builds only. It is never derived
+  from the working tree, so a normal build never changes it. A release stamps it: the deploy
+  workflow configures the server image, the page and the `kfm_arena` archives of a run with the
+  first 8 hex digits of the commit it builds (`00000001` should those all be zero), so every
+  artefact of a tag carries the same non-zero id; from the commit rather than the tag name,
+  because the id must change whenever the code does and a manual run has no tag. A client
+  refused for it says "version mismatch (reload the page or update the client)" (the
+  `Reject{BuildMismatch}` of a direct connect; the lobby refuses `mismatch`, shown as "Version
+  mismatch: reload the page or update the client"). The replay viewer shows a replay's build
+  hash and never checks it (§7).
 - Enforcement: a replay corpus is run in CI on Linux, Windows and macOS, Debug and Release;
   per-tick checksums must be identical. This is a merge gate, not a nice-to-have.
   `tools/ci/check_sim_no_float.sh` (lint job) rejects float types, float literals, the `Fixed`
@@ -2807,8 +2826,8 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   through the visitor; the reader checks both the visitor's validation and the checksum.
   Measured 4 740 B with every pool full and at most 1 308 B in a scripted 10-player match, so
   LZ4 (§10) is deferred: uncompressed is under 1/13 of `kMaxReliableBytes`.
-- Control: `Hello` (version, `contentHash`, `buildId`, a token of up to 64 bytes, requested slot
-  count with 0 = spectate), `Welcome` (assigned slots, `MatchConfig`, server tick), `Reject`
+- Control: `Hello` (version, `contentHash`, `buildId` (0 unless the build was stamped, §5.1
+  v0.70), a token of up to 64 bytes, requested slot count with 0 = spectate), `Welcome` (assigned slots, `MatchConfig`, server tick), `Reject`
   (protocol, content or build mismatch, bad token, match full, shutting down), `JoinMatch`,
   `PlayerJoined`, `PlayerLeft`, `MatchConfig` (with its start tick), `Disconnect` (quit, kicked,
   timeout, protocol error, shutting down). `Ping{sendNs, tick}` / `Pong{echo, tick, holdNs}`.

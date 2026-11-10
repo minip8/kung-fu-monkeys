@@ -2,6 +2,7 @@
 #include "arena_core.hpp"
 
 #include "kfm/ai/agent_host.hpp"
+#include "kfm/build_id.hpp"
 #include "kfm/core/bitstream.hpp"
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/events.hpp"
@@ -145,7 +146,7 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   result.index = index;
   result.seed = config.seed;
   result.contentHash = contentHash(content);
-  result.buildHash = 0;  // no build stamps a hash yet (kfm_replay writes 0 too)
+  result.buildHash = kfm::kBuildId;  // KFM_BUILD_ID: 0 unless a release stamped it
   result.slots.resize(n);
   for (size_t i = 0; i < n; ++i) {
     const ai::BotSpec& bot = *specOf[i];
