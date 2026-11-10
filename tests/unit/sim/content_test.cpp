@@ -62,9 +62,12 @@ namespace {
 // overloads (visit.hpp), so a new content field fails to compile here until
 // it has one. Every array slot is hashed whatever the def counts say, so a
 // mutation may touch a slot past them.
+// The list is a braced list bound to an array reference, not std::to_array:
+// MSVC 19.51 will not deduce to_array<Mutation>({lambda, ...}) (it tries to
+// deduce the element type from each lambda although it is given).
 using ContentMutation = void (*)(ContentDB&);
 template <class T, size_t N>
-void everyFieldReachesTheHash(const std::array<ContentMutation, N>& mutations) {
+void everyFieldReachesTheHash(const ContentMutation (&mutations)[N]) {
   static_assert(N == fieldCount<T>(), "one mutation per field");
   const ContentDB& base = defaultContent();
   const uint32_t before = contentHash(base);
@@ -78,7 +81,7 @@ void everyFieldReachesTheHash(const std::array<ContentMutation, N>& mutations) {
 }  // namespace
 
 TEST_CASE("every content field reaches the content hash", "[sim][content]") {
-  everyFieldReachesTheHash<ContentDB>(std::to_array<ContentMutation>({
+  everyFieldReachesTheHash<ContentDB>({
       [](ContentDB& c) { c.abilities[kMaxAbilityDefs - 1].cooldownTicks += 1; },
       [](ContentDB& c) { c.abilityCount += 1; },
       [](ContentDB& c) { c.boomerang.damage += 1; },
@@ -93,11 +96,11 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.powerUpCount += 1; },
       [](ContentDB& c) { c.loadouts[kMaxLoadouts - 1].abilities[2] += 1; },
       [](ContentDB& c) { c.loadoutCount += 1; },
-  }));
-  everyFieldReachesTheHash<ContentName>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<ContentName>({
       [](ContentDB& c) { c.modes[0].name.chars[15] = 'x'; },
-  }));
-  everyFieldReachesTheHash<AbilityDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<AbilityDef>({
       [](ContentDB& c) { c.abilities[1].name.chars[0] ^= 1; },
       [](ContentDB& c) { c.abilities[1].kind = AbilityKind::Call; },
       [](ContentDB& c) { c.abilities[1].cooldownTicks += 1; },
@@ -112,8 +115,8 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.abilities[1].tagsActive.set(Tag::Shielded); },
       [](ContentDB& c) { c.abilities[1].tagsRecovery.set(Tag::Shielded); },
       [](ContentDB& c) { c.abilities[1].rootPhases ^= 1; },
-  }));
-  everyFieldReachesTheHash<BoomerangDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<BoomerangDef>({
       [](ContentDB& c) { c.boomerang.radius += Fixed::epsilon(); },
       [](ContentDB& c) { c.boomerang.speed += Fixed::epsilon(); },
       [](ContentDB& c) { c.boomerang.outboundTicks += 1; },
@@ -123,11 +126,11 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.boomerang.spawnOffset += Fixed::epsilon(); },
       [](ContentDB& c) { c.boomerang.damage += 1; },
       [](ContentDB& c) { c.boomerang.pitSinkTicks += 1; },
-  }));
-  everyFieldReachesTheHash<PickupDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<PickupDef>({
       [](ContentDB& c) { c.pickup.radius += Fixed::epsilon(); },
-  }));
-  everyFieldReachesTheHash<PlayerDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<PlayerDef>({
       [](ContentDB& c) { c.player.radius += Fixed::epsilon(); },
       [](ContentDB& c) { c.player.moveSpeed += Fixed::epsilon(); },
       [](ContentDB& c) { c.player.maxHp += 1; },
@@ -136,13 +139,13 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.player.hitStunTicks += 1; },
       [](ContentDB& c) { c.player.fallTicks += 1; },
       [](ContentDB& c) { c.player.abilities[2] += 1; },
-  }));
-  everyFieldReachesTheHash<DashAttackDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<DashAttackDef>({
       [](ContentDB& c) { c.dashAttack.damage += 1; },
       [](ContentDB& c) { c.dashAttack.minAmmo += 1; },
       [](ContentDB& c) { c.dashAttack.consumesAmmo ^= 1; },
-  }));
-  everyFieldReachesTheHash<ArenaDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<ArenaDef>({
       [](ContentDB& c) { c.arenas[0].name.chars[0] ^= 1; },
       [](ContentDB& c) { c.arenas[0].halfExtents.x += Fixed::epsilon(); },
       [](ContentDB& c) { c.arenas[0].spawnPoints[9].y += Fixed::epsilon(); },
@@ -157,29 +160,29 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.arenas[0].zones[7].min.y += Fixed::epsilon(); },
       [](ContentDB& c) { c.arenas[0].zoneCount += 1; },
       [](ContentDB& c) { c.arenas[0].cellSize += Fixed::epsilon(); },
-  }));
-  everyFieldReachesTheHash<Wall>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<Wall>({
       [](ContentDB& c) { c.arenas[1].walls[0].min.x += Fixed::epsilon(); },
       [](ContentDB& c) { c.arenas[1].walls[0].max.y += Fixed::epsilon(); },
-  }));
-  everyFieldReachesTheHash<Hazard>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<Hazard>({
       [](ContentDB& c) { c.arenas[1].hazards[0].min.x += Fixed::epsilon(); },
       [](ContentDB& c) { c.arenas[1].hazards[0].max.y += Fixed::epsilon(); },
       [](ContentDB& c) { c.arenas[1].hazards[0].kind = HazardKind::Slow; },
       [](ContentDB& c) { c.arenas[1].hazards[0].speedMul += Fixed::epsilon(); },
-  }));
-  everyFieldReachesTheHash<Zone>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<Zone>({
       [](ContentDB& c) { c.arenas[1].zones[0].min.x += Fixed::epsilon(); },
       [](ContentDB& c) { c.arenas[1].zones[0].max.y += Fixed::epsilon(); },
-  }));
-  everyFieldReachesTheHash<PickupSpawner>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<PickupSpawner>({
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].pos.x += Fixed::epsilon(); },
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].powerUpSet ^= 1; },
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].firstTicks += 1; },
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].intervalTicks += 1; },
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].maxAlive += 1; },
-  }));
-  everyFieldReachesTheHash<ModeDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<ModeDef>({
       [](ContentDB& c) { c.modes[0].name.chars[0] ^= 1; },
       [](ContentDB& c) { c.modes[0].kind = ModeKind::Capture; },
       [](ContentDB& c) { c.modes[0].roundsToWin += 1; },
@@ -205,48 +208,48 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.modes[0].catchScore = -1; },
       [](ContentDB& c) { c.modes[0].suicideScore = -1; },
       [](ContentDB& c) { c.modes[0].bananaRegrowTicks += 1; },
-  }));
-  everyFieldReachesTheHash<VisionDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<VisionDef>({
       [](ContentDB& c) { c.modes[1].vision.kind = VisionKind::Team; },
       [](ContentDB& c) { c.modes[1].vision.peripheral += 1; },
       [](ContentDB& c) { c.modes[1].vision.cone += 1; },
       [](ContentDB& c) { c.modes[1].vision.focus += 1; },
       [](ContentDB& c) { c.modes[1].vision.hearing += 1; },
       [](ContentDB& c) { c.modes[1].vision.bananaSight += 1; },
-  }));
-  everyFieldReachesTheHash<PowerUpDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<PowerUpDef>({
       [](ContentDB& c) { c.powerUps[0].name.chars[0] ^= 1; },
       [](ContentDB& c) { c.powerUps[0].durationTicks += 1; },
       [](ContentDB& c) { c.powerUps[0].visual.color += 1; },
       [](ContentDB& c) { c.powerUps[0].grants[3].slot += 1; },
       [](ContentDB& c) { c.powerUps[0].grantCount += 1; },
-  }));
-  everyFieldReachesTheHash<PowerUpVisual>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<PowerUpVisual>({
       [](ContentDB& c) { c.powerUps[1].visual.color += 1; },
       [](ContentDB& c) { c.powerUps[1].visual.shape = PowerUpShape::Coin; },
-  }));
-  everyFieldReachesTheHash<PowerUpGrant>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<PowerUpGrant>({
       [](ContentDB& c) { c.powerUps[1].grants[0].kind = GrantKind::Tag; },
       [](ContentDB& c) { c.powerUps[1].grants[0].stat.add += Fixed::epsilon(); },
       [](ContentDB& c) { c.powerUps[1].grants[0].slot += 1; },
       [](ContentDB& c) { c.powerUps[1].grants[0].ability += 1; },
       [](ContentDB& c) { c.powerUps[1].grants[0].projectile.damageAdd += 1; },
       [](ContentDB& c) { c.powerUps[1].grants[0].tag = Tag::FriendlyFire; },
-  }));
-  everyFieldReachesTheHash<StatModifier>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<StatModifier>({
       [](ContentDB& c) { c.powerUps[2].grants[1].stat.stat = StatKind::Radius; },
       [](ContentDB& c) { c.powerUps[2].grants[1].stat.mul += Fixed::epsilon(); },
       [](ContentDB& c) { c.powerUps[2].grants[1].stat.add += Fixed::epsilon(); },
-  }));
-  everyFieldReachesTheHash<ProjectileModifier>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<ProjectileModifier>({
       [](ContentDB& c) { c.powerUps[2].grants[1].projectile.speedMul += Fixed::epsilon(); },
       [](ContentDB& c) { c.powerUps[2].grants[1].projectile.radiusMul += Fixed::epsilon(); },
       [](ContentDB& c) { c.powerUps[2].grants[1].projectile.damageAdd += 1; },
-  }));
-  everyFieldReachesTheHash<LoadoutDef>(std::to_array<ContentMutation>({
+  });
+  everyFieldReachesTheHash<LoadoutDef>({
       [](ContentDB& c) { c.loadouts[0].name.chars[0] ^= 1; },
       [](ContentDB& c) { c.loadouts[0].abilities[1] += 1; },
-  }));
+  });
 }
 
 TEST_CASE("default content holds per-tick speeds and the M1 numbers", "[sim][content]") {
