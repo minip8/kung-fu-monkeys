@@ -3810,8 +3810,8 @@ which the contract needs.
   winner first, then higher final score, fewer deaths, lower slot, all distinct; kills and deaths come from `PlayerEliminated` (a self-elimination is a
   death, not a kill); the final checksum lets a replay be checked against its line. Exit codes:
   0, 2 bad arguments or content, 3 a module refused at load (or a module spec in a build without
-  `KFM_WASM_BOTS`), 4 I/O. `kfm_arena_core` (`runMatch`, placements, formatting, the module
-  cache) is the library under test; the CLI is a thin wrapper, and it builds under Emscripten
+  `KFM_WASM_BOTS`), 4 I/O. `kfm_arena_core` (`runMatch`, placements, formatting) is the library
+  under test, its agents from the hosts' shared `BotFactory` (below); the CLI is a thin wrapper, and it builds under Emscripten
   as a node CLI with reference bots only. Release, this machine: a 4-bot reference tournament
   runs about 40–50 k ticks/s, dominated by the bot's own evaluation (20 k before the content
   hash was cached), four `echo.wasm` modules about 8× that, and `kfm_replay bench` steps the
@@ -3821,7 +3821,7 @@ which the contract needs.
   the bot slots present, called once per tick before assembly, after a restart has been
   applied, so it sees the fresh world and the new `botSeed()`); unset, `NetServer` keeps the
   scripted generator, which is what netsim and the netcode tests still run. `ServerHost` owns an
-  `AgentHost` and a `WasmRuntime`, takes `--bot SPEC` (repeatable), `--bots N` (pads with
+  `AgentHost` and a `BotFactory`, takes `--bot SPEC` (repeatable), `--bots N` (pads with
   `ref:hard`), `--bot-delay auto|N` and `--fuel N`, re-inits every agent on the first tick of
   each match (bot seed B₀ = `--bots-seed`, Bₖ₊₁ = splitmix64(Bₖ), slot seed from the shared
   formula; a module gets a fresh instance), refuses to start on a module that fails to load,
@@ -3930,10 +3930,17 @@ which the contract needs.
     its content in place): hashing every tick had been 60 % of a reference tournament and 95 %
     of a module run; `fill` is now allocation-free and O(agents). The reference bot's reaction delay
     is on top of the host delay and not compensated. Every host names bots by one grammar,
-    `BotSpec`: `ref`, `ref:easy|medium|hard` or a `.wasm` path (`engine/ai` parses, the app reads
-    the file), and seeds slot `s` of a match with seed `S` as `S ^ (0x9E3779B97F4A7C15 · (s + 1))`
-    so an arena run and a server match with the same seeds agree (`ai::agentSeed` in
-    `agent_host.hpp`, the one copy every host calls).
+    `BotSpec`: `ref`, `ref:easy|medium|hard` or a `.wasm` path, and turns a spec into an agent
+    through one `ai::BotFactory` (`kfm/ai/bot_factory.hpp`, its own target `kfm::ai_bots` so
+    `kfm_ai` never sees WAMR: it links `kfm::ai_wasm` privately with `KFM_WASM_BOTS` and is
+    otherwise reference bots only, a module spec an `Unsupported` error with no file opened). It
+    reads each distinct module path once (at most `maxModuleBytes` + 1 bytes), loads it under the
+    `WasmRuntime` it owns and gives every slot its own instance; the only knob is the per-tick
+    fuel. What a factory error means stays the host's: `kfm_arena` exits 3 (4 for I/O),
+    `kfm_server` refuses to start, the client falls back to the reference bot. Every host seeds
+    slot `s` of a match with seed `S` as `S ^ (0x9E3779B97F4A7C15 · (s + 1))` so an arena run and
+    a server match with the same seeds agree (`ai::agentSeed` in `agent_host.hpp`, the one copy
+    every host calls).
   - *Reference bot.* Scores sixteen walking directions plus idle over a 32-tick horizon with
     enemy bananas predicted by the sim's own flight rule and the outer-box bounce, then takes,
     when they score, a dash-catch in the perfect window, a dodge (dash, then blink, parry or

@@ -66,10 +66,11 @@
 //     median estimated lead of the peers holding slots, 0 when none does
 //     (bot versus bot: no delay). See ai::AgentHost::setDelay for how a
 //     change is absorbed.
-//   - Modules: create() reads each distinct .wasm path once (the cache lives
-//     in the host, one WasmModule per path, one instance per slot) under a
-//     WasmRuntime it owns; a module that fails to load fails create(). Needs
-//     KFM_WASM_BOTS (otherwise a module spec is that error).
+//   - Modules: create() prepares every spec in the host's ai::BotFactory
+//     (kfm/ai/bot_factory.hpp: each distinct .wasm path read and loaded
+//     once, one instance per slot, under the factory's WasmRuntime); a module
+//     that fails to load fails create(). Needs KFM_WASM_BOTS (otherwise a
+//     module spec is that error).
 //   - The stats line ends with the bot delay and one "bot S SPEC acts=+N
 //     subst=+M" group per bot, modules adding traps, over-budget ticks and
 //     the mean fuel per act over the period.

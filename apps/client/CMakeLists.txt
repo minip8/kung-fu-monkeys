@@ -29,7 +29,7 @@ add_library(kfm_client_core STATIC
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(kfm_client_core
-  PUBLIC kfm::sim kfm::ai kfm::net kfm::presentation kfm::platform_input
+  PUBLIC kfm::sim kfm::ai kfm::ai_bots kfm::net kfm::presentation kfm::platform_input
   PRIVATE kfm::content kfm::warnings)
 kfm_no_exceptions_rtti(kfm_client_core)
 # M6a: the lobby a build points at by default (--lobby, the browser page's

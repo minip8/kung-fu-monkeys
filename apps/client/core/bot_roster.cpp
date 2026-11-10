@@ -4,44 +4,19 @@
 
 #ifdef KFM_CLIENT_WASM_BOTS
 #include "kfm/ai/wasm_runtime.hpp"
+#endif
 
-#include <cstddef>
 #include <expected>
-#include <fstream>
-#include <ios>
-#include <iterator>
-#include <span>
-#include <vector>
-#endif
-
 #include <utility>
-
-#ifndef KFM_CLIENT_WASM_BOTS
-namespace kfm::ai {
-// Complete (empty) types for the unique_ptr deleters of a build without the
-// runtime; they are never instantiated.
-class WasmModule {};
-class WasmRuntime {};
-}  // namespace kfm::ai
-#endif
 
 namespace kfm::client {
 
 bool moduleBotsSupported() {
-#ifdef KFM_CLIENT_WASM_BOTS
-  return true;
-#else
-  return false;
-#endif
+  return ai::botModulesAvailable();
 }
 
-BotRoster::BotRoster() = default;
-BotRoster::~BotRoster() = default;
-BotRoster::BotRoster(BotRoster&&) noexcept = default;
-BotRoster& BotRoster::operator=(BotRoster&&) noexcept = default;
-
 bool BotRoster::moduleActive() const {
-  return spec_.kind == ai::BotKind::Module && module_ != nullptr;
+  return spec_.kind == ai::BotKind::Module && moduleActive_;
 }
 
 std::string BotRoster::describe() const {
@@ -51,43 +26,26 @@ std::string BotRoster::describe() const {
 
 bool BotRoster::configure(const ai::BotSpec& spec, std::string& error) {
   spec_ = spec;
+  moduleActive_ = false;
   if (spec.kind != ai::BotKind::Module) return true;
-  if (module_ != nullptr && modulePath_ == spec.path) return true;
-  module_.reset();
-  modulePath_.clear();
-#ifdef KFM_CLIENT_WASM_BOTS
-  std::ifstream in(spec.path, std::ios::binary);
-  if (!in) {
-    error = "cannot read the bot module '" + spec.path + "'";
+  // The factory caches every module it loaded: the same path again (a tier
+  // change, a lobby round trip) does not read the file again.
+  const std::expected<void, ai::BotError> ok = factory_.prepare(spec);
+  if (!ok) {
+    error = ok.error().kind == ai::BotErrorKind::Unsupported
+                ? "bot modules are not supported in this build ('" + spec.path + "')"
+                : "bot module refused: " + ok.error().message;
     return false;
   }
-  const std::vector<char> chars((std::istreambuf_iterator<char>(in)),
-                                std::istreambuf_iterator<char>());
-  const std::span<const std::byte> bytes = std::as_bytes(std::span<const char>(chars));
-  if (runtime_ == nullptr) runtime_ = std::make_unique<ai::WasmRuntime>();
-  if (!runtime_->ok()) {
-    error = "the wasm bot runtime failed to initialise";
-    return false;
-  }
-  std::expected<ai::WasmModule, ai::LoadError> loaded = ai::WasmModule::load(bytes);
-  if (!loaded) {
-    error = "bot module '" + spec.path + "' refused (" +
-            std::string(ai::toString(loaded.error().kind)) + "): " + loaded.error().message;
-    return false;
-  }
-  module_ = std::make_unique<ai::WasmModule>(std::move(*loaded));
-  modulePath_ = spec.path;
+  moduleActive_ = true;
   return true;
-#else
-  error = "bot modules are not supported in this build ('" + spec.path + "')";
-  return false;
-#endif
 }
 
-std::unique_ptr<ai::IAgent> BotRoster::make() const {
-#ifdef KFM_CLIENT_WASM_BOTS
-  if (moduleActive()) return std::make_unique<ai::WasmAgent>(*module_);
-#endif
+std::unique_ptr<ai::IAgent> BotRoster::make() {
+  if (moduleActive()) {
+    std::expected<ai::BotFactory::Made, ai::BotError> made = factory_.make(spec_);
+    if (made) return std::move(made->agent);
+  }
   return std::make_unique<ai::ReferenceBot>(spec_.referenceConfig());
 }
 

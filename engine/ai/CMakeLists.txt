@@ -46,3 +46,26 @@ if(KFM_WASM_BOTS)
   kfm_no_exceptions_rtti(kfm_ai_wasm)
   set_target_properties(kfm_ai_wasm PROPERTIES FOLDER engine)
 endif()
+
+# ---------------------------------------------------------------------------
+# kfm_ai_bots (kfm::ai_bots): BotFactory, BotSpec -> IAgent for every bot host
+# (kfm_arena, kfm_server, the client). Always built: with KFM_WASM_BOTS it
+# links kfm::ai_wasm privately and loads module specs from their files;
+# without it (Emscripten, -DKFM_WASM_BOTS=OFF) it makes reference bots only
+# and a module spec is an error. Separate from kfm_ai so kfm_ai never sees
+# WAMR, and from kfm_ai_wasm so a host links one factory in every build.
+# ---------------------------------------------------------------------------
+add_library(kfm_ai_bots STATIC src/bot_factory.cpp)
+add_library(kfm::ai_bots ALIAS kfm_ai_bots)
+target_include_directories(kfm_ai_bots
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(kfm_ai_bots
+  PUBLIC kfm::ai
+  PRIVATE kfm::warnings)
+if(KFM_WASM_BOTS)
+  target_link_libraries(kfm_ai_bots PRIVATE kfm::ai_wasm)
+  target_compile_definitions(kfm_ai_bots PRIVATE KFM_AI_BOTS_WASM=1)
+endif()
+kfm_no_exceptions_rtti(kfm_ai_bots)
+set_target_properties(kfm_ai_bots PROPERTIES FOLDER engine)

@@ -74,8 +74,14 @@ kfm_add_test_exe(kfm_ai_tests
   ai/agent_host_test.cpp
   ai/reference_bot_test.cpp
   ai/vision_test.cpp
+  ai/bot_factory_test.cpp
 )
-target_link_libraries(kfm_ai_tests PRIVATE kfm::ai)
+target_link_libraries(kfm_ai_tests PRIVATE kfm::ai kfm::ai_bots)
+target_compile_definitions(kfm_ai_tests PRIVATE
+  KFM_BOT_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
+if(KFM_WASM_BOTS)
+  target_compile_definitions(kfm_ai_tests PRIVATE KFM_AI_TEST_WASM_BOTS=1)
+endif()
 
 if(KFM_WASM_BOTS)
   # WasmAgent over WAMR (§8), on the hand-written modules in tests/fixtures/bots

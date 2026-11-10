@@ -3,9 +3,10 @@
 # kfm_arena_core  MatchSetup, runMatch, the result line and the summary:
 #                 AgentHost over sim::step with bots built from BotSpecs.
 #                 Headless, so it is unit-tested on every target
-#                 (tests/unit/arena). With KFM_WASM_BOTS it links kfm::ai_wasm
-#                 and runs bot modules; without (and under Emscripten, where
-#                 the option is forced off) a module spec is refused.
+#                 (tests/unit/arena). Bots come from kfm::ai_bots's
+#                 BotFactory; with KFM_WASM_BOTS it also links kfm::ai_wasm
+#                 for the modules' stats; without (and under Emscripten,
+#                 where the option is forced off) a module spec is refused.
 # kfm_arena       the CLI. Everywhere, the server-headless preset included;
 #                 under Emscripten a node CLI like kfm_replay (reference bots
 #                 only).
@@ -14,7 +15,7 @@
 add_library(kfm_arena_core STATIC arena_core.cpp)
 add_library(kfm::arena_core ALIAS kfm_arena_core)
 target_include_directories(kfm_arena_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(kfm_arena_core PUBLIC kfm::ai kfm::sim PRIVATE kfm::warnings)
+target_link_libraries(kfm_arena_core PUBLIC kfm::ai kfm::ai_bots kfm::sim PRIVATE kfm::warnings)
 if(KFM_WASM_BOTS)
   target_link_libraries(kfm_arena_core PRIVATE kfm::ai_wasm)
   target_compile_definitions(kfm_arena_core PRIVATE KFM_WASM_BOTS=1)

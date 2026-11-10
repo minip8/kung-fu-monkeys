@@ -34,6 +34,7 @@
 
 #include "kfm/ai/agent.hpp"
 #include "kfm/ai/agent_host.hpp"
+#include "kfm/ai/bot_factory.hpp"
 #include "kfm/ai/bot_spec.hpp"
 #include "kfm/core/types.hpp"
 #include "kfm/sim/content.hpp"
@@ -46,56 +47,24 @@
 #include <string>
 #include <vector>
 
-namespace kfm::ai {
-class WasmAgent;
-}
-
 namespace kfm::arena {
 
 inline constexpr uint32_t kDefaultTickCap = 36'000;  // 10 minutes at 60 Hz
 inline constexpr uint32_t kDefaultFuelPerTick = 100'000;
 inline constexpr uint64_t kDefaultSeed = 1;
 
+// Agents from specs: every host's ai::BotFactory (kfm/ai/bot_factory.hpp),
+// one module cache for the tournament (each module read and loaded once,
+// one instance per slot). The arena's policy on its errors: Io exits 4,
+// Load and Unsupported exit 3 (main.cpp).
+using BotFactory = ai::BotFactory;
+using BotError = ai::BotError;
+using BotErrorKind = ai::BotErrorKind;
+
 // Whether this build runs bot modules (KFM_WASM_BOTS).
-[[nodiscard]] bool wasmBotsAvailable();
-
-enum class BotErrorKind : uint8_t {
-  Io,           // the module file could not be read
-  Load,         // WasmModule::load refused it (message: the LoadError)
-  Unsupported,  // a module spec in a build without KFM_WASM_BOTS
-};
-
-struct BotError {
-  BotErrorKind kind{BotErrorKind::Load};
-  std::string message;  // one line
-};
-
-// Builds agents from specs. A module file is read and WasmModule::load()ed
-// once per distinct path (the cache); every agent made from it gets its own
-// instance and linear memory. Owns the WasmRuntime while modules are loaded.
-class BotFactory {
- public:
-  explicit BotFactory(uint32_t fuelPerTick = kDefaultFuelPerTick);
-  ~BotFactory();
-  BotFactory(const BotFactory&) = delete;
-  BotFactory& operator=(const BotFactory&) = delete;
-  BotFactory(BotFactory&&) = delete;
-  BotFactory& operator=(BotFactory&&) = delete;
-
-  // Loads a module spec's file into the cache (a reference spec: nothing to do).
-  [[nodiscard]] std::expected<void, BotError> prepare(const ai::BotSpec& spec);
-
-  struct Made {
-    std::unique_ptr<ai::IAgent> agent;
-    ai::WasmAgent* wasm{nullptr};  // the same agent when it is a module, for its stats
-  };
-  // A fresh agent for the spec (prepare()s a module first).
-  [[nodiscard]] std::expected<Made, BotError> make(const ai::BotSpec& spec);
-
- private:
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
-};
+[[nodiscard]] inline bool wasmBotsAvailable() {
+  return ai::botModulesAvailable();
+}
 
 struct MatchSetup {
   // seed, arena, mode, loadout and powerUps; players is set by runMatch from bots.

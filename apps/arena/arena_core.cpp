@@ -2,7 +2,6 @@
 #include "arena_core.hpp"
 
 #include "kfm/ai/agent_host.hpp"
-#include "kfm/ai/reference_bot.hpp"
 #include "kfm/core/bitstream.hpp"
 #include "kfm/sim/constants.hpp"
 #include "kfm/sim/events.hpp"
@@ -12,10 +11,6 @@
 
 #ifdef KFM_WASM_BOTS
 #include "kfm/ai/wasm_runtime.hpp"
-
-#include <cstring>
-#include <fstream>
-#include <map>
 #endif
 
 #include <algorithm>
@@ -26,86 +21,6 @@
 #include <utility>
 
 namespace kfm::arena {
-
-// ---------------------------------------------------------------------------
-// BotFactory
-// ---------------------------------------------------------------------------
-
-struct BotFactory::Impl {
-  uint32_t fuelPerTick{kDefaultFuelPerTick};
-#ifdef KFM_WASM_BOTS
-  std::unique_ptr<ai::WasmRuntime> runtime;
-  std::map<std::string, ai::WasmModule, std::less<>> modules;
-#endif
-};
-
-bool wasmBotsAvailable() {
-#ifdef KFM_WASM_BOTS
-  return true;
-#else
-  return false;
-#endif
-}
-
-BotFactory::BotFactory(uint32_t fuelPerTick) : impl_(std::make_unique<Impl>()) {
-  impl_->fuelPerTick = fuelPerTick;
-}
-
-BotFactory::~BotFactory() = default;
-
-std::expected<void, BotError> BotFactory::prepare(const ai::BotSpec& spec) {
-  if (spec.kind == ai::BotKind::Reference) return {};
-#ifdef KFM_WASM_BOTS
-  if (impl_->modules.contains(spec.path)) return {};
-  if (!impl_->runtime) {
-    impl_->runtime = std::make_unique<ai::WasmRuntime>();
-    if (!impl_->runtime->ok()) {
-      return std::unexpected(BotError{BotErrorKind::Load, "the wasm runtime failed to initialise"});
-    }
-  }
-  std::ifstream in(spec.path, std::ios::binary);
-  if (!in) {
-    return std::unexpected(BotError{BotErrorKind::Io, std::format("cannot read {}", spec.path)});
-  }
-  const std::vector<char> chars{std::istreambuf_iterator<char>(in),
-                                std::istreambuf_iterator<char>()};
-  if (in.bad()) {
-    return std::unexpected(BotError{BotErrorKind::Io, std::format("cannot read {}", spec.path)});
-  }
-  std::vector<std::byte> bytes(chars.size());
-  if (!chars.empty()) std::memcpy(bytes.data(), chars.data(), chars.size());
-  ai::WasmAgentConfig config{};
-  config.fuelPerTick = impl_->fuelPerTick;
-  auto module = ai::WasmModule::load(bytes, config);
-  if (!module) {
-    return std::unexpected(
-        BotError{BotErrorKind::Load, std::format("{}: {} ({})", spec.path, module.error().message,
-                                                 ai::toString(module.error().kind))});
-  }
-  impl_->modules.emplace(spec.path, *module);
-  return {};
-#else
-  return std::unexpected(
-      BotError{BotErrorKind::Unsupported,
-               std::format("{}: this build runs no bot modules (configured with KFM_WASM_BOTS=OFF)",
-                           spec.path)});
-#endif
-}
-
-std::expected<BotFactory::Made, BotError> BotFactory::make(const ai::BotSpec& spec) {
-  if (spec.kind == ai::BotKind::Reference) {
-    return Made{std::make_unique<ai::ReferenceBot>(spec.referenceConfig()), nullptr};
-  }
-  if (auto ok = prepare(spec); !ok) return std::unexpected(std::move(ok.error()));
-#ifdef KFM_WASM_BOTS
-  const auto it = impl_->modules.find(spec.path);
-  auto agent = std::make_unique<ai::WasmAgent>(it->second);
-  ai::WasmAgent* raw = agent.get();
-  return Made{std::move(agent), raw};
-#else
-  return std::unexpected(BotError{BotErrorKind::Unsupported, "no bot modules in this build"});
-#endif
-}
 
 // ---------------------------------------------------------------------------
 // runMatch

@@ -4,8 +4,9 @@
 //   ref              the built-in reference bot at its hard tier
 //   ref:easy|medium|hard   the reference bot at that difficulty tier
 //   <path>.wasm      a bot module (ABI v1) loaded from that file
-// Parsing only: engine/ai never touches the file system, so the host reads
-// the module bytes and builds a WasmAgent itself (apps/, §4).
+// Parsing only. Turning a spec into an agent is ai::BotFactory
+// (kfm/ai/bot_factory.hpp, target kfm::ai_bots), the one place in engine/ai
+// that reads a module's file; kfm_ai itself never touches the file system.
 #pragma once
 
 #include "kfm/ai/reference_bot.hpp"
