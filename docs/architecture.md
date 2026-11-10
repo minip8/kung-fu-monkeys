@@ -2231,7 +2231,13 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   field by field (through the visitor) on the singletons, the abilities `defaultContent()`
   defines, arena 0 and mode 0, so the default match stays the fixture's; it does not compare the
   whole-DB hashes. A new field of an existing def struct still gets its default value in
-  `defaultContent()`, because the struct changes anyway.
+  `defaultContent()`, because the struct changes anyway. The scenario tests' hand copies of
+  shipped defs (`tests/scenario/loadout_util.hpp`: blink, slam, parry, `grid_call` and the
+  ability loadouts; `powerup_util.hpp`: `throw_fast` and the five M4 power-ups) are checked
+  against the loaded TOML the same way (v0.70, `tests/unit/content/mirror_test.cpp`), indices
+  compared by the name they resolve to; it found the copy of `throw_fast` charging at the
+  throw's rate rather than twice it (`charge_ticks` 20) and the power-ups without their
+  visuals, both fixed in the copies.
 - Adding content (any def, an arena or mode included) changes the content hash, which every
   replay carries, so it is followed by `regen-replay-corpus`; the existing `.checksums` must stay
   identical, because added content never changes the default match.

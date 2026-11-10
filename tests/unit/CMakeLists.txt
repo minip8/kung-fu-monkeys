@@ -34,6 +34,7 @@ target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 kfm_add_test_exe(kfm_content_tests
   content/decimal_test.cpp
   content/loader_test.cpp
+  content/mirror_test.cpp
   content/tilemap_test.cpp
 )
 target_link_libraries(kfm_content_tests PRIVATE kfm::content)

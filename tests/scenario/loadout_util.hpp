@@ -1,7 +1,8 @@
 // Helpers for the v0.21 ability scenarios: content with an extra ability in
 // the third slot (or a loadout picked through MatchConfig::loadout, v0.31),
 // and a Playing world for any MatchContent. The defs mirror
-// content/abilities.toml and content/loadouts.toml.
+// content/abilities.toml and content/loadouts.toml; kfm_content_tests'
+// mirror test (tests/unit/content/mirror_test.cpp) checks they still do.
 #pragma once
 
 #include "scenario_util.hpp"
@@ -51,13 +52,13 @@ namespace kfm::sim::test {
   return d;
 }
 
-// v0.35: a call heard within 4 units, once a quarter second.
+// v0.35: a call heard within 4 units, once a quarter second (content/'s
+// grid_call: no startup, no active phase, so a press calls on its tick).
 [[nodiscard]] inline AbilityDef callDef() {
   AbilityDef d;
-  d.name = ContentName::of("call");
+  d.name = ContentName::of("grid_call");
   d.kind = AbilityKind::Call;
   d.cooldownTicks = 15;
-  d.activeTicks = 1;
   d.param0 = Fixed::fromInt(4);  // range
   return d;
 }
