@@ -17,6 +17,7 @@
 #include "kfm/sim/content.hpp"
 #include "kfm/sim/events.hpp"
 #include "kfm/sim/input.hpp"
+#include "kfm/sim/step.hpp"
 #include "kfm/sim/world_state.hpp"
 
 #include <array>
@@ -168,9 +169,11 @@ class StatsCollector {
   std::set<std::pair<uint8_t, uint32_t>> dashAttackWithoutAmmo_;
 };
 
-// step() with the collector looking at the contact list (see above).
+// step() with the collector looking at the contact list (see above); like
+// step()'s StepStats overload it reports what the tick's contact list
+// dropped (overwritten, not summed).
 void statsStep(sim::WorldState& s, const sim::InputFrame& in, const sim::MatchContent& content,
-               sim::EventSink& sink, StatsCollector& collector);
+               sim::EventSink& sink, StatsCollector& collector, sim::StepStats& stepStats);
 
 // One line per match.
 void printMatchLine(uint32_t index, uint64_t seed, uint64_t inputSeed, const Stats& st);

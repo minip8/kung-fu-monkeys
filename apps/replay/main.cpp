@@ -13,7 +13,8 @@
 //     their indices and the set
 //   kfm_replay info <in.kfmr>
 //   kfm_replay checksums <in.kfmr>              prints "<tick> <hex>" per tick
-//   kfm_replay verify <in.kfmr> <expected.txt>  exit 0 when identical
+//   kfm_replay verify <in.kfmr> <expected.txt> [--fail-on-dropped-contacts]
+//                                               exit 0 when identical
 //   kfm_replay bench [--ticks N] [--seed S] [--players P] [--input-seed I]
 //   kfm_replay stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]
 //                    [--throw-one-in N] [--dash-one-in N] [--dodge-per-256 N]
@@ -25,6 +26,11 @@
 //   --content DIR (any command): load content/*.toml from DIR instead of the
 //     copy built into the binary (architecture §5.10). Recording stores the
 //     content hash; playback refuses a replay recorded with other content.
+//   bench, verify, stats and record-scripted --stats count the contacts the
+//     per-tick contact list dropped (sim::StepStats, contact_drops.hpp) and,
+//     when any were, write one line to stderr (--quiet keeps it); verify
+//     --fail-on-dropped-contacts then exits 1.
+#include "contact_drops.hpp"
 #include "kfm/build_id.hpp"
 #include "kfm/content/app_content.hpp"
 #include "kfm/core/rng.hpp"
@@ -59,9 +65,10 @@ struct Args {
   uint32_t matches{20};
   bool stats{false};
   bool quiet{false};
-  ScriptedInputConfig bot{};  // stats only; replays always use the defaults
-  std::string contentDir;     // empty: the embedded content
-  std::string arena;          // names; empty = index 0
+  bool failOnDroppedContacts{false};  // verify only
+  ScriptedInputConfig bot{};          // stats only; replays always use the defaults
+  std::string contentDir;             // empty: the embedded content
+  std::string arena;                  // names; empty = index 0
   std::string mode;
   std::string loadout;
   std::string powerUps;  // --powerups list; empty = all
@@ -89,7 +96,7 @@ constexpr const char* kUsage =
     "                  [--arena A] [--mode M] [--loadout L] [--powerups LIST]\n"
     "  info <in.kfmr>\n"
     "  checksums <in.kfmr>\n"
-    "  verify <in.kfmr> <expected.checksums>\n"
+    "  verify <in.kfmr> <expected.checksums> [--fail-on-dropped-contacts]\n"
     "  bench [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
     "  record-scripted ... --stats   also print feel-tuning statistics of the match\n"
     "  stats [--matches M] [--ticks N] [--seed S] [--players P] [--input-seed I]\n"
@@ -97,7 +104,10 @@ constexpr const char* kUsage =
     "        [--dash-attack-one-in N] [--quiet]\n"
     "  every command: --content DIR   content/*.toml to use (default: built in)\n"
     "  record-*, bench, stats: --arena A --mode M --loadout L\n"
-    "                         --powerups all|none|name,name...\n";
+    "                         --powerups all|none|name,name...\n"
+    "  bench, verify, stats, record-scripted --stats: a line on stderr when the contact\n"
+    "                        list dropped contacts; verify --fail-on-dropped-contacts\n"
+    "                        then exits 1\n";
 
 bool parseArgs(int argc, char** argv, Args& a) {
   if (argc < 2) return false;
@@ -166,6 +176,8 @@ bool parseArgs(int argc, char** argv, Args& a) {
       a.stats = true;
     } else if (arg == "--quiet") {
       a.quiet = true;
+    } else if (arg == "--fail-on-dropped-contacts") {
+      a.failOnDroppedContacts = true;
     } else {
       a.positional.emplace_back(arg);
     }
@@ -190,9 +202,11 @@ bool writeFile(const std::string& path, std::span<const std::byte> data) {
 }
 
 // Runs a replay and calls onTick(tick, checksum) for the state at every tick
-// 0..tickCount inclusive (the last call is the state after the final step).
+// 0..tickCount inclusive (the last call is the state after the final step),
+// adding each stepped tick's dropped contacts to `drops`.
 template <class F>
-bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, F&& onTick) {
+bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, replay::ContactDrops& drops,
+               F&& onTick) {
   BitReader r(bytes);
   if (!readReplayHeader(r, header)) {
     std::fprintf(stderr, "error: not a KFMR replay (bad magic/version/header)\n");
@@ -227,7 +241,9 @@ bool runReplay(std::span<const std::byte> bytes, ReplayHeader& header, F&& onTic
       return false;
     }
     sink.clear();
-    step(world, frame, content, sink);
+    StepStats stats;
+    step(world, frame, content, sink, stats);
+    drops.add(frame.tick, stats.contactsDropped);
     onTick(world.tick, checksum(world));
   }
   return true;
@@ -305,14 +321,21 @@ int cmdRecordEmpty(const Args& a) {
 struct StatsRun {
   explicit StatsRun(const WorldState& start) : shadow(start) {}
 
-  void step(WorldState& world, const InputFrame& f, EventSink& sink) {
+  // `match` numbers the run's contact drops (cmdStats: match k). The
+  // shadow's StepStats must agree too: the count comes from statsStep's own
+  // contact list.
+  void step(WorldState& world, const InputFrame& f, EventSink& sink, uint32_t match = 0) {
     const MatchContent content = matchContent(gContent.db, gMatch);
-    replay::statsStep(world, f, content, sink, collector);
+    StepStats stats;
+    replay::statsStep(world, f, content, sink, collector, stats);
     shadowSink.clear();
-    sim::step(shadow, f, content, shadowSink);
-    if (mismatchTick < 0 && checksum(shadow) != checksum(world)) {
+    StepStats shadowStats;
+    sim::step(shadow, f, content, shadowSink, shadowStats);
+    if (mismatchTick < 0 && (checksum(shadow) != checksum(world) ||
+                             shadowStats.contactsDropped != stats.contactsDropped)) {
       mismatchTick = static_cast<int64_t>(f.tick.value);
     }
+    drops.add(f.tick, stats.contactsDropped, match);
     collector.afterStep(world, sink);
   }
 
@@ -328,6 +351,7 @@ struct StatsRun {
   WorldState shadow;
   EventSink shadowSink;
   replay::StatsCollector collector;
+  replay::ContactDrops drops;
   int64_t mismatchTick{-1};
 };
 
@@ -368,6 +392,7 @@ int cmdRecordScripted(const Args& a) {
     if (!stats->ok()) return 1;
     stats->collector.finish(world);
     replay::printSummary(stats->collector.stats(), a.players, content);
+    replay::reportContactDrops(stats->drops, /*perMatch=*/false);
   }
   return rc;
 }
@@ -385,6 +410,7 @@ int cmdBench(const Args& a) {
   EventSink sink;
   uint64_t events = 0;
   uint32_t matches = 1;
+  replay::ContactDrops drops;  // match k is the one with seed + k
   Clock::duration stepTime{};
   const Clock::time_point begin = Clock::now();
   for (uint32_t t = 0; t < a.ticks; ++t) {
@@ -396,10 +422,12 @@ int cmdBench(const Args& a) {
     }
     const InputFrame f = scriptedFrame(inputs, world, content);
     sink.clear();
+    StepStats stats;
     const Clock::time_point s0 = Clock::now();
-    step(world, f, content, sink);
+    step(world, f, content, sink, stats);
     stepTime += Clock::now() - s0;
     events += sink.count;
+    drops.add(f.tick, stats.contactsDropped, matches - 1);
   }
   const Clock::duration total = Clock::now() - begin;
   const double totalUs = std::chrono::duration<double, std::micro>(total).count();
@@ -411,6 +439,7 @@ int cmdBench(const Args& a) {
       "  step only:              %.0f ticks/s, %.2f us/tick\n",
       a.players, a.ticks, matches, static_cast<unsigned long long>(events), checksum(world),
       ticks / (totalUs * 1e-6), totalUs / ticks, ticks / (stepUs * 1e-6), stepUs / ticks);
+  replay::reportContactDrops(drops, /*perMatch=*/true);
   return 0;
 }
 
@@ -425,6 +454,7 @@ int cmdStats(const Args& a) {
   const MatchContent content = matchContent(gContent.db, h.matchConfig());
   const uint32_t cap = a.ticksSet ? a.ticks : kStatsDefaultTicks;
   replay::Stats total;
+  replay::ContactDrops drops;
   for (uint32_t m = 0; m < a.matches; ++m) {
     const uint64_t seed = a.seed + m;
     const uint64_t inputSeed = a.inputSeed + m;
@@ -437,14 +467,16 @@ int cmdStats(const Args& a) {
     for (uint32_t t = 0; t < cap && world.rules.phase != MatchPhase::MatchEnded; ++t) {
       const InputFrame f = scriptedFrame(inputs, world, content, a.bot);
       sink.clear();
-      run->step(world, f, sink);
+      run->step(world, f, sink, m);
     }
     if (!run->ok()) return 1;
     run->collector.finish(world);
     if (!a.quiet) replay::printMatchLine(m, seed, inputSeed, run->collector.stats());
     total.merge(run->collector.stats());
+    drops.merge(run->drops);
   }
   replay::printSummary(total, a.players, content);
+  replay::reportContactDrops(drops, /*perMatch=*/true);
   return 0;
 }
 
@@ -492,8 +524,9 @@ int cmdChecksums(const Args& a) {
     return 2;
   }
   ReplayHeader h;
+  replay::ContactDrops drops;  // not reported: the output is a checksum file
   const bool ok =
-      runReplay(bytes, h, [](Tick t, uint32_t c) { std::printf("%u %08x\n", t.value, c); });
+      runReplay(bytes, h, drops, [](Tick t, uint32_t c) { std::printf("%u %08x\n", t.value, c); });
   return ok ? 0 : 1;
 }
 
@@ -512,7 +545,8 @@ int cmdVerify(const Args& a) {
   uint32_t compared = 0;
   bool truncated = false;
   ReplayHeader h;
-  const bool ran = runReplay(bytes, h, [&](Tick t, uint32_t c) {
+  replay::ContactDrops drops;
+  const bool ran = runReplay(bytes, h, drops, [&](Tick t, uint32_t c) {
     unsigned long expTick = 0;
     unsigned long expSum = 0;
     if (!(expected >> expTick >> std::hex >> expSum >> std::dec)) {
@@ -529,6 +563,10 @@ int cmdVerify(const Args& a) {
     }
   });
   if (!ran) return 1;
+  // Reported whatever the checksums say; with --fail-on-dropped-contacts a
+  // drop is an error: exit 1 and no OK line.
+  const bool dropsFail = a.failOnDroppedContacts && drops.any();
+  replay::reportContactDrops(drops, /*perMatch=*/false, dropsFail);
   if (truncated) {
     std::fprintf(stderr, "error: expected file has fewer lines than the replay has ticks\n");
     return 1;
@@ -542,6 +580,7 @@ int cmdVerify(const Args& a) {
     std::fprintf(stderr, "FAIL: %u of %u ticks mismatched\n", mismatches, compared);
     return 1;
   }
+  if (dropsFail) return 1;
   std::printf("OK: %u ticks, %u checksums identical\n", h.tickCount, compared);
   return 0;
 }
