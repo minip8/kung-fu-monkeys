@@ -1,6 +1,7 @@
 // The client's IPlatformServices per platform (architecture §13.4): the
 // hooks LocalPlatformServices reaches the OS through. CMake compiles one of
-// two files into kfm_client, so neither holds an #ifdef:
+// two files into kfm_client (the web one keeps an __EMSCRIPTEN__ guard only
+// for the native lint job):
 //
 //   client_platform.cpp         shared: the guest id's entropy, the services.
 //   client_platform_native.cpp  SDL: preferences as <name>.txt in SDL's pref

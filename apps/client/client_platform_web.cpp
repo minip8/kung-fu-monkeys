@@ -1,5 +1,8 @@
 // The browser client's platform hooks (client_platform.hpp): the page's
-// JavaScript through EM_JS. Compiled only into the Emscripten build.
+// JavaScript through EM_JS. Compiled only into the Emscripten build; the
+// guard is for CI's lint job, which runs clang-tidy over every .cpp with the
+// native compile database (as engine/platform/src/main_loop.cpp's is).
+#ifdef __EMSCRIPTEN__
 #include "client_platform.hpp"
 
 #include <emscripten/em_js.h>
@@ -241,3 +244,5 @@ platform::PlatformHooks makePlatformHooks(bool persist) {
 }
 
 }  // namespace kfm::client
+
+#endif  // __EMSCRIPTEN__
