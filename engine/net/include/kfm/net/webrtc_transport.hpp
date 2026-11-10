@@ -69,6 +69,12 @@
 // so callers built with -fno-exceptions can use it. This header includes
 // nothing from rtc::.
 //
+// Send buffers: the unreliable lane drops a message once 64 KB wait to be
+// sent; the reliable lane cannot drop one, so a peer with more than
+// maxReliableBufferedBytes waiting is disconnected (lastError() says so) and
+// reported at the next poll(), which bounds what a peer that stops reading
+// costs the sender.
+//
 // The connection token (§6.7) is held for the message layer, which sends it
 // in its first reliable message; the transport never validates it.
 #pragma once
@@ -92,6 +98,11 @@ namespace kfm::net {
 enum class WebRtcLogLevel : uint8_t { None = 0, Fatal, Error, Warning, Info, Debug, Verbose };
 
 inline constexpr uint32_t kDefaultWebRtcConnectTimeoutMs = 10'000;
+// The reliable lane's send buffer per peer: a peer with more than this still
+// unsent (it stopped reading, or its link cannot keep up) is dropped rather
+// than left to grow the sender's memory. A match sends ~100 KB/s and a full
+// snapshot is at most kMaxReliableBytes, so this is seconds of backlog.
+inline constexpr size_t kDefaultMaxReliableBufferedBytes = size_t{1024} * 1024;
 
 struct WebRtcServerConfig {
   uint16_t signalingPort{
@@ -111,6 +122,10 @@ struct WebRtcServerConfig {
   // The host relays signaling (see "Lobby modes" above): no WebSocket server
   // is created and signalingPort/signalingBindAddress are ignored.
   bool externalSignaling{false};
+  // Reliable bytes a peer may have waiting to be sent; past it the peer is
+  // dropped (Disconnected; an external peer is reported by
+  // takeDroppedExternalPeers()). See kDefaultMaxReliableBufferedBytes.
+  size_t maxReliableBufferedBytes{kDefaultMaxReliableBufferedBytes};
 };
 
 // A client's request to the lobby (docs/lobby-protocol.md §3): create a room

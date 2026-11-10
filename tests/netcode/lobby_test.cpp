@@ -223,10 +223,39 @@ TEST_CASE("lobby: the server registers and a created room plays", "[lobby][webrt
   CHECK(w.server->link->peerCount() == 2);
   CHECK(w.server->adapter->restarts() == 1);
 
+  // v1.3: the server named its version, and reports its connected players
+  // to a lobby that takes them.
+  CHECK(w.lobby.serverVersion() == "1.3");
+  CHECK(w.server->link->lobbySpeaksV13());
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "2"; }));
+
   // The stats line carries the lobby state.
   w.server->host->logStats(nowNs());
   CHECK(w.server->lines.back().find("| lobby registered room=ABCDE peers=2 capacity=3") !=
         std::string::npos);
+}
+
+TEST_CASE("lobby: players follow the game connections; a v1.2 lobby hears none (v1.3)",
+          "[lobby][webrtc]") {
+  WebRtcTransport::initLogging(WebRtcLogLevel::Error);
+  World w;
+  w.startRoom();
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "1"; }));
+  const int sent = w.lobby.playersMessages();
+  w.runFor(200'000'000);
+  CHECK(w.lobby.playersMessages() == sent);  // only on a change
+  w.clients[0].reset();
+  REQUIRE(w.runUntil([&] { return w.lobby.players() == "0"; }));
+
+  // An older lobby gets no `players` (it would take the type as a protocol
+  // error), and the link says so.
+  World old;
+  old.lobby.asLegacyLobby();
+  old.startRoom();
+  CHECK_FALSE(old.server->link->lobbySpeaksV13());
+  old.runFor(300'000'000);
+  CHECK(old.lobby.playersMessages() == 0);
+  CHECK(old.server->link->state() == LobbyLinkState::Registered);
 }
 
 TEST_CASE("lobby: a refused join is Disconnected with the reason", "[lobby][webrtc]") {

@@ -1,9 +1,22 @@
-//! Wire helpers for lobby protocol v1.2 (docs/lobby-protocol.md §1-§2): every
+//! Wire helpers for lobby protocol v1.3 (docs/lobby-protocol.md §1-§2): every
 //! frame is a flat JSON object whose values are all strings.
 
 use std::collections::HashMap;
 
 use rand::Rng;
+
+/// The protocol version this lobby speaks (`registered`'s `version`, v1.3).
+pub const VERSION: &str = "1.3";
+
+/// Whether a `version` value ("1.3", "1.10", "2.0") is 1.3 or later.
+pub fn at_least_v1_3(version: &str) -> bool {
+    let mut parts = version.split('.').map(|p| p.parse::<u32>().ok());
+    match (parts.next().flatten(), parts.next().flatten()) {
+        (Some(major), Some(minor)) => (major, minor) >= (1, 3),
+        (Some(major), None) => major >= 2,
+        _ => false,
+    }
+}
 
 /// Alphabet of room codes: no I, O, 0 or 1.
 pub const CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -134,6 +147,18 @@ mod tests {
         let text = encode(&[("type", "signal"), ("msg", r#"{"type":"offer"}"#)]);
         let fields = parse(&text).unwrap();
         assert_eq!(fields["msg"], r#"{"type":"offer"}"#);
+    }
+
+    #[test]
+    fn versions_compare() {
+        assert!(at_least_v1_3("1.3"));
+        assert!(at_least_v1_3("1.10"));
+        assert!(at_least_v1_3("2.0"));
+        assert!(at_least_v1_3("2"));
+        assert!(!at_least_v1_3("1.2"));
+        assert!(!at_least_v1_3("1"));
+        assert!(!at_least_v1_3(""));
+        assert!(!at_least_v1_3("x.y"));
     }
 
     #[test]

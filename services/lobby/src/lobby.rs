@@ -1,14 +1,18 @@
-//! The lobby's state: the server registry and the rooms, behind one mutex.
-//! Every method takes the lock once, never across an await, and talks to
-//! sockets only through their unbounded outgoing queues, so the order of
-//! messages to one socket is the order the state changed in.
+//! The lobby's state: the server registry, the rooms and the per-address
+//! limits, behind one mutex. Every method takes the lock once, never across
+//! an await, and talks to sockets only through their unbounded outgoing
+//! queues, so the order of messages to one socket is the order the state
+//! changed in.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+use crate::limits::{Address, Bucket};
 use crate::protocol::{self, CLOSE_NORMAL};
 use crate::LobbyConfig;
 
@@ -35,6 +39,8 @@ pub(crate) enum Refusal {
     BadSecret,
     /// v1.2: a rejoin with a token the room never issued.
     BadToken,
+    /// v1.3: the client's address is over one of the §7 limits.
+    Limited,
 }
 
 impl Refusal {
@@ -48,6 +54,7 @@ impl Refusal {
             Refusal::ServerGone => "server_gone",
             Refusal::BadSecret => "bad_secret",
             Refusal::BadToken => "bad_token",
+            Refusal::Limited => "limited",
         }
     }
 }
@@ -59,6 +66,8 @@ pub(crate) struct Registration {
     pub build: String,
     pub content: String,
     pub capacity: u32,
+    /// v1.3: the server reports `players` (its `register` said `version`).
+    pub reports_players: bool,
 }
 
 /// A client's place in a room after `joined`: the routing key of its socket.
@@ -78,14 +87,44 @@ struct Server {
     next_peer: u64,
 }
 
+/// A token the room issued: the peer seated under it now (`None`: its
+/// socket is gone) and when it was issued, for eviction.
+struct Token {
+    seated: Option<u64>,
+    issued: u64,
+}
+
 struct Room {
+    /// Unique per room for the lobby's lifetime (a code can be reused).
+    id: u64,
     server: u64,
     clients: BTreeMap<u64, Tx>,
-    /// Every token issued for this room and the peer seated under it now
-    /// (`None`: its socket is gone), so a `join` with the token rejoins (v1.2).
-    tokens: HashMap<String, Option<u64>>,
+    /// Every token issued for this room, so a `join` with one rejoins (v1.2),
+    /// at most `max_tokens_per_room` of them (v1.3).
+    tokens: HashMap<String, Token>,
     /// Generation of the pending expiry timer; any change voids older timers.
     expiry: u64,
+    /// The address that created the room, for its per-address count.
+    creator: Option<IpAddr>,
+    /// Players the server reports connected over their game connection
+    /// (v1.3 `players`; always 0 for an older server).
+    players: u32,
+    /// A game connection was ever made (a `players` above 0), or the server
+    /// predates v1.3 and cannot say: the room has the full `room_ttl`.
+    used: bool,
+}
+
+impl Room {
+    /// Occupancy for `full`: open client sockets, or the server's count of
+    /// connected players when that is higher.
+    fn occupancy(&self) -> usize {
+        self.clients.len().max(self.players as usize)
+    }
+
+    /// Nobody here, by socket or by game connection: the expiry may run.
+    fn empty(&self) -> bool {
+        self.clients.is_empty() && self.players == 0
+    }
 }
 
 #[derive(Default)]
@@ -94,6 +133,7 @@ struct State {
     next_generation: u64,
     servers: HashMap<u64, Server>,
     rooms: HashMap<String, Room>,
+    addresses: HashMap<IpAddr, Address>,
 }
 
 impl State {
@@ -123,6 +163,15 @@ impl State {
     fn all_regions(&self) -> Vec<String> {
         self.regions_where(|_| true)
     }
+
+    /// A room is gone: its creator's count goes down.
+    fn forget_room(&mut self, room: &Room) {
+        if let Some(addr) = room.creator {
+            if let Some(a) = self.addresses.get_mut(&addr) {
+                a.rooms = a.rooms.saturating_sub(1);
+            }
+        }
+    }
 }
 
 /// The `regions` reply: every registered region and the free subset.
@@ -146,6 +195,43 @@ pub(crate) struct Lobby {
 /// `true` when the client did not send the key or sent the server's value.
 fn matches(client: Option<&str>, server: &str) -> bool {
     client.is_none_or(|c| c == server)
+}
+
+/// Issues `token` to `peer` in a room that keeps at most `max` tokens: when
+/// it is full, the oldest token no socket is seated under makes room (its
+/// player can no longer rejoin). `false` when every token is seated.
+fn issue_token(
+    tokens: &mut HashMap<String, Token>,
+    token: &str,
+    peer: u64,
+    issued: u64,
+    max: usize,
+) -> bool {
+    if let Some(t) = tokens.get_mut(token) {
+        t.seated = Some(peer);
+        return true;
+    }
+    if tokens.len() >= max {
+        let oldest = tokens
+            .iter()
+            .filter(|(_, t)| t.seated.is_none())
+            .min_by_key(|(_, t)| t.issued)
+            .map(|(k, _)| k.clone());
+        match oldest {
+            Some(k) => {
+                tokens.remove(&k);
+            }
+            None => return false,
+        }
+    }
+    tokens.insert(
+        token.to_owned(),
+        Token {
+            seated: Some(peer),
+            issued,
+        },
+    );
+    true
 }
 
 impl Lobby {
@@ -178,6 +264,76 @@ impl Lobby {
         }
     }
 
+    // --- per-address limits (§7, v1.3) -----------------------------------
+
+    /// A `/client` socket from `addr` opened; `Err(Limited)` when the address
+    /// has too many open, or the lobby tracks too many addresses.
+    pub(crate) fn connect(&self, addr: IpAddr) -> Result<(), Refusal> {
+        let config = &self.config;
+        let mut state = self.lock();
+        if !state.addresses.contains_key(&addr)
+            && state.addresses.len() >= config.max_tracked_addresses
+        {
+            state.addresses.retain(|_, a| !a.idle());
+            if state.addresses.len() >= config.max_tracked_addresses {
+                warn!(event = "refuse", socket = "client", reason = "limited", %addr, "address table full");
+                return Err(Refusal::Limited);
+            }
+        }
+        let a = state.addresses.entry(addr).or_insert_with(|| Address {
+            connections: 0,
+            rooms: 0,
+            requests: Bucket::new(config.requests_per_minute / 60.0, config.requests_burst),
+            failures: Bucket::new(
+                config.failed_joins_per_minute / 60.0,
+                config.failed_joins_burst,
+            ),
+        });
+        if a.connections >= config.max_connections_per_address {
+            debug!(%addr, connections = a.connections, "connection limit");
+            return Err(Refusal::Limited);
+        }
+        a.connections += 1;
+        Ok(())
+    }
+
+    /// The socket `connect` admitted closed.
+    pub(crate) fn disconnect(&self, addr: IpAddr) {
+        let mut state = self.lock();
+        if let Some(a) = state.addresses.get_mut(&addr) {
+            a.connections = a.connections.saturating_sub(1);
+        }
+    }
+
+    /// One `create` or `join` from `addr`: the request bucket, and for a
+    /// join the failed-join bucket (a guesser out of guesses is refused
+    /// before the code is even looked up).
+    pub(crate) fn admit_request(&self, addr: IpAddr, join: bool) -> Result<(), Refusal> {
+        let mut state = self.lock();
+        let Some(a) = state.addresses.get_mut(&addr) else {
+            return Ok(()); // not admitted through connect (cannot happen)
+        };
+        if join && !a.failures.has() {
+            debug!(%addr, "failed-join limit");
+            return Err(Refusal::Limited);
+        }
+        if !a.requests.take() {
+            debug!(%addr, "request limit");
+            return Err(Refusal::Limited);
+        }
+        Ok(())
+    }
+
+    /// A join from `addr` was refused for its code or token: one guess spent.
+    pub(crate) fn failed_join(&self, addr: IpAddr) {
+        let mut state = self.lock();
+        if let Some(a) = state.addresses.get_mut(&addr) {
+            let _ = a.failures.take();
+        }
+    }
+
+    // --- servers ---------------------------------------------------------
+
     /// Adds a server to the registry and returns its id.
     pub(crate) fn register(&self, tx: Tx, reg: Registration) -> Result<u64, Refusal> {
         let mut state = self.lock();
@@ -200,6 +356,7 @@ impl Lobby {
             build = %reg.build,
             content = %reg.content,
             capacity = reg.capacity,
+            v13 = reg.reports_players,
             "server registered"
         );
         state.servers.insert(
@@ -228,6 +385,7 @@ impl Lobby {
                     let _ = tx.send(Out::Close(CLOSE_NORMAL));
                 }
                 info!(event = "room_close", code = %code, server = id, reason = "server_gone", clients = room.clients.len(), "room closed");
+                state.forget_room(&room);
             }
         }
     }
@@ -242,16 +400,51 @@ impl Lobby {
         }
     }
 
+    /// v1.3 `players`: how many of its room's players the server has
+    /// connected over their game connection. A room is held while it has
+    /// any (or a client socket), and the first one makes it used.
+    pub(crate) fn set_players(self: &Arc<Self>, id: u64, players: u32) {
+        let mut state = self.lock();
+        let generation = state.generation();
+        let State { servers, rooms, .. } = &mut *state;
+        let Some(code) = servers.get(&id).and_then(|s| s.room.clone()) else {
+            return;
+        };
+        let Some(room) = rooms.get_mut(&code) else {
+            return;
+        };
+        debug!(server = id, code = %code, players, "players");
+        let was_empty = room.empty();
+        room.players = players;
+        if players > 0 {
+            room.used = true;
+            room.expiry = generation; // voids a pending expiry timer
+        } else if room.empty() && !was_empty {
+            room.expiry = generation;
+            self.schedule_expiry(code, generation, self.config.room_ttl);
+        }
+    }
+
+    // --- clients ---------------------------------------------------------
+
     /// `create`: reserves a room on a free server of the region and seats
     /// the creator as its first peer.
     pub(crate) fn create(
         self: &Arc<Self>,
         tx: Tx,
+        addr: Option<IpAddr>,
         region: &str,
         build: Option<&str>,
         content: Option<&str>,
     ) -> Result<Seat, Refusal> {
         let mut state = self.lock();
+        if let Some(addr) = addr {
+            let held = state.addresses.get(&addr).map_or(0, |a| a.rooms);
+            if held >= self.config.max_rooms_per_address {
+                debug!(%addr, rooms = held, "room limit");
+                return Err(Refusal::Limited);
+            }
+        }
         if state.rooms.len() >= self.config.max_rooms {
             return Err(Refusal::NoServer);
         }
@@ -297,21 +490,41 @@ impl Lobby {
         }
         server.room = Some(code.clone());
         let region = server.reg.region.clone();
+        let used = !server.reg.reports_players;
         info!(event = "room_open", code = %code, server = server_id, name = %server.reg.name, region = %region, "room opened");
         info!(event = "join", code = %code, server = server_id, peer, clients = 1, "client joined");
         let mut clients = BTreeMap::new();
         clients.insert(peer, tx);
         let mut tokens = HashMap::new();
-        tokens.insert(token.clone(), Some(peer));
+        tokens.insert(
+            token.clone(),
+            Token {
+                seated: Some(peer),
+                issued: generation,
+            },
+        );
         state.rooms.insert(
             code.clone(),
             Room {
+                id: generation,
                 server: server_id,
                 clients,
                 tokens,
                 expiry: generation,
+                creator: addr,
+                players: 0,
+                used,
             },
         );
+        if let Some(addr) = addr {
+            if let Some(a) = state.addresses.get_mut(&addr) {
+                a.rooms += 1;
+            }
+        }
+        if !used {
+            // v1.3: a room no game connection reaches in time is released.
+            self.schedule_unused_close(code.clone(), generation);
+        }
         Ok(Seat {
             code,
             server: server_id,
@@ -344,14 +557,14 @@ impl Lobby {
         // v1.2: a rejoin is the same player, whose slots the server holds.
         let seated = match rejoin {
             Some(token) => match room.tokens.get(token) {
-                Some(seated) => *seated,
+                Some(t) => t.seated,
                 None => return Err(Refusal::BadToken),
             },
             None => None,
         };
-        let occupancy = room.clients.len() - usize::from(seated.is_some());
-        if occupancy >= self.config.max_clients_per_room
-            || (rejoin.is_none() && occupancy >= server.reg.capacity as usize)
+        let sockets = room.clients.len() - usize::from(seated.is_some());
+        if sockets >= self.config.max_clients_per_room
+            || (rejoin.is_none() && room.occupancy() >= server.reg.capacity as usize)
         {
             return Err(Refusal::Full);
         }
@@ -368,9 +581,20 @@ impl Lobby {
             let _ = server.tx.send(Out::Text(msg));
             info!(event = "peer_loss", code = %code, server = room.server, peer = old, by = "rejoin", clients = room.clients.len(), "client replaced");
         }
-        server.next_peer += 1;
-        let peer = server.next_peer;
+        let peer = server.next_peer + 1;
         let token = rejoin.map_or_else(protocol::random_token, str::to_owned);
+        // max_clients_per_room ≤ max_tokens_per_room (router()), so there is
+        // always an unseated token to evict; refuse rather than overfill.
+        if !issue_token(
+            &mut room.tokens,
+            &token,
+            peer,
+            generation,
+            self.config.max_tokens_per_room,
+        ) {
+            return Err(Refusal::Full);
+        }
+        server.next_peer = peer;
         let peer_msg = protocol::encode(&[
             ("type", "peer"),
             ("peer", &peer.to_string()),
@@ -380,7 +604,6 @@ impl Lobby {
             return Err(Refusal::ServerGone);
         }
         room.clients.insert(peer, tx);
-        room.tokens.insert(token.clone(), Some(peer));
         room.expiry = generation; // voids a pending expiry timer
         info!(event = "join", code = %code, server = room.server, peer, rejoin = rejoin.is_some(), clients = room.clients.len(), "client joined");
         Ok(Seat {
@@ -441,6 +664,16 @@ impl Lobby {
         }
     }
 
+    /// The hold of an empty room: the full TTL once it was used, else the
+    /// short one (v1.3).
+    fn ttl_of(&self, room: &Room) -> Duration {
+        if room.used {
+            self.config.room_ttl
+        } else {
+            self.config.unused_room_ttl.min(self.config.room_ttl)
+        }
+    }
+
     /// A client socket closed: tells the server and, when the room is
     /// empty, starts its expiry timer.
     pub(crate) fn leave(self: &Arc<Self>, seat: &Seat) {
@@ -453,9 +686,9 @@ impl Lobby {
         if room.server != seat.server || room.clients.remove(&seat.peer).is_none() {
             return;
         }
-        if let Some(seated) = room.tokens.get_mut(&seat.token) {
-            if *seated == Some(seat.peer) {
-                *seated = None;
+        if let Some(t) = room.tokens.get_mut(&seat.token) {
+            if t.seated == Some(seat.peer) {
+                t.seated = None;
             }
         }
         info!(event = "peer_loss", code = %seat.code, server = seat.server, peer = seat.peer, by = "client", clients = room.clients.len(), "client left");
@@ -463,9 +696,10 @@ impl Lobby {
             let msg = protocol::encode(&[("type", "peer_gone"), ("peer", &seat.peer.to_string())]);
             let _ = server.tx.send(Out::Text(msg));
         }
-        if room.clients.is_empty() {
+        if room.empty() {
             room.expiry = generation;
-            self.schedule_expiry(seat.code.clone(), generation);
+            let ttl = self.ttl_of(room);
+            self.schedule_expiry(seat.code.clone(), generation, ttl);
         }
     }
 
@@ -490,23 +724,23 @@ impl Lobby {
             return;
         };
         // The token stays the room's: a kicked or timed-out player may rejoin.
-        for seated in room.tokens.values_mut() {
-            if *seated == Some(id) {
-                *seated = None;
+        for t in room.tokens.values_mut() {
+            if t.seated == Some(id) {
+                t.seated = None;
             }
         }
         let _ = tx.send(Out::Text(protocol::closed("kicked")));
         let _ = tx.send(Out::Close(CLOSE_NORMAL));
         info!(event = "peer_loss", code = %code, server = server_id, peer, by = "server", clients = room.clients.len(), "client kicked");
-        if room.clients.is_empty() {
+        if room.empty() {
             room.expiry = generation;
-            self.schedule_expiry(code, generation);
+            let ttl = self.ttl_of(room);
+            self.schedule_expiry(code, generation, ttl);
         }
     }
 
-    fn schedule_expiry(self: &Arc<Self>, code: String, generation: u64) {
+    fn schedule_expiry(self: &Arc<Self>, code: String, generation: u64, ttl: Duration) {
         let lobby = Arc::clone(self);
-        let ttl = self.config.room_ttl;
         tokio::spawn(async move {
             tokio::time::sleep(ttl).await;
             lobby.expire(&code, generation);
@@ -518,16 +752,72 @@ impl Lobby {
         let live = state
             .rooms
             .get(code)
-            .is_some_and(|r| r.expiry == generation && r.clients.is_empty());
+            .is_some_and(|r| r.expiry == generation && r.empty());
         if !live {
             return;
         }
-        let room = state.rooms.remove(code).expect("checked above");
+        self.close_room(&mut state, code, "expired");
+    }
+
+    fn schedule_unused_close(self: &Arc<Self>, code: String, id: u64) {
+        let lobby = Arc::clone(self);
+        let after = self.config.unused_room_ttl;
+        tokio::spawn(async move {
+            tokio::time::sleep(after).await;
+            lobby.close_unused(&code, id);
+        });
+    }
+
+    /// v1.3: a room whose server has reported no game connection within
+    /// `unused_room_ttl` of its creation is released, sockets or not.
+    fn close_unused(&self, code: &str, id: u64) {
+        let mut state = self.lock();
+        let unused = state.rooms.get(code).is_some_and(|r| r.id == id && !r.used);
+        if !unused {
+            return;
+        }
+        self.close_room(&mut state, code, "unused");
+    }
+
+    /// Ends a room on the lobby's initiative: its clients get
+    /// `closed`/`room_closed`, its server `room_closed`, the code is free.
+    fn close_room(&self, state: &mut State, code: &str, reason: &str) {
+        let Some(room) = state.rooms.remove(code) else {
+            return;
+        };
+        for tx in room.clients.values() {
+            let _ = tx.send(Out::Text(protocol::closed("room_closed")));
+            let _ = tx.send(Out::Close(CLOSE_NORMAL));
+        }
         if let Some(server) = state.servers.get_mut(&room.server) {
             server.room = None;
             let msg = protocol::encode(&[("type", "room_closed"), ("code", code)]);
             let _ = server.tx.send(Out::Text(msg));
         }
-        info!(event = "room_close", code = %code, server = room.server, reason = "expired", "room closed");
+        info!(event = "room_close", code = %code, server = room.server, reason, clients = room.clients.len(), "room closed");
+        state.forget_room(&room);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_full_token_table_evicts_its_oldest_unseated_token() {
+        let mut tokens = HashMap::new();
+        assert!(issue_token(&mut tokens, "a", 1, 1, 2));
+        assert!(issue_token(&mut tokens, "b", 2, 2, 2));
+        // Both seated: nothing to evict.
+        assert!(!issue_token(&mut tokens, "c", 3, 3, 2));
+        tokens.get_mut("b").unwrap().seated = None;
+        tokens.get_mut("a").unwrap().seated = None;
+        assert!(issue_token(&mut tokens, "c", 3, 3, 2));
+        assert!(!tokens.contains_key("a"), "the oldest unseated goes");
+        assert!(tokens.contains_key("b"));
+        // A token the room knows is reseated, never counted twice.
+        assert!(issue_token(&mut tokens, "b", 4, 4, 2));
+        assert_eq!(tokens.len(), 2);
+        assert_eq!(tokens["b"].seated, Some(4));
     }
 }

@@ -1,6 +1,6 @@
 //! `kfm-lobby`: the lobby service binary (docs/lobby-protocol.md §8).
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::process::ExitCode;
 use std::time::Duration;
 
@@ -32,6 +32,44 @@ struct Args {
     /// Milliseconds a socket may wait before its first message (testing).
     #[arg(long, hide = true, default_value_t = 10_000)]
     first_message_timeout_ms: u64,
+
+    /// A proxy (Caddy) whose X-Forwarded-For names the client; repeatable.
+    /// Without one every client counts as its TCP peer address, so behind a
+    /// proxy all clients would share the proxy's limits.
+    #[arg(long = "trusted-proxy", value_name = "IP")]
+    trusted_proxies: Vec<IpAddr>,
+
+    /// Open client sockets per client address.
+    #[arg(long, default_value_t = 32)]
+    max_connections_per_address: usize,
+
+    /// Live rooms one client address may have created.
+    #[arg(long, default_value_t = 4)]
+    max_rooms_per_address: usize,
+
+    /// create and join requests per client address and minute (also the burst).
+    #[arg(long, default_value_t = 30.0)]
+    requests_per_minute: f64,
+
+    /// Joins refused unknown_code or bad_token per client address: the burst...
+    #[arg(long, default_value_t = 10.0)]
+    failed_joins_burst: f64,
+
+    /// ... and the sustained rate per minute after it.
+    #[arg(long, default_value_t = 1.0)]
+    failed_joins_per_minute: f64,
+
+    /// Tokens a room keeps for rejoins (the oldest unseated one makes way).
+    #[arg(long, default_value_t = 128)]
+    max_tokens_per_room: usize,
+
+    /// Seconds a room that no game connection reached is held.
+    #[arg(long, default_value_t = 60)]
+    unused_room_ttl_seconds: u64,
+
+    /// The unused-room hold in milliseconds; overrides the seconds (testing).
+    #[arg(long, hide = true)]
+    unused_room_ttl_ms: Option<u64>,
 
     /// Log filter: a level (error, warn, info, debug, trace) or a tracing directive.
     #[arg(long, default_value = "info")]
@@ -71,9 +109,23 @@ fn main() -> ExitCode {
         Some(ms) => Duration::from_millis(ms),
         None => Duration::from_secs(args.room_ttl_seconds),
     };
-    let config = LobbyConfig::new(secret)
+    let unused_ttl = match args.unused_room_ttl_ms {
+        Some(ms) => Duration::from_millis(ms),
+        None => Duration::from_secs(args.unused_room_ttl_seconds),
+    };
+    let mut config = LobbyConfig::new(secret)
         .with_room_ttl(ttl)
-        .with_first_message_timeout(Duration::from_millis(args.first_message_timeout_ms));
+        .with_first_message_timeout(Duration::from_millis(args.first_message_timeout_ms))
+        .with_trusted_proxies(args.trusted_proxies)
+        .with_unused_room_ttl(unused_ttl);
+    config.max_connections_per_address = args.max_connections_per_address;
+    config.max_rooms_per_address = args.max_rooms_per_address;
+    config.requests_per_minute = args.requests_per_minute;
+    config.requests_burst = args.requests_per_minute;
+    config.failed_joins_burst = args.failed_joins_burst;
+    config.failed_joins_per_minute = args.failed_joins_per_minute;
+    config.max_tokens_per_room = args.max_tokens_per_room;
+    let proxies = format!("{:?}", config.trusted_proxies);
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -90,6 +142,8 @@ fn main() -> ExitCode {
         tracing::info!(
             listen = %listener.local_addr()?,
             room_ttl_ms = ttl.as_millis() as u64,
+            unused_room_ttl_ms = unused_ttl.as_millis() as u64,
+            trusted_proxies = %proxies,
             "kfm-lobby listening"
         );
         kfm_lobby::serve(config, listener, async {

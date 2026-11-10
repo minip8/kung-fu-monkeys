@@ -18,7 +18,11 @@
 //   - `room` / `room_closed`: the room code (room()); the host decides what
 //     a new room means (kfm_server restarts the match when no human is
 //     connected, spec §6 point 5);
-//   - setCapacity() sends `capacity` when the value changes.
+//   - setCapacity() sends `capacity` when the value changes;
+//   - v1.3: `register` carries `version`; when the lobby's `registered` names
+//     1.3 or later, the link reports `players` (the room's lobby peers with
+//     both data channels open) whenever that count changes, which the lobby
+//     uses to hold the room and to release one no game connection reached.
 // Once registered, a frame it cannot use (over the size limit, not a flat
 // object of strings, a known message missing a key) is ignored and counted
 // (ignoredFrames()), never a reason to drop the link: the lobby is trusted
@@ -123,6 +127,8 @@ class LobbyLink {
   [[nodiscard]] bool acceptsToken(std::span<const std::byte> token) const;
 
   [[nodiscard]] LobbyLinkState state() const;
+  // The lobby's `registered` said v1.3 or later (it takes `players`).
+  [[nodiscard]] bool lobbySpeaksV13() const;
   // The room this server hosts now, if any.
   [[nodiscard]] std::optional<std::string> room() const;
   // Lobby peers mapped to transport peers now.

@@ -113,6 +113,8 @@ std::string lobbyErrorText(std::string_view error, const LobbyTarget& target) {
     if (reason == "bad_request") return "The lobby did not understand the request";
     if (reason == "server_gone") return room + "'s server went away";
     if (reason == "bad_token") return room + " does not know this player any more";  // v1.2
+    // v1.3: the client's address is over the lobby's limits.
+    if (reason == "limited") return "Too many attempts from this network: wait a minute";
     return "The lobby refused: " + std::string(reason);
   }
   if (error.starts_with(kClosed)) {

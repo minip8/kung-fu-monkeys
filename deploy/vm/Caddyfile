@@ -2,6 +2,13 @@
 # Encrypt for the lobby's name, WebSocket upgrades proxied to kfm-lobby on
 # loopback. KFM_LOBBY_DOMAIN comes from /etc/kfm/kfm.env through the drop-in
 # install.sh writes (caddy.service.d/kfm.conf); the default is a placeholder.
+#
+# The lobby limits clients per address (docs/lobby-protocol.md §7) and trusts
+# the X-Forwarded-For of 127.0.0.1 only (kfm-lobby.service --trusted-proxy).
+# header_up sets it to the address Caddy saw, replacing whatever the client
+# sent, so the lobby's "last entry" is always Caddy's own.
 {$KFM_LOBBY_DOMAIN:lobby.example.com} {
-	reverse_proxy 127.0.0.1:8080
+	reverse_proxy 127.0.0.1:8080 {
+		header_up X-Forwarded-For {remote_host}
+	}
 }

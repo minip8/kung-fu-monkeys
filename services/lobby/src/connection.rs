@@ -2,6 +2,7 @@
 //! flat-object rule), writes what the state queues for it, and runs the
 //! client (§3) or server (§5) side of the protocol.
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -10,41 +11,10 @@ use tokio::sync::mpsc;
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
+use crate::limits::Bucket;
 use crate::lobby::{Lobby, Out, Refusal, Registration, Seat, Tx};
 use crate::protocol::{self, Fields, CLOSE_NORMAL, CLOSE_PROTOCOL_ERROR};
 use crate::LobbyConfig;
-
-/// Token bucket: `rate` messages per second, `burst` at most.
-struct Bucket {
-    tokens: f64,
-    rate: f64,
-    burst: f64,
-    last: Instant,
-}
-
-impl Bucket {
-    fn new(config: &LobbyConfig) -> Self {
-        Bucket {
-            tokens: config.rate_burst,
-            rate: config.rate_per_second,
-            burst: config.rate_burst,
-            last: Instant::now(),
-        }
-    }
-
-    fn take(&mut self) -> bool {
-        let now = Instant::now();
-        let elapsed = now.duration_since(self.last).as_secs_f64();
-        self.last = now;
-        self.tokens = (self.tokens + elapsed * self.rate).min(self.burst);
-        if self.tokens >= 1.0 {
-            self.tokens -= 1.0;
-            true
-        } else {
-            false
-        }
-    }
-}
 
 enum Event {
     /// A text frame that passed the rate and size limits.
@@ -88,7 +58,7 @@ impl Conn {
             socket,
             tx,
             rx,
-            bucket: Bucket::new(config),
+            bucket: Bucket::new(config.rate_per_second, config.rate_burst),
             max_frame_bytes: config.max_frame_bytes,
         }
     }
@@ -199,9 +169,30 @@ fn get<'a>(fields: &'a Fields, key: &str) -> Option<&'a str> {
     fields.get(key).map(String::as_str)
 }
 
+/// Holds one of an address's connections (§7) until dropped.
+struct Admitted {
+    lobby: Arc<Lobby>,
+    addr: IpAddr,
+}
+
+impl Drop for Admitted {
+    fn drop(&mut self) {
+        self.lobby.disconnect(self.addr);
+    }
+}
+
 /// `/client`: one request, one reply, then signaling until the socket closes.
-pub(crate) async fn client(lobby: Arc<Lobby>, socket: WebSocket) {
+/// `addr` is the client's address (`limits::client_address`).
+pub(crate) async fn client(lobby: Arc<Lobby>, socket: WebSocket, addr: IpAddr) {
     let mut conn = Conn::new(socket, &lobby.config);
+    // Over the address's connection limit: refused at once, before reading.
+    if let Err(reason) = lobby.connect(addr) {
+        return conn.finish("client", Ending::Refuse(reason)).await;
+    }
+    let _admitted = Admitted {
+        lobby: Arc::clone(&lobby),
+        addr,
+    };
     let deadline = Instant::now() + lobby.config.first_message_timeout;
     let fields = match conn.first(deadline).await {
         Ok(text) => protocol::parse(&text),
@@ -229,14 +220,22 @@ pub(crate) async fn client(lobby: Arc<Lobby>, socket: WebSocket) {
             }
             return;
         }
-        (Some("create"), Some(region), _) => lobby.create(conn.tx.clone(), region, build, content),
+        (Some("create"), Some(region), _) => lobby
+            .admit_request(addr, false)
+            .and_then(|()| lobby.create(conn.tx.clone(), Some(addr), region, build, content)),
         (Some("join"), _, Some(code)) => {
             let token = get(&fields, "token");
-            if token.is_some_and(|t| !protocol::valid_token(t)) {
-                Err(Refusal::BadToken)
-            } else {
-                lobby.join(conn.tx.clone(), code, build, content, token)
+            let result = lobby.admit_request(addr, true).and_then(|()| {
+                if token.is_some_and(|t| !protocol::valid_token(t)) {
+                    Err(Refusal::BadToken)
+                } else {
+                    lobby.join(conn.tx.clone(), code, build, content, token)
+                }
+            });
+            if matches!(result, Err(Refusal::UnknownCode | Refusal::BadToken)) {
+                lobby.failed_join(addr);
             }
+            result
         }
         _ => Err(Refusal::BadRequest),
     };
@@ -304,6 +303,7 @@ fn registration(fields: &Fields) -> Option<Registration> {
         build: get(fields, "build")?.to_owned(),
         content: get(fields, "content")?.to_owned(),
         capacity: get(fields, "capacity")?.parse::<u32>().ok()?,
+        reports_players: get(fields, "version").is_some_and(protocol::at_least_v1_3),
     })
 }
 
@@ -341,7 +341,9 @@ pub(crate) async fn server(lobby: Arc<Lobby>, socket: WebSocket) {
         Ok(id) => id,
         Err(reason) => return conn.finish("server", Ending::Refuse(reason)).await,
     };
-    let ending = if conn.send(protocol::encode(&[("type", "registered")])).await {
+    // v1.3: `version` tells the server it may send `players` (§5).
+    let registered = protocol::encode(&[("type", "registered"), ("version", protocol::VERSION)]);
+    let ending = if conn.send(registered).await {
         relay_server(&lobby, &mut conn, id).await
     } else {
         Ending::Gone
@@ -378,6 +380,13 @@ async fn relay_server(lobby: &Arc<Lobby>, conn: &mut Conn, id: u64) -> Ending {
                             return Ending::ProtocolError("bad capacity");
                         };
                         lobby.set_capacity(id, capacity);
+                    }
+                    (Some("players"), _) => {
+                        let count = get(&fields, "count").and_then(|c| c.parse::<u32>().ok());
+                        let Some(count) = count else {
+                            return Ending::ProtocolError("bad players");
+                        };
+                        lobby.set_players(id, count);
                     }
                     _ => return Ending::ProtocolError("unexpected message"),
                 }

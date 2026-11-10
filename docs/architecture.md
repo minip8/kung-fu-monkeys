@@ -5675,6 +5675,24 @@ still seated under the token (its owner noticed the drop first) is closed with
 refused `bad_token`. Re-signaling to the server directly was the alternative and is not
 taken: a server in lobby mode has no public signaling socket, and a second path would bypass
 the lobby's token set. A v1.1 lobby ignores the key and seats the client as a new player.
+Lobby protocol v1.3, part one (v0.70, the audit's abuse limits): `create` is unauthenticated
+and reserves a whole server process, and a room code is the only admission control, so the
+lobby now limits each client address (an open-socket cap, a cap on live rooms it created, a
+token bucket on `create`/`join` and a separate one on joins refused `unknown_code` or
+`bad_token`, which bounds code guessing), refused with the new reason `limited`; the address
+is the TCP peer unless that peer is a configured `--trusted-proxy` (Caddy on 127.0.0.1, whose
+`X-Forwarded-For` it then reads, last entry only). A room keeps at most 128 tokens, evicting
+the oldest unseated one. A v1.3 server names its version in `register`, learns the lobby's from
+`registered`, and reports `players` (its room's peers with both data channels open) on every
+change; the lobby holds a room while that is above zero, counts it toward `full`, and holds a
+room no game connection ever reached for one minute instead of ten, from its creation as well
+as from its last socket, so a create that never plays frees its server quickly while a running
+match keeps the full TTL for rejoins. Rooms of an older server keep the v1.2 hold. The
+reliable data channel lane also gained a send-buffer cap (1 MiB by default,
+`WebRtcServerConfig::maxReliableBufferedBytes`): a peer past it is dropped, so one that stops
+reading cannot grow the server's memory. The limits are flags with these defaults
+(`docs/lobby-protocol.md` §7-§8); the deploy units pass `--trusted-proxy 127.0.0.1` and Caddy
+sets `X-Forwarded-For` itself.
 
 ### 13.6 Sequencing
 

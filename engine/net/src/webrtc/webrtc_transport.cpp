@@ -273,6 +273,7 @@ struct WebRtcTransport::Impl {
   bool iceUdpMux{false};
   uint16_t maxPeers{kMaxPeers};
   uint64_t connectTimeoutNs{kDefaultWebRtcConnectTimeoutMs * kNsPerMs};
+  size_t maxReliableBuffered{kDefaultMaxReliableBufferedBytes};
   std::vector<std::byte> token;
   uint16_t listenPort{0};
   bool externalSignaling{false};        // server: the host relays signaling
@@ -812,6 +813,15 @@ struct WebRtcTransport::Impl {
         ++stats.sendErrors;
         return;
       }
+      if (lane == Lane::Reliable && dc->bufferedAmount() > maxReliableBuffered) {
+        // A reliable message cannot be dropped and the peer is not draining:
+        // let it go before its backlog grows without bound.
+        lastError = std::format("peer {}: over {} reliable bytes waiting to be sent; dropped",
+                                peer.value, maxReliableBuffered);
+        ++stats.sendErrors;
+        dropPeer(peer.value, lastPollNs, nullptr);
+        return;
+      }
       const bool ok = dc->send(data.data(), data.size());
 #ifdef __EMSCRIPTEN__
       // datachannel-wasm: false means the browser refused the message.
@@ -850,6 +860,7 @@ std::expected<std::unique_ptr<WebRtcTransport>, std::string> WebRtcTransport::cr
     impl->iceUdpMux = config.iceUdpMux;
     impl->maxPeers = std::min(config.maxPeers, kMaxPeers);
     impl->connectTimeoutNs = uint64_t{config.connectTimeoutMs} * kNsPerMs;
+    impl->maxReliableBuffered = config.maxReliableBufferedBytes;
     impl->externalSignaling = config.externalSignaling;
     if (config.externalSignaling) return std::make_unique<WebRtcTransport>(std::move(impl));
 

@@ -36,6 +36,27 @@ constexpr uint64_t kNsPerMs = 1'000'000;
 // ignored as such (docs/lobby-protocol.md §7) instead of reaching the decoder
 // cut short. Sends are held to signaling::kMaxMessageBytes by send().
 constexpr size_t kSocketMessageLimit = size_t{1024} * 1024;
+// The protocol version this link speaks (`register`'s `version`, spec v1.3).
+constexpr std::string_view kVersion = "1.3";
+
+// Whether a `version` value ("1.3", "1.10", "2.0") is 1.3 or later.
+[[nodiscard]] bool atLeastV13(std::string_view v) {
+  const auto number = [](std::string_view s) -> std::optional<uint32_t> {
+    if (s.empty() || s.size() > 6) return std::nullopt;
+    uint32_t n = 0;
+    for (const char c : s) {
+      if (c < '0' || c > '9') return std::nullopt;
+      n = (n * 10) + static_cast<uint32_t>(c - '0');
+    }
+    return n;
+  };
+  const size_t dot = v.find('.');
+  const auto major = number(v.substr(0, dot));
+  if (!major) return false;
+  if (dot == std::string_view::npos) return *major >= 2;
+  const auto minor = number(v.substr(dot + 1));
+  return minor && (*major > 1 || (*major == 1 && *minor >= 3));
+}
 
 enum class SocketEventKind : uint8_t { Open = 0, Closed, Text };
 
@@ -77,6 +98,9 @@ struct LobbyLink::Impl {
   uint32_t attempts{0};
   uint16_t capacity{0};
   std::optional<uint16_t> sentCapacity;
+  // v1.3: the lobby's `registered` named a version that takes `players`.
+  bool lobbyV13{false};
+  std::optional<uint32_t> sentPlayers;  // the last `players` count, per room
 
   struct LobbyPeer {
     PeerId peer{PeerId::invalid()};
@@ -174,17 +198,38 @@ struct LobbyLink::Impl {
     sentCapacity = capacity;
   }
 
+  // The room's players on their game connection: lobby peers whose data
+  // channels are both open.
+  [[nodiscard]] uint32_t connectedPlayers() const {
+    return static_cast<uint32_t>(std::ranges::count_if(
+        byLobby, [&](const auto& entry) { return transport->isConnected(entry.second.peer); }));
+  }
+
+  // v1.3 `players`, to a lobby that takes it, when the count changes (an
+  // older lobby would take the unknown type as a protocol error).
+  void sendPlayersIfChanged() {
+    if (state != LobbyLinkState::Registered || !lobbyV13 || !room) return;
+    const uint32_t n = connectedPlayers();
+    if (sentPlayers == n) return;
+    const std::string c = std::to_string(n);
+    const std::array<signaling::Field, 2> f = {signaling::Field{"type", "players"},
+                                               signaling::Field{"count", c}};
+    send(f);
+    sentPlayers = n;
+  }
+
   void sendRegister() {
     const std::string build = std::format("{:08x}", config.buildId);
     const std::string content = std::format("{:08x}", config.contentHash);
     const std::string cap = std::to_string(capacity);
-    const std::array<signaling::Field, 7> f = {
+    const std::array<signaling::Field, 8> f = {
         signaling::Field{"type", "register"},      signaling::Field{"secret", config.secret},
         signaling::Field{"region", config.region}, signaling::Field{"name", config.name},
         signaling::Field{"build", build},          signaling::Field{"content", content},
-        signaling::Field{"capacity", cap}};
+        signaling::Field{"capacity", cap},         signaling::Field{"version", kVersion}};
     send(f);
     sentCapacity = capacity;
+    lobbyV13 = false;
     state = LobbyLinkState::Registering;
   }
 
@@ -248,6 +293,7 @@ struct LobbyLink::Impl {
       if (type == "registered") {
         state = LobbyLinkState::Registered;
         backoffMs = 0;
+        lobbyV13 = atLeastV13(o->get("version").value_or(""));
         out.push_back(LobbyEvent{LobbyEventKind::Registered, {}, {}, {}, false, 0});
         sendCapacityIfChanged();
       } else if (type == "refused") {
@@ -271,6 +317,7 @@ struct LobbyLink::Impl {
         return;
       }
       room = *code;
+      sentPlayers = 0;  // a new room starts with nobody connected
       out.push_back(LobbyEvent{LobbyEventKind::RoomAssigned, {}, {}, *code, false, 0});
     } else if (type == "peer") {
       const auto peer = need("peer");
@@ -341,6 +388,7 @@ struct LobbyLink::Impl {
       send(f);
     }
     sendCapacityIfChanged();
+    sendPlayersIfChanged();
   }
 
   void poll(uint64_t nowNs) {
@@ -440,6 +488,10 @@ std::vector<LobbyEvent> LobbyLink::poll(uint64_t nowNs) {
 
 void LobbyLink::setCapacity(uint16_t capacity) {
   impl_->capacity = capacity;
+}
+
+bool LobbyLink::lobbySpeaksV13() const {
+  return impl_->lobbyV13;
 }
 
 bool LobbyLink::acceptsToken(std::span<const std::byte> token) const {

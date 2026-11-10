@@ -3,7 +3,8 @@
 // server socket (/server: register with a secret, room, peer, signal relay,
 // peer_gone both ways, capacity) and client sockets (/client: regions (v1.1),
 // create/join, joined/refused, signaling relay, closed; v1.2: a join with a
-// token the room issued rejoins under it). One room at a time, code
+// token the room issued rejoins under it; v1.3: `registered` names the
+// version unless asLegacyLobby(), and `players` is recorded). One room at a time, code
 // "ABCDE", or "FGHJK" for the second, and so on. Test code only: it runs on
 // libdatachannel's callback threads under one recursive mutex and uses
 // exceptions freely.
@@ -101,6 +102,17 @@ class FakeLobby {
   [[nodiscard]] size_t clientsInRoom() const {
     return locked([&] { return clients_.size(); });
   }
+  // v1.3: the server's last `players` count (empty: none received) and how
+  // many it sent; the `version` its `register` carried.
+  [[nodiscard]] std::string players() const {
+    return locked([&] { return players_; });
+  }
+  [[nodiscard]] int playersMessages() const {
+    return locked([&] { return playersMessages_; });
+  }
+  [[nodiscard]] std::string serverVersion() const {
+    return locked([&] { return version_; });
+  }
 
   // --- what the tests do ---
   // The room expires: room_closed to the server (its clients, if any, get closed).
@@ -121,6 +133,12 @@ class FakeLobby {
   void answerRegions(std::string list, std::optional<std::string> free) {
     const std::scoped_lock lock(mutex_);
     regionsReply_ = std::pair{std::move(list), std::move(free)};
+  }
+  // From now on behave as a v1.2 lobby: `registered` without `version`, and
+  // a `players` message (which a v1.2 lobby never expects) is counted as such.
+  void asLegacyLobby() {
+    const std::scoped_lock lock(mutex_);
+    legacy_ = true;
   }
   // A raw text frame to the server's socket, whatever it holds.
   void sendServerRaw(const std::string& text) {
@@ -239,7 +257,12 @@ class FakeLobby {
       build_ = std::string(o->get("build").value_or(""));
       content_ = std::string(o->get("content").value_or(""));
       capacity_ = std::string(o->get("capacity").value_or(""));
-      send(ws, {{"type", "registered"}});
+      version_ = std::string(o->get("version").value_or(""));
+      if (legacy_) {
+        send(ws, {{"type", "registered"}});
+      } else {
+        send(ws, {{"type", "registered"}, {"version", "1.3"}});
+      }
       return;
     }
     if (ws != serverWs_) return;
@@ -262,6 +285,9 @@ class FakeLobby {
       }
     } else if (type == "capacity") {
       capacity_ = std::string(o->get("capacity").value_or(""));
+    } else if (type == "players") {
+      ++playersMessages_;
+      players_ = std::string(o->get("count").value_or(""));
     }
   }
 
@@ -362,6 +388,10 @@ class FakeLobby {
   std::string build_;
   std::string content_;
   std::string capacity_;
+  std::string version_;
+  std::string players_;
+  int playersMessages_{0};
+  bool legacy_{false};
   int peerGoneFromServer_{0};
   int signalsFromServer_{0};
   std::optional<std::string> room_;

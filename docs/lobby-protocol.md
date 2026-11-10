@@ -1,4 +1,4 @@
-# Lobby protocol v1.2 (M6a, architecture v0.37 §13.5; v1.1: M6b, architecture v0.41; v1.2: M6b, architecture v0.44)
+# Lobby protocol v1.3 (M6a, architecture v0.37 §13.5; v1.1: M6b, architecture v0.41; v1.2: M6b, architecture v0.44; v1.3: architecture v0.70)
 
 The lobby service is the only public TCP endpoint. Browsers and native clients dial it to
 create or join a room and to exchange WebRTC signaling with the game server that hosts the
@@ -33,7 +33,9 @@ format shared by `services/lobby/` (Rust), `engine/net` (the transport's lobby m
   remembers every token it issued for a live room, and a `join` that presents one is a
   **rejoin**: the same player coming back under the same token (§3), so the game server's
   reconnect (it keeps a dropped player's slots reserved for its grace window, keyed on the
-  token) recognises it.
+  token) recognises it. v1.3: a room keeps at most 128 tokens (and never fewer than its 64
+  sockets); a join that would issue one more first forgets the oldest token no socket is
+  seated under, whose player can then no longer rejoin (`bad_token`).
 - **Peer id** (lobby-assigned, per server socket): a decimal string, unique for the lifetime of
   the server's socket, never reused on that socket. It is only a routing key between the lobby
   and the server; the transport's own `PeerId` is the server's business.
@@ -93,7 +95,12 @@ Refusal reasons: `unknown_code` (no live room), `full` (the room's open client s
 its server's `capacity`), `no_server` (no free server in that region, or the region is unknown), `mismatch`
 (`build`/`content` differ from the server's), `bad_request` (malformed, wrong first message,
 or a second request on the same socket), `server_gone` (the room's server dropped while the
-join was in flight), `bad_token` (v1.2: a rejoin with a token this room never issued).
+join was in flight), `bad_token` (v1.2: a rejoin with a token this room never issued),
+`limited` (v1.3: the client's address is over one of the limits of §7; it may be sent as soon
+as the socket opens, before the client's request, when the address has too many sockets open).
+
+Compatibility (v1.2 → v1.3, clients): `limited` is a new reason; a v1.2 client shows it as an
+unknown refusal ("The lobby refused: limited"). Nothing else changes on the client socket.
 
 Compatibility (v1.1 → v1.2): `token` is a new optional key of `join` and unknown keys are
 ignored, so a v1.1 lobby treats a rejoin as a plain join: a fresh token and a fresh player
@@ -134,11 +141,15 @@ First message (server → lobby):
  "build":"<8 hex>","content":"<8 hex>","capacity":"7"}
 ```
 
-`capacity` is the total number of human slots the process offers (max players minus the bots
+`version` (v1.3, optional) is the protocol version the server speaks, `"1.3"`; without it the
+lobby treats the server as v1.2 (it never sends `players`, below). `capacity` is the total number of human slots the process offers (max players minus the bots
 that keep their slots; a server whose bots yield to joining humans, kfm_server's room flow since
 architecture v0.44, offers max players), never net of connected humans: the lobby counts a room's occupancy itself by its open
-client sockets and refuses `full` once they reach `capacity`. `name` is free text for logs and `/healthz`. Reply: `{"type":"registered"}` or
-`{"type":"refused","reason":"bad_secret"|"bad_request"}` (then the socket closes).
+client sockets and refuses `full` once they reach `capacity`. `name` is free text for logs and `/healthz`. Reply: `{"type":"registered","version":"1.3"}` or
+`{"type":"refused","reason":"bad_secret"|"bad_request"}` (then the socket closes). The reply's
+`version` (v1.3) is the lobby's; a server sends the v1.3 messages (`players`) only to a lobby
+whose `registered` names 1.3 or later (a v1.2 lobby sends a bare `registered`, and would take
+an unknown message type after it as a protocol error).
 
 Then, lobby → server:
 
@@ -148,7 +159,7 @@ Then, lobby → server:
 | `{"type":"peer","peer":"7","token":"<32 hex>"}` | A client joined the room; `token` is what its `Hello` will carry. The server must accept it. Sent before any `signal` for that peer. |
 | `{"type":"signal","peer":"7","msg":"<signaling JSON as a string>"}` | A signaling message from that client. |
 | `{"type":"peer_gone","peer":"7"}` | The client's lobby socket closed (it left). The server forgets the peer and stops accepting its token, but the token stays the room's: a rejoin presents it and the lobby announces it again in a new `peer` (§2, §3). |
-| `{"type":"room_closed","code":"ABCDE"}` | The room expired (ten minutes after its last peer left) or every peer is gone and the lobby released it. The server is free for a new `room`. |
+| `{"type":"room_closed","code":"ABCDE"}` | The lobby released the room (§6: it expired, or no game connection reached it in time, v1.3). The server is free for a new `room`. |
 
 Server → lobby:
 
@@ -157,6 +168,14 @@ Server → lobby:
 | `{"type":"signal","peer":"7","msg":"<signaling JSON as a string>"}` | A signaling message for that client (`answer`, `candidate`). |
 | `{"type":"peer_gone","peer":"7"}` | The server dropped that peer (kick, protocol error, transport loss). The lobby sends the client `closed`/`kicked` and closes its socket. |
 | `{"type":"capacity","capacity":"5"}` | Optional: the total changed (a bot yielded a slot). Never sent on a human join or leave. The lobby uses the latest value for `full`. |
+| `{"type":"players","count":"2"}` | v1.3, only to a lobby whose `registered` named 1.3: how many of the room's players are connected over their game connection (both data channels open), sent whenever that number changes while the server hosts a room. The lobby holds a room while it is above 0 and counts it toward `full` (§6). A count that is not a decimal number is a protocol error. |
+
+Compatibility (v1.2 → v1.3, servers): `version` is a new key of `register` and of
+`registered`, and unknown keys are ignored, so a v1.2 lobby registers a v1.3 server as before
+and a v1.2 server's `registered` parses as before. A v1.3 server sends `players` only to a
+lobby that named 1.3, so a v1.2 lobby never sees it. A v1.2 server (no `version`) never sends
+`players`: a v1.3 lobby keeps the v1.2 hold for its rooms (the full TTL from the last socket,
+no early release) and counts their occupancy by sockets alone.
 
 ## 6. Room lifecycle
 
@@ -164,16 +183,27 @@ Server → lobby:
    and a matching `build`/`content` pair (lowest name first for determinism in tests), sends it
    `room`, then `peer` for the creator, then `joined` to the creator. Free servers in the
    region that all mismatch refuse `mismatch`; none at all refuses `no_server`.
-2. `join`: the code must name a live room; the number of open client sockets in the room must
-   be below the server's latest `capacity` (not for a rejoin, v1.2); `build`/`content` must
-   match the server's. On success `peer` to the server, then `joined` to the client. A rejoin
-   that replaces a seated socket first closes it (`closed`/`replaced`) and sends `peer_gone`.
-3. A client socket closing → `peer_gone` to the server. When the room has no client sockets,
-   an expiry timer of ten minutes starts; a join resets it. On expiry → `room_closed` to the
-   server and the code is free to reuse.
-4. A server socket closing → every client in its room gets `closed`/`server_gone` and is
+2. `join`: the code must name a live room; the room's occupancy must be below the server's
+   latest `capacity` (not for a rejoin, v1.2); `build`/`content` must match the server's. The
+   occupancy is the number of open client sockets in the room or, when it is higher, the
+   server's latest `players` (v1.3). On success `peer` to the server, then `joined` to the
+   client. A rejoin that replaces a seated socket first closes it (`closed`/`replaced`) and
+   sends `peer_gone`.
+3. A client socket closing → `peer_gone` to the server. When the room has no client sockets
+   and (v1.3) the server's latest `players` is 0, an expiry timer starts; a join or a
+   `players` above 0 resets it. On expiry → `room_closed` to the server and the code is free to
+   reuse. The timer is ten minutes (`--room-ttl-seconds`) for a room that was **used**, one
+   whose server has reported `players` above 0 at least once, or whose server predates v1.3
+   (it cannot say, so its rooms keep the v1.2 behaviour); a room of a v1.3 server that no game
+   connection has reached is held one minute (`--unused-room-ttl-seconds`).
+4. v1.3: a room of a v1.3 server that is not used one minute after its `create` is released
+   whatever its sockets: its clients get `closed`/`room_closed` and are closed, the server gets
+   `room_closed`. A real client connects within seconds (its own connect timeout is ten), so
+   this only frees a server held by a create that never meant to play. Rejoin is unaffected:
+   a running match's room is used, so a brief disconnect of everyone still has the full TTL.
+5. A server socket closing → every client in its room gets `closed`/`server_gone` and is
    closed; the room is gone immediately (no expiry).
-5. The server treats a `room` assignment that arrives while no human peers are connected as a
+6. The server treats a `room` assignment that arrives while no human peers are connected as a
    new group: it restarts the match (`NetServer::restartMatch`) so the new room starts fresh
    with the server's bots, not mid-match.
 
@@ -185,6 +215,21 @@ Server → lobby:
   closed. (Signaling is a few dozen messages per join.)
 - At most 64 open client sockets per room (the server's `capacity` is the real cap), at most
   1024 servers, at most 4096 rooms; beyond those the request is refused as below.
+- Per client address (v1.3), each configurable (§8), with these defaults: at most 32 open
+  `/client` sockets (the next is refused `limited` at once); at most 4 live rooms created by
+  the address (a `create` beyond is refused `limited`); 30 `create` and `join` requests a
+  minute, with a burst of 30 (`regions` is not counted); and 10 joins refused `unknown_code` or
+  `bad_token`, then one a minute (a `join` from an address out of guesses is refused `limited`
+  before its code is looked up, so codes cannot be enumerated faster than that). The lobby
+  tracks at most 65536 addresses; past that it forgets idle ones (nothing open, every budget
+  full), and refuses a new address `limited` if none is idle. Game servers are not counted
+  (they hold the secret).
+- The client address is the TCP peer's address, unless that peer is one of the configured
+  trusted proxies (`--trusted-proxy`, none by default): then it is the last entry of the
+  request's last `X-Forwarded-For` header, the one the proxy appended (entries before it come
+  from the client and are not trusted; a missing or unparsable header counts as the proxy). An
+  IPv4-mapped IPv6 address counts as its IPv4 address. Behind Caddy on the same host the lobby
+  runs with `--trusted-proxy 127.0.0.1`; without it every client would share Caddy's limits.
 - Every close initiated by the lobby uses WebSocket close code 1000 after the `refused` or
   `closed` message; protocol errors use 1002 with no message. A frame that is not a flat object
   of strings, a frame over the size limit, the rate limit and the first-message timeout are
@@ -214,3 +259,8 @@ Server → lobby:
 `kfm-lobby [--listen 127.0.0.1:8080] [--secret S | env KFM_LOBBY_SECRET] [--room-ttl-seconds 600]
 [--log-level info]`; `SENTRY_DSN` in the environment enables Sentry. `--secret` is required (an
 empty secret refuses to start). Caddy terminates TLS in front of `--listen`.
+
+v1.3 limits (§6, §7), with their defaults: `--trusted-proxy IP` (repeatable; none),
+`--max-connections-per-address 32`, `--max-rooms-per-address 4`, `--requests-per-minute 30`
+(also the burst), `--failed-joins-burst 10`, `--failed-joins-per-minute 1`,
+`--max-tokens-per-room 128`, `--unused-room-ttl-seconds 60`.

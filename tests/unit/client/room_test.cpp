@@ -375,6 +375,9 @@ TEST_CASE("lobby refusals and closes in plain words", "[client][room][status]") 
   CHECK(lobbyErrorText("lobby refused: bad_token", join) ==
         "Room ABCDE does not know this player any more");
   CHECK(lobbyErrorText("lobby closed: replaced", join) == "Joined Room ABCDE again from elsewhere");
+  // v1.3: an address over the lobby's limits.
+  CHECK(lobbyErrorText("lobby refused: limited", create) ==
+        "Too many attempts from this network: wait a minute");
   CHECK(lobbyErrorText("lobby connection closed", join) == "Lost the connection to the lobby");
   CHECK(lobbyErrorText("", join).empty());
   CHECK(lobbyErrorText("ICE failed", join).empty());
