@@ -55,8 +55,10 @@ name: Deploy
 # working after v0.61 ships. Each versioned copy is self-contained (the page
 # references assets/, config.js and favicon.svg relatively) and carries the
 # config.js of its release, i.e. the lobby URL at that release.
-# The run graph: release -> arena -> arena-sums; images -> vms -> web, where
-# web also needs release (it uploads the site asset before publishing).
+# The run graph: release -> arena -> arena-sums -> bots-bump; images -> vms ->
+# web, where web also needs release (it uploads the site asset before
+# publishing). bots-bump (v0.71) opens the engine pin bump in the bots
+# repository as a pull request once the release has its kfm_arena archives.
 # A manual run creates no release and uploads no release asset: arena and
 # arena-sums keep their archives as workflow artifacts (sha-<short> in the
 # names) and web publishes the branch's build at the root plus the earlier
@@ -71,7 +73,11 @@ name: Deploy
 #              GCP_PROJECT_ID    the GCP project of the VMs
 #              GCP_WORKLOAD_IDENTITY_PROVIDER  the provider's full resource name
 #              GCP_DEPLOY_SERVICE_ACCOUNT      the deploy service account's email
+#              KFM_RELEASE_BOT_APP_ID  the kfm-release-bot GitHub App's id (Contents
+#                                and Pull requests: write, installed on the bots
+#                                repository only); unset: no bots-bump
 #   secrets    CLOUDFLARE_API_TOKEN (Cloudflare Pages: Edit), CLOUDFLARE_ACCOUNT_ID
+#              KFM_RELEASE_BOT_PRIVATE_KEY  that App's private key (the .pem's text)
 #              GITHUB_TOKEN (automatic): GHCR, and the release (contents: write)
 on:
   push:
@@ -557,3 +563,118 @@ jobs:
             --branch=${{ github.ref_type == 'tag' && 'main' || github.ref_name }}
             --commit-hash=${{ github.sha }}
           gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+  bots-bump:
+    # The bots repository pins the engine release its SDK header, its examples
+    # and the ladder's baked-in kfm_arena come from (its engine.lock; the
+    # ladder runs a new engine only after that repository's own release). On a
+    # tag, once the release has its kfm_arena archives and SHA256SUMS, this
+    # opens the pin bump there as a pull request: it runs that repository's
+    # tools/bump_engine.sh (the mechanical edits; it says when the SDK header
+    # changed, which is when the C++ layer needs a person) and pushes
+    # chore/engine-<tag> as the kfm-release-bot GitHub App, whose commits,
+    # unlike GITHUB_TOKEN's, start that repository's CI, so the examples are
+    # played with the new runner before anyone merges. Merging and releasing
+    # the ladder stay a person's. Skipped without KFM_RELEASE_BOT_APP_ID, and
+    # for a tag that is not vX.Y.Z; a re-run updates the branch and keeps the
+    # pull request.
+    name: bots repository engine bump
+    needs: arena-sums
+    if: >-
+      !cancelled()
+      && github.ref_type == 'tag'
+      && needs.arena-sums.result == 'success'
+      && vars.KFM_RELEASE_BOT_APP_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      BOTS_REPO: ${{ github.repository_owner }}/kung-fu-monkeys-bots
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Is this a release the bots repository can pin?
+        id: tag
+        run: |
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "pin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::$TAG is not vX.Y.Z: no engine bump"
+            echo "pin=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: A token for the bots repository
+        if: steps.tag.outputs.pin == 'true'
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.KFM_RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.KFM_RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: kung-fu-monkeys-bots
+      # The engine with its history: the bump records the commit that last
+      # changed the SDK header.
+      - uses: actions/checkout@v4
+        if: steps.tag.outputs.pin == 'true'
+        with:
+          path: engine
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        if: steps.tag.outputs.pin == 'true'
+        with:
+          repository: ${{ env.BOTS_REPO }}
+          token: ${{ steps.app.outputs.token }}
+          path: bots
+      - name: Bump the pin and open the pull request
+        if: steps.tag.outputs.pin == 'true'
+        working-directory: bots
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_REPO: ${{ env.BOTS_REPO }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          KFM_ENGINE_DIR: ${{ github.workspace }}/engine
+          ENGINE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          [[ -x tools/bump_engine.sh ]] || {
+            echo "::error::$BOTS_REPO has no tools/bump_engine.sh on its default branch"
+            exit 1
+          }
+          base="$(git rev-parse --abbrev-ref HEAD)"
+          branch="chore/engine-$TAG"
+          KFM_ENGINE_REPO="$ENGINE_REPO" tools/bump_engine.sh "$TAG" | tee "$RUNNER_TEMP/bump.log"
+          if git diff --quiet; then
+            echo "::notice::$BOTS_REPO is already pinned to $TAG"
+            exit 0
+          fi
+          bot_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          {
+            echo "chore: pin the engine to $TAG"
+            echo
+            echo "tools/bump_engine.sh $TAG, run by the engine's release workflow:"
+            echo
+            cat "$RUNNER_TEMP/bump.log"
+          } > "$RUNNER_TEMP/message.txt"
+          git commit --all --quiet --file "$RUNNER_TEMP/message.txt"
+          git push --force origin "$branch"
+          if [[ -n "$(gh pr list --head "$branch" --state open --json number --jq '.[].number')" ]]; then
+            echo "::notice::the pull request of $branch is open: its branch was updated"
+            exit 0
+          fi
+          {
+            echo "The engine released [$TAG](https://github.com/$ENGINE_REPO/releases/tag/$TAG)."
+            echo "This is the mechanical part of the pin bump, from \`tools/bump_engine.sh $TAG\`:"
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/bump.log"
+            echo '```'
+            echo
+            echo "- CI plays the examples with the new \`kfm_arena\`."
+            echo "- If the header changed, bring \`sdk/cpp/kfm_bot.hpp\`, the examples and the"
+            echo "  prose that describes the contest along on this branch before merging."
+            echo "- The ladder runs the new engine only after this repository's own release."
+          } > "$RUNNER_TEMP/body.md"
+          gh pr create --base "$base" --head "$branch" \
+            --title "chore: pin the engine to $TAG" --body-file "$RUNNER_TEMP/body.md"

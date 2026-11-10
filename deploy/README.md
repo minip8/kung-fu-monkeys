@@ -167,6 +167,26 @@ upload with four reference bots and with `tests/fixtures/bots/echo.wasm`. The la
 and the VMs and never wait for them; a manual run builds the same archives (named
 `sha-<short>` for the tag) as workflow artifacts and creates no release.
 
+**The bots repository's pin.** The ladder runs the engine release named in the bots
+repository's `engine.lock`, baked into its service image, so an engine fix reaches the ladder
+only when that pin moves and the bots repository is released. The workflow's last job,
+`bots-bump`, opens the first half as a pull request: on a `vX.Y.Z` tag, once `SHA256SUMS` is
+on the release, it checks out the bots repository, runs its `tools/bump_engine.sh <tag>` (the
+tag's commit into `engine.lock`, the SDK header copy, the lines of its docs that name the pin)
+and pushes `chore/engine-<tag>`. The pull request is the bots CI's to check (it plays the
+examples with the new `kfm_arena`) and yours to merge: when the script's output in the pull
+request says the header changed, bring `sdk/cpp/kfm_bot.hpp` and the examples along on that
+branch first. Releasing the ladder afterwards is a tag of the bots repository, by hand.
+
+The job authenticates as the `kfm-release-bot` GitHub App (a commit pushed with `GITHUB_TOKEN`
+would start no CI there). Set it up once: create the App on the account that owns both
+repositories (webhook off; repository permissions Contents and Pull requests, read and write;
+installable only on this account), install it on `kung-fu-monkeys-bots` only, and store its
+App ID as this repository's variable `KFM_RELEASE_BOT_APP_ID` and a generated private key (the
+`.pem`'s text) as the secret `KFM_RELEASE_BOT_PRIVATE_KEY`. Without the variable the job is
+skipped and the bump is by hand (`tools/bump_engine.sh` in a clone of the bots repository). A
+re-run of the workflow updates the branch and keeps the open pull request.
+
 **Versioned pages.** A replay is viewed in the client of its own release (§8 "Replays"), so the
 site serves every release under its tag, `https://play.example.com/v0.60/` (keep the trailing
 slash: the page's references are relative), beside the root, which serves the release being
