@@ -1574,7 +1574,11 @@ current tick's, so rotation never costs anything (§5.12).
   the current phase going past its duration, `buttonHeld` being the slot's button in this
   tick's intent; `phaseTicks` saturates at 65535, so a phase held for good never wraps. The table is a `constexpr`
   array (no startup registration, no mutable static state). Adding an ability touches a new behaviour file, a content def, one registry line and
-  a scenario test.
+  a scenario test. Every hook is called unconditionally, so the registry `static_assert`s that
+  every row (one per `AbilityKind::kCount`) has every hook set, with the hook count pinned by
+  `fieldCount<AbilityBehavior>()` (v0.70): a forgotten row or hook is a compile error, not a
+  null call at the first dispatch. The mode (`ModeBehavior`, §5.3) and space
+  (`SpaceBehavior`, §5.12) registries assert the same.
 - Players have N ability slots. Base kit is {Dash, Throw}. Buttons belong to slots, not to
   kinds (v0.21, `slotButton()`): slot 0 fires on `Button::Dash`, slot 1 on `Button::Throw`,
   whatever kind the slot runs. The catch rule and the tie-break (§5.11) read the press time of

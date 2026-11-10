@@ -2,8 +2,10 @@
 // ModeKind, in enum order, and the shared no-op hooks (v0.31).
 #include "kfm/sim/modes/registry.hpp"
 
+#include "kfm/core/field_count.hpp"
 #include "kfm/sim/modes/modes.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 
@@ -25,6 +27,17 @@ constexpr std::array<ModeBehavior, static_cast<size_t>(ModeKind::kCount)> kBehav
     hillBehavior(),            // ModeKind::Hill (v0.33)
     captureBehavior(),         // ModeKind::Capture (v0.33)
 };
+
+// Every hook is called unconditionally: a row missing from the list above (a
+// new ModeKind) or a behaviour that leaves a hook unset is a null call at the
+// first dispatch, so it is a compile error instead.
+constexpr bool rowComplete(const ModeBehavior& b) {
+  return b.onRoundStart != nullptr && b.onPlaying != nullptr && b.onEliminated != nullptr &&
+         b.onPickupTaken != nullptr;
+}
+static_assert(fieldCount<ModeBehavior>() == 4, "check the new hook in rowComplete");
+static_assert(std::ranges::all_of(kBehaviors, rowComplete),
+              "every ModeKind needs a row with every hook set");
 
 }  // namespace
 

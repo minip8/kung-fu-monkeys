@@ -2,6 +2,7 @@
 // AbilityKind, in enum order.
 #include "kfm/sim/abilities/registry.hpp"
 
+#include "kfm/core/field_count.hpp"
 #include "kfm/sim/abilities/blink.hpp"
 #include "kfm/sim/abilities/call.hpp"
 #include "kfm/sim/abilities/dash.hpp"
@@ -9,6 +10,7 @@
 #include "kfm/sim/abilities/slam.hpp"
 #include "kfm/sim/abilities/throw.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 
@@ -36,6 +38,18 @@ constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> 
     parryBehavior(),  // AbilityKind::Parry
     callBehavior(),   // AbilityKind::Call (v0.35)
 };
+
+// AbilitySystem calls every hook unconditionally: a row missing from the
+// list above (a new AbilityKind) or a behaviour that leaves a hook unset is
+// a null call at the first dispatch, so it is a compile error instead.
+constexpr bool rowComplete(const AbilityBehavior& b) {
+  return b.canActivate != nullptr && b.onActivate != nullptr && b.onTick != nullptr &&
+         b.onPhaseChange != nullptr && b.onEnd != nullptr && b.kindTags != nullptr &&
+         b.holdsPhase != nullptr;
+}
+static_assert(fieldCount<AbilityBehavior>() == 7, "check the new hook in rowComplete");
+static_assert(std::ranges::all_of(kBehaviors, rowComplete),
+              "every AbilityKind needs a row with every hook set");
 
 }  // namespace
 
