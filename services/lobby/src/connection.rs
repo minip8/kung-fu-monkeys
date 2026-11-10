@@ -12,7 +12,7 @@ use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
 use crate::limits::Bucket;
-use crate::lobby::{Lobby, Out, Refusal, Registration, Seat, Tx};
+use crate::lobby::{Claim, Lobby, Out, Refusal, Registration, Seat, Tx};
 use crate::protocol::{self, Fields, CLOSE_NORMAL, CLOSE_PROTOCOL_ERROR};
 use crate::LobbyConfig;
 
@@ -292,19 +292,60 @@ async fn relay_client(lobby: &Arc<Lobby>, conn: &mut Conn, seat: &Seat) -> Endin
     }
 }
 
-fn registration(fields: &Fields) -> Option<Registration> {
+fn registration(fields: &Fields, max_tokens: usize) -> Option<Registration> {
     let region = get(fields, "region")?;
     if !protocol::valid_region(region) {
         return None;
     }
+    let reports_players = get(fields, "version").is_some_and(protocol::at_least_v1_3);
     Some(Registration {
         region: region.to_owned(),
         name: get(fields, "name")?.to_owned(),
         build: get(fields, "build")?.to_owned(),
         content: get(fields, "content")?.to_owned(),
         capacity: get(fields, "capacity")?.parse::<u32>().ok()?,
-        reports_players: get(fields, "version").is_some_and(protocol::at_least_v1_3),
+        reports_players,
+        // v1.3 room claim; ignored without `version`, malformed is refused.
+        claim: if reports_players {
+            claim(fields, max_tokens)?
+        } else {
+            None
+        },
     })
+}
+
+/// The room claim of a v1.3 `register` (§5): `None` inside when there is
+/// none, `None` outside when it is malformed.
+fn claim(fields: &Fields, max_tokens: usize) -> Option<Option<Claim>> {
+    let Some(code) = get(fields, "room") else {
+        return Some(None);
+    };
+    if !protocol::valid_code(code) {
+        return None;
+    }
+    let mut tokens = Vec::new();
+    for token in get(fields, "tokens").unwrap_or("").split(',') {
+        if token.is_empty() {
+            continue;
+        }
+        if !protocol::valid_token(token) {
+            return None;
+        }
+        tokens.push(token.to_owned());
+    }
+    // The most recent ones (the server lists them oldest first).
+    if tokens.len() > max_tokens {
+        tokens.drain(..tokens.len() - max_tokens);
+    }
+    let players = match get(fields, "players") {
+        Some(p) => p.parse::<u32>().ok()?,
+        None => 0,
+    };
+    Some(Some(Claim {
+        code: code.to_owned(),
+        tokens,
+        players,
+    }))
 }
 
 /// Checks a `register` frame; `Err` is the refusal.
@@ -322,7 +363,8 @@ fn check_register(lobby: &Lobby, fields: Option<Fields>) -> Result<Registration,
         }
         Some(_) => {}
     }
-    registration(&fields).ok_or(Ending::Refuse(Refusal::BadRequest))
+    registration(&fields, lobby.config.max_tokens_per_room)
+        .ok_or(Ending::Refuse(Refusal::BadRequest))
 }
 
 /// `/server`: `register`, then the server half of rooms and signaling.
@@ -337,12 +379,17 @@ pub(crate) async fn server(lobby: Arc<Lobby>, socket: WebSocket) {
         Ok(reg) => reg,
         Err(ending) => return conn.finish("server", ending).await,
     };
-    let id = match lobby.register(conn.tx.clone(), reg) {
-        Ok(id) => id,
+    let (id, adopted) = match lobby.register(conn.tx.clone(), reg) {
+        Ok(registered) => registered,
         Err(reason) => return conn.finish("server", Ending::Refuse(reason)).await,
     };
-    // v1.3: `version` tells the server it may send `players` (§5).
-    let registered = protocol::encode(&[("type", "registered"), ("version", protocol::VERSION)]);
+    // v1.3: `version` tells the server it may send `players`, `room` that
+    // its claim was adopted (§5).
+    let mut reply = vec![("type", "registered"), ("version", protocol::VERSION)];
+    if let Some(code) = adopted.as_deref() {
+        reply.push(("room", code));
+    }
+    let registered = protocol::encode(&reply);
     let ending = if conn.send(registered).await {
         relay_server(&lobby, &mut conn, id).await
     } else {

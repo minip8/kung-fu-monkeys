@@ -109,8 +109,12 @@ its `vms` job ships `deploy/vm/` to every VM in the repository variable `KFM_VMS
 SSH tunnel and runs `update.sh v0.2.0` on each (in the listed order: lobby VM last), and only
 then publishes the page, so a browser never meets a server of another build. `update.sh`
 pulls the tag, refreshes the units and the Caddyfile from the shipped copy, writes the tag
-into `kfm.env`, restarts the lobby (closing every room) and then the servers one at a time,
-at once: a match in progress ends. Watch it under Actions → Deploy; the job's log shows every
+into `kfm.env`, restarts the lobby and then the servers one at a time, at once: a match in
+progress ends with its server's restart. The lobby's own restart ends no match (lobby protocol
+v1.3: servers keep their connected players, re-register within seconds and claim their rooms
+back, `docs/lobby-protocol.md` §5); joins and creates fail while it is down. The first release
+with v1.3 is the exception: its lobby restart happens while the old servers still run, and a
+server older than v1.3 closes every peer with its lobby link, so those matches end as before. Watch it under Actions → Deploy; the job's log shows every
 restart.
 
 One-time setup (architecture §13.5): `deploy/gcp/setup_deploy_identity.sh --project my-proj

@@ -407,6 +407,9 @@ class FakeLobbyTransport final : public net::ITransport, public client::ILobbyJo
     error_ = "lobby refused: " + reason;
     refused_ = true;
   }
+  // v1.3: the lobby socket went away under a connected transport, which
+  // plays on (WebRtcTransport reports nothing, and may keep an error string).
+  void loseLobby(std::string error) { error_ = std::move(error); }
 
   // ITransport
   void sendUnreliable(net::PeerId peer, std::span<const std::byte> data) override {
@@ -603,4 +606,42 @@ TEST_CASE("reconnect from the UI in a room: a lobby rejoin with the room's token
   CHECK(s.localSlots() == slots);
   CHECK(rig.server->stats().reconnects == 1);
   CHECK(s.room() == client::LobbyRoomInfo{.code = "ABCDE", .region = "eu"});
+}
+
+TEST_CASE(
+    "a lobby that goes away under a running match ends nothing; Reconnect still rejoins (v1.3)",
+    "[client][room][net][reconnect]") {
+  LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""});
+  NetSession& s = *rig.session;
+  rig.transport->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  const sim::PlayerMask slots = s.localSlots();
+
+  // The lobby restarts: the session goes on over its data channels, and the
+  // status keeps naming the room.
+  rig.transport->loseLobby("lobby connection closed");
+  for (int i = 0; i < 2000; ++i)
+    rig.step();
+  CHECK(s.running());
+  CHECK(s.statusText().find("Online on room ABCDE (eu)") != std::string::npos);
+  CHECK_FALSE(s.canReconnect());
+
+  // The link dies later: Reconnect is the same rejoin with the room's token,
+  // which the server re-announced when it claimed the room back.
+  rig.net.cut(net::PeerId{1});
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, 7 * kSec));
+  REQUIRE(rig.runUntil([&] { return rig.server->peers().empty(); }, kSec));
+  CHECK(s.canReconnect());
+  const NetSessionConfig again = s.reconnectConfig();
+  CHECK(again.lobby == LobbyTarget{.create = false, .region = "eu", .code = "ABCDE"});
+  CHECK(again.rejoinToken == "room-token");
+  net::LoopbackTransport& inner = rig.net.connectClient(rig.now, net::LinkConditions::uniform(kMs),
+                                                        net::LinkConditions::uniform(kMs));
+  auto fresh = std::make_unique<FakeLobbyTransport>(inner);
+  FakeLobbyTransport* raw = fresh.get();
+  s.reconnect(raw, rig.now, std::move(fresh));
+  s.attachLobby(std::make_unique<LobbyView>(*raw));
+  raw->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  CHECK(s.localSlots() == slots);
 }

@@ -49,7 +49,9 @@
 // bots re-seeded), the process offers max players minus
 // bots human slots (its `capacity`; v0.44: max players in the room flow,
 // whose bots yield), the stats line ends with the lobby
-// state, and a lost lobby link is retried every 1 s doubling to 30 s.
+// state, and a lost lobby link is retried every 1 s doubling to 30 s (5 s
+// while it hosts a room). Lobby protocol v1.3: a lost link ends no match; the
+// connected players play on and the room is claimed back on reconnecting.
 // --seed S             first match seed (default: from the clock, printed)
 // --bot SPEC           a server-side bot (repeatable, in slot order): ref,
 //                      ref:easy|medium|hard or a bot module path.wasm; a

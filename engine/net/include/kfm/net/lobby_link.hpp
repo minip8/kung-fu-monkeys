@@ -29,12 +29,20 @@
 // and such a frame concerns one peer at most (spec §7). Before `registered`
 // it is a protocol error like any other.
 // If the socket closes, fails, or does not open and register within
-// openTimeoutMs, every lobby peer is closed on the transport, the tokens and
-// the room are forgotten (the lobby has closed them on its side), and the
-// link reconnects after a backoff that starts at reconnectMinMs, doubles per
-// failed attempt up to reconnectMaxMs and resets once registered. A
+// openTimeoutMs, the link reconnects after a backoff that starts at
+// reconnectMinMs, doubles per failed attempt up to reconnectMaxMs (5 s at
+// most while it holds a room or kept peers) and resets once registered. A
 // `refused` reply (bad secret) is reported and retried the same way: the
-// process stays up.
+// process stays up. v1.3 (spec §0, §5): a lost socket does not end the match.
+// Peers whose data channels are open are kept (keptPeerCount(); no lobby
+// peer id any more, counted in `players`, reported PeerGone when the
+// transport drops them), the others are closed, and the room is kept: the
+// next `register` claims it back with its tokens (every token announced for
+// it, oldest first, at most 128) and its players. A `registered` that names
+// the room means the lobby adopted it (RoomAdopted); one that does not (a
+// v1.2 lobby, or the code is taken there) closes the room (RoomClosed) while
+// the kept peers play on, and the link offers capacity 0 until they have
+// gone (holding()).
 //
 // Threading: the socket's callbacks (libdatachannel threads) only append to a
 // mutex-guarded queue; poll() does everything on the caller's thread,
@@ -83,10 +91,11 @@ enum class LobbyEventKind : uint8_t {
   Registered = 0,  // the lobby accepted the registration
   Refused,         // text = the reason (bad_secret, bad_request)
   RoomAssigned,    // text = the room code
-  RoomClosed,      // text = the room code (also when the link is lost)
+  RoomClosed,      // text = the room code (also when a claim was not adopted)
   PeerJoined,      // peer + lobbyPeer: a client was announced
   PeerGone,        // peer + lobbyPeer; byServer: we dropped it, else the lobby said so
   LinkLost,        // text = why; retryInMs = the backoff before the next attempt
+  RoomAdopted,     // v1.3: text = the room code the lobby took back after a reconnect
 };
 
 struct LobbyEvent {
@@ -131,8 +140,13 @@ class LobbyLink {
   [[nodiscard]] bool lobbySpeaksV13() const;
   // The room this server hosts now, if any.
   [[nodiscard]] std::optional<std::string> room() const;
-  // Lobby peers mapped to transport peers now.
+  // Peers of the room now: the lobby's (mapped to transport peers) and the
+  // ones kept across a lost link.
   [[nodiscard]] size_t peerCount() const;
+  // v1.3: of those, the ones kept across a lost link (no lobby peer id).
+  [[nodiscard]] size_t keptPeerCount() const;
+  // v1.3: a claim the lobby did not adopt; capacity 0 until the kept peers go.
+  [[nodiscard]] bool holding() const;
   [[nodiscard]] uint16_t capacity() const;
   // Connection attempts after the first.
   [[nodiscard]] uint32_t reconnects() const;

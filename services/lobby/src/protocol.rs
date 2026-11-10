@@ -69,6 +69,11 @@ pub fn closed(reason: &str) -> String {
     encode(&[("type", "closed"), ("reason", reason)])
 }
 
+/// A room code's shape: `CODE_LEN` characters of `CODE_ALPHABET` (upper case).
+pub fn valid_code(code: &str) -> bool {
+    code.len() == CODE_LEN && code.bytes().all(|b| CODE_ALPHABET.contains(&b))
+}
+
 /// A fresh room code (uniqueness among live rooms is the caller's job).
 pub fn random_code() -> String {
     let mut rng = rand::rng();

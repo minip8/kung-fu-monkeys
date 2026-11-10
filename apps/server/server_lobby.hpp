@@ -7,9 +7,10 @@
 //   - the stats line ends with " | lobby <status>" (lobbyStatsSuffix(), into
 //     HostConfig::statsSuffix);
 //   - frame() (after ServerHost::frame) polls the link, logs one line per
-//     lobby event (registered, refused, room opened/closed, peer joined/gone,
-//     link lost), restarts the match when a room is assigned while no peer
-//     is connected (spec §6 point 5, ServerHost::openRoom: the M3 flow's
+//     lobby event (registered, refused, room opened/closed/adopted again,
+//     peer joined/gone, link lost; v1.3: a lost link keeps the connected
+//     peers and the room, which the next registration claims back), restarts the match when a room
+//     is assigned while no peer is connected (spec §6 point 5, ServerHost::openRoom: the M3 flow's
 //     startNewMatch, so the bots are re-seeded, or v0.42's room flow reset
 //     to Waiting with the server's default settings) and keeps the link's capacity at max players
 //     minus the host's bots that never yield (the total of human slots, not net of joined humans:

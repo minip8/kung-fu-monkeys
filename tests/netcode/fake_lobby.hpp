@@ -4,7 +4,9 @@
 // peer_gone both ways, capacity) and client sockets (/client: regions (v1.1),
 // create/join, joined/refused, signaling relay, closed; v1.2: a join with a
 // token the room issued rejoins under it; v1.3: `registered` names the
-// version unless asLegacyLobby(), and `players` is recorded). One room at a time, code
+// version unless asLegacyLobby(), `players` is recorded, a `register` with a
+// room claim is adopted unless refuseClaims() or legacy, and restart() forgets
+// everything as a lobby restart does). One room at a time, code
 // "ABCDE", or "FGHJK" for the second, and so on. Test code only: it runs on
 // libdatachannel's callback threads under one recursive mutex and uses
 // exceptions freely.
@@ -113,6 +115,20 @@ class FakeLobby {
   [[nodiscard]] std::string serverVersion() const {
     return locked([&] { return version_; });
   }
+  // v1.3 room claims: how many `register`s carried one, and the last one's
+  // keys.
+  [[nodiscard]] int claims() const {
+    return locked([&] { return claims_; });
+  }
+  [[nodiscard]] std::string claimedRoom() const {
+    return locked([&] { return claimedRoom_; });
+  }
+  [[nodiscard]] std::string claimedTokens() const {
+    return locked([&] { return claimedTokens_; });
+  }
+  [[nodiscard]] std::string claimedPlayers() const {
+    return locked([&] { return claimedPlayers_; });
+  }
 
   // --- what the tests do ---
   // The room expires: room_closed to the server (its clients, if any, get closed).
@@ -139,6 +155,34 @@ class FakeLobby {
   void asLegacyLobby() {
     const std::scoped_lock lock(mutex_);
     legacy_ = true;
+  }
+  // A v1.3 lobby whose room codes moved on: a claim gets `registered`
+  // without `room`, and the server is registered at capacity 0.
+  void refuseClaims() {
+    const std::scoped_lock lock(mutex_);
+    refuseClaims_ = true;
+  }
+  // The lobby process restarts: every socket closes (no `closed` message, as
+  // when the process dies) and it forgets every server, room and token. It
+  // goes on listening on the same port.
+  void restart() {
+    std::vector<std::shared_ptr<rtc::WebSocket>> all;
+    {
+      const std::scoped_lock lock(mutex_);
+      all = std::move(sockets_);
+      sockets_.clear();
+      serverWs_.reset();
+      registered_ = false;
+      clients_.clear();
+      room_.reset();
+      tokens_.clear();
+    }
+    for (const auto& ws : all) {
+      try {
+        ws->close();
+      } catch (...) {  // NOLINT(bugprone-empty-catch): already closed
+      }
+    }
   }
   // A raw text frame to the server's socket, whatever it holds.
   void sendServerRaw(const std::string& text) {
@@ -260,9 +304,29 @@ class FakeLobby {
       version_ = std::string(o->get("version").value_or(""));
       if (legacy_) {
         send(ws, {{"type", "registered"}});
-      } else {
-        send(ws, {{"type", "registered"}, {"version", "1.3"}});
+        return;
       }
+      if (const std::optional<std::string_view> claim = o->get("room")) {
+        ++claims_;
+        claimedRoom_ = std::string(*claim);
+        claimedTokens_ = std::string(o->get("tokens").value_or(""));
+        claimedPlayers_ = std::string(o->get("players").value_or(""));
+        if (refuseClaims_ || room_) {
+          capacity_ = "0";
+          send(ws, {{"type", "registered"}, {"version", "1.3"}});
+          return;
+        }
+        room_ = claimedRoom_;
+        tokens_.clear();
+        for (size_t start = 0; start < claimedTokens_.size();) {
+          const size_t comma = std::min(claimedTokens_.find(',', start), claimedTokens_.size());
+          if (comma > start) tokens_.push_back(claimedTokens_.substr(start, comma - start));
+          start = comma + 1;
+        }
+        send(ws, {{"type", "registered"}, {"version", "1.3"}, {"room", *room_}});
+        return;
+      }
+      send(ws, {{"type", "registered"}, {"version", "1.3"}});
       return;
     }
     if (ws != serverWs_) return;
@@ -392,6 +456,11 @@ class FakeLobby {
   std::string players_;
   int playersMessages_{0};
   bool legacy_{false};
+  bool refuseClaims_{false};
+  int claims_{0};
+  std::string claimedRoom_;
+  std::string claimedTokens_;
+  std::string claimedPlayers_;
   int peerGoneFromServer_{0};
   int signalsFromServer_{0};
   std::optional<std::string> room_;

@@ -59,6 +59,14 @@ impl Refusal {
     }
 }
 
+/// v1.3: a room a registering server still hosts (§5 "Room claims").
+pub(crate) struct Claim {
+    pub code: String,
+    /// The room's tokens the server still honours, oldest first.
+    pub tokens: Vec<String>,
+    pub players: u32,
+}
+
 /// What a registering server announced.
 pub(crate) struct Registration {
     pub region: String,
@@ -68,6 +76,8 @@ pub(crate) struct Registration {
     pub capacity: u32,
     /// v1.3: the server reports `players` (its `register` said `version`).
     pub reports_players: bool,
+    /// v1.3: the room it still hosts, if any (taken by `register`).
+    pub claim: Option<Claim>,
 }
 
 /// A client's place in a room after `joined`: the routing key of its socket.
@@ -334,8 +344,13 @@ impl Lobby {
 
     // --- servers ---------------------------------------------------------
 
-    /// Adds a server to the registry and returns its id.
-    pub(crate) fn register(&self, tx: Tx, reg: Registration) -> Result<u64, Refusal> {
+    /// Adds a server to the registry and returns its id and, when it claimed
+    /// a room the lobby adopted (v1.3), that room's code.
+    pub(crate) fn register(
+        self: &Arc<Self>,
+        tx: Tx,
+        mut reg: Registration,
+    ) -> Result<(u64, Option<String>), Refusal> {
         let mut state = self.lock();
         if state.servers.len() >= self.config.max_servers {
             warn!(event = "refuse", socket = "server", reason = "bad_request", name = %reg.name, "server limit reached");
@@ -357,18 +372,71 @@ impl Lobby {
             content = %reg.content,
             capacity = reg.capacity,
             v13 = reg.reports_players,
+            claim = reg.claim.as_ref().map_or("", |c| c.code.as_str()),
             "server registered"
         );
+        let claim = reg.claim.take();
+        let adopted = match claim {
+            Some(claim)
+                if !state.rooms.contains_key(&claim.code)
+                    && state.rooms.len() < self.config.max_rooms =>
+            {
+                Some(claim)
+            }
+            Some(claim) => {
+                // Not this server's room here: busy until it says otherwise.
+                warn!(event = "claim_refused", server = id, code = %claim.code, "room claim not adopted");
+                reg.capacity = 0;
+                None
+            }
+            None => None,
+        };
+        let room = adopted.as_ref().map(|c| c.code.clone());
         state.servers.insert(
             id,
             Server {
                 tx,
                 reg,
-                room: None,
+                room: room.clone(),
                 next_peer: 0,
             },
         );
-        Ok(id)
+        if let Some(claim) = adopted {
+            // The claim lists them oldest first: issue them in that order,
+            // before any token this lobby issues from now on.
+            let tokens = claim
+                .tokens
+                .into_iter()
+                .map(|t| {
+                    let issued = state.generation();
+                    (
+                        t,
+                        Token {
+                            seated: None,
+                            issued,
+                        },
+                    )
+                })
+                .collect();
+            let generation = state.generation();
+            let room = Room {
+                id: generation,
+                server: id,
+                clients: BTreeMap::new(),
+                tokens,
+                expiry: generation,
+                creator: None,
+                players: claim.players,
+                used: true,
+            };
+            info!(event = "room_adopt", code = %claim.code, server = id, players = claim.players, tokens = room.tokens.len(), "room adopted");
+            let empty = room.empty();
+            state.rooms.insert(claim.code.clone(), room);
+            if empty {
+                self.schedule_expiry(claim.code, generation, self.config.room_ttl);
+            }
+        }
+        Ok((id, room))
     }
 
     /// Removes a server; its room's clients get `closed`/`server_gone`.

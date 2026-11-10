@@ -8,8 +8,10 @@
 #   sudo deploy/vm/update.sh v0.2.0                  # restart at once
 #   sudo deploy/vm/update.sh v0.2.0 --drain 900      # first wait up to 15 min for no live room
 #
-# Restarting a server ends the match it hosts; restarting the lobby closes
-# every room (servers re-register when they reconnect or restart). With
+# Restarting a server ends the match it hosts. Restarting the lobby ends no
+# established match (lobby protocol v1.3): each server keeps its connected
+# players, re-registers and claims its room back; only joins wait for it
+# (a server older than v1.3 still closes its room with the lobby link). With
 # --drain the script polls the lobby's /healthz (locally on a lobby VM, else
 # KFM_LOBBY_URL's host over https) every 10 s until "rooms":0 or the timeout,
 # then proceeds regardless. The deploy workflow runs this on every tagged

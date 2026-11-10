@@ -5693,6 +5693,31 @@ reliable data channel lane also gained a send-buffer cap (1 MiB by default,
 reading cannot grow the server's memory. The limits are flags with these defaults
 (`docs/lobby-protocol.md` §7-§8); the deploy units pass `--trusted-proxy 127.0.0.1` and Caddy
 sets `X-Forwarded-For` itself.
+Lobby protocol v1.3, part two (v0.70): the lobby stops being a liveness dependency of running
+matches (correcting v0.37's "a server that drops off the socket leaves the registry and its
+rooms close", which still holds at the lobby but no longer ends the match). The lobby admits
+players and relays the signaling that opens their data channels; after that a match needs only
+the client and its server, yet a lobby restart, deploy or blip used to end every match in every
+region, because `LobbyLink` closed every peer with its socket and the client transport ended
+the session with its lobby socket. Now `LobbyLink` keeps the peers whose data channels are open
+(detached: no lobby peer id) and the room, retries every 1 s doubling to 5 s while it holds
+one, and claims the room back in its next `register` (`room`, `tokens`: every token announced
+for the room, oldest first, at most 128, and `players`). A v1.3 lobby adopts the claim unless
+the code is live there (only if it was reassigned meanwhile) or the room cap is reached, and
+says so with `room` in `registered`; the room is then live again under the same code with the
+tokens re-announced, so a join by code and the v1.2 rejoin both work after a restart and
+Reconnect needs no fallback. A claim that is not adopted (that, or a v1.2 lobby, which ignores
+the keys) leaves the kept players playing while the server offers capacity 0 until they have
+gone. On the client, once both data channels are open the lobby socket's close and a `closed`
+`server_gone` end nothing; `kicked`, `replaced` and `room_closed` still label the session's end
+for the UI, and the client never redials the lobby (the server's `players` counts it). The
+lobby's state stays memory-only: the servers are its source of truth for live rooms.
+Alternatives not taken: persisting the lobby's state (a database for a few hundred bytes per
+room, and a second source of truth that can disagree with the servers'), and clients
+re-seating themselves on a restarted lobby (a browser change and a reconnect storm of every
+player at once, where one claim per server suffices). What is still unavailable while the
+lobby is down: creating, joining and rejoining. Deploys still end matches, because
+`update.sh` restarts the server processes themselves.
 
 ### 13.6 Sequencing
 

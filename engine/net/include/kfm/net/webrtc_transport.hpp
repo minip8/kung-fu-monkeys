@@ -46,16 +46,19 @@
 //           becomes the room's token, lobbyRoom() the code and region, and only then the peer
 //           connection is created and the offer sent) or `refused`
 //           (Disconnected, lastError() "lobby refused: <reason>"). After
-//           `joined` the socket carries plain signaling; a `closed` frame
-//           or the socket closing at any time is Disconnected, lastError()
-//           "lobby closed: <reason>" or "lobby connection closed". The socket
-//           stays open for the transport's lifetime (the lobby counts a
-//           room's occupancy by it). The connect timeout covers the lobby
-//           reply too. The message layer's token: the NetClient's Hello goes
-//           out once the transport is Connected, which is after `joined`, so
-//           a client hands the token over with NetClient::setToken(
-//           transport.connectionToken()) before its first pump() after
-//           lobbyRoom() appears (or builds the NetClient only then).
+//           `joined` the socket carries plain signaling; until Connected, a
+//           `closed` frame or the socket closing is Disconnected, lastError()
+//           "lobby closed: <reason>" or "lobby connection closed". Once
+//           Connected (lobby protocol v1.3) neither ends anything: the data
+//           channels alone decide, so a lobby restart leaves the match be; a
+//           `closed` other than `server_gone` still sets lastError() for the
+//           UI. The socket stays open for the transport's lifetime unless the
+//           lobby closes it (the lobby counts a room's occupancy by it, and by
+//           the server's `players` once it is gone); it is never redialled. The connect timeout
+//           covers the lobby reply too. The message layer's token: the NetClient's Hello goes out
+//           once the transport is Connected, which is after `joined`, so a client hands the token
+//           over with NetClient::setToken( transport.connectionToken()) before its first pump()
+//           after lobbyRoom() appears (or builds the NetClient only then).
 //
 // Threading: libdatachannel calls back on its own threads (in the browser on
 // the main thread). Callbacks only append to a mutex-guarded queue; poll()

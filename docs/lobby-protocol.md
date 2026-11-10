@@ -6,14 +6,27 @@ room; game servers dial it to register and to receive peers. This file is the no
 format shared by `services/lobby/` (Rust), `engine/net` (the transport's lobby modes) and
 `apps/server` / `apps/client`. Change it here first.
 
+## 0. What the lobby is for (v1.3)
+
+The lobby admits players: it issues room codes and tokens, picks a server and relays the
+signaling that sets up each player's game connection (the WebRTC data channels). Once a
+player's data channels are open the match runs between that client and its server alone, and
+the lobby is no longer needed for it: since v1.3 a lobby restart, deploy or network blip ends no
+established match. What needs the lobby (a new player joining, a create, a rejoin) is simply
+unavailable while it is down. The lobby keeps nothing on disk, so after a restart it learns the
+rooms back from their servers (§5, "Room claims").
+
 ## 1. Transport and framing
 
 - One WebSocket per participant, text frames only, one JSON object per frame, at most
-  `kfm::net::signaling::kMaxMessageBytes` (64 KiB) per frame; a larger frame closes the socket.
+  `kfm::net::signaling::kMaxMessageBytes` (64 KiB) per frame; a larger frame closes the socket
+  (the lobby's rule for what it receives; a registered game server ignores a bad frame from the
+  lobby instead, §7).
 - Every message is a **flat JSON object whose values are all strings**, so the engine's
   hand-written `signaling::decode` reads it without a JSON library. Nested signaling messages
   travel as a JSON string in `msg`. Unknown keys are ignored; a missing required key or a
-  non-string value is a protocol error that closes the socket.
+  non-string value is a protocol error that closes the socket (again with the server's
+  exception of §7).
 - `type` names the message. Types are lower case ASCII.
 - Paths on the lobby: `GET /client` (WebSocket, clients), `GET /server` (WebSocket, game
   servers), `GET /healthz` (plain JSON: `{"servers":N,"rooms":N,"regions":["eu","us"]}`,
@@ -54,7 +67,10 @@ format shared by `services/lobby/` (Rust), `engine/net` (the transport's lobby m
 The client sends exactly one request as its first message, gets exactly one reply, and after
 a `joined` the socket carries raw signaling messages (§4) until it closes. The client keeps the
 socket open for as long as it is in the match: the lobby counts a room's occupancy by its open
-client sockets and treats a close as leaving.
+client sockets and treats a close as leaving. v1.3: the lobby may close it first (it restarted,
+or the room's server lost its own lobby socket); a client whose data channels are already open
+then plays on without it (below, "After `joined`"), and the lobby counts it through the
+server's `players` (§5).
 
 Requests (client → lobby):
 
@@ -119,7 +135,29 @@ After `joined`:
   server); it never reaches the server, and the room and its other clients are untouched.
 - Lobby → client: the server's `answer` and `candidate` messages, unwrapped, unchanged; or
   `{"type":"closed","reason":"server_gone"|"kicked"|"room_closed"|"replaced"}` followed by the
-  socket closing (`replaced`, v1.2: a rejoin under this socket's token took its place). (A transport treats the close itself as Disconnected; the message is for the UI.)
+  socket closing (`replaced`, v1.2: a rejoin under this socket's token took its place). Until
+  the client's data channels are open, the close (with or without a `closed` message) is
+  Disconnected; the message is for the UI.
+- v1.3, once the client's data channels are open: the lobby socket closing, for any reason
+  and with or without a `closed` message, does not end the session; the data channels alone
+  decide it. A `closed` with `kicked`, `replaced` or `room_closed` is still kept as the
+  session's lobby error for the UI (the server drops a kicked or replaced peer's channels
+  itself), while `server_gone` is not (a v1.3 server keeps its players across its own lobby
+  link's loss, so the match is not over). The client does not dial the lobby again on its own.
+- Reconnect from the UI after a lobby restart (v1.3) is the v1.2 rejoin, unchanged: the room's
+  server re-announces its tokens when it re-registers (§5, "Room claims"), so `join` with the
+  code and the token rejoins as before once that server is back. While the lobby is down the
+  rejoin cannot connect ("Lost the connection to the lobby", and Reconnect stays offered);
+  after the lobby is back but before the server has re-registered (seconds: a server holding a
+  room retries every 5 s at most) it is refused `unknown_code` and the player can join the
+  room by its code again. There is no fallback from a refused rejoin to a plain join: a plain
+  join is a new player, so the UI leaves it to the player.
+
+Compatibility (v1.2 → v1.3, clients, continued): a v1.2 client still ends its session when its
+lobby socket closes; against a v1.3 server that keeps its players, such a client sees its
+match end at a lobby restart exactly as before, and its data channels then close. A v1.3 client
+against a v1.2 server plays on only until that server, which drops every peer with its lobby
+link, closes the data channels.
 
 ## 4. Signaling (unchanged from M3)
 
@@ -130,9 +168,12 @@ strings under the size limit.
 
 ## 5. Server socket (`/server`)
 
-A game server opens one socket per process and keeps it open for its lifetime. A server socket
-that closes for any reason takes its room with it: the lobby sends `closed`/`server_gone` to
-that room's clients and forgets the server.
+A game server opens one socket per process and keeps it open for its lifetime, dialling again
+after a loss. A server socket that closes for any reason takes its room with it at the lobby:
+the lobby sends `closed`/`server_gone` to that room's clients and forgets the server. v1.3: the
+server does not give up the room with it. It keeps every peer whose data channels are open
+(their match goes on), closes the ones still setting up, and claims the room back when it
+registers again ("Room claims", below).
 
 First message (server → lobby):
 
@@ -142,7 +183,7 @@ First message (server → lobby):
 ```
 
 `version` (v1.3, optional) is the protocol version the server speaks, `"1.3"`; without it the
-lobby treats the server as v1.2 (it never sends `players`, below). `capacity` is the total number of human slots the process offers (max players minus the bots
+lobby treats the server as v1.2 (it never sends `players`, below, nor claims a room). `capacity` is the total number of human slots the process offers (max players minus the bots
 that keep their slots; a server whose bots yield to joining humans, kfm_server's room flow since
 architecture v0.44, offers max players), never net of connected humans: the lobby counts a room's occupancy itself by its open
 client sockets and refuses `full` once they reach `capacity`. `name` is free text for logs and `/healthz`. Reply: `{"type":"registered","version":"1.3"}` or
@@ -155,7 +196,7 @@ Then, lobby → server:
 
 | Message | Meaning |
 |---|---|
-| `{"type":"room","code":"ABCDE"}` | A room is now hosted by this server. A server holds at most one room at a time; the lobby only assigns to a server with no room. |
+| `{"type":"room","code":"ABCDE"}` | A room is now hosted by this server. A server holds at most one room at a time; the lobby only assigns to a server with no room. (An adopted claim gets no `room`: the `registered` reply names it.) |
 | `{"type":"peer","peer":"7","token":"<32 hex>"}` | A client joined the room; `token` is what its `Hello` will carry. The server must accept it. Sent before any `signal` for that peer. |
 | `{"type":"signal","peer":"7","msg":"<signaling JSON as a string>"}` | A signaling message from that client. |
 | `{"type":"peer_gone","peer":"7"}` | The client's lobby socket closed (it left). The server forgets the peer and stops accepting its token, but the token stays the room's: a rejoin presents it and the lobby announces it again in a new `peer` (§2, §3). |
@@ -169,6 +210,41 @@ Server → lobby:
 | `{"type":"peer_gone","peer":"7"}` | The server dropped that peer (kick, protocol error, transport loss). The lobby sends the client `closed`/`kicked` and closes its socket. |
 | `{"type":"capacity","capacity":"5"}` | Optional: the total changed (a bot yielded a slot). Never sent on a human join or leave. The lobby uses the latest value for `full`. |
 | `{"type":"players","count":"2"}` | v1.3, only to a lobby whose `registered` named 1.3: how many of the room's players are connected over their game connection (both data channels open), sent whenever that number changes while the server hosts a room. The lobby holds a room while it is above 0 and counts it toward `full` (§6). A count that is not a decimal number is a protocol error. |
+
+Room claims (v1.3). A server that registers while it still hosts a room (it lost its lobby
+socket, or the lobby restarted, and its players play on) adds three keys to `register`:
+
+```
+"room":"ABCDE","tokens":"<32 hex>,<32 hex>,…","players":"2"
+```
+
+`room` is the room's code, `tokens` every token the lobby issued for that room that the server
+still honours (comma-separated, at most 128, the most recent), and `players` the count it would
+report in `players` now. A lobby of v1.3 or later **adopts** the room when the code is not a
+live room there and it is below its room cap: the room is live again on that server with those
+tokens (none seated: every client socket of the old lobby is gone), counted as used (§6), with
+the claimed `players`, and with no creator address. The reply then names it:
+`{"type":"registered","version":"1.3","room":"ABCDE"}`. A join by the code works again and a
+rejoin with one of the tokens is a rejoin (§3); with `players` at 0 and no socket the room's
+expiry starts as for any empty room.
+
+A claim the lobby does not adopt (the code is a live room of another server, which happens only
+if the code was reassigned while this server was away, or the room cap is reached) gets a
+`registered` without `room`. The server then knows the code is not its room at the lobby: it
+keeps its players until they leave but offers no slot meanwhile (`capacity` 0, so it is not
+handed a new room under them), and once the last one has gone it reports its real `capacity`
+again and is free. A v1.3 lobby that refuses a claim registers the server at capacity 0 itself,
+so no `create` can race the server's own `capacity`. A claim with a malformed `room`, `tokens`
+or `players` is refused `bad_request`; claim keys without `version` are ignored.
+
+Compatibility (v1.2 → v1.3, claims): the claim keys are new keys of `register`, which a v1.2
+lobby ignores; its `registered` has no `room`, so a v1.3 server treats the claim as not adopted
+(above): the match goes on, the old code is dead at the lobby (a v1.2 lobby forgot it), and
+the server is busy until its players leave. Between the v1.2 lobby's `registered` and the
+server's `capacity` 0 a `create` can race in and assign a new room while the old players are
+still connected; the server then hosts both groups (it never restarts a match with peers
+connected, §6), as it already could in v1.2. A v1.2 server never claims, and loses its players
+with its lobby socket as before.
 
 Compatibility (v1.2 → v1.3, servers): `version` is a new key of `register` and of
 `registered`, and unknown keys are ignored, so a v1.2 lobby registers a v1.3 server as before
@@ -202,7 +278,11 @@ no early release) and counts their occupancy by sockets alone.
    this only frees a server held by a create that never meant to play. Rejoin is unaffected:
    a running match's room is used, so a brief disconnect of everyone still has the full TTL.
 5. A server socket closing → every client in its room gets `closed`/`server_gone` and is
-   closed; the room is gone immediately (no expiry).
+   closed; the room is gone immediately (no expiry). v1.3: the clients whose data channels
+   are open play on (§3), the server keeps them and reconnects (every 1 s doubling to 5 s while
+   it holds a room, to 30 s otherwise), and its `register` claims the room back, which the
+   lobby adopts under the same code (§5, "Room claims"). A lobby restart is the same for every
+   server at once: each re-registers and claims its room.
 6. The server treats a `room` assignment that arrives while no human peers are connected as a
    new group: it restarts the match (`NetServer::restartMatch`) so the new room starts fresh
    with the server's bots, not mid-match.
@@ -246,8 +326,9 @@ no early release) and counts their occupancy by sockets alone.
   most): a `register` that would add a 65th is refused `bad_request`.
 - A game server is robust to a bad frame from the lobby once it is registered: a frame over
   the size limit, one that is not a flat object of strings, and a known message missing a
-  required key are ignored and logged, not a protocol error that drops the socket (and with
-  it every peer of the room). The lobby is trusted, and such a frame concerns
+  required key are ignored and logged, not a protocol error that drops the socket (before
+  v1.3 that dropped every peer of the room with it; since v1.3 a lost socket keeps the
+  established ones, but the peers still setting up and new joins would wait for a reconnect). The lobby is trusted, and such a frame concerns
   one peer at most (a `signal`), whose handshake then times out on the server's side and is
   reported `peer_gone` as usual. A server also never sends a frame over the limit (it drops
   such a message instead). Before `registered`, a bad frame is a protocol error as above.

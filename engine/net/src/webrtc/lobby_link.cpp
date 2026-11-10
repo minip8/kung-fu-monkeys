@@ -38,6 +38,11 @@ constexpr uint64_t kNsPerMs = 1'000'000;
 constexpr size_t kSocketMessageLimit = size_t{1024} * 1024;
 // The protocol version this link speaks (`register`'s `version`, spec v1.3).
 constexpr std::string_view kVersion = "1.3";
+// The most tokens a room claim lists (the lobby keeps at most this many).
+constexpr size_t kMaxClaimTokens = 128;
+// The reconnect backoff's ceiling while the server still holds a room or
+// players, so the lobby re-adopts it within seconds of coming back.
+constexpr uint64_t kRoomReconnectMaxMs = 5'000;
 
 // Whether a `version` value ("1.3", "1.10", "2.0") is 1.3 or later.
 [[nodiscard]] bool atLeastV13(std::string_view v) {
@@ -108,7 +113,16 @@ struct LobbyLink::Impl {
   };
   std::map<std::string, LobbyPeer> byLobby;     // lobby peer id -> ours
   std::map<uint16_t, std::string> byTransport;  // ours -> lobby peer id
+  // v1.3: peers kept across a lost link (their data channels were open). They
+  // have no lobby peer id any more: ours -> token.
+  std::map<uint16_t, std::string> detached;
   std::optional<std::string> room;
+  // Every token the lobby announced for `room`, oldest first (a room claim's
+  // `tokens`), at most kMaxClaimTokens.
+  std::vector<std::string> roomTokens;
+  // A claim the lobby did not adopt: the kept players stay until they leave,
+  // and the process offers capacity 0 meanwhile.
+  bool holding{false};
   std::string lastError;
   uint32_t ignoredFrames{0};
   std::vector<LobbyEvent> out;
@@ -189,20 +203,34 @@ struct LobbyLink::Impl {
     send(f);
   }
 
+  // What the lobby should offer: nothing while players of a room it did not
+  // adopt are still here.
+  [[nodiscard]] uint16_t effectiveCapacity() const { return holding ? uint16_t{0} : capacity; }
+
   void sendCapacityIfChanged() {
-    if (state != LobbyLinkState::Registered || sentCapacity == capacity) return;
-    const std::string c = std::to_string(capacity);
+    const uint16_t c = effectiveCapacity();
+    if (state != LobbyLinkState::Registered || sentCapacity == c) return;
+    const std::string text = std::to_string(c);
     const std::array<signaling::Field, 2> f = {signaling::Field{"type", "capacity"},
-                                               signaling::Field{"capacity", c}};
+                                               signaling::Field{"capacity", text}};
     send(f);
-    sentCapacity = capacity;
+    sentCapacity = c;
+  }
+
+  void rememberToken(const std::string& token) {
+    if (std::ranges::find(roomTokens, token) != roomTokens.end()) return;
+    roomTokens.push_back(token);
+    if (roomTokens.size() > kMaxClaimTokens) roomTokens.erase(roomTokens.begin());
   }
 
   // The room's players on their game connection: lobby peers whose data
   // channels are both open.
   [[nodiscard]] uint32_t connectedPlayers() const {
-    return static_cast<uint32_t>(std::ranges::count_if(
-        byLobby, [&](const auto& entry) { return transport->isConnected(entry.second.peer); }));
+    const auto lobbyPeers = std::ranges::count_if(
+        byLobby, [&](const auto& entry) { return transport->isConnected(entry.second.peer); });
+    const auto kept = std::ranges::count_if(
+        detached, [&](const auto& entry) { return transport->isConnected(PeerId{entry.first}); });
+    return static_cast<uint32_t>(lobbyPeers + kept);
   }
 
   // v1.3 `players`, to a lobby that takes it, when the count changes (an
@@ -222,11 +250,24 @@ struct LobbyLink::Impl {
     const std::string build = std::format("{:08x}", config.buildId);
     const std::string content = std::format("{:08x}", config.contentHash);
     const std::string cap = std::to_string(capacity);
-    const std::array<signaling::Field, 8> f = {
+    std::vector<signaling::Field> f = {
         signaling::Field{"type", "register"},      signaling::Field{"secret", config.secret},
         signaling::Field{"region", config.region}, signaling::Field{"name", config.name},
         signaling::Field{"build", build},          signaling::Field{"content", content},
         signaling::Field{"capacity", cap},         signaling::Field{"version", kVersion}};
+    // v1.3: the room this process still hosts, claimed back (spec §5).
+    std::string tokens;
+    std::string players;
+    if (room) {
+      for (const std::string& t : roomTokens) {
+        if (!tokens.empty()) tokens += ',';
+        tokens += t;
+      }
+      players = std::to_string(connectedPlayers());
+      f.emplace_back("room", *room);
+      f.emplace_back("tokens", tokens);
+      f.emplace_back("players", players);
+    }
     send(f);
     sentCapacity = capacity;
     lobbyV13 = false;
@@ -240,33 +281,91 @@ struct LobbyLink::Impl {
     byLobby.erase(it);
   }
 
-  // The lobby side of every peer and the room are gone with the socket.
+  // The room is over: every peer goes, the lobby's and the kept ones.
   void closeAllPeers() {
     for (const auto& [lobbyPeer, p] : byLobby) {
       transport->closeExternalPeer(p.peer);
       out.push_back(LobbyEvent{LobbyEventKind::PeerGone, p.peer, lobbyPeer, {}, false, 0});
     }
+    for (const auto& [id, token] : detached) {
+      transport->closeExternalPeer(PeerId{id});
+      out.push_back(LobbyEvent{LobbyEventKind::PeerGone, PeerId{id}, {}, {}, false, 0});
+    }
     byLobby.clear();
     byTransport.clear();
+    detached.clear();
+    holding = false;
   }
 
+  // Peers the transport dropped on its own (disconnect(), failure, timeout):
+  // a lobby peer is reported to the lobby when the link is up; a kept one has
+  // nobody to tell. Runs in every state, so the kept set stays true.
+  void drainDroppedPeers() {
+    const bool registered = state == LobbyLinkState::Registered;
+    for (const PeerId id : transport->takeDroppedExternalPeers()) {
+      if (const auto it = byTransport.find(id.value); it != byTransport.end()) {
+        const std::string lobbyPeer = it->second;
+        if (registered) sendPeerGone(lobbyPeer);
+        forgetPeer(lobbyPeer);
+        out.push_back(LobbyEvent{LobbyEventKind::PeerGone, id, lobbyPeer, {}, true, 0});
+      } else if (detached.erase(id.value) > 0) {
+        out.push_back(LobbyEvent{LobbyEventKind::PeerGone, id, {}, {}, true, 0});
+      }
+    }
+    if (holding && detached.empty()) holding = false;  // free again: real capacity
+  }
+
+  // v1.3 (spec §0, §5): the socket is gone, the match is not. Peers whose data
+  // channels are open are kept (detached) and the room with its tokens is
+  // claimed back at the next registration; peers still setting up cannot
+  // finish without the lobby and are closed.
   void lose(uint64_t nowNs, std::string why) {
     closeSocket();
-    closeAllPeers();
-    // Whatever the transport still holds for those peers is moot now.
-    (void)transport->takeOutgoingSignaling();
-    (void)transport->takeDroppedExternalPeers();
-    if (room) {
-      out.push_back(LobbyEvent{LobbyEventKind::RoomClosed, {}, {}, *room, false, 0});
-      room.reset();
+    drainDroppedPeers();
+    size_t kept = 0;
+    for (const auto& [lobbyPeer, p] : byLobby) {
+      if (transport->isConnected(p.peer)) {
+        detached[p.peer.value] = p.token;
+        ++kept;
+      } else {
+        transport->closeExternalPeer(p.peer);
+        out.push_back(LobbyEvent{LobbyEventKind::PeerGone, p.peer, lobbyPeer, {}, false, 0});
+      }
     }
-    backoffMs = backoffMs == 0 ? config.reconnectMinMs
-                               : std::min<uint64_t>(backoffMs * 2, uint64_t{config.reconnectMaxMs});
+    byLobby.clear();
+    byTransport.clear();
+    // Whatever the transport still holds for the closed peers is moot now.
+    (void)transport->takeOutgoingSignaling();
+    const uint64_t ceiling = room || !detached.empty()
+                                 ? std::min<uint64_t>(config.reconnectMaxMs, kRoomReconnectMaxMs)
+                                 : uint64_t{config.reconnectMaxMs};
+    backoffMs = backoffMs == 0 ? std::min<uint64_t>(config.reconnectMinMs, ceiling)
+                               : std::min<uint64_t>(backoffMs * 2, ceiling);
     state = LobbyLinkState::Waiting;
     deadlineNs = nowNs + backoffMs * kNsPerMs;
     if (!why.empty()) lastError = why;
+    if (kept > 0) why += std::format("; {} connected peer(s) kept", kept);
     out.push_back(LobbyEvent{
         LobbyEventKind::LinkLost, {}, {}, std::move(why), false, static_cast<uint32_t>(backoffMs)});
+  }
+
+  // The lobby's answer to a room claim (spec §5): `registered` named the room
+  // (adopted: the room goes on, players and tokens as claimed), or did not (a
+  // v1.2 lobby, or the code is taken there): the room is closed as far as the
+  // lobby goes, and the kept players stay until they leave with capacity 0.
+  void settleClaim(std::optional<std::string_view> adopted) {
+    const std::string code = room.value_or("");
+    if (lobbyV13 && adopted == std::optional<std::string_view>(code)) {
+      sentPlayers = connectedPlayers();  // the claim carried it
+      out.push_back(LobbyEvent{LobbyEventKind::RoomAdopted, {}, {}, code, false, 0});
+      return;
+    }
+    out.push_back(LobbyEvent{LobbyEventKind::RoomClosed, {}, {}, code, false, 0});
+    room.reset();
+    roomTokens.clear();
+    holding = !detached.empty();
+    // A v1.3 lobby registers a refused claim at capacity 0 itself.
+    if (lobbyV13) sentCapacity = 0;
   }
 
   // A protocol error closes the socket (spec §1) and reconnects.
@@ -295,6 +394,7 @@ struct LobbyLink::Impl {
         backoffMs = 0;
         lobbyV13 = atLeastV13(o->get("version").value_or(""));
         out.push_back(LobbyEvent{LobbyEventKind::Registered, {}, {}, {}, false, 0});
+        if (room) settleClaim(o->get("room"));
         sendCapacityIfChanged();
       } else if (type == "refused") {
         const std::string reason(o->get("reason").value_or("unknown"));
@@ -317,6 +417,7 @@ struct LobbyLink::Impl {
         return;
       }
       room = *code;
+      roomTokens.clear();
       sentPlayers = 0;  // a new room starts with nobody connected
       out.push_back(LobbyEvent{LobbyEventKind::RoomAssigned, {}, {}, *code, false, 0});
     } else if (type == "peer") {
@@ -335,6 +436,7 @@ struct LobbyLink::Impl {
       }
       byLobby[*peer] = LobbyPeer{*id, *token};
       byTransport[id->value] = *peer;
+      rememberToken(*token);
       out.push_back(LobbyEvent{LobbyEventKind::PeerJoined, *id, *peer, {}, false, 0});
     } else if (type == "signal") {
       const auto peer = need("peer");
@@ -364,21 +466,15 @@ struct LobbyLink::Impl {
       // Every peer has left by then; any that has not, goes with the room.
       closeAllPeers();
       room.reset();
+      roomTokens.clear();
       out.push_back(LobbyEvent{LobbyEventKind::RoomClosed, {}, {}, code, false, 0});
     }
     // Unknown types are ignored (forward compatibility).
   }
 
-  // Registered: the transport's side of the relay.
+  // Registered: the transport's side of the relay (drainDroppedPeers() has
+  // run this poll).
   void relayFromTransport() {
-    for (const PeerId id : transport->takeDroppedExternalPeers()) {
-      const auto it = byTransport.find(id.value);
-      if (it == byTransport.end()) continue;
-      const std::string lobbyPeer = it->second;
-      sendPeerGone(lobbyPeer);
-      forgetPeer(lobbyPeer);
-      out.push_back(LobbyEvent{LobbyEventKind::PeerGone, id, lobbyPeer, {}, true, 0});
-    }
     for (const OutgoingSignal& s : transport->takeOutgoingSignaling()) {
       const auto it = byTransport.find(s.peer.value);
       if (it == byTransport.end()) continue;
@@ -412,6 +508,8 @@ struct LobbyLink::Impl {
           break;
       }
     }
+    drainDroppedPeers();
+    if (state != LobbyLinkState::Registered) (void)transport->takeOutgoingSignaling();
     switch (state) {
       case LobbyLinkState::Connecting:
       case LobbyLinkState::Registering:
@@ -509,7 +607,15 @@ std::optional<std::string> LobbyLink::room() const {
 }
 
 size_t LobbyLink::peerCount() const {
-  return impl_->byLobby.size();
+  return impl_->byLobby.size() + impl_->detached.size();
+}
+
+size_t LobbyLink::keptPeerCount() const {
+  return impl_->detached.size();
+}
+
+bool LobbyLink::holding() const {
+  return impl_->holding;
 }
 
 uint16_t LobbyLink::capacity() const {
@@ -532,7 +638,8 @@ std::string LobbyLink::statusText(uint64_t nowNs) const {
                          i.byLobby.size(), i.capacity);
     case LobbyLinkState::Waiting: {
       const uint64_t ms = i.deadlineNs > nowNs ? (i.deadlineNs - nowNs) / kNsPerMs : 0;
-      return std::format("waiting retry_in={}ms", ms);
+      return std::format("waiting retry_in={}ms room={} kept={}", ms, i.room.value_or("-"),
+                         i.detached.size());
     }
   }
   return "unknown";

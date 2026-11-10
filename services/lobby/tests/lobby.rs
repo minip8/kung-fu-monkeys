@@ -1238,6 +1238,149 @@ async fn an_older_server_keeps_the_full_hold() {
     assert_eq!(healthz(addr).await["rooms"], 1);
 }
 
+// --- room claims (v1.3, §5) -------------------------------------------------
+
+const TOKEN_1: &str = "11111111111111111111111111111111";
+const TOKEN_2: &str = "22222222222222222222222222222222";
+
+/// A v1.3 `register` claiming `code` with these tokens and players.
+fn claim_msg(name: &str, capacity: &str, code: &str, tokens: &str, players: &str) -> String {
+    let mut fields: Fields = serde_json::from_str(&register_msg(name, "eu", capacity)).unwrap();
+    for (k, v) in [
+        ("version", "1.3"),
+        ("room", code),
+        ("tokens", tokens),
+        ("players", players),
+    ] {
+        fields.insert(k.into(), v.into());
+    }
+    serde_json::to_string(&fields).unwrap()
+}
+
+async fn register_claiming(
+    addr: SocketAddr,
+    name: &str,
+    code: &str,
+    tokens: &str,
+    players: &str,
+) -> (Ws, Fields) {
+    let mut ws = connect(addr, "/server").await;
+    send(&mut ws, claim_msg(name, "4", code, tokens, players)).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(reply["type"], "registered", "{reply:?}");
+    (ws, reply)
+}
+
+#[tokio::test]
+async fn a_server_claims_its_room_back_after_a_lobby_restart() {
+    // A fresh lobby, as after a restart: it knows nothing until the server
+    // registers with the room it still hosts.
+    let addr = start(config()).await;
+    let (mut server, reply) =
+        register_claiming(addr, "eu-1", "ABCDE", &format!("{TOKEN_1},{TOKEN_2}"), "2").await;
+    assert_eq!(reply["room"], "ABCDE");
+    assert_eq!(reply["version"], "1.3");
+    // No `room` message for an adopted claim, and the server is busy.
+    expect_silence(&mut server, Duration::from_millis(100)).await;
+    assert_eq!(
+        healthz(addr).await,
+        serde_json::json!({"servers": 1, "rooms": 1, "regions": []})
+    );
+
+    // Its players rejoin under their tokens, and others join by the code.
+    let (_a, again) = rejoin(addr, "abcde", TOKEN_1).await;
+    assert_eq!(again["type"], "joined", "{again:?}");
+    assert_eq!(again["token"], TOKEN_1);
+    let (peer, token) = expect_peer(&mut server).await;
+    assert_eq!(token, TOKEN_1);
+    assert_eq!(peer, "1");
+    let (_b, joined) = join(addr, "ABCDE").await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut server).await;
+    let (_, reply) = rejoin(addr, "ABCDE", "33333333333333333333333333333333").await;
+    assert_eq!(reply["reason"], "bad_token");
+
+    // Reported players count toward full: 4 connected (the 2 kept and the 2
+    // who came back) with 2 sockets is the capacity of 4.
+    send(&mut server, json(&[("type", "players"), ("count", "4")])).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_, reply) = join(addr, "ABCDE").await;
+    assert_eq!(reply["reason"], "full");
+}
+
+#[tokio::test]
+async fn an_adopted_room_without_players_expires_like_any_empty_room() {
+    let ttl = Duration::from_millis(300);
+    let addr = start(config().with_room_ttl(ttl)).await;
+    let (mut server, reply) = register_claiming(addr, "eu-1", "ABCDE", TOKEN_1, "0").await;
+    assert_eq!(reply["room"], "ABCDE");
+    let closed = recv(&mut server).await;
+    assert_eq!(
+        (closed["type"].as_str(), closed["code"].as_str()),
+        ("room_closed", "ABCDE")
+    );
+    // Then free for a create.
+    let (_c, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut server).await;
+}
+
+#[tokio::test]
+async fn a_claim_on_a_live_code_is_refused_and_the_server_stays_busy() {
+    let addr = start(config()).await;
+    let mut first = register(addr, "eu-1", "eu", "4").await;
+    let (_host, _) = create(addr, "eu").await;
+    let (code, _, _) = expect_room(&mut first).await;
+
+    // Another server claims that code (it was away while the code moved on).
+    let (mut second, reply) = register_claiming(addr, "eu-2", &code, TOKEN_1, "1").await;
+    assert!(!reply.contains_key("room"), "{reply:?}");
+    assert_eq!(reply["version"], "1.3");
+    // Registered at capacity 0: no create lands on it under its players.
+    assert_eq!(regions(addr).await, pair("eu", ""));
+    let (_, reply) = create(addr, "eu").await;
+    assert_eq!(reply["reason"], "no_server");
+    // Its players gone, it says so with its capacity and is free again.
+    send(
+        &mut second,
+        json(&[("type", "capacity"), ("capacity", "4")]),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (_c, joined) = create(addr, "eu").await;
+    assert_eq!(joined["type"], "joined");
+    expect_room(&mut second).await;
+    // The first room was never touched.
+    let (_d, joined) = join(addr, &code).await;
+    assert_eq!(joined["type"], "joined");
+    expect_peer(&mut first).await;
+}
+
+#[tokio::test]
+async fn claims_are_checked_and_need_a_version() {
+    let addr = start(config()).await;
+    for (code, tokens, players) in [
+        ("abcde", TOKEN_1, "1"), // codes are upper case
+        ("ABCD", TOKEN_1, "1"),
+        ("ABCDE", "not-a-token", "1"),
+        ("ABCDE", TOKEN_1, "many"),
+    ] {
+        let mut ws = connect(addr, "/server").await;
+        send(&mut ws, claim_msg("eu-1", "4", code, tokens, players)).await;
+        expect_refused(&mut ws, "bad_request").await;
+    }
+    // Claim keys from a server that names no version are ignored.
+    let mut fields: Fields = serde_json::from_str(&register_msg("eu-1", "eu", "4")).unwrap();
+    fields.insert("room".into(), "ABCDE".into());
+    fields.insert("tokens".into(), TOKEN_1.into());
+    let mut ws = connect(addr, "/server").await;
+    send(&mut ws, serde_json::to_string(&fields).unwrap()).await;
+    let reply = recv(&mut ws).await;
+    assert_eq!(reply["type"], "registered");
+    assert!(!reply.contains_key("room"));
+    assert_eq!(healthz(addr).await["rooms"], 0);
+}
+
 #[tokio::test]
 async fn reported_players_count_toward_full() {
     let addr = start(config()).await;
