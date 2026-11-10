@@ -3875,7 +3875,23 @@ which the contract needs.
     pin changes. `kfm_ai_wasm` is a separate target so `kfm_ai` never sees WAMR; the option
     `KFM_WASM_BOTS` (default on natively, off under Emscripten) builds without it. A fuel unit is
     one executed opcode plus one per function entry, as WAMR meters it; fuel use is exact and
-    deterministic (limit minus remaining), and an over-budget tick uses exactly the limit.
+    deterministic (limit minus remaining), and an over-budget tick uses exactly the limit. WAMR
+    meters one unit per opcode regardless of its operands, so the few opcodes whose host work
+    grows with an operand would be metering holes: a 16 MiB `memory.fill` (a single `memset`) or
+    `memory.copy`/`memory.init` the same, and `table.fill`/`copy`/`init`/`grow` and `memory.grow`
+    their counterparts, cost one unit but hundreds of GiB of host work in a tight loop. The same
+    configure-time patch therefore charges each extra fuel in proportion to its operand — ⌊len/8⌋
+    units for a bulk-memory op (`len` bytes, about a compiled word loop), one per element for a
+    table op, 8192 per page for `memory.grow` — as a pure integer function of the operands (so a
+    match still reproduces bit for bit), taken before the work so an op that cannot afford it does
+    not run and the tick is over budget; the charge sits after the op's bounds check, so an
+    out-of-range op still traps. Turning bulk memory and reference types off was the alternative,
+    but `docs/bot-abi.md` accepts them and current Rust toolchains emit them, so charging keeps
+    existing modules working. Instantiation fills declared data, element and table segments outside
+    any instruction budget, so a table is capped at 65 536 elements at load (`maxTableElements`)
+    beside the 16 MiB memory and 4 MiB module caps; the extended-const-expr init exprs WAMR enables
+    are evaluated once at load and are size-bounded by the module, not a hole. See
+    `docs/bot-abi.md` §1.4 for the normative cost rule.
     Measured (Release, this machine): about 820 M instructions/s on an integer loop and 600 M on
     a float-heavy C bot, so a full 100 k budget costs about 0.12 ms and ten bots at full budget
     about 1.2 ms per tick, roughly 14× real time per core worst case; a `-O2` C bot that
@@ -3885,8 +3901,10 @@ which the contract needs.
   - *Numbers.* `WasmAgentConfig`: `fuelPerTick` 100 000 instructions, `fuelInit` 10 000 000
     (applied separately to instantiation, i.e. `start` and constructors, and to `kfm_init`),
     `maxModuleBytes` 4 MiB, `maxMemoryBytes` 16 MiB (a declared minimum above it is refused, the
-    maximum is clamped, `memory.grow` past it returns −1 and never traps), interpreter stack
-    64 KiB, host heap 0, `kfm_log` capture 4 KiB tail per agent. All host knobs (`--fuel`).
+    maximum is clamped, `memory.grow` past it returns −1 and never traps), `maxTableElements`
+    65 536 (a module whose tables would allocate more, counting a growable table's maximum, is
+    refused at load), interpreter stack 64 KiB, host heap 0, `kfm_log` capture 4 KiB tail per
+    agent. All host knobs (`--fuel`).
   - *ABI as built.* The exports are wasm `i32`/`i64` (`kfm_abi_version() -> i32`,
     `kfm_obs_buffer() -> i32`, `kfm_init(i64, i32)`, `kfm_act(i32) -> i64`); the only import
     allowed is `env.kfm_log(i32, i32)`, and importing memory is refused. Load validates size,

@@ -74,8 +74,25 @@ A module must import nothing else. A module importing anything else is refused.
   `start` function and the constructors) and `kfm_init` each run under `fuelInit` = 10 000 000.
   Caps: a module file of at most 4 MiB; a linear memory whose declared minimum is at most 16 MiB
   (a larger minimum is refused at load; the maximum is clamped to it; `memory.grow` past the cap
-  returns −1 and never traps); the runtime's interpreter stack is 64 KiB. All of these are host
-  settings (`kfm_arena --fuel`), and a contest publishes the values it runs with.
+  returns −1 and never traps); a table (or all tables together) of at most 65 536 elements (a
+  larger declared table, counting its maximum when it can grow, is refused at load); the runtime's
+  interpreter stack is 64 KiB. All of these are host settings (`kfm_arena --fuel`), and a contest
+  publishes the values it runs with.
+- The few opcodes whose host work grows with an operand pay extra fuel for it, so the budget
+  bounds host work and not only the opcode count. The extra cost is a pure integer function of the
+  operands, the same on every host (so a match still reproduces bit for bit), charged on top of
+  the one unit the opcode costs anyway, and it is taken *before* the work runs: when it exceeds the
+  fuel remaining the op does not execute at all and the call ends over budget (the tick is lost,
+  "repeat last input"), the same as any exhausted budget. The rule:
+  - `memory.fill`, `memory.copy`, `memory.init`: ⌊len / 8⌋ extra units, `len` the byte count (so a
+    copy costs about what a compiled 64-bit word loop would). A copy of the 5748-byte `Observation`
+    costs ~718, a 16 MiB fill ~2 097 152 — more than a whole tick's budget, so it cannot run.
+  - `table.fill`, `table.copy`, `table.init`, `table.grow`: one extra unit per element (the count
+    `n`). `table.grow` charges only when it can succeed; a grow past the table's maximum returns −1,
+    does nothing and is not charged.
+  - `memory.grow`: 8192 extra units per page added (what filling the page would cost); charged only
+    when the grow can succeed (a grow past the cap returns −1 and is not charged).
+  Bounds checks still run first: an out-of-range bulk or table op traps before any charge.
 - Loading validates the file size, the imports, the four exports and their signatures and the
   memory, then runs a probe instance that checks `kfm_abi_version` and `kfm_obs_buffer`, so a bad
   module is refused at load, not mid-match. Instantiation is repeated for every `kfm_init`: a host

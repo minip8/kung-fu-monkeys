@@ -56,7 +56,9 @@ namespace kfm::ai {
 
 // Host settings, applied per module at load and to every agent made from it.
 // Instruction budgets count wasm instructions as WAMR's classic interpreter
-// meters them (one per executed opcode plus one per function entry); they
+// meters them (one per executed opcode plus one per function entry), plus
+// the extra cost of an opcode whose work grows with an operand (bulk memory
+// and table ops, memory.grow and table.grow: docs/bot-abi.md §1.4); they
 // never depend on the machine or on wall-clock time.
 struct WasmAgentConfig {
   // kfm_act's budget per tick. Over it, the tick is lost (OverBudget).
@@ -70,6 +72,11 @@ struct WasmAgentConfig {
   // Linear memory cap: a module whose declared initial memory exceeds it is
   // refused at load; its maximum is clamped to it.
   uint32_t maxMemoryBytes{16u << 20};
+  // Table cap: a module whose tables would allocate more elements than this
+  // in all (each table's initial size, or its maximum when the module can
+  // grow it) is refused at load. Instantiation fills them outside any
+  // budget.
+  uint32_t maxTableElements{1u << 16};
   // The interpreter's operand/call stack per instance (outside linear
   // memory; overflow traps).
   uint32_t stackBytes{64u << 10};
@@ -131,6 +138,7 @@ enum class LoadErrorKind : uint8_t {
   Instantiate,   // instantiation failed: start function trapped or ran over fuelInit, out of memory
   AbiMismatch,   // kfm_abi_version() != kObservationVersion
   BadObsBuffer,  // kfm_obs_buffer() does not point at sizeof(Observation) bytes of memory
+  TableTooLarge,  // its tables would allocate more than maxTableElements elements
 };
 
 struct LoadError {
