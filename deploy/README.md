@@ -54,7 +54,10 @@ Files:
    `KFM_IMAGE_TAG`, `KFM_LOBBY_SECRET` (`openssl rand -hex 32`), `KFM_LOBBY_DOMAIN`. Keep it
    out of git. Passing it to `create_vm.sh` embeds it in the VM's startup-script metadata,
    which anyone with read access to the project can see; for a stricter setup leave
-   `--env-file` out and edit `/etc/kfm/kfm.env` over `gcloud compute ssh`.
+   `--env-file` out and edit `/etc/kfm/kfm.env` over `gcloud compute ssh`. On the VM the
+   units hand `KFM_LOBBY_SECRET` to the lobby and server containers through the environment
+   (`docker run -e KFM_LOBBY_SECRET`), never a command-line flag, which any local user could
+   read in `ps` or `/proc` and anyone with the Docker socket in `docker inspect`.
 6. **The VM.**
    ```sh
    deploy/gcp/create_vm.sh --project my-proj --zone europe-west1-b \

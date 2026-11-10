@@ -9,7 +9,10 @@
 # (the external one is 1:1 NAT), so without it browsers are offered an
 # unreachable 10.x host candidate. KFM_ICE_PORTS is the UDP range the
 # firewall opens (deploy/README.md). KFM_SERVER_EXTRA_ARGS is unquoted on
-# purpose (split on whitespace, nothing when empty).
+# purpose (split on whitespace, nothing when empty). The lobby secret reaches
+# the container through the environment (-e KFM_LOBBY_SECRET, which kfm_server
+# reads when --lobby-secret is absent), never the command line: arguments are
+# visible to every user of the VM in ps and /proc, and in `docker inspect`.
 [Unit]
 Description=Kung Fu Monkeys game server %i
 Documentation=https://github.com/minip8/kung-fu-monkeys/blob/main/deploy/README.md
@@ -22,8 +25,9 @@ EnvironmentFile=/etc/kfm/kfm.env
 ExecStartPre=-/usr/bin/docker rm -f kfm-server-%i
 ExecStart=/usr/bin/docker run --rm --name kfm-server-%i --network host \
     --log-opt max-size=10m --log-opt max-file=3 \
+    -e KFM_LOBBY_SECRET \
     ${KFM_IMAGE_REPO}/kfm-server:${KFM_IMAGE_TAG} \
-    --lobby ${KFM_LOBBY_URL} --lobby-secret ${KFM_LOBBY_SECRET} \
+    --lobby ${KFM_LOBBY_URL} \
     --region ${KFM_REGION} --name ${KFM_NAME_PREFIX}:%i --bots ${KFM_BOTS} \
     --stun ${KFM_STUN} --ice-ports ${KFM_ICE_PORTS} --stats-every 60 $KFM_SERVER_EXTRA_ARGS
 ExecStop=/usr/bin/docker stop -t 10 kfm-server-%i
