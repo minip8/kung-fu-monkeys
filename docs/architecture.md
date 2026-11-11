@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.75 (2026-11-11), a living document: it describes the system as built and deployed,
+Status: v0.76 (2026-11-11), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -1801,7 +1801,10 @@ the present mask repeat the newest authoritative frame before the tick; local sl
 inputs submitted for it. Inputs are resent back to the newest tick the server has assembled (at
 most 16). Checksums are compared at confirmed ticks against the saved, anchor or current state of
 that tick. A spectator (no slots) never predicts: it steps only authoritative frames and its clock
-keeps it `spectatorDelayTicks` (3) behind the newest one. `sizeof(NetClient)` is about 360 KB
+keeps it `spectatorDelayTicks` (3) behind the newest one. A snapshot it loads that is older
+than the frames it already holds (the stream keeps arriving while a snapshot is delayed) is
+followed, inside the load, by a run over those frames to that same delay (v0.76); it is part
+of the load, not a hard jump. `sizeof(NetClient)` is about 360 KB
 (the ring is 32 × 5.9 KB), so hosts allocate it on the heap.
 
 ### 6.3 Message layer
@@ -1822,7 +1825,7 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | Ping | both | transport stats plus our own tick-stamped ping | — |
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 | `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
-| `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, the bots' placement (v0.75), winner, nicknames |
+| `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, the bots' placement (v0.75), the player cap (v0.76), winner, nicknames |
 | `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
@@ -1870,7 +1873,9 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   from the humans: at most 178 B (`kRoomStateMsgMaxBytes`; the 191 B this paragraph gave
   before was never the constant's value). While the room waits it is the slots the settings'
   bots take if the host starts now; in Playing and Over it is the slots bots hold, equal to
-  the bot mask (§6.6).
+  the bot mask (§6.6). Protocol version 8 (v0.76) adds the server's player cap after the
+  placement mask, u4 holding the cap − 1: 1 to `kMaxPlayers`, with no human, bot or placement
+  slot at or above it (refused on encode and on decode). `RoomState` is then at most 179 B.
 - `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
   with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
   shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
@@ -2096,10 +2101,13 @@ C++ server library is mature. The seam makes that swap a contained change.
   tick). There the backstop does part of the work: once the redundancy window, one hop and the
   client's lead add up to the 32-state ring (a 3 s outage at 300 ms, 1 s or more at 500 ms), the
   first frames after the outage are a rollback overflow, and that request goes out on the first
-  window without waiting `gapResyncNs`. Also covered: 2 to 10% loss on top of the outage; the
+  window without waiting `gapResyncNs`. `ClientNetStats::rollbackOverflows` counts such
+  episodes (v0.76): once when the client starts waiting for a snapshot it cannot do without,
+  and not again until one has loaded, so a repair through the backstop counts one. Also covered: 2 to 10% loss on top of the outage; the
   `ResyncRequest` or the snapshot held back (a request held past the client's 1 s retry is
   retried and the server's 250 ms limit drops the duplicate; a snapshot held that long is
-  served twice and both load, in order); and a second outage that starts before, or just
+  served twice and both load, in order, the spectator back at its delay in the frame of each
+  load); and a second outage that starts before, or just
   after, the first repair completes, which costs a second snapshot and no more. The server's lead estimate (§8 human-likeness) also counted the outage: a stale
   acknowledgement reads as a round trip growing one tick per tick, and before v0.70 a 3 s outage
   pushed that peer's estimate to 146 ticks (`humanLeadTicks()` clamps to 60, so a mixed match's bot
@@ -2161,7 +2169,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   the server's player cap, all of them when fewer are free): Start places the bots with it and
   the Waiting `RoomState` carries its answer as the bots' placement (v0.75), re-sent like any
   other change on a join, a leave or a settings change, so what the waiting room previews is
-  what Start does. The client has no copy of the rule.
+  what Start does. The client has no copy of the rule. Every `RoomState` also carries the
+  server's player cap (v0.76): the waiting room ends its slots at the cap, and the host's Bots
+  row stops at the cap − 1, where the validation above does.
   The client side of a server that does not tick: `NetClient` holds while its `RoomState` says
   Waiting or Over (`holding()`: `ticksDue()` returns 0 and restarts the clock, `tick()` sends
   nothing), so no input runs ahead of a frozen assembler and nothing accumulates; pings go on
@@ -2194,7 +2204,10 @@ C++ server library is mature. The seam makes that swap a contained change.
   (`NetClient::waitingForSlot()` before it) runs forward on its next `ticksDue()` from its
   delayed position to estimated server tick + target lead, predicting, with the lead controller
   and the clock reset (counted as a hard jump); `NetSession` binds its devices to the new slots.
-- Reconnect from the UI (v0.44, M6b): the token flow above behind a button. A `NetSession`
+- Reconnect from the UI (v0.44, M6b): the token flow above behind a button. Since v0.76 a
+  lobby rejoin refused `unknown_code` is retried by the client on its own, 2 s apart and up to
+  4 times, with the screen still on "Reconnecting": after a lobby restart the room's server
+  may not have claimed the room back yet (§13.5, `docs/lobby-protocol.md` §3). A `NetSession`
   that ran and then lost its link (`Disconnected` by a timeout or a closed transport, or the
   lobby's `closed`/`kicked`, which is how a server-side timeout reaches a lobby client; not a
   quit, a kick, a shutdown, a closed room or a gone server) `canReconnect()`, and the network
@@ -2508,7 +2521,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `core/scoreboard.hpp`, and since the architecture audit `core/hud_view.hpp`: `HudView`, the
   winner's title and colour, the clock's urgent threshold, the match-over screen's typed
   `MatchOverAction` buttons and `roomSlots()`, what each slot of the waiting room shows, with
-  the bots to come taken from the server's placement in `RoomState`, v0.75). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
+  the bots to come taken from the server's placement in `RoomState`, v0.75, and the slots at
+  or above the server's player cap `Closed` and given no card, v0.76). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
   `assets/fonts/` with its licence), compiled in by `cmake/EmbedFile.cmake`, loaded once by
   `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
   1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette
@@ -4788,7 +4802,10 @@ for the room, oldest first, at most 128, and `players`). A v1.3 lobby adopts the
 the code is live there (only if it was reassigned meanwhile) or the room cap is reached, and
 says so with `room` in `registered`; the room is then live again under the same code with the
 tokens re-announced, so a join by code and the v1.2 rejoin both work after a restart and
-Reconnect needs no fallback. A claim that is not adopted (that, or a v1.2 lobby, which ignores
+Reconnect needs no fallback. Between the lobby coming back and the claim landing (the server
+redials after 1, 2, 4, then every 5 s) the code is not live and a rejoin is refused
+`unknown_code`; the client retries that refusal for 8 s, which covers the server's longest
+gap (v0.76). A claim that is not adopted (that, or a v1.2 lobby, which ignores
 the keys) leaves the kept players playing while the server offers capacity 0 until they have
 gone. On the client, once both data channels are open the lobby socket's close and a `closed`
 `server_gone` end nothing; `kicked`, `replaced` and `room_closed` still label the session's end

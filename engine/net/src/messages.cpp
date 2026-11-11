@@ -165,6 +165,14 @@ static_assert(sim::kMaxPlayers <= (1u << kSlotBits));
 constexpr int kNicknameLengthBits = 5;
 static_assert(kMaxNicknameBytes < (1u << kNicknameLengthBits));
 constexpr int kBotCountBits = 4;
+// v8: RoomState's player cap, 1..kMaxPlayers coded as cap − 1.
+constexpr int kPlayerCapBits = 4;
+static_assert(sim::kMaxPlayers <= (1u << kPlayerCapBits));
+
+// Whether `cap` is a player cap and no slot of `slots` is at or above it.
+[[nodiscard]] constexpr bool validCap(uint8_t cap, sim::PlayerMask slots) {
+  return cap >= 1 && cap <= sim::kMaxPlayers && (static_cast<uint32_t>(slots) >> cap) == 0;
+}
 
 [[nodiscard]] bool validSettings(const RoomSettings& s) {
   return s.arena < sim::kMaxArenas && s.mode < sim::kMaxModes && s.loadout < sim::kMaxLoadouts &&
@@ -347,7 +355,8 @@ bool HelloMsg::operator==(const HelloMsg& o) const {
 
 bool RoomStateMsg::operator==(const RoomStateMsg& o) const {
   if (phase != o.phase || host != o.host || settings != o.settings || humans != o.humans ||
-      bots != o.bots || botPlacement != o.botPlacement || winner != o.winner) {
+      bots != o.bots || botPlacement != o.botPlacement || maxPlayers != o.maxPlayers ||
+      winner != o.winner) {
     return false;
   }
   for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
@@ -761,6 +770,7 @@ size_t encode(const RoomStateMsg& m, std::span<std::byte> out) {
     if (phase >= kRoomPhaseCount || !validSettings(m.settings) || !validMask(m.humans) ||
         !validMask(m.bots) || (m.humans & m.bots) != 0 || !validMask(m.botPlacement) ||
         (m.humans & m.botPlacement) != 0 ||
+        !validCap(m.maxPlayers, static_cast<sim::PlayerMask>(m.humans | m.bots | m.botPlacement)) ||
         (hasHost && (m.host.value >= sim::kMaxPlayers || !hasSlot(m.humans, m.host.value))) ||
         (hasWinner && m.winner.value >= sim::kMaxPlayers)) {
       return false;
@@ -772,6 +782,7 @@ size_t encode(const RoomStateMsg& m, std::span<std::byte> out) {
     writeMask(w, m.humans);
     writeMask(w, m.bots);
     writeMask(w, m.botPlacement);
+    w.writeBits(m.maxPlayers - 1u, kPlayerCapBits);
     w.writeBool(hasWinner);
     if (hasWinner) w.writeBits(m.winner.value, kSlotBits);
     for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
@@ -794,10 +805,13 @@ DecodeResult decode(std::span<const std::byte> bytes, RoomStateMsg& out) {
     out.humans = readMask(r);
     out.bots = readMask(r);
     out.botPlacement = readMask(r);
+    out.maxPlayers = static_cast<uint8_t>(r.readBits(kPlayerCapBits) + 1u);
     out.winner = PlayerId::invalid();
     if (r.readBool()) out.winner = PlayerId{static_cast<PlayerId::rep>(r.readBits(kSlotBits))};
     if (phase >= kRoomPhaseCount || !validSettings(out.settings) || (out.humans & out.bots) != 0 ||
         (out.humans & out.botPlacement) != 0 ||
+        !validCap(out.maxPlayers,
+                  static_cast<sim::PlayerMask>(out.humans | out.bots | out.botPlacement)) ||
         (out.host.isValid() &&
          (out.host.value >= sim::kMaxPlayers || !hasSlot(out.humans, out.host.value))) ||
         (out.winner.isValid() && out.winner.value >= sim::kMaxPlayers)) {

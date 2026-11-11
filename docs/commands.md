@@ -156,6 +156,8 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 - `kfm_server` runs a room that waits (no ticks) for its host, the first client, to pick the
   match and Start; `--arena/--mode/--loadout/--powerups/--bots` are its defaults. `--auto-start`
   (implied by `--exit-after-matches`) plays back-to-back matches with every bot from the start.
+  `--max-players N` (1..10) caps the slots open to clients and bots: the waiting room shows only
+  those N slots and the host's Bots row stops at N − 1.
 - Server bots: `--bot SPEC` (repeatable, slot order; SPEC = `ref | ref:easy|medium|hard |
   path.wasm`), `--bots N` pads with `ref:hard`, `--bot-delay auto|N` (auto = the humans' lead, 0
   bot vs bot), `--fuel N` (instructions per tick, default 100000), `--memory-on-respawn

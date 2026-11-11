@@ -166,7 +166,8 @@ TEST_CASE("The room flow: wait, settings, start, play, over, play again, host ha
   CHECK(waiting.names[1].view() == "Beta");
   CHECK(waiting.bots == 0);
   CHECK(waiting.settings.bots == 1);
-  CHECK(waiting.botPlacement == 0b100);  // v7: where Start puts the one bot
+  CHECK(waiting.botPlacement == 0b100);           // v7: where Start puts the one bot
+  CHECK(waiting.maxPlayers == sim::kMaxPlayers);  // v8: the default cap, every slot
   CHECK(a.holding());
   CHECK(b.holding());
 
@@ -210,6 +211,7 @@ TEST_CASE("The room flow: wait, settings, start, play, over, play again, host ha
   CHECK(rig.host->server().bots() == 0b1100);  // the preview's slots
   CHECK(roomOf(b).bots == 0b1100);
   CHECK(roomOf(b).botPlacement == 0b1100);  // Playing: where the bots are
+  CHECK(roomOf(b).maxPlayers == sim::kMaxPlayers);
   REQUIRE(rig.runUntil([&] { return !a.holding() && !b.holding(); }, 2 * kSec));
   CHECK(a.netStats().matchRestarts == 1);
   CHECK(a.simConfig().mode == 1);
@@ -407,6 +409,8 @@ TEST_CASE("The room flow: in Over a bot yields at once; Start places the bots th
   REQUIRE(rig.runUntil([&] { return roomOf(a).humans == 0b101; }, kSec));
   CHECK(roomOf(a).phase == RoomPhase::Over);
   CHECK(roomOf(a).botPlacement == 0b010);  // Over: the bot that stayed
+  CHECK(roomOf(a).maxPlayers == 3);        // v8: the cap, in every phase
+  CHECK(roomOf(b).maxPlayers == 3);
 
   // Play again, then Start: one bot fits beside the two humans.
   a.sendStart();
@@ -416,10 +420,12 @@ TEST_CASE("The room flow: in Over a bot yields at once; Start places the bots th
   CHECK(roomOf(a).settings.bots == 2);
   CHECK(roomOf(a).botPlacement == 0b010);
   CHECK(roomOf(b).botPlacement == 0b010);
+  CHECK(roomOf(b).maxPlayers == 3);
   a.sendStart();
   REQUIRE(rig.runUntil([&] { return roomIs(b, RoomPhase::Playing) && !b.holding(); }, 2 * kSec));
   CHECK(rig.host->server().bots() == 0b010);
   CHECK(roomOf(b).botPlacement == 0b010);
+  CHECK(roomOf(b).maxPlayers == 3);
   CHECK(roomOf(b).settings.bots == 2);  // kept: bots when there is room
   rig.runFor(3 * kSec);
   CHECK(b.netStats().checksumMismatches == 0);
@@ -447,12 +453,14 @@ TEST_CASE("The room flow: the waiting room previews the bots' placement under th
   REQUIRE(rig.runUntil([&] { return a.running() && roomOf(a).humans == 0b1; }, 5 * kSec));
   CHECK(roomOf(a).settings.bots == 3);
   CHECK(roomOf(a).botPlacement == 0b1110);
+  CHECK(roomOf(a).maxPlayers == 4);  // v8 (issue #83): the cap the screen ends at
 
   // A join: two humans leave room for two of the three bots.
   NetClient& b = rig.addClient("two", "Two");
   REQUIRE(rig.runUntil([&] { return b.running() && roomOf(a).humans == 0b11; }, 5 * kSec));
   CHECK(roomOf(a).botPlacement == 0b1100);
   CHECK(roomOf(b).botPlacement == 0b1100);
+  CHECK(roomOf(b).maxPlayers == 4);
 
   // Settings: fewer bots, then as many as before.
   a.sendRoomSettings(RoomSettings{.bots = 1});
@@ -461,6 +469,14 @@ TEST_CASE("The room flow: the waiting room previews the bots' placement under th
   a.sendRoomSettings(RoomSettings{.bots = 3});
   REQUIRE(rig.runUntil([&] { return roomOf(b).settings.bots == 3; }, kSec));
   CHECK(roomOf(b).botPlacement == 0b1100);
+  // v8: more bots than the cap leaves room for (cap − 1, the limit the
+  // client's Bots row stops at): refused, the RoomState re-sent as it was.
+  const uint32_t updates = a.roomUpdates();
+  a.sendRoomSettings(RoomSettings{.bots = 4});
+  REQUIRE(rig.runUntil([&] { return a.roomUpdates() > updates; }, kSec));
+  CHECK(roomOf(a).settings.bots == 3);
+  CHECK(roomOf(a).maxPlayers == 4);
+  CHECK(rig.room().settings().bots == 3);
 
   // A third human: one slot is left.
   NetClient& c = rig.addClient("three", "Three");
@@ -483,4 +499,5 @@ TEST_CASE("The room flow: the waiting room previews the bots' placement under th
   CHECK(roomOf(a).bots == preview);
   CHECK(roomOf(a).botPlacement == preview);
   CHECK(roomOf(c).botPlacement == preview);
+  CHECK(roomOf(c).maxPlayers == 4);
 }

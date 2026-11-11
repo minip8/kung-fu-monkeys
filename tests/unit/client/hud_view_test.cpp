@@ -3,7 +3,7 @@
 // winner's title and colour, the clock's last seconds, the match-over
 // screen's typed buttons locally and in an online room, the lost-connection
 // screen's typed buttons, and what the room's slots show (the server's bot
-// placement).
+// placement, v8 its player cap).
 #include "core/hud_view.hpp"
 
 #include "core/match_session.hpp"
@@ -214,4 +214,44 @@ TEST_CASE("room: the slots show the humans, the bots and the server's placement"
   room.bots = 0b0101'0000;
   room.botPlacement = room.bots;
   CHECK(client::roomSlots(room) == Slots{h, h, o, o, b, o, b, o, o, o});
+}
+
+// v8 (issue #83): the slots at or above the server's player cap are Closed,
+// never Open: nobody can join them (`kfm_server --max-players 3` with two
+// humans showed one bot to come and seven open cards). The default cap,
+// every slot, closes none.
+TEST_CASE("room: the slots at or above the server's player cap are closed", "[client][hud][room]") {
+  using client::RoomSlot;
+  const RoomSlot o = RoomSlot::Open;
+  const RoomSlot h = RoomSlot::Human;
+  const RoomSlot b = RoomSlot::Bot;
+  const RoomSlot s = RoomSlot::BotAtStart;
+  const RoomSlot x = RoomSlot::Closed;
+  using Slots = std::array<RoomSlot, sim::kMaxPlayers>;
+
+  net::RoomStateMsg room;
+  CHECK(room.maxPlayers == sim::kMaxPlayers);  // the default: no cap
+
+  // A cap of three: two humans and the one bot that fits; nothing else.
+  room.maxPlayers = 3;
+  room.humans = 0b11;
+  room.settings.bots = 2;
+  room.botPlacement = 0b100;
+  CHECK(client::roomSlots(room) == Slots{h, h, s, x, x, x, x, x, x, x});
+  room.botPlacement = 0;
+  CHECK(client::roomSlots(room) == Slots{h, h, o, x, x, x, x, x, x, x});
+
+  // A cap of four, Playing: a bot and an open slot below it.
+  room.maxPlayers = 4;
+  room.phase = net::RoomPhase::Playing;
+  room.humans = 0b1;
+  room.bots = 0b100;
+  room.botPlacement = room.bots;
+  CHECK(client::roomSlots(room) == Slots{h, o, b, o, x, x, x, x, x, x});
+
+  // The default cap of ten: every slot as without one.
+  room.maxPlayers = static_cast<uint8_t>(sim::kMaxPlayers);
+  CHECK(client::roomSlots(room) == Slots{h, o, b, o, o, o, o, o, o, o});
+  room.humans = 0b11'0000'0001;
+  CHECK(client::roomSlots(room) == Slots{h, o, b, o, o, o, o, o, h, h});
 }

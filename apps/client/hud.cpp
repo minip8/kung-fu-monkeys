@@ -580,7 +580,11 @@ void drawCrown(ImDrawList* dl, ImVec2 p, float w) {
 
 // `perRow`: 0 picks ten in a row, or two rows of five when the window is
 // narrow; the online room asks for five (wider cards for nicknames).
-void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int perRowWanted = 0) {
+// `count`: the first `count` cards only (v8: the online room's slots below
+// the server's player cap), at the width and place they have among ten,
+// with as many rows as they fill.
+void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int perRowWanted = 0,
+                    uint8_t count = static_cast<uint8_t>(sim::kMaxPlayers)) {
   constexpr float kGap = 7.0f;
   constexpr float kH = 48.0f;
   const float avail = ImGui::GetContentRegionAvail().x;
@@ -588,11 +592,12 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int pe
   if (perRow == 0) perRow = avail >= (10.0f * 64.0f) + (9.0f * kGap) ? 10 : 5;
   const float w = (avail - (static_cast<float>(perRow - 1) * kGap)) / static_cast<float>(perRow);
   const ImVec2 origin = ImGui::GetCursorScreenPos();
-  const int rows = (static_cast<int>(sim::kMaxPlayers) + perRow - 1) / perRow;
+  const uint8_t shown = std::min(count, static_cast<uint8_t>(sim::kMaxPlayers));
+  const int rows = (static_cast<int>(shown) + perRow - 1) / perRow;
   ImGui::Dummy(ImVec2(avail, (static_cast<float>(rows) * (kH + kGap)) - kGap));
   ImDrawList* dl = ImGui::GetWindowDrawList();
   ImFont* font = ImGui::GetFont();
-  for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+  for (uint8_t i = 0; i < shown; ++i) {
     const LobbyCard& c = cards[i];
     const int column = i % perRow;
     const int row = i / perRow;
@@ -1089,11 +1094,15 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
 
     // The roster (roomSlots()): the humans by name (the host's crown, you),
     // the bots where the server says it puts them at the start, then the
-    // open slots.
+    // open slots. v8 (issue #83): the slots at or above the server's player
+    // cap (Closed, always the highest) get no card: the grid ends at the
+    // cap, so nothing past it looks joinable.
     std::array<LobbyCard, sim::kMaxPlayers> cards{};
     const net::RoomSettings& r = room->settings;
     const std::array<RoomSlot, sim::kMaxPlayers> slots = roomSlots(*room);
+    uint8_t cardCount = 0;
     for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+      if (slots[i] == RoomSlot::Closed) continue;
       const PlayerId slot{i};
       LobbyCard& c = cards[i];
       c.filled = slots[i] != RoomSlot::Open;
@@ -1120,9 +1129,12 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
           c.title = "open";
           std::snprintf(c.sub, sizeof c.sub, "send the link");
           break;
+        case RoomSlot::Closed:
+          break;  // skipped above
       }
+      cardCount = static_cast<uint8_t>(i + 1);
     }
-    drawLobbyCards(cards, 5);
+    drawLobbyCards(cards, 5, cardCount);
     ImGui::Spacing();
 
     // The match: the host changes it, everyone else sees it.

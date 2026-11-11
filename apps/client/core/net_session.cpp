@@ -211,6 +211,7 @@ void NetSession::advance(uint64_t nowNs) {
   c.beginFrame();
   c.pump(nowNs);
   c.reconcile();
+  scheduleRejoinRetry(nowNs);
   if (c.state() == net::ClientState::Syncing || c.running()) configKnown_ = true;
   const bool rolledBack = c.frameReport().rolledBack;
   if (rolledBack && everRan_) {
@@ -251,6 +252,20 @@ void NetSession::advance(uint64_t nowNs) {
   frameEventCount_ = std::min(events.size(), frameEvents_.size());
   std::copy_n(events.begin(), frameEventCount_, frameEvents_.begin());
   updateRates(nowNs);
+}
+
+void NetSession::scheduleRejoinRetry(uint64_t nowNs) {
+  // Only a rejoin (a join of a known room under its token), only `unknown_code`
+  // (the room's server may not have claimed it back yet, protocol §3), and only
+  // while retries are left; every other refusal ends the session at once.
+  if (!retryArmed_ || !lobby_ || !config_.lobby || config_.lobby->create ||
+      config_.rejoinToken.empty() || rejoinRetries_ >= config_.rejoinRetries ||
+      client_->state() != net::ClientState::Disconnected ||
+      lobby_->error() != "lobby refused: unknown_code") {
+    return;
+  }
+  retryArmed_ = false;  // once per attempt
+  rejoinRetryAtNs_ = nowNs + (uint64_t{config_.rejoinRetrySpacingMs} * 1'000'000ULL);
 }
 
 void NetSession::setInputSuspended(bool suspended) {
@@ -331,6 +346,8 @@ void NetSession::build(float dtSeconds, presentation::RenderState& out) {
 }
 
 void NetSession::disconnect() {
+  rejoinRetryAtNs_.reset();  // leaving: nothing more to retry
+  retryArmed_ = false;
   if (failure_.empty()) client_->disconnect();
 }
 
@@ -363,7 +380,14 @@ NetSessionConfig NetSession::reconnectConfig() const {
 void NetSession::reconnect(net::ITransport* transport, uint64_t nowNs,
                            std::unique_ptr<net::ITransport> owned, std::string failure) {
   config_ = reconnectConfig();
-  ++reconnects_;
+  if (rejoinRetryAtNs_) {
+    ++rejoinRetries_;  // the retry of a rejoin refused `unknown_code`
+    rejoinRetryAtNs_.reset();
+  } else {
+    ++reconnects_;  // the player's Reconnect: a fresh retry budget
+    rejoinRetries_ = 0;
+  }
+  retryArmed_ = true;
   // The lobby view looks at the old transport: gone first. The room stays
   // known (its code labels the status) and is confirmed by the rejoin.
   lobby_.reset();
@@ -409,6 +433,7 @@ void NetSession::updateRates(uint64_t nowNs) {
 
 NetPhase NetSession::phase() const {
   if (!failure_.empty()) return NetPhase::Failed;
+  if (rejoinRetryAtNs_) return NetPhase::Connecting;  // still rejoining, between attempts
   switch (client_->state()) {
     case net::ClientState::Idle:
     case net::ClientState::Connecting:
@@ -430,7 +455,8 @@ NetPhase NetSession::phase() const {
 }
 
 std::string NetSession::lobbyErrorText() const {
-  if (!lobby_ || !config_.lobby) return {};
+  // A refusal that will be retried is not the session's end yet.
+  if (!lobby_ || !config_.lobby || rejoinRetryAtNs_) return {};
   LobbyTarget target = *config_.lobby;
   if (room_) {  // a created room has its code now
     target.create = false;

@@ -175,6 +175,11 @@ void LobbyMenu::setRoomRows(bool room) {
   rebuildRows();
 }
 
+void LobbyMenu::setPlayerCap(uint8_t maxPlayers) {
+  playerCap_ = std::clamp<uint8_t>(maxPlayers, 1, static_cast<uint8_t>(sim::kMaxPlayers));
+  settings_.bots = std::min(settings_.bots, maxBots());
+}
+
 void LobbyMenu::rebuildRows() {
   const sim::ContentDB& content = this->content();
   const LobbyRow focused = rowCount_ > 0 ? rows_[focus_] : LobbyRow{};
@@ -265,7 +270,7 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       break;
     case LobbyRowKind::Bots: {
       const int bots = std::clamp(static_cast<int>(settings_.bots) + (direction > 0 ? 1 : -1), 0,
-                                  static_cast<int>(sim::kMaxPlayers) - 1);
+                                  static_cast<int>(maxBots()));
       settings_.bots = static_cast<uint8_t>(bots);
       break;
     }

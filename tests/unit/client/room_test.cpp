@@ -645,3 +645,158 @@ TEST_CASE(
   REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
   CHECK(s.localSlots() == slots);
 }
+
+// --- the rejoin retry (docs/lobby-protocol.md §3) ------------------------------------
+
+namespace {
+
+// What the app does for the Reconnect button and for a due rejoin retry: a
+// new lobby transport for reconnectConfig(), handed to reconnect(). The
+// session owns it; the reference is valid until the next call.
+FakeLobbyTransport& reconnectOverNewTransport(LobbyRig& rig) {
+  net::LoopbackTransport& inner = rig.net.connectClient(rig.now, net::LinkConditions::uniform(kMs),
+                                                        net::LinkConditions::uniform(kMs));
+  auto fresh = std::make_unique<FakeLobbyTransport>(inner);
+  FakeLobbyTransport& raw = *fresh;
+  rig.session->reconnect(&raw, rig.now, std::move(fresh));
+  rig.session->attachLobby(std::make_unique<LobbyView>(raw));
+  return raw;
+}
+
+// A created room's session ran and lost its link: Reconnect is on offer.
+void loseRunningRoom(LobbyRig& rig) {
+  NetSession& s = *rig.session;
+  rig.transport->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  rig.net.cut(net::PeerId{1});  // the rig's only client
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, 7 * kSec));
+  REQUIRE(rig.runUntil([&] { return rig.server->peers().empty(); }, kSec));
+  REQUIRE(s.canReconnect());
+}
+
+constexpr uint64_t kSpacingNs = uint64_t{client::kRejoinRetrySpacingMs} * kMs;
+constexpr uint64_t kFrameNs = 16 * kMs;  // the rig's session frame
+
+}  // namespace
+
+TEST_CASE("a rejoin refused unknown_code is retried until the room is back (v1.3)",
+          "[client][room][net][reconnect]") {
+  LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""});
+  NetSession& s = *rig.session;
+  loseRunningRoom(rig);
+  const sim::PlayerMask slots = s.localSlots();
+
+  // The lobby restarted and the room's server has not claimed the room back:
+  // the press and the first retry are refused, the second is joined.
+  FakeLobbyTransport* t = &reconnectOverNewTransport(rig);
+  CHECK(s.reconnects() == 1);
+  for (uint8_t refusal = 0; refusal < 2; ++refusal) {
+    INFO("refusal " << int{refusal});
+    t->refuse("unknown_code");
+    REQUIRE(rig.runUntil([&] { return s.rejoinRetryPending(); }, kSec));
+    const uint64_t refusedAt = rig.now;
+    // Until the retry is due the session is still rejoining: never the
+    // failed screen, no refusal text, no button for the player to press.
+    while (!s.rejoinRetryDue(rig.now)) {
+      REQUIRE(s.phase() == NetPhase::Connecting);
+      REQUIRE(s.statusText() == "Joining room ABCDE ...");
+      REQUIRE(s.lobbyErrorText().empty());
+      REQUIRE_FALSE(s.canReconnect());
+      REQUIRE(rig.now < refusedAt + kSpacingNs + kFrameNs);
+      rig.step();
+    }
+    CHECK(rig.now + kFrameNs >= refusedAt + kSpacingNs);
+    t = &reconnectOverNewTransport(rig);
+    CHECK(s.reconnects() == 1);  // a retry, not a press
+    CHECK(s.rejoinRetries() == refusal + 1);
+    CHECK_FALSE(s.rejoinRetryPending());
+    CHECK(s.phase() == NetPhase::Connecting);
+  }
+
+  // The server re-registered: the rejoin goes through, with the slot back.
+  t->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  CHECK(s.localSlots() == slots);
+  CHECK(rig.server->stats().reconnects == 1);
+  CHECK(s.room() == client::LobbyRoomInfo{.code = "ABCDE", .region = "eu"});
+  CHECK(s.reconnects() == 1);
+}
+
+TEST_CASE("a rejoin refused unknown_code for the whole window ends as before (v1.3)",
+          "[client][room][net][reconnect]") {
+  LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""});
+  NetSession& s = *rig.session;
+  loseRunningRoom(rig);
+
+  FakeLobbyTransport* t = &reconnectOverNewTransport(rig);
+  t->refuse("unknown_code");
+  REQUIRE(rig.runUntil([&] { return s.rejoinRetryPending(); }, kSec));
+  const uint64_t firstRefusal = rig.now;
+  for (uint8_t retry = 0; retry < client::kRejoinRetries; ++retry) {
+    INFO("retry " << int{retry});
+    REQUIRE(rig.runUntil([&] { return s.rejoinRetryDue(rig.now); }, kSpacingNs + kFrameNs));
+    REQUIRE(s.phase() == NetPhase::Connecting);
+    t = &reconnectOverNewTransport(rig);
+    t->refuse("unknown_code");
+    REQUIRE(rig.runUntil(
+        [&] { return s.rejoinRetryPending() || s.phase() == NetPhase::Disconnected; }, kSec));
+  }
+  // The last retry's refusal is final, the window after the first refusal.
+  CHECK(s.rejoinRetries() == client::kRejoinRetries);
+  REQUIRE(s.phase() == NetPhase::Disconnected);
+  const uint64_t window = uint64_t{client::kRejoinRetries} * kSpacingNs;
+  CHECK(rig.now >= firstRefusal + window);
+  CHECK(rig.now <= firstRefusal + window + ((uint64_t{client::kRejoinRetries} + 1) * kFrameNs));
+  CHECK(s.statusText() == "Room ABCDE not found (check the code)");
+  CHECK(s.lobbyErrorText() == "Room ABCDE not found (check the code)");
+  CHECK_FALSE(s.canReconnect());
+  for (int i = 0; i < 5000; ++i)
+    rig.step();
+  CHECK_FALSE(s.rejoinRetryPending());
+  CHECK(s.phase() == NetPhase::Disconnected);
+  CHECK(s.reconnects() == 1);
+}
+
+TEST_CASE("a first join by code refused unknown_code is not retried", "[client][room][net]") {
+  LobbyRig rig(LobbyTarget{.create = false, .region = "", .code = "ABCDE"});
+  NetSession& s = *rig.session;
+  rig.transport->refuse("unknown_code");
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, kSec));
+  CHECK(s.statusText() == "Room ABCDE not found (check the code)");
+  for (int i = 0; i < 5000; ++i) {
+    rig.step();
+    REQUIRE_FALSE(s.rejoinRetryPending());
+    REQUIRE_FALSE(s.rejoinRetryDue(rig.now));
+  }
+  CHECK(s.phase() == NetPhase::Disconnected);
+  CHECK_FALSE(s.canReconnect());
+}
+
+TEST_CASE("a rejoin refused for another reason is not retried", "[client][room][net][reconnect]") {
+  struct Case {
+    const char* reason{nullptr};
+    const char* text{nullptr};
+  };
+  const Case cases[] = {
+      {"bad_token", "Room ABCDE does not know this player any more"},
+      {"server_gone", "Room ABCDE's server went away"},
+      {"mismatch", "Version mismatch: reload the page or update the client"},
+      {"limited", "Too many attempts from this network: wait a minute"},
+  };
+  for (const Case& c : cases) {
+    INFO(c.reason);
+    LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""});
+    NetSession& s = *rig.session;
+    loseRunningRoom(rig);
+    FakeLobbyTransport& t = reconnectOverNewTransport(rig);
+    t.refuse(c.reason);
+    REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, kSec));
+    CHECK_FALSE(s.rejoinRetryPending());
+    CHECK(s.statusText() == c.text);
+    CHECK_FALSE(s.canReconnect());
+    for (int i = 0; i < 3000; ++i)
+      rig.step();
+    CHECK_FALSE(s.rejoinRetryPending());
+    CHECK(s.phase() == NetPhase::Disconnected);
+  }
+}

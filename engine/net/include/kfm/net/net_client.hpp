@@ -23,6 +23,9 @@
 // forward to the current L. A reconnect is connect() on a new transport with
 // the same token. A spectator (requestedSlots = 0) never predicts: it steps
 // only authoritative frames and stays spectatorDelayTicks behind the newest.
+// A snapshot it loads that is older than the frames it holds (the stream
+// keeps arriving while a snapshot is delayed) is followed at once by a run
+// over those frames to that delay, not a catch-up at the clock's 2 % (#84).
 //
 // Prediction: local slots use the inputs submitted for that tick (input delay
 // D: the inputs passed at local tick L are for tick L + D); remote slots and
@@ -173,13 +176,23 @@ struct ClientNetStats {
   uint64_t mispredictedPresent{0};  // ... in the present mask
   uint64_t substitutionsSeen{0};    // confirmed local slot-ticks whose input the server repeated
   uint64_t anchorRollbacks{0};      // deeper than the ring: re-simulated from the anchor
-  uint64_t rollbackOverflows{0};    // deeper than the frame history (resync instead)
+  // Episodes of a misprediction deeper than the frame history (resync
+  // instead): counted when the client starts awaiting a snapshot for one,
+  // not again until a snapshot has loaded (the overflow is found again on
+  // every frame while the snapshot is on its way; counted per frame, one
+  // repair of a 3 s outage at 500 ms RTT was 502). Its ResyncRequests,
+  // retries included, count in resyncRequests.
+  uint64_t rollbackOverflows{0};
   // Clock and lead.
   int32_t leadTicks{0};        // L − estimated server tick at the last ticksDue()
   int32_t targetLeadTicks{0};  // §6.2 target from RTT and jitter
   int8_t arrivalMargin{0};     // last reported by the server
   int32_t arrivalMarginQ8{0};  // smoothed
   uint32_t ratePpm{kRateOnePpm};
+  // Forward jumps off the clock: the lead controller's, a spectator's backlog
+  // past spectatorDelayTicks + kRollbackWindow, a promotion. Not a snapshot
+  // load's run forward (a player's to L, a spectator's to spectatorDelayTicks
+  // behind its frames), which snapshotsLoaded counts.
   uint64_t hardJumps{0};
   uint64_t runForwardClamped{0};  // forward runs cut to kMaxRunForwardTicks (v0.70)
   uint64_t clockDroppedTicks{0};
@@ -382,6 +395,8 @@ class NetClient {
   sim::PlayerMask basePresent_{0};
   Tick marginFrom_{};  // margins of inputs before this tick are ignored
   bool awaitingResync_{false};
+  // A rollback overflow was counted; cleared when a snapshot loads.
+  bool overflowPending_{false};
   std::optional<Tick> restartTick_;  // announced, snapshot not loaded yet
   std::optional<RoomStateMsg> room_;
   uint32_t roomUpdates_{0};

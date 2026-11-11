@@ -169,32 +169,38 @@ int32_t leadOf(const NetSim& s, const ClientRig& r) {
 // kRollbackWindow, their misprediction can only be re-simulated from the
 // anchor at verified_, which the outage left more than kInputHistoryTicks
 // behind for long outages, and the backstop asks for the snapshot (on the
-// first window, before gapResyncNs passes) or counts while it is awaited.
-// Below it the ring holds the state and the backstop never fires.
+// first window, before gapResyncNs passes) or waits for the one the gap
+// asked for: one rollback-overflow episode either way. Below it the ring
+// holds the state and the backstop never fires.
 bool overflowPossible(const ServerConfig& sc, const LinkSpec& l, const ClientRig& a) {
   const auto hopTicks = static_cast<int32_t>((l.hopNs() + kTickNs - 1) / kTickNs);
   const int32_t reach = int32_t{sc.authRedundancy} + hopTicks + a.client->netStats().leadTicks;
   return std::cmp_greater_equal(reach, kRollbackWindow);
 }
 
-// Every ResyncRequest of a repair is the gap's (gapResyncs), or, where
-// overflowPossible(), the rollback-overflow backstop's; never a mismatch's.
-void checkRequests(const ClientRig& c, const Baseline& base, uint64_t requests,
-                   bool overflowAllowed) {
+// Every ResyncRequest of a repair is the gap's (gapResyncs) or a
+// rollback-overflow episode's; never a mismatch's. `overflows` is the
+// case's number of episodes, which only overflowPossible() allows. An
+// episode counts once until a snapshot loads and sends a request of its
+// own only when no gap's is outstanding (none of these cases holds one
+// long enough to retry it), so gap <= requests <= gap + episodes, and each
+// episode ends in a loaded snapshot.
+void checkRequests(const ClientRig& c, const Baseline& base, uint64_t requests, uint64_t overflows,
+                   bool overflowPossible) {
   const ClientNetStats& st = c.client->netStats();
   const uint64_t req = st.resyncRequests - base.resyncs;
   const uint64_t gap = st.gapResyncs - base.gapResyncs;
-  const uint64_t overflows = st.rollbackOverflows - base.overflows;
-  INFO("requests " << req << ", gap " << gap << ", overflows +" << overflows);
+  const uint64_t episodes = st.rollbackOverflows - base.overflows;
+  const uint64_t loaded = st.snapshotsLoaded - base.snapshots;
+  INFO("requests " << req << ", gap " << gap << ", overflows +" << episodes << ", snapshots +"
+                   << loaded);
+  CHECK((overflowPossible || overflows == 0));
   CHECK(req == requests);
   CHECK(st.checksumMismatches == base.mismatches);
-  if (overflowAllowed) {
-    CHECK(gap <= req);
-    CHECK((gap == req || overflows > 0));
-  } else {
-    CHECK(gap == req);
-    CHECK(overflows == 0);
-  }
+  CHECK(episodes == overflows);
+  CHECK(gap <= req);
+  CHECK(req <= gap + episodes);
+  CHECK(episodes <= loaded);
 }
 
 // When one client first agrees again after s.now() at the call, and the
@@ -240,8 +246,9 @@ void checkWithin(const char* who, const Agreement& g, const LinkSpec& l, const S
 }
 
 // And it stays so for 3 s: checksums keep being compared and keep matching,
-// for every client, nothing overflows any more, and the spectator still
-// stands on the server's state.
+// for every client, no new overflow episode starts and no snapshot is asked
+// for or loaded (an episode still awaiting one would ask again within
+// resyncRetryNs), and the spectator still stands on the server's state.
 void checkStaysInAgreement(NetSim& s, const Rigs& r, const Baseline& b0, int32_t maxBehind) {
   const Baseline a1 = baseline(r.a);
   const Baseline w1 = baseline(r.w);
@@ -253,12 +260,76 @@ void checkStaysInAgreement(NetSim& s, const Rigs& r, const Baseline& b0, int32_t
     CHECK(st.checksumsCompared > base.compared + 10);
     CHECK(st.checksumMismatches == 0);
     CHECK(st.rollbackOverflows == base.overflows);
+    CHECK(st.resyncRequests == base.resyncs);
+    CHECK(st.snapshotsLoaded == base.snapshots);
   }
   CHECK(agrees(s, r.w, w1, maxBehind));
   // The untouched player never needed a snapshot, and never overflowed.
   CHECK(r.b.client->netStats().resyncRequests == b0.resyncs);
   CHECK(r.b.client->netStats().rollbackOverflows == b0.overflows);
 }
+
+// Issue #84: a spectator steps only authoritative frames, spectatorDelayTicks
+// behind the newest it has confirmed: its backlog, confirmed + 1 − its tick,
+// is what ticksDue() and spectatorRatePpm() hold at the delay. A snapshot
+// that arrives late while the unreliable stream kept coming (the "snapshot
+// held" cases; a reliable retransmission after loss) is older than the
+// frames the spectator holds, and the load runs it over them to the delay
+// at once. At the end of the client frame that loaded a snapshot the
+// backlog is then at most the delay plus the frames that same frame
+// received after the snapshot: AuthInputs leave one per server tick (at
+// least kSec / kTickHz apart) with one-way delays at most 2 · jitter apart,
+// and a frame's 1 ms of messages is delivered in arrival order, so the
+// newest frame moves at most ceil((2 · jitter + 1 ms) / tick) ticks past the
+// newest one before. (On a lossy link each AuthInputs lost just before
+// those adds its tick; the bound leaves no room for that, and the lossy
+// cases here meet it anyway.) A snapshot not older than the stream leaves a
+// backlog under the delay, as before the fix. Before it, the backlog after
+// a late load was the snapshot's age: 15 and 16 ticks after the 1.5 s holds,
+// 18 at 300 ms with 10% loss, drained at lead.maxDeviationPpm (2%).
+int32_t arrivalTicks(const LinkSpec& l) {
+  constexpr uint64_t kMinTickNs = kSec / sim::kTickHz;
+  return static_cast<int32_t>((2 * l.jitterNs + kMs + kMinTickNs - 1) / kMinTickNs);
+}
+
+// Samples the spectator at the end of every client frame in which it loaded
+// a snapshot.
+struct SpectatorLoads {
+  const ClientRig* rig{nullptr};
+  uint64_t seen{0};       // its snapshotsLoaded so far
+  uint64_t loaded{0};     // snapshots loaded since the first sample's baseline
+  int32_t maxBacklog{0};  // the largest backlog at the end of a loading frame
+  uint32_t offServer{0};  // loading frames that left it off the server's state
+
+  void sample(const NetSim& s, const ClientRig& c) {
+    if (&c != rig) return;
+    const NetClient& cl = *c.client;
+    const uint64_t n = cl.netStats().snapshotsLoaded;
+    if (n == seen) return;
+    loaded += n - seen;
+    seen = n;
+    const std::optional<Tick> confirmed = cl.confirmedTick();
+    const int32_t backlog = confirmed ? confirmed->plus(1).minus(cl.localTick()) : 0;
+    maxBacklog = std::max(maxBacklog, backlog);
+    if (sim::checksum(cl.world()) != s.serverSum(cl.localTick())) ++offServer;
+  }
+
+  // At the end of each loading frame: within arrivalTicks() of the delay
+  // and on the server's state of its tick (it stepped authoritative frames
+  // only), for every snapshot the case expects.
+  void check(const char* name, const LinkSpec& l, uint64_t expectLoads) const {
+    const int32_t delay = ClientConfig{}.spectatorDelayTicks;
+    std::printf(
+        "[spectator] %s: %llu snapshots loaded, backlog at most %d after a load (bound %d "
+        "= delay %d + %d)\n",
+        name, static_cast<unsigned long long>(loaded), maxBacklog, delay + arrivalTicks(l), delay,
+        arrivalTicks(l));
+    INFO(name);
+    CHECK(loaded == expectLoads);
+    CHECK(offServer == 0);
+    CHECK(maxBacklog <= delay + arrivalTicks(l));
+  }
+};
 
 // A reliable-only hold (Outage{.., reliable, !unreliable}) of one direction
 // of the player's and the spectator's links from the outage's end for ns:
@@ -286,6 +357,7 @@ struct OutageCase {
   uint64_t seed{0x0A7A};
   Hold hold{};
   std::optional<Expect> expect{std::nullopt};  // default: one repair, none for client to server
+  uint64_t overflows{0};  // the player's rollback-overflow episodes (the spectator never has one)
 };
 
 void runOutage(const OutageCase& oc) {
@@ -316,6 +388,8 @@ void runOutage(const OutageCase& oc) {
     }
   }
   int32_t leadMax = leadBefore;
+  SpectatorLoads loads{&w, w0.snapshots};
+  s.afterClientFrame = [&](ClientRig& c) { loads.sample(s, c); };
   // When the player first asks for a snapshot, from the outage's start.
   uint64_t firstResyncMs = 0;
   s.afterServerTick = [&] {
@@ -377,8 +451,8 @@ void runOutage(const OutageCase& oc) {
   // snapshot served is loaded. A spectator never predicts, so never overflows.
   const uint64_t want = oc.toServer ? 0 : 1;
   const Expect e = oc.expect.value_or(Expect{want, want, 0});
-  checkRequests(a, a0, e.requests, overflow);
-  checkRequests(w, w0, e.requests, false);
+  checkRequests(a, a0, e.requests, oc.overflows, overflow);
+  checkRequests(w, w0, e.requests, 0, false);
   for (const auto& [c, base, srv0] : {std::tuple{&a, a0, aServed0}, std::tuple{&w, w0, wServed0}}) {
     const ClientNetStats& st = c->client->netStats();
     CHECK(served(s, *c) - srv0 == e.served);
@@ -388,6 +462,8 @@ void runOutage(const OutageCase& oc) {
 
   checkStaysInAgreement(s, r, b0, maxBehind);
   s.afterServerTick = nullptr;
+  s.afterClientFrame = nullptr;
+  loads.check(oc.name, oc.link, e.served);
   // Stale acknowledgements during the outage do not inflate the human lead
   // the bots are delayed by (§8 human-likeness).
   CHECK(leadMax <= leadBefore + 2);
@@ -410,6 +486,7 @@ struct TwoOutagesCase {
   bool afterRepair{false};  // false: the second starts when the first request is sent
   LinkSpec link{};
   uint64_t seed{0x0A7C};
+  uint64_t overflows{0};  // the player's rollback-overflow episodes over both repairs
 };
 
 void runTwoOutages(const TwoOutagesCase& tc) {
@@ -437,7 +514,9 @@ void runTwoOutages(const TwoOutagesCase& tc) {
     s.network().setOutage(t.rig->transport->self(), false, Outage{from, from + tc.firstNs});
   int32_t leadMax = leadBefore;
   s.afterServerTick = [&] { leadMax = std::max(leadMax, leadOf(s, r.a)); };
+  SpectatorLoads loads{&r.w, tracks[1].before.snapshots};
   s.afterClientFrame = [&](ClientRig& c) {
+    loads.sample(s, c);
     for (Track& t : tracks) {
       if (t.rig != &c || t.secondFrom) continue;
       const ClientNetStats& st = c.client->netStats();
@@ -453,7 +532,7 @@ void runTwoOutages(const TwoOutagesCase& tc) {
   const uint64_t firstBound = recoveryBoundNs(tc.link, sc, cc, 0);
   REQUIRE(s.runUntil([&] { return tracks[0].secondFrom && tracks[1].secondFrom; },
                      tc.firstNs + firstBound));
-  s.afterClientFrame = nullptr;
+  // The hook keeps sampling the spectator; both second outages are set.
   const uint64_t secondUntil =
       std::max(tracks[0].secondFrom.value_or(0), tracks[1].secondFrom.value_or(0)) + tc.secondNs;
   s.runFor(secondUntil - s.now());
@@ -487,12 +566,14 @@ void runTwoOutages(const TwoOutagesCase& tc) {
     REQUIRE(g.afterNs.has_value());
     CHECK(g.afterNs.value_or(0) + lag <= recoveryBoundNs(tc.link, sc, cc, g.retransmits));
     // One repair per outage, none dropped by the server's limit.
-    checkRequests(*t.rig, t.before, 2, i == 0 && overflow);
+    checkRequests(*t.rig, t.before, 2, i == 0 ? tc.overflows : 0, i == 0 && overflow);
     CHECK(served(s, *t.rig) - t.served0 == 2);
     CHECK(st.snapshotsLoaded - t.before.snapshots == 2);
   }
   checkStaysInAgreement(s, r, b0, maxBehind);
   s.afterServerTick = nullptr;
+  s.afterClientFrame = nullptr;
+  loads.check(tc.name, tc.link, 2);
   CHECK(leadMax <= leadBefore + 2);
 }
 
@@ -544,6 +625,13 @@ TEST_CASE("an outage shorter than the redundancy needs no snapshot", "[netcode][
 }
 
 // --- issue #66: high RTT (§6.2's 200, 300 and 500 ms rows) -------------------------
+//
+// Where the backstop fires (a 3 s outage at 300 ms, 1 s or more at 500 ms;
+// overflowPossible() holds from 300 ms on) the repair is one
+// rollback-overflow episode: after 3 s the overflow's own request goes out
+// on the first window (gap +0); after 1 s at 500 ms the gap asks first and
+// the overflow waits for that snapshot (issue #85: one episode, not one per
+// frame awaited).
 
 TEST_CASE("outages at 200 ms RTT ± 30 ms: the player and the spectator recover",
           "[netcode][outage][outage-rtt]") {
@@ -558,15 +646,15 @@ TEST_CASE("outages at 300 ms RTT ± 10 ms: the player and the spectator recover"
   const LinkSpec l{150 * kMs, 10 * kMs};
   runOutage({"300 ms ±10, s->c 0.4 s", 400 * kMs, false, false, l});
   runOutage({"300 ms ±10, s->c 1 s", kSec, false, false, l});
-  runOutage({"300 ms ±10, s->c 3 s", 3 * kSec, false, false, l});
+  runOutage({.name = "300 ms ±10, s->c 3 s", .durationNs = 3 * kSec, .link = l, .overflows = 1});
 }
 
 TEST_CASE("outages at 500 ms RTT ± 30 ms: the player and the spectator recover",
           "[netcode][outage][outage-rtt]") {
   const LinkSpec l{250 * kMs, 30 * kMs};
   runOutage({"500 ms ±30, s->c 0.4 s", 400 * kMs, false, false, l});
-  runOutage({"500 ms ±30, s->c 1 s", kSec, false, false, l});
-  runOutage({"500 ms ±30, s->c 3 s", 3 * kSec, false, false, l});
+  runOutage({.name = "500 ms ±30, s->c 1 s", .durationNs = kSec, .link = l, .overflows = 1});
+  runOutage({.name = "500 ms ±30, s->c 3 s", .durationNs = 3 * kSec, .link = l, .overflows = 1});
 }
 
 // --- issue #66: independent loss on top of an outage -------------------------------
@@ -648,5 +736,7 @@ TEST_CASE("a second outage before the first repair completes needs a second snap
 TEST_CASE("a second outage just after the first repair completes needs a second snapshot",
           "[netcode][outage][outage-twice]") {
   runTwoOutages({"twice, after the repair, 80 ms", kSec, 400 * kMs, true});
-  runTwoOutages({"twice, after the repair, 500 ms", kSec, kSec, true, {250 * kMs, 30 * kMs}});
+  // At 500 ms one of the two repairs is also a rollback-overflow episode.
+  runTwoOutages(
+      {"twice, after the repair, 500 ms", kSec, kSec, true, {250 * kMs, 30 * kMs}, 0x0A7C, 1});
 }

@@ -19,7 +19,8 @@
 // arena to the first one that does; v0.34: a mode that names its own arena
 // (ModeDef::arena) brings it, and a mode's baseline power-up gets no row.
 // v0.42: the online room's host edits the same rows; v0.43 gives that menu
-// only the rows a RoomSettings carries (setRoomRows()). v0.43 moved the M6a
+// only the rows a RoomSettings carries (setRoomRows()), and v8 its Bots row
+// the server's player cap (setPlayerCap()). v0.43 moved the M6a
 // Online section (Create room, the region, Join) to the Play online screen
 // (online_menu.hpp).
 #pragma once
@@ -119,6 +120,14 @@ class LobbyMenu {
   // v0.43: only the rows a RoomSettings carries (arena, mode, teams,
   // loadout, power-ups, bots): the online room host's menu. Off: every row.
   void setRoomRows(bool room);
+  // v8 (issue #83): the player cap the Bots row stops under, the server's
+  // rule (apps/server validRoomSettings(): at most maxPlayers − 1 bots, one
+  // slot stays a human's). The online room sets it from the RoomState's
+  // maxPlayers; local play keeps the default, kMaxPlayers. Clamped to
+  // 1..kMaxPlayers; a bot count above the new limit drops to it.
+  void setPlayerCap(uint8_t maxPlayers);
+  // The Bots row's highest value: playerCap − 1.
+  [[nodiscard]] uint8_t maxBots() const { return static_cast<uint8_t>(playerCap_ - 1); }
 
   [[nodiscard]] std::span<const LobbyRow> rows() const { return {rows_.data(), rowCount_}; }
   [[nodiscard]] std::size_t focus() const { return focus_; }
@@ -144,6 +153,7 @@ class LobbyMenu {
 
   const sim::ContentDB* content_{nullptr};
   bool roomRows_{false};
+  uint8_t playerCap_{sim::kMaxPlayers};
   std::array<LobbyRow, kMaxRows> rows_{};
   std::size_t rowCount_{0};
   std::size_t focus_{0};

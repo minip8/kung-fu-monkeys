@@ -53,6 +53,7 @@ void NetClient::resetSession() {
   basePresent_ = 0;
   marginFrom_ = Tick{};
   awaitingResync_ = false;
+  overflowPending_ = false;
   restartTick_.reset();
   room_.reset();
   roomUpdates_ = 0;
@@ -444,12 +445,24 @@ void NetClient::loadSnapshot(Tick runTo) {
     u.valid = false;
   confirmed_.reset();
   advanceConfirmed();
+  overflowPending_ = false;  // a later overflow is a new episode
   basePresent_ = static_cast<sim::PlayerMask>(world_.rules.present | localSlots_);
   for (PendingChecksum& c : checksums_)
     if (c.valid && c.tick < base_) c.valid = false;
   ++stats_.snapshotsLoaded;
   report_.snapshotLoaded = true;
   report_.rolledBack = true;
+  // A spectator whose snapshot is older than the frames it holds runs at
+  // once to where ticksDue() keeps it, spectatorDelayTicks behind its newest
+  // confirmed frame, over those frames only: they are contiguous from the
+  // snapshot's tick, so it never predicts (issue #84; left to
+  // spectatorRatePpm(), at most lead.maxDeviationPpm faster, a 15-tick
+  // backlog took about 10 s). Part of the load, not a hard jump.
+  if (spectator() && confirmed_) {
+    const int32_t avail = confirmed_->plus(1).minus(world_.tick);
+    const int32_t delay = config_.spectatorDelayTicks;
+    if (avail > delay) runTo = std::max(runTo, world_.tick.plus(avail - delay));
+  }
   // Unsigned: a tick far enough away would wrap Tick::minus.
   if (runTo > world_.tick && runTo.value - world_.tick.value > uint32_t{kMaxRunForwardTicks}) {
     runTo = world_.tick.plus(kMaxRunForwardTicks);
@@ -458,6 +471,7 @@ void NetClient::loadSnapshot(Tick runTo) {
   while (world_.tick < runTo)
     stepOne();
   advanceVerified();
+  KFM_ASSERT(!spectator() || verified_ == world_.tick);  // stepped authoritative frames only
 }
 
 // --- timeline -----------------------------------------------------------------------
@@ -635,7 +649,10 @@ void NetClient::reconcile() {
         world_.tick.minus(verified_) < static_cast<int32_t>(kInputHistoryTicks)) {
       rollbackTo(*first);
     } else {
-      ++stats_.rollbackOverflows;
+      // The overflow is found again on every frame until a snapshot loads;
+      // the episode counts once (requestResync() paces the request itself).
+      if (!overflowPending_) ++stats_.rollbackOverflows;
+      overflowPending_ = true;
       requestResync(*first, 0);
     }
   }

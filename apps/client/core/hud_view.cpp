@@ -186,7 +186,9 @@ std::array<RoomSlot, sim::kMaxPlayers> roomSlots(const net::RoomStateMsg& room) 
   std::array<RoomSlot, sim::kMaxPlayers> out{};
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     const PlayerId slot{i};
-    if (sim::maskHas(room.humans, slot)) {
+    if (i >= room.maxPlayers) {
+      out[i] = RoomSlot::Closed;  // the decoder refuses a holder up here
+    } else if (sim::maskHas(room.humans, slot)) {
       out[i] = RoomSlot::Human;
     } else if (sim::maskHas(room.bots, slot)) {
       out[i] = RoomSlot::Bot;

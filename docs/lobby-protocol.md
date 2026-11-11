@@ -46,9 +46,11 @@ rooms back from their servers (§5, "Room claims").
   remembers every token it issued for a live room, and a `join` that presents one is a
   **rejoin**: the same player coming back under the same token (§3), so the game server's
   reconnect (it keeps a dropped player's slots reserved for its grace window, keyed on the
-  token) recognises it. v1.3: a room keeps at most 128 tokens (and never fewer than its 64
-  sockets); a join that would issue one more first forgets the oldest token no socket is
-  seated under, whose player can then no longer rejoin (`bad_token`).
+  token) recognises it; after a lobby restart a rejoin can be early, and a client retries one
+  refused `unknown_code` for a few seconds (§3, "After `joined`"). v1.3: a room keeps at most
+  128 tokens (and never fewer than its 64 sockets); a join that would issue one more first
+  forgets the oldest token no socket is seated under, whose player can then no longer rejoin
+  (`bad_token`).
 - **Peer id** (lobby-assigned, per server socket): a decimal string, unique for the lifetime of
   the server's socket, never reused on that socket. It is only a routing key between the lobby
   and the server; the transport's own `PeerId` is the server's business.
@@ -149,9 +151,19 @@ After `joined`:
   code and the token rejoins as before once that server is back. While the lobby is down the
   rejoin cannot connect ("Lost the connection to the lobby", and Reconnect stays offered);
   after the lobby is back but before the server has re-registered (seconds: a server holding a
-  room retries every 5 s at most) it is refused `unknown_code` and the player can join the
-  room by its code again. There is no fallback from a refused rejoin to a plain join: a plain
-  join is a new player, so the UI leaves it to the player.
+  room retries every 5 s at most) it is refused `unknown_code`. A client therefore retries a
+  rejoin refused `unknown_code` on its own, each time on a new socket with the same `join`
+  (code and token): 2 s after each refusal, at most 4 times, so for 8 s after the first one
+  (the server's longest gap between attempts, 5 s, plus 3 s for its `register` and the
+  client's own round trip; five refused joins in all, half of the address's budget of §7).
+  Meanwhile the client is still rejoining, not failed. A refusal of the last retry ends the
+  rejoin as any `unknown_code` does: the room is gone, and the player can only join a room by
+  its code. Only a rejoin is retried, and only on `unknown_code`: a first join by code refused
+  `unknown_code` names a code the lobby does not know, and every other reason (`bad_token`,
+  `server_gone`, `mismatch`, `limited`, …) ends the rejoin at once. This is client behaviour
+  only; nothing on the wire changes, and a client that does not retry sees the refusal as
+  before. There is no fallback from a refused rejoin to a plain join: a plain join is a new
+  player, so the UI leaves it to the player.
 
 Compatibility (v1.2 → v1.3, clients, continued): a v1.2 client still ends its session when its
 lobby socket closes; against a v1.3 server that keeps its players, such a client sees its
@@ -226,7 +238,9 @@ tokens (none seated: every client socket of the old lobby is gone), counted as u
 the claimed `players`, and with no creator address. The reply then names it:
 `{"type":"registered","version":"1.3","room":"ABCDE"}`. A join by the code works again and a
 rejoin with one of the tokens is a rejoin (§3); with `players` at 0 and no socket the room's
-expiry starts as for any empty room.
+expiry starts as for any empty room. Until the claim lands the code is not live, so a rejoin is
+refused `unknown_code`; clients retry it for 8 s, which covers this server's 5 s ceiling
+between attempts (§3, "After `joined`").
 
 A claim the lobby does not adopt (the code is a live room of another server, which happens only
 if the code was reassigned while this server was away, or the room cap is reached) gets a

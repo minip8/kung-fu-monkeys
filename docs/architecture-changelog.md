@@ -1191,3 +1191,77 @@ the humans. Verified on GCC: headless Debug 45 of 45, the `dev` preset 47 of 47,
 `server-headless` Release preset with the soak and real-socket gates 52 of 52, and through
 real binaries: `kfm_server --max-players 3 --bots 3` with two
 clients shows "Bots 2" and one bot to come.
+
+v0.76 changes: four follow-ups of v0.75 and of the outage coverage, one commit each (§6.2,
+§6.3, §6.6, §7, §13.5; issues #85, #84, #74 and #83). No sim change in any of them; replay
+checksums unchanged.
+
+`rollbackOverflows` counts episodes (#85). The client counted a rollback overflow on every
+`reconcile()` that found one, and it finds the same one on every frame until the snapshot it
+asked for arrives, so the stat measured the wait in frames: 284 for one repair of a 3 s outage
+at 300 ms RTT, 502 at 500 ms. It now counts once when the client starts waiting for a snapshot
+and not again until one has loaded (any load: a resync, a restart, a room resume, the initial
+sync); a second overflow after that counts again. The per-frame figure is not kept: nothing
+read it as anything but a count. `resyncRequests` and `gapResyncs` are unchanged, and the two
+gates on the stat (`kfm_netsim`'s exit status and the soak test) require zero, which means
+what it meant. The outage tests now assert the episode count exactly (one wherever the
+backstop repairs, zero below the ring's reach) and that no client asks for or loads another
+snapshot in the 3 s after it agrees; with the old counting they fail on 48 == 1.
+
+A spectator catches up at once after a late snapshot (#84). A spectator that loaded a
+snapshot older than the frames it already held stepped on from the snapshot's tick and then
+sat 15 to 18 ticks behind its newest frame instead of 3, because `ticksDue` jumps a spectator
+forward only past `spectatorDelayTicks + kRollbackWindow` and left the rest to
+`spectatorRatePpm()`, which `lead.maxDeviationPpm` holds to 2%: about 10 s of watching a
+quarter of a second late. Decided: the load itself runs a spectator on to
+`spectatorDelayTicks` behind its newest confirmed frame, where the clock would hold it. It
+steps only frames it holds (they are contiguous from the snapshot's tick, so it still never
+predicts; a debug assertion says so), journals events as any run forward does, and is not a
+hard jump: `snapshotsLoaded` counts it. A snapshot that is not older than the stream is
+untouched, and so are players. The other option, a lower jump threshold for spectators, would
+have left the same lag below the new threshold. Side effect: the initial sync goes through
+the same load, so a spectator starts 2 to 3 ticks closer to its delay than before. Measured
+in the outage tests at the end of the frame that loads: 15, 16 and 18 ticks before, 3 after;
+the test bounds it by the delay plus the frames that can arrive within that frame (twice the
+jitter). That bound leaves no room for packet loss just before the load; the lossy cases meet
+it at their seeds. Not tested: a spectator promoted to a player right after a late load.
+
+Reconnect survives a lobby restart (#74, its second item). After the lobby restarts, a room is
+not live again until its server has redialled and claimed it (1, 2, 4, then every 5 s). A
+player who pressed Reconnect in that gap was refused `unknown_code`, which withdrew Reconnect
+and left only a join by code, as a new player. Decided: the client retries a rejoin refused
+`unknown_code` on its own, 2 s after each refusal and at most 4 times, so for 8 s: the
+server's 5 s ceiling plus 3 s for its `register` and the round trips, and five refused joins
+in all, half of an address's budget of ten (lobby protocol §7), so a join by code still works
+straight after. Only a rejoin (a `join` carrying the token of a room the session was in) and
+only `unknown_code`: a first join by code, `bad_token`, `server_gone`, `mismatch` and
+`limited` end at once as before. Between attempts the session reads Connecting and the screen
+stays on "Reconnecting" with no button, since nothing is asked of the player; after the last
+refusal it ends exactly as before ("Room ABCDE not found"). `NetSession` cannot build a
+transport, so it schedules the retry (`rejoinRetryDue()`) and the app answers it as it
+answers the button. No wire change and no lobby protocol version: `docs/lobby-protocol.md`
+§2, §3 and §5 state the client rule. Not covered: a lobby whose host is unreachable rather
+than restarted, where a server attempt can hang for its 10 s open timeout and the claim can
+land after the window. Not taken: retrying `server_gone`, which can have the same shape. The
+issue's first item (an adopted room always counting as used) stays open.
+
+The waiting room knows the server's player cap, protocol version 8 (#83). The client drew all
+ten slots and did not know `--max-players`, so the slots above the cap read "open, send the
+link" though nobody could join them, and the host's Bots row offered counts the server would
+refuse. Decided: `RoomState` carries the cap (u4, the cap − 1, after the placement mask;
+valid from 1 to `kMaxPlayers` with no slot of the three masks at or above it), rather than
+`Welcome`: the cap never changes, but the room screen then stays a function of the one
+message it draws. `kProtocolVersion` goes from 7 to 8, again with no compatibility path
+(v0.75 has the reason); `RoomState` is at most 179 B. `roomSlots()` returns `Closed` for a
+slot at or above the cap and the waiting room gives those slots no card: the grid ends at the
+cap, each remaining card where it was among ten, so at the default cap of 10 the screen is
+what it was (compared against the previous build: differences within the renderer's own
+run-to-run noise). `LobbyMenu::setPlayerCap()` stops the room's Bots row at the cap − 1, the
+server's own rule, which is unchanged; local play never sets it. Not changed: the Bots row
+follows the cap, not the free slots, so with two humans at a cap of three it can still read 2
+where Start places one; the waiting room shows the one bot that fits (v0.75), and the count
+is a setting the server clamps at Start. Verified for the four changes together on GCC:
+headless Debug 45 of 45, the `dev` preset 52 of 52 with the real-socket tests
+(`net_probe_loopback` failed once and passed 15 of 15 repeats; it does not use anything
+changed here), the `server-headless` Release preset 52 of 52 with the soak gates, and through
+real binaries a server at `--max-players 3` with two clients showing three cards.

@@ -65,6 +65,18 @@
 // it had: within the server's grace (10 s) the slots and the nickname are
 // reclaimed, later (or outside Playing) it joins like anyone. The session
 // keeps its devices, nickname and room code.
+//
+// The rejoin retry (docs/lobby-protocol.md §3, "Reconnect from the UI after a
+// lobby restart"): a rejoin (a lobby `join` carrying the token of a room this
+// session was in) refused `unknown_code` may only be early: the lobby is back
+// but the room's server has not claimed the room yet. The session then stays
+// Connecting ("Joining room ABCDE ...") and rejoinRetryDue() turns true
+// rejoinRetrySpacingMs after the refusal; the app answers it exactly like the
+// Reconnect button, with a new transport for reconnectConfig() handed to
+// reconnect(), which counts it as a retry (reconnects() does not move). After
+// rejoinRetries retries still refused, the session ends as any `unknown_code`
+// does ("Room ABCDE not found (check the code)", canReconnect() false). A
+// first join by code and every other refusal are never retried.
 #pragma once
 
 #include "kfm/net/net_client.hpp"
@@ -146,6 +158,20 @@ class ILobbyJoin {
 // `error` is not a lobby error.
 [[nodiscard]] std::string lobbyErrorText(std::string_view error, const LobbyTarget& target);
 
+// The rejoin retry's schedule (see the header comment). It follows the game
+// server's: its LobbyLink redials a lost lobby socket after 1, 2, 4, then
+// every 5 s while it holds a room (LobbyLinkConfig::reconnectMinMs doubling up
+// to kRoomReconnectMaxMs in engine/net/src/webrtc/lobby_link.cpp), so once the
+// lobby is back (it answered the refusal) the server's claim lands within 5 s
+// plus its connect and `register` round trip. Four retries 2 s apart cover
+// 8 s after the first refusal: the server's longest gap plus 3 s of margin,
+// and an adopted room is rejoined at most 2 s after it is back. A room that is
+// really gone is reported about 8 s after the press, and the five refused
+// joins use half of the lobby's per-address budget of ten (§7), so the
+// player can still join another room by code at once.
+inline constexpr uint8_t kRejoinRetries = 4;
+inline constexpr uint32_t kRejoinRetrySpacingMs = 2'000;
+
 struct NetSessionConfig {
   std::string serverLabel;           // shown in the status ("ws://host:port", the lobby URL)
   std::optional<LobbyTarget> lobby;  // set: a room through the lobby at serverLabel
@@ -154,6 +180,10 @@ struct NetSessionConfig {
   // v0.44, lobby protocol v1.2: join `lobby`'s room as the player this token
   // was issued to (a reconnect); empty: a new player.
   std::string rejoinToken;
+  // A rejoin refused `unknown_code` is retried this many times, this far
+  // apart (from the refusal); 0 retries: never.
+  uint8_t rejoinRetries{kRejoinRetries};
+  uint32_t rejoinRetrySpacingMs{kRejoinRetrySpacingMs};
   bool spectate{false};        // request no slots
   std::string nickname;        // v0.42: sent in Hello (Nickname::from)
   uint8_t requestedSlots{0};   // 0: one per bound lobby device (at least 1)
@@ -219,9 +249,21 @@ class NetSession {
   // Starts over on `transport` (see the header comment); `owned` replaces the
   // owned transport after the client let go of the old one. A null transport
   // fails with `failure`. Lobby mode: attachLobby() the new transport's view.
+  // While a rejoin retry is pending this is that retry; otherwise it is the
+  // player's Reconnect and starts a fresh retry budget.
   void reconnect(net::ITransport* transport, uint64_t nowNs,
                  std::unique_ptr<net::ITransport> owned = nullptr, std::string failure = {});
+  // The player's Reconnects (rejoin retries not counted).
   [[nodiscard]] uint32_t reconnects() const { return reconnects_; }
+  // A rejoin refused `unknown_code` waits to be retried (the phase reads
+  // Connecting meanwhile), and its time has come at `nowNs`: call reconnect()
+  // with a new transport for reconnectConfig().
+  [[nodiscard]] bool rejoinRetryDue(uint64_t nowNs) const {
+    return rejoinRetryAtNs_ && nowNs >= *rejoinRetryAtNs_;
+  }
+  [[nodiscard]] bool rejoinRetryPending() const { return rejoinRetryAtNs_.has_value(); }
+  // Retries made since the player's last Reconnect.
+  [[nodiscard]] uint8_t rejoinRetries() const { return rejoinRetries_; }
 
   // Lobby mode: the transport's view of the lobby (see the header comment).
   // Call before the first advance(); destroyed before the owned transport.
@@ -320,6 +362,7 @@ class NetSession {
 
   void bindLocalSlots();
   void handleRebinds();
+  void scheduleRejoinRetry(uint64_t nowNs);
   void stepTicks(uint32_t ticks);
   void updateRates(uint64_t nowNs);
   void updateDisplayRate(uint64_t nowNs);
@@ -339,7 +382,10 @@ class NetSession {
   uint64_t nowNs_{0};
   std::vector<std::byte> token_;  // the token the Hello carried (lobby or config)
   uint32_t reconnects_{0};
-  bool inputSuspended_{false};  // v0.46: the pause menu is open
+  std::optional<uint64_t> rejoinRetryAtNs_;  // a refused rejoin's next attempt
+  uint8_t rejoinRetries_{0};                 // retries since the last Reconnect
+  bool retryArmed_{true};                    // this attempt's refusal may still be retried
+  bool inputSuspended_{false};               // v0.46: the pause menu is open
 
   std::vector<LobbyDevice> devices_;
   platform::InputSampler sampler_{};
