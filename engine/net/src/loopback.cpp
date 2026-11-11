@@ -253,7 +253,8 @@ void LoopbackNetwork::route(LoopbackTransport& from, PeerId to, Lane lane, bool 
   LoopbackTransport& receiver = from.isServer_ ? *link->client : *server_;
   const PeerId seenAs = from.isServer_ ? kServerPeer : from.self_;
   const uint64_t sendNs = from.nowNs_;
-  const bool blackedOut = sendNs >= dir.outage.fromNs && sendNs < dir.outage.untilNs;
+  const bool inOutage = sendNs >= dir.outage.fromNs && sendNs < dir.outage.untilNs;
+  const bool blackedOut = inOutage && dir.outage.unreliable;
 
   const auto enqueue = [&](uint64_t deliverAtNs) {
     LoopbackTransport::InFlight m;
@@ -305,7 +306,7 @@ void LoopbackNetwork::route(LoopbackTransport& from, PeerId to, Lane lane, bool 
   LoopbackTransport::Peer* senderPeer = from.findPeer(to);
   KFM_ASSERT(senderPeer != nullptr);
   uint64_t deliverAtNs = sendNs + delay;
-  if (blackedOut && dir.outage.reliable) {
+  if (inOutage && dir.outage.reliable) {
     const uint64_t after = dir.outage.untilNs + c.latencyNs;
     if (after > deliverAtNs) {
       deliverAtNs = after;
