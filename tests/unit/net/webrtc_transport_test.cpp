@@ -254,7 +254,13 @@ TEST_CASE("WebRtcTransport: three clients get distinct ids and their own traffic
   std::set<uint16_t> ids;
   for (const auto& j : joined)
     ids.insert(j.peer.value);
-  CHECK(ids == std::set<uint16_t>{1, 2, 3});
+  // Distinct, and none the server's own. Not {1, 2, 3}: the server hands out
+  // an id per signaling socket it accepts, a client whose first WebSocket
+  // handshake fails is dialled again (kMaxSignalingDials) and an id is never
+  // reused, so one failed handshake on a busy runner gives {2, 3, 4}.
+  CHECK(ids.size() == joined.size());
+  CHECK_FALSE(ids.contains(kServerPeer.value));
+  CHECK_FALSE(ids.contains(PeerId::kInvalidValue));
 
   for (const auto& j : joined) {
     f.endpoint(0).sendReliable(j.peer, bytesOf("to " + std::to_string(j.peer.value)));
