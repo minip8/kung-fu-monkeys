@@ -1307,3 +1307,34 @@ are a gate on desyncs and rollback depth rather than a search for memory errors,
 that (run 42948352596) the sanitizer leg took 8.5 min, its tests 318 s, and the run 9.4 min,
 the slowest leg now Windows Debug at 8.9; the legs vary by a minute or two between runs of
 one commit (`clang-tidy` took 164 s in one and 310 s in the next).
+
+v0.78 changes: an account is held to one team on the ladder, and the house teams are the
+exception (§8 "The ladder", "Accounts, tokens and teams"; the bots repository's
+`docs/ladder-api.md` v1.5, its PR #20). Until now an account could create any number of teams,
+each an entrant with its own rating; seeding the board showed it, since one account made both
+house teams through the portal. The rule is on memberships, not on creating a team (a limit on
+creation alone leaves the same hole through "add member"): `POST /teams` and `POST
+/teams/{id}/members` answer the new code `already_in_team` (409) for an account that is in a
+team, a member counting as much as an owner, and an account that left its team may join or
+create another. It is judged when a membership is made, under a lock on the user's row (two
+requests for one account cannot both pass: a test makes two at once and gets one team; it
+fails four runs in five without the lock), and memberships from before stay, so nothing is
+removed at deploy. It is enforced in the service rather than by a unique index because the
+index could not except the operators. An operator is `users.operator`, set by `kfm-ladder
+operator add|remove|list` on the VM as a season is, shown by `GET /me`, and it lifts only this
+limit: the flag is the account's, not its teams' (a user an operator adds to a house team is
+still held to one), no route is open to an operator that is closed to another account, and
+nothing sets it over HTTP. The portal shows the create-team form only to an account that may
+use it. Also recorded here, the state this decision came out of: the bots repository released
+v0.1.5 on engine v0.9.0 (the game is the same for a bot, since `content/`, `engine/sim`,
+`engine/ai` and `apps/arena` are identical between v0.8.0 and v0.9.0), gained `examples/holder`
+(the starter that stays on the hill armed or not; 187 wins in 200 against the starter and 189
+in 200 against `ref:hard` in the ladder's shape), and season `2026-11`'s board, empty since its
+start, was seeded with the two house teams, whose first round was paired within a minute and
+recorded engine v0.9.0 on both games. Not done: a route that dissolves a team, which the rule
+now makes wanted (the last owner cannot leave, so an account that made a team of one cannot
+move to another team); a mark for house teams on the board. Verified in the bots repository:
+`cargo fmt --check`, `clippy -D warnings` and 187 tests against `postgres:17`, and the
+`operator` command by hand against a local database. Not yet released: the rule takes effect
+with the bots release after v0.1.5, and M7's criterion still wants an entrant from outside the
+project.
