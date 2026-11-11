@@ -1303,4 +1303,7 @@ after the VM update finished (about two minutes before the split). Decided after
 numbers: the sanitizer leg leaves out the three `kfm_netsim` soak gates (`-LE soak`), which
 took 93, 72 and 33 s there four at a time. The `server-headless` Release leg runs them, they
 are a gate on desyncs and rollback depth rather than a search for memory errors, and the
-`NetServer` and `NetClient` they drive run under the sanitizers in `kfm_netcode_tests`.
+`NetServer` and `NetClient` they drive run under the sanitizers in `kfm_netcode_tests`. With
+that (run 42948352596) the sanitizer leg took 8.5 min, its tests 318 s, and the run 9.4 min,
+the slowest leg now Windows Debug at 8.9; the legs vary by a minute or two between runs of
+one commit (`clang-tidy` took 164 s in one and 310 s in the next).
