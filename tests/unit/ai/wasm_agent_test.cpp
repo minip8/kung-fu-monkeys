@@ -63,10 +63,27 @@ PlayerInput mustAct(WasmAgent& agent, const Observation& obs, Tick tick) {
   return in.value_or(PlayerInput{});
 }
 
-Observation patternObservation(uint32_t firstWord) {
+// An observation whose match.tick (byte 16) is `word`. Not the header: a
+// version 1 module's header is the host's (v0.79), and the fixtures are
+// version 1 modules.
+Observation patternObservation(uint32_t word) {
   Observation obs{};
-  std::memcpy(static_cast<void*>(&obs), &firstWord, sizeof firstWord);
+  obs.header.version = kfm::ai::kObservationVersion;
+  obs.header.size = sizeof(Observation);
+  obs.match.tick = word;
   return obs;
+}
+
+// The u32 at byte `at` of an observation.
+uint32_t wordAt(const Observation& obs, size_t at) {
+  uint32_t w = 0;
+  std::memcpy(&w, reinterpret_cast<const unsigned char*>(&obs) + at, sizeof w);
+  return w;
+}
+
+// What a peek fixture's kfm_act(at) returns: the u32 at byte `at` of its buffer.
+uint32_t peek(WasmAgent& agent, const Observation& obs, uint32_t at) {
+  return static_cast<uint32_t>(kfm::ai::packInput(mustAct(agent, obs, Tick{at})));
 }
 
 }  // namespace
@@ -95,9 +112,10 @@ TEST_CASE("WasmModule needs a live WasmRuntime", "[ai][wasm]") {
 TEST_CASE("WasmModule loads the valid fixtures", "[ai][wasm]") {
   const WasmRuntime runtime;
   for (const char* name :
-       {"idle",      "echo",       "reads_obs",  "counter",    "work",       "trap",    "spin",
-        "logger",    "grow",       "bad_return", "init_trap",  "init_spin",  "leaky",   "bulk_fill",
-        "bulk_copy", "table_fill", "table_copy", "table_init", "table_grow", "mem_grow"}) {
+       {"idle",       "echo",      "reads_obs", "counter",    "work",       "trap",
+        "spin",       "logger",    "grow",      "bad_return", "init_trap",  "init_spin",
+        "leaky",      "bulk_fill", "bulk_copy", "table_fill", "table_copy", "table_init",
+        "table_grow", "mem_grow",  "peek_v1",   "peek_v2",    "tight_v1"}) {
     INFO(name);
     CHECK(WasmModule::load(readFixture(name)).has_value());
   }
@@ -113,6 +131,8 @@ TEST_CASE("WasmModule refuses bad modules with the right error", "[ai][wasm]") {
   };
   for (const Case& c :
        {Case{"abi_mismatch", LoadErrorKind::AbiMismatch},
+        Case{"abi_v0", LoadErrorKind::AbiMismatch}, Case{"abi_v3", LoadErrorKind::AbiMismatch},
+        Case{"tight_v2", LoadErrorKind::BadObsBuffer},
         Case{"big_memory", LoadErrorKind::MemoryTooLarge},
         Case{"bad_import", LoadErrorKind::BadImport},
         Case{"bad_signature", LoadErrorKind::BadSignature},
@@ -129,6 +149,27 @@ TEST_CASE("WasmModule refuses bad modules with the right error", "[ai][wasm]") {
     CHECK(kfm::ai::toString(module.error().kind) != "unknown");
   }
 
+  SECTION("a version the host does not speak names the module's and both of the host's") {
+    for (const char* fixture : {"abi_v0", "abi_v3", "abi_mismatch"}) {
+      INFO(fixture);
+      auto module = WasmModule::load(readFixture(fixture));
+      REQUIRE_FALSE(module.has_value());
+      const std::string& message = module.error().message;
+      INFO(message);
+      CHECK(message.find("the host speaks 1 and 2") != std::string::npos);
+    }
+    auto v0 = WasmModule::load(readFixture("abi_v0"));
+    REQUIRE_FALSE(v0.has_value());
+    CHECK(v0.error().message.find("kfm_abi_version() is 0,") != std::string::npos);
+    auto v3 = WasmModule::load(readFixture("abi_v3"));
+    REQUIRE_FALSE(v3.has_value());
+    CHECK(v3.error().message.find("kfm_abi_version() is 3,") != std::string::npos);
+  }
+  SECTION("a version 2 module needs room for version 2's observation") {
+    auto module = WasmModule::load(readFixture("tight_v2"));
+    REQUIRE_FALSE(module.has_value());
+    CHECK(module.error().message.find("5880-byte observation") != std::string::npos);
+  }
   SECTION("the start function is metered") {
     auto module = WasmModule::load(readFixture("start_spin"));
     REQUIRE_FALSE(module.has_value());
@@ -184,10 +225,16 @@ TEST_CASE("WasmAgent act round trip", "[ai][wasm]") {
     CHECK(agent.stats().substitutions == 0);
   }
   SECTION("the observation is written before every act") {
-    WasmAgent agent = makeAgent("reads_obs");
-    for (const uint32_t word : {0x11223344u, 0xA1B2C3D4u, 0u}) {
-      const PlayerInput in = mustAct(agent, patternObservation(word), Tick{1});
-      CHECK(kfm::ai::packInput(in) == word);
+    WasmAgent agent = makeAgent("peek_v1");
+    for (const uint32_t word : {0x11223344u, 0xA1B2C3D4u, 0u})
+      CHECK(peek(agent, patternObservation(word), 16) == word);  // match.tick
+  }
+  SECTION("a version 1 module reads version 1 in its header, whatever it is given") {
+    WasmAgent agent = makeAgent("reads_obs");  // returns the buffer's first u32
+    for (const uint32_t word : {0x11223344u, 0u}) {
+      Observation obs = patternObservation(word);
+      std::memcpy(static_cast<void*>(&obs), &word, sizeof word);
+      CHECK(kfm::ai::packInput(mustAct(agent, obs, Tick{1})) == kfm::ai::kObservationV1Version);
     }
   }
   SECTION("kfm_init receives the seed and the slot") {
@@ -196,6 +243,64 @@ TEST_CASE("WasmAgent act round trip", "[ai][wasm]") {
     CHECK(in.moveDir == 1);
     CHECK(in.moveMag == 5);
     CHECK(in.aimDir == 0xF0);
+  }
+}
+
+TEST_CASE("WasmAgent serves each module its own version's observation (v0.79)", "[ai][wasm]") {
+  // A host that speaks 2 writes a version 2 module all 5880 bytes and a
+  // version 1 module version 1's 5748 under a version 1 header, nothing past
+  // them (version 2 only appends). The peek fixtures return the u32 at any
+  // byte of their buffer, whose bytes from 5748 on start as 0xA5.
+  const WasmRuntime runtime;
+  using kfm::ai::kObservationV1Size;
+  constexpr uint32_t kSentinel = 0xA5A5A5A5u;
+  constexpr uint32_t kSentinelEnd = kObservationV1Size + 256;
+  Observation obs{};
+  auto* bytes = reinterpret_cast<unsigned char*>(&obs);
+  for (size_t i = 0; i < sizeof obs; ++i)
+    bytes[i] = static_cast<unsigned char>((i * 7) + 3);
+  obs.header.version = kfm::ai::kObservationVersion;
+  obs.header.size = sizeof(Observation);
+  obs.header.schemaFlags = 0x1;
+  obs.header.reserved0 = 0;
+  static_assert(sizeof(Observation) + 4 <= kSentinelEnd);
+
+  SECTION("version 2: every byte") {
+    WasmAgent agent = makeAgent("peek_v2");
+    CHECK(peek(agent, obs, 0) == 2);
+    CHECK(peek(agent, obs, 4) == 5880);
+    CHECK(peek(agent, obs, 8) == 0x1);
+    for (uint32_t at = 0; at < sizeof(Observation); at += 4) {
+      INFO("byte " << at);
+      CHECK(peek(agent, obs, at) == wordAt(obs, at));
+    }
+    for (auto at = static_cast<uint32_t>(sizeof(Observation)); at + 4 <= kSentinelEnd; at += 4) {
+      INFO("byte " << at);
+      CHECK(peek(agent, obs, at) == kSentinel);
+    }
+  }
+  SECTION("version 1: version 1's prefix under version 1's header") {
+    WasmAgent agent = makeAgent("peek_v1");
+    CHECK(peek(agent, obs, 0) == 1);
+    CHECK(peek(agent, obs, 4) == 5748);
+    CHECK(peek(agent, obs, 8) == 0x1);  // the schema flags are version 1's too
+    CHECK(peek(agent, obs, 12) == 0);
+    for (uint32_t at = 16; at < kObservationV1Size; at += 4) {
+      INFO("byte " << at);
+      CHECK(peek(agent, obs, at) == wordAt(obs, at));
+    }
+    for (uint32_t at = kObservationV1Size; at + 4 <= kSentinelEnd; at += 4) {
+      INFO("byte " << at);
+      CHECK(peek(agent, obs, at) == kSentinel);  // the zones block never reaches it
+    }
+  }
+  SECTION("version 1: room for 5748 bytes is enough") {
+    // tight_v1's buffer ends at the end of its memory (no growth possible).
+    WasmAgent agent = makeAgent("tight_v1");
+    CHECK(peek(agent, obs, 0) == 1);
+    CHECK(peek(agent, obs, 16) == wordAt(obs, 16));
+    CHECK(peek(agent, obs, kObservationV1Size - 4) == wordAt(obs, kObservationV1Size - 4));
+    CHECK(agent.stats().traps == 0);
   }
 }
 
