@@ -197,7 +197,7 @@ if(NOT KFM_HEADLESS)
     # process, 127.0.0.1. Labelled `network` like the other WebRTC tests.
     kfm_add_test_exe(kfm_client_net_tests client/net_session_webrtc_test.cpp)
     target_link_libraries(kfm_client_net_tests PRIVATE kfm::client_core kfm::net_webrtc)
-    set_tests_properties(kfm_client_net_tests PROPERTIES LABELS network TIMEOUT 120)
+    set_tests_properties(kfm_client_net_tests PROPERTIES LABELS network TIMEOUT 120 RUN_SERIAL TRUE)
   endif()
 endif()
 
@@ -215,7 +215,7 @@ if(KFM_WEBRTC AND NOT EMSCRIPTEN)
   )
   target_include_directories(kfm_net_webrtc_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(kfm_net_webrtc_tests PRIVATE kfm::net_webrtc kfm::transport_contract)
-  set_tests_properties(kfm_net_webrtc_tests PROPERTIES LABELS network TIMEOUT 300)
+  set_tests_properties(kfm_net_webrtc_tests PROPERTIES LABELS network TIMEOUT 300 RUN_SERIAL TRUE)
 endif()
 
 if(KFM_WEBRTC AND EMSCRIPTEN)
@@ -251,7 +251,8 @@ if(TARGET kfm::server_host)
       server/server_webrtc_test.cpp
     )
     target_link_libraries(kfm_server_network_tests PRIVATE kfm::server_host kfm::net_webrtc)
-    set_tests_properties(kfm_server_network_tests PROPERTIES LABELS network TIMEOUT 120)
+    set_tests_properties(kfm_server_network_tests PROPERTIES LABELS network TIMEOUT 120
+      RUN_SERIAL TRUE)
   endif()
 endif()
 

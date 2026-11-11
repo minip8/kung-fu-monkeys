@@ -1265,3 +1265,45 @@ headless Debug 45 of 45, the `dev` preset 52 of 52 with the real-socket tests
 (`net_probe_loopback` failed once and passed 15 of 15 repeats; it does not use anything
 changed here), the `server-headless` Release preset 52 of 52 with the soak gates, and through
 real binaries a server at `--max-players 3` with two clients showing three cards.
+
+v0.77 changes: CI's legs are made shorter without removing a test (§9; `ci.yml`, the tests'
+CMake). A run took about 20 minutes, the length of its slowest leg. Measured on run
+42939083286: the sanitizer leg 19.9 min (configure 5.7, build 2.7, tests 11.0), the Windows
+and Clang legs 14 to 16 min of which 7.5 to 8.7 were configure, lint 10.2 min of which 9.2 were
+`clang-tidy`; the tests of an ordinary leg were 1 to 4 min. Three causes, three changes.
+(1) vcpkg built all 16 ports from source on every leg (OpenSSL alone three minutes): run-vcpkg
+points vcpkg at the `x-gha` binary cache, which vcpkg has removed and now only warns about.
+Each vcpkg leg now writes `VCPKG_BINARY_SOURCES=clear;files,<workspace>/.vcpkg-bincache,readwrite`
+to `GITHUB_ENV` after run-vcpkg, restores that directory with `actions/cache/restore` (the
+newest cache of its toolchain) and saves it under a key of its contents, only when the
+configure built something the restored cache lacked. (2) `ctest` ran one test at a time: every
+leg now passes `--parallel 4`. The five tests labelled `network` are `RUN_SERIAL` (they open
+real sockets and were already timing-sensitive, issue #88) and the five that start a virtual
+display take the `xvfb` resource lock (`xvfb-run -a` races for a display number). Locally
+(GCC Debug, 12 cores): 123 s serially, 50 s four at a time, 55 of 55 in five parallel runs.
+(3) `clang-tidy` ran as one process over 248 files: the lint job now runs one per core over
+batches of six, each batch printing its diagnostics in one piece, and fails when any batch
+does (checked: a batch that errors makes the pipeline exit 123). Locally 105 s on 12 cores
+with no diagnostics. Not done: sharding `kfm_ai_tests`, the single longest test under the
+sanitizers (207 s), which now bounds that leg's test time; a compiler cache; trimming the
+matrix on pull requests, which would save runner minutes, not wall time. Measured on the pull
+request's own runs (42944132751): the first, with no cache to restore, took 19.0 min and saved
+nine caches of 41 to 127 MB (a toolchain's legs each save their own, since two builds of a
+package are not byte-identical); the second restored them ("Restored 16 package(s) ... in 559
+ms"), every configure fell to under half a minute, and the run took 12.5 min. The sanitizer
+leg is still the slowest and now by a wide margin (12.5 min; the next is Windows Release at
+8.2, most are 3.5 to 6.5). Its tests fell only from 661 s to 493 s, not to the four minutes
+projected: four at a time each test ran about 2.4 times slower (the test times sum to 1571 s),
+so the runner gives this workload well under two cores' worth, and `kfm_ai_tests` alone
+stretched from 207 s to 400 s. `clang-tidy` likewise went from 549 s to 164 s on a cache hit
+rather than to a quarter. Shortening the sanitizer leg further means giving it less to do or
+splitting it across two runners, not more parallelism. Also recorded here: v0.73's split of
+the page job ran on a tag for the first time with v0.9.0, and the page was published 31 s
+after the VM update finished (about two minutes before the split). Decided after those
+numbers: the sanitizer leg leaves out the three `kfm_netsim` soak gates (`-LE soak`), which
+took 93, 72 and 33 s there four at a time. The `server-headless` Release leg runs them, they
+are a gate on desyncs and rollback depth rather than a search for memory errors, and the
+`NetServer` and `NetClient` they drive run under the sanitizers in `kfm_netcode_tests`. With
+that (run 42948352596) the sanitizer leg took 8.5 min, its tests 318 s, and the run 9.4 min,
+the slowest leg now Windows Debug at 8.9; the legs vary by a minute or two between runs of
+one commit (`clang-tidy` took 164 s in one and 310 s in the next).

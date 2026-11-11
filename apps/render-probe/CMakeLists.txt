@@ -36,6 +36,7 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
               --exit-after-frames 120)
     set_tests_properties(render_probe_smoke PROPERTIES
       TIMEOUT 120
+      RESOURCE_LOCK xvfb
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
   endif()
 endif()

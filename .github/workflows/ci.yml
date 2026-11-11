@@ -59,7 +59,15 @@ jobs:
       - name: Configure (compile database)
         run: cmake --preset dev -DKFM_USE_VCPKG=OFF
       - name: clang-tidy
-        run: clang-tidy -p build/dev --quiet $(find engine apps tests -name '*.cpp')
+        # One clang-tidy per core over batches of six files (the single process
+        # this replaced took nine minutes). Each batch prints its diagnostics
+        # in one piece; xargs exits non-zero when any batch does.
+        run: |
+          find engine apps tests -name '*.cpp' -print0 \
+            | xargs -0 -n 6 -P "$(nproc)" sh -c '
+                out=$(clang-tidy -p build/dev --quiet "$@" 2>&1); rc=$?
+                [ -n "$out" ] && printf "%s\n" "$out"
+                exit $rc' _
 
   native:
     name: ${{ matrix.name }} ${{ matrix.build }}
@@ -102,12 +110,45 @@ jobs:
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgJsonGlob: vcpkg.json
+      # vcpkg's binary cache (architecture §9, v0.77). run-vcpkg points vcpkg at
+      # the `x-gha` backend, which vcpkg has removed, so every port was built
+      # from source on every run (OpenSSL alone: three minutes). A `files`
+      # cache under the workspace, kept by actions/cache, replaces it. Written
+      # to GITHUB_ENV after run-vcpkg so it is the value Configure sees.
+      - name: Point vcpkg at a file binary cache
+        shell: bash
+        run: |
+          mkdir -p .vcpkg-bincache
+          echo "VCPKG_BINARY_SOURCES=clear;files,${{ github.workspace }}/.vcpkg-bincache,readwrite" >> "$GITHUB_ENV"
+      - name: Restore the vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .vcpkg-bincache
+          # No exact key: the newest cache of this toolchain (Debug and
+          # Release build the same packages, so they share it).
+          key: vcpkg-bin-${{ matrix.name }}-
+          restore-keys: vcpkg-bin-${{ matrix.name }}-
       - name: Configure
         run: cmake --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
+      - name: Save the vcpkg binary cache
+        # Keyed by its contents, so it is saved only when Configure built a
+        # package the restored cache did not have (also after a failed
+        # Configure: what it did build is still good).
+        if: >-
+          always() && hashFiles('.vcpkg-bincache/**') != ''
+          && steps.vcpkg-cache.outputs.cache-matched-key
+             != format('vcpkg-bin-{0}-{1}', matrix.name, hashFiles('.vcpkg-bincache/**'))
+        uses: actions/cache/save@v4
+        with:
+          path: .vcpkg-bincache
+          key: vcpkg-bin-${{ matrix.name }}-${{ hashFiles('.vcpkg-bincache/**') }}
       - name: Build (engine, kfm_replay, kfm_client, tests)
         run: cmake --build --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
       - name: Test (unit + determinism gate, client smoke on Linux)
-        run: ctest --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
+        # Four at a time; the real-socket tests run alone (RUN_SERIAL) and the
+        # xvfb ones one at a time (RESOURCE_LOCK), as their CMake says.
+        run: ctest --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }} --parallel 4
 
   server-headless:
     # The dedicated server's build (architecture §13.5): KFM_HEADLESS=ON, so no
@@ -130,7 +171,7 @@ jobs:
       - name: Check the dedicated server was produced
         run: build/server-headless/apps/server/kfm_server --help
       - name: Test (unit, netcode soaks, network, determinism gate)
-        run: ctest --preset server-headless
+        run: ctest --preset server-headless --parallel 4
 
   wasm:
     name: wasm (Emscripten)
@@ -148,7 +189,7 @@ jobs:
       - name: Check the browser client was produced
         run: ls -l build/wasm/apps/client/kfm_client.html build/wasm/apps/client/kfm_client.js build/wasm/apps/client/kfm_client.wasm
       - name: Test (unit + determinism gate under node)
-        run: ctest --preset wasm
+        run: ctest --preset wasm --parallel 4
 
   asan:
     name: linux-gcc ASan+UBSan
@@ -162,9 +203,45 @@ jobs:
         with:
           vcpkgDirectory: ${{ github.workspace }}/vcpkg
           vcpkgJsonGlob: vcpkg.json
-      - run: cmake --preset asan
-      - run: cmake --build --preset asan
-      - run: ctest --preset asan
+      # The vcpkg binary cache, as in the native legs: the packages are
+      # linux-gcc's (the sanitizers are this project's flags, not the ports').
+      - name: Point vcpkg at a file binary cache
+        shell: bash
+        run: |
+          mkdir -p .vcpkg-bincache
+          echo "VCPKG_BINARY_SOURCES=clear;files,${{ github.workspace }}/.vcpkg-bincache,readwrite" >> "$GITHUB_ENV"
+      - name: Restore the vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .vcpkg-bincache
+          # No exact key: the newest cache of this toolchain (Debug and
+          # Release build the same packages, so they share it).
+          key: vcpkg-bin-linux-gcc-
+          restore-keys: vcpkg-bin-linux-gcc-
+      - name: Configure
+        run: cmake --preset asan
+      - name: Save the vcpkg binary cache
+        # Keyed by its contents, so it is saved only when Configure built a
+        # package the restored cache did not have (also after a failed
+        # Configure: what it did build is still good).
+        if: >-
+          always() && hashFiles('.vcpkg-bincache/**') != ''
+          && steps.vcpkg-cache.outputs.cache-matched-key
+             != format('vcpkg-bin-{0}-{1}', 'linux-gcc', hashFiles('.vcpkg-bincache/**'))
+        uses: actions/cache/save@v4
+        with:
+          path: .vcpkg-bincache
+          key: vcpkg-bin-linux-gcc-${{ hashFiles('.vcpkg-bincache/**') }}
+      - name: Build
+        run: cmake --build --preset asan
+      - name: Test
+        # The sanitizers make this the slowest test run by far (eleven minutes
+        # one at a time), and four at a time each test runs over twice as slow
+        # on the runner, so this leg leaves out what another leg covers: the
+        # netsim soak gates (label soak) are run by server-headless Release,
+        # and the same NetServer/NetClient code runs here in kfm_netcode_tests.
+        run: ctest --preset asan --parallel 4 -LE soak
 
   lobby:
     name: lobby (Rust)
