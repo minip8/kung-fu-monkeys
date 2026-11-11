@@ -51,6 +51,28 @@ TEST_CASE("tuning: contentToCpp prints the tuned fields in content.cpp style", "
   CHECK(tuned.find("  c.player.moveSpeed = Fixed::fromRaw(") != std::string::npos);
 }
 
+TEST_CASE("tuning: contentToCpp prints a control mode's clocks and banana flight (v0.79)",
+          "[client][tuning]") {
+  sim::ContentDB c = sim::defaultContent();
+  REQUIRE(c.modeCount < sim::kMaxModes);
+  const uint8_t i = c.modeCount++;
+  c.modes[i] = c.modes[0];
+  c.modes[i].kind = sim::ModeKind::Control;
+  c.modes[i].hillTicks = 240;
+  c.modes[i].captureTicks = 75;
+  const std::string idx = "  c.modes[" + std::to_string(i) + "].";
+  std::string out = contentToCpp(c);
+  CHECK(out.find(idx + "hillTicks = 240;\n") != std::string::npos);
+  CHECK(out.find(idx + "captureTicks = 75;\n") != std::string::npos);
+  CHECK(out.find(idx + "bananaOutboundTicks") == std::string::npos);  // no override: not printed
+
+  c.modes[i].bananaOutboundTicks = 18;
+  c.modes[i].bananaTurnRateBam = 2400;
+  out = contentToCpp(c);
+  CHECK(out.find(idx + "bananaOutboundTicks = 18;\n") != std::string::npos);
+  CHECK(out.find(idx + "bananaTurnRateBam = 2400;\n") != std::string::npos);
+}
+
 TEST_CASE("options: flags parse", "[client][options]") {
   ClientOptions o;
   std::string err;

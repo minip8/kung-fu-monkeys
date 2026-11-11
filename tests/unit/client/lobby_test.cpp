@@ -673,6 +673,18 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   survival.roundsToWin = 3;
   survival.timeLimitTicks = 3600;
   CHECK(client::modeSummary(survival) == "first to 3 rounds of 1:00, last monkey standing");
+  sim::ModeDef control;  // v0.79
+  control.kind = sim::ModeKind::Control;
+  control.teams = 2;
+  control.scoreToWin = 5;
+  control.captureTicks = 90;
+  control.hillTicks = 300;
+  control.timeLimitTicks = 10800;
+  CHECK(client::modeSummary(control) ==
+        "first team to 5 points, a zone taken in 1.5 s pays a point per 5.0 s, 3:00");
+  control.timeLimitTicks = 0;
+  CHECK(client::modeSummary(control) ==
+        "first team to 5 points, a zone taken in 1.5 s pays a point per 5.0 s, no clock");
   CHECK(client::ticksClock(61) == "0:02");
   CHECK(client::ticksClock(0) == "0:00");
 }

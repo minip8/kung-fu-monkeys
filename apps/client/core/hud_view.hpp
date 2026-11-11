@@ -96,6 +96,26 @@ struct WinnerTitle {
 inline constexpr float kClockUrgentSeconds = 10.0f;
 [[nodiscard]] bool clockUrgent(const presentation::RenderHud& hud);
 
+// v0.79, control: the zones at a glance, a chip per zone under the clock in
+// the arena's order, lettered as the arena preview letters them (a, b, ...):
+// filled in its owner's colour (team t is palette colour t; none: neutral),
+// with a bar in the challenger's colour while a capture is under way. Empty
+// in every other kind.
+struct ZoneChip {
+  char letter{'a'};
+  std::optional<uint8_t> owner{};       // a team
+  std::optional<uint8_t> challenger{};  // the team taking it
+  float capture{0.0f};                  // its progress, [0, 1)
+  bool operator==(const ZoneChip&) const = default;
+};
+struct ZoneStrip {
+  std::array<ZoneChip, sim::kMaxArenaZones> chips{};
+  uint8_t count{0};
+  // Zones each team owns (the chips' owners counted).
+  std::array<uint8_t, sim::kMaxPlayers> owned{};
+};
+[[nodiscard]] ZoneStrip zoneStrip(const presentation::RenderState& state);
+
 // --- the match-over screen (v0.43) ------------------------------------------------
 
 enum class MatchOverAction : uint8_t { PlayAgain = 0, BackToLobby, Leave };
