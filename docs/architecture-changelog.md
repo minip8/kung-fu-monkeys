@@ -1299,4 +1299,8 @@ stretched from 207 s to 400 s. `clang-tidy` likewise went from 549 s to 164 s on
 rather than to a quarter. Shortening the sanitizer leg further means giving it less to do or
 splitting it across two runners, not more parallelism. Also recorded here: v0.73's split of
 the page job ran on a tag for the first time with v0.9.0, and the page was published 31 s
-after the VM update finished (about two minutes before the split).
+after the VM update finished (about two minutes before the split). Decided after those
+numbers: the sanitizer leg leaves out the three `kfm_netsim` soak gates (`-LE soak`), which
+took 93, 72 and 33 s there four at a time. The `server-headless` Release leg runs them, they
+are a gate on desyncs and rollback depth rather than a search for memory errors, and the
+`NetServer` and `NetClient` they drive run under the sanitizers in `kfm_netcode_tests`.

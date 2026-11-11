@@ -3676,7 +3676,10 @@ lives in the bots repository (above) and uses this repository through its tagged
   restored cache lacked. `ctest` runs four tests at a time on every leg; the tests labelled
   `network` open real sockets and are `RUN_SERIAL`, so a parallel run never starves a
   handshake, and the tests that start a virtual display share the `xvfb` resource lock. The
-  lint job runs one `clang-tidy` per core over batches of files. None of this removes a test.
+  lint job runs one `clang-tidy` per core over batches of files. None of this removes a test;
+  the one thing a leg leaves out is the three `kfm_netsim` soak gates on the sanitizer leg,
+  which the `server-headless` Release leg runs (the sanitizer leg still runs the same netcode
+  in `kfm_netcode_tests`).
 - Why C++23: the design uses C++20 directly (`std::span` in interfaces, `<bit>` for pools and
   serialization, `std::endian`, concepts to reject non-trivially-copyable types in `Pool` and the
   visitor, defaulted `operator<=>` on strong typedefs and `Fixed`, `consteval`, designated

@@ -237,8 +237,11 @@ jobs:
         run: cmake --build --preset asan
       - name: Test
         # The sanitizers make this the slowest test run by far (eleven minutes
-        # one at a time).
-        run: ctest --preset asan --parallel 4
+        # one at a time), and four at a time each test runs over twice as slow
+        # on the runner, so this leg leaves out what another leg covers: the
+        # netsim soak gates (label soak) are run by server-headless Release,
+        # and the same NetServer/NetClient code runs here in kfm_netcode_tests.
+        run: ctest --preset asan --parallel 4 -LE soak
 
   lobby:
     name: lobby (Rust)
