@@ -197,7 +197,9 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
 - Also `--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR`, `--fuel N`,
   `--delay T`, `--memory-on-respawn keep|wipe`, `--replay out.kfmr | --replay-dir DIR`,
   `--result FILE`, `--json`, `--quiet`, `--log`. One result line per match and a summary; exit
-  0 ok, 2 args, 3 module refused, 4 I/O.
+  0 ok, 2 args, 3 module refused, 4 I/O. A module may speak `Observation` version 2 or 1 (a
+  version 1 module is served version 1's bytes, `docs/bot-abi.md` §4); any other
+  `kfm_abi_version()` is refused (`abi-mismatch`, exit 3).
 - The `--json` objects are an append-only contract (`docs/arena-result.md`, normative; a test
   freezes every key, its order and type): a new key is appended to the code, the doc and the
   test, never inserted or renamed. The match object carries `content_hash` and `build_hash`
