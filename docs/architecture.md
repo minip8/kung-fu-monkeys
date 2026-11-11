@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.76 (2026-11-11), a living document: it describes the system as built and deployed,
+Status: v0.77 (2026-11-11), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -3669,6 +3669,14 @@ lives in the bots repository (above) and uses this repository through its tagged
 - Code standards: C++23, warnings as errors, clang-format and clang-tidy in CI, ASan/UBSan
   builds, no exceptions or RTTI inside `sim`, strong typedefs (`Tick`, `PlayerId`, `EntityId`),
   `[[nodiscard]]`, no raw `new`.
+- CI run time (v0.77). The wall time of a CI run is its slowest leg, so three things keep the
+  legs short. vcpkg's packages are restored from a `files` binary cache that `actions/cache`
+  keeps per toolchain (a leg's Debug and Release builds, and the sanitizer leg with
+  `linux-gcc`, build the same packages), saved only when a configure built something the
+  restored cache lacked. `ctest` runs four tests at a time on every leg; the tests labelled
+  `network` open real sockets and are `RUN_SERIAL`, so a parallel run never starves a
+  handshake, and the tests that start a virtual display share the `xvfb` resource lock. The
+  lint job runs one `clang-tidy` per core over batches of files. None of this removes a test.
 - Why C++23: the design uses C++20 directly (`std::span` in interfaces, `<bit>` for pools and
   serialization, `std::endian`, concepts to reject non-trivially-copyable types in `Pool` and the
   visitor, defaulted `operator<=>` on strong typedefs and `Fixed`, `consteval`, designated

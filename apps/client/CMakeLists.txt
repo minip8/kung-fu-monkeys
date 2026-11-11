@@ -143,6 +143,7 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
     # Wayland compositor; LSan reports leaks inside Mesa/X11, not ours.
     set_tests_properties(client_smoke PROPERTIES
       TIMEOUT 120
+      RESOURCE_LOCK xvfb
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
     # Network mode without a server: the connecting/disconnected screen
     # renders and the client exits 0 (nothing listens on port 1).
@@ -152,6 +153,7 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
               --no-settings)
     set_tests_properties(client_smoke_net PROPERTIES
       TIMEOUT 120
+      RESOURCE_LOCK xvfb
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
     # M7 step 6: the replay viewer plays a corpus replay (recorded with the
     # content built into the client) and its exit line names a tick past 0;
@@ -171,6 +173,7 @@ if(KFM_BUILD_TESTS AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT EMSCRIPTEN)
               --exit-after-frames 60 --no-settings)
     set_tests_properties(client_smoke_replay client_smoke_replay_bad PROPERTIES
       TIMEOUT 120
+      RESOURCE_LOCK xvfb
       ENVIRONMENT "SDL_VIDEO_DRIVER=x11;LIBGL_ALWAYS_SOFTWARE=1;ASAN_OPTIONS=detect_leaks=0")
     set_tests_properties(client_smoke_replay PROPERTIES
       PASS_REGULAR_EXPRESSION "in the replay at tick [1-9][0-9]* of 1800,")

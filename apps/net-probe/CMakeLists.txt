@@ -43,5 +43,6 @@ if(KFM_BUILD_TESTS AND NOT EMSCRIPTEN)
     COMMAND $<TARGET_FILE:kfm_net_probe> --loopback --messages 200 --timeout-seconds 60)
   set_tests_properties(net_probe_loopback PROPERTIES
     LABELS network
-    TIMEOUT 120)
+    TIMEOUT 120
+    RUN_SERIAL TRUE)
 endif()

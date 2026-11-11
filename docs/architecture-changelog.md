@@ -1265,3 +1265,26 @@ headless Debug 45 of 45, the `dev` preset 52 of 52 with the real-socket tests
 (`net_probe_loopback` failed once and passed 15 of 15 repeats; it does not use anything
 changed here), the `server-headless` Release preset 52 of 52 with the soak gates, and through
 real binaries a server at `--max-players 3` with two clients showing three cards.
+
+v0.77 changes: CI's legs are made shorter without removing a test (§9; `ci.yml`, the tests'
+CMake). A run took about 20 minutes, the length of its slowest leg. Measured on run
+42939083286: the sanitizer leg 19.9 min (configure 5.7, build 2.7, tests 11.0), the Windows
+and Clang legs 14 to 16 min of which 7.5 to 8.7 were configure, lint 10.2 min of which 9.2 were
+`clang-tidy`; the tests of an ordinary leg were 1 to 4 min. Three causes, three changes.
+(1) vcpkg built all 16 ports from source on every leg (OpenSSL alone three minutes): run-vcpkg
+points vcpkg at the `x-gha` binary cache, which vcpkg has removed and now only warns about.
+Each vcpkg leg now writes `VCPKG_BINARY_SOURCES=clear;files,<workspace>/.vcpkg-bincache,readwrite`
+to `GITHUB_ENV` after run-vcpkg, restores that directory with `actions/cache/restore` (the
+newest cache of its toolchain) and saves it under a key of its contents, only when the
+configure built something the restored cache lacked. (2) `ctest` ran one test at a time: every
+leg now passes `--parallel 4`. The five tests labelled `network` are `RUN_SERIAL` (they open
+real sockets and were already timing-sensitive, issue #88) and the five that start a virtual
+display take the `xvfb` resource lock (`xvfb-run -a` races for a display number). Locally
+(GCC Debug, 12 cores): 123 s serially, 50 s four at a time, 55 of 55 in five parallel runs.
+(3) `clang-tidy` ran as one process over 248 files: the lint job now runs one per core over
+batches of six, each batch printing its diagnostics in one piece, and fails when any batch
+does (checked: a batch that errors makes the pipeline exit 123). Locally 105 s on 12 cores
+with no diagnostics. Not done: sharding `kfm_ai_tests`, the single longest test under the
+sanitizers (207 s), which now bounds that leg's test time; a compiler cache; trimming the
+matrix on pull requests, which would save runner minutes, not wall time. The cache cannot be
+shown locally: the numbers after the change are those of the pull request's own runs.
