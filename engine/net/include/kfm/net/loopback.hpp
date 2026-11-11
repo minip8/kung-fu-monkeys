@@ -44,7 +44,12 @@
 // the reliable lane's messages sent in it are delivered no earlier than
 // untilNs + the lane's latency, as a retransmission after the outage would
 // (still in order). The emulator draws its random numbers for those messages
-// as usual, so an outage never shifts the rest of the link's draws.
+// as usual, so an outage never shifts the rest of the link's draws. With
+// `unreliable` false (test support, issue #66) the unreliable lane is left
+// alone and only the reliable lane is held: the targeted loss of one control
+// message (a ResyncRequest, a Snapshot's first attempt) on a link whose
+// stream keeps flowing, since the reliable lane carries nothing else in
+// steady play.
 #pragma once
 
 #include "kfm/core/rng.hpp"
@@ -94,7 +99,8 @@ inline constexpr uint32_t kPpmOne = 1'000'000;
 struct Outage {
   uint64_t fromNs{0};
   uint64_t untilNs{0};
-  bool reliable{false};  // the reliable lane waits for the end too
+  bool reliable{false};   // the reliable lane waits for the end too
+  bool unreliable{true};  // false: the unreliable lane is not blacked out
 };
 
 // What the emulator did to the traffic of one link direction.

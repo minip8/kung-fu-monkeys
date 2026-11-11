@@ -1912,6 +1912,10 @@ Implementations, in priority order:
   disconnecting: unreliable messages sent in `[from, until)` of the sender's clock are lost, and
   with `reliable` the reliable lane's are delivered no earlier than `until` + its latency, in
   order, as a retransmission after the outage; the random draws are the same as without it.
+  `Outage::unreliable` (default true) set to false holds the reliable lane alone and leaves
+  the unreliable stream flowing: test support for the loss of one control message (a
+  `ResyncRequest`, a `Snapshot`'s first attempt), which the reliable lane never drops and in
+  steady play carries nothing else.
   The contract suite (`tests/unit/net/transport_contract.hpp`, target
   `kfm::transport_contract`) takes a harness (server, client, optional extra client, clock,
   advance, timeout) and generates eleven cases: connect, both lanes both ways, reliable order and
@@ -2085,7 +2089,18 @@ C++ server library is mature. The seam makes that swap a contained change.
   and matching, a spectator on the server's state) about 0.3–0.4 s after it, for 0.4, 1 and 3 s
   outages, of one lane or both; a 150 ms outage (inside the window) needs no snapshot. The
   rollback-overflow resync stays as the backstop. The emulator gained `LoopbackNetwork::setOutage`
-  for this (§6.4). The server's lead estimate (§8 human-likeness) also counted the outage: a stale
+  for this (§6.4). The same outages are covered at the high-RTT conditions of §6.2
+  (`tests/netcode/outage_test.cpp`): at 200 ± 30, 300 ± 10 and 500 ± 30 ms RTT the clients agree
+  again 0.5–0.6, 0.6–0.8 and 0.9–1.1 s after the outage ends, each inside a bound the test
+  derives from the mechanism (three one-way delays, `gapResyncNs`, one checksum period and a
+  tick). There the backstop does part of the work: once the redundancy window, one hop and the
+  client's lead add up to the 32-state ring (a 3 s outage at 300 ms, 1 s or more at 500 ms), the
+  first frames after the outage are a rollback overflow, and that request goes out on the first
+  window without waiting `gapResyncNs`. Also covered: 2 to 10% loss on top of the outage; the
+  `ResyncRequest` or the snapshot held back (a request held past the client's 1 s retry is
+  retried and the server's 250 ms limit drops the duplicate; a snapshot held that long is
+  served twice and both load, in order); and a second outage that starts before, or just
+  after, the first repair completes, which costs a second snapshot and no more. The server's lead estimate (§8 human-likeness) also counted the outage: a stale
   acknowledgement reads as a round trip growing one tick per tick, and before v0.70 a 3 s outage
   pushed that peer's estimate to 146 ticks (`humanLeadTicks()` clamps to 60, so a mixed match's bot
   delay went to its clamp); it now samples only messages whose acknowledgement moved on.
