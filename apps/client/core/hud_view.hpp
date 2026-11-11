@@ -17,7 +17,9 @@
 //   LostConnectionAction   the lost-connection screen's typed buttons
 //                          (Reconnect, Leave), offered while the session
 //                          canReconnect() (v0.44), none otherwise.
-//   roomBotPreview()       the slots the room's bots will take at Start.
+//   roomSlots()            what the online room's waiting screen shows in
+//                          each slot: a human, a bot, the server's bot to
+//                          come at Start (RoomStateMsg::botPlacement), open.
 #pragma once
 
 #include "kfm/net/messages.hpp"
@@ -144,11 +146,16 @@ enum class LostConnectionAction : uint8_t { Reconnect = 0, Leave };
 
 // --- the online room's waiting screen (v0.42) -------------------------------------
 
-// The slots the room's bots take when the host starts: the server places
-// settings.bots bots in the lowest free slots (apps/server ServerHost::
-// placeRoomBots); while none are placed yet (Waiting), the lowest slots no
-// human holds. Once the server placed them (room.bots non-zero) there is
-// nothing left to preview.
-[[nodiscard]] sim::PlayerMask roomBotPreview(const net::RoomStateMsg& room);
+// What a slot of the room shows. The client keeps no copy of the server's
+// placement rule (issue #68): the bots to come are the RoomState's
+// botPlacement slots no bot holds yet, which is the server's own preview
+// while the room waits (none once the bots are placed).
+enum class RoomSlot : uint8_t {
+  Open = 0,    // nobody: "open"
+  Human,       // a peer's slot (a reserved one too)
+  Bot,         // a server-side bot holds it
+  BotAtStart,  // a bot takes it when the host starts now
+};
+[[nodiscard]] std::array<RoomSlot, sim::kMaxPlayers> roomSlots(const net::RoomStateMsg& room);
 
 }  // namespace kfm::client

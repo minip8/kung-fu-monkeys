@@ -33,7 +33,10 @@
 // Over (no auto-restart, exitAfterMatches still counts); the host's Start in
 // Over removes the bots → Waiting. The room returns to Waiting, removing the
 // bots, when its last human slot is gone. Every change goes out as one
-// RoomState (NetServer::setRoomState) and one "room ..." log line.
+// RoomState (NetServer::setRoomState) and one "room ..." log line; while
+// Waiting its botPlacement is the slots Start would place the bots in now
+// (roomBotSlots(), the same function placeRoomBots() is given), so a join,
+// a leave or a settings change re-sends it.
 //
 // Bots yield (v0.44, §6.6): in the room flow the NetServer queues a
 // joiner that only bots' slots could fit (ServerConfig::queueForBotSlots)
@@ -213,7 +216,13 @@ class ServerHost {
   // The room flow's per-frame work after pump(): reservations, members,
   // requests, the RoomState broadcast.
   void updateRoom();
-  void placeRoomBots(uint8_t count);
+  // The slots the room's bots take if the host starts now: roomBotSlots()
+  // of the free slots and the settings' bot count. Start places them; the
+  // Waiting RoomState shows them (botPlacement).
+  [[nodiscard]] sim::PlayerMask roomBotSlotsNow() const;
+  // A host bot in every slot of `slots` (roomBotSlotsNow()), the k-th
+  // lowest with the k-th spec of HostConfig::bots (ref:hard past the list).
+  void placeRoomBots(sim::PlayerMask slots);
   void removeRoomBots();
   // v0.44: drops one host bot (its agent detached, its slot freed).
   void removeBot(PlayerId slot);

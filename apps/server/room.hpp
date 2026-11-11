@@ -43,6 +43,13 @@ namespace kfm::server {
 // defaults: --arena/--mode/--loadout/--powerups and --bots).
 [[nodiscard]] net::RoomSettings roomSettingsOf(const sim::MatchConfig& config, uint8_t bots);
 
+// The slots `count` room bots take at Start: the lowest `count` slots of
+// `free` (NetServer::freeSlots(): below the player cap, nobody's), all of
+// them when fewer are free. ServerHost places the bots with it and sends
+// it as the Waiting RoomState's botPlacement, so the waiting room's
+// preview and the placement cannot disagree (issue #68).
+[[nodiscard]] sim::PlayerMask roomBotSlots(sim::PlayerMask free, uint8_t count);
+
 class Room {
  public:
   enum class StartResult : uint8_t {

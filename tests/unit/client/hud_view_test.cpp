@@ -2,7 +2,8 @@
 // architecture §7): hudView() of a local match, the "you" rows online, the
 // winner's title and colour, the clock's last seconds, the match-over
 // screen's typed buttons locally and in an online room, the lost-connection
-// screen's typed buttons, and where the room's bots join at the start.
+// screen's typed buttons, and what the room's slots show (the server's bot
+// placement).
 #include "core/hud_view.hpp"
 
 #include "core/match_session.hpp"
@@ -11,6 +12,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <optional>
@@ -182,26 +184,34 @@ TEST_CASE("lost connection: Reconnect and Leave only while the session can recon
   CHECK(std::string(client::lostConnectionLabel(LostConnectionAction::Leave)) == "Leave");
 }
 
-// The server places a room's bots in the lowest free slots at Start
-// (apps/server ServerHost::placeRoomBots); the waiting screen previews the
-// same slots. The cases mirror tests/unit/server/room_flow_test.cpp's.
-TEST_CASE("room: the bots join in the lowest slots no human holds", "[client][hud][room]") {
+// The waiting screen shows the server's placement as it is: the client has
+// no rule of its own for where the bots go (issue #68; the rule and its
+// cases are the server's, tests/unit/server/room_flow_test.cpp).
+TEST_CASE("room: the slots show the humans, the bots and the server's placement",
+          "[client][hud][room]") {
+  using client::RoomSlot;
+  const RoomSlot o = RoomSlot::Open;  // short names: the rows read as the screen
+  const RoomSlot h = RoomSlot::Human;
+  const RoomSlot b = RoomSlot::Bot;
+  const RoomSlot s = RoomSlot::BotAtStart;
+  using Slots = std::array<RoomSlot, sim::kMaxPlayers>;
+
   net::RoomStateMsg room;
+  CHECK(client::roomSlots(room) == Slots{o, o, o, o, o, o, o, o, o, o});  // nobody
+
+  // Waiting: the bots to come are exactly botPlacement, whatever the bot count.
   room.humans = 0b11;
-  room.settings.bots = 2;
-  CHECK(client::roomBotPreview(room) == 0b1100);
-  room.humans = 0b10;
-  CHECK(client::roomBotPreview(room) == 0b101);
-  room.humans = 0b1;
   room.settings.bots = 3;
-  CHECK(client::roomBotPreview(room) == 0b1110);
-  room.settings.bots = 0;
-  CHECK(client::roomBotPreview(room) == 0);
-  // More bots than slots: every slot no human holds.
-  room.settings.bots = 20;
-  CHECK(client::roomBotPreview(room) == static_cast<sim::PlayerMask>(0x3FEu));
-  // Once the server placed them there is nothing left to preview.
-  room.settings.bots = 2;
-  room.bots = 0b110;
-  CHECK(client::roomBotPreview(room) == 0);
+  room.botPlacement = 0b1100;  // the server's cap left room for two
+  CHECK(client::roomSlots(room) == Slots{h, h, s, s, o, o, o, o, o, o});
+  room.botPlacement = 0b10'0000'0100;  // not the lowest: shown as sent
+  CHECK(client::roomSlots(room) == Slots{h, h, s, o, o, o, o, o, o, s});
+  room.botPlacement = 0;  // no room for a bot, or none asked for
+  CHECK(client::roomSlots(room) == Slots{h, h, o, o, o, o, o, o, o, o});
+
+  // Playing and Over: the bots hold their slots (botPlacement == bots).
+  room.phase = net::RoomPhase::Playing;
+  room.bots = 0b0101'0000;
+  room.botPlacement = room.bots;
+  CHECK(client::roomSlots(room) == Slots{h, h, o, o, b, o, b, o, o, o});
 }

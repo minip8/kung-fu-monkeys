@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.74 (2026-11-11), a living document: it describes the system as built and deployed,
+Status: v0.75 (2026-11-11), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -1822,7 +1822,7 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | Ping | both | transport stats plus our own tick-stamped ping | — |
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 | `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
-| `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, winner, nicknames |
+| `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, the bots' placement (v0.75), winner, nicknames |
 | `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
@@ -1865,7 +1865,12 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   arena u8, mode u8, loadout u8 (below their capacities), power-ups u16 and bots u4 (at most
   `kMaxPlayers`): 6 B. `RoomState` is phase u2 (Waiting, Playing, Over), an optional host slot
   (u4, a human slot), the settings, the human and bot masks (disjoint), an optional winner and a
-  nickname (length u5) per human slot: at most 191 B. `Start` is the type byte alone.
+  nickname (length u5) per human slot. `Start` is the type byte alone. Protocol version 7
+  (v0.75) adds the bots' placement to `RoomState`, a third mask after the bot mask, disjoint
+  from the humans: at most 178 B (`kRoomStateMsgMaxBytes`; the 191 B this paragraph gave
+  before was never the constant's value). While the room waits it is the slots the settings'
+  bots take if the host starts now; in Playing and Over it is the slots bots hold, equal to
+  the bot mask (§6.6).
 - `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
   with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
   shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
@@ -2136,7 +2141,12 @@ C++ server library is mature. The seam makes that swap a contained change.
   while outside Playing reservations are released and the role passes at once. Settings are
   validated against the content (indices in range, `ContentDB::compatible`, bots ≤ max players
   − 1); an invalid set, a non-host's request or a request outside its phase is ignored and the
-  current `RoomState` re-sent; at Start the bots are clamped to the free slots.
+  current `RoomState` re-sent; at Start the bots are clamped to the free slots. One function
+  decides those slots, `server::roomBotSlots(free, count)` (the lowest `count` free slots under
+  the server's player cap, all of them when fewer are free): Start places the bots with it and
+  the Waiting `RoomState` carries its answer as the bots' placement (v0.75), re-sent like any
+  other change on a join, a leave or a settings change, so what the waiting room previews is
+  what Start does. The client has no copy of the rule.
   The client side of a server that does not tick: `NetClient` holds while its `RoomState` says
   Waiting or Over (`holding()`: `ticksDue()` returns 0 and restarts the clock, `tick()` sends
   nothing), so no input runs ahead of a frozen assembler and nothing accumulates; pings go on
@@ -2482,8 +2492,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
   `core/scoreboard.hpp`, and since the architecture audit `core/hud_view.hpp`: `HudView`, the
   winner's title and colour, the clock's urgent threshold, the match-over screen's typed
-  `MatchOverAction` buttons and the room's bot-slot preview, which mirrors the server's "lowest
-  free slots" rule in `ServerHost::placeRoomBots`). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
+  `MatchOverAction` buttons and `roomSlots()`, what each slot of the waiting room shows, with
+  the bots to come taken from the server's placement in `RoomState`, v0.75). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
   `assets/fonts/` with its licence), compiled in by `cmake/EmbedFile.cmake`, loaded once by
   `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
   1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette

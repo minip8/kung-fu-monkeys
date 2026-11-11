@@ -1087,36 +1087,39 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     }
     ImGui::Spacing();
 
-    // The roster: the humans by name (the host's crown, you), the bots the
-    // host asked for where the server puts them at the start
-    // (roomBotPreview()), then the open slots.
+    // The roster (roomSlots()): the humans by name (the host's crown, you),
+    // the bots where the server says it puts them at the start, then the
+    // open slots.
     std::array<LobbyCard, sim::kMaxPlayers> cards{};
     const net::RoomSettings& r = room->settings;
-    const sim::PlayerMask botsToCome = roomBotPreview(*room);
+    const std::array<RoomSlot, sim::kMaxPlayers> slots = roomSlots(*room);
     for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
       const PlayerId slot{i};
       LobbyCard& c = cards[i];
-      const bool human = sim::maskHas(room->humans, slot);
-      const bool bot = sim::maskHas(room->bots, slot);
-      c.filled = human || bot;
-      if (human) {
-        c.title = session.slotName(slot);
-        c.host = room->host == slot;
-        const bool you = sim::maskHas(session.localSlots(), slot);
-        const char* role = c.host ? "host" : "player";
-        if (you) role = c.host ? "you, host" : "you";
-        std::snprintf(c.sub, sizeof c.sub, "%s", role);
-      } else if (bot) {
-        c.title = session.slotName(slot);
-        std::snprintf(c.sub, sizeof c.sub, "bot");
-      } else if (sim::maskHas(botsToCome, slot)) {
-        c.filled = true;
-        c.alpha = 150;
-        c.title = "BOT" + std::to_string(i + 1);
-        std::snprintf(c.sub, sizeof c.sub, "joins at the start");
-      } else {
-        c.title = "open";
-        std::snprintf(c.sub, sizeof c.sub, "send the link");
+      c.filled = slots[i] != RoomSlot::Open;
+      switch (slots[i]) {
+        case RoomSlot::Human: {
+          c.title = session.slotName(slot);
+          c.host = room->host == slot;
+          const bool you = sim::maskHas(session.localSlots(), slot);
+          const char* role = c.host ? "host" : "player";
+          if (you) role = c.host ? "you, host" : "you";
+          std::snprintf(c.sub, sizeof c.sub, "%s", role);
+          break;
+        }
+        case RoomSlot::Bot:
+          c.title = session.slotName(slot);
+          std::snprintf(c.sub, sizeof c.sub, "bot");
+          break;
+        case RoomSlot::BotAtStart:
+          c.alpha = 150;
+          c.title = "BOT" + std::to_string(i + 1);
+          std::snprintf(c.sub, sizeof c.sub, "joins at the start");
+          break;
+        case RoomSlot::Open:
+          c.title = "open";
+          std::snprintf(c.sub, sizeof c.sub, "send the link");
+          break;
       }
     }
     drawLobbyCards(cards, 5);

@@ -166,6 +166,7 @@ TEST_CASE("The room flow: wait, settings, start, play, over, play again, host ha
   CHECK(waiting.names[1].view() == "Beta");
   CHECK(waiting.bots == 0);
   CHECK(waiting.settings.bots == 1);
+  CHECK(waiting.botPlacement == 0b100);  // v7: where Start puts the one bot
   CHECK(a.holding());
   CHECK(b.holding());
 
@@ -200,13 +201,15 @@ TEST_CASE("The room flow: wait, settings, start, play, over, play again, host ha
   a.sendRoomSettings(wanted);
   REQUIRE(rig.runUntil([&] { return roomOf(b).settings == wanted; }, kSec));
   CHECK(rig.room().settings() == wanted);
+  CHECK(roomOf(b).botPlacement == 0b1100);  // the settings change re-sent it
 
   // --- the host starts: bots placed, the match runs --------------------------------
   a.sendStart();
   REQUIRE(rig.runUntil(
       [&] { return roomIs(a, RoomPhase::Playing) && roomIs(b, RoomPhase::Playing); }, kSec));
-  CHECK(rig.host->server().bots() == 0b1100);
+  CHECK(rig.host->server().bots() == 0b1100);  // the preview's slots
   CHECK(roomOf(b).bots == 0b1100);
+  CHECK(roomOf(b).botPlacement == 0b1100);  // Playing: where the bots are
   REQUIRE(rig.runUntil([&] { return !a.holding() && !b.holding(); }, 2 * kSec));
   CHECK(a.netStats().matchRestarts == 1);
   CHECK(a.simConfig().mode == 1);
@@ -237,16 +240,18 @@ TEST_CASE("The room flow: wait, settings, start, play, over, play again, host ha
   CHECK(rig.room().settings() == wanted);
   CHECK(rig.host->server().bots() == 0);
   CHECK(roomOf(b).bots == 0);
+  CHECK(roomOf(b).botPlacement == 0b1100);  // Waiting again: the preview
   CHECK(!roomOf(b).winner.isValid());
 
   // --- the host leaves: the other client becomes host and starts --------------------
   a.disconnect();
   REQUIRE(rig.runUntil([&] { return roomOf(b).host == PlayerId{1}; }, kSec));
   CHECK(roomOf(b).humans == 0b10);
+  CHECK(roomOf(b).botPlacement == 0b101);  // the leave re-sent it
   CHECK(rig.room().host() == PlayerId{1});
   b.sendStart();
   REQUIRE(rig.runUntil([&] { return roomIs(b, RoomPhase::Playing) && !b.holding(); }, 2 * kSec));
-  CHECK(rig.host->server().bots() == 0b101);  // the lowest free slots
+  CHECK(rig.host->server().bots() == 0b101);  // the lowest free slots, as previewed
   const uint64_t compared = b.netStats().checksumsCompared;
   rig.runFor(5 * kSec);
   CHECK(b.running());
@@ -267,6 +272,7 @@ TEST_CASE("The room flow: the last human leaving returns the room to Waiting; op
   // The long deathmatch: the match must still run through the reconnect grace.
   a.sendRoomSettings(RoomSettings{.mode = 2, .bots = 3});
   REQUIRE(rig.runUntil([&] { return roomOf(a).settings.bots == 3; }, kSec));
+  CHECK(roomOf(a).botPlacement == 0b1110);
   a.sendStart();
   REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Playing) && !a.holding(); }, 2 * kSec));
   CHECK(rig.host->server().bots() == 0b1110);
@@ -313,9 +319,11 @@ TEST_CASE("The room flow: a bot yields its slot to a joiner in a full room",
   CAPTURE(deathmatch);
   a.sendRoomSettings(RoomSettings{.mode = static_cast<uint8_t>(deathmatch ? 2 : 0), .bots = 3});
   REQUIRE(rig.runUntil([&] { return roomOf(a).settings.bots == 3; }, kSec));
+  CHECK(roomOf(a).botPlacement == 0b1110);
   a.sendStart();
   REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Playing) && !a.holding(); }, 2 * kSec));
   CHECK(rig.host->server().bots() == 0b1110);
+  CHECK(roomOf(a).botPlacement == 0b1110);
   CHECK(rig.host->server().freeSlots() == 0);
 
   // The room is full: the joiner waits as a spectator, not rejected.
@@ -345,6 +353,7 @@ TEST_CASE("The room flow: a bot yields its slot to a joiner in a full room",
   REQUIRE(
       rig.runUntil([&] { return roomOf(a).humans == humans && roomOf(b).humans == humans; }, kSec));
   CHECK(roomOf(b).bots == bots);
+  CHECK(roomOf(b).botPlacement == bots);  // the yielded bot left the placement too
   CHECK(roomOf(b).names[y].view() == "Second");
   CHECK(roomOf(b).host == PlayerId{0});
   // The slot left for a tick: a deathmatch forfeits the bot's score and
@@ -397,16 +406,81 @@ TEST_CASE("The room flow: in Over a bot yields at once; Start places the bots th
   CHECK(rig.host->server().bots() == 0b010);
   REQUIRE(rig.runUntil([&] { return roomOf(a).humans == 0b101; }, kSec));
   CHECK(roomOf(a).phase == RoomPhase::Over);
+  CHECK(roomOf(a).botPlacement == 0b010);  // Over: the bot that stayed
 
   // Play again, then Start: one bot fits beside the two humans.
   a.sendStart();
   REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Waiting); }, kSec));
   CHECK(rig.host->server().bots() == 0);
+  // Issue #68: two bots asked for, one free slot under the cap of three.
+  CHECK(roomOf(a).settings.bots == 2);
+  CHECK(roomOf(a).botPlacement == 0b010);
+  CHECK(roomOf(b).botPlacement == 0b010);
   a.sendStart();
   REQUIRE(rig.runUntil([&] { return roomIs(b, RoomPhase::Playing) && !b.holding(); }, 2 * kSec));
   CHECK(rig.host->server().bots() == 0b010);
+  CHECK(roomOf(b).botPlacement == 0b010);
   CHECK(roomOf(b).settings.bots == 2);  // kept: bots when there is room
   rig.runFor(3 * kSec);
   CHECK(b.netStats().checksumMismatches == 0);
   CHECK(b.netStats().leadTicks > 0);
+}
+
+// v7 (issue #68): the Waiting RoomState's botPlacement is where Start puts
+// the bots, under the server's player cap, re-sent on every join, leave and
+// settings change; Start places exactly the previewed slots. A cap of four
+// with three bots asked for: the client's old copy of the rule ignored the
+// cap and showed a bot in slots the server does not have.
+TEST_CASE("The room flow: the waiting room previews the bots' placement under the player cap",
+          "[server][room][flow]") {
+  CHECK(server::roomBotSlots(0b11'1111'1100, 3) == 0b1'1100);
+  CHECK(server::roomBotSlots(0b1010, 3) == 0b1010);  // fewer free than asked for
+  CHECK(server::roomBotSlots(0b1010, 0) == 0);
+  CHECK(server::roomBotSlots(0, 3) == 0);
+
+  server::HostConfig cfg;
+  cfg.room = true;
+  cfg.server.maxPlayers = 4;
+  cfg.bots = server::referenceBots(3);
+  RoomRig rig(cfg);
+  NetClient& a = rig.addClient("one", "One");
+  REQUIRE(rig.runUntil([&] { return a.running() && roomOf(a).humans == 0b1; }, 5 * kSec));
+  CHECK(roomOf(a).settings.bots == 3);
+  CHECK(roomOf(a).botPlacement == 0b1110);
+
+  // A join: two humans leave room for two of the three bots.
+  NetClient& b = rig.addClient("two", "Two");
+  REQUIRE(rig.runUntil([&] { return b.running() && roomOf(a).humans == 0b11; }, 5 * kSec));
+  CHECK(roomOf(a).botPlacement == 0b1100);
+  CHECK(roomOf(b).botPlacement == 0b1100);
+
+  // Settings: fewer bots, then as many as before.
+  a.sendRoomSettings(RoomSettings{.bots = 1});
+  REQUIRE(rig.runUntil([&] { return roomOf(b).settings.bots == 1; }, kSec));
+  CHECK(roomOf(b).botPlacement == 0b100);
+  a.sendRoomSettings(RoomSettings{.bots = 3});
+  REQUIRE(rig.runUntil([&] { return roomOf(b).settings.bots == 3; }, kSec));
+  CHECK(roomOf(b).botPlacement == 0b1100);
+
+  // A third human: one slot is left.
+  NetClient& c = rig.addClient("three", "Three");
+  REQUIRE(rig.runUntil([&] { return c.running() && roomOf(a).humans == 0b111; }, 5 * kSec));
+  CHECK(roomOf(a).botPlacement == 0b1000);
+
+  // A leave: the gap is the lowest free slot again.
+  b.disconnect();
+  REQUIRE(
+      rig.runUntil([&] { return roomOf(a).humans == 0b101 && roomOf(c).humans == 0b101; }, kSec));
+  const sim::PlayerMask preview = roomOf(a).botPlacement;
+  CHECK(preview == 0b1010);
+  CHECK(roomOf(c).botPlacement == preview);
+
+  // Start places exactly the previewed slots; Playing shows where they are.
+  a.sendStart();
+  REQUIRE(rig.runUntil(
+      [&] { return roomIs(a, RoomPhase::Playing) && roomIs(c, RoomPhase::Playing); }, kSec));
+  CHECK(rig.host->server().bots() == preview);
+  CHECK(roomOf(a).bots == preview);
+  CHECK(roomOf(a).botPlacement == preview);
+  CHECK(roomOf(c).botPlacement == preview);
 }
