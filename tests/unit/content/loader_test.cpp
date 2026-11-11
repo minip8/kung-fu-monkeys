@@ -1070,6 +1070,34 @@ score_to_win = 0
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_limit = 3\n"),
                  "unknown key 'score_limit'"));
 
+  // v0.79: a mode may override the banana's flight (0, the default, keeps
+  // the [boomerang] def's), within the [boomerang] keys' bounds.
+  {
+    ContentDB flight{};
+    Diagnostics flightDiag;
+    REQUIRE(parseContent(base + "[[mode]]\nname = \"far\"\nbanana_outbound_ticks = 45\n"
+                                "banana_turn_rate = 8000\n",
+                         "modes.toml", flight, flightDiag));
+    CHECK(flight.modes[0].bananaOutboundTicks == 0);
+    CHECK(flight.modes[0].bananaTurnRateBam == 0);
+    CHECK(flight.modes[1].bananaOutboundTicks == 45);
+    CHECK(flight.modes[1].bananaTurnRateBam == 8000);
+    CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[0]) ==
+          flight.boomerang.outboundTicks);
+    CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[1]) == 45);
+    CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[0]) ==
+          flight.boomerang.turnRateBam);
+    CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[1]) == 8000);
+  }
+  CHECK(loads(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65535\n"
+                     "banana_turn_rate = 32768\n"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65536\n"),
+                 "'banana_outbound_ticks'"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_turn_rate = 32769\n"),
+                 "'banana_turn_rate'"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_turn_rate = -1\n"),
+                 "'banana_turn_rate'"));
+
   // kMaxModes is 32 since v0.31 (8 before): kMinimal's rounds plus 31 more.
   std::string many = base;
   for (uint32_t i = 1; i < sim::kMaxModes; ++i)

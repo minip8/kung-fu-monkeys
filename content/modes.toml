@@ -45,6 +45,12 @@
 #                        ticks in a row grows one in its hand (0 = never, the
 #                        default); the clock stops while it falls. A mode that
 #                        regrows never runs dry
+#   banana_outbound_ticks  v0.79, any kind: the ticks a banana flies out
+#                        before it turns for home, 0 to 65535 (0, the
+#                        default: [boomerang] outbound_ticks)
+#   banana_turn_rate     v0.79, any kind: the most a returning banana turns
+#                        per tick, in BAM (65536 a full turn), 0 to 32768 (0,
+#                        the default: [boomerang] turn_rate_bam)
 #   teams                0 = free-for-all (default), else 2 to 10 teams the
 #                        hosts split the slots into, round-robin (the team
 #                        kinds need it; such a mode plays only on an arena

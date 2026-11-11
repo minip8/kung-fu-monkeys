@@ -210,6 +210,13 @@ struct ModeDef {
   // v0.79, control: ticks of majority in a zone a team does not own that
   // make it the owner (>= 1).
   uint16_t captureTicks{60};
+  // v0.79, every kind: the banana's flight in this mode (ProjectileSystem,
+  // §5.7): the ticks it flies out before it turns for home, and the most it
+  // turns per tick on the way back (BAM). 0 = the BoomerangDef's
+  // outboundTicks / turnRateBam, so a mode cannot set either to 0 itself.
+  // Read through bananaOutboundTicksOf() / bananaTurnRateBamOf() (content.hpp).
+  uint16_t bananaOutboundTicks{0};
+  uint16_t bananaTurnRateBam{0};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }

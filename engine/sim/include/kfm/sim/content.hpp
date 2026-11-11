@@ -272,6 +272,18 @@ using TeamSet = std::array<uint8_t, kMaxPlayers>;
 }
 inline constexpr TeamSet kFreeForAllTeams = freeForAllTeams();
 
+// v0.79: the banana's flight a mode plays with (ProjectileSystem, and the
+// readers outside the sim: the observation's rules block, the banana's arc):
+// the mode's override (ModeDef::bananaOutboundTicks / ::bananaTurnRateBam),
+// or the BoomerangDef's where the mode leaves it 0.
+[[nodiscard]] constexpr uint16_t bananaOutboundTicksOf(const BoomerangDef& def,
+                                                       const ModeDef& mode) {
+  return mode.bananaOutboundTicks != 0 ? mode.bananaOutboundTicks : def.outboundTicks;
+}
+[[nodiscard]] constexpr uint16_t bananaTurnRateBamOf(const BoomerangDef& def, const ModeDef& mode) {
+  return mode.bananaTurnRateBam != 0 ? mode.bananaTurnRateBam : def.turnRateBam;
+}
+
 // How one monkey stands to another (or to a banana's owner): the rules
 // table's InteractionRule::relationB is a mask over these bits.
 enum class Relation : uint8_t { Self = 0, Ally, Enemy };
@@ -338,6 +350,14 @@ struct MatchContent {
   // override, as the ability def per slot.
   [[nodiscard]] constexpr const std::array<uint8_t, kAbilitySlots>& loadout(PlayerId id) const {
     return db.loadoutAbilities(loadoutIndexFor(id));
+  }
+
+  // v0.79: the banana's flight in this match (bananaOutboundTicksOf()).
+  [[nodiscard]] constexpr uint16_t bananaOutboundTicks() const {
+    return bananaOutboundTicksOf(db.boomerang, mode);
+  }
+  [[nodiscard]] constexpr uint16_t bananaTurnRateBam() const {
+    return bananaTurnRateBamOf(db.boomerang, mode);
   }
 
   // The team of a slot (an invalid slot has none: kMaxPlayers).

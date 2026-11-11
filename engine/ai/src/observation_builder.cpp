@@ -172,7 +172,7 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   m.reservedTicksToLatch = clock.ticksToLatch;
 }
 
-void fillRules(const sim::ContentDB& db, ObsRules& r) {
+void fillRules(const sim::ContentDB& db, const sim::ModeDef& mode, ObsRules& r) {
   r.playerRadius = db.player.radius.raw;
   r.playerMoveSpeed = db.player.moveSpeed.raw;
   r.bananaRadius = db.boomerang.radius.raw;
@@ -180,9 +180,9 @@ void fillRules(const sim::ContentDB& db, ObsRules& r) {
   r.bananaSpawnOffset = db.boomerang.spawnOffset.raw;
   r.bananaRestitution = db.boomerang.restitution.raw;
   r.pickupRadius = db.pickup.radius.raw;
-  r.bananaOutboundTicks = db.boomerang.outboundTicks;
+  r.bananaOutboundTicks = sim::bananaOutboundTicksOf(db.boomerang, mode);  // v0.79: the mode's
   r.bananaMaxReturnTicks = db.boomerang.maxReturnTicks;
-  r.bananaTurnRateBam = db.boomerang.turnRateBam;
+  r.bananaTurnRateBam = sim::bananaTurnRateBamOf(db.boomerang, mode);
   r.hitStunTicks = db.player.hitStunTicks;
   r.bananaDamage = db.boomerang.damage;
   r.dashAttackDamage = db.dashAttack.damage;
@@ -493,7 +493,7 @@ void buildObservation(const sim::WorldState& world, const sim::MatchContent& con
     out.zones.zone[k] = ObsZone{z.min.x.raw, z.min.y.raw, z.max.x.raw, z.max.y.raw};
   }
   fillMatch(world, content, contentHash, inputDelayTicks, out.match);
-  fillRules(content.db, out.rules);
+  fillRules(content.db, content.mode, out.rules);
   fillSelf(world, content, self, out.self);
   fillPlayers(world, content, self, out.players);
   fillBananas(world, content, self, out.bananas);

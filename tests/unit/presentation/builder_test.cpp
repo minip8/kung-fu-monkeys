@@ -1226,3 +1226,28 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
   // Deep enough under the floor that the body, scaled down, is gone.
   CHECK(deepest < -radius * kMonkeyHeightOverRadius * kFallEndScale);
 }
+
+// v0.79: a mode that overrides the banana's outbound ticks peaks the arc at
+// its own turn-for-home, not the BoomerangDef's.
+TEST_CASE("the banana arc follows the mode's outbound ticks", "[presentation][builder]") {
+  ContentDB c = defaultContent();
+  REQUIRE(c.modeCount >= 1);
+  c.modes[1] = c.modes[0];
+  c.modes[1].name = ContentName::of("flight");
+  c.modes[1].bananaOutboundTicks = 10;
+  c.modeCount = std::max<uint8_t>(c.modeCount, 2);
+  REQUIRE(c.boomerang.outboundTicks > 10);
+  WorldState s = makePlayingWorld(17, 0b1);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-6), Fixed::zero()});
+  const EntityId id = spawnBanana(s, kP0, Vec2{Fixed::fromInt(-4), Fixed::zero()},
+                                  Vec2{Fixed::fromRatio(1, 8), Fixed::zero()});
+  s.boomerangs.items[id.index].ticksInPhase = 10;
+  const auto heightIn = [&](uint8_t mode) {
+    PresentationState ps;
+    const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, MatchContent(c, 0, mode), kDt);
+    REQUIRE(rs.bananaCount == 1);
+    return rs.bananas[0].height - kBananaHandHeight;
+  };
+  CHECK(heightIn(1) == Approx(kBananaArcPeak));
+  CHECK(heightIn(0) < kBananaArcPeak - 0.05f);
+}

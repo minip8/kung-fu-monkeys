@@ -387,8 +387,33 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
   }
 }
 
+// bananaArcHeight() over the outbound ticks the match flies (v0.79: a mode
+// may override the BoomerangDef's, MatchContent::bananaOutboundTicks).
+[[nodiscard]] float bananaArc(const Boomerang& b, float distanceToOwner, float returnStartDistance,
+                              uint16_t outboundTicks) {
+  switch (b.phase) {
+    case BoomerangPhase::Outbound: {
+      if (outboundTicks == 0) return kBananaArcPeak;
+      const float u =
+          clamp01(static_cast<float>(b.ticksInPhase) / static_cast<float>(outboundTicks));
+      return kBananaArcPeak * std::sin(0.5f * kPi * u);
+    }
+    case BoomerangPhase::Returning: {
+      if (returnStartDistance <= 0.0f) return kBananaArcPeak;
+      const float u = clamp01(distanceToOwner / returnStartDistance);
+      return kBananaArcPeak * std::sin(0.5f * kPi * u);
+    }
+    case BoomerangPhase::Grounded:
+    case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
+      break;
+  }
+  return 0.0f;
+}
+
 void buildBananas(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                  float alpha, const ContentDB& content, float dt, RenderState& out) {
+                  float alpha, const sim::MatchContent& match, float dt, RenderState& out) {
+  const ContentDB& content = match.db;
+  const uint16_t outboundTicks = match.bananaOutboundTicks();  // v0.79: the mode's
   const float radius = content.boomerang.radius.toFloat();
   for (uint16_t i = 0; i < sim::kMaxBoomerangs; ++i) {
     if (!curr.boomerangs.isAliveIndex(i)) {
@@ -413,13 +438,13 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     const float dCurr = ownerDistance(curr, cb, track.returnStartDistance);
     if (cb.phase == BoomerangPhase::Returning && track.returnStartDistance < 0.0f)
       track.returnStartDistance = std::max(dCurr, 0.01f);
-    const float arcCurr = bananaArcHeight(cb, dCurr, track.returnStartDistance, content);
+    const float arcCurr = bananaArc(cb, dCurr, track.returnStartDistance, outboundTicks);
     float arc = arcCurr;
     float heading = simAngleToYaw(cb.transform.facing);
     float spin = simAngleToYaw(cb.spin);
     if (lerped) {
       const float dPrev = ownerDistance(prev, *pb, track.returnStartDistance);
-      arc = lerp(bananaArcHeight(*pb, dPrev, track.returnStartDistance, content), arcCurr, alpha);
+      arc = lerp(bananaArc(*pb, dPrev, track.returnStartDistance, outboundTicks), arcCurr, alpha);
       heading = lerpAngle(simAngleToYaw(pb->transform.facing), heading, alpha);
       spin = lerpAngle(simAngleToYaw(pb->spin), spin, alpha);
     }
@@ -578,23 +603,7 @@ float playerHeight(const Player& p, const ContentDB& content) {
 
 float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnStartDistance,
                       const ContentDB& content) {
-  switch (b.phase) {
-    case BoomerangPhase::Outbound: {
-      const uint16_t out = content.boomerang.outboundTicks;
-      if (out == 0) return kBananaArcPeak;
-      const float u = clamp01(static_cast<float>(b.ticksInPhase) / static_cast<float>(out));
-      return kBananaArcPeak * std::sin(0.5f * kPi * u);
-    }
-    case BoomerangPhase::Returning: {
-      if (returnStartDistance <= 0.0f) return kBananaArcPeak;
-      const float u = clamp01(distanceToOwner / returnStartDistance);
-      return kBananaArcPeak * std::sin(0.5f * kPi * u);
-    }
-    case BoomerangPhase::Grounded:
-    case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
-      break;
-  }
-  return 0.0f;
+  return bananaArc(b, distanceToOwner, returnStartDistance, content.boomerang.outboundTicks);
 }
 
 void buildRenderState(PresentationState& ps, const WorldState& prev, const WorldState& curr,
@@ -617,7 +626,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   // are still valid for players eliminated this tick.
   ageEffects(ps, dt);
   buildPlayers(ps, prev, curr, alpha, match, dt, out);
-  buildBananas(ps, prev, curr, alpha, content, dt, out);
+  buildBananas(ps, prev, curr, alpha, match, dt, out);
   buildPickups(ps, curr, content, dt, out);
 
   ps.shake *= std::exp(-dt / kShakeTau);

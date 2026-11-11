@@ -381,9 +381,11 @@ void visit(V& v, ModeDef& d) {
   visitI8(v, d.suicideScore);
   v.u16(d.bananaRegrowTicks);
   v.u16(d.captureTicks);  // v0.79
+  v.u16(d.bananaOutboundTicks);
+  v.u16(d.bananaTurnRateBam);
 }
 static_assert(fieldCount<VisionDef>() == 6, "visit the new field, then update the count");
-static_assert(fieldCount<ModeDef>() == 26, "visit the new field, then update the count");
+static_assert(fieldCount<ModeDef>() == 28, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, LoadoutDef& d) {
   visit(v, d.name);

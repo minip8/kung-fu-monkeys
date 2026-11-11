@@ -1383,6 +1383,10 @@ class Builder {
       }
     }
     s.integer("banana_regrow_ticks", m.bananaRegrowTicks, 0, 65535);
+    // v0.79: the banana's flight in this mode, the [boomerang] keys'
+    // bounds (0 = the def's outbound_ticks / turn_rate_bam).
+    s.integer("banana_outbound_ticks", m.bananaOutboundTicks, 0, 65535);
+    s.integer("banana_turn_rate", m.bananaTurnRateBam, 0, 32768);
     // v0.32: teams, the baseline power-up and the roles. Names resolve once
     // every file is read (powerups.toml sorts after modes.toml).
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);
