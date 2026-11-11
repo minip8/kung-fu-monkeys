@@ -3,8 +3,9 @@
 // constants are the C++ ones, its integer math is the engine's bit for bit,
 // its banana flight step reproduces the sim's ProjectileSystem exactly, and
 // the checked-in chaser.wasm, built from the header, loads and plays a whole
-// match against the reference bot within budget, deterministically. The win
-// counts and the fuel and wall numbers are printed, never asserted.
+// match against the reference bot within budget, deterministically, and the
+// version 1 build of it kept as a fixture plays the same match (v0.79). The
+// win counts and the fuel and wall numbers are printed, never asserted.
 #include "kfm/ai/agent_host.hpp"
 #include "kfm/ai/observation.hpp"
 #include "kfm/ai/observation_builder.hpp"
@@ -51,10 +52,18 @@ static_assert(sizeof(kfm_observation) == sizeof(Observation));
 static_assert(KFM_OBS_SIZE == sizeof(Observation));
 static_assert(KFM_ABI_VERSION == kObservationVersion);
 static_assert(KFM_ZONE_WORD == kObsZoneWord && KFM_ZONES == kObsZones);  // v0.69
-static_assert(KFM_MAX_ZONES == kObsMaxZones);                            // v0.79
+// v0.79 (version 2): the zones block appended at version 1's end, and the
+// control kind's modeData words (docs/bot-abi.md §3, modes/control.cpp).
+static_assert(KFM_MAX_ZONES == kObsMaxZones);
 static_assert(offsetof(kfm_observation, zones) == offsetof(Observation, zones));
+static_assert(offsetof(kfm_observation, zones) == kObservationV1Size);
 static_assert(sizeof(kfm_obs_zones) == sizeof(ObsZones));
+static_assert(sizeof(kfm_obs_zone) == sizeof(ObsZone));
 static_assert(KFM_MODE_CONTROL == static_cast<int>(ObsModeKind::Control));
+static_assert(KFM_CONTROL_OWNER_WORD == 2 && KFM_CONTROL_CHALLENGER_WORD == 3 &&
+              KFM_CONTROL_PROGRESS_WORD == 4);
+static_assert(KFM_CONTROL_PROGRESS_WORD + ((KFM_MAX_ZONES + 1) / 2) <= KFM_ZONE_WORD,
+              "the control state stays clear of the zone words");
 static_assert(alignof(kfm_observation) == alignof(Observation));
 #define KFM_SAME_AT(ct, cf, cppt) static_assert(offsetof(ct, cf) == offsetof(cppt, cf), #ct "." #cf)
 // The SDK names a filled reserved field without the prefix (v0.35).
@@ -103,6 +112,12 @@ KFM_SAME_AT(kfm_obs_spawner, intervalTicks, ObsSpawner);
 KFM_SAME_AT(kfm_obs_arena, spawnerCount, ObsArena);
 KFM_SAME_AT(kfm_obs_arena, spawners, ObsArena);
 KFM_SAME_AT(kfm_obs_heard_call, cellY, ObsHeardCall);
+KFM_SAME_AT(kfm_obs_zones, count, ObsZones);
+KFM_SAME_AT(kfm_obs_zones, zone, ObsZones);
+KFM_SAME_AT(kfm_obs_zone, minX, ObsZone);
+KFM_SAME_AT(kfm_obs_zone, minY, ObsZone);
+KFM_SAME_AT(kfm_obs_zone, maxX, ObsZone);
+KFM_SAME_AT(kfm_obs_zone, maxY, ObsZone);
 #undef KFM_SAME_AT
 #undef KFM_SAME_AS
 
@@ -146,14 +161,18 @@ static_assert(KFM_NO_APPROACH == kObsNoApproach &&
   return *reinterpret_cast<const kfm_observation*>(&obs);
 }
 
-std::vector<std::byte> readExample(const std::string& name) {
-  const std::string path = std::string{KFM_BOT_EXAMPLES_DIR} + "/" + name + ".wasm";
+std::vector<std::byte> readWasm(const std::string& dir, const std::string& name) {
+  const std::string path = dir + "/" + name + ".wasm";
   std::ifstream in(path, std::ios::binary);
   REQUIRE(in.good());
   std::vector<char> chars{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
   std::vector<std::byte> bytes(chars.size());
   std::memcpy(bytes.data(), chars.data(), chars.size());
   return bytes;
+}
+
+std::vector<std::byte> readExample(const std::string& name) {
+  return readWasm(KFM_BOT_EXAMPLES_DIR, name);
 }
 
 // --- a chaser match -----------------------------------------------------------
@@ -278,7 +297,7 @@ ChaserMatch playChaserMatch(const WasmModule& chaser, uint64_t seed, int maxTick
 
 }  // namespace
 
-TEST_CASE("the C SDK header mirrors Observation v1", "[ai][sdk]") {
+TEST_CASE("the C SDK header mirrors Observation v2", "[ai][sdk]") {
   // The static_asserts above are the test; a few runtime reads through both
   // views of one observation make the mirror concrete.
   Observation obs{};
@@ -304,6 +323,14 @@ TEST_CASE("the C SDK header mirrors Observation v1", "[ai][sdk]") {
   CHECK(c.self.facingOctant == 5);
   CHECK(c.match.ticksToLatch == 9);
   CHECK(c.players[4].visible == 1);
+  obs.zones.count = 8;
+  obs.zones.zone[7].maxY = -19;
+  CHECK(c.zones.count == 8);
+  CHECK(c.zones.zone[7].maxY == -19);
+  // A version 1 observation is not one this header reads.
+  obs.header.version = kObservationV1Version;
+  obs.header.size = kObservationV1Size;
+  CHECK(kfm_obs_ok(&c) == 0);
   CHECK(kfm_pack_input(1, 2, 3, 4, 5) == packInput(PlayerInput{1, 2, 3, 4, 5}));
 }
 
@@ -419,7 +446,8 @@ TEST_CASE("the C SDK's example bots load", "[ai][sdk][wasm]") {
   const WasmRuntime runtime;
   REQUIRE(runtime.ok());
   // Loading checks the four exports, the imports, the memory and, on a probe
-  // instance, that kfm_abi_version() is 1 (AbiMismatch otherwise).
+  // instance, that kfm_abi_version() is a version the host speaks (the
+  // examples are built against the header: version 2).
   auto idle = WasmModule::load(readExample("idle"));
   if (!idle) FAIL("idle: " << idle.error().message);
   if (!idle) return;
@@ -514,4 +542,33 @@ TEST_CASE("the chaser plays matches against the reference bot", "[ai][sdk][wasm]
   // Deterministic: the first seed replays the same match, checksum for checksum.
   const ChaserMatch again = playChaserMatch(*chaser, 2026, kMaxTicks);
   CHECK(again.checksums == firstChecksums);
+}
+
+TEST_CASE("the chaser built against version 1 plays as the version 2 build (v0.79)",
+          "[ai][sdk][wasm]") {
+  // tests/fixtures/bots/chaser_v1.wasm is the chaser.wasm checked in before
+  // v0.79, byte for byte: chaser.c built against the version 1 header. Its
+  // kfm_obs_ok wants version 1 and 5748 bytes, and the chaser reads nothing
+  // version 2 added, so when the host serves it version 1's prefix it plays
+  // exactly what the version 2 build plays.
+  const WasmRuntime runtime;
+  REQUIRE(runtime.ok());
+  auto v1 = WasmModule::load(readWasm(KFM_BOT_FIXTURES_DIR, "chaser_v1"));
+  if (!v1) FAIL("chaser_v1: " << v1.error().message);
+  if (!v1) return;
+  auto v2 = WasmModule::load(readExample("chaser"));
+  if (!v2) FAIL("chaser: " << v2.error().message);
+  if (!v2) return;
+  constexpr int kMaxTicks = 36000;
+  const ChaserMatch old = playChaserMatch(*v1, 2027, kMaxTicks);
+  const ChaserMatch now = playChaserMatch(*v2, 2027, kMaxTicks);
+  CHECK(old.ended);
+  CHECK(old.thrown > 0);
+  CHECK(old.caught > 0);
+  for (const WasmAgentStats& st : old.stats) {
+    CHECK(st.traps == 0);
+    CHECK(st.substitutions == 0);
+  }
+  CHECK(old.log == now.log);
+  CHECK(old.checksums == now.checksums);
 }

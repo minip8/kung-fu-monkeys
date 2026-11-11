@@ -1,7 +1,8 @@
 # tools/bots
 
 Bot tooling kept in the game repository (architecture §8). The normative contract is
-`docs/bot-abi.md` (bot ABI and `Observation` v1).
+`docs/bot-abi.md` (bot ABI and `Observation` v2; the host still runs a module built against
+version 1, architecture v0.79).
 
 | Path | What |
 |---|---|
@@ -21,6 +22,9 @@ checks the header's layout and constants against `engine/ai/include/kfm/ai/obser
 its integer math and banana flight step against the engine and the sim, and plays the checked-in
 `chaser.wasm` through `AgentHost` against the reference bot. A change to the header or to an
 example is followed by `tools/bots/build_example.sh` and a commit of the rebuilt `.wasm`.
+`tests/fixtures/bots/chaser_v1.wasm` is the chaser as built against the version 1 header (the
+`chaser.wasm` checked in before v0.79, byte for byte); it is never rebuilt, and the same test
+plays it against the version 2 build to show a version 1 module runs unchanged.
 
 ## The header
 
@@ -39,7 +43,7 @@ uint64_t kfm_act(uint32_t tick) {
 }
 ```
 
-Besides the ABI (the `Observation` v1 structs with `_Static_assert`ed layout, the enum and
+Besides the ABI (the `Observation` v2 structs with `_Static_assert`ed layout, the enum and
 button constants, `kfm_pack_input`, the export and `kfm_log` import declarations) it has
 integer helpers that behave identically on every host: Q16.16 fixed point (`kfm_fx_*`,
 `kfm_vec_*`), the engine's sine table and atan2 (`kfm_sin`, `kfm_cos`, `kfm_angle_of`,
@@ -68,8 +72,9 @@ on what is installed.
 
 A module must:
 
-- export `kfm_abi_version () -> i32` (returns 1), `kfm_obs_buffer () -> i32` (a 4-aligned
-  address of at least 5748 bytes, the same for the life of the instance),
+- export `kfm_abi_version () -> i32` (returns 2, the header's `KFM_ABI_VERSION`; a module built
+  against version 1 returns 1 and still runs), `kfm_obs_buffer () -> i32` (a 4-aligned address
+  of at least 5880 bytes, 5748 for version 1, the same for the life of the instance),
   `kfm_init (i64 seed, i32 slot)` and `kfm_act (i32 tick) -> i64` (the packed input in the low
   40 bits, bits 40..63 zero);
 - export its linear memory (wasm-ld does by default) and its shadow stack pointer

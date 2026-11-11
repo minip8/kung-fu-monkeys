@@ -1,4 +1,4 @@
-/* kfm_bot.h: the Kung Fu Monkeys bot SDK for C, bot ABI and Observation v1.
+/* kfm_bot.h: the Kung Fu Monkeys bot SDK for C, bot ABI and Observation v2.
  *
  * One dependency-free C11 header (freestanding: <stdint.h> and <stddef.h>
  * only, no libc). Copy it into a bot project. The normative ABI is
@@ -62,7 +62,9 @@ extern "C" {
 
 /* Version 2 (architecture v0.79) is version 1 with the `zones` block appended:
    nothing of version 1 moved. A host that speaks 2 still runs a module built
-   against version 1 (it writes it version 1's 5748 bytes). */
+   against version 1 (it writes it version 1's 5748 bytes under a version 1
+   header and nothing past them); a module built with this header is version
+   2 and needs a host that speaks 2. */
 #define KFM_ABI_VERSION 2u /* kfm_abi_version() and header.version */
 #define KFM_OBS_SIZE 5880u /* sizeof(kfm_observation) and header.size */
 
@@ -80,17 +82,20 @@ extern "C" {
 #define KFM_MODE_DATA_WORDS 16
 /* v0.69: match.modeData[KFM_ZONE_WORD + 4k .. +3] is the arena's zone k
    (k < KFM_ZONES) as the closed box minX, minY, maxX, maxY (Q16.16, as
-   int32_t), all zero when the arena has no zone k. Zone 0 is the hill. */
+   int32_t), all zero when the arena has no zone k. Zone 0 is the hill.
+   Version 2 still fills them. */
 #define KFM_ZONE_WORD 8
 #define KFM_ZONES 2
-/* v0.79 (version 2): every zone of the arena is in observation.zones. */
+/* v0.79 (version 2): every zone of the arena, zones 0 and 1 included, is in
+   observation.zones. */
 #define KFM_MAX_ZONES 8
 /* v0.79, the control mode's state in match.modeData (bot-abi.md §3):
    words 0-1 the teams' clocks (u16 each, team 2w low, 2w+1 high), word
    KFM_CONTROL_OWNER_WORD the owners and KFM_CONTROL_CHALLENGER_WORD the
    challengers (4 bits per zone, zone k in bits 4k..4k+3, the team + 1, 0 =
    nobody), words KFM_CONTROL_PROGRESS_WORD.. the capture progress (u16 per
-   zone, zone k in word + k/2, the low half for an even k). */
+   zone, zone k in word + k/2, the low half for an even k). The kind plays
+   at most 4 teams and KFM_MAX_ZONES zones. */
 #define KFM_CONTROL_OWNER_WORD 2
 #define KFM_CONTROL_CHALLENGER_WORD 3
 #define KFM_CONTROL_PROGRESS_WORD 4
@@ -446,6 +451,8 @@ KFM_CHECK_AT(kfm_obs_arena, hazards, 604);
 KFM_CHECK_AT(kfm_obs_arena, spawners, 988);
 KFM_CHECK_AT(kfm_obs_heard_call, tick, 4);
 KFM_CHECK_AT(kfm_obs_heard_call, cellX, 8);
+KFM_CHECK_AT(kfm_obs_zones, zone, 4);
+KFM_CHECK_AT(kfm_obs_zone, maxY, 12);
 #undef KFM_CHECK_SIZE
 #undef KFM_CHECK_AT
 
