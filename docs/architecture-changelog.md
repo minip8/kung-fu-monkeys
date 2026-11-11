@@ -1338,3 +1338,56 @@ move to another team); a mark for house teams on the board. Verified in the bots
 `operator` command by hand against a local database. Not yet released: the rule takes effect
 with the bots release after v0.1.5, and M7's criterion still wants an entrant from outside the
 project.
+
+v0.79 changes: the contest's next rules are designed, not built (§11 "Contest design: zones to
+capture and keep"; pointers in §8 "The `contest` mode" and §12's grid item). Nothing in the
+tree changes with this version but the two documents. The design: a new mode kind `control`
+(every zone of the arena has an owner; the team with strictly the most monkeys in a zone it
+does not own captures it after `capture_ticks`; an owned zone pays its team's clock whether or
+not anyone stands on it, `hill_ticks` of clock a point), its state in `modeData` (four teams,
+eight zones), three zones on a new arena, `Observation` version 2 as version 1 plus an appended
+`zones` block with the host still serving version 1 modules, a banana at 2 cells a turn with a
+per-mode outbound and turn rate and hearing cut to 1, power-ups from about turn 90 as `_1t`
+twins, and a starting row (`capture_ticks` 30, `hill_ticks` 60, `score_to_win` 10, respawn 240,
+invulnerability 8) with the gates it is tuned against. Chosen by the project's owner on the
+measurements below: capture and keep rather than presence, three zones rather than two (so a
+new ABI version) or five, and the faster banana together with the power-ups. What was
+measured, all with `kfm_arena`, `--mode contest`, five against five, `--rotate --seed 1`, the
+bots repository's `starter` and `holder` and the built-in `ref:hard`:
+(a) The contest as shipped, 40 games each on this tree: `ref:hard` against itself 18 to 22, a
+median of 1479 ticks; `starter` against `ref:hard` 32 to 8 (585 eliminations to 849);
+`starter` against itself 18 to 22, a median of 717; `starter` against the `idle` or `chaser`
+examples 40 to 0 in 371 ticks, the walkover. No fault, no draw, no game at the clock.
+(b) `holder` (the starter that stays on the hill unarmed and walks to its nearest hill cell),
+200 games each with engine v0.9.0's released runner: 187 to 13 against `starter` (1705
+eliminations to 2564), 189 to 11 against `ref:hard`, and against itself 72 to 80 with 48 draws
+and 156 games at the 3600-turn clock, split 50 west to 102 east.
+(c) The row's numbers on that mirror, 100 games each (games at the clock, draws, median
+ticks; then `holder` against `starter`): as shipped 80, 30, 3660 and 95 to 5; invulnerability
+8: 34, 7, 1769 and 92 to 8; respawn 240: 22, 2, 1207 and 63 to 37; respawn 240 with
+invulnerability 8: 14, 4, 1031 and 66 to 34; respawn 360 with invulnerability 8: 0, 0, 414 and
+53 to 47 (the first won fight decides: a walkover is 371); `hill_ticks` 30: 52, 3, 3660 and 82
+to 18. In the `holder` against `starter` runs the east side won 55 to 77 games of 100 in every
+one of these, whichever bot stood there.
+(d) Majority instead of sole occupancy, a throwaway build of `hill.cpp` (the team with
+strictly the most monkeys in the zone holds it), the same 100 games: as shipped otherwise 20,
+3, 669 and 98 to 2; invulnerability 8: 9, 7, 668 and 96 to 4; respawn 240 with
+invulnerability 8: 0, 0, 658 and 75 to 25, 8.5 points a game. The bots were not written for
+it.
+(e) Where banana hits come from, a throwaway build of the runner counting `BoomerangThrown`
+and `PlayerHit` by the banana's age at the hit, 100 games each as shipped: the share of hits
+at an age of 3 to 5 ticks was 4 % (`starter` against itself), 5 % (`holder` against
+`starter`), 1 % (`ref:hard` against itself) and 4 % (`starter` against `ref:hard`); at most 1
+tick, 53, 61, 92 and 74 %; the rest at 2 ticks or at 6 and more (ricochets and returns). Dash
+attacks were 1 to 4 % of all hits, and a game had 44 to 94 banana hits and 21 to 48
+eliminations.
+(f) Content and host knobs on `starter` against itself, 100 games each, the share at 3 to 5
+ticks: hearing 1 or 0 (identical results) 4 %, the banana's `radius_mul` 0.8 and 1.0 (radius
+0.28 and 0.35) 6 and 7 %, both 5 %, `--delay 2` and `--delay 4` 7 and 8 % (with 37 and 54
+eliminations a game against 23: stale observations walk monkeys into the pits). None is a
+fix, and the test is limited by the bots, which throw from 3 cells or nearer.
+Not measured: anything of the design itself (the kind, the three-zone arena, the banana at 2
+cells a turn, the power-up twins); the numbers in the row are starting points. Not done and
+kept open in the section: the side bias's cause (a mirrored-inputs scenario test comes first),
+a tie-break at the clock, whether a tie decays the capture progress, whether home zones start
+owned. The roles, the reference bot and the ladder service are deliberately unchanged.
