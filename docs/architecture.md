@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.77 (2026-11-11), a living document: it describes the system as built and deployed,
+Status: v0.78 (2026-11-11), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -3369,6 +3369,16 @@ lives in the bots repository (above) and uses this repository through its tagged
   a hosted OAuth provider, never a password the service stores: GitHub or Google (v0.63), an
   account may link both, and the account is keyed by the provider's subject id, never by the
   email (an email changes and two providers may report the same one).
+  **An account is in at most one team (v0.78)**, as owner or member: the entrant and the rating
+  are the team's, so an account in two teams would be two entrants, holding two places on the
+  board and paired against itself. The service refuses the second membership when it is made
+  (creating a team, or being added to one) and leaves the ones made before. The exception is an
+  **operator**, the account of whoever runs the ladder: a round needs two teams with a ready
+  bot, so the ladder runs **house teams** (the bots repository's `examples/starter` and
+  `examples/holder`, submitted through the public path like any entrant's) for a first
+  submission to be paired against, and one account owns them. The flag is on the account, set
+  on the service's VM like a season (`kfm-ladder operator add`), never over HTTP, and lifts
+  this limit and nothing else: there is still no admin role over the API.
 - **Source in, module out.** A submission is a source tree plus a small manifest (the entrant,
   the language, the build entry), uploaded as a zip through the portal or through the CLI; the two
   paths hit one HTTP endpoint. The service builds it, never the author: every ranked module then
