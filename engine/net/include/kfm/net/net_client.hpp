@@ -173,7 +173,13 @@ struct ClientNetStats {
   uint64_t mispredictedPresent{0};  // ... in the present mask
   uint64_t substitutionsSeen{0};    // confirmed local slot-ticks whose input the server repeated
   uint64_t anchorRollbacks{0};      // deeper than the ring: re-simulated from the anchor
-  uint64_t rollbackOverflows{0};    // deeper than the frame history (resync instead)
+  // Episodes of a misprediction deeper than the frame history (resync
+  // instead): counted when the client starts awaiting a snapshot for one,
+  // not again until a snapshot has loaded (the overflow is found again on
+  // every frame while the snapshot is on its way; counted per frame, one
+  // repair of a 3 s outage at 500 ms RTT was 502). Its ResyncRequests,
+  // retries included, count in resyncRequests.
+  uint64_t rollbackOverflows{0};
   // Clock and lead.
   int32_t leadTicks{0};        // L − estimated server tick at the last ticksDue()
   int32_t targetLeadTicks{0};  // §6.2 target from RTT and jitter
@@ -382,6 +388,8 @@ class NetClient {
   sim::PlayerMask basePresent_{0};
   Tick marginFrom_{};  // margins of inputs before this tick are ignored
   bool awaitingResync_{false};
+  // A rollback overflow was counted; cleared when a snapshot loads.
+  bool overflowPending_{false};
   std::optional<Tick> restartTick_;  // announced, snapshot not loaded yet
   std::optional<RoomStateMsg> room_;
   uint32_t roomUpdates_{0};

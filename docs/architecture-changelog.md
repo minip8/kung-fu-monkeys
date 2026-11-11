@@ -1191,3 +1191,19 @@ the humans. Verified on GCC: headless Debug 45 of 45, the `dev` preset 47 of 47,
 `server-headless` Release preset with the soak and real-socket gates 52 of 52, and through
 real binaries: `kfm_server --max-players 3 --bots 3` with two
 clients shows "Bots 2" and one bot to come.
+
+v0.76 changes: four follow-ups of v0.75 and of the outage coverage, one commit each (§6.2,
+§6.3, §6.6, §7, §13.5; issues #85, #84, #74 and #83). No sim change in any of them; replay
+checksums unchanged.
+
+`rollbackOverflows` counts episodes (#85). The client counted a rollback overflow on every
+`reconcile()` that found one, and it finds the same one on every frame until the snapshot it
+asked for arrives, so the stat measured the wait in frames: 284 for one repair of a 3 s outage
+at 300 ms RTT, 502 at 500 ms. It now counts once when the client starts waiting for a snapshot
+and not again until one has loaded (any load: a resync, a restart, a room resume, the initial
+sync); a second overflow after that counts again. The per-frame figure is not kept: nothing
+read it as anything but a count. `resyncRequests` and `gapResyncs` are unchanged, and the two
+gates on the stat (`kfm_netsim`'s exit status and the soak test) require zero, which means
+what it meant. The outage tests now assert the episode count exactly (one wherever the
+backstop repairs, zero below the ring's reach) and that no client asks for or loads another
+snapshot in the 3 s after it agrees; with the old counting they fail on 48 == 1.

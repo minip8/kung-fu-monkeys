@@ -53,6 +53,7 @@ void NetClient::resetSession() {
   basePresent_ = 0;
   marginFrom_ = Tick{};
   awaitingResync_ = false;
+  overflowPending_ = false;
   restartTick_.reset();
   room_.reset();
   roomUpdates_ = 0;
@@ -444,6 +445,7 @@ void NetClient::loadSnapshot(Tick runTo) {
     u.valid = false;
   confirmed_.reset();
   advanceConfirmed();
+  overflowPending_ = false;  // a later overflow is a new episode
   basePresent_ = static_cast<sim::PlayerMask>(world_.rules.present | localSlots_);
   for (PendingChecksum& c : checksums_)
     if (c.valid && c.tick < base_) c.valid = false;
@@ -635,7 +637,10 @@ void NetClient::reconcile() {
         world_.tick.minus(verified_) < static_cast<int32_t>(kInputHistoryTicks)) {
       rollbackTo(*first);
     } else {
-      ++stats_.rollbackOverflows;
+      // The overflow is found again on every frame until a snapshot loads;
+      // the episode counts once (requestResync() paces the request itself).
+      if (!overflowPending_) ++stats_.rollbackOverflows;
+      overflowPending_ = true;
       requestResync(*first, 0);
     }
   }

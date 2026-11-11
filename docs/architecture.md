@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.75 (2026-11-11), a living document: it describes the system as built and deployed,
+Status: v0.76 (2026-11-11), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -2096,7 +2096,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   tick). There the backstop does part of the work: once the redundancy window, one hop and the
   client's lead add up to the 32-state ring (a 3 s outage at 300 ms, 1 s or more at 500 ms), the
   first frames after the outage are a rollback overflow, and that request goes out on the first
-  window without waiting `gapResyncNs`. Also covered: 2 to 10% loss on top of the outage; the
+  window without waiting `gapResyncNs`. `ClientNetStats::rollbackOverflows` counts such
+  episodes (v0.76): once when the client starts waiting for a snapshot it cannot do without,
+  and not again until one has loaded, so a repair through the backstop counts one. Also covered: 2 to 10% loss on top of the outage; the
   `ResyncRequest` or the snapshot held back (a request held past the client's 1 s retry is
   retried and the server's 250 ms limit drops the duplicate; a snapshot held that long is
   served twice and both load, in order); and a second outage that starts before, or just
