@@ -1105,6 +1105,13 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     const Color c = z.team >= 0 ? playerColor(static_cast<uint32_t>(z.team)) : kWhite;
     d.groundRect(z.center, kZoneLift, z.size.x, z.size.z, c, kZoneRimOpacity, kZoneRimStart,
                  kZoneOpacity / kZoneRimOpacity);
+    // v0.79, control: the capture under way grows from the centre in the
+    // challenger's colour.
+    if (z.challenger >= 0 && z.capture > 0.0f) {
+      d.groundRect(z.center, kZoneCaptureLift, z.size.x * z.capture, z.size.z * z.capture,
+                   playerColor(static_cast<uint32_t>(z.challenger)), kZoneCaptureRimOpacity,
+                   kZoneCaptureRimStart, kZoneCaptureOpacity / kZoneCaptureRimOpacity);
+    }
   }
   for (uint16_t i = 0; i < state.shadowCount; ++i) {
     const RenderShadow& s = state.shadows[i];
@@ -1224,6 +1231,11 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       }
       case EffectKind::ScorePop:
         ring(e, r * discSize(kScorePopRing, easeOut(t)), kGold, kScorePopRing, fade);
+        break;
+      case EffectKind::ZoneCaptured:
+        // v0.79: a ring in the new owner's colour racing out over the zone.
+        ring(e, std::max(e.size, r) * discSize(kZoneCapturedRing, easeOut(t)),
+             whitened(e.slot, kZoneCapturedWhiten), kZoneCapturedRing, fade);
         break;
       case EffectKind::SlamShockwave:
         // A ring racing out to the reach: what it touches is pushed.

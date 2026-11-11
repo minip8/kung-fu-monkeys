@@ -175,6 +175,9 @@ enum class EffectKind : uint8_t {
   CallShout,  // a call: rings popping over the caller's head (slot colour; size = symbol / 255)
   // v0.57 (pit falls):
   PitFall,  // a ring closing in where a monkey went down a pit (slot colour)
+  // v0.79 (control):
+  ZoneCaptured,  // a ring racing out over a zone a team just took (slot = the team, its
+                 // palette colour; size = the zone's larger half extent, units)
 };
 
 struct RenderEffect {
@@ -210,11 +213,16 @@ struct RenderArenaPiece {
 
 // An objective zone (v0.33): a translucent floor rectangle in world space,
 // tinted with its team's colour when it is a team's (capture: zone t is team
-// t's), neutral otherwise (hill).
+// t's; control, v0.79: its owner's, from modeData), neutral otherwise (hill,
+// an unowned control zone). Team t is palette colour t.
 struct RenderZone {
   Vec3 center{};  // on the ground, y = 0
   Vec3 size{};    // world extents (x, 0, z)
   int8_t team{kNoSlot};
+  // v0.79, control: the team taking the zone (kNoSlot: no capture under way)
+  // and its progress toward ModeDef::captureTicks, in [0, 1).
+  int8_t challenger{kNoSlot};
+  float capture{0.0f};
 };
 
 // Rim strips are capped; a pit layout needing more draws without the excess.
