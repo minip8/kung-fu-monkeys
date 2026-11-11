@@ -230,7 +230,8 @@ struct ContentDB {
 
   // Whether a match may pair this arena with this mode (v0.32, v0.33,
   // v0.34): a team mode needs a spawn group per team, hill a zone (zone 0),
-  // capture a zone per team (team t's is zone t), a grid mode cells
+  // capture a zone per team (team t's is zone t), control (v0.79) a zone
+  // (it plays every zone the arena has), a grid mode cells
   // (`cellSize > 0`, §5.12), and so does a fog vision (v0.35: its radii are
   // cells, §8). An incompatible pair is a configuration error of the
   // host (the lobby skips it, a command line refuses it), never a load

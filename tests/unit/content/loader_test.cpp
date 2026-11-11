@@ -749,6 +749,46 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
       loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
                           "{ kind = \"projectile\", radius_mul = 5 }")),
       "'radius_mul' = 5.000 is outside"));
+  // v0.79: the projectile speed multiplier has its own limit, 8; the radius
+  // multiplier keeps 4.
+  const auto projectile = [](std::string_view grant) {
+    return replaced(withPowerUp(), R"({ kind = "stat", stat = "move_speed", mul = 1.5 })", grant);
+  };
+  CHECK(loads(projectile(R"({ kind = "projectile", speed_mul = 8, radius_mul = 4 })")));
+  CHECK(loads(projectile(R"({ kind = "projectile", speed_mul = 7.5 })")));
+  CHECK(contains(loadErrors(projectile(R"({ kind = "projectile", speed_mul = 8.5 })")),
+                 "'speed_mul' = 8.500 is outside"));
+  CHECK(contains(
+      loadErrors(projectile(R"({ kind = "projectile", speed_mul = 8, radius_mul = 4.5 })")),
+      "'radius_mul' = 4.500 is outside"));
+  {
+    // validateContent() holds content built in code to the same limits.
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(
+        parseContent(projectile(R"({ kind = "projectile", speed_mul = 8 })"), "p.toml", db, diag));
+    sim::PowerUpGrant* grant = nullptr;
+    for (uint8_t g = 0; g < db.powerUps[0].grantCount; ++g) {
+      if (db.powerUps[0].grants[g].kind == sim::GrantKind::Projectile) {
+        grant = &db.powerUps[0].grants[g];
+      }
+    }
+    if (grant == nullptr) {
+      FAIL("no projectile grant");
+      return;
+    }
+    Diagnostics ok;
+    CHECK(validateContent(db, ok));
+    grant->projectile.speedMul = Fixed::fromInt(8) + Fixed::epsilon();
+    Diagnostics fast;
+    CHECK_FALSE(validateContent(db, fast));
+    CHECK(fast.format().contains("speed_mul must be in (0, 8] and radius_mul in (0, 4]"));
+    grant->projectile.speedMul = Fixed::fromInt(8);
+    grant->projectile.radiusMul = Fixed::fromInt(4) + Fixed::epsilon();
+    Diagnostics wide;
+    CHECK_FALSE(validateContent(db, wide));
+    CHECK(wide.format().contains("speed_mul must be in (0, 8] and radius_mul in (0, 4]"));
+  }
   // Spawners.
   CHECK(contains(loadErrors(replaced(withPowerUp(), "pos = [3, 1]", "pos = [12, 1]")),
                  "spawner 0: pos (12.000, 1.000) is outside the arena"));

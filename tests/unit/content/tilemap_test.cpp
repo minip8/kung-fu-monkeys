@@ -355,3 +355,63 @@ TEST_CASE("capture: mode keys and validation (v0.33)", "[content][modes][capture
   CHECK_FALSE(parseContent(mode("teams = 2\nflag_return_ticks = 0\n"), "m.toml", db, zero));
   CHECK(zero.format().contains("'flag_return_ticks'"));
 }
+
+TEST_CASE("control: mode keys and validation (v0.79)", "[content][modes][control]") {
+  const std::string arena = "name = \"z\"\ncell = 1\nspawn_groups = 2\nmap = [\"a0b1c\"]";
+  const auto mode = [&](std::string_view m) {
+    return withArena(arena) + "\n[[mode]]\nname = \"k\"\nkind = \"control\"\n" + std::string(m);
+  };
+  {
+    ContentDB db{};
+    Diagnostics diag;
+    const bool ok =
+        parseContent(mode("teams = 2\ncapture_ticks = 30\nhill_ticks = 60\nscore_to_win = 10\n"),
+                     "m.toml", db, diag);
+    INFO(diag.format());
+    REQUIRE(ok);
+    const sim::ModeDef& m = db.modes[1];
+    CHECK(m.kind == sim::ModeKind::Control);
+    CHECK(sim::scoresPoints(m.kind));
+    CHECK(m.captureTicks == 30);
+    CHECK(m.hillTicks == 60);
+    CHECK(m.scoreToWin == 10);
+    REQUIRE(db.arenas[0].zoneCount == 3);
+    CHECK(db.compatible(0, 1));
+    CHECK(db.firstCompatibleArena(1) == std::optional<uint8_t>{0});
+    db.arenas[0].zoneCount = 0;  // control plays every zone, and needs one
+    CHECK_FALSE(db.compatible(0, 1));
+    CHECK_FALSE(db.firstCompatibleArena(1).has_value());
+  }
+  {
+    // Four teams is the most: the clocks fill two words of modeData.
+    ContentDB db{};
+    Diagnostics diag;
+    CHECK(parseContent(mode("teams = 4\n"), "m.toml", db, diag));
+    CHECK(db.modes[1].captureTicks == 60);  // the default
+  }
+  const auto errors = [](const std::string& text) {
+    ContentDB db{};
+    Diagnostics diag;
+    CHECK_FALSE(parseContent(text, "m.toml", db, diag));
+    return diag.format();
+  };
+  CHECK(errors(mode("")).contains("a team kind needs teams of 2 or more"));
+  CHECK(errors(mode("teams = 5\n")).contains("control plays at most 4 teams"));
+  CHECK(errors(mode("teams = 2\ncapture_ticks = 0\n")).contains("'capture_ticks'"));
+  CHECK(errors(mode("teams = 2\ncapture_ticks = 65536\n")).contains("'capture_ticks'"));
+  CHECK(errors(mode("teams = 2\nhill_ticks = 0\n")).contains("'hill_ticks'"));
+  CHECK(errors(mode("teams = 2\nscore_to_win = 0\n"))
+            .contains("score_to_win must be at least 1 in control"));
+  CHECK(errors(mode("teams = 2\nrespawn_ticks = 0\n"))
+            .contains("respawn_ticks must be at least 1 in control"));
+  {
+    // validateContent() holds a mode built in code to the same.
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(parseContent(mode("teams = 2\n"), "m.toml", db, diag));
+    db.modes[1].captureTicks = 0;
+    Diagnostics zero;
+    CHECK_FALSE(validateContent(db, zero));
+    CHECK(zero.format().contains("capture_ticks must be at least 1"));
+  }
+}

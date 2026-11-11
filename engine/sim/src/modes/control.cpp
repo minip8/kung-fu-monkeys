@@ -162,7 +162,7 @@ void controlOnPlaying(WorldState& s, const MatchContent& content, EventSink& sin
       setTeamIn(r, kChallengerWord, k, kNobody);
       setProgress(r, k, 0);
     }
-    if (owner != kNobody && owner < kMaxControlTeams) ++owned[owner];
+    if (owner < kMaxControlTeams) ++owned[owner];  // kNobody (0xFF) is past every team
   }
 
   const uint32_t pointTicks = mode.hillTicks > 0 ? mode.hillTicks : 1u;

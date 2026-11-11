@@ -6,7 +6,7 @@
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
 #   kind                 rounds (default), deathmatch, survival, team_rounds,
-#                        team_deathmatch, hill or capture
+#                        team_deathmatch, hill, capture or control
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      rounds, survival, team_rounds: pause after a round
 #                        before the next one (the round's scoreboard); the
@@ -32,7 +32,8 @@
 #                        with it; the respawn hands out the starting banana).
 #                        A pit fall always takes the held ones down; the ones
 #                        in flight follow this key from the fall's start
-#   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture:
+#   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture,
+#                        control:
 #                        points for a perfect dash catch of an enemy's banana
 #                        (the own one or an ally's scores nothing; default 0)
 #   suicide_score        v0.57, the same kinds: points for an elimination with
@@ -58,11 +59,24 @@
 #                        point (>= 1); a contested or empty zone holds the
 #                        clock. Plays only on an arena with a zone; respawns
 #                        and the clock as deathmatch, score_to_win counts
-#                        points
+#                        points. Control (v0.79): the zone-ticks of a point
+#                        (two owned zones score twice as fast)
 #   flag_return_ticks    capture: ticks a dropped flag lies untouched before
 #                        it goes home (>= 1). Team t's flag starts in zone t,
 #                        so it plays only on an arena with a zone per team;
 #                        score_to_win counts captures
+#   capture_ticks        v0.79, control: every zone of the arena has an owner
+#                        (nobody at the start); the team with strictly the
+#                        most monkeys in a zone it does not own captures it
+#                        after this many ticks of that (>= 1, default 60; a
+#                        new challenger starts from zero, a tie holds the
+#                        progress, the owner with the most or an empty zone
+#                        clears it). An owned zone pays its team one tick a
+#                        tick whether or not anyone stands on it, and
+#                        hill_ticks of them score a point (to the team's
+#                        lowest present slot). At most 4 teams; plays only on
+#                        an arena with a zone; respawns and the clock as
+#                        deathmatch, score_to_win counts points
 #   space                v0.34: how monkeys move, "continuous" (default, the
 #                        stick) or "grid": a monkey at rest commits to one of
 #                        its eight neighbouring cells at every turn's latch

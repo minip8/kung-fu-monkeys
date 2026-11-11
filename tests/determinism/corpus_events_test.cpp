@@ -47,7 +47,7 @@ struct Tally {
 
   [[nodiscard]] uint32_t of(EventKind k) const { return kinds[static_cast<size_t>(k)]; }
 };
-static_assert(static_cast<size_t>(EventKind::BananaRegrown) < Tally::kKinds);
+static_assert(static_cast<size_t>(EventKind::ZoneCaptured) < Tally::kKinds);
 
 std::string describe(const Tally& t) {
   std::ostringstream o;
