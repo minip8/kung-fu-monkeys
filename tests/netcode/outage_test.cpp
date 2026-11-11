@@ -269,6 +269,68 @@ void checkStaysInAgreement(NetSim& s, const Rigs& r, const Baseline& b0, int32_t
   CHECK(r.b.client->netStats().rollbackOverflows == b0.overflows);
 }
 
+// Issue #84: a spectator steps only authoritative frames, spectatorDelayTicks
+// behind the newest it has confirmed: its backlog, confirmed + 1 − its tick,
+// is what ticksDue() and spectatorRatePpm() hold at the delay. A snapshot
+// that arrives late while the unreliable stream kept coming (the "snapshot
+// held" cases; a reliable retransmission after loss) is older than the
+// frames the spectator holds, and the load runs it over them to the delay
+// at once. At the end of the client frame that loaded a snapshot the
+// backlog is then at most the delay plus the frames that same frame
+// received after the snapshot: AuthInputs leave one per server tick (at
+// least kSec / kTickHz apart) with one-way delays at most 2 · jitter apart,
+// and a frame's 1 ms of messages is delivered in arrival order, so the
+// newest frame moves at most ceil((2 · jitter + 1 ms) / tick) ticks past the
+// newest one before. (On a lossy link each AuthInputs lost just before
+// those adds its tick; the bound leaves no room for that, and the lossy
+// cases here meet it anyway.) A snapshot not older than the stream leaves a
+// backlog under the delay, as before the fix. Before it, the backlog after
+// a late load was the snapshot's age: 15 and 16 ticks after the 1.5 s holds,
+// 18 at 300 ms with 10% loss, drained at lead.maxDeviationPpm (2%).
+int32_t arrivalTicks(const LinkSpec& l) {
+  constexpr uint64_t kMinTickNs = kSec / sim::kTickHz;
+  return static_cast<int32_t>((2 * l.jitterNs + kMs + kMinTickNs - 1) / kMinTickNs);
+}
+
+// Samples the spectator at the end of every client frame in which it loaded
+// a snapshot.
+struct SpectatorLoads {
+  const ClientRig* rig{nullptr};
+  uint64_t seen{0};       // its snapshotsLoaded so far
+  uint64_t loaded{0};     // snapshots loaded since the first sample's baseline
+  int32_t maxBacklog{0};  // the largest backlog at the end of a loading frame
+  uint32_t offServer{0};  // loading frames that left it off the server's state
+
+  void sample(const NetSim& s, const ClientRig& c) {
+    if (&c != rig) return;
+    const NetClient& cl = *c.client;
+    const uint64_t n = cl.netStats().snapshotsLoaded;
+    if (n == seen) return;
+    loaded += n - seen;
+    seen = n;
+    const std::optional<Tick> confirmed = cl.confirmedTick();
+    const int32_t backlog = confirmed ? confirmed->plus(1).minus(cl.localTick()) : 0;
+    maxBacklog = std::max(maxBacklog, backlog);
+    if (sim::checksum(cl.world()) != s.serverSum(cl.localTick())) ++offServer;
+  }
+
+  // At the end of each loading frame: within arrivalTicks() of the delay
+  // and on the server's state of its tick (it stepped authoritative frames
+  // only), for every snapshot the case expects.
+  void check(const char* name, const LinkSpec& l, uint64_t expectLoads) const {
+    const int32_t delay = ClientConfig{}.spectatorDelayTicks;
+    std::printf(
+        "[spectator] %s: %llu snapshots loaded, backlog at most %d after a load (bound %d "
+        "= delay %d + %d)\n",
+        name, static_cast<unsigned long long>(loaded), maxBacklog, delay + arrivalTicks(l), delay,
+        arrivalTicks(l));
+    INFO(name);
+    CHECK(loaded == expectLoads);
+    CHECK(offServer == 0);
+    CHECK(maxBacklog <= delay + arrivalTicks(l));
+  }
+};
+
 // A reliable-only hold (Outage{.., reliable, !unreliable}) of one direction
 // of the player's and the spectator's links from the outage's end for ns:
 // the targeted loss of the ResyncRequest (toServer) or of the Snapshot's
@@ -326,6 +388,8 @@ void runOutage(const OutageCase& oc) {
     }
   }
   int32_t leadMax = leadBefore;
+  SpectatorLoads loads{&w, w0.snapshots};
+  s.afterClientFrame = [&](ClientRig& c) { loads.sample(s, c); };
   // When the player first asks for a snapshot, from the outage's start.
   uint64_t firstResyncMs = 0;
   s.afterServerTick = [&] {
@@ -398,6 +462,8 @@ void runOutage(const OutageCase& oc) {
 
   checkStaysInAgreement(s, r, b0, maxBehind);
   s.afterServerTick = nullptr;
+  s.afterClientFrame = nullptr;
+  loads.check(oc.name, oc.link, e.served);
   // Stale acknowledgements during the outage do not inflate the human lead
   // the bots are delayed by (§8 human-likeness).
   CHECK(leadMax <= leadBefore + 2);
@@ -448,7 +514,9 @@ void runTwoOutages(const TwoOutagesCase& tc) {
     s.network().setOutage(t.rig->transport->self(), false, Outage{from, from + tc.firstNs});
   int32_t leadMax = leadBefore;
   s.afterServerTick = [&] { leadMax = std::max(leadMax, leadOf(s, r.a)); };
+  SpectatorLoads loads{&r.w, tracks[1].before.snapshots};
   s.afterClientFrame = [&](ClientRig& c) {
+    loads.sample(s, c);
     for (Track& t : tracks) {
       if (t.rig != &c || t.secondFrom) continue;
       const ClientNetStats& st = c.client->netStats();
@@ -464,7 +532,7 @@ void runTwoOutages(const TwoOutagesCase& tc) {
   const uint64_t firstBound = recoveryBoundNs(tc.link, sc, cc, 0);
   REQUIRE(s.runUntil([&] { return tracks[0].secondFrom && tracks[1].secondFrom; },
                      tc.firstNs + firstBound));
-  s.afterClientFrame = nullptr;
+  // The hook keeps sampling the spectator; both second outages are set.
   const uint64_t secondUntil =
       std::max(tracks[0].secondFrom.value_or(0), tracks[1].secondFrom.value_or(0)) + tc.secondNs;
   s.runFor(secondUntil - s.now());
@@ -504,6 +572,8 @@ void runTwoOutages(const TwoOutagesCase& tc) {
   }
   checkStaysInAgreement(s, r, b0, maxBehind);
   s.afterServerTick = nullptr;
+  s.afterClientFrame = nullptr;
+  loads.check(tc.name, tc.link, 2);
   CHECK(leadMax <= leadBefore + 2);
 }
 

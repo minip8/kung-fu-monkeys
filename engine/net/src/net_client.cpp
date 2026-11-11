@@ -452,6 +452,17 @@ void NetClient::loadSnapshot(Tick runTo) {
   ++stats_.snapshotsLoaded;
   report_.snapshotLoaded = true;
   report_.rolledBack = true;
+  // A spectator whose snapshot is older than the frames it holds runs at
+  // once to where ticksDue() keeps it, spectatorDelayTicks behind its newest
+  // confirmed frame, over those frames only: they are contiguous from the
+  // snapshot's tick, so it never predicts (issue #84; left to
+  // spectatorRatePpm(), at most lead.maxDeviationPpm faster, a 15-tick
+  // backlog took about 10 s). Part of the load, not a hard jump.
+  if (spectator() && confirmed_) {
+    const int32_t avail = confirmed_->plus(1).minus(world_.tick);
+    const int32_t delay = config_.spectatorDelayTicks;
+    if (avail > delay) runTo = std::max(runTo, world_.tick.plus(avail - delay));
+  }
   // Unsigned: a tick far enough away would wrap Tick::minus.
   if (runTo > world_.tick && runTo.value - world_.tick.value > uint32_t{kMaxRunForwardTicks}) {
     runTo = world_.tick.plus(kMaxRunForwardTicks);
@@ -460,6 +471,7 @@ void NetClient::loadSnapshot(Tick runTo) {
   while (world_.tick < runTo)
     stepOne();
   advanceVerified();
+  KFM_ASSERT(!spectator() || verified_ == world_.tick);  // stepped authoritative frames only
 }
 
 // --- timeline -----------------------------------------------------------------------

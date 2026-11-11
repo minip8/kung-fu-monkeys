@@ -1801,7 +1801,10 @@ the present mask repeat the newest authoritative frame before the tick; local sl
 inputs submitted for it. Inputs are resent back to the newest tick the server has assembled (at
 most 16). Checksums are compared at confirmed ticks against the saved, anchor or current state of
 that tick. A spectator (no slots) never predicts: it steps only authoritative frames and its clock
-keeps it `spectatorDelayTicks` (3) behind the newest one. `sizeof(NetClient)` is about 360 KB
+keeps it `spectatorDelayTicks` (3) behind the newest one. A snapshot it loads that is older
+than the frames it already holds (the stream keeps arriving while a snapshot is delayed) is
+followed, inside the load, by a run over those frames to that same delay (v0.76); it is part
+of the load, not a hard jump. `sizeof(NetClient)` is about 360 KB
 (the ring is 32 × 5.9 KB), so hosts allocate it on the heap.
 
 ### 6.3 Message layer
@@ -2101,7 +2104,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   and not again until one has loaded, so a repair through the backstop counts one. Also covered: 2 to 10% loss on top of the outage; the
   `ResyncRequest` or the snapshot held back (a request held past the client's 1 s retry is
   retried and the server's 250 ms limit drops the duplicate; a snapshot held that long is
-  served twice and both load, in order); and a second outage that starts before, or just
+  served twice and both load, in order, the spectator back at its delay in the frame of each
+  load); and a second outage that starts before, or just
   after, the first repair completes, which costs a second snapshot and no more. The server's lead estimate (§8 human-likeness) also counted the outage: a stale
   acknowledgement reads as a round trip growing one tick per tick, and before v0.70 a 3 s outage
   pushed that peer's estimate to 146 ticks (`humanLeadTicks()` clamps to 60, so a mixed match's bot

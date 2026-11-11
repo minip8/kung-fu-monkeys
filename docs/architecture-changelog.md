@@ -1207,3 +1207,21 @@ gates on the stat (`kfm_netsim`'s exit status and the soak test) require zero, w
 what it meant. The outage tests now assert the episode count exactly (one wherever the
 backstop repairs, zero below the ring's reach) and that no client asks for or loads another
 snapshot in the 3 s after it agrees; with the old counting they fail on 48 == 1.
+
+A spectator catches up at once after a late snapshot (#84). A spectator that loaded a
+snapshot older than the frames it already held stepped on from the snapshot's tick and then
+sat 15 to 18 ticks behind its newest frame instead of 3, because `ticksDue` jumps a spectator
+forward only past `spectatorDelayTicks + kRollbackWindow` and left the rest to
+`spectatorRatePpm()`, which `lead.maxDeviationPpm` holds to 2%: about 10 s of watching a
+quarter of a second late. Decided: the load itself runs a spectator on to
+`spectatorDelayTicks` behind its newest confirmed frame, where the clock would hold it. It
+steps only frames it holds (they are contiguous from the snapshot's tick, so it still never
+predicts; a debug assertion says so), journals events as any run forward does, and is not a
+hard jump: `snapshotsLoaded` counts it. A snapshot that is not older than the stream is
+untouched, and so are players. The other option, a lower jump threshold for spectators, would
+have left the same lag below the new threshold. Side effect: the initial sync goes through
+the same load, so a spectator starts 2 to 3 ticks closer to its delay than before. Measured
+in the outage tests at the end of the frame that loads: 15, 16 and 18 ticks before, 3 after;
+the test bounds it by the delay plus the frames that can arrive within that frame (twice the
+jitter). That bound leaves no room for packet loss just before the load; the lossy cases meet
+it at their seeds. Not tested: a spectator promoted to a player right after a late load.

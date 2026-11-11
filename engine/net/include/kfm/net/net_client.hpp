@@ -23,6 +23,9 @@
 // forward to the current L. A reconnect is connect() on a new transport with
 // the same token. A spectator (requestedSlots = 0) never predicts: it steps
 // only authoritative frames and stays spectatorDelayTicks behind the newest.
+// A snapshot it loads that is older than the frames it holds (the stream
+// keeps arriving while a snapshot is delayed) is followed at once by a run
+// over those frames to that delay, not a catch-up at the clock's 2 % (#84).
 //
 // Prediction: local slots use the inputs submitted for that tick (input delay
 // D: the inputs passed at local tick L are for tick L + D); remote slots and
@@ -186,6 +189,10 @@ struct ClientNetStats {
   int8_t arrivalMargin{0};     // last reported by the server
   int32_t arrivalMarginQ8{0};  // smoothed
   uint32_t ratePpm{kRateOnePpm};
+  // Forward jumps off the clock: the lead controller's, a spectator's backlog
+  // past spectatorDelayTicks + kRollbackWindow, a promotion. Not a snapshot
+  // load's run forward (a player's to L, a spectator's to spectatorDelayTicks
+  // behind its frames), which snapshotsLoaded counts.
   uint64_t hardJumps{0};
   uint64_t runForwardClamped{0};  // forward runs cut to kMaxRunForwardTicks (v0.70)
   uint64_t clockDroppedTicks{0};
