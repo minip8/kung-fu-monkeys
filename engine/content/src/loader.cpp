@@ -89,7 +89,7 @@ struct ModeKindName {
   std::string_view name;
   sim::ModeKind kind;
 };
-constexpr std::array<ModeKindName, 7> kModeKinds = {{
+constexpr std::array<ModeKindName, 8> kModeKinds = {{
     {"rounds", sim::ModeKind::Rounds},
     {"deathmatch", sim::ModeKind::Deathmatch},
     {"survival", sim::ModeKind::Survival},
@@ -97,6 +97,7 @@ constexpr std::array<ModeKindName, 7> kModeKinds = {{
     {"team_deathmatch", sim::ModeKind::TeamDeathmatch},  // v0.32
     {"hill", sim::ModeKind::Hill},                       // v0.33
     {"capture", sim::ModeKind::Capture},                 // v0.33
+    {"control", sim::ModeKind::Control},                 // v0.79
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -160,8 +161,13 @@ constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash",
   return t == Tag::Shielded || t == Tag::Invulnerable || t == Tag::FriendlyFire;
 }
 
-// Projectile multipliers (and v0.34 the radius stat's) stay in (0, kMaxProjectileMul].
+// Projectile radius multipliers (and v0.34 the radius stat's) stay in
+// (0, kMaxProjectileMul]. v0.79: the speed multiplier's limit is its own, 8,
+// so a one-tick grid mode can fly a banana at two cells a turn (7.5 x the
+// def's 16 u/s on a unit cell); moves and contacts are swept, so nothing
+// tunnels at any speed (§5.6).
 const Fixed kMaxProjectileMul = Fixed::fromInt(4);
+const Fixed kMaxProjectileSpeedMul = Fixed::fromInt(8);
 
 // Whether a stat is an integer stat (add-only, whole).
 [[nodiscard]] constexpr bool integerStat(StatKind k) {
@@ -1206,7 +1212,7 @@ class Builder {
       }
     } else if (*kind == "projectile") {
       out.kind = GrantKind::Projectile;
-      g.fixed("speed_mul", out.projectile.speedMul, Fixed::epsilon(), kMaxProjectileMul);
+      g.fixed("speed_mul", out.projectile.speedMul, Fixed::epsilon(), kMaxProjectileSpeedMul);
       g.fixed("radius_mul", out.projectile.radiusMul, Fixed::epsilon(), kMaxProjectileMul);
       g.integer("damage_add", out.projectile.damageAdd, 0, 255);
     } else if (*kind == "tag") {
@@ -1339,7 +1345,8 @@ class Builder {
       const auto* const entry = findNamed(kModeKinds, *kind);
       if (entry == nullptr) {
         s.error("unknown kind " + inQuotes(*kind) +
-                " (rounds, deathmatch, survival, team_rounds, team_deathmatch, hill or capture)");
+                " (rounds, deathmatch, survival, team_rounds, team_deathmatch, hill, capture or "
+                "control)");
       } else {
         m.kind = entry->kind;
       }
@@ -1371,7 +1378,7 @@ class Builder {
         if (const toml::node* n = s.take(key)) {
           s.error(*n, "'" + std::string(key) +
                           "' belongs to a point-scoring kind (deathmatch, team_deathmatch, hill, "
-                          "capture): a round kind's score counts round wins");
+                          "capture, control): a round kind's score counts round wins");
         }
       }
     }
@@ -1381,6 +1388,7 @@ class Builder {
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);
     s.integer("hill_ticks", m.hillTicks, 1, 65535);  // v0.33
     s.integer("flag_return_ticks", m.flagReturnTicks, 1, 65535);
+    s.integer("capture_ticks", m.captureTicks, 1, 65535);  // v0.79
     // v0.34: the space, and the grid's turn and dash.
     if (const std::optional<std::string> space = s.string("space")) {
       if (*space == "continuous") {
@@ -1710,10 +1718,10 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
         }
         case GrantKind::Projectile:
           if (grant.projectile.speedMul <= Fixed::zero() ||
-              grant.projectile.speedMul > kMaxProjectileMul ||
+              grant.projectile.speedMul > kMaxProjectileSpeedMul ||
               grant.projectile.radiusMul <= Fixed::zero() ||
               grant.projectile.radiusMul > kMaxProjectileMul) {
-            fail(at + ": speed_mul and radius_mul must be in (0, 4]");
+            fail(at + ": speed_mul must be in (0, 8] and radius_mul in (0, 4]");
           }
           break;
         case GrantKind::Tag:
@@ -2001,7 +2009,8 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     // v0.33: the objective kinds respawn and score like deathmatch.
     const bool respawning = m.kind == sim::ModeKind::Deathmatch ||
                             m.kind == sim::ModeKind::TeamDeathmatch ||
-                            m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture;
+                            m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture ||
+                            m.kind == sim::ModeKind::Control;
     if (respawning) {
       const auto atLeastOne = [&](std::string_view key) {
         std::string message = where;
@@ -2016,8 +2025,15 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
       if (m.scoreToWin < 1) atLeastOne("score_to_win");
       if (m.respawnTicks < 1) atLeastOne("respawn_ticks");
     }
-    if (m.kind == sim::ModeKind::Hill && m.hillTicks < 1) {
+    if ((m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Control) && m.hillTicks < 1) {
       fail(where + ": hill_ticks must be at least 1");
+    }
+    // v0.79: control keeps a clock per team in two words of modeData.
+    if (m.kind == sim::ModeKind::Control && m.captureTicks < 1) {
+      fail(where + ": capture_ticks must be at least 1");
+    }
+    if (m.kind == sim::ModeKind::Control && m.teams > sim::kMaxControlTeams) {
+      fail(where + ": control plays at most " + std::to_string(sim::kMaxControlTeams) + " teams");
     }
     if (m.kind == sim::ModeKind::Capture && m.flagReturnTicks < 1) {
       fail(where + ": flag_return_ticks must be at least 1");
@@ -2047,7 +2063,8 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     }
     const bool teamKind = m.kind == sim::ModeKind::TeamRounds ||
                           m.kind == sim::ModeKind::TeamDeathmatch ||
-                          m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture;
+                          m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture ||
+                          m.kind == sim::ModeKind::Control;
     if (teamKind && m.teams == 0) fail(where + ": a team kind needs teams of 2 or more");
     if (m.hasBaseline() && m.baseline >= c.powerUpCount) {
       fail(where + ": baseline names an undefined power-up");

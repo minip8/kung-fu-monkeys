@@ -52,6 +52,12 @@ void captureOnEliminated(WorldState& s, const MatchContent& content, PlayerId vi
 void captureOnPickupTaken(WorldState& s, const MatchContent& content, PlayerId player,
                           const Pickup& pickup, EventSink& sink);
 
+// Control (modes/control.cpp, v0.79): capture zones and keep them.
+void controlOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
+void controlOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
+void controlOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
+                         PlayerId killer, EventSink& sink);
+
 [[nodiscard]] constexpr ModeBehavior roundsBehavior() {
   return ModeBehavior{&modeNoRoundStart, &roundsOnPlaying, &roundsOnEliminated, &modeNoPickupTaken};
 }
@@ -79,6 +85,11 @@ void captureOnPickupTaken(WorldState& s, const MatchContent& content, PlayerId p
 [[nodiscard]] constexpr ModeBehavior captureBehavior() {
   return ModeBehavior{&captureOnRoundStart, &captureOnPlaying, &captureOnEliminated,
                       &captureOnPickupTaken};
+}
+
+[[nodiscard]] constexpr ModeBehavior controlBehavior() {
+  return ModeBehavior{&controlOnRoundStart, &controlOnPlaying, &controlOnEliminated,
+                      &modeNoPickupTaken};
 }
 
 }  // namespace kfm::sim

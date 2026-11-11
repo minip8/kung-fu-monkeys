@@ -41,7 +41,8 @@ static_assert(
         static_cast<uint8_t>(ObsModeKind::TeamDeathmatch) &&
     static_cast<uint8_t>(sim::ModeKind::Hill) == static_cast<uint8_t>(ObsModeKind::Hill) &&
     static_cast<uint8_t>(sim::ModeKind::Capture) == static_cast<uint8_t>(ObsModeKind::Capture) &&
-    static_cast<uint8_t>(sim::ModeKind::kCount) == 7);
+    static_cast<uint8_t>(sim::ModeKind::Control) == static_cast<uint8_t>(ObsModeKind::Control) &&
+    static_cast<uint8_t>(sim::ModeKind::kCount) == 8);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::Call) ==
@@ -484,6 +485,13 @@ void buildObservation(const sim::WorldState& world, const sim::MatchContent& con
   out = Observation{};
   out.header.version = kObservationVersion;
   out.header.size = sizeof(Observation);
+  // bot-abi.md §3.3 (version 2, v0.79): every zone of the arena.
+  static_assert(sim::kMaxArenaZones <= kObsMaxZones);
+  out.zones.count = std::min<uint8_t>(content.arena.zoneCount, sim::kMaxArenaZones);
+  for (uint8_t k = 0; k < out.zones.count; ++k) {
+    const sim::Zone& z = content.arena.zones[k];
+    out.zones.zone[k] = ObsZone{z.min.x.raw, z.min.y.raw, z.max.x.raw, z.max.y.raw};
+  }
   fillMatch(world, content, contentHash, inputDelayTicks, out.match);
   fillRules(content.db, out.rules);
   fillSelf(world, content, self, out.self);

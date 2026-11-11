@@ -27,6 +27,7 @@ constexpr std::array<ModeBehavior, static_cast<size_t>(ModeKind::kCount)> kBehav
     teamDeathmatchBehavior(),  // ModeKind::TeamDeathmatch (v0.32)
     hillBehavior(),            // ModeKind::Hill (v0.33)
     captureBehavior(),         // ModeKind::Capture (v0.33)
+    controlBehavior(),         // ModeKind::Control (v0.79)
 };
 
 // Every hook is called unconditionally: a row missing from the list above (a

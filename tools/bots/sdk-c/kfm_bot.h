@@ -60,8 +60,11 @@ extern "C" {
 
 /* ---- ABI constants -------------------------------------------------------- */
 
-#define KFM_ABI_VERSION 1u /* kfm_abi_version() and header.version */
-#define KFM_OBS_SIZE 5748u /* sizeof(kfm_observation) and header.size */
+/* Version 2 (architecture v0.79) is version 1 with the `zones` block appended:
+   nothing of version 1 moved. A host that speaks 2 still runs a module built
+   against version 1 (it writes it version 1's 5748 bytes). */
+#define KFM_ABI_VERSION 2u /* kfm_abi_version() and header.version */
+#define KFM_OBS_SIZE 5880u /* sizeof(kfm_observation) and header.size */
 
 /* Capacities (a change is a new ABI version). */
 #define KFM_MAX_PLAYERS 10
@@ -80,6 +83,17 @@ extern "C" {
    int32_t), all zero when the arena has no zone k. Zone 0 is the hill. */
 #define KFM_ZONE_WORD 8
 #define KFM_ZONES 2
+/* v0.79 (version 2): every zone of the arena is in observation.zones. */
+#define KFM_MAX_ZONES 8
+/* v0.79, the control mode's state in match.modeData (bot-abi.md §3):
+   words 0-1 the teams' clocks (u16 each, team 2w low, 2w+1 high), word
+   KFM_CONTROL_OWNER_WORD the owners and KFM_CONTROL_CHALLENGER_WORD the
+   challengers (4 bits per zone, zone k in bits 4k..4k+3, the team + 1, 0 =
+   nobody), words KFM_CONTROL_PROGRESS_WORD.. the capture progress (u16 per
+   zone, zone k in word + k/2, the low half for an even k). */
+#define KFM_CONTROL_OWNER_WORD 2
+#define KFM_CONTROL_CHALLENGER_WORD 3
+#define KFM_CONTROL_PROGRESS_WORD 4
 
 #define KFM_NO_SLOT 0xFFu        /* a slot field naming no player */
 #define KFM_NO_APPROACH 0xFFFFu  /* banana.approachTicks while self is not alive */
@@ -110,7 +124,8 @@ enum {
   KFM_MODE_TEAM_ROUNDS = 3,
   KFM_MODE_TEAM_DEATHMATCH = 4,
   KFM_MODE_HILL = 5,
-  KFM_MODE_CAPTURE = 6
+  KFM_MODE_CAPTURE = 6,
+  KFM_MODE_CONTROL = 7 /* architecture v0.79 */
 };
 enum {
   KFM_ABILITY_NONE = 0,
@@ -159,15 +174,15 @@ enum {
 /* heardCalls[i].cellX/cellY of a caller this bot does not see. */
 #define KFM_NO_CELL (-1)
 
-/* ---- Observation v1 --------------------------------------------------------
- * Little-endian, 5748 bytes, alignment 4, every hole an explicit pad. Units:
+/* ---- Observation v2 --------------------------------------------------------
+ * Little-endian, 5880 bytes, alignment 4, every hole an explicit pad. Units:
  * Q16.16 (int32 / 65536: arena units, units per tick for speeds), angle8
  * (uint8 1/256 turn, 0 = +x, counter-clockwise), bam (uint16 1/65536 turn),
  * ticks (60 per second), slot (0..9, 0xFF none). Field meanings: bot-abi.md §2. */
 
 typedef struct kfm_obs_header {
-  uint32_t version; /* 1 */
-  uint32_t size;    /* 5748 */
+  uint32_t version; /* 2 */
+  uint32_t size;    /* 5880 */
   uint32_t schemaFlags, reserved0;
 } kfm_obs_header;
 
@@ -321,6 +336,21 @@ typedef struct kfm_obs_heard_call {
   int16_t cellX, cellY;
 } kfm_obs_heard_call;
 
+/* v0.79 (version 2): an objective zone, the closed box in Q16.16. */
+typedef struct kfm_obs_zone {
+  int32_t minX, minY;
+  int32_t maxX, maxY;
+} kfm_obs_zone;
+
+/* v0.79 (version 2): the arena's zones in content order (zone 0 is the hill,
+   a capture team t's home is zone t, control plays them all); entries past
+   `count` are zero. Fog never hides them. */
+typedef struct kfm_obs_zones {
+  uint8_t count;
+  uint8_t pad0[3];
+  kfm_obs_zone zone[KFM_MAX_ZONES];
+} kfm_obs_zones;
+
 typedef struct kfm_observation {
   kfm_obs_header header;
   kfm_obs_match match;
@@ -331,6 +361,7 @@ typedef struct kfm_observation {
   kfm_obs_pickup pickups[KFM_MAX_PICKUPS];
   kfm_obs_arena arena;
   kfm_obs_heard_call heardCalls[KFM_MAX_HEARD_CALLS]; /* oldest first */
+  kfm_obs_zones zones; /* version 2: every zone of the arena */
 } kfm_observation;
 
 #define KFM_CHECK_SIZE(T, n) KFM_STATIC_ASSERT(sizeof(T) == (n), "size of " #T)
@@ -348,6 +379,8 @@ KFM_CHECK_SIZE(kfm_obs_hazard, 24);
 KFM_CHECK_SIZE(kfm_obs_spawner, 16);
 KFM_CHECK_SIZE(kfm_obs_arena, 1116);
 KFM_CHECK_SIZE(kfm_obs_heard_call, 12);
+KFM_CHECK_SIZE(kfm_obs_zone, 16);
+KFM_CHECK_SIZE(kfm_obs_zones, 132);
 KFM_CHECK_SIZE(kfm_observation, KFM_OBS_SIZE);
 KFM_CHECK_AT(kfm_observation, match, 16);
 KFM_CHECK_AT(kfm_observation, rules, 184);
@@ -357,6 +390,7 @@ KFM_CHECK_AT(kfm_observation, bananas, 1112);
 KFM_CHECK_AT(kfm_observation, pickups, 3928);
 KFM_CHECK_AT(kfm_observation, arena, 4440);
 KFM_CHECK_AT(kfm_observation, heardCalls, 5556);
+KFM_CHECK_AT(kfm_observation, zones, 5748);
 KFM_CHECK_AT(kfm_obs_match, modeIndex, 16);
 KFM_CHECK_AT(kfm_obs_match, presentMask, 24);
 KFM_CHECK_AT(kfm_obs_match, inputDelayTicks, 28);

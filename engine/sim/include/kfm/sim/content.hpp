@@ -241,6 +241,7 @@ struct ContentDB {
     if (m.teams != 0 && a.spawnGroups < m.teams) return false;
     if (m.kind == ModeKind::Hill && a.zoneCount < 1) return false;
     if (m.kind == ModeKind::Capture && a.zoneCount < (m.teams > 0 ? m.teams : 1)) return false;
+    if (m.kind == ModeKind::Control && a.zoneCount < 1) return false;
     if (m.space == Space::Grid && a.cellSize <= Fixed::zero()) return false;
     if (m.vision.fog() && a.cellSize <= Fixed::zero()) return false;
     return true;
