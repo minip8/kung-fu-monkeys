@@ -1286,5 +1286,17 @@ batches of six, each batch printing its diagnostics in one piece, and fails when
 does (checked: a batch that errors makes the pipeline exit 123). Locally 105 s on 12 cores
 with no diagnostics. Not done: sharding `kfm_ai_tests`, the single longest test under the
 sanitizers (207 s), which now bounds that leg's test time; a compiler cache; trimming the
-matrix on pull requests, which would save runner minutes, not wall time. The cache cannot be
-shown locally: the numbers after the change are those of the pull request's own runs.
+matrix on pull requests, which would save runner minutes, not wall time. Measured on the pull
+request's own runs (42944132751): the first, with no cache to restore, took 19.0 min and saved
+nine caches of 41 to 127 MB (a toolchain's legs each save their own, since two builds of a
+package are not byte-identical); the second restored them ("Restored 16 package(s) ... in 559
+ms"), every configure fell to under half a minute, and the run took 12.5 min. The sanitizer
+leg is still the slowest and now by a wide margin (12.5 min; the next is Windows Release at
+8.2, most are 3.5 to 6.5). Its tests fell only from 661 s to 493 s, not to the four minutes
+projected: four at a time each test ran about 2.4 times slower (the test times sum to 1571 s),
+so the runner gives this workload well under two cores' worth, and `kfm_ai_tests` alone
+stretched from 207 s to 400 s. `clang-tidy` likewise went from 549 s to 164 s on a cache hit
+rather than to a quarter. Shortening the sanitizer leg further means giving it less to do or
+splitting it across two runners, not more parallelism. Also recorded here: v0.73's split of
+the page job ran on a tag for the first time with v0.9.0, and the page was published 31 s
+after the VM update finished (about two minutes before the split).
