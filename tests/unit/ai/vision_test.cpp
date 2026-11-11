@@ -274,7 +274,9 @@ TEST_CASE("team vision is the union of the allies' sight", "[ai][vision]") {
 }
 
 TEST_CASE("vision all is the pre-fog observation byte for byte", "[ai][vision]") {
-  const ContentDB c = fogContent(VisionKind::All);
+  ContentDB c = fogContent(VisionKind::All);
+  c.arenas[0].zones[0] = Zone{centre(2, 2), centre(3, 3)};  // v0.79: the zones block too
+  c.arenas[0].zoneCount = 1;
   WorldState s = makePlayingWorld(8, 0b111, c);
   put(s, kP0, 1, 5, 0);
   put(s, kP1, 7, 5);
@@ -288,6 +290,7 @@ TEST_CASE("vision all is the pre-fog observation byte for byte", "[ai][vision]")
   buildObservation(s, mc, 0, kP0, 0, ObservationContext{&none, nullptr, 0}, withContext);
   CHECK(std::memcmp(&plain, &withContext, sizeof(Observation)) == 0);
   CHECK(plain.header.schemaFlags == 0);
+  CHECK(plain.zones.count == 1);
   for (const ObsPlayer& p : plain.players)
     CHECK(p.reservedVisible == 0);
   for (const ObsBanana& b : plain.bananas)
@@ -297,6 +300,41 @@ TEST_CASE("vision all is the pre-fog observation byte for byte", "[ai][vision]")
   CHECK(plain.match.reservedTurnTicks == 0);
   CHECK(plain.self.reservedCellX == 0);
   CHECK(plain.self.reservedFacingOctant == 0);
+}
+
+TEST_CASE("fog never hides a zone (v0.79)", "[ai][vision][zones]") {
+  // Three zones, one behind the wall from P0 and one at its back: under own
+  // and team vision the zones block and words 8-15 are those of vision all.
+  ContentDB c = fogContent(VisionKind::Own);
+  c.modes[0].teams = 2;
+  ArenaDef& a = c.arenas[0];
+  a.zones[0] = Zone{centre(7, 4) - Vec2{Fixed::one(), Fixed::one()}, centre(7, 4)};
+  a.zones[1] = Zone{centre(0, 8), centre(1, 9)};
+  a.zones[2] = Zone{centre(4, 0), centre(6, 1)};
+  a.zoneCount = 3;
+  WorldState s = makePlayingWorld(9, 0b1111, c);
+  put(s, kP0, 1, 5, 0);
+  put(s, kP1, 7, 5);
+  put(s, kP2, 8, 8, 64);
+  put(s, kP3, 1, 0);
+  MatchConfig config{9, 0b1111};
+  config.teams = teamsFor(c.modes[0], 0b1111);
+  ContentDB all = c;
+  all.modes[0].vision.kind = VisionKind::All;
+  const Observation seen = observe(s, matchContent(all, config), kP0);
+  REQUIRE(seen.zones.count == 3);
+  for (const VisionKind kind : {VisionKind::Own, VisionKind::Team}) {
+    ContentDB fog = c;
+    fog.modes[0].vision.kind = kind;
+    const Observation o = observe(s, matchContent(fog, config), kP0);
+    INFO("vision " << static_cast<int>(kind));
+    CHECK((o.header.schemaFlags & kObsFlagFog) != 0);
+    CHECK(o.players[3].reservedVisible == 0);  // the fog is on: nobody sees P3
+    CHECK(o.players[3].posX == 0);
+    CHECK(std::memcmp(&o.zones, &seen.zones, sizeof(ObsZones)) == 0);
+    for (uint32_t w = kObsZoneWord; w < kObsModeDataWords; ++w)
+      CHECK(o.match.reservedModeData[w] == seen.match.reservedModeData[w]);
+  }
 }
 
 TEST_CASE("a grid mode fills the cell, the octant and the turn clock", "[ai][vision]") {
