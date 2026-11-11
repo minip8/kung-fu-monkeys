@@ -1225,3 +1225,22 @@ in the outage tests at the end of the frame that loads: 15, 16 and 18 ticks befo
 the test bounds it by the delay plus the frames that can arrive within that frame (twice the
 jitter). That bound leaves no room for packet loss just before the load; the lossy cases meet
 it at their seeds. Not tested: a spectator promoted to a player right after a late load.
+
+Reconnect survives a lobby restart (#74, its second item). After the lobby restarts, a room is
+not live again until its server has redialled and claimed it (1, 2, 4, then every 5 s). A
+player who pressed Reconnect in that gap was refused `unknown_code`, which withdrew Reconnect
+and left only a join by code, as a new player. Decided: the client retries a rejoin refused
+`unknown_code` on its own, 2 s after each refusal and at most 4 times, so for 8 s: the
+server's 5 s ceiling plus 3 s for its `register` and the round trips, and five refused joins
+in all, half of an address's budget of ten (lobby protocol §7), so a join by code still works
+straight after. Only a rejoin (a `join` carrying the token of a room the session was in) and
+only `unknown_code`: a first join by code, `bad_token`, `server_gone`, `mismatch` and
+`limited` end at once as before. Between attempts the session reads Connecting and the screen
+stays on "Reconnecting" with no button, since nothing is asked of the player; after the last
+refusal it ends exactly as before ("Room ABCDE not found"). `NetSession` cannot build a
+transport, so it schedules the retry (`rejoinRetryDue()`) and the app answers it as it
+answers the button. No wire change and no lobby protocol version: `docs/lobby-protocol.md`
+§2, §3 and §5 state the client rule. Not covered: a lobby whose host is unreachable rather
+than restarted, where a server attempt can hang for its 10 s open timeout and the claim can
+land after the window. Not taken: retrying `server_gone`, which can have the same shape. The
+issue's first item (an adopted room always counting as used) stays open.

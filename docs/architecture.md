@@ -2200,7 +2200,10 @@ C++ server library is mature. The seam makes that swap a contained change.
   (`NetClient::waitingForSlot()` before it) runs forward on its next `ticksDue()` from its
   delayed position to estimated server tick + target lead, predicting, with the lead controller
   and the clock reset (counted as a hard jump); `NetSession` binds its devices to the new slots.
-- Reconnect from the UI (v0.44, M6b): the token flow above behind a button. A `NetSession`
+- Reconnect from the UI (v0.44, M6b): the token flow above behind a button. Since v0.76 a
+  lobby rejoin refused `unknown_code` is retried by the client on its own, 2 s apart and up to
+  4 times, with the screen still on "Reconnecting": after a lobby restart the room's server
+  may not have claimed the room back yet (§13.5, `docs/lobby-protocol.md` §3). A `NetSession`
   that ran and then lost its link (`Disconnected` by a timeout or a closed transport, or the
   lobby's `closed`/`kicked`, which is how a server-side timeout reaches a lobby client; not a
   quit, a kick, a shutdown, a closed room or a gone server) `canReconnect()`, and the network
@@ -4794,7 +4797,10 @@ for the room, oldest first, at most 128, and `players`). A v1.3 lobby adopts the
 the code is live there (only if it was reassigned meanwhile) or the room cap is reached, and
 says so with `room` in `registered`; the room is then live again under the same code with the
 tokens re-announced, so a join by code and the v1.2 rejoin both work after a restart and
-Reconnect needs no fallback. A claim that is not adopted (that, or a v1.2 lobby, which ignores
+Reconnect needs no fallback. Between the lobby coming back and the claim landing (the server
+redials after 1, 2, 4, then every 5 s) the code is not live and a rejoin is refused
+`unknown_code`; the client retries that refusal for 8 s, which covers the server's longest
+gap (v0.76). A claim that is not adopted (that, or a v1.2 lobby, which ignores
 the keys) leaves the kept players playing while the server offers capacity 0 until they have
 gone. On the client, once both data channels are open the lobby socket's close and a `closed`
 `server_gone` end nothing; `kicked`, `replaced` and `room_closed` still label the session's end

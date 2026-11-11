@@ -474,6 +474,7 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
 
 // v0.44: the lost session's Reconnect button: a new transport to the same
 // server, or a lobby rejoin of the same room, with the same token (§6.6).
+// Also a refused rejoin's retry (NetSession::rejoinRetryDue()).
 void reconnectNetwork(App& app, std::uint64_t nowNs) {
   client::NetSession& n = *app.net;
   ClientTransport t = makeTransport(app, n.reconnectConfig());
@@ -1386,6 +1387,9 @@ bool frame(void* user) {
   app->pendingRoom.reset();
   if (app->reconnectRequested && app->net) reconnectNetwork(*app, now);
   app->reconnectRequested = false;
+  // A rejoin refused `unknown_code` is retried for a few seconds: the room's
+  // server may not have claimed it back from a restarted lobby yet.
+  if (app->net && app->net->rejoinRetryDue(now)) reconnectNetwork(*app, now);
   app->drawWorld = true;
   presentation::Camera camera;
   if (app->net) {
