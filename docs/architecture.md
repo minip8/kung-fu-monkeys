@@ -1825,7 +1825,7 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | Ping | both | transport stats plus our own tick-stamped ping | — |
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 | `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
-| `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, the bots' placement (v0.75), winner, nicknames |
+| `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, the bots' placement (v0.75), the player cap (v0.76), winner, nicknames |
 | `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
@@ -1873,7 +1873,9 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   from the humans: at most 178 B (`kRoomStateMsgMaxBytes`; the 191 B this paragraph gave
   before was never the constant's value). While the room waits it is the slots the settings'
   bots take if the host starts now; in Playing and Over it is the slots bots hold, equal to
-  the bot mask (§6.6).
+  the bot mask (§6.6). Protocol version 8 (v0.76) adds the server's player cap after the
+  placement mask, u4 holding the cap − 1: 1 to `kMaxPlayers`, with no human, bot or placement
+  slot at or above it (refused on encode and on decode). `RoomState` is then at most 179 B.
 - `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
   with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
   shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
@@ -2167,7 +2169,9 @@ C++ server library is mature. The seam makes that swap a contained change.
   the server's player cap, all of them when fewer are free): Start places the bots with it and
   the Waiting `RoomState` carries its answer as the bots' placement (v0.75), re-sent like any
   other change on a join, a leave or a settings change, so what the waiting room previews is
-  what Start does. The client has no copy of the rule.
+  what Start does. The client has no copy of the rule. Every `RoomState` also carries the
+  server's player cap (v0.76): the waiting room ends its slots at the cap, and the host's Bots
+  row stops at the cap − 1, where the validation above does.
   The client side of a server that does not tick: `NetClient` holds while its `RoomState` says
   Waiting or Over (`holding()`: `ticksDue()` returns 0 and restarts the clock, `tick()` sends
   nothing), so no input runs ahead of a frozen assembler and nothing accumulates; pings go on
@@ -2517,7 +2521,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `core/scoreboard.hpp`, and since the architecture audit `core/hud_view.hpp`: `HudView`, the
   winner's title and colour, the clock's urgent threshold, the match-over screen's typed
   `MatchOverAction` buttons and `roomSlots()`, what each slot of the waiting room shows, with
-  the bots to come taken from the server's placement in `RoomState`, v0.75). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
+  the bots to come taken from the server's placement in `RoomState`, v0.75, and the slots at
+  or above the server's player cap `Closed` and given no card, v0.76). Dear ImGui stays the drawing library. Font: Lilita One (OFL 1.1,
   `assets/fonts/` with its licence), compiled in by `cmake/EmbedFile.cmake`, loaded once by
   `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
   1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette

@@ -49,8 +49,10 @@ namespace kfm::net {
 // the loadout. v5 (v0.32): and the team of every slot. v6 (v0.42, M6b):
 // the room (RoomSettings, RoomState, Start) and a nickname in Hello. v7:
 // RoomState carries the bots' placement (botPlacement), so the waiting room
-// shows the slots the server will put its bots in (issue #68).
-inline constexpr uint16_t kProtocolVersion = 7;
+// shows the slots the server will put its bots in (issue #68). v8:
+// RoomState carries the server's player cap (maxPlayers), so the waiting
+// room shows no slot above it as open (issue #83).
+inline constexpr uint16_t kProtocolVersion = 8;
 
 // Inputs per Input / AuthInputs message: the newest tick and up to 15 before
 // it (§6.3: the last 8–16 are resent every packet).
@@ -313,6 +315,12 @@ struct RoomStateMsg {
   // Playing and Over: the slots bots hold, equal to `bots` (a bot that
   // yields its slot to a joiner leaves both).
   sim::PlayerMask botPlacement{0};
+  // v8: the server's player cap (ServerConfig::maxPlayers, --max-players),
+  // 1..kMaxPlayers: only the lowest maxPlayers slots exist for peers and
+  // bots, so no human, bot or placement slot is at or above it, and the
+  // waiting room offers none of the others (issue #83). Coded as
+  // maxPlayers − 1 in 4 bits.
+  uint8_t maxPlayers{sim::kMaxPlayers};
   PlayerId winner{PlayerId::invalid()};  // Over: the match's winner, invalid on a draw
   std::array<Nickname, sim::kMaxPlayers> names{};
   [[nodiscard]] bool operator==(const RoomStateMsg& o) const;
@@ -340,7 +348,7 @@ inline constexpr size_t kRoomSettingsBits = 8 + 8 + 8 + 16 + 4;
 inline constexpr size_t kRoomSettingsMsgBytes = (8 + kRoomSettingsBits + 7) / 8;
 inline constexpr size_t kStartMsgBytes = 1;
 inline constexpr size_t kRoomStateMsgMaxBytes =
-    (8 + 2 + 1 + 4 + kRoomSettingsBits + (3 * size_t{sim::kMaxPlayers}) + 1 + 4 +
+    (8 + 2 + 1 + 4 + kRoomSettingsBits + (3 * size_t{sim::kMaxPlayers}) + 4 + 1 + 4 +
      size_t{sim::kMaxPlayers} * (5 + kMaxNicknameBytes * 8) + 7) /
     8;
 static_assert(kRoomSettingsMsgBytes <= kMaxUnreliableBytes);

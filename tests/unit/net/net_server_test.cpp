@@ -860,6 +860,7 @@ TEST_CASE("RoomSettings and Start become events; RoomState reaches everyone and 
   state.host = PlayerId{0};
   state.humans = 0b1;
   state.botPlacement = 0b110;  // v7: carried as the host set it
+  state.maxPlayers = 5;        // v8: so is the cap
   state.names[0] = Nickname::from("Host");
   rig.server->setRoomState(state);
   rig.pump();

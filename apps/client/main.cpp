@@ -1207,6 +1207,9 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
   app.overMenu.setFocus(0);
   app.overActivate = false;
   if (app.roomSentAt && n.client().roomUpdates() != *app.roomSentAt) app.roomSentAt.reset();
+  // v8 (issue #83): the Bots row asks for no more bots than the server's
+  // cap leaves room for (it would ignore the request).
+  app.roomMenu.setPlayerCap(room->maxPlayers);
   client::LobbySettings& ls = app.roomMenu.settings();
   if (!app.roomSentAt) {
     ls.arena = room->settings.arena;

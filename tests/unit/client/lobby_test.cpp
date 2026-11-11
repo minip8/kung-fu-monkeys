@@ -327,6 +327,55 @@ TEST_CASE("lobby menu: new content clamps the settings and keeps the focus", "[c
   CHECK_FALSE(m.apply(MenuAction::Right));  // a single arena cycles onto itself
 }
 
+// v8 (issue #83): the online room's Bots row stops where the server's
+// validRoomSettings() does under its player cap (RoomStateMsg::maxPlayers):
+// at most cap − 1 bots, so the host never asks for bots Start cannot place.
+// Local play keeps the default cap, every slot (the case above).
+TEST_CASE("lobby menu: the room's Bots row stops under the server's player cap",
+          "[client][lobby][room]") {
+  LobbyMenu m;
+  m.setContent(shipped());
+  m.setRoomRows(true);
+  const std::size_t bots = rowOf(m, LobbyRowKind::Bots);
+  const auto most = [&] {
+    for (int i = 0; i < 12; ++i)
+      (void)m.change(bots, +1);
+    return m.settings().bots;
+  };
+  CHECK(m.maxBots() == sim::kMaxPlayers - 1);  // the default: no cap
+  CHECK(most() == sim::kMaxPlayers - 1);
+
+  // A cap below the bots asked for: the count drops to the limit.
+  m.setPlayerCap(3);
+  CHECK(m.maxBots() == 2);
+  CHECK(m.settings().bots == 2);
+  CHECK(m.rowValue(m.rows()[bots]) == "2");
+  CHECK_FALSE(m.change(bots, +1));  // already at the limit
+  CHECK(m.change(bots, -1));
+  CHECK(m.settings().bots == 1);
+
+  m.setPlayerCap(4);
+  CHECK(m.maxBots() == 3);
+  CHECK(m.settings().bots == 1);  // under the limit: kept
+  CHECK(most() == 3);
+
+  m.setPlayerCap(sim::kMaxPlayers);
+  CHECK(m.settings().bots == 3);
+  CHECK(most() == sim::kMaxPlayers - 1);
+
+  // One slot: no bot fits beside the human.
+  m.setPlayerCap(1);
+  CHECK(m.maxBots() == 0);
+  CHECK(m.settings().bots == 0);
+  CHECK_FALSE(m.change(bots, +1));
+
+  // Out of range: clamped to 1..kMaxPlayers.
+  m.setPlayerCap(0);
+  CHECK(m.maxBots() == 0);
+  m.setPlayerCap(static_cast<uint8_t>(sim::kMaxPlayers + 5));
+  CHECK(m.maxBots() == sim::kMaxPlayers - 1);
+}
+
 TEST_CASE("menu input: keys, a bound pad's d-pad and stick, never an unbound pad",
           "[client][lobby][input]") {
   MenuInput in;

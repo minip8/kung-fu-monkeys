@@ -1244,3 +1244,24 @@ answers the button. No wire change and no lobby protocol version: `docs/lobby-pr
 than restarted, where a server attempt can hang for its 10 s open timeout and the claim can
 land after the window. Not taken: retrying `server_gone`, which can have the same shape. The
 issue's first item (an adopted room always counting as used) stays open.
+
+The waiting room knows the server's player cap, protocol version 8 (#83). The client drew all
+ten slots and did not know `--max-players`, so the slots above the cap read "open, send the
+link" though nobody could join them, and the host's Bots row offered counts the server would
+refuse. Decided: `RoomState` carries the cap (u4, the cap − 1, after the placement mask;
+valid from 1 to `kMaxPlayers` with no slot of the three masks at or above it), rather than
+`Welcome`: the cap never changes, but the room screen then stays a function of the one
+message it draws. `kProtocolVersion` goes from 7 to 8, again with no compatibility path
+(v0.75 has the reason); `RoomState` is at most 179 B. `roomSlots()` returns `Closed` for a
+slot at or above the cap and the waiting room gives those slots no card: the grid ends at the
+cap, each remaining card where it was among ten, so at the default cap of 10 the screen is
+what it was (compared against the previous build: differences within the renderer's own
+run-to-run noise). `LobbyMenu::setPlayerCap()` stops the room's Bots row at the cap − 1, the
+server's own rule, which is unchanged; local play never sets it. Not changed: the Bots row
+follows the cap, not the free slots, so with two humans at a cap of three it can still read 2
+where Start places one; the waiting room shows the one bot that fits (v0.75), and the count
+is a setting the server clamps at Start. Verified for the four changes together on GCC:
+headless Debug 45 of 45, the `dev` preset 52 of 52 with the real-socket tests
+(`net_probe_loopback` failed once and passed 15 of 15 repeats; it does not use anything
+changed here), the `server-headless` Release preset 52 of 52 with the soak gates, and through
+real binaries a server at `--max-players 3` with two clients showing three cards.

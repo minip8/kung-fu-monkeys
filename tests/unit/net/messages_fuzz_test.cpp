@@ -215,6 +215,7 @@ TEST_CASE("Room decoders survive arbitrary bytes", "[net][messages][fuzz][room]"
   waiting.humans = 0b10;
   waiting.settings = RoomSettings{0, 0, 0, 0xFFFF, 2};
   waiting.botPlacement = 0b101;
+  waiting.maxPlayers = 4;  // v8: a capped server (slots 0..3)
   waiting.names[1] = Nickname::from("Mandrill");
   const Tally t = fuzz(MessageType::RoomState,
                        std::vector<RoomStateMsg>{r, waiting, RoomStateMsg{}}, 20'000, 18);

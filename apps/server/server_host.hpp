@@ -36,7 +36,8 @@
 // RoomState (NetServer::setRoomState) and one "room ..." log line; while
 // Waiting its botPlacement is the slots Start would place the bots in now
 // (roomBotSlots(), the same function placeRoomBots() is given), so a join,
-// a leave or a settings change re-sends it.
+// a leave or a settings change re-sends it. Every RoomState carries the
+// server's player cap (ServerConfig::maxPlayers, v8).
 //
 // Bots yield (v0.44, §6.6): in the room flow the NetServer queues a
 // joiner that only bots' slots could fit (ServerConfig::queueForBotSlots)

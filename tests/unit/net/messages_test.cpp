@@ -402,7 +402,7 @@ TEST_CASE("Snapshot round-trips and stays far below the reliable limit", "[net][
   CHECK(decode({buf.data(), worst - 1}, *back).error() == DecodeError::Truncated);
 }
 
-// --- protocol 6: the room and nicknames (v0.42); v7: the bots' placement -----------
+// --- protocol 6: the room and nicknames (v0.42); v7: the bots' placement; v8: the cap
 
 namespace {
 
@@ -420,7 +420,8 @@ RoomStateMsg fullRoom() {
   m.settings = RoomSettings{.arena = 4, .mode = 2, .loadout = 1, .powerUps = 0x0F0F, .bots = 7};
   m.humans = 0b11'1111'1000;
   m.bots = 0b111;
-  m.botPlacement = 0b111;  // Over: where the bots are
+  m.botPlacement = 0b111;                                 // Over: where the bots are
+  m.maxPlayers = static_cast<uint8_t>(sim::kMaxPlayers);  // v8: every slot (a human holds slot 9)
   m.winner = PlayerId{1};
   for (uint8_t s = 3; s < sim::kMaxPlayers; ++s)
     m.names[s] = nick("ABCDEFGHIJKLMNOP");  // 16 bytes each: the worst case
@@ -455,7 +456,7 @@ TEST_CASE("Nicknames: validation and sanitising", "[net][messages][room]") {
 }
 
 TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
-  CHECK(kProtocolVersion == 7);  // v7: RoomState's botPlacement
+  CHECK(kProtocolVersion == 8);  // v7: RoomState's botPlacement; v8: its maxPlayers
   HelloMsg h;
   h.contentHash = 5;
   h.requestedSlots = 2;
@@ -482,6 +483,7 @@ TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
   CHECK(back.names[5].view() == "ABCDEFGHIJKLMNOP");
   CHECK(back.names[0].empty());  // a bot slot carries no name
   CHECK(back.botPlacement == 0b111);
+  CHECK(back.maxPlayers == sim::kMaxPlayers);
 
   // v7: Waiting previews the bots' slots before any bot holds one.
   RoomStateMsg waiting;
@@ -491,6 +493,28 @@ TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
   waiting.botPlacement = 0b10'0000'0110;
   waiting.names[0] = nick("h");
   CHECK(roundTrip(waiting).botPlacement == 0b10'0000'0110);
+
+  // v8: the server's player cap, 1..kMaxPlayers; every slot below it.
+  RoomStateMsg capped;
+  capped.host = PlayerId{1};
+  capped.humans = 0b11;
+  capped.settings.bots = 2;
+  capped.botPlacement = 0b100;  // the one bot that fits under three
+  capped.maxPlayers = 3;
+  capped.names[0] = nick("a");
+  capped.names[1] = nick("b");
+  const RoomStateMsg cappedBack = roundTrip(capped);
+  CHECK(cappedBack.maxPlayers == 3);
+  CHECK(cappedBack.botPlacement == 0b100);
+  RoomStateMsg alone;  // a cap of one: the host and nobody else
+  alone.host = PlayerId{0};
+  alone.humans = 0b1;
+  alone.maxPlayers = 1;
+  alone.names[0] = nick("solo");
+  CHECK(roundTrip(alone).maxPlayers == 1);
+  RoomStateMsg empty;  // nobody yet, under a cap of four
+  empty.maxPlayers = 4;
+  CHECK(roundTrip(empty).maxPlayers == 4);
 
   RoomStateMsg playing;
   playing.phase = RoomPhase::Playing;
@@ -520,6 +544,31 @@ TEST_CASE("Protocol 6 encoders refuse invalid messages", "[net][messages][room]"
   m = fullRoom();
   m.botPlacement = static_cast<sim::PlayerMask>(1u << sim::kMaxPlayers);  // past the slots
   CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.maxPlayers = 0;  // v8: no cap of zero
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.maxPlayers = static_cast<uint8_t>(sim::kMaxPlayers + 1);  // past the slots
+  CHECK(encode(m, buf) == 0);
+  m = fullRoom();
+  m.maxPlayers = static_cast<uint8_t>(sim::kMaxPlayers - 1);  // a human holds slot 9
+  CHECK(encode(m, buf) == 0);
+  RoomStateMsg c;  // v8: a cap of three, with each mask reaching slot 3
+  c.humans = 0b1;
+  c.names[0] = nick("a");
+  c.maxPlayers = 3;
+  REQUIRE(encode(c, buf) > 0);
+  c.humans = 0b1001;
+  c.names[3] = nick("d");
+  CHECK(encode(c, buf) == 0);  // a human at the cap
+  c.humans = 0b1;
+  c.bots = 0b1000;
+  CHECK(encode(c, buf) == 0);  // a bot at the cap
+  c.bots = 0;
+  c.botPlacement = 0b1'0000;
+  CHECK(encode(c, buf) == 0);  // a placement above it
+  c.botPlacement = 0b100;
+  CHECK(encode(c, buf) > 0);  // below it
   m = fullRoom();
   m.winner = PlayerId{sim::kMaxPlayers};
   CHECK(encode(m, buf) == 0);
@@ -558,8 +607,9 @@ TEST_CASE("Protocol 6 decoders reject bad nicknames and ranges", "[net][messages
   RoomSettingsMsg rs;
   CHECK(decode({buf.data(), w.bytesWritten()}, rs).error() == DecodeError::OutOfRange);
 
-  // v7: a RoomState whose botPlacement overlaps its humans.
-  const auto roomWithPlacement = [&](sim::PlayerMask placement) {
+  // v7: a RoomState whose botPlacement overlaps its humans; v8: one whose
+  // cap is out of range or below a slot it shows.
+  const auto roomWith = [&](sim::PlayerMask bots, sim::PlayerMask placement, uint32_t capCode) {
     BitWriter rw(buf);
     rw.writeU8(static_cast<uint8_t>(MessageType::RoomState));
     rw.writeBits(0, 2);   // Waiting
@@ -570,19 +620,55 @@ TEST_CASE("Protocol 6 decoders reject bad nicknames and ranges", "[net][messages
     rw.writeU16(0);
     rw.writeBits(1, 4);     // one bot
     rw.writeBits(0b1, 10);  // humans
-    rw.writeBits(0, 10);    // bots
+    rw.writeBits(bots, 10);
     rw.writeBits(placement, 10);
-    rw.writeBool(false);  // no winner
-    rw.writeBits(0, 5);   // slot 0's empty nickname
+    rw.writeBits(capCode, 4);  // maxPlayers − 1
+    rw.writeBool(false);       // no winner
+    rw.writeBits(0, 5);        // slot 0's empty nickname
     rw.align();
     return rw.bytesWritten();
   };
+  const uint32_t ten = sim::kMaxPlayers - 1u;
   RoomStateMsg room;
-  n = roomWithPlacement(0b10);
+  n = roomWith(0, 0b10, ten);
   REQUIRE(decode({buf.data(), n}, room).has_value());
   CHECK(room.botPlacement == 0b10);
-  n = roomWithPlacement(0b11);
+  CHECK(room.maxPlayers == sim::kMaxPlayers);
+  n = roomWith(0, 0b11, ten);
   CHECK(decode({buf.data(), n}, room).error() == DecodeError::OutOfRange);
+
+  n = roomWith(0b100, 0b100, 2);  // a cap of three: slot 2 is the last
+  REQUIRE(decode({buf.data(), n}, room).has_value());
+  CHECK(room.maxPlayers == 3);
+  n = roomWith(0, 0, 0);  // a cap of one: the human's slot only
+  REQUIRE(decode({buf.data(), n}, room).has_value());
+  CHECK(room.maxPlayers == 1);
+  for (uint32_t code = sim::kMaxPlayers; code < 16; ++code) {
+    CAPTURE(code);  // a cap of 11..16: past the slots
+    n = roomWith(0, 0, code);
+    CHECK(decode({buf.data(), n}, room).error() == DecodeError::OutOfRange);
+  }
+  n = roomWith(0b1000, 0, 2);  // a bot at the cap of three
+  CHECK(decode({buf.data(), n}, room).error() == DecodeError::OutOfRange);
+  n = roomWith(0, 0b10'0000'0000, 8);  // a placement at the cap of nine
+  CHECK(decode({buf.data(), n}, room).error() == DecodeError::OutOfRange);
+  BitWriter hw(buf);  // a human at the cap of one: slot 1
+  hw.writeU8(static_cast<uint8_t>(MessageType::RoomState));
+  hw.writeBits(0, 2);
+  hw.writeBool(false);
+  hw.writeU8(0);
+  hw.writeU8(0);
+  hw.writeU8(0);
+  hw.writeU16(0);
+  hw.writeBits(0, 4);
+  hw.writeBits(0b10, 10);  // humans
+  hw.writeBits(0, 10);
+  hw.writeBits(0, 10);
+  hw.writeBits(0, 4);  // a cap of one
+  hw.writeBool(false);
+  hw.writeBits(0, 5);
+  hw.align();
+  CHECK(decode({buf.data(), hw.bytesWritten()}, room).error() == DecodeError::OutOfRange);
 
   // A Start with a trailing byte.
   n = encode(StartMsg{}, buf);

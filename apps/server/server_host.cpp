@@ -462,6 +462,11 @@ void ServerHost::broadcastRoom() {
   // v7 (issue #68): Waiting previews where Start puts the bots; later
   // the bots are placed and botPlacement is where they are.
   m.botPlacement = room_->phase() == net::RoomPhase::Waiting ? roomBotSlotsNow() : m.bots;
+  // v8 (issue #83): the cap, so the waiting room offers no slot above it
+  // and the host's Bots row stops where validRoomSettings() does. Clamped
+  // as NetServer::freeSlots() reads it (main.cpp accepts 1..kMaxPlayers).
+  m.maxPlayers =
+      std::clamp<uint8_t>(config_.server.maxPlayers, 1, static_cast<uint8_t>(sim::kMaxPlayers));
   m.winner = room_->winner();
   for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
     if (sim::maskHas(m.humans, PlayerId{s})) m.names[s] = server_->nickname(PlayerId{s});

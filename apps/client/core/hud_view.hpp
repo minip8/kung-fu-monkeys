@@ -19,7 +19,9 @@
 //                          canReconnect() (v0.44), none otherwise.
 //   roomSlots()            what the online room's waiting screen shows in
 //                          each slot: a human, a bot, the server's bot to
-//                          come at Start (RoomStateMsg::botPlacement), open.
+//                          come at Start (RoomStateMsg::botPlacement), open,
+//                          or closed: at or above the server's player cap
+//                          (RoomStateMsg::maxPlayers).
 #pragma once
 
 #include "kfm/net/messages.hpp"
@@ -149,12 +151,16 @@ enum class LostConnectionAction : uint8_t { Reconnect = 0, Leave };
 // What a slot of the room shows. The client keeps no copy of the server's
 // placement rule (issue #68): the bots to come are the RoomState's
 // botPlacement slots no bot holds yet, which is the server's own preview
-// while the room waits (none once the bots are placed).
+// while the room waits (none once the bots are placed). Nor does it know
+// the server's player cap but from the RoomState (issue #83): the slots at
+// or above maxPlayers are Closed, never Open. They are always the highest
+// slots (the cap keeps the lowest), so the open ones come first.
 enum class RoomSlot : uint8_t {
-  Open = 0,    // nobody: "open"
+  Open = 0,    // nobody, and below the cap: "open"
   Human,       // a peer's slot (a reserved one too)
   Bot,         // a server-side bot holds it
   BotAtStart,  // a bot takes it when the host starts now
+  Closed,      // at or above the server's player cap: nobody can take it
 };
 [[nodiscard]] std::array<RoomSlot, sim::kMaxPlayers> roomSlots(const net::RoomStateMsg& room);
 
