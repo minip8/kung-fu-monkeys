@@ -300,7 +300,9 @@ TEST_CASE("a match is deterministic: result line and replay bytes", "[arena]") {
 
 TEST_CASE("reference bots finish a match with a winner", "[arena]") {
   BotFactory factory;
-  const MatchResult r = play(setupOf({"ref:hard", "ref:medium"}, 1, 36'000), factory);
+  // A seed whose match both slots lose a round of (paused below): which
+  // seeds do moves with the reference bot's play.
+  const MatchResult r = play(setupOf({"ref:hard", "ref:medium"}, 2, 36'000), factory);
   REQUIRE(r.outcome == MatchOutcome::Ended);
   REQUIRE(r.winner.isValid());
   REQUIRE(r.slots.size() == 2);

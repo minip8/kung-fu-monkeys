@@ -13,11 +13,22 @@
 //     turn on, cells counted from the other corner, slots exchanged within
 //     pairs, teams 0 and 1 swapped), is byte for byte its twin's, the heard
 //     calls included;
-// Found and fixed with these: fog put a centre on a cell edge in the east
-// and south cell only.
+//   - the reference bot: two bots with one seed, one fed slot i's
+//     observation and one its twin's, decide each other's half turn, over
+//     several decisions (a bot keeps state). Configurations where the bot
+//     stands exactly as far from a thing as from its twin (m · p = 0, a tie
+//     the bot breaks by its seed in pool order) are left out.
+// Found and fixed with these (the east bias of ref:hard's harvest matches):
+// the explore goal floored to the cell east and south of the map's centre;
+// the first walk's hysteresis favoured east; a target on the own centre was
+// aimed at along +x; the sweep started east; dodges and equal fetches went
+// to the first direction or pool slot; a call's symbol (the caller's facing
+// for the turn) was the same compass code for both sides; and fog put a
+// centre on a cell edge in the east and south cell only.
 #include "../sim/sim_test_util.hpp"
 #include "kfm/ai/observation.hpp"
 #include "kfm/ai/observation_builder.hpp"
+#include "kfm/ai/reference_bot.hpp"
 #include "kfm/ai/vision.hpp"
 #include "kfm/content/loader.hpp"
 #include "kfm/core/rng.hpp"
@@ -399,4 +410,60 @@ TEST_CASE("the observation of a slot turns into its twin's", "[ai][observation][
       }
     }
   }
+}
+
+TEST_CASE("the reference bot decides the half turn of its twin's decision",
+          "[ai][reference][symmetry]") {
+  // The bot's frame is the side it first stands on, and its ties are drawn
+  // from its seed in that frame's order: one seed, mirrored observations,
+  // mirrored inputs (the call symbol too: bit 7 is the frame).
+  const ContentDB db = contestWith(VisionKind::Own);
+  uint32_t compared = 0;
+  for (const std::string_view arena : kArenas) {
+    MirrorWorld w(db, arena);
+    for (uint64_t trial = 0; trial < 30; ++trial) {
+      w.place(3000 + trial, 4, 4, /*flying=*/true);
+      for (uint8_t i = 0; i < kMaxPlayers; i += 2) {
+        const Player& me = playerAt(w.s, PlayerId{i});
+        // Leave out a tie between a thing and its twin (equally far).
+        const auto dot = [&](Vec2 p) {
+          return (int64_t{me.transform.pos.x.raw} * p.x.raw) +
+                 (int64_t{me.transform.pos.y.raw} * p.y.raw);
+        };
+        bool tie = false;
+        w.s.boomerangs.forEachAlive(
+            [&](EntityId /*id*/, const Boomerang& b) { tie = tie || dot(b.transform.pos) == 0; });
+        w.s.pickups.forEachAlive(
+            [&](EntityId /*id*/, const Pickup& k) { tie = tie || dot(k.pos) == 0; });
+        for (uint8_t j = 0; j < kMaxPlayers; ++j) {
+          tie = tie || dot(playerAt(w.s, PlayerId{j}).transform.pos) == 0;
+        }
+        if (tie) continue;
+        INFO("arena " << arena << " trial " << trial << " slot " << int{i});
+        ReferenceBot bot;
+        ReferenceBot twin;
+        bot.init(99 + trial, PlayerId{i});
+        twin.init(99 + trial, PlayerId{i});  // one seed (init mixes in the slot)
+        Observation mine = w.observe(PlayerId{i});
+        Observation theirs = w.observe(PlayerId{twinSlot(i)});
+        for (uint32_t k = 0; k < 6; ++k) {
+          INFO("decision " << k);
+          mine.match.tick = theirs.match.tick = w.s.tick.value + k;
+          const std::optional<PlayerInput> a = bot.act(mine, Tick{mine.match.tick});
+          const std::optional<PlayerInput> b = twin.act(theirs, Tick{theirs.match.tick});
+          if (!a || !b) {
+            FAIL("no input");
+            return;
+          }
+          CHECK(a->buttons == b->buttons);
+          CHECK(a->moveMag == b->moveMag);
+          if (a->moveMag != 0) CHECK(static_cast<uint8_t>(a->moveDir + 128u) == b->moveDir);
+          CHECK(static_cast<uint8_t>(a->aimDir + 128u) == b->aimDir);
+          CHECK(a->subTick == b->subTick);
+          ++compared;
+        }
+      }
+    }
+  }
+  CHECK(compared > 400);
 }

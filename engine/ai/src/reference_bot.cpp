@@ -83,6 +83,14 @@ static_assert(kTagFalling == static_cast<uint32_t>(sim::Tag::Falling));
   return length(b - a);
 }
 
+// The direction from `from` to `to`, else `fallback` (the own facing) where
+// they coincide: two monkeys on one cell (a swap, a contest) put the target
+// on the bot's own centre, and the zero vector's angle is east for both
+// sides, so both threw and turned their cones east.
+[[nodiscard]] uint8_t directionOr(Vec2 from, Vec2 to, uint8_t fallback) {
+  return from == to ? fallback : directionTo(from, to);
+}
+
 // Whether enemy `p` can use ability slot `slot` of kind `kind` within `ticks`
 // ticks (idle and the cooldown running out by then).
 [[nodiscard]] bool enemyReady(const ObsPlayer& p, uint32_t slot, ObsAbilityKind kind,
@@ -203,6 +211,15 @@ void ReferenceBot::init(uint64_t seed, PlayerId slot) {
   slot_ = slot;
   lastDecidedButtons_ = 0;
   lastMoveDir_ = 0;
+  moved_ = false;
+  sweepFrom_ = 0;
+  haveSweep_ = false;
+  sweepTicks_ = 0;
+  patrol_ = Vec2{};
+  patrolTick_ = 0;
+  havePatrol_ = false;
+  turnedFrame_ = false;
+  haveFrame_ = false;
   decisions_ = 0;
   throwHold_ = -1;
   chargeHold_ = 0;
@@ -213,7 +230,7 @@ void ReferenceBot::init(uint64_t seed, PlayerId slot) {
   gridCols_ = 0;
   gridRows_ = 0;
   gridCell_ = Fixed{};
-  distGoal_ = -1;
+  distValid_ = false;
   lastSeen_ = Vec2{};
   lastSeenTick_ = 0;
   haveLastSeen_ = false;
@@ -258,10 +275,12 @@ void ReferenceBot::learn(const Observation& obs, int target) {
         (haveLastSeen_ && c.tick <= lastSeenTick_)) {
       continue;
     }
+    // Bit 7: the caller counted the cells from the half-turned map.
     const int32_t col = (2 * int32_t{static_cast<uint8_t>(c.symbol & 15u)}) + 1;
-    const int32_t row = (2 * int32_t{static_cast<uint8_t>(c.symbol >> 4)}) + 1;
-    lastSeen_ = Vec2{(cellSize_ * col) - Fixed::fromRaw(half.x),
-                     Fixed::fromRaw(half.y) - (cellSize_ * row)};
+    const int32_t row = (2 * int32_t{static_cast<uint8_t>((c.symbol >> 4) & 7u)}) + 1;
+    const Vec2 at{(cellSize_ * col) - Fixed::fromRaw(half.x),
+                  Fixed::fromRaw(half.y) - (cellSize_ * row)};
+    lastSeen_ = (c.symbol & 0x80u) != 0 ? Vec2{-at.x, -at.y} : at;
     lastSeenTick_ = c.tick;
     haveLastSeen_ = true;
   }
@@ -270,7 +289,7 @@ void ReferenceBot::learn(const Observation& obs, int target) {
 void ReferenceBot::prepareGrid(const Observation& obs) {
   if (gridCell_ == cellSize_ && gridCols_ > 0) return;
   gridCell_ = cellSize_;
-  distGoal_ = -1;
+  distValid_ = false;
   const Fixed c = cellSize_;
   const Fixed hx = Fixed::fromRaw(obs.arena.halfExtents.x);
   const Fixed hy = Fixed::fromRaw(obs.arena.halfExtents.y);
@@ -304,16 +323,33 @@ int32_t ReferenceBot::cellIndexOf(Vec2 at) const {
 }
 
 void ReferenceBot::distancesTo(Vec2 goal) {
-  const int32_t g = cellIndexOf(goal);
-  if (g < 0 || g == distGoal_) return;
-  distGoal_ = g;
+  if (gridCols_ <= 0 || (distValid_ && goal == distGoal_)) return;
+  distGoal_ = goal;
+  distValid_ = true;
   const int32_t count = gridCols_ * gridRows_;
   const auto cells = static_cast<size_t>(count);
   std::fill_n(gridDist_.begin(), cells, uint16_t{0xFFFF});
+  const Fixed c = cellSize_;
+  const Fixed hx = Fixed::fromRaw(gridCols_ * c.raw / 2);
+  const Fixed hy = Fixed::fromRaw(gridRows_ * c.raw / 2);
+  const auto centreOf = [&](int32_t i) {
+    return Vec2{(c * (i % gridCols_)) + (c / 2) - hx, hy - (c * (i / gridCols_)) - (c / 2)};
+  };
+  // The sources: the free cells nearest the goal (every one on a tie).
+  uint64_t nearest = UINT64_MAX;
+  for (int32_t i = 0; i < count; ++i) {
+    if (gridFree_[static_cast<size_t>(i)] == 0) continue;
+    nearest = std::min(nearest, lengthSqRaw(centreOf(i) - goal));
+  }
   size_t head = 0;
   size_t tail = 0;
-  gridDist_[static_cast<size_t>(g)] = 0;
-  gridQueue_[tail++] = static_cast<uint16_t>(g);
+  for (int32_t i = 0; i < count && nearest != UINT64_MAX; ++i) {
+    if (gridFree_[static_cast<size_t>(i)] == 0 || lengthSqRaw(centreOf(i) - goal) != nearest) {
+      continue;
+    }
+    gridDist_[static_cast<size_t>(i)] = 0;
+    gridQueue_[tail++] = static_cast<uint16_t>(i);
+  }
   const auto freeAt = [&](int32_t col, int32_t row) {
     const int32_t i = (row * gridCols_) + col;
     return col >= 0 && row >= 0 && col < gridCols_ && row < gridRows_ &&
@@ -339,7 +375,7 @@ void ReferenceBot::distancesTo(Vec2 goal) {
 
 Fixed ReferenceBot::walkDistance(Vec2 at) const {
   const int32_t i = cellIndexOf(at);
-  if (i < 0 || distGoal_ < 0) return Fixed{};
+  if (i < 0 || !distValid_) return Fixed{};
   const uint16_t d = gridDist_[static_cast<size_t>(i)];
   return cellSize_ * (d == 0xFFFF ? gridCols_ + gridRows_ : int32_t{d});
 }
@@ -406,7 +442,10 @@ std::optional<sim::PlayerInput> ReferenceBot::act(const Observation& obs, Tick /
   // A press is a fresh edge: a button set in the previous decision is released.
   in.buttons = static_cast<uint8_t>(in.buttons & ~lastDecidedButtons_);
   lastDecidedButtons_ = in.buttons;
-  if (in.moveMag != 0) lastMoveDir_ = in.moveDir;
+  if (in.moveMag != 0) {
+    lastMoveDir_ = in.moveDir;
+    moved_ = true;
+  }
 
   const uint32_t line = uint32_t{config_.reactionDelayTicks} + 1;
   pending_[decisions_ % line] = in;
@@ -656,6 +695,11 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   sim::PlayerInput in{};
   const ObsSelf& me = obs.self;
   const Vec2 myPos = vec(me.posX, me.posY);
+  // The call frame (below): the side of the centre the bot first stood on.
+  if (!haveFrame_ && me.alive != 0) {
+    turnedFrame_ = me.posX > 0 || (me.posX == 0 && me.posY < 0);
+    haveFrame_ = true;
+  }
   const int target = pickTarget(obs, rng_);
   // v0.35: the grid and the fog (the turn clock is 0 in a continuous mode).
   const bool grid = obs.match.reservedTurnTicks > 0;
@@ -663,20 +707,57 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   const uint32_t turn = grid ? obs.match.reservedTurnTicks : 1u;
   if (grid || fog) learn(obs, target);
   in.aimDir = me.facing;
-  if (target >= 0) in.aimDir = directionTo(myPos, posOf(obs.players[target]));
+  if (target >= 0) in.aimDir = directionOr(myPos, posOf(obs.players[target]), me.facing);
   // Nobody in sight under fog or on the grid: the last sighting (or an
-  // ally's call), else the centre; the cone turns toward it.
+  // ally's call), else the centre; the cone turns toward it, and sweeps
+  // once there. On the grid the bot is there on any of the free cells
+  // nearest the goal (distancesTo's sources: the centre of an even map is a
+  // cell corner, and may be a wall). A whole sweep at the centre with
+  // nobody seen sends it to the half turn of where it stands, round what
+  // stands in the middle, and back: two sides parked on the two faces of a
+  // central block would never see each other.
   bool explore = false;
   Vec2 exploreAt{};
   if (target < 0 && (grid || fog)) {
     if (haveLastSeen_ && obs.match.tick - lastSeenTick_ > kSightingTicks) haveLastSeen_ = false;
     if (haveLastSeen_ && distanceBetween(myPos, lastSeen_) <= cellSize_) haveLastSeen_ = false;
+    if (havePatrol_ && obs.match.tick - patrolTick_ > kSightingTicks) havePatrol_ = false;
     explore = true;
-    exploreAt = haveLastSeen_ ? lastSeen_ : Vec2{};
-    if (distanceBetween(myPos, exploreAt) > cellSize_) {
+    if (haveLastSeen_) {
+      exploreAt = lastSeen_;
+    } else if (havePatrol_) {
+      exploreAt = patrol_;
+    }
+    bool arrived = distanceBetween(myPos, exploreAt) <= cellSize_;
+    if (!arrived && grid && me.alive != 0) {
+      prepareGrid(obs);
+      if (gridCols_ > 0) {
+        distancesTo(exploreAt);
+        arrived = walkDistance(myPos) == Fixed{};
+      }
+    }
+    if (arrived && !haveLastSeen_) havePatrol_ = false;
+    if (!arrived) {
       in.aimDir = directionTo(myPos, exploreAt);
+      sweepFrom_ = in.aimDir;
+      haveSweep_ = true;
+      sweepTicks_ = 0;
     } else {
-      in.aimDir = static_cast<uint8_t>(((obs.match.tick / (kSweepTurns * turn)) & 3u) * 64u);
+      // The sweep's quarters start from the way the bot came in (else its
+      // facing), never from a fixed compass point: an absolute east-first
+      // sweep had both sides look the same way at once.
+      if (!haveSweep_) {
+        sweepFrom_ = me.facing;
+        haveSweep_ = true;
+      }
+      in.aimDir =
+          static_cast<uint8_t>(sweepFrom_ + (((sweepTicks_ / (kSweepTurns * turn)) & 3u) * 64u));
+      if (++sweepTicks_ >= 4 * kSweepTurns * turn && !haveLastSeen_) {
+        patrol_ = Vec2{-myPos.x, -myPos.y};
+        havePatrol_ = true;
+        patrolTick_ = obs.match.tick;
+        sweepTicks_ = 0;
+      }
     }
   }
   if (me.alive == 0 || hasTag(me.tags, kTagFalling) ||
@@ -714,15 +795,24 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   Vec2 fetch{};
   Fixed fetchWeight = Fixed::one();
   if (!armed) {
-    // The own banana on its way back, else the nearest banana lying around.
+    // The own banana on its way back, else the nearest banana lying around
+    // (equal distances: a random one, not the lowest pool slot, which is
+    // the first tree's when two trees bear on one tick).
     uint64_t best = UINT64_MAX;
+    TieBreak fetchTie;
     for (const ObsBanana& b : obs.bananas) {
       if (b.valid == 0 || b.ownerRelation != static_cast<uint8_t>(ObsRelation::Self) ||
           b.phase >= static_cast<uint8_t>(ObsBananaPhase::Grounded)) {
         continue;
       }
       const uint64_t d = lengthSqRaw(vec(b.posX, b.posY) - myPos);
-      if (d < best) {
+      bool take = d < best;
+      if (take) {
+        fetchTie.reset();
+      } else if (d == best) {
+        take = fetchTie.replaces(rng_);
+      }
+      if (take) {
         best = d;
         fetch = vec(b.posX, b.posY);
         haveFetch = true;
@@ -738,7 +828,13 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
           continue;
         }
         const uint64_t d = lengthSqRaw(vec(k.posX, k.posY) - myPos);
-        if (d < best) {
+        bool take = d < best;
+        if (take) {
+          fetchTie.reset();
+        } else if (d == best) {
+          take = fetchTie.replaces(rng_);
+        }
+        if (take) {
           best = d;
           fetch = vec(k.posX, k.posY);
           haveFetch = true;
@@ -751,10 +847,17 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   Vec2 powerUp{};
   {
     uint64_t best = squareRaw(kPowerUpRadius);
+    TieBreak powerUpTie;
     for (const ObsPickup& k : obs.pickups) {
       if (k.valid == 0 || k.kind != static_cast<uint8_t>(ObsPickupKind::PowerUp)) continue;
       const uint64_t d = lengthSqRaw(vec(k.posX, k.posY) - myPos);
-      if (d < best) {
+      bool take = d < best;
+      if (take) {
+        powerUpTie.reset();
+      } else if (havePowerUp && d == best) {
+        take = powerUpTie.replaces(rng_);
+      }
+      if (take) {
         best = d;
         powerUp = vec(k.posX, k.posY);
         havePowerUp = true;
@@ -848,8 +951,13 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   bool pitWalk = false;
   // On the grid: the eight octants (moveDir 32·o is exactly octant o) and idle.
   const uint8_t directions = grid ? sim::grid::kOctants : kDirections;
-  for (uint8_t c = 0; c <= directions; ++c) {
-    const bool idle = c == directions;
+  // The directions are scanned from the bot's own frame (east, or west on
+  // the half-turned side), so a tie draws the same lot for twin bots on the
+  // two sides as for their mirror images: equal seeds, mirrored choices.
+  const uint8_t firstDir = turnedFrame_ ? directions / 2 : 0;
+  for (uint8_t n = 0; n <= directions; ++n) {
+    const bool idle = n == directions;
+    const auto c = static_cast<uint8_t>((firstDir + n) % directions);
     const auto dir = static_cast<uint8_t>(idle ? 0 : c * (256 / directions));
     if (grid) {
       gridWalkPath(obs, c, idle, path_);
@@ -858,7 +966,9 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     }
     const Outcome o = evaluate(obs, path_, 0, 0);
     Fixed util = goal(path_) - o.danger;
-    if (!idle && dir == lastMoveDir_) util += kHysteresis;
+    // No last direction before the first walk: an east default would pull
+    // every bot's opening step east, toward one side's enemy and the other's wall.
+    if (!idle && moved_ && dir == lastMoveDir_) util += kHysteresis;
     const Fixed fall = pitDanger(obs, path_, 0, 0);
     if (fall > Fixed{}) {
       if (!idle && o.danger < kHitThreshold && util > pitWalkUtil) {
@@ -918,7 +1028,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       const Track& t = tracks_[i];
       if (!t.catchable) continue;
       for (uint8_t aim = catchFrom; aim < catchUntil && aim <= kHorizon; ++aim) {
-        const uint8_t dir = snap(directionTo(myPos, t.pos[aim]));
+        const uint8_t dir = snap(directionOr(myPos, t.pos[aim], me.facing));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, catchFrom, catchUntil);
         if (o.catches && o.danger < catchDanger &&
@@ -938,14 +1048,25 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
   // --- dodge when no walk escapes -------------------------------------------
   if (!dashed && bestDanger >= kHitThreshold) {
     if (dashReady) {
+      // Equal dangers: a random one of them, not the first direction from
+      // east (a fixed compass preference both sides share).
       Fixed best = bestDanger;
       bool found = false;
       uint8_t bestDash = 0;
-      for (uint8_t c = 0; c < directions; ++c) {
+      TieBreak dashTie;
+      for (uint8_t n = 0; n < directions; ++n) {
+        const auto c = static_cast<uint8_t>((firstDir + n) % directions);
         const auto dir = static_cast<uint8_t>(c * (256 / directions));
         dashPath(obs, dir, path_);
         const Outcome o = evaluate(obs, path_, canCatch ? catchFrom : 0, canCatch ? catchUntil : 0);
-        if (o.danger + pitDanger(obs, path_, airFrom, airUntil) < best) {
+        const Fixed v = o.danger + pitDanger(obs, path_, airFrom, airUntil);
+        bool take = v < best;
+        if (take) {
+          dashTie.reset();
+        } else if (found && v == best) {
+          take = dashTie.replaces(rng_);
+        }
+        if (take) {
           best = o.danger;
           bestDash = dir;
           found = true;
@@ -962,11 +1083,21 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
         Fixed best = bestDanger;
         bool found = false;
         uint8_t bestBlink = 0;
-        for (uint8_t c = 0; c < kDirections; ++c) {
+        TieBreak blinkTie;
+        for (uint8_t n = 0; n < kDirections; ++n) {
+          const auto c =
+              static_cast<uint8_t>(((turnedFrame_ ? kDirections / 2 : 0) + n) % kDirections);
           const auto dir = static_cast<uint8_t>(c * (256 / kDirections));
           blinkPath(obs, dir, path_);
           const Outcome o = evaluate(obs, path_, 0, 0);
-          if (o.danger + pitDanger(obs, path_, 0, 0) < best) {
+          const Fixed v = o.danger + pitDanger(obs, path_, 0, 0);
+          bool take = v < best;
+          if (take) {
+            blinkTie.reset();
+          } else if (found && v == best) {
+            take = blinkTie.replaces(rng_);
+          }
+          if (take) {
             best = o.danger;
             bestBlink = dir;
             found = true;
@@ -1031,7 +1162,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     bool found = false;
     uint8_t strikeDir = 0;
     for (uint8_t aim = 1; aim <= active && !found; ++aim) {
-      const uint8_t dir = snap(directionTo(myPos, tp + (tv * int32_t{lead + aim})));
+      const uint8_t dir = snap(directionOr(myPos, tp + (tv * int32_t{lead + aim}), me.facing));
       dashPath(obs, dir, path_);
       for (uint32_t k = uint32_t{lead} + 1; k <= uint32_t{lead} + active; ++k) {
         const Vec2 e0 = tp + (tv * static_cast<int32_t>(k - 1));
@@ -1074,7 +1205,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       in.buttons = static_cast<uint8_t>(in.buttons | thr.button);
       Vec2 from{};
       const Vec2 aimAt = leadAim(*tgt, chargeSpeed_, int32_t{lead} + chargeHold_, from);
-      int32_t aim = directionTo(myPos, aimAt);
+      int32_t aim = directionOr(myPos, aimAt, me.facing);
       if (config_.aimNoise != 0) aim += rng_.range(-int32_t{config_.aimNoise}, config_.aimNoise);
       in.aimDir = static_cast<uint8_t>(aim & 0xFF);
     }
@@ -1141,7 +1272,7 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     }
     if (clear && throwHold_ > 0) {
       --throwHold_;
-      in.aimDir = directionTo(myPos, aimAt);
+      in.aimDir = directionOr(myPos, aimAt, me.facing);
     } else if (clear && rng_.below(256) < config_.throwPer256) {
       throwHold_ = -1;
       in.buttons = static_cast<uint8_t>(in.buttons | thr.button);
@@ -1149,11 +1280,11 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       // startup plus `hold` ticks held past it.
       chargeHold_ = hold > 0 ? static_cast<uint16_t>(thr.defStartupTicks + hold - 1) : uint16_t{0};
       chargeSpeed_ = speed;
-      int32_t aim = directionTo(myPos, aimAt);
+      int32_t aim = directionOr(myPos, aimAt, me.facing);
       if (config_.aimNoise != 0) aim += rng_.range(-int32_t{config_.aimNoise}, config_.aimNoise);
       in.aimDir = static_cast<uint8_t>(aim & 0xFF);
     } else {
-      in.aimDir = directionTo(myPos, aimAt);
+      in.aimDir = directionOr(myPos, aimAt, me.facing);
     }
   }
 
@@ -1162,13 +1293,19 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       extra.kind == static_cast<uint8_t>(ObsAbilityKind::Call) &&
       (turn == 1 || obs.match.reservedTicksToLatch != 0) &&
       (!called_ || obs.match.tick - lastCallTick_ >= kCallEveryTurns * turn)) {
-    const Vec2 at = posOf(*tgt);
+    // A bot that started east of the centre counts the cells on the half-
+    // turned map and sets bit 7, so twin callers on the two sides shout
+    // symbols half a turn apart: the symbol is also the caller's facing for
+    // the turn, and one plain encoding turned both sides' cones the same
+    // compass way (north-east, for every cell of the map).
+    const Vec2 seen = posOf(*tgt);
+    const Vec2 at = turnedFrame_ ? Vec2{-seen.x, -seen.y} : seen;
     const Fixed hx = Fixed::fromRaw(obs.arena.halfExtents.x);
     const Fixed hy = Fixed::fromRaw(obs.arena.halfExtents.y);
     const int32_t col = std::clamp(((at.x + hx) / cellSize_).floorToInt(), 0, 31);
-    const int32_t row = std::clamp(((hy - at.y) / cellSize_).floorToInt(), 0, 31);
+    const int32_t row = std::clamp(((hy - at.y) / cellSize_).floorToInt(), 0, 15);
     in.buttons = static_cast<uint8_t>(in.buttons | extra.button);
-    in.aimDir = static_cast<uint8_t>((col >> 1) | ((row >> 1) << 4));
+    in.aimDir = static_cast<uint8_t>((col >> 1) | ((row >> 1) << 4) | (turnedFrame_ ? 0x80 : 0x00));
     lastCallTick_ = obs.match.tick;
     called_ = true;
   }

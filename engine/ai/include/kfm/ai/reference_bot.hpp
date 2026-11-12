@@ -38,6 +38,15 @@
 // bots would play mirrored rounds (the same opening for every spawn
 // rotation, both falling on one tick); the tie-breaks and the standoff hold
 // are where the per-slot seed breaks that symmetry without a handicap.
+// Nor does it depend on the compass: the half turn of an observation gets
+// the half turn of the decision from a bot with the same seed (the
+// directions are scanned from the bot's own frame, east, or west for a bot
+// that first stood east of the centre; equal distances to a banana or a
+// power-up, equal dodges, go to a random one; a target on the bot's own
+// centre is aimed at along its facing, not along +x), so the two sides of a
+// map that is its own half turn are played alike (tests/unit/ai
+// side_symmetry_test.cpp). Fixed-point rounding toward -x, -y in the
+// predictions is the one compass lean left.
 // On the grid (v0.35: match.reservedTurnTicks > 0) it walks cells: the
 // eight octants and idle, each a slide of one cell per turn from the next
 // latch (match.reservedTicksToLatch) on; dashes go along octants; it fights
@@ -48,12 +57,18 @@
 // with a perfect window. The cell size it infers from its own cell while at
 // rest. Under fog it acts only on what it sees (zeroed entries are never
 // monkeys or bananas): with no enemy in sight it heads for the last one it
-// saw or an ally called out, else the arena's centre, and turns its cone
-// toward that goal (sweeping a quarter turn every four turns once there).
+// saw or an ally called out, else the arena's centre (on the grid, the
+// free cells nearest it), and turns its cone toward that goal (sweeping a
+// quarter turn every four turns once there, from the way it came in); a
+// whole sweep with nobody seen sends it to the half turn of where it stands
+// and back, round whatever stands in the middle.
 // With a call on the ability button it calls out a seen enemy's coarse
-// cell, symbol = (col / 2) | (row / 2) << 4, at most once per eight turns;
-// a call on a latch tick also sets the facing to the symbol for that turn,
-// the price of talking.
+// cell, symbol = (col / 2) | (row / 2) << 4 (rows past 15 count as 15), at
+// most once per eight turns; a call on a latch tick also sets the facing to
+// the symbol for that turn, the price of talking. A bot that first stood
+// east of the centre (x > 0, or x = 0 and y < 0) counts the cell on the
+// half-turned map and sets bit 7, so the two sides' twin calls, and the
+// facings they cost, are half a turn apart.
 // A monkey falling down a pit (v0.57, Tag::Falling) is no target and no
 // threat; falling itself, the bot does nothing.
 // It aims ahead by the observation's inputDelayTicks, presses buttons only
@@ -145,7 +160,12 @@ class ReferenceBot final : public IAgent {
   // v0.35: the grid's free cells (for the own circle), once per match, and
   // the walking distance in cells from every cell to `goal` (BFS over the
   // eight neighbours without corner cutting, as the grid steps; a pit is
-  // never free: the sim lets a walk into one, the bot does not).
+  // never free: the sim lets a walk into one, the bot does not). The BFS
+  // starts from every free cell whose centre lies nearest the goal, all of
+  // them on a tie, so a goal on a cell corner (the centre of an even map) or
+  // in a wall gets sources that turn with the map; the cell the goal floors
+  // to, east and south of a corner, made every explorer of both sides walk
+  // to the east of the centre.
   void prepareGrid(const Observation& obs);
   void distancesTo(Vec2 goal);
   [[nodiscard]] int32_t cellIndexOf(Vec2 at) const;
@@ -171,6 +191,19 @@ class ReferenceBot final : public IAgent {
   PlayerId slot_{PlayerId::invalid()};
   uint8_t lastDecidedButtons_{0};
   uint8_t lastMoveDir_{0};
+  bool moved_{false};  // lastMoveDir_ holds a walk (no hysteresis before the first)
+  // The aim the explore sweep turns from (the last aim toward the explore
+  // goal), the ticks swept there, and the far side of the centre it heads
+  // for after a whole sweep (and since when).
+  uint8_t sweepFrom_{0};
+  bool haveSweep_{false};
+  uint32_t sweepTicks_{0};
+  Vec2 patrol_{};
+  uint32_t patrolTick_{0};
+  bool havePatrol_{false};
+  // The call frame: whether the bot counts cells on the half-turned map.
+  bool turnedFrame_{false};
+  bool haveFrame_{false};
   uint32_t decisions_{0};
   // Ticks left of a standoff's throw hold; -1 while none is drawn.
   int8_t throwHold_{-1};
@@ -206,8 +239,9 @@ class ReferenceBot final : public IAgent {
   std::array<uint16_t, kMaxGridCells> gridQueue_{};
   int32_t gridCols_{0};
   int32_t gridRows_{0};
-  Fixed gridCell_{};      // the cell size the map was built for (0: none)
-  int32_t distGoal_{-1};  // the cell gridDist_ measures to
+  Fixed gridCell_{};       // the cell size the map was built for (0: none)
+  Vec2 distGoal_{};        // the goal gridDist_ measures to
+  bool distValid_{false};  // whether gridDist_ holds distGoal_'s distances
 };
 
 }  // namespace kfm::ai
