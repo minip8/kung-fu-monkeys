@@ -4394,8 +4394,9 @@ the more interesting constraint).
 
 Open, to settle by measurement in (4): whether stealing from a bank belongs at all, and
 whether one defender in the zone should stop it (`steal_ticks` 0 is the kind without it);
-whether an empty-handed respawn lets the leader camp a team with no bananas (the home tree and
-the 8 turns of invulnerability are the answer on paper; `respawn_ammo` 1 is the other row); a
+how well the home tree answers the empty-handed respawn (the owner's choice: a respawned
+monkey rearms at its home tree under 8 turns of invulnerability; if a leader can still camp a
+team with no bananas, the tree's beat is the knob, and `respawn_ammo` 1 the other row); a
 tie-break at the clock (bananas in hand, then a draw); whether the rich trees' yield should
 depend on anything a team holds; and the capacities, which bound the maps: 8 spawners a map
 (trees and power-ups together; more is a new ABI version), 16 arenas (15 used with this pool),

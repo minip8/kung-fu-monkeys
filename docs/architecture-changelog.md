@@ -1541,16 +1541,16 @@ most 5 % at the clock and 5 % drawn, a median of 1200 to 2700 turns, no house bo
 others in more than 65 % of games, 15 to 50 % of banked bananas having changed sides, the team
 behind at a third of the game winning at least one in five, each map's sides splitting as a
 fair coin does, no fault and `fuel_max` under 80 k. Chosen by the project's owner: the
-direction (bananas as the economy, and a pool of maps) and that it is written up before
-anything is built. Proposed in the write-up and still the owner's to confirm: stealing from a
-bank and the lone-defender rule, the empty-handed respawn, the global beats, four maps, the
+direction (bananas as the economy, and a pool of maps), that it is written up before
+anything is built, and the empty-handed respawn with a home tree per team as its answer. Proposed in the write-up and still the owner's to confirm: stealing from a
+bank and the lone-defender rule, the global beats, four maps, the
 row's numbers and the gates. Step (4) of the control design (control-aware `starter` and
 `holder`) is dropped: the house bots are written for `harvest`. Considered and kept for later
 designs, in order: spending banked bananas (a priced respawn, a loadout chosen at the
 respawn), peels as traps, bushes (fog only, no checksum), escalating trees, an opening gate,
 homes that grant. Considered and not planned: more than ten monkeys (a third ABI version), a
 painted floor, a shared team array. Not measured: anything of the design; every number is a
-starting point. Open in the section: whether stealing belongs at all, whether an empty-handed
-respawn lets a leader camp, a tie-break at the clock, the capacities that bound the maps (8
+starting point. Open in the section: whether stealing belongs at all, how well the home tree
+answers the empty-handed respawn, a tie-break at the clock, the capacities that bound the maps (8
 spawners a map, 16 arenas, 32 pickups), and, recommended with the kind, the tied cell
 contest's fix of §12, which moves checksums and is the owner's call.
