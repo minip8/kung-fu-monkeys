@@ -64,6 +64,14 @@ static_assert(KFM_CONTROL_OWNER_WORD == 2 && KFM_CONTROL_CHALLENGER_WORD == 3 &&
               KFM_CONTROL_PROGRESS_WORD == 4);
 static_assert(KFM_CONTROL_PROGRESS_WORD + ((KFM_MAX_ZONES + 1) / 2) <= KFM_ZONE_WORD,
               "the control state stays clear of the zone words");
+// v0.82: the harvest kind, its beats word (modes/harvest.cpp) and the
+// spawner's tree byte, within version 2.
+static_assert(KFM_MODE_HARVEST == static_cast<int>(ObsModeKind::Harvest));
+static_assert(KFM_HARVEST_BEATS_WORD == 0 && KFM_HARVEST_BEATS_WORD < KFM_ZONE_WORD);
+static_assert(KFM_HARVEST_BANK_TICKS(0x00060002u) == 2 &&
+              KFM_HARVEST_STEAL_TICKS(0x00060002u) == 6);
+static_assert(KFM_HARVEST_BANK_TICKS(0xFFFF0000u) == 0 &&
+              KFM_HARVEST_STEAL_TICKS(0x0000FFFFu) == 0);
 static_assert(alignof(kfm_observation) == alignof(Observation));
 #define KFM_SAME_AT(ct, cf, cppt) static_assert(offsetof(ct, cf) == offsetof(cppt, cf), #ct "." #cf)
 // The SDK names a filled reserved field without the prefix (v0.35).
@@ -109,6 +117,8 @@ KFM_SAME_AT(kfm_obs_banana, radius, ObsBanana);
 KFM_SAME_AT(kfm_obs_pickup, radius, ObsPickup);
 KFM_SAME_AT(kfm_obs_hazard, pad2, ObsHazard);
 KFM_SAME_AT(kfm_obs_spawner, intervalTicks, ObsSpawner);
+KFM_SAME_AT(kfm_obs_spawner, maxAlive, ObsSpawner);
+KFM_SAME_AT(kfm_obs_spawner, tree, ObsSpawner);
 KFM_SAME_AT(kfm_obs_arena, spawnerCount, ObsArena);
 KFM_SAME_AT(kfm_obs_arena, spawners, ObsArena);
 KFM_SAME_AT(kfm_obs_heard_call, cellY, ObsHeardCall);
@@ -308,6 +318,7 @@ TEST_CASE("the C SDK header mirrors Observation v2", "[ai][sdk]") {
   obs.players[9].abilityPhaseTicks[2] = 11;
   obs.bananas[63].approachDistance = -5;
   obs.arena.spawners[7].maxAlive = 13;
+  obs.arena.spawners[6].tree = 1;
   obs.reservedHeardCalls[15].cellY = -17;
   const kfm_observation& c = asC(obs);
   CHECK(kfm_obs_ok(&c) == 1);
@@ -316,6 +327,8 @@ TEST_CASE("the C SDK header mirrors Observation v2", "[ai][sdk]") {
   CHECK(c.players[9].abilityPhaseTicks[2] == 11);
   CHECK(c.bananas[63].approachDistance == -5);
   CHECK(c.arena.spawners[7].maxAlive == 13);
+  CHECK(c.arena.spawners[6].tree == 1);
+  CHECK(c.arena.spawners[7].tree == 0);
   CHECK(c.heardCalls[15].cellY == -17);
   obs.self.reservedFacingOctant = 5;
   obs.match.reservedTicksToLatch = 9;

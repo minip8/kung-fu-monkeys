@@ -99,6 +99,14 @@ extern "C" {
 #define KFM_CONTROL_OWNER_WORD 2
 #define KFM_CONTROL_CHALLENGER_WORD 3
 #define KFM_CONTROL_PROGRESS_WORD 4
+/* v0.82, the harvest mode's state in match.modeData (bot-abi.md §3): word
+   KFM_HARVEST_BEATS_WORD holds the two beats, bank_ticks in the low half and
+   steal_ticks (0 = no stealing) in the high half; every other word 0-7 is 0.
+   Team t's home is zone t (observation.zones, or modeData words 8-15 for
+   zones 0 and 1); the cargo is self.ammo, up to self.ammoMax. */
+#define KFM_HARVEST_BEATS_WORD 0
+#define KFM_HARVEST_BANK_TICKS(word) ((uint32_t)(word) & 0xFFFFu)
+#define KFM_HARVEST_STEAL_TICKS(word) ((uint32_t)(word) >> 16)
 
 #define KFM_NO_SLOT 0xFFu        /* a slot field naming no player */
 #define KFM_NO_APPROACH 0xFFFFu  /* banana.approachTicks while self is not alive */
@@ -130,7 +138,8 @@ enum {
   KFM_MODE_TEAM_DEATHMATCH = 4,
   KFM_MODE_HILL = 5,
   KFM_MODE_CAPTURE = 6,
-  KFM_MODE_CONTROL = 7 /* architecture v0.80 */
+  KFM_MODE_CONTROL = 7, /* architecture v0.80 */
+  KFM_MODE_HARVEST = 8  /* architecture v0.82: bank bananas in the home zone */
 };
 enum {
   KFM_ABILITY_NONE = 0,
@@ -317,10 +326,13 @@ typedef struct kfm_obs_hazard {
   uint8_t pad0, pad1, pad2;
 } kfm_obs_hazard;
 
+/* A power-up spawner, or (v0.82, tree 1) a tree: on the same beat it lays one
+   banana pickup on its cell while fewer than maxAlive bananas lie there. */
 typedef struct kfm_obs_spawner {
   kfm_obs_point pos;
   uint16_t powerUpSet, firstTicks, intervalTicks;
-  uint8_t maxAlive, pad0;
+  uint8_t maxAlive;
+  uint8_t tree; /* v0.82 (was pad0, always 0): 1 a tree, 0 a power-up spawner */
 } kfm_obs_spawner;
 
 typedef struct kfm_obs_arena {
@@ -444,6 +456,7 @@ KFM_CHECK_AT(kfm_obs_hazard, speedMul, 16);
 KFM_CHECK_AT(kfm_obs_hazard, kind, 20);
 KFM_CHECK_AT(kfm_obs_spawner, powerUpSet, 8);
 KFM_CHECK_AT(kfm_obs_spawner, maxAlive, 14);
+KFM_CHECK_AT(kfm_obs_spawner, tree, 15);
 KFM_CHECK_AT(kfm_obs_arena, spawnPointCount, 8);
 KFM_CHECK_AT(kfm_obs_arena, spawnPoints, 12);
 KFM_CHECK_AT(kfm_obs_arena, walls, 92);
