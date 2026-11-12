@@ -19,7 +19,12 @@
 // What it sees: every monkey (itself always) and pickup whose centre's cell
 // it sees, every banana whose centre's cell it sees, plus every banana in
 // flight within Chebyshev vision.hearing of `here` (heard, whatever the
-// facing and the walls) and its own bananas in flight.
+// facing and the walls) and its own bananas in flight. A centre on a cell
+// edge lies in the cells on both sides of it (on a corner in all four):
+// seen when one is, heard and banana sight measured to the nearest
+// (cellOf alone gave an edge to the east and the south cell, so the two
+// sides of a half-turn map saw an edge pickup at different distances).
+// The monkey's own cell `here` is cellOf's.
 //
 // Focus: a monkey is focused on a tick when it is at rest and did not move
 // on the previous tick (Player::moveTicks == 0 and transform.pos ==

@@ -78,6 +78,7 @@ kfm_add_test_exe(kfm_ai_tests
   ai/reference_bot_test.cpp
   ai/vision_test.cpp
   ai/bot_factory_test.cpp
+  ai/side_symmetry_test.cpp
 )
 # kfm::content: the shipped contest row (observation_test.cpp).
 target_link_libraries(kfm_ai_tests PRIVATE kfm::ai kfm::ai_bots kfm::content)

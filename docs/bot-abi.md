@@ -592,7 +592,12 @@ the column and row differences):
   need no line.
 - What is seen: a monkey or a pickup whose centre's cell is seen; a banana whose centre's cell is
   seen, or that is in flight (Outbound, Returning) within `hearing` of `h` whatever the facing
-  and the walls, or that is the monkey's own and in flight.
+  and the walls, or that is the monkey's own and in flight. A centre on the edge between two
+  cells (a whole number of cells from the arena's west or north side) lies in both, on a corner
+  in all four: it is seen when one of them is, and hearing and banana sight count from the
+  nearest of them, so a map that is its own half turn shows the two sides the same. The
+  monkey's own cell `h` is the one its centre's coordinates round down to (east and south of an
+  edge), as in `self.reservedCellX`/`reservedCellY`.
 - Over a turn: a host ORs what was seen on every tick since the previous latch observation
   (the window closes after the observation of a latch tick, and after every tick outside
   Playing, of a continuous mode or of a one-tick turn), so a latch observation carries

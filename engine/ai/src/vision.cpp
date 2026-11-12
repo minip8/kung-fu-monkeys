@@ -20,6 +20,32 @@ using sim::grid::cellOf;
   return static_cast<uint16_t>(1u << i);
 }
 
+// The cells a centre lies in: cellOf's, which takes the east and the south
+// cell of an edge, and on a column edge the west one too, on a row edge the
+// north one (on a corner all four). The half turn maps the set of a point
+// onto the set of its image, where cellOf alone leaned east and south.
+struct CellSpan {
+  Cell lo;  // the north-west cell
+  Cell hi;  // cellOf's
+};
+[[nodiscard]] CellSpan cellsOf(const sim::ArenaDef& a, Vec2 p) {
+  const Cell k = cellOf(a, p);
+  Cell lo = k;
+  const int64_t c = a.cellSize.raw;
+  if (c > 0 && (int64_t{p.x.raw} + a.halfExtents.x.raw) % c == 0) lo.col -= 1;
+  if (c > 0 && (int64_t{a.halfExtents.y.raw} - p.y.raw) % c == 0) lo.row -= 1;
+  return CellSpan{lo, k};
+}
+
+// The Chebyshev distance from a cell to the nearest cell of a span.
+[[nodiscard]] constexpr int32_t spanDistance(Cell from, const CellSpan& s) {
+  const auto gap = [](int32_t v, int32_t lo, int32_t hi) {
+    if (v < lo) return lo - v;
+    return v > hi ? v - hi : 0;
+  };
+  return chebyshev(gap(from.col, s.lo.col, s.hi.col), gap(from.row, s.lo.row, s.hi.row));
+}
+
 }  // namespace
 
 bool wallCell(const sim::ArenaDef& a, Cell k) {
@@ -55,20 +81,30 @@ Sight sightOf(const sim::WorldState& world, const sim::MatchContent& content, Pl
   const int32_t cone = int32_t{v.cone} + (focused(*me) ? int32_t{v.focus} : 0);
 
   // The cells of the monkey's own bananas in flight (banana sight).
-  std::array<Cell, sim::kMaxBoomerangs> mine{};
+  std::array<CellSpan, sim::kMaxBoomerangs> mine{};
   uint32_t mineCount = 0;
   world.boomerangs.forEachAlive([&](EntityId /*id*/, const sim::Boomerang& b) {
     if (b.owner == slot && inFlight(b) && mineCount < mine.size()) {
-      mine[mineCount++] = cellOf(a, b.transform.pos);
+      mine[mineCount++] = cellsOf(a, b.transform.pos);
     }
   });
-  const auto seen = [&](Cell k) {
+  const auto seenCell = [&](Cell k) {
     if (chebyshev(here, k) <= int32_t{v.peripheral}) return true;
     if (inCone(k.col - here.col, k.row - here.row, octant, cone) && lineOfSight(a, here, k)) {
       return true;
     }
     for (uint32_t i = 0; i < mineCount; ++i) {
-      if (chebyshev(mine[i], k) <= int32_t{v.bananaSight}) return true;
+      if (spanDistance(k, mine[i]) <= int32_t{v.bananaSight}) return true;
+    }
+    return false;
+  };
+  // A centre is seen when one of its cells is.
+  const auto seen = [&](Vec2 at) {
+    const CellSpan span = cellsOf(a, at);
+    for (int32_t row = span.lo.row; row <= span.hi.row; ++row) {
+      for (int32_t col = span.lo.col; col <= span.hi.col; ++col) {
+        if (seenCell(Cell{col, row})) return true;
+      }
     }
     return false;
   };
@@ -76,20 +112,20 @@ Sight sightOf(const sim::WorldState& world, const sim::MatchContent& content, Pl
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     const sim::Player* p = world.playerBySlot(PlayerId{i});
     if (p == nullptr) continue;
-    if (i == slot.value || seen(cellOf(a, p->transform.pos))) {
+    if (i == slot.value || seen(p->transform.pos)) {
       s.players = static_cast<uint16_t>(s.players | bit16(i));
     }
   }
   world.boomerangs.forEachAlive([&](EntityId id, const sim::Boomerang& b) {
-    const Cell k = cellOf(a, b.transform.pos);
     const bool flying = inFlight(b);
-    if ((flying && b.owner == slot) || (flying && chebyshev(here, k) <= int32_t{v.hearing}) ||
-        seen(k)) {
+    if ((flying && b.owner == slot) ||
+        (flying && spanDistance(here, cellsOf(a, b.transform.pos)) <= int32_t{v.hearing}) ||
+        seen(b.transform.pos)) {
       s.bananas |= uint64_t{1} << id.index;
     }
   });
   world.pickups.forEachAlive([&](EntityId id, const sim::Pickup& k) {
-    if (seen(cellOf(a, k.pos))) s.pickups |= uint32_t{1} << id.index;
+    if (seen(k.pos)) s.pickups |= uint32_t{1} << id.index;
   });
   return s;
 }
