@@ -41,6 +41,8 @@ enum class SoundId : uint8_t {
   Fall,        // a monkey went down a pit: a falling slide whistle
   BananaPlop,  // a faller's banana dropped into its pit: a short falling bloop
   Regrow,      // an empty hand grew a banana: a soft rising pop with a twinkle
+  // v0.81 (harvest):
+  Steal,  // a banked banana taken back out of a home: a sly falling two-note slide
   Count,
 };
 
@@ -100,6 +102,8 @@ inline constexpr uint8_t kSoundCount = static_cast<uint8_t>(SoundId::Count);
       return "banana-plop";
     case SoundId::Regrow:
       return "regrow";
+    case SoundId::Steal:
+      return "steal";
     case SoundId::Count:
       break;
   }

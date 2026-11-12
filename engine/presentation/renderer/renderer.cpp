@@ -681,6 +681,43 @@ void drawPowerUp(FrameDrawer& d, const RenderPickup& p, float playerRadius, floa
   }
 }
 
+// v0.81: a tree (RenderTree): a trunk at the back of its cell, a canopy of
+// three balls round its top, and the next fruit ripening under the canopy's
+// front. playerRadius and playerHeight are the capsule mesh's dimensions
+// (the canopy balls are scaled capsules, as a power-up orb is).
+void drawTree(FrameDrawer& d, const RenderTree& t, float playerRadius, float playerHeight) {
+  const float c = t.cell;
+  const Vec3 back{0.0f, 0.0f, -kTreeTrunkBack * c};  // world -z is sim +y: away from the camera
+  const Vec3 root = t.ground + back;
+  const float trunkW = kTreeTrunkWidth * c;
+  const float trunkH = kTreeTrunkHeight * c;
+  const Mat4 trunk =
+      translate(root + Vec3{0.0f, 0.5f * trunkH, 0.0f}) * scale({trunkW, trunkH, trunkW});
+  d.lit(kCubeMesh, trunk, kTreeTrunk);
+  d.outline(kCubeMesh, trunk, kOutlinePowerUp, Hull::Box);
+  const float size = kTreeCanopySize * c;
+  const float rx = playerRadius > 0.0f ? (0.5f * size) / playerRadius : 1.0f;
+  const float hy = playerHeight > 0.0f ? size / playerHeight : 1.0f;
+  const float spread = kTreeCanopySpread * c;
+  const Vec3 top = root + Vec3{0.0f, trunkH, 0.0f};
+  // Left, right and a raised middle one, the middle a lighter green.
+  const std::array<Vec3, 3> balls = {Vec3{-spread, 0.0f, 0.0f}, Vec3{spread, 0.0f, 0.0f},
+                                     Vec3{0.0f, 0.6f * spread, -0.3f * spread}};
+  for (std::size_t k = 0; k < balls.size(); ++k) {
+    const Mat4 m = translate(top + balls[k] + Vec3{0.0f, -0.5f * size, 0.0f}) * scale({rx, hy, rx});
+    d.lit(kCapsuleMesh, m, k == 2 ? kTreeLeafAlt : kTreeLeaf);
+    d.outline(kCapsuleMesh, m, kOutlinePowerUp, Hull::Smooth);
+  }
+  if (t.ripeness > 0.0f) {
+    // The next fruit, hanging in front of the canopy, growing toward the beat.
+    const float k = kHeldBananaScale * kTreeFruitScale * t.ripeness;
+    const Vec3 at = top + Vec3{0.0f, -(0.5f * size) - kTreeFruitDrop * c, 0.5f * size};
+    const Mat4 m = translate(at) * rotateZ(-0.5f * kPi) * scale({k, k, k});
+    d.surface(kBananaMesh, m, kBananaColor, Surface::Banana, kBananaTip, 0.0f, kHeldBananaGlow);
+    d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
+  }
+}
+
 }  // namespace
 
 bool Renderer::init(const sim::MatchContent& match) {
@@ -970,6 +1007,10 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     }
   }
 
+  // v0.81: the arena's trees, after the walls (they stand like them).
+  for (uint8_t i = 0; i < state.treeCount; ++i)
+    drawTree(d, state.trees[i], state.playerRadius, state.playerHeight);
+
   // Character animation advances with presentation time; time going
   // backwards (a fresh PresentationState) counts as no time.
   const bool skinnedBodies = skinnedLoaded_ && !forceCapsules_;
@@ -1055,7 +1096,9 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       d.outline(kCubeMesh, m, kOutlinePowerUp, Hull::Box);
     }
     // A banana in hand while the player has ammo: in the skinned hand when
-    // there is one (v0.53), else beside the capsule along the aim.
+    // there is one (v0.53), else beside the capsule along the aim. v0.81:
+    // the cargo, several held bananas fan out from the grip as a bunch (up
+    // to kHeldBunchShown), each a little higher, so the count reads.
     if (p.has(PlayerFlag::HasAmmo)) {
       const Mat4 at = hasHand[i]
                           ? translate(handAt[i]) * rotateY(p.aimYaw)
@@ -1063,9 +1106,18 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
                                 translate({r * kHeldBananaForward, 0.0f, r * kHeldBananaSide});
       // v0.57: shrinking with a falling body.
       const float held = kHeldBananaScale * (falling ? lerp(1.0f, kFallEndScale, p.fall) : 1.0f);
-      const Mat4 m = at * scale({held, held, held});
-      d.surface(kBananaMesh, m, kBananaColor, Surface::Banana, kBananaTip, 0.0f, kHeldBananaGlow);
-      d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
+      // The bunch turns about the bananas' shared stem end (the mesh's chord
+      // runs along z, state.bananaRadius each side of its centre).
+      const float half = state.bananaRadius * held;
+      const int shown = std::clamp<int>(p.ammo, 1, kHeldBunchShown);
+      for (int k = 0; k < shown; ++k) {
+        const float fan =
+            kHeldBunchFan * (static_cast<float>(k) - (0.5f * static_cast<float>(shown - 1)));
+        const Mat4 m = at * translate({0.0f, kHeldBunchLift * r * static_cast<float>(k), -half}) *
+                       rotateY(fan) * translate({0.0f, 0.0f, half}) * scale({held, held, held});
+        d.surface(kBananaMesh, m, kBananaColor, Surface::Banana, kBananaTip, 0.0f, kHeldBananaGlow);
+        d.outline(kBananaMesh, m, kOutlineBanana, Hull::Smooth);
+      }
     }
   }
 
@@ -1112,6 +1164,16 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
                    playerColor(static_cast<uint32_t>(z.challenger)), kZoneCaptureRimOpacity,
                    kZoneCaptureRimStart, kZoneCaptureOpacity / kZoneCaptureRimOpacity);
     }
+  }
+  // v0.81: a tree's shade over the cell its fruit is laid on, and a ring
+  // round it in banana yellow marking the spot.
+  for (uint8_t i = 0; i < state.treeCount; ++i) {
+    const RenderTree& t = state.trees[i];
+    const float shade = kTreeShadeRadius * t.cell;
+    d.groundDisc(t.ground, kShadowLift, 0.0f, shade, shade, look.shadow, kTreeShadeOpacity,
+                 DecalMode::Shadow);
+    d.groundDisc(t.ground, kDecalLift, 0.0f, shade, shade, kTreeRing, kTreeRingAlpha,
+                 DecalMode::Ring, kTreeRingInner);
   }
   for (uint16_t i = 0; i < state.shadowCount; ++i) {
     const RenderShadow& s = state.shadows[i];
@@ -1237,6 +1299,17 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
         ring(e, std::max(e.size, r) * discSize(kZoneCapturedRing, easeOut(t)),
              whitened(e.slot, kZoneCapturedWhiten), kZoneCapturedRing, fade);
         break;
+      case EffectKind::BananaStolen: {
+        // v0.81: two rings closing in over the robbed home, the inner a beat
+        // behind, in the raider's team colour: the opposite of a capture's.
+        const float size = std::max(e.size, r);
+        const Color c = whitened(e.slot, kBananaStolenWhiten);
+        ring(e, size * discSize(kBananaStolenRing, easeOut(t)), c, kBananaStolenRing, fade);
+        const float inner =
+            size * discSize(kBananaStolenInnerRing, easeOut(clamp01(t * kBananaStolenInnerLead)));
+        ring(e, inner, c, kBananaStolenInnerRing, fade);
+        break;
+      }
       case EffectKind::SlamShockwave:
         // A ring racing out to the reach: what it touches is pushed.
         ring(e, std::max(e.size, r) * discSize(kSlamRing, easeOut(t)),
@@ -1313,6 +1386,12 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       case EffectKind::BlinkFlash:
         flare(e.position, discSize(kBlinkFlashDisc, easeOut(t)), whitened(e.slot, kBlinkWhiten),
               kBlinkFlashDisc, fade);
+        break;
+      case EffectKind::StealFlash:
+        // v0.81: the raider lights up in its team colour as the banana jumps
+        // into its hand.
+        flare(e.position, discSize(kStealFlashDisc, easeOut(t)),
+              whitened(e.slot, kStealFlashWhiten), kStealFlashDisc, fade);
         break;
       case EffectKind::ParrySpark:
         flare(e.position, discSize(kParrySparkFlash, t), kWhite, kParrySparkFlash, fade);

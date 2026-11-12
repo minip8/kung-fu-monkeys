@@ -3,6 +3,7 @@
 #include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/world_basis.hpp"
 #include "kfm/sim/abilities/throw.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
 
 #include <algorithm>
 #include <array>
@@ -509,14 +510,28 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
     const Vec2f simPos = toFloat(cp.pos);
     const Vec2f drawn = simPos + track.visualOffset;
     track.lastDrawn = drawn;
-    const float phase = static_cast<float>(i) * 0.7f;
+    // v0.81: banana pickups lying on one spot (a tree lays one per banana)
+    // stack into a column over the lowest-indexed one, bobbing with it.
+    uint16_t base = i;
+    uint32_t below = 0;
+    if (cp.kind == sim::PickupKind::Banana) {
+      for (uint16_t j = 0; j < i; ++j) {
+        if (!curr.pickups.isAliveIndex(j)) continue;
+        const sim::Pickup& other = curr.pickups.items[j];
+        if (other.kind != sim::PickupKind::Banana || other.pos != cp.pos) continue;
+        if (base == i) base = j;
+        below += std::max<uint8_t>(other.count, 1);
+      }
+    }
+    const auto lift = static_cast<float>(std::min<uint32_t>(below, kPickupColumnMax - 1));
+    const float phase = static_cast<float>(base) * 0.7f;
     const float bob = kPickupBobHeight * std::sin((kTwoPi * kPickupBobHz * ps.time) + phase);
-    const float height = kPickupHeight + bob;
+    const float height = kPickupHeight + bob + (kPickupStackLift * lift);
 
     RenderPickup& rp = out.pickups[out.pickupCount++];
     rp.position = simToWorld(drawn, height);
     rp.ground = simToWorld(simPos);
-    rp.spin = wrapRadians((kPickupSpinRadPerSec * ps.time) + phase);
+    rp.spin = wrapRadians((kPickupSpinRadPerSec * ps.time) + phase + (kPickupStackTurn * lift));
     rp.radius = radius;
     rp.count = cp.count;
     rp.kind = PickupKindView::Banana;
@@ -531,7 +546,8 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
       rp.colorIndex = cp.spawner;  // the team's colour
       rp.shape = kFlagShape;
     }
-    pushShadow(out, rp.ground, radius, height, ShadowOwner::Pickup);
+    // A column casts the one shadow of its lowest banana.
+    if (below == 0) pushShadow(out, rp.ground, radius, height, ShadowOwner::Pickup);
   }
 }
 
@@ -652,6 +668,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   out.arenaHalfExtents = toFloat(match.arena.halfExtents);
   buildArenaPieces(match.arena, out);
   buildZones(curr, match, out);
+  buildTrees(curr, match, out);
   out.floorGridCell = match.mode.space == sim::Space::Grid ? match.arena.cellSize.toFloat() : 0.0f;
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
@@ -773,7 +790,13 @@ ControlZone controlZone(const sim::MatchRules& rules, uint8_t zone) {
 
 void buildZones(const WorldState& curr, const sim::MatchContent& match, RenderState& out) {
   const sim::ArenaDef& arena = match.arena;
-  const uint8_t teamZones = match.mode.kind == sim::ModeKind::Capture ? match.mode.teams : 0;
+  // Capture's flag homes and (v0.81) harvest's banking homes: zone t is team
+  // t's (a free-for-all harvest: slot t's, each slot its own team).
+  uint8_t teamZones = 0;
+  if (match.mode.kind == sim::ModeKind::Capture) teamZones = match.mode.teams;
+  if (match.mode.kind == sim::ModeKind::Harvest) {
+    teamZones = match.mode.teams > 0 ? match.mode.teams : sim::kMaxArenaZones;
+  }
   const bool control = match.mode.kind == sim::ModeKind::Control;
   const float captureTicks = static_cast<float>(std::max<uint16_t>(match.mode.captureTicks, 1));
   out.zoneCount = 0;
@@ -792,6 +815,42 @@ void buildZones(const WorldState& curr, const sim::MatchContent& match, RenderSt
       }
     }
     out.zones[out.zoneCount++] = z;
+  }
+}
+
+float treeRipeness(const sim::PickupSpawner& tree, const sim::MatchRules& rules, uint32_t fruit) {
+  if (rules.phase != sim::MatchPhase::Playing || fruit >= tree.maxAlive) return 0.0f;
+  const uint32_t t = rules.ticksInPhase;
+  // Toward the first beat, then from one beat to the next (lifecycle.cpp's
+  // spawnerBeat); a tree with no interval bears once.
+  if (t < tree.firstTicks) return static_cast<float>(t) / static_cast<float>(tree.firstTicks);
+  if (tree.intervalTicks == 0) return 0.0f;
+  const uint32_t since = (t - tree.firstTicks) % tree.intervalTicks;
+  return static_cast<float>(since) / static_cast<float>(tree.intervalTicks);
+}
+
+void buildTrees(const WorldState& curr, const sim::MatchContent& match, RenderState& out) {
+  const sim::ArenaDef& arena = match.arena;
+  const bool cells = arena.cellSize > Fixed::zero();
+  out.treeCount = 0;
+  for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < sim::kMaxPickupSpawners; ++i) {
+    const sim::PickupSpawner& sp = arena.pickupSpawners[i];
+    if (!sp.isTree()) continue;
+    // The bananas on its cell, whoever dropped them (the sim's own count).
+    uint32_t fruit = 0;
+    curr.pickups.forEachAlive([&](EntityId /*id*/, const sim::Pickup& k) {
+      if (k.kind != sim::PickupKind::Banana) return;
+      const bool here = cells ? sim::grid::cellOf(arena, k.pos) == sim::grid::cellOf(arena, sp.pos)
+                              : k.pos == sp.pos;
+      if (here) fruit += std::max<uint8_t>(k.count, 1);
+    });
+    RenderTree& t = out.trees[out.treeCount++];
+    t = RenderTree{};
+    t.ground = simToWorld(toFloat(sp.pos));
+    t.cell = cells ? arena.cellSize.toFloat() : 1.0f;
+    t.fruit = static_cast<uint8_t>(std::min<uint32_t>(fruit, 255));
+    t.maxFruit = sp.maxAlive;
+    t.ripeness = treeRipeness(sp, curr.rules, fruit);
   }
 }
 
