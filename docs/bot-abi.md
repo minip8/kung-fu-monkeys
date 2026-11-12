@@ -5,8 +5,10 @@ with the `zones` block appended, §2.12; a host that speaks 2 still serves a ver
 version 1's 5748 bytes, §4). Version 1 is everything before the `zones` block, byte for byte:
 every reserved field filled since architecture v0.35, the arena's zones 0 and 1 in
 `reservedModeData` words 8–15 since v0.69. A module built against version 1 reads this document
-without §2.12. The design and its rationale are in `docs/architecture.md` §8 and §11 ("Contest
-design"); this document is what an SDK author implements against. The C++ source of truth is `engine/ai/include/kfm/ai/observation.hpp`; a unit
+without §2.12. Architecture v0.82 (the harvest kind, designed in v0.81) stays within version 2:
+mode kind 8, the spawner's `tree` byte (was `pad0`) and harvest's `modeData` word 0 (§2.10, §3,
+§3.3), so a version 1 module plays the kind whole. The design and its rationale are in
+`docs/architecture.md` §8 and §11 ("Contest design"); this document is what an SDK author implements against. The C++ source of truth is `engine/ai/include/kfm/ai/observation.hpp`; a unit
 test (`tests/unit/ai/observation_test.cpp`) checks offsets from the tables below against it, and the
 header `static_assert`s every block's size and key offsets. Where this document and the header
 disagree, the header is right and this document has a bug.
@@ -175,7 +177,7 @@ Enumerations (byte values):
 |---|---|
 | relation | 0 None (empty slot), 1 Self, 2 Ally (a teammate in a team mode, since architecture v0.32; a free-for-all has none), 3 Enemy |
 | match phase | 0 Lobby, 1 RoundStarting (spawned, frozen), 2 Playing, 3 RoundEnded, 4 MatchEnded |
-| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else") |
+| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else"), 8 Harvest (architecture v0.82: carry bananas from the trees to the team's home zone and bank them, §3.3; version 1 and 2 modules alike see the 8) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup) |
@@ -226,7 +228,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 19 | u8 | `phase` | match phase |
 | 20 | u8 | `round` | current round, 1-based once the match started |
 | 21 | u8 | `roundsToWin` | rounds, survival: round wins that take the match |
-| 22 | u8 | `scoreToWin` | deathmatch: eliminations that win |
+| 22 | u8 | `scoreToWin` | deathmatch: eliminations that win; harvest (architecture v0.82): the team score, in bananas banked, that wins (§3.3) |
 | 23 | u8 | `aliveCount` | monkeys in the arena |
 | 24 | u16 | `presentMask` | bit i: slot i is in the roster |
 | 26 | u16 | `aliveMask` | bit i: slot i has a monkey in the arena |
@@ -239,7 +241,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 38 | u16 | `respawnInvulnTicks` | deathmatch: spawn protection after a respawn |
 | 40 | u16 | `reservedTurnTicks` | §3: ticks per turn in a grid mode, 0 in a continuous one |
 | 42 | u16 | `reservedTicksToLatch` | §3: in a grid mode, ticks from this observation's tick to the next latch (0: this tick's input is latched) |
-| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
+| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures; harvest: bananas banked, less those stolen back, §3.3). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
 | 54 | u8[10] | `deaths` | per slot: eliminations suffered this match |
 | 64 | u16[10] | `respawnTicks` | per slot: ticks until a dead slot respawns, 0 = none due |
 | 84 | i16[10] | `reservedTeamScores` | §3: per team index (signed since architecture v0.57) |
@@ -296,8 +298,8 @@ All zero except `slot`, `respawnTicks` and the reserved fields while `alive` is 
 | 1 | u8 | `alive` | 1: the own monkey is in the arena |
 | 2 | u8 | `hp` | |
 | 3 | u8 | `maxHp` | derived (power-ups) |
-| 4 | u8 | `ammo` | bananas in hand |
-| 5 | u8 | `ammoMax` | derived (power-ups); a perfect catch needs `ammo < ammoMax` |
+| 4 | u8 | `ammo` | bananas in hand (harvest: the cargo, §3.3) |
+| 5 | u8 | `ammoMax` | derived (power-ups, the mode's baseline); a perfect catch needs `ammo < ammoMax` |
 | 6 | u8 | `lastButtons` | the buttons the sim applied last tick |
 | 7 | u8 | `modifierCount` | live entries in `modifiers` |
 | 8 | i32 | `posX` | Q16.16 |
@@ -448,7 +450,7 @@ banana is caught on contact.
 | 0 | u8 | `valid` | 1: a pickup in this pool slot |
 | 1 | u8 | `kind` | pickup kind |
 | 2 | u8 | `powerUp` | PowerUp: index of the power-up def in the content |
-| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners`; Flag (architecture v0.33): the flag's team |
+| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners`; Flag (architecture v0.33): the flag's team; Banana: 0 (a tree's fruit too, architecture v0.82: nothing tells it from a dropped banana but where it lies) |
 | 4 | i32 | `posX` | Q16.16 |
 | 8 | i32 | `posY` | Q16.16 |
 | 12 | i32 | `radius` | Q16.16: contact radius |
@@ -488,7 +490,17 @@ the mode's `dry_round_ticks` on an arena with pits.
 
 `spawners[i]` (16 bytes; absolute 5428 + 16 i): offset 0 point `pos`; 8 u16 `powerUpSet` (bit j:
 power-up j may spawn, 0 = any); 10 u16 `firstTicks` (Playing tick of the first spawn); 12 u16
-`intervalTicks` (0 = once); 14 u8 `maxAlive`; 15 `pad0`.
+`intervalTicks` (0 = once); 14 u8 `maxAlive`; 15 u8 `tree` (architecture v0.82, was `pad0`: 1 a
+tree, 0 a power-up spawner; every spawner of an arena without trees reads 0, as `pad0` did).
+
+A power-up spawner, on its beat (`firstTicks`, then every `intervalTicks` Playing ticks), draws a
+power-up for a new pickup while fewer than `maxAlive` of its pickups lie around. A tree
+(architecture v0.82; `powerUpSet` 0) lays one banana pickup at `pos`, the centre of its cell, on
+the same beat while fewer than `maxAlive` bananas lie on that cell, whoever dropped them, with no
+random draw. Trees are arena content: they bear in every mode on their arena, whatever the
+match's power-ups, and need an arena with cells. The fruit is an ordinary banana pickup (§2.9),
+seen under fog as any pickup is (§3.1); the trees themselves, like the whole `arena` block, are
+never fogged.
 
 ### 2.11 `reservedHeardCalls[i]` (offset 5556 + 12 i, 12 bytes)
 
@@ -527,7 +539,10 @@ loadout index the match plays and `match.reservedModeData` with the mode's state
 team fields (`players[i].reservedTeam`, `self.reservedTeam`, `match.reservedTeamScores` and the
 Ally relation of `players[i].relation` and `bananas[i].ownerRelation`); v0.35 the fog, call and
 grid fields and `header.schemaFlags` bit 0 (§3.1, §3.2). A field a mode does not use stays 0
-(the grid fields in a continuous mode, the visible flags without fog).
+(the grid fields in a continuous mode, the visible flags without fog). Architecture v0.82 names
+a pad byte without a layout change, as v0.57 did `bananaRegrowTicks`: `arena.spawners[i].tree`
+(was `pad0`, always 0 before; §2.10), 1 only on a tree, so no observation of an arena without
+trees changes by a byte.
 
 | Field | Meaning once used |
 |---|---|
@@ -540,7 +555,8 @@ grid fields and `header.schemaFlags` bit 0 (§3.1, §3.2). A field a mode does n
 | `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks from this observation's tick to the next latch: 0 when the input answering this observation is latched; while Playing `(turn − ticksInPhase mod turn) mod turn`, in the countdown `roundStartTicks − ticksInPhase`, between rounds `roundEndTicks − ticksInPhase + roundStartTicks`, before the first round `roundStartTicks`, 0 once the match ended (a round that ends early moves it). Filled since architecture v0.35; both 0 in a continuous mode |
 | `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; since v0.32 the role's in a team mode with `roles`: the slot's position within its team, round-robin) |
 | `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index; filled since architecture v0.32 (in a free-for-all team i is slot i, so entry i equals `scores[i]`) |
-| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`. The shipped kinds (rounds, deathmatch, survival) leave words 0–7 at 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). Architecture v0.69: words 8–15 hold the arena's zones 0 and 1 in every mode (zones are arena statics, never fogged): zone k is the closed box `minX`, `minY`, `maxX`, `maxY` (Q16.16, read as i32) in words 8 + 4k to 11 + 4k, all four 0 when the arena has no zone k (a real zone is never all zero: min < max). Before v0.69 these words were always 0, so a bot reading them on an older host sees "no zone". The hill is zone 0 (a monkey whose centre is in the box stands on it), a capture team t's home zone t; zones past 1 are not shown in these words (version 2 lists every zone in `zones`, §2.12, and keeps words 8–15 exactly as they are). A capture bot finds the flags in `pickups`. Architecture v0.80, control (mode kind 7, at most 4 teams and 8 zones): words 0–1 hold the clocks of teams 0 to 3, a u16 each, team 2w in the low half of word w and team 2w + 1 in the high half (hill's layout; a team's clock gains one per zone it owns per Playing tick, owned zones pay whether or not anyone stands on them, and every `hill_ticks` of clock score a point, the remainder kept; `hill_ticks` and `capture_ticks` are the mode's content, not in the observation); word 2 the zones' owners and word 3 their challengers, 4 bits per zone, zone k in bits 4k..4k+3, holding the team + 1 (0: nobody owns it, no capture under way); words 4–7 the capture progress, a u16 per zone (Playing ticks the challenger has had strictly the most monkeys there; a tie for the most holds it, the owner having the most or an empty zone clears it, and at `capture_ticks` the challenger owns the zone), zone k in word 4 + k/2, the low half for an even k. The round start clears all eight. Words 8–15 still hold zones 0 and 1 |
+| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`. The shipped kinds (rounds, deathmatch, survival) leave words 0–7 at 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). Architecture v0.69: words 8–15 hold the arena's zones 0 and 1 in every mode (zones are arena statics, never fogged): zone k is the closed box `minX`, `minY`, `maxX`, `maxY` (Q16.16, read as i32) in words 8 + 4k to 11 + 4k, all four 0 when the arena has no zone k (a real zone is never all zero: min < max). Before v0.69 these words were always 0, so a bot reading them on an older host sees "no zone". The hill is zone 0 (a monkey whose centre is in the box stands on it), a capture team t's home zone t; zones past 1 are not shown in these words (version 2 lists every zone in `zones`, §2.12, and keeps words 8–15 exactly as they are). A capture bot finds the flags in `pickups`. Architecture v0.80, control (mode kind 7, at most 4 teams and 8 zones): words 0–1 hold the clocks of teams 0 to 3, a u16 each, team 2w in the low half of word w and team 2w + 1 in the high half (hill's layout; a team's clock gains one per zone it owns per Playing tick, owned zones pay whether or not anyone stands on them, and every `hill_ticks` of clock score a point, the remainder kept; `hill_ticks` and `capture_ticks` are the mode's content, not in the observation); word 2 the zones' owners and word 3 their challengers, 4 bits per zone, zone k in bits 4k..4k+3, holding the team + 1 (0: nobody owns it, no capture under way); words 4–7 the capture progress, a u16 per zone (Playing ticks the challenger has had strictly the most monkeys there; a tie for the most holds it, the owner having the most or an empty zone clears it, and at `capture_ticks` the challenger owns the zone), zone k in word 4 + k/2, the low half for an even k. The round start clears all eight. Words 8–15 still hold zones 0 and 1. Architecture v0.82, harvest (mode kind 8, §3.3): word 0 holds the mode's two beats, `bank_ticks` in the low u16 and `steal_ticks` (0: no stealing) in the high u16, written at the round start; words 1–7 are 0. Words 8–15 hold zones 0 and 1, the homes of teams 0 and 1 |
+| `arena.spawners[i].tree` | architecture v0.82 (was `pad0`): 1 when the spawner is a tree, 0 otherwise (§2.10) |
 | `header.reserved0` | nothing yet |
 
 A field a mode does not use is 0; a module reads every filled field with the meaning above.
@@ -604,6 +620,53 @@ caller's cell at the call when this monkey sees the caller in that observation (
 fog) and the arena has cells, else −1, −1. A dead monkey hears nothing. What a symbol means is
 the bot author's business.
 
+### 3.3 Harvest (architecture v0.82)
+
+The harvest kind (`modeKind` 8; designed in architecture v0.81, §11 "Contest design: bananas as
+the economy") makes the banana the resource as well as the ammunition. Everything a bot needs is
+in the observation as version 1 already has it, so a version 1 module plays the kind whole; a
+version 2 module also has the homes in `zones`.
+
+- **The home.** Team t's home is zone t: a monkey's own is zone `self.reservedTeam`, in version
+  2's `zones` block and, for teams 0 and 1, in `reservedModeData` words 8–15 (zone 0 in words
+  8–11, zone 1 in 12–15). A monkey stands in a zone when its centre is in the closed box.
+- **The cargo.** The hand is `self.ammo`, up to `self.ammoMax`; the mode's baseline power-up may
+  raise the capacity (a modifier with `ticksLeft` 0xFFFF) without filling the hand, so
+  `ammoMax` can exceed `rules.playerAmmoMax`. In a row that turns the regrow off
+  (`bananaRegrowTicks` 0) and respawns empty-handed, as the contest's does, bananas enter a
+  match only from the opening hands and the trees (§2.10): a respawn holds the mode's
+  `respawn_ammo` (content, not in the observation), not `rules.playerAmmoStart`. Taking a banana
+  pickup fills the hand up to `ammoMax` and leaves the rest of a stacked pickup lying.
+- **The beats.** `reservedModeData` word 0 holds `bank_ticks` (low u16) and `steal_ticks` (high
+  u16). Both are global: a beat falls on the step that takes `match.ticksInPhase` to a multiple
+  of it (while Playing), judged on where each monkey stands after that tick's move. A monkey
+  falling down a pit stands nowhere.
+- **Banking.** On a bank beat, every living monkey in its own home holding a banana banks one:
+  its `ammo` drops by one and its own `scores` entry (and so its team's) gains one. An enemy in
+  the zone stops nothing. A banked banana leaves the match.
+- **Stealing.** On a steal beat (never when `steal_ticks` is 0), after that tick's banking, every
+  living monkey with room in its hand (`ammo < ammoMax`) standing in another team's home takes one
+  banana back out, when that team's score is above zero and none of that team's living monkeys
+  stands in the zone (one defender stops every raider): the point comes off the robbed team's
+  highest-scoring slot (the lowest slot on a tie), so a `scores` entry can fall, and the
+  raider's `ammo` gains one. A raider takes at most one a beat.
+- **The fight.** A throw is a loan: the banana comes back to the hand unless it is caught,
+  grounded or its thrower dies. A perfect dash catch takes the enemy's banana into the
+  catcher's hand, and needs room for it: with a full hand (`ammo == ammoMax`) the catch is
+  declined and the banana hits (§2.8). Under `death_bananas = "drop"` (the contest's) an
+  eliminated monkey drops what it held where it stood and its bananas in flight come down as
+  pickups; a pit takes its cargo. A dash attack needs `rules.dashAttackMinAmmo` bananas in hand, so a monkey that banks
+  its last banana cannot strike until it picks one up. Eliminations score nothing; a catch or a
+  fall moves a score only by the mode's `catch_score` / `suicide_score` (content, 0 in the
+  contest's design), so the board is the banks less the thefts.
+- **The end.** The first team to `scoreToWin` wins, else the team leading at
+  `timeLimitTicks`; a tied lead is a draw.
+
+The example bot `tools/bots/examples/gatherer.c` (§5) plays the kind: it fetches the nearest
+banana it sees with room in its hand, waits at the nearest tree when there is none, and carries
+a full hand (or what it holds when nothing is left to fetch) home, where it stands until its
+hand is empty.
+
 
 ## 4. Versioning
 
@@ -624,7 +687,9 @@ the bot author's business.
   that only appends (as 2 did) lets the host keep serving the older one its prefix; one that moves
   anything does not.
 - Appending new enumeration values (a new ability or mode kind, a new tag bit) is allowed within a
-  version: a bot must treat an unknown value as "something else", never as an error.
+  version: a bot must treat an unknown value as "something else", never as an error. Mode kinds
+  7 (control, architecture v0.80) and 8 (harvest, v0.82) were appended this way, and harvest's
+  `tree` byte named a pad byte that was always 0, so neither needed a version.
 - Content (arenas, modes, ability and power-up numbers) is data, not schema: it reaches a bot
   through the observation (`rules`, `abilities[s].def*`, `arena`) and `contentHash`, never through
   the version.
@@ -642,8 +707,14 @@ bit for bit (`example_bot_test.cpp` checks each against the engine), so a bot ca
 deterministic flight exactly; its predictor over several ticks is approximate because it cannot
 foresee catches, hits or the owner's moves. The header is version 2 (`KFM_ABI_VERSION` 2,
 `KFM_OBS_SIZE` 5880, the `zones` block, `KFM_MODE_CONTROL` and the `KFM_CONTROL_*_WORD` names
-of the control kind's `modeData` words); a module built with an older copy stays a version 1
-module and keeps running (§4).
+of the control kind's `modeData` words; since architecture v0.82 `KFM_MODE_HARVEST`, the
+spawner's `tree` field, `KFM_HARVEST_BEATS_WORD` and `KFM_HARVEST_BANK_TICKS(word)` /
+`KFM_HARVEST_STEAL_TICKS(word)` for its halves); a module built with an older copy stays a
+version 1 module and keeps running (§4), and one built with a version 2 copy from before v0.82
+reads the `tree` byte as `pad0`. The examples are `idle.c` (the minimal skeleton), `chaser.c`
+(approach, dodge, dash-catch, throw) and `gatherer.c` (architecture v0.82: the harvest kind's
+smoke test, a breadth-first path over the arena's cells round walls and pits to bananas, trees
+and home).
 
 Recommended clang flags (any clang that targets wasm32 and finds `wasm-ld`; the emsdk one does):
 

@@ -189,10 +189,15 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]
 build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5
 build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
+build/dev/apps/arena/kfm_arena --mode contest --team tools/bots/examples/gatherer.wasm --team ref:hard --matches 4 --rotate
 tools/bots/build_example.sh      # compile tools/bots/examples/*.c against the C SDK seed with the emsdk clang
 tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wat2wasm (the .wasm are checked in)
 ```
 
+- The examples (`tools/bots/examples`): `idle.wasm` never moves, `chaser.wasm` fights,
+  `gatherer.wasm` (architecture v0.82) carries bananas from the trees to its home zone in a
+  `harvest` mode and does nothing else; the reference bot never banks, so the gatherer is the
+  kind's smoke test (the `contest` line above once that row is the harvest kind).
 - `--rotate` moves every bot through every slot across the tournament (the sim's spawn order
   favours some slots). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
   fill that team's slots in order, the last repeating, and `--rotate` moves entrants across
