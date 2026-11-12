@@ -1542,9 +1542,9 @@ others in more than 65 % of games, 15 to 50 % of banked bananas having changed s
 behind at a third of the game winning at least one in five, each map's sides splitting as a
 fair coin does, no fault and `fuel_max` under 80 k. Chosen by the project's owner: the
 direction (bananas as the economy, and a pool of maps), that it is written up before
-anything is built, and the empty-handed respawn with a home tree per team as its answer. Proposed in the write-up and still the owner's to confirm: stealing from a
-bank and the lone-defender rule, the global beats, four maps, the
-row's numbers and the gates. Step (4) of the control design (control-aware `starter` and
+anything is built, and the empty-handed respawn with a home tree per team as its answer.
+Proposed in the write-up and still the owner's to confirm: stealing from a bank and the
+lone-defender rule, the global beats, four maps, the row's numbers and the gates. Step (4) of the control design (control-aware `starter` and
 `holder`) is dropped: the house bots are written for `harvest`. Considered and kept for later
 designs, in order: spending banked bananas (a priced respawn, a loadout chosen at the
 respawn), peels as traps, bushes (fog only, no checksum), escalating trees, an opening gate,
