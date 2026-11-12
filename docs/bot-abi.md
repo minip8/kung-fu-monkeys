@@ -668,9 +668,11 @@ version 2 module also has the homes in `zones`.
   `timeLimitTicks`; a tied lead is a draw.
 
 The example bot `tools/bots/examples/gatherer.c` (§5) plays the kind: it fetches the nearest
-banana it sees with room in its hand, waits at the nearest tree when there is none, and carries
-a full hand (or what it holds when nothing is left to fetch) home, where it stands until its
-hand is empty.
+banana it sees with room in its hand, else waits at the tree it works (the team shares the
+trees out by slot rank, weighting each by its beat plus twice its walking distance from the
+home: everything it needs is in `arena.spawners` and the roster), and carries a full hand (or
+what it holds when nothing is left to fetch) home, where it stands until its hand is empty;
+holding two or more it throws at an enemy in a clear line.
 
 
 ## 4. Versioning
@@ -718,8 +720,8 @@ spawner's `tree` field, `KFM_HARVEST_BEATS_WORD` and `KFM_HARVEST_BANK_TICKS(wor
 version 1 module and keeps running (§4), and one built with a version 2 copy from before v0.82
 reads the `tree` byte as `pad0`. The examples are `idle.c` (the minimal skeleton), `chaser.c`
 (approach, dodge, dash-catch, throw) and `gatherer.c` (architecture v0.82: the harvest kind's
-smoke test, a breadth-first path over the arena's cells round walls and pits to bananas, trees
-and home).
+smoke test, a breadth-first path over the arena's cells round walls and pits to bananas, the
+tree its team's share-out gives it, and home).
 
 Recommended clang flags (any clang that targets wasm32 and finds `wasm-ld`; the emsdk one does):
 

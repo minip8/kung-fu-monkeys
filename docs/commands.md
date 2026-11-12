@@ -199,15 +199,17 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]
 build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5
 build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
-build/dev/apps/arena/kfm_arena --mode contest --team tools/bots/examples/gatherer.wasm --team ref:hard --matches 4 --rotate
+build/dev/apps/arena/kfm_arena --mode contest --arena grove --team G,G,G,G,G --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --matches 20 --rotate   # G = tools/bots/examples/gatherer.wasm
 tools/bots/build_example.sh      # compile tools/bots/examples/*.c against the C SDK seed with the emsdk clang
 tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wat2wasm (the .wasm are checked in)
 ```
 
 - The examples (`tools/bots/examples`): `idle.wasm` never moves, `chaser.wasm` fights,
   `gatherer.wasm` (architecture v0.82) carries bananas from the trees to its home zone in a
-  `harvest` mode and does nothing else; the reference bot never banks, so the gatherer is the
-  kind's smoke test (the `contest` line above once that row is the harvest kind).
+  `harvest` mode: each works a tree its rank in the team gives it and throws at an enemy in a
+  clear line when it holds two or more. The reference bot never banks, so the gatherer is the
+  kind's smoke test: on `contest`, five a side, its games end in 490 to 1200 turns on every
+  pool arena, far inside the 3600-turn clock (`tools/bots/README.md` has the table).
 - `--rotate` moves every bot through every slot across the tournament (the sim's spawn order
   favours some slots). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
   fill that team's slots in order, the last repeating, and `--rotate` moves entrants across
