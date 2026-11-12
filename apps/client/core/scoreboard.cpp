@@ -20,6 +20,7 @@ using presentation::HudPhase;
       // v0.57: eliminations plus catch points less suicides, not kills alone.
       return "Score";
     case sim::ModeKind::Hill:
+    case sim::ModeKind::Control:  // v0.80: the zones' points
       return "Points";
     case sim::ModeKind::Capture:
       return "Flags";

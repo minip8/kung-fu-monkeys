@@ -1,0 +1,39 @@
+# The contest's three zones (architecture v0.80, §11 "Contest design"): the
+# courtyard (arenas/08-courtyard.toml) with its middle 2 x 2 block taken out
+# and three zones for the control kind. Zone 0 (glyph a) is the 4 x 2 floor
+# between the two 1 x 4 pillars, courtyard_hill's hill; zone 1 (b) is the
+# west team's home, a 3 x 2 box beside its spawn group's door, and zone 2 (c)
+# the east team's. Walking at a cell a turn, a team reaches its home zone in
+# 3 turns, the centre in about 10 (round a pillar) and the enemy's home in
+# about 17. Every other cell and the spawn groups are the courtyard's; still
+# symmetric under a half turn, zone 1 mapping to zone 2. The two spawners on
+# the centre line, three cells from the centre and away from every zone (a
+# pickup costs a monkey its place), lay one of the contest's _1t power-up
+# twins (powerups.toml) from turn 90 and every 240 turns, one alive each; no
+# speed_boost, since a walk is a cell a turn on the grid whatever the speed.
+# The contest mode needs it; courtyard_hill stays the hill's.
+# Keys: arenas/06-hilltop.toml.
+[[arena]]
+name = "courtyard_zones"
+cell = 1.0
+spawn_groups = 2
+map = [
+  "...........~~...........",
+  "...........~~...........",
+  ".0...##..........##...8.",
+  ".....##..........##.....",
+  "........................",
+  ".1.......#....#.......7.",
+  "....bbb..#aaaa#..ccc9...",
+  "...4bbb..#aaaa#..ccc....",
+  ".2.......#....#.......6.",
+  "........................",
+  ".....##..........##.....",
+  ".3...##..........##...5.",
+  "...........~~...........",
+  "...........~~...........",
+]
+spawners = [
+  { pos = [-0.5, 3.5], power_ups = ["big_banana_1t", "triplebanana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+  { pos = [0.5, -3.5], power_ups = ["big_banana_1t", "triplebanana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+]

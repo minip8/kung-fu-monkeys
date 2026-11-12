@@ -387,8 +387,33 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
   }
 }
 
+// bananaArcHeight() over the outbound ticks the match flies (v0.80: a mode
+// may override the BoomerangDef's, MatchContent::bananaOutboundTicks).
+[[nodiscard]] float bananaArc(const Boomerang& b, float distanceToOwner, float returnStartDistance,
+                              uint16_t outboundTicks) {
+  switch (b.phase) {
+    case BoomerangPhase::Outbound: {
+      if (outboundTicks == 0) return kBananaArcPeak;
+      const float u =
+          clamp01(static_cast<float>(b.ticksInPhase) / static_cast<float>(outboundTicks));
+      return kBananaArcPeak * std::sin(0.5f * kPi * u);
+    }
+    case BoomerangPhase::Returning: {
+      if (returnStartDistance <= 0.0f) return kBananaArcPeak;
+      const float u = clamp01(distanceToOwner / returnStartDistance);
+      return kBananaArcPeak * std::sin(0.5f * kPi * u);
+    }
+    case BoomerangPhase::Grounded:
+    case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
+      break;
+  }
+  return 0.0f;
+}
+
 void buildBananas(PresentationState& ps, const WorldState& prev, const WorldState& curr,
-                  float alpha, const ContentDB& content, float dt, RenderState& out) {
+                  float alpha, const sim::MatchContent& match, float dt, RenderState& out) {
+  const ContentDB& content = match.db;
+  const uint16_t outboundTicks = match.bananaOutboundTicks();  // v0.80: the mode's
   const float radius = content.boomerang.radius.toFloat();
   for (uint16_t i = 0; i < sim::kMaxBoomerangs; ++i) {
     if (!curr.boomerangs.isAliveIndex(i)) {
@@ -413,13 +438,13 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     const float dCurr = ownerDistance(curr, cb, track.returnStartDistance);
     if (cb.phase == BoomerangPhase::Returning && track.returnStartDistance < 0.0f)
       track.returnStartDistance = std::max(dCurr, 0.01f);
-    const float arcCurr = bananaArcHeight(cb, dCurr, track.returnStartDistance, content);
+    const float arcCurr = bananaArc(cb, dCurr, track.returnStartDistance, outboundTicks);
     float arc = arcCurr;
     float heading = simAngleToYaw(cb.transform.facing);
     float spin = simAngleToYaw(cb.spin);
     if (lerped) {
       const float dPrev = ownerDistance(prev, *pb, track.returnStartDistance);
-      arc = lerp(bananaArcHeight(*pb, dPrev, track.returnStartDistance, content), arcCurr, alpha);
+      arc = lerp(bananaArc(*pb, dPrev, track.returnStartDistance, outboundTicks), arcCurr, alpha);
       heading = lerpAngle(simAngleToYaw(pb->transform.facing), heading, alpha);
       spin = lerpAngle(simAngleToYaw(pb->spin), spin, alpha);
     }
@@ -578,23 +603,7 @@ float playerHeight(const Player& p, const ContentDB& content) {
 
 float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnStartDistance,
                       const ContentDB& content) {
-  switch (b.phase) {
-    case BoomerangPhase::Outbound: {
-      const uint16_t out = content.boomerang.outboundTicks;
-      if (out == 0) return kBananaArcPeak;
-      const float u = clamp01(static_cast<float>(b.ticksInPhase) / static_cast<float>(out));
-      return kBananaArcPeak * std::sin(0.5f * kPi * u);
-    }
-    case BoomerangPhase::Returning: {
-      if (returnStartDistance <= 0.0f) return kBananaArcPeak;
-      const float u = clamp01(distanceToOwner / returnStartDistance);
-      return kBananaArcPeak * std::sin(0.5f * kPi * u);
-    }
-    case BoomerangPhase::Grounded:
-    case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
-      break;
-  }
-  return 0.0f;
+  return bananaArc(b, distanceToOwner, returnStartDistance, content.boomerang.outboundTicks);
 }
 
 void buildRenderState(PresentationState& ps, const WorldState& prev, const WorldState& curr,
@@ -617,7 +626,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
   // are still valid for players eliminated this tick.
   ageEffects(ps, dt);
   buildPlayers(ps, prev, curr, alpha, match, dt, out);
-  buildBananas(ps, prev, curr, alpha, content, dt, out);
+  buildBananas(ps, prev, curr, alpha, match, dt, out);
   buildPickups(ps, curr, content, dt, out);
 
   ps.shake *= std::exp(-dt / kShakeTau);
@@ -642,7 +651,7 @@ void buildRenderState(PresentationState& ps, const WorldState& prev, const World
       Vec3{ps.shake * std::sin(w), ps.shake * 0.6f * std::sin((1.37f * w) + 1.1f), 0.0f};
   out.arenaHalfExtents = toFloat(match.arena.halfExtents);
   buildArenaPieces(match.arena, out);
-  buildZones(match, out);
+  buildZones(curr, match, out);
   out.floorGridCell = match.mode.space == sim::Space::Grid ? match.arena.cellSize.toFloat() : 0.0f;
   out.playerRadius = content.player.radius.toFloat();
   out.playerHeight = out.playerRadius * kMonkeyHeightOverRadius;
@@ -744,17 +753,45 @@ void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out) {
   out.arenaPieceCount = n;
 }
 
-void buildZones(const sim::MatchContent& match, RenderState& out) {
+ControlZone controlZone(const sim::MatchRules& rules, uint8_t zone) {
+  // modeData words 2 (owners) and 3 (challengers): a nibble per zone, the
+  // team + 1; words 4-7: a u16 of progress per zone (control.cpp).
+  constexpr uint8_t kOwnerWord = 2;
+  constexpr uint8_t kChallengerWord = 3;
+  constexpr uint8_t kProgressWord = 4;
+  if (zone >= sim::kMaxArenaZones) return {};
+  const auto teamIn = [&](uint8_t word) {
+    const uint32_t v = (rules.modeData[word] >> (4u * zone)) & 0xFu;
+    return v == 0 || v > sim::kMaxControlTeams ? kNoSlot : static_cast<int8_t>(v - 1);
+  };
+  const uint32_t progress =
+      (rules.modeData[kProgressWord + (zone / 2)] >> ((zone % 2) * 16u)) & 0xFFFFu;
+  return ControlZone{.owner = teamIn(kOwnerWord),
+                     .challenger = teamIn(kChallengerWord),
+                     .progress = static_cast<uint16_t>(progress)};
+}
+
+void buildZones(const WorldState& curr, const sim::MatchContent& match, RenderState& out) {
   const sim::ArenaDef& arena = match.arena;
   const uint8_t teamZones = match.mode.kind == sim::ModeKind::Capture ? match.mode.teams : 0;
+  const bool control = match.mode.kind == sim::ModeKind::Control;
+  const float captureTicks = static_cast<float>(std::max<uint16_t>(match.mode.captureTicks, 1));
   out.zoneCount = 0;
   for (uint8_t k = 0; k < arena.zoneCount && k < sim::kMaxArenaZones; ++k) {
     const Vec2f lo = toFloat(arena.zones[k].min);
     const Vec2f hi = toFloat(arena.zones[k].max);
-    out.zones[out.zoneCount++] =
-        RenderZone{.center = simToWorld(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}),
-                   .size = Vec3{hi.x - lo.x, 0.0f, hi.y - lo.y},
-                   .team = k < teamZones ? static_cast<int8_t>(k) : kNoSlot};
+    RenderZone z{.center = simToWorld(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}),
+                 .size = Vec3{hi.x - lo.x, 0.0f, hi.y - lo.y},
+                 .team = k < teamZones ? static_cast<int8_t>(k) : kNoSlot};
+    if (control) {
+      const ControlZone cz = controlZone(curr.rules, k);
+      z.team = cz.owner;
+      if (cz.challenger != kNoSlot) {
+        z.challenger = cz.challenger;
+        z.capture = std::clamp(static_cast<float>(cz.progress) / captureTicks, 0.0f, 1.0f);
+      }
+    }
+    out.zones[out.zoneCount++] = z;
   }
 }
 

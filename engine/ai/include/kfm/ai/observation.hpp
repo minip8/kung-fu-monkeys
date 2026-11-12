@@ -45,7 +45,14 @@
 
 namespace kfm::ai {
 
-inline constexpr uint32_t kObservationVersion = 1;
+// v0.80: version 2 is version 1 with the `zones` block appended (every
+// zone of the arena; version 1 shows only zones 0 and 1, in
+// match.reservedModeData). Nothing of version 1 moved, so a host serves a
+// version 1 module the first kObservationV1Size bytes with its header saying
+// version 1 (WasmAgent); every native agent sees version 2.
+inline constexpr uint32_t kObservationVersion = 2;
+inline constexpr uint32_t kObservationV1Version = 1;
+inline constexpr uint32_t kObservationV1Size = 5748;
 
 // Capacities (equal to the sim's pools and content tables; observation.cpp
 // asserts it). Changing one is a schema change.
@@ -66,6 +73,8 @@ inline constexpr uint32_t kObsModeDataWords = 16;
 // (docs/bot-abi.md §3).
 inline constexpr uint32_t kObsZoneWord = 8;
 inline constexpr uint32_t kObsZones = 2;
+// v0.80 (version 2): every zone an arena may have, in the `zones` block.
+inline constexpr uint32_t kObsMaxZones = 8;
 static_assert(kObsZoneWord + (4 * kObsZones) == kObsModeDataWords);
 
 // No player in a slot field.
@@ -92,6 +101,7 @@ enum class ObsModeKind : uint8_t {
   TeamDeathmatch = 4,  // v0.32
   Hill = 5,            // architecture v0.33
   Capture = 6,         // architecture v0.33
+  Control = 7,         // architecture v0.80
 };
 enum class ObsAbilityKind : uint8_t {
   None = 0,
@@ -382,6 +392,22 @@ struct ObsHeardCall {
   int16_t cellY;
 };
 
+// v0.80 (version 2): an objective zone of the arena, the closed box in Q16.16
+// (the boxes of match.reservedModeData words 8-15, for every zone).
+struct ObsZone {
+  int32_t minX, minY;
+  int32_t maxX, maxY;
+};
+
+// v0.80 (version 2): the arena's zones in content order (zone 0 is the hill,
+// a capture team t's home is zone t, control plays them all); entries past
+// `count` are zero. Static geometry: fog never hides it.
+struct ObsZones {
+  uint8_t count;
+  uint8_t pad0[3];
+  ObsZone zone[kObsMaxZones];
+};
+
 struct Observation {
   ObsHeader header;
   ObsMatch match;
@@ -392,6 +418,7 @@ struct Observation {
   ObsPickup pickups[kObsMaxPickups];  // by pool slot
   ObsArena arena;
   ObsHeardCall reservedHeardCalls[kObsMaxHeardCalls];  // this turn's, oldest first (v0.35)
+  ObsZones zones;  // version 2 (v0.80): everything above is version 1, byte for byte
 };
 
 // --- layout -------------------------------------------------------------------
@@ -413,7 +440,11 @@ static_assert(sizeof(ObsHazard) == 24);
 static_assert(sizeof(ObsSpawner) == 16);
 static_assert(sizeof(ObsArena) == 1116);
 static_assert(sizeof(ObsHeardCall) == 12);
-static_assert(sizeof(Observation) == 5748);
+static_assert(sizeof(ObsZone) == 16);
+static_assert(sizeof(ObsZones) == 132);
+static_assert(sizeof(Observation) == 5880);
+static_assert(offsetof(Observation, zones) == kObservationV1Size,
+              "version 2 appends to version 1: nothing before the zones block moves");
 
 static_assert(offsetof(Observation, header) == 0);
 static_assert(offsetof(Observation, match) == 16);

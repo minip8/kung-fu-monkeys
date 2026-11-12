@@ -32,6 +32,7 @@ kfm_add_test_exe(kfm_sim_tests
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
 kfm_add_test_exe(kfm_content_tests
+  content/contest_test.cpp
   content/decimal_test.cpp
   content/loader_test.cpp
   content/mirror_test.cpp
@@ -78,7 +79,8 @@ kfm_add_test_exe(kfm_ai_tests
   ai/vision_test.cpp
   ai/bot_factory_test.cpp
 )
-target_link_libraries(kfm_ai_tests PRIVATE kfm::ai kfm::ai_bots)
+# kfm::content: the shipped contest row (observation_test.cpp).
+target_link_libraries(kfm_ai_tests PRIVATE kfm::ai kfm::ai_bots kfm::content)
 target_compile_definitions(kfm_ai_tests PRIVATE
   KFM_BOT_FIXTURES_DIR="${PROJECT_SOURCE_DIR}/tests/fixtures/bots")
 if(KFM_WASM_BOTS)

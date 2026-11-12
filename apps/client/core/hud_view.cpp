@@ -106,6 +106,25 @@ bool clockUrgent(const presentation::RenderHud& hud) {
   return hud.phase == presentation::HudPhase::Playing && hud.clockSeconds <= kClockUrgentSeconds;
 }
 
+ZoneStrip zoneStrip(const presentation::RenderState& state) {
+  ZoneStrip strip;
+  if (state.hud.mode != sim::ModeKind::Control) return strip;
+  const auto team = [](int8_t t) -> std::optional<uint8_t> {
+    if (t < 0 || t >= static_cast<int8_t>(sim::kMaxPlayers)) return std::nullopt;
+    return static_cast<uint8_t>(t);
+  };
+  for (uint8_t k = 0; k < state.zoneCount && k < sim::kMaxArenaZones; ++k) {
+    const presentation::RenderZone& z = state.zones[k];
+    ZoneChip& chip = strip.chips[strip.count++];
+    chip.letter = static_cast<char>('a' + k);
+    chip.owner = team(z.team);
+    chip.challenger = team(z.challenger);
+    chip.capture = chip.challenger ? z.capture : 0.0f;
+    if (chip.owner) ++strip.owned[*chip.owner];
+  }
+  return strip;
+}
+
 const char* matchOverLabel(MatchOverAction action) {
   switch (action) {
     case MatchOverAction::PlayAgain:

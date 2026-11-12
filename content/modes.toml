@@ -6,7 +6,7 @@
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
 #   kind                 rounds (default), deathmatch, survival, team_rounds,
-#                        team_deathmatch, hill or capture
+#                        team_deathmatch, hill, capture or control
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      rounds, survival, team_rounds: pause after a round
 #                        before the next one (the round's scoreboard); the
@@ -32,7 +32,8 @@
 #                        with it; the respawn hands out the starting banana).
 #                        A pit fall always takes the held ones down; the ones
 #                        in flight follow this key from the fall's start
-#   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture:
+#   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture,
+#                        control:
 #                        points for a perfect dash catch of an enemy's banana
 #                        (the own one or an ally's scores nothing; default 0)
 #   suicide_score        v0.57, the same kinds: points for an elimination with
@@ -44,6 +45,12 @@
 #                        ticks in a row grows one in its hand (0 = never, the
 #                        default); the clock stops while it falls. A mode that
 #                        regrows never runs dry
+#   banana_outbound_ticks  v0.80, any kind: the ticks a banana flies out
+#                        before it turns for home, 0 to 65535 (0, the
+#                        default: [boomerang] outbound_ticks)
+#   banana_turn_rate     v0.80, any kind: the most a returning banana turns
+#                        per tick, in BAM (65536 a full turn), 0 to 32768 (0,
+#                        the default: [boomerang] turn_rate_bam)
 #   teams                0 = free-for-all (default), else 2 to 10 teams the
 #                        hosts split the slots into, round-robin (the team
 #                        kinds need it; such a mode plays only on an arena
@@ -58,11 +65,24 @@
 #                        point (>= 1); a contested or empty zone holds the
 #                        clock. Plays only on an arena with a zone; respawns
 #                        and the clock as deathmatch, score_to_win counts
-#                        points
+#                        points. Control (v0.80): the zone-ticks of a point
+#                        (two owned zones score twice as fast)
 #   flag_return_ticks    capture: ticks a dropped flag lies untouched before
 #                        it goes home (>= 1). Team t's flag starts in zone t,
 #                        so it plays only on an arena with a zone per team;
 #                        score_to_win counts captures
+#   capture_ticks        v0.80, control: every zone of the arena has an owner
+#                        (nobody at the start); the team with strictly the
+#                        most monkeys in a zone it does not own captures it
+#                        after this many ticks of that (>= 1, default 60; a
+#                        new challenger starts from zero, a tie holds the
+#                        progress, the owner with the most or an empty zone
+#                        clears it). An owned zone pays its team one tick a
+#                        tick whether or not anyone stands on it, and
+#                        hill_ticks of them score a point (to the team's
+#                        lowest present slot). At most 4 teams; plays only on
+#                        an arena with a zone; respawns and the clock as
+#                        deathmatch, score_to_win counts points
 #   space                v0.34: how monkeys move, "continuous" (default, the
 #                        stick) or "grid": a monkey at rest commits to one of
 #                        its eight neighbouring cells at every turn's latch
@@ -223,29 +243,45 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banan
 # M7: the row the bot ladder points at (architecture §8 "The ladder"), the
 # contest knobs in one place (team size, vision, the call range of the kits,
 # turn_ticks, the arena). A season changes this row, not the service, and the
-# row may change between releases inside a season (v0.59). Since v0.69 it is
-# king of the hill on the grid: grid_rounds_1t's squad (1-tick turns, roles,
-# baseline, fog and calls) under hill's rules on courtyard_hill. Counted in
-# 1-tick turns: a monkey crosses the arena in 24, so a point takes 60 turns
-# alone on the hill, a respawn 120 (long enough that a kill costs the team
-# about two points' worth of holding), a match at most 3600.
+# row may change between releases inside a season (v0.59). Since v0.80 it is
+# capture and keep on the grid (§11 "Contest design"): grid_rounds_1t's squad
+# (1-tick turns, roles, fog and calls) under the control kind on
+# courtyard_zones, three zones (the centre, then the west and east homes).
+# The team with strictly the most monkeys in a zone it does not own captures
+# it after 30 turns; an owned zone pays its team a tick of clock every turn
+# whether or not anyone stands on it, and 60 of them score a point, so two
+# zones score twice as fast. First to 10 points, else the leader at 3600
+# turns (a tied lead is a draw); eliminations score nothing. A monkey
+# crosses the arena in 24 turns; a respawn takes 240, then 8 turns of
+# protection. The baseline, contest_base, is grid_base_1t with the banana at
+# 2 cells a turn. It flies out for 3 turns (6 cells of flight; the third
+# turn already bends home, so it reaches about 5 cells from the thrower,
+# the 1-cell spawn offset included) and turns for home at up to 85 degrees
+# a turn, a U-turn about 2.3 cells wide, so a banana is back in about 5
+# turns. 85, not 90: at a right angle a returning banana on this
+# axis-aligned map can square-orbit a pillar until max_return_ticks grounds
+# it. A banana is heard only a cell away (hearing 1), so where a monkey
+# looks decides what it can dodge.
 [[mode]]
 name = "contest"
-kind = "hill"
+kind = "control"
 space = "grid"
 turn_ticks = 1
 dash_cells = 2
 teams = 2
 roles = ["catcher_1t", "grid_1t", "grid_1t", "grid_1t", "grid_1t"]
-baseline = "grid_base_1t"
-arena = "courtyard_hill"
-hill_ticks = 60             # 60 turns alone on the hill scores a point
-score_to_win = 5            # the first team to five points wins
+baseline = "contest_base"
+arena = "courtyard_zones"
+capture_ticks = 30          # 30 turns with the most monkeys in a zone takes it
+hill_ticks = 60             # 60 turns of owned zone score a point
+score_to_win = 10           # the first team to ten points wins
 time_limit_ticks = 3600     # else the leading team after 3600 turns (a tie is a draw)
-respawn_ticks = 120
-respawn_invuln_ticks = 30
+respawn_ticks = 240
+respawn_invuln_ticks = 8
 death_bananas = "vanish"
 banana_regrow_ticks = 120   # an empty hand grows a banana after 120 turns
+banana_outbound_ticks = 3   # 3 turns out at 2 cells a turn: 6 cells
+banana_turn_rate = 15474    # BAM a turn on the way home: 85 degrees
 round_start_ticks = 60
 round_end_ticks = 180
-vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banana_sight = 1 }
+vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 1, banana_sight = 1 }

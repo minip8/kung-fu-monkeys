@@ -23,6 +23,7 @@ add_library(kfm_sim STATIC
   src/modes/team_deathmatch.cpp
   src/modes/hill.cpp
   src/modes/capture.cpp
+  src/modes/control.cpp
   src/spaces/registry.cpp
   src/spaces/continuous.cpp
   src/spaces/grid.cpp

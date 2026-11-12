@@ -1112,7 +1112,7 @@ TEST_CASE("zones and capture flags render (v0.33)", "[presentation][builder][cap
   // In a free-for-all mode the zones are nobody's.
   {
     auto rs = std::make_unique<RenderState>();
-    buildZones(MatchContent(content), *rs);
+    buildZones(s, MatchContent(content), *rs);
     REQUIRE(rs->zoneCount == 2);
     CHECK(rs->zones[0].team == kNoSlot);
     CHECK(rs->zones[1].team == kNoSlot);
@@ -1225,4 +1225,149 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
   CHECK(lastFall > 0.9f);
   // Deep enough under the floor that the body, scaled down, is gone.
   CHECK(deepest < -radius * kMonkeyHeightOverRadius * kFallEndScale);
+}
+
+// v0.80: a mode that overrides the banana's outbound ticks peaks the arc at
+// its own turn-for-home, not the BoomerangDef's.
+TEST_CASE("the banana arc follows the mode's outbound ticks", "[presentation][builder]") {
+  ContentDB c = defaultContent();
+  REQUIRE(c.modeCount >= 1);
+  c.modes[1] = c.modes[0];
+  c.modes[1].name = ContentName::of("flight");
+  c.modes[1].bananaOutboundTicks = 10;
+  c.modeCount = std::max<uint8_t>(c.modeCount, 2);
+  REQUIRE(c.boomerang.outboundTicks > 10);
+  WorldState s = makePlayingWorld(17, 0b1);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-6), Fixed::zero()});
+  const EntityId id = spawnBanana(s, kP0, Vec2{Fixed::fromInt(-4), Fixed::zero()},
+                                  Vec2{Fixed::fromRatio(1, 8), Fixed::zero()});
+  s.boomerangs.items[id.index].ticksInPhase = 10;
+  const auto heightIn = [&](uint8_t mode) {
+    PresentationState ps;
+    const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, MatchContent(c, 0, mode), kDt);
+    REQUIRE(rs.bananaCount == 1);
+    return rs.bananas[0].height - kBananaHandHeight;
+  };
+  CHECK(heightIn(1) == Approx(kBananaArcPeak));
+  CHECK(heightIn(0) < kBananaArcPeak - 0.05f);
+}
+
+// v0.80, control: every zone is drawn in its owner's colour from modeData
+// (words 2/3 a nibble per zone, team + 1; words 4-7 a u16 of progress per
+// zone), neutral while unowned, with the capture under way; hand-built
+// content with all eight zones and four teams.
+namespace {
+
+void setNibble(MatchRules& r, uint8_t word, uint8_t zone, uint8_t teamPlusOne) {
+  const uint32_t shift = 4u * zone;
+  r.modeData[word] = (r.modeData[word] & ~(0xFu << shift)) | (uint32_t{teamPlusOne} << shift);
+}
+void setProgress(MatchRules& r, uint8_t zone, uint16_t ticks) {
+  const uint32_t shift = (zone % 2) * 16u;
+  uint32_t& w = r.modeData[4 + (zone / 2)];
+  w = (w & ~(0xFFFFu << shift)) | (uint32_t{ticks} << shift);
+}
+
+[[nodiscard]] ContentDB controlContent(uint8_t zones, uint8_t teams) {
+  ContentDB content = defaultContent();
+  ArenaDef& a = content.arenas[0];
+  for (uint8_t k = 0; k < zones; ++k) {
+    const int32_t x = -14 + (4 * k);
+    a.zones[k] = Zone{Vec2{Fixed::fromInt(x), Fixed::fromInt(-1)},
+                      Vec2{Fixed::fromInt(x + 2), Fixed::fromInt(1 + k)}};
+  }
+  a.zoneCount = zones;
+  content.modes[1] = content.modes[0];
+  content.modes[1].name = ContentName::of("zones");
+  content.modes[1].kind = ModeKind::Control;
+  content.modes[1].teams = teams;
+  content.modes[1].scoreToWin = 5;
+  content.modes[1].captureTicks = 120;
+  content.modeCount = std::max<uint8_t>(content.modeCount, 2);
+  return content;
+}
+
+}  // namespace
+
+TEST_CASE("control: zones are tinted by their owner, with the capture under way",
+          "[presentation][builder][control]") {
+  const ContentDB content = controlContent(kMaxArenaZones, kMaxControlTeams);
+  const MatchContent control(content, 0, 1);
+  WorldState s = makePlayingWorld(31, 0b1111, content);
+  MatchRules& r = s.rules;
+  // Zone 0 nobody's; zone 1 team 0's; zone 7 team 3's, team 2 a quarter of
+  // the way to taking it; zone 4 nobody's, team 1 halfway.
+  setNibble(r, 2, 1, 1);
+  setNibble(r, 2, 7, 4);
+  setNibble(r, 3, 7, 3);
+  setProgress(r, 7, 30);
+  setNibble(r, 3, 4, 2);
+  setProgress(r, 4, 60);
+
+  CHECK(controlZone(r, 0) == ControlZone{});
+  CHECK(controlZone(r, 1) == ControlZone{.owner = 0});
+  CHECK(controlZone(r, 7) == ControlZone{.owner = 3, .challenger = 2, .progress = 30});
+  CHECK(controlZone(r, 4) == ControlZone{.challenger = 1, .progress = 60});
+  CHECK(controlZone(r, kMaxArenaZones) == ControlZone{});
+
+  PresentationState ps;
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, control, kDt);
+  REQUIRE(rs.zoneCount == kMaxArenaZones);
+  CHECK(rs.zones[0].team == kNoSlot);
+  CHECK(rs.zones[0].challenger == kNoSlot);
+  CHECK(rs.zones[0].capture == 0.0f);
+  CHECK(rs.zones[1].team == 0);
+  CHECK(rs.zones[7].team == 3);
+  CHECK(rs.zones[7].challenger == 2);
+  CHECK(rs.zones[7].capture == Approx(0.25f));
+  CHECK(rs.zones[4].team == kNoSlot);
+  CHECK(rs.zones[4].challenger == 1);
+  CHECK(rs.zones[4].capture == Approx(0.5f));
+  CHECK(worldToSim(rs.zones[7].center).x == Approx(15.0f));
+  CHECK(rs.zones[7].size.z == Approx(9.0f));
+
+  // The same modeData under another kind is not read: a free-for-all's
+  // zones are nobody's.
+  const RenderState ffa = buildRenderState(ps, s, s, 1.0f, {}, MatchContent(content), kDt);
+  REQUIRE(ffa.zoneCount == kMaxArenaZones);
+  for (uint8_t k = 0; k < ffa.zoneCount; ++k) {
+    CHECK(ffa.zones[k].team == kNoSlot);
+    CHECK(ffa.zones[k].challenger == kNoSlot);
+  }
+}
+
+TEST_CASE("control: a zone captured rings in its team's colour and sounds",
+          "[presentation][builder][control]") {
+  const ContentDB content = controlContent(3, 2);
+  const MatchContent control(content, 0, 1);
+  const WorldState s = makePlayingWorld(32, 0b11, content);
+  SimEvent e{};
+  e.kind = EventKind::ZoneCaptured;
+  e.tick = s.tick;
+  e.a = 1;  // team 1
+  e.b = 2;  // zone 2: x in [-6, -4], y in [-1, 3]
+  PresentationState ps;
+  const std::array events{e};
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, events, control, kDt);
+  REQUIRE(countEffects(rs, EffectKind::ZoneCaptured) == 1);
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& fx = rs.effects[i];
+    if (fx.kind != EffectKind::ZoneCaptured) continue;
+    CHECK(fx.slot == 1);
+    CHECK(worldToSim(fx.position).x == Approx(-5.0f));
+    CHECK(worldToSim(fx.position).y == Approx(1.0f));
+    CHECK(fx.size == Approx(2.0f));
+  }
+  bool scored = false;
+  for (uint16_t i = 0; i < rs.soundCount; ++i)
+    scored = scored || rs.sounds[i].id == SoundId::Score;
+  CHECK(scored);
+  CHECK(soundForEvent(e).has_value());
+
+  // A zone past the arena's draws nothing.
+  e.b = 5;
+  PresentationState ps2;
+  const std::array bad{e};
+  const RenderState none = buildRenderState(ps2, s, s, 1.0f, bad, control, kDt);
+  CHECK(countEffects(none, EffectKind::ZoneCaptured) == 0);
 }

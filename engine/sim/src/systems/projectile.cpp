@@ -19,6 +19,11 @@
 // grounded banana came down over one) stays put and counts its ticks in
 // every match phase, so it finishes sinking even if the round is decided;
 // LifecycleSystem despawns it after BoomerangDef::pitSinkTicks.
+//
+// v0.80: the outbound ticks and the return's turn rate are the mode's when
+// it overrides them (MatchContent::bananaOutboundTicks / ::bananaTurnRateBam:
+// ModeDef's, else the BoomerangDef's), so a mode reshapes the flight with
+// nothing new in the world state.
 #include "kfm/sim/systems.hpp"
 #include "systems/angle_of.hpp"
 #include "systems/statics.hpp"
@@ -45,12 +50,12 @@ constexpr void enterPhase(Boomerang& b, BoomerangPhase phase) {
 // Turns facing toward `target` by at most turnRateBam and sets the velocity
 // along the new facing at `speed`. A target at the boomerang's own position
 // leaves the facing unchanged.
-void steerToward(Boomerang& b, Vec2 target, const BoomerangDef& def, Fixed speed) {
+void steerToward(Boomerang& b, Vec2 target, uint16_t turnRateBam, Fixed speed) {
   Transform& t = b.transform;
   const Vec2 toTarget = target - t.pos;
   if (toTarget != Vec2::zero()) {
     const Angle desired = angleOf(toTarget);
-    const int32_t rate = def.turnRateBam;
+    const int32_t rate = turnRateBam;
     const int32_t delta = std::clamp<int32_t>(desired.signedDeltaFrom(t.facing), -rate, rate);
     t.facing += Angle::fromBam(static_cast<uint16_t>(delta));
   }
@@ -61,6 +66,8 @@ void steerToward(Boomerang& b, Vec2 target, const BoomerangDef& def, Fixed speed
 
 void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sink) {
   const BoomerangDef& def = content.db.boomerang;
+  const uint16_t outboundTicks = content.bananaOutboundTicks();
+  const uint16_t turnRateBam = content.bananaTurnRateBam();
   const statics::MoveParams base{
       .radius = def.radius, .response = statics::Response::Bounce, .restitution = def.restitution};
 
@@ -80,7 +87,7 @@ void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sin
     saturatingIncrement(b.ticksInPhase);
     if (b.phase == BoomerangPhase::Grounded) return;
 
-    if (b.phase == BoomerangPhase::Outbound && b.ticksInPhase >= def.outboundTicks) {
+    if (b.phase == BoomerangPhase::Outbound && b.ticksInPhase >= outboundTicks) {
       enterPhase(b, BoomerangPhase::Returning);
     }
 
@@ -91,7 +98,7 @@ void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sin
         t.vel = Vec2::zero();
         return;
       }
-      steerToward(b, owner->transform.pos, def, def.speed * b.speedMul);
+      steerToward(b, owner->transform.pos, turnRateBam, def.speed * b.speedMul);
     } else if (t.vel != Vec2::zero()) {  // Outbound: straight line
       t.facing = angleOf(t.vel);
     }

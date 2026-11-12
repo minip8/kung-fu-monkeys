@@ -36,7 +36,7 @@ its status line carries the version, and `docs/architecture-changelog.md` has on
 version, oldest first. When a design decision changes, update the document's body, bump the
 version in its status line and append a changelog entry, in the same change. Do not let code
 and doc disagree silently. Three more documents are normative for their contracts:
-`docs/bot-abi.md` (the bot ABI and Observation v1), `docs/lobby-protocol.md` and
+`docs/bot-abi.md` (the bot ABI and Observation v2), `docs/lobby-protocol.md` and
 `docs/arena-result.md` (`kfm_arena --json`).
 
 ## Commands
@@ -173,9 +173,9 @@ bots write into the authoritative frame directly. Helpers (nearest banana, time 
 in the SDKs, not the host ABI. Human-likeness is a host setting: input delay equal to the
 human lead in mixed matches, none bot versus bot. SDKs, example bots and the contest live in the
 bots repository; this repo ships no training tooling (no ONNX, no nanobind, no Python env).
-`docs/bot-abi.md` is the normative ABI and Observation v1 layout.
-`engine/ai` is fixed-point only (the no-float check covers it): a bot match reproduces bit for
-bit on every host. Every host names bots through `BotSpec` and seeds slot s with
+`docs/bot-abi.md` is the normative ABI and Observation v2 layout (version 1 modules are still
+served). `engine/ai` is fixed-point only (the no-float check covers it): a bot match reproduces
+bit for bit on every host. Every host names bots through `BotSpec` and seeds slot s with
 `seed ^ (0x9E3779B97F4A7C15 · (s + 1))`; `engine/net`'s only bot hook is
 `ServerConfig::botInputs`, and `net` and `ai` never link each other.
 

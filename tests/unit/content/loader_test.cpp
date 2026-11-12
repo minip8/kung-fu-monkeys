@@ -749,6 +749,46 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
       loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
                           "{ kind = \"projectile\", radius_mul = 5 }")),
       "'radius_mul' = 5.000 is outside"));
+  // v0.80: the projectile speed multiplier has its own limit, 8; the radius
+  // multiplier keeps 4.
+  const auto projectile = [](std::string_view grant) {
+    return replaced(withPowerUp(), R"({ kind = "stat", stat = "move_speed", mul = 1.5 })", grant);
+  };
+  CHECK(loads(projectile(R"({ kind = "projectile", speed_mul = 8, radius_mul = 4 })")));
+  CHECK(loads(projectile(R"({ kind = "projectile", speed_mul = 7.5 })")));
+  CHECK(contains(loadErrors(projectile(R"({ kind = "projectile", speed_mul = 8.5 })")),
+                 "'speed_mul' = 8.500 is outside"));
+  CHECK(contains(
+      loadErrors(projectile(R"({ kind = "projectile", speed_mul = 8, radius_mul = 4.5 })")),
+      "'radius_mul' = 4.500 is outside"));
+  {
+    // validateContent() holds content built in code to the same limits.
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(
+        parseContent(projectile(R"({ kind = "projectile", speed_mul = 8 })"), "p.toml", db, diag));
+    sim::PowerUpGrant* grant = nullptr;
+    for (uint8_t g = 0; g < db.powerUps[0].grantCount; ++g) {
+      if (db.powerUps[0].grants[g].kind == sim::GrantKind::Projectile) {
+        grant = &db.powerUps[0].grants[g];
+      }
+    }
+    if (grant == nullptr) {
+      FAIL("no projectile grant");
+      return;
+    }
+    Diagnostics ok;
+    CHECK(validateContent(db, ok));
+    grant->projectile.speedMul = Fixed::fromInt(8) + Fixed::epsilon();
+    Diagnostics fast;
+    CHECK_FALSE(validateContent(db, fast));
+    CHECK(fast.format().contains("speed_mul must be in (0, 8] and radius_mul in (0, 4]"));
+    grant->projectile.speedMul = Fixed::fromInt(8);
+    grant->projectile.radiusMul = Fixed::fromInt(4) + Fixed::epsilon();
+    Diagnostics wide;
+    CHECK_FALSE(validateContent(db, wide));
+    CHECK(wide.format().contains("speed_mul must be in (0, 8] and radius_mul in (0, 4]"));
+  }
   // Spawners.
   CHECK(contains(loadErrors(replaced(withPowerUp(), "pos = [3, 1]", "pos = [12, 1]")),
                  "spawner 0: pos (12.000, 1.000) is outside the arena"));
@@ -774,10 +814,12 @@ TEST_CASE("content/ ships the power-ups and an arena that spawns them",
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
-  // v0.34 appended quick_hands and the grid modes' two baselines.
-  const std::array<std::string_view, 8> names = {"speed_boost", "big_banana",  "triple_banana",
-                                                 "shield",      "fast_hands",  "quick_hands",
-                                                 "grid_base",   "grid_base_1t"};
+  // v0.34 appended quick_hands and the grid modes' two baselines, v0.80 the
+  // contest's baseline and the _1t twins its arena lays.
+  const std::array<std::string_view, 13> names = {
+      "speed_boost",     "big_banana",     "triple_banana", "shield",       "fast_hands",
+      "quick_hands",     "grid_base",      "grid_base_1t",  "contest_base", "big_banana_1t",
+      "triplebanana_1t", "quick_hands_1t", "shield_1t"};
   REQUIRE(db.powerUpCount == names.size());
   for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);
@@ -1030,6 +1072,34 @@ score_to_win = 0
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_limit = 3\n"),
                  "unknown key 'score_limit'"));
 
+  // v0.80: a mode may override the banana's flight (0, the default, keeps
+  // the [boomerang] def's), within the [boomerang] keys' bounds.
+  {
+    ContentDB flight{};
+    Diagnostics flightDiag;
+    REQUIRE(parseContent(base + "[[mode]]\nname = \"far\"\nbanana_outbound_ticks = 45\n"
+                                "banana_turn_rate = 8000\n",
+                         "modes.toml", flight, flightDiag));
+    CHECK(flight.modes[0].bananaOutboundTicks == 0);
+    CHECK(flight.modes[0].bananaTurnRateBam == 0);
+    CHECK(flight.modes[1].bananaOutboundTicks == 45);
+    CHECK(flight.modes[1].bananaTurnRateBam == 8000);
+    CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[0]) ==
+          flight.boomerang.outboundTicks);
+    CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[1]) == 45);
+    CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[0]) ==
+          flight.boomerang.turnRateBam);
+    CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[1]) == 8000);
+  }
+  CHECK(loads(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65535\n"
+                     "banana_turn_rate = 32768\n"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65536\n"),
+                 "'banana_outbound_ticks'"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_turn_rate = 32769\n"),
+                 "'banana_turn_rate'"));
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_turn_rate = -1\n"),
+                 "'banana_turn_rate'"));
+
   // kMaxModes is 32 since v0.31 (8 before): kMinimal's rounds plus 31 more.
   std::string many = base;
   for (uint32_t i = 1; i < sim::kMaxModes; ++i)
@@ -1089,11 +1159,13 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
 }
 
 // M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset.
-// Since v0.69 it is king of the hill with grid_rounds_1t's squad: the space,
-// turns, kits, baseline and vision are that row's, the rules hill's, the arena
-// courtyard_hill (the courtyard with the hill in its middle). A season's
-// change to the row is a deliberate edit here.
-TEST_CASE("content/ ships contest as hill with grid_rounds_1t's squad (M7, v0.69)",
+// Since v0.80 it is the control kind (§11 "Contest design") with
+// grid_rounds_1t's squad: the space, turns, kits and the vision's radii are
+// that row's; the baseline is contest_base (the banana at 2 cells a turn),
+// the arena courtyard_zones (three zones), hearing 1 and the banana's flight
+// the mode's own. A season's change to the row is a deliberate edit here;
+// the arena, the twins and the flight are pinned in contest_test.cpp.
+TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0.80)",
           "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
@@ -1101,34 +1173,64 @@ TEST_CASE("content/ ships contest as hill with grid_rounds_1t's squad (M7, v0.69
   const std::optional<uint8_t> contest = db.findMode("contest");
   const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
   const std::optional<uint8_t> courtyard = db.findArena("courtyard");
-  const std::optional<uint8_t> hillArena = db.findArena("courtyard_hill");
+  const std::optional<uint8_t> zones = db.findArena("courtyard_zones");
+  const std::optional<uint8_t> base = db.findPowerUp("contest_base");
   REQUIRE(contest);
   REQUIRE(grid);
   REQUIRE(courtyard);
-  REQUIRE(hillArena);
+  REQUIRE(zones);
+  REQUIRE(base);
   const sim::ModeDef& g = db.modes[grid.value_or(0)];
   const sim::ModeDef& m = db.modes[contest.value_or(0)];
-  CHECK(m.kind == sim::ModeKind::Hill);
+  CHECK(m.kind == sim::ModeKind::Control);
   CHECK(m.space == g.space);
   CHECK(m.turnTicks == g.turnTicks);
+  CHECK(m.turnTicks == 1);
   CHECK(m.dashCells == g.dashCells);
   CHECK(m.teams == g.teams);
   CHECK(m.roleCount == g.roleCount);
   CHECK(m.roles == g.roles);
-  CHECK(m.baseline == g.baseline);
-  CHECK(m.vision == g.vision);
+  CHECK(m.baseline == base);
   CHECK(m.vision.kind == sim::VisionKind::Own);
+  CHECK(m.vision.peripheral == g.vision.peripheral);
+  CHECK(m.vision.cone == g.vision.cone);
+  CHECK(m.vision.focus == g.vision.focus);
+  CHECK(m.vision.bananaSight == g.vision.bananaSight);
+  CHECK(m.vision.hearing == 1);
+  CHECK(m.captureTicks == 30);
   CHECK(m.hillTicks == 60);
-  CHECK(m.scoreToWin == 5);
+  CHECK(m.scoreToWin == 10);
   CHECK(m.timeLimitTicks == 3600);
-  CHECK(m.respawnTicks == 120);
+  CHECK(m.respawnTicks == 240);
+  CHECK(m.respawnInvulnTicks == 8);
   CHECK(m.deathBananas == sim::DeathBananas::Vanish);
   CHECK(m.bananaRegrowTicks == 120);
-  CHECK(db.firstCompatibleArena(contest.value_or(0)) == hillArena);
-  CHECK(db.compatible(hillArena.value_or(0), contest.value_or(0)));
+  CHECK(m.catchScore == 0);
+  CHECK(m.suicideScore == 0);
+  CHECK(m.bananaOutboundTicks == 3);
+  CHECK(m.bananaTurnRateBam == 15474);
+  CHECK(m.roundStartTicks == 60);
+  CHECK(m.arena == zones);
+  CHECK(db.firstCompatibleArena(contest.value_or(0)) == zones);
+  CHECK(db.compatible(zones.value_or(0), contest.value_or(0)));
   CHECK_FALSE(db.compatible(courtyard.value_or(0), contest.value_or(0)));  // no zone
   CHECK_FALSE(db.compatible(0, contest.value_or(0)));                      // the dojo has no cells
+}
 
+// v0.69's hill, kept for the hill kind: the courtyard with its middle block
+// taken out and the floor between the pillars made zone 0.
+TEST_CASE("content/ ships courtyard_hill as the courtyard with a hill (v0.69)",
+          "[content][loader][arena]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> courtyard = db.findArena("courtyard");
+  const std::optional<uint8_t> hillArena = db.findArena("courtyard_hill");
+  const std::optional<uint8_t> hill = db.findMode("hill");
+  REQUIRE(courtyard);
+  REQUIRE(hillArena);
+  REQUIRE(hill);
+  CHECK(db.compatible(hillArena.value_or(0), hill.value_or(0)));
   // The arena is the courtyard but for its middle: same box, spawns and
   // spawners, one zone (4 x 2 cells between the pillars), one wall box fewer.
   const sim::ArenaDef& a = db.arenas[hillArena.value_or(0)];

@@ -189,7 +189,10 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.modes[0].deathBananas = DeathBananas::Vanish; },
       [](ContentDB& c) { c.modes[0].catchScore = -1; },
       [](ContentDB& c) { c.modes[0].suicideScore = -1; },
-      [](ContentDB& c) { c.modes[0].bananaRegrowTicks += 1; });
+      [](ContentDB& c) { c.modes[0].bananaRegrowTicks += 1; },
+      [](ContentDB& c) { c.modes[0].captureTicks += 1; },
+      [](ContentDB& c) { c.modes[0].bananaOutboundTicks += 1; },
+      [](ContentDB& c) { c.modes[0].bananaTurnRateBam += 1; });
   everyFieldReachesTheHash<VisionDef>(
       [](ContentDB& c) { c.modes[1].vision.kind = VisionKind::Team; },
       [](ContentDB& c) { c.modes[1].vision.peripheral += 1; },

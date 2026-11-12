@@ -230,7 +230,8 @@ struct ContentDB {
 
   // Whether a match may pair this arena with this mode (v0.32, v0.33,
   // v0.34): a team mode needs a spawn group per team, hill a zone (zone 0),
-  // capture a zone per team (team t's is zone t), a grid mode cells
+  // capture a zone per team (team t's is zone t), control (v0.80) a zone
+  // (it plays every zone the arena has), a grid mode cells
   // (`cellSize > 0`, §5.12), and so does a fog vision (v0.35: its radii are
   // cells, §8). An incompatible pair is a configuration error of the
   // host (the lobby skips it, a command line refuses it), never a load
@@ -241,6 +242,7 @@ struct ContentDB {
     if (m.teams != 0 && a.spawnGroups < m.teams) return false;
     if (m.kind == ModeKind::Hill && a.zoneCount < 1) return false;
     if (m.kind == ModeKind::Capture && a.zoneCount < (m.teams > 0 ? m.teams : 1)) return false;
+    if (m.kind == ModeKind::Control && a.zoneCount < 1) return false;
     if (m.space == Space::Grid && a.cellSize <= Fixed::zero()) return false;
     if (m.vision.fog() && a.cellSize <= Fixed::zero()) return false;
     return true;
@@ -269,6 +271,18 @@ using TeamSet = std::array<uint8_t, kMaxPlayers>;
   return t;
 }
 inline constexpr TeamSet kFreeForAllTeams = freeForAllTeams();
+
+// v0.80: the banana's flight a mode plays with (ProjectileSystem, and the
+// readers outside the sim: the observation's rules block, the banana's arc):
+// the mode's override (ModeDef::bananaOutboundTicks / ::bananaTurnRateBam),
+// or the BoomerangDef's where the mode leaves it 0.
+[[nodiscard]] constexpr uint16_t bananaOutboundTicksOf(const BoomerangDef& def,
+                                                       const ModeDef& mode) {
+  return mode.bananaOutboundTicks != 0 ? mode.bananaOutboundTicks : def.outboundTicks;
+}
+[[nodiscard]] constexpr uint16_t bananaTurnRateBamOf(const BoomerangDef& def, const ModeDef& mode) {
+  return mode.bananaTurnRateBam != 0 ? mode.bananaTurnRateBam : def.turnRateBam;
+}
 
 // How one monkey stands to another (or to a banana's owner): the rules
 // table's InteractionRule::relationB is a mask over these bits.
@@ -336,6 +350,14 @@ struct MatchContent {
   // override, as the ability def per slot.
   [[nodiscard]] constexpr const std::array<uint8_t, kAbilitySlots>& loadout(PlayerId id) const {
     return db.loadoutAbilities(loadoutIndexFor(id));
+  }
+
+  // v0.80: the banana's flight in this match (bananaOutboundTicksOf()).
+  [[nodiscard]] constexpr uint16_t bananaOutboundTicks() const {
+    return bananaOutboundTicksOf(db.boomerang, mode);
+  }
+  [[nodiscard]] constexpr uint16_t bananaTurnRateBam() const {
+    return bananaTurnRateBamOf(db.boomerang, mode);
   }
 
   // The team of a slot (an invalid slot has none: kMaxPlayers).

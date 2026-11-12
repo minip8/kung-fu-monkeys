@@ -304,36 +304,49 @@ struct AbiCheck {
   AgentFault fault{AgentFault::None};
   std::string message;
   uint32_t obsAddr{0};
+  // The bytes of the observation the module takes: all of it, or version
+  // 1's prefix (v0.80: version 2 only appends).
+  uint32_t obsSize{0};
 };
+
+// The observation bytes a module of `version` is written, or 0 for a version
+// the host does not speak.
+[[nodiscard]] constexpr uint32_t observationBytes(uint32_t version) {
+  if (version == kObservationVersion) return sizeof(Observation);
+  if (version == kObservationV1Version) return kObservationV1Size;
+  return 0;
+}
 
 AbiCheck checkAbi(const Instance& in, uint32_t fuel) {
   std::array<uint32_t, 2> cells{};
   CallResult r = call(in, in.abiVersion, cells, 0, fuel);
   if (!r.ok) {
     return {r.overBudget ? AgentFault::InitOverBudget : AgentFault::InitTrap,
-            "kfm_abi_version: " + r.error, 0};
+            "kfm_abi_version: " + r.error, 0, 0};
   }
-  if (cells[0] != kObservationVersion) {
+  const uint32_t obsSize = observationBytes(cells[0]);
+  if (obsSize == 0) {
     return {AgentFault::AbiMismatch,
             "kfm_abi_version() is " + std::to_string(cells[0]) + ", the host speaks " +
+                std::to_string(kObservationV1Version) + " and " +
                 std::to_string(kObservationVersion),
-            0};
+            0, 0};
   }
   cells = {};
   r = call(in, in.obsBuffer, cells, 0, fuel);
   if (!r.ok) {
     return {r.overBudget ? AgentFault::InitOverBudget : AgentFault::InitTrap,
-            "kfm_obs_buffer: " + r.error, 0};
+            "kfm_obs_buffer: " + r.error, 0, 0};
   }
   const uint32_t addr = cells[0];
-  if (!wasm_runtime_validate_app_addr(in.inst, addr, sizeof(Observation))) {
+  if (!wasm_runtime_validate_app_addr(in.inst, addr, obsSize)) {
     wasm_runtime_clear_exception(in.inst);
     return {AgentFault::BadObsBuffer,
             "kfm_obs_buffer() = " + std::to_string(addr) + " has no room for the " +
-                std::to_string(sizeof(Observation)) + "-byte observation",
-            0};
+                std::to_string(obsSize) + "-byte observation",
+            0, 0};
   }
-  return {AgentFault::None, {}, addr};
+  return {AgentFault::None, {}, addr, obsSize};
 }
 
 }  // namespace
@@ -456,6 +469,7 @@ struct WasmAgent::Impl {
   std::shared_ptr<WasmModule::Impl> module;
   std::unique_ptr<Instance> instance;  // null while dead
   uint32_t obsAddr{0};
+  uint32_t obsSize{0};  // the bytes written per act: its ABI version's observation
   AgentFault lastFault{AgentFault::Dead};
   AgentFault deathCause{AgentFault::Dead};  // why `instance` is null
   std::string lastFaultMessage{"not initialised"};
@@ -511,6 +525,7 @@ void WasmAgent::init(uint64_t seed, PlayerId slot) {
     return;
   }
   a.obsAddr = abi.obsAddr;
+  a.obsSize = abi.obsSize;
   a.instance = std::move(in);
   a.lastFault = AgentFault::None;
   a.deathCause = AgentFault::None;
@@ -529,7 +544,13 @@ std::optional<sim::PlayerInput> WasmAgent::act(const Observation& obs, Tick tick
   // Resolved every tick: memory.grow may have moved the linear memory. The
   // range was validated at init and memory never shrinks.
   void* dst = wasm_runtime_addr_app_to_native(in.inst, a.obsAddr);
-  std::memcpy(dst, &obs, sizeof obs);
+  std::memcpy(dst, &obs, a.obsSize);
+  if (a.obsSize == kObservationV1Size) {
+    // A version 1 module (v0.80): version 2's prefix under version 1's header.
+    const ObsHeader v1{kObservationV1Version, kObservationV1Size, obs.header.schemaFlags,
+                       obs.header.reserved0};
+    std::memcpy(dst, &v1, sizeof v1);
+  }
 
   // A call cut short by a trap or the budget never runs its epilogue, so a
   // compiled module's shadow-stack pointer would stay where the dead frames

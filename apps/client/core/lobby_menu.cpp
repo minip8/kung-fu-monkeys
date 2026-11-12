@@ -418,6 +418,16 @@ std::string modeSummary(const sim::ModeDef& mode) {
           static_cast<unsigned>(mode.scoreToWin), secs(mode.flagReturnTicks), clock.c_str());
       return buf;
     }
+    case sim::ModeKind::Control: {
+      // v0.80: capture zones and keep them.
+      const std::string clock =
+          mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      std::snprintf(buf, sizeof buf,
+                    "first team to %u points, a zone taken in %.1f s pays a point per %.1f s, %s",
+                    static_cast<unsigned>(mode.scoreToWin), secs(mode.captureTicks),
+                    secs(mode.hillTicks), clock.c_str());
+      return buf;
+    }
     case sim::ModeKind::TeamRounds:
       std::snprintf(buf, sizeof buf, "first team to %u rounds, last team standing",
                     static_cast<unsigned>(mode.roundsToWin));

@@ -103,6 +103,26 @@ std::string contentToCpp(const sim::ContentDB& c) {
   appendLine(out, "rounds.roundsToWin", rounds.roundsToWin);
   appendLine(out, "rounds.roundEndTicks", rounds.roundEndTicks);
   appendLine(out, "rounds.roundStartTicks", rounds.roundStartTicks);
+
+  // v0.80: the objective clocks the overlay tunes (hill's and control's
+  // hillTicks, control's captureTicks) and a mode's banana flight when it
+  // overrides the banana's, per mode by index.
+  for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {
+    const sim::ModeDef& m = c.modes[i];
+    const auto line = [&](const char* field, uint32_t value) {
+      char lhs[48];
+      std::snprintf(lhs, sizeof lhs, "c.modes[%u].%s", static_cast<unsigned>(i), field);
+      appendLine(out, lhs, value);
+    };
+    if (m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Control) {
+      line("hillTicks", m.hillTicks);
+    }
+    if (m.kind == sim::ModeKind::Control) line("captureTicks", m.captureTicks);
+    if (m.bananaOutboundTicks != 0 || m.bananaTurnRateBam != 0) {
+      line("bananaOutboundTicks", m.bananaOutboundTicks);
+      line("bananaTurnRateBam", m.bananaTurnRateBam);
+    }
+  }
   return out;
 }
 

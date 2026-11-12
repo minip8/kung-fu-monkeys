@@ -1,11 +1,13 @@
-// Observation v1 and its builder (architecture §8, docs/bot-abi.md): the
+// Observation v2 and its builder (architecture §8, docs/bot-abi.md): the
 // documented layout, a hand-built world mapped field by field, the
 // closest-approach math against a brute-force reference, every
-// present/absent/dead combination and the host delay copied through.
+// present/absent/dead combination, the host delay copied through, and
+// version 2's zones block over a version 1 prefix that did not move (v0.80).
 #include "kfm/ai/observation.hpp"
 
 #include "../sim/sim_test_util.hpp"
 #include "kfm/ai/observation_builder.hpp"
+#include "kfm/content/loader.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/content.hpp"
 
@@ -15,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <utility>
 
 using namespace kfm;
@@ -50,10 +53,19 @@ constexpr PlayerId kP2{2};
 
 }  // namespace
 
-TEST_CASE("Observation v1 matches the documented layout", "[ai][observation]") {
+TEST_CASE("Observation v2 matches the documented layout", "[ai][observation]") {
   // A handful of offsets from the table in docs/bot-abi.md; the full set is
   // static_asserted in observation.hpp.
-  CHECK(sizeof(Observation) == 5748);
+  CHECK(kObservationVersion == 2);
+  CHECK(sizeof(Observation) == 5880);
+  // v0.80: version 2 appends the zones block to version 1's 5748 bytes.
+  CHECK(kObservationV1Version == 1);
+  CHECK(kObservationV1Size == 5748);
+  CHECK(offsetof(Observation, zones) == kObservationV1Size);
+  CHECK(offsetof(Observation, zones) + offsetof(ObsZones, zone) == 5752);
+  CHECK(offsetof(Observation, zones) + offsetof(ObsZones, zone) + (7 * sizeof(ObsZone)) +
+            offsetof(ObsZone, maxY) ==
+        5876);
   CHECK(alignof(Observation) == 4);
   CHECK(offsetof(Observation, header) + offsetof(ObsHeader, size) == 4);
   CHECK(offsetof(Observation, match) + offsetof(ObsMatch, inputDelayTicks) == 44);
@@ -527,4 +539,288 @@ TEST_CASE("the arena's zones 0 and 1 follow the mode's words (v0.69)", "[ai][obs
   buildObservation(s, MatchContent(c, 0, 0), kP0, 0, obs);
   for (uint32_t i = kObsZoneWord; i < kObsModeDataWords; ++i)
     CHECK(obs.match.reservedModeData[i] == 0);
+}
+
+namespace {
+
+constexpr PlayerId kP3{3};
+
+// FNV-1a over a byte range of an observation.
+[[nodiscard]] uint32_t fnv1a(const Observation& obs, size_t begin, size_t end) {
+  const auto* bytes = reinterpret_cast<const unsigned char*>(&obs);
+  uint32_t h = 2166136261u;
+  for (size_t i = begin; i < end; ++i) {
+    h ^= bytes[i];
+    h *= 16777619u;
+  }
+  return h;
+}
+
+// Zone k of zonedArena: the box [2k - 8, 2k - 7] x [k - 3, k + 1].
+[[nodiscard]] Zone zoneNumber(int32_t k) {
+  return Zone{Vec2{fx((2 * k) - 8), fx(k - 3)}, Vec2{fx((2 * k) - 7), fx(k + 1)}};
+}
+
+// Gives an arena `count` zones (zoneNumber(k) each), the rest cleared.
+void zonedArena(ArenaDef& a, uint8_t count) {
+  for (uint8_t k = 0; k < kMaxArenaZones; ++k)
+    a.zones[k] = k < count ? zoneNumber(k) : Zone{};
+  a.zoneCount = count;
+}
+
+void checkZone(const ObsZone& got, const Zone& want) {
+  CHECK(got.minX == want.min.x.raw);
+  CHECK(got.minY == want.min.y.raw);
+  CHECK(got.maxX == want.max.x.raw);
+  CHECK(got.maxY == want.max.y.raw);
+}
+
+[[nodiscard]] bool zeroZone(const ObsZone& z) {
+  return z.minX == 0 && z.minY == 0 && z.maxX == 0 && z.maxY == 0;
+}
+
+}  // namespace
+
+TEST_CASE("version 2 lists every zone of the arena (v0.80)", "[ai][observation][zones]") {
+  ContentDB c = defaultContent();
+  ArenaDef& zoned = c.arenas[1];
+  zoned = c.arenas[0];
+  zoned.name = ContentName::of("zoned");
+  zonedArena(zoned, 5);
+  c.arenaCount = 2;
+  const WorldState s = makePlayingWorld(4, 0b11);
+  Observation obs{};
+  std::memset(&obs, 0xCD, sizeof obs);  // every byte of the block is written
+  buildObservation(s, MatchContent(c, 1, 0), kP0, 0, obs);
+  CHECK(obs.zones.count == 5);
+  for (const uint8_t pad : obs.zones.pad0)
+    CHECK(pad == 0);
+  for (uint8_t k = 0; k < 5; ++k) {
+    INFO("zone " << int{k});
+    checkZone(obs.zones.zone[k], zoneNumber(k));
+  }
+  for (uint8_t k = 5; k < kObsMaxZones; ++k)
+    CHECK(zeroZone(obs.zones.zone[k]));
+  // Words 8-15 still show zones 0 and 1, exactly as version 1 does.
+  for (uint32_t k = 0; k < kObsZones; ++k) {
+    const Zone z = zoneNumber(static_cast<int32_t>(k));
+    const uint32_t* box = &obs.match.reservedModeData[kObsZoneWord + (4 * k)];
+    CHECK(static_cast<int32_t>(box[0]) == z.min.x.raw);
+    CHECK(static_cast<int32_t>(box[1]) == z.min.y.raw);
+    CHECK(static_cast<int32_t>(box[2]) == z.max.x.raw);
+    CHECK(static_cast<int32_t>(box[3]) == z.max.y.raw);
+  }
+
+  // As many zones as an arena may have: all of them.
+  STATIC_CHECK(kMaxArenaZones == kObsMaxZones);
+  zonedArena(zoned, kMaxArenaZones);
+  buildObservation(s, MatchContent(c, 1, 0), kP0, 0, obs);
+  CHECK(obs.zones.count == kObsMaxZones);
+  checkZone(obs.zones.zone[kObsMaxZones - 1], zoneNumber(kObsMaxZones - 1));
+
+  // One zone, and none: what is past `count` is zero.
+  zonedArena(zoned, 1);
+  buildObservation(s, MatchContent(c, 1, 0), kP0, 0, obs);
+  CHECK(obs.zones.count == 1);
+  checkZone(obs.zones.zone[0], zoneNumber(0));
+  for (uint8_t k = 1; k < kObsMaxZones; ++k)
+    CHECK(zeroZone(obs.zones.zone[k]));
+  buildObservation(s, MatchContent(c, 0, 0), kP0, 0, obs);
+  CHECK(obs.zones.count == 0);
+  for (const ObsZone& z : obs.zones.zone)
+    CHECK(zeroZone(z));
+}
+
+TEST_CASE("a control match reports kind 7 and its state in words 0-7 (v0.80)",
+          "[ai][observation][zones]") {
+  // The documented modeData layout of the control kind (docs/bot-abi.md §3),
+  // read off a real match: team 0 takes zone 0, then team 1 challenges it.
+  ContentDB c = defaultContent();
+  ArenaDef& zoned = c.arenas[1];
+  zoned = c.arenas[0];
+  zoned.name = ContentName::of("zoned");
+  zonedArena(zoned, 3);
+  c.arenaCount = 2;
+  ModeDef& m = c.modes[1];
+  m.name = ContentName::of("control");
+  m.kind = ModeKind::Control;
+  m.teams = 2;
+  m.captureTicks = 3;
+  m.hillTicks = 60;
+  m.scoreToWin = 10;
+  m.timeLimitTicks = 3600;
+  c.modeCount = 2;
+  const MatchConfig config{.seed = 4,
+                           .players = 0b1111,
+                           .arena = 1,
+                           .mode = 1,
+                           .teams = balancedTeams(2, 0b1111)};  // slots 0, 2 against 1, 3
+  const MatchContent match = matchContent(c, config);
+  WorldState s = initialWorld(config);
+  EventLog log;
+  for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::Playing; ++i)
+    runTicks(s, frameFor(s), 1, match, log);
+  REQUIRE(s.rules.phase == MatchPhase::Playing);
+  const Vec2 inZone0 = zoneNumber(0).centre();
+  placePlayer(s, kP0, inZone0);
+  placePlayer(s, kP1, Vec2{fx(6), fx(5)});
+  placePlayer(s, kP2, Vec2{fx(4), fx(5)});
+  placePlayer(s, kP3, Vec2{fx(2), fx(5)});
+  log.clear();
+  // Two ticks of progress, the capture on the third, then two ticks of clock.
+  runTicks(s, frameFor(s), 5, match, log);
+  REQUIRE(countEvents(log, EventKind::ZoneCaptured) == 1);
+
+  Observation obs{};
+  buildObservation(s, match, kP0, 0, obs);
+  CHECK(obs.match.modeKind == 7);
+  CHECK(obs.match.modeKind == static_cast<uint8_t>(ObsModeKind::Control));
+  for (uint32_t i = 0; i < kModeDataWords; ++i)
+    CHECK(obs.match.reservedModeData[i] == s.rules.modeData[i]);
+  CHECK((obs.match.reservedModeData[0] & 0xFFFFu) == 3);  // team 0's clock: three owned ticks
+  CHECK((obs.match.reservedModeData[0] >> 16) == 0);      // team 1's
+  CHECK(obs.match.reservedModeData[2] == 0x1u);           // zone 0: team 0 + 1
+  CHECK(obs.match.reservedModeData[3] == 0);              // no challenger
+  CHECK(obs.match.reservedModeData[4] == 0);              // no progress
+  CHECK(obs.zones.count == 3);
+
+  // Team 1 out-numbers team 0 on zone 0: it challenges, two ticks in.
+  placePlayer(s, kP1, inZone0);
+  placePlayer(s, kP3, inZone0);
+  runTicks(s, frameFor(s), 2, match, log);
+  buildObservation(s, match, kP0, 0, obs);
+  CHECK((obs.match.reservedModeData[0] & 0xFFFFu) == 5);  // the zone still pays its owner
+  CHECK(obs.match.reservedModeData[2] == 0x1u);
+  CHECK(obs.match.reservedModeData[3] == 0x2u);           // zone 0: team 1 + 1
+  CHECK((obs.match.reservedModeData[4] & 0xFFFFu) == 2);  // zone 0's progress, the low half
+  CHECK(obs.match.reservedModeData[5] == 0);
+  // Words 8-15 keep showing zones 0 and 1.
+  CHECK(static_cast<int32_t>(obs.match.reservedModeData[kObsZoneWord]) == zoneNumber(0).min.x.raw);
+  CHECK(static_cast<int32_t>(obs.match.reservedModeData[kObsZoneWord + 4]) ==
+        zoneNumber(1).min.x.raw);
+}
+
+TEST_CASE("version 2's first 5748 bytes are version 1's observation (v0.80)",
+          "[ai][observation][zones]") {
+  // A team hill match on an arena with three zones, walls, a hazard and a
+  // spawner, with scores, deaths, respawns, modeData, a power-up, bananas and
+  // pickups: most of version 1's fields hold something. The hash of bytes
+  // [16, 5748) below was computed with the version 1 builder (the tree
+  // before v0.80, 650ffde) on this world, so the zones block and the version
+  // 2 header are all version 2 changed. A deliberate change to what version
+  // 1 shows (a reserved field filled) updates it; anything else that moves
+  // it changes what every version 1 module sees.
+  ContentDB c = defaultContent();
+  ArenaDef& arena = c.arenas[1];
+  arena = c.arenas[0];
+  arena.name = ContentName::of("three");
+  arena.walls[0] = Wall{Vec2{fx(-1), fx(-2)}, Vec2{fx(1), fx(2)}};
+  arena.wallCount = 1;
+  arena.hazards[0] = Hazard{Vec2{fx(5), fx(5)}, Vec2{fx(7), fx(6)}, HazardKind::Slow, fx(1, 2)};
+  arena.hazardCount = 1;
+  arena.pickupSpawners[0] = PickupSpawner{Vec2{fx(3), fx(-4)}, 0x5, 60, 300, 2};
+  arena.pickupSpawnerCount = 1;
+  zonedArena(arena, 3);
+  c.arenaCount = 2;
+  ModeDef& mode = c.modes[1];
+  mode.name = ContentName::of("team_hill");
+  mode.kind = ModeKind::Hill;
+  mode.teams = 2;
+  mode.timeLimitTicks = 7200;
+  mode.scoreToWin = 5;
+  mode.respawnTicks = 180;
+  mode.respawnInvulnTicks = 30;
+  c.modeCount = 2;
+  const uint8_t shield = addPowerUp(c, "shield", 600, {tagGrant(Tag::Shielded)});
+  const MatchContent content(c, 1, 1, kAllPowerUps, 0, balancedTeams(2, 0b1111));
+
+  WorldState s = makePlayingWorld(9, 0b1111);
+  s.rules.scores = {2, -1, 3, 0};
+  s.rules.deaths[1] = 2;
+  s.rules.respawnTicks[3] = 40;
+  s.rules.invulnTicks[2] = 7;
+  s.rules.modeData[0] = 0x00340012;
+  s.rules.modeData[5] = 2;
+  Player& me = placePlayer(s, kP0, Vec2{fx(2), fx(1)});
+  me.transform.vel = Vec2{fx(1, 10), Fixed{}};
+  me.transform.facing = Angle::fromInput8(40);
+  givePowerUp(me, shield, 99);
+  placePlayer(s, kP1, Vec2{fx(-6), fx(3)}).ammo = 0;
+  placePlayer(s, kP2, Vec2{fx(4), fx(-2)});
+  s.players.despawn(s.players.idAt(3));
+  spawnBanana(s, kP1, Vec2{fx(-2), fx(1)}, Vec2{fx(1, 2), Fixed{}}, BoomerangPhase::Returning);
+  spawnBanana(s, kP2, Vec2{fx(6), fx(-3)}, Vec2{Fixed{}, fx(1, 3)});
+  spawnPickup(s, Vec2{fx(-3), fx(-3)});
+  spawnPowerUpPickup(s, Vec2{fx(3), fx(-4)}, shield, 0);
+
+  Observation obs{};
+  std::memset(&obs, 0x5A, sizeof obs);
+  buildObservation(s, content, 0x5EED1234, kP0, 2, obs);
+  CHECK(obs.header.version == kObservationVersion);
+  CHECK(obs.header.size == sizeof(Observation));
+  CHECK(obs.header.schemaFlags == 0);
+  CHECK(obs.header.reserved0 == 0);
+  CHECK(fnv1a(obs, sizeof(ObsHeader), kObservationV1Size) == 0x28715d37u);
+}
+
+TEST_CASE("the rules block reports the mode's banana flight, else the def's (v0.80)",
+          "[ai][observation][flight]") {
+  // fillRules reads MatchContent::bananaOutboundTicks() / bananaTurnRateBam():
+  // a mode that sets banana_outbound_ticks / banana_turn_rate shows its own,
+  // a mode that leaves them 0 shows the BoomerangDef's.
+  ContentDB c = defaultContent();
+  REQUIRE(c.boomerang.outboundTicks != 7);
+  REQUIRE(c.boomerang.turnRateBam != 12345);
+  ModeDef& flown = c.modes[1];
+  flown = c.modes[0];
+  flown.name = ContentName::of("flown");
+  flown.bananaOutboundTicks = 7;
+  flown.bananaTurnRateBam = 12345;
+  c.modeCount = 2;
+  REQUIRE(c.modes[0].bananaOutboundTicks == 0);
+  REQUIRE(c.modes[0].bananaTurnRateBam == 0);
+  const WorldState s = makePlayingWorld(5, 0b11);
+
+  Observation obs{};
+  buildObservation(s, MatchContent(c, 0, 1), kP0, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == 7);
+  CHECK(obs.rules.bananaTurnRateBam == 12345);
+  buildObservation(s, MatchContent(c, 0, 0), kP0, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == c.boomerang.outboundTicks);
+  CHECK(obs.rules.bananaTurnRateBam == c.boomerang.turnRateBam);
+
+  // Only one of the two set: each falls back on its own.
+  flown.bananaTurnRateBam = 0;
+  buildObservation(s, MatchContent(c, 0, 1), kP0, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == 7);
+  CHECK(obs.rules.bananaTurnRateBam == c.boomerang.turnRateBam);
+}
+
+TEST_CASE("a bot in the shipped contest is told 3 turns out and 85 degrees a turn home (v0.80)",
+          "[ai][observation][flight][contest]") {
+  ContentDB db{};
+  content::Diagnostics diag;
+  const bool loaded = content::loadEmbeddedContent(db, diag);
+  REQUIRE(loaded);
+  const std::optional<uint8_t> contest = db.findMode("contest");
+  REQUIRE(contest);
+  const uint8_t mode = contest.value_or(0);
+  const PlayerMask players = 0b11;
+  const MatchConfig config{.seed = 3,
+                           .players = players,
+                           .arena = db.modes[mode].arena,
+                           .mode = mode,
+                           .teams = teamsFor(db.modes[mode], players)};
+  const MatchContent match = matchContent(db, config);
+  WorldState s = initialWorld(config);
+  EventLog log;
+  runTicks(s, frameFor(s), 1, match, log);  // the round start spawns the monkeys
+
+  Observation obs{};
+  buildObservation(s, match, kP1, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == 3);
+  CHECK(obs.rules.bananaTurnRateBam == 15474);
+  // Neither is the def's: the row overrides both.
+  CHECK(db.boomerang.outboundTicks != 3);
+  CHECK(db.boomerang.turnRateBam != 15474);
 }

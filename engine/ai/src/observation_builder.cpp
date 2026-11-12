@@ -41,7 +41,8 @@ static_assert(
         static_cast<uint8_t>(ObsModeKind::TeamDeathmatch) &&
     static_cast<uint8_t>(sim::ModeKind::Hill) == static_cast<uint8_t>(ObsModeKind::Hill) &&
     static_cast<uint8_t>(sim::ModeKind::Capture) == static_cast<uint8_t>(ObsModeKind::Capture) &&
-    static_cast<uint8_t>(sim::ModeKind::kCount) == 7);
+    static_cast<uint8_t>(sim::ModeKind::Control) == static_cast<uint8_t>(ObsModeKind::Control) &&
+    static_cast<uint8_t>(sim::ModeKind::kCount) == 8);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::Call) ==
@@ -171,7 +172,7 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   m.reservedTicksToLatch = clock.ticksToLatch;
 }
 
-void fillRules(const sim::ContentDB& db, ObsRules& r) {
+void fillRules(const sim::ContentDB& db, const sim::ModeDef& mode, ObsRules& r) {
   r.playerRadius = db.player.radius.raw;
   r.playerMoveSpeed = db.player.moveSpeed.raw;
   r.bananaRadius = db.boomerang.radius.raw;
@@ -179,9 +180,9 @@ void fillRules(const sim::ContentDB& db, ObsRules& r) {
   r.bananaSpawnOffset = db.boomerang.spawnOffset.raw;
   r.bananaRestitution = db.boomerang.restitution.raw;
   r.pickupRadius = db.pickup.radius.raw;
-  r.bananaOutboundTicks = db.boomerang.outboundTicks;
+  r.bananaOutboundTicks = sim::bananaOutboundTicksOf(db.boomerang, mode);  // v0.80: the mode's
   r.bananaMaxReturnTicks = db.boomerang.maxReturnTicks;
-  r.bananaTurnRateBam = db.boomerang.turnRateBam;
+  r.bananaTurnRateBam = sim::bananaTurnRateBamOf(db.boomerang, mode);
   r.hitStunTicks = db.player.hitStunTicks;
   r.bananaDamage = db.boomerang.damage;
   r.dashAttackDamage = db.dashAttack.damage;
@@ -484,8 +485,15 @@ void buildObservation(const sim::WorldState& world, const sim::MatchContent& con
   out = Observation{};
   out.header.version = kObservationVersion;
   out.header.size = sizeof(Observation);
+  // bot-abi.md §3.3 (version 2, v0.80): every zone of the arena.
+  static_assert(sim::kMaxArenaZones <= kObsMaxZones);
+  out.zones.count = std::min<uint8_t>(content.arena.zoneCount, sim::kMaxArenaZones);
+  for (uint8_t k = 0; k < out.zones.count; ++k) {
+    const sim::Zone& z = content.arena.zones[k];
+    out.zones.zone[k] = ObsZone{z.min.x.raw, z.min.y.raw, z.max.x.raw, z.max.y.raw};
+  }
   fillMatch(world, content, contentHash, inputDelayTicks, out.match);
-  fillRules(content.db, out.rules);
+  fillRules(content.db, content.mode, out.rules);
   fillSelf(world, content, self, out.self);
   fillPlayers(world, content, self, out.players);
   fillBananas(world, content, self, out.bananas);

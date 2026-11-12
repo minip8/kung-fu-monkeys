@@ -80,6 +80,10 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       std::snprintf(line, sizeof line, "Capture  (first team to %u flags)",
                     static_cast<unsigned>(hud.scoreToWin));
       break;
+    case sim::ModeKind::Control:  // v0.80
+      std::snprintf(line, sizeof line, "Control  (first team to %u points)",
+                    static_cast<unsigned>(hud.scoreToWin));
+      break;
     case sim::ModeKind::TeamRounds:
       std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
                     static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
@@ -96,27 +100,64 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       break;
   }
   centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y), kWhite, line);
+  // v0.80: control's zones at a glance (empty in every other kind).
+  const ZoneStrip zones = zoneStrip(state);
   if (hud.teamCount > 0) {
-    // v0.32: the team scores, each in its team's colour, side by side.
+    // v0.32: the team scores, each in its team's colour, side by side;
+    // control adds the zones each team owns.
     y += 22.0f;
-    constexpr float kTeamW = 128.0f;
+    const float teamW = zones.count > 0 ? 176.0f : 128.0f;
     const uint8_t teams = std::min<uint8_t>(hud.teamCount, sim::kMaxPlayers);
-    float x = (viewW * 0.5f) - (static_cast<float>(teams - 1) * kTeamW * 0.5f);
+    float x = (viewW * 0.5f) - (static_cast<float>(teams - 1) * teamW * 0.5f);
     for (uint8_t t = 0; t < teams; ++t) {
-      char text[32];
-      std::snprintf(text, sizeof text, "Team %u: %d", static_cast<unsigned>(t) + 1U,
-                    static_cast<int>(hud.teamScores[t]));
+      char text[48];
+      if (zones.count > 0) {
+        std::snprintf(text, sizeof text, "Team %u: %d (%u %s)", static_cast<unsigned>(t) + 1U,
+                      static_cast<int>(hud.teamScores[t]), static_cast<unsigned>(zones.owned[t]),
+                      zones.owned[t] == 1 ? "zone" : "zones");
+      } else {
+        std::snprintf(text, sizeof text, "Team %u: %d", static_cast<unsigned>(t) + 1U,
+                      static_cast<int>(hud.teamScores[t]));
+      }
       centredText(dl, 18.0f, ImVec2(x, y), teamColor(t), text);
-      x += kTeamW;
+      x += teamW;
     }
   }
-  if (!hud.hasClock) return;
-  char clock[16];
-  clockText(hud.clockSeconds, clock);
-  const bool urgent = clockUrgent(hud);
-  const float pop = presentation::bannerScale(state, EffectKind::TimerBanner);
-  centredText(dl, 26.0f * pop, ImVec2(viewW * 0.5f, y + 24.0f), urgent ? ui::kAlarm : kWhite,
-              clock);
+  if (hud.hasClock) {
+    char clock[16];
+    clockText(hud.clockSeconds, clock);
+    const bool urgent = clockUrgent(hud);
+    const float pop = presentation::bannerScale(state, EffectKind::TimerBanner);
+    centredText(dl, 26.0f * pop, ImVec2(viewW * 0.5f, y + 24.0f), urgent ? ui::kAlarm : kWhite,
+                clock);
+    y += 24.0f;
+  }
+  if (zones.count == 0) return;
+  // A chip per zone: its owner's colour (neutral when unowned), its letter,
+  // and under it the capture under way in the challenger's colour.
+  constexpr float kChip = 24.0f;
+  constexpr float kGap = 8.0f;
+  constexpr float kBarH = 4.0f;
+  const float rowW =
+      (static_cast<float>(zones.count) * kChip) + (static_cast<float>(zones.count - 1) * kGap);
+  float x = (viewW - rowW) * 0.5f;
+  const float top = y + 24.0f;
+  for (uint8_t k = 0; k < zones.count; ++k) {
+    const ZoneChip& chip = zones.chips[k];
+    const ImVec2 a{x, top};
+    const ImVec2 b{x + kChip, top + kChip};
+    dl->AddRectFilled(a, b, chip.owner ? teamColor(*chip.owner) : kEmptyPip, 4.0f);
+    dl->AddRect(a, b, ui::kOutline, 4.0f, 0, 2.0f);
+    const char letter[2] = {chip.letter, '\0'};
+    centredText(dl, 16.0f, ImVec2(x + (kChip * 0.5f), top + (kChip * 0.5f)), kWhite, letter);
+    if (chip.challenger) {
+      const ImVec2 barA{x, b.y + 3.0f};
+      dl->AddRectFilled(barA, ImVec2(b.x, barA.y + kBarH), kEmptyPip);
+      dl->AddRectFilled(barA, ImVec2(x + (kChip * chip.capture), barA.y + kBarH),
+                        teamColor(*chip.challenger));
+    }
+    x += kChip + kGap;
+  }
 }
 
 // The one power-up timer widget (HUD cards and the over-head row): a pie in
@@ -447,6 +488,8 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
         std::snprintf(text, sizeof text, "King of the hill");
       } else if (hud.mode == sim::ModeKind::Capture) {
         std::snprintf(text, sizeof text, "Capture the flag");
+      } else if (hud.mode == sim::ModeKind::Control) {
+        std::snprintf(text, sizeof text, "Control the zones");
       } else {
         std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
       }

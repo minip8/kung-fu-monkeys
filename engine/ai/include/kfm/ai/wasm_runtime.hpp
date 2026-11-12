@@ -5,14 +5,22 @@
 // runtime underneath is WAMR 2.4.5's classic interpreter (kfm::wamr,
 // third_party/wamr); nothing in this header depends on it.
 //
-// Bot ABI v1 (docs/bot-abi.md). A module imports nothing but, optionally,
+// Bot ABI v2 (docs/bot-abi.md). A module imports nothing but, optionally,
 // `env.kfm_log(ptr: i32, len: i32)`; a module importing anything else is
 // refused at load. No WASI. A `start` function may run at instantiation, under
 // the init budget. Exports, checked by name and signature at load:
-//   kfm_abi_version() -> i32        must equal kObservationVersion
-//   kfm_obs_buffer() -> i32         address in linear memory of at least
-//                                   sizeof(Observation) bytes; the host
-//                                   writes the observation there each tick
+//   kfm_abi_version() -> i32        kObservationVersion (2) or
+//                                   kObservationV1Version (1); anything else
+//                                   is refused (AbiMismatch)
+//   kfm_obs_buffer() -> i32         address in linear memory of at least the
+//                                   module's version's observation bytes
+//                                   (sizeof(Observation), or
+//                                   kObservationV1Size for version 1); the
+//                                   host writes the observation there each
+//                                   tick: all of it, or for a version 1
+//                                   module (v0.80) its first
+//                                   kObservationV1Size bytes under a version
+//                                   1 header, nothing past them
 //   kfm_init(seed: i64, slot: i32)  once per instance, before the first act
 //   kfm_act(tick: i32) -> i64       the PlayerInput packed little-endian in
 //                                   the low 40 bits (packInput); bits 40..63
@@ -136,8 +144,8 @@ enum class LoadErrorKind : uint8_t {
   NoMemory,        // no linear memory
   MemoryTooLarge,  // declared initial memory over maxMemoryBytes
   Instantiate,   // instantiation failed: start function trapped or ran over fuelInit, out of memory
-  AbiMismatch,   // kfm_abi_version() != kObservationVersion
-  BadObsBuffer,  // kfm_obs_buffer() does not point at sizeof(Observation) bytes of memory
+  AbiMismatch,   // kfm_abi_version() is neither 1 nor kObservationVersion (2)
+  BadObsBuffer,  // kfm_obs_buffer() does not point at its version's observation bytes of memory
   TableTooLarge,  // its tables would allocate more than maxTableElements elements
 };
 
@@ -179,7 +187,7 @@ enum class AgentFault : uint8_t {
   Dead,        // init() never ran or failed: the module is not called
   // init() (the agent is dead afterwards):
   Instantiate,     // instantiation failed (start function trap / over fuelInit, out of memory)
-  AbiMismatch,     // kfm_abi_version() changed its mind since load
+  AbiMismatch,     // kfm_abi_version() changed its mind since load to a version not spoken
   BadObsBuffer,    // kfm_obs_buffer() no longer valid
   InitTrap,        // kfm_abi_version, kfm_obs_buffer or kfm_init trapped
   InitOverBudget,  // ... or ran over its budget

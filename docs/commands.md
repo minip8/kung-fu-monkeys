@@ -122,13 +122,17 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 
 - Modes (`content/modes.toml`): `rounds` (default), `deathmatch`, `survival`, `team_rounds`,
   `team_deathmatch`, `hill`, `capture`, `grid_rounds`, `grid_rounds_1t` (the grid at 1-tick
-  turns, for `kfm_arena`), `contest` (the bot ladder's row: a loader test pins it, so a season's
-  change to it is a deliberate edit of both).
-- A team mode needs an arena with a spawn group per team, `hill` and `capture` need their
-  zones, a grid mode needs an arena with cells (a tilemap): `ContentDB::compatible`. Without
+  turns, for `kfm_arena`), `contest` (the bot ladder's row, the `control` kind on
+  `courtyard_zones` since v0.80: a loader test pins it, so a season's change to it is a
+  deliberate edit of both).
+- A team mode needs an arena with a spawn group per team, `hill`, `capture` and `control` need
+  their zones, a grid mode needs an arena with cells (a tilemap): `ContentDB::compatible`. Without
   `--arena` every host picks the first arena that suits; a named arena that does not suit is a
   configuration error (non-zero exit).
-- Arenas: `content/arenas.toml` (dojo) and `content/arenas/*.toml`, appended by file name. A
+- Arenas: `content/arenas.toml` (`dojo`) and `content/arenas/*.toml`, appended by file name:
+  `pillars`, `corridors`, `island`, `dojo_powerups`, `standoff`, `hilltop` (`hill`), `outposts`
+  (`capture`), `courtyard` (the grid modes), `courtyard_hill` (`hill` on the grid),
+  `courtyard_zones` (`contest`: three zones, v0.80). A
   tilemap arena gives `cell = 1.0` and `map = ["..."]` (`#` wall, `.` floor, `~` pit, `:` mud,
   `0-9` spawns, `a-h` zones) in place of `half_extents`/`walls`/`hazards`/`spawn_points`/`zones`
   (format: `content/arenas/06-hilltop.toml`, architecture §5.10).
@@ -193,7 +197,9 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
 - Also `--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR`, `--fuel N`,
   `--delay T`, `--memory-on-respawn keep|wipe`, `--replay out.kfmr | --replay-dir DIR`,
   `--result FILE`, `--json`, `--quiet`, `--log`. One result line per match and a summary; exit
-  0 ok, 2 args, 3 module refused, 4 I/O.
+  0 ok, 2 args, 3 module refused, 4 I/O. A module may speak `Observation` version 2 or 1 (a
+  version 1 module is served version 1's bytes, `docs/bot-abi.md` §4); any other
+  `kfm_abi_version()` is refused (`abi-mismatch`, exit 3).
 - The `--json` objects are an append-only contract (`docs/arena-result.md`, normative; a test
   freezes every key, its order and type): a new key is appended to the code, the doc and the
   test, never inserted or renamed. The match object carries `content_hash` and `build_hash`

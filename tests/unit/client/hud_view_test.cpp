@@ -108,6 +108,39 @@ TEST_CASE("hud view: the clock is urgent in the last ten seconds of play", "[cli
   CHECK_FALSE(client::clockUrgent(hud));
 }
 
+TEST_CASE("control: the zone strip, a chip per zone (v0.80)", "[client][hud][control]") {
+  presentation::RenderState rs;
+  rs.hud.mode = sim::ModeKind::Control;
+  rs.hud.teamCount = 4;
+  rs.zoneCount = sim::kMaxArenaZones;
+  rs.zones[0].team = 0;
+  rs.zones[2].team = 3;
+  rs.zones[2].challenger = 1;
+  rs.zones[2].capture = 0.75f;
+  rs.zones[5].challenger = 2;
+  rs.zones[5].capture = 0.25f;
+  rs.zones[7].team = 0;
+  const client::ZoneStrip strip = client::zoneStrip(rs);
+  REQUIRE(strip.count == sim::kMaxArenaZones);
+  CHECK(strip.chips[0] == client::ZoneChip{.letter = 'a', .owner = 0});
+  CHECK(strip.chips[1] == client::ZoneChip{.letter = 'b'});
+  CHECK(strip.chips[2] ==
+        client::ZoneChip{.letter = 'c', .owner = 3, .challenger = 1, .capture = 0.75f});
+  CHECK(strip.chips[5] == client::ZoneChip{.letter = 'f', .challenger = 2, .capture = 0.25f});
+  CHECK(strip.chips[7].letter == 'h');
+  CHECK(strip.owned[0] == 2);
+  CHECK(strip.owned[1] == 0);
+  CHECK(strip.owned[3] == 1);
+
+  // One zone, and any other kind shows none.
+  rs.zoneCount = 1;
+  CHECK(client::zoneStrip(rs).count == 1);
+  rs.hud.mode = sim::ModeKind::Hill;
+  CHECK(client::zoneStrip(rs).count == 0);
+  rs.hud.mode = sim::ModeKind::Capture;
+  CHECK(client::zoneStrip(rs).count == 0);
+}
+
 TEST_CASE("match over: title, colour and the scoreboard", "[client][hud][over]") {
   const HudView v = threeSlots(true);
   const client::MatchOverView draw = client::matchOverView(v, matchEnded(presentation::kNoSlot));

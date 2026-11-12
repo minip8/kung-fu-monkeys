@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.79 (2026-11-11), a living document: it describes the system as built and deployed,
+Status: v0.80 (2026-11-12), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -319,6 +319,7 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 | `team_deathmatch` (v0.32) | one round; the first team whose slots' eliminations sum to `scoreToWin`, or the leading team once `timeLimitTicks` pass (a tied lead: draw); `MatchEnded` names the team's present top scorer | +1 score for an enemy attacker only (an ally's or one's own scores nothing), +1 death, respawn as deathmatch | a slot that leaves keeps its score: it is the team's |
 | `hill` (v0.33) | one round; every Playing tick, if the monkeys in zone 0 are of exactly one team, that team's hold clock advances, and at `hillTicks` the team scores a point (credited to its lowest slot in the zone) and that clock alone restarts; a contested or empty zone holds every clock; the first team to `scoreToWin` points, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch; nobody scores | `HillHolderChanged` when the sole holder changes; a leaver keeps its score |
 | `capture` (v0.33) | one round; team t's flag starts at the centre of zone t; a carrier in its own team's zone while its own flag is home scores a capture (credited to the carrier) and the flag goes home; the first team to `scoreToWin` captures, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch, nobody scores; a carrier drops the flag as a pickup where it stood | a dropped flag no enemy picks up for `flagReturnTicks` goes home; its own team cannot touch it |
+| `control` (v0.80) | one round over every zone of the arena, each owned by a team or nobody (nobody at the start); every Playing tick, per zone, the team with strictly the most monkeys in it, when not the owner, gains a tick of capture progress (a new challenger starts from zero) and at `captureTicks` owns the zone; the owner with the most, or an empty zone, clears the progress, a tie for the most holds it; an owned zone pays its team's clock one tick, occupied or not, from the tick it is captured, and every `hillTicks` of clock is a point to the team's lowest present slot (none present: the clock drains, nobody is credited); the first team to `scoreToWin`, or the leader once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch; nobody scores | `ZoneCaptured` on a capture; at most `kMaxControlTeams` (4) teams; a leaver keeps its score |
 | (v0.57, every kind: the banana economy) | the point kinds' `catch_score` (a perfect catch of an enemy's banana) and `suicide_score` (an elimination with no killer, after the kind's own hook: `reportElimination`) move the slot's signed score and count toward `scoreToWin`; shipped: deathmatch and team_deathmatch +1 / −1 | `death_bananas`: drop (the round kinds) or vanish (the respawn kinds: held and in flight go with it) | `banana_regrow_ticks` (hill, capture: 480): an empty hand grows a banana (`Player::regrowTicks`, `LifecycleSystem`); a regrowing mode never runs dry; hill and capture respawn in 300 ticks |
 
 Respawn (`LifecycleSystem`, v0.23) is driven only by the timers: during Playing a dead present slot
@@ -414,6 +415,28 @@ Both kinds are team kinds (`teams` >= 2) and respawning kinds (`score_to_win`, `
 input generator walks to the objective in these two kinds only (hill: zone 0 while outside it;
 capture: a carrier home, anyone else the nearest flag of another team), from state alone with no
 Rng draw, so every other mode's inputs are unchanged.
+
+As built (v0.80, the contest's control kind, §11 "Contest design"): `control`
+(`src/modes/control.cpp`, `ModeKind::Control`, `controlBehavior()`: its own round start and
+`onPlaying`, `countDeath` on an elimination, no pickup hook) is hill's flow (`deathmatchRoster`
+without forfeit, `clockWarnings`, `teamScoreLeader`) over every zone. Its `modeData`: words 0–1
+the clocks of teams 0 to 3 (u16, hill's halves), word 2 the owners and word 3 the challengers (a
+nibble per zone, the team + 1, 0 nobody), words 4–7 the capture progress (a u16 per zone, zone k
+in word 4 + k/2, low half for an even k), all cleared at the round start; no world-state field.
+Per Playing tick the zones are judged in index order, then every team's clock gains one per zone
+it owns, the capture tick included, and a team without a present slot still drains its clock
+with nobody credited. `kMaxControlTeams` (4) is a loader error past it. The scripted generator
+adds the kind: a monkey heads for the nearest zone its team does not own (squared distance, the
+lowest index on a tie) and has no target, so wanders as in hill, while it stands in any zone its
+team does not own. Pinned by `tests/scenario/control_scenario.cpp` (13 cases: a strict majority
+and the capture tick's payment, a tie and a new challenger, the owner's majority, an empty zone
+paying and two zones paying twice with the points to the lowest present slot, a team with no
+present slot (its clock drains and credits nobody, the remainder carried; a leaver eliminated
+while away is not respawned; a slot back again takes the next point at once, dead or alive, and
+respawns `respawn_ticks` on; at the clock only teams with a present slot are judged, so a team
+that left leading does not win), `score_to_win`, the clock and a tied lead, eliminations, the
+round start, `compatible`, the scripted generator and its lowest-index tie) and
+`side_symmetry_scenario.cpp` (the shipped row under mirrored inputs, §11 "Contest design").
 
 As built (v0.34, step 4: the grid). The space is a pair of hooks, not a system: `InputSystem`
 decodes every alive monkey's `Intent` as before and then calls `spaceBehaviorFor(mode.space)
@@ -936,6 +959,13 @@ is a defence only for a player who has thrown.
   outbound banana keeps flying after its thrower is eliminated and grounds once it turns back.
   Walls reflect per axis with `restitution` and emit one `BoomerangBounced` per bounce tick,
   also when a corner reflects both axes in the same tick.
+- Per-mode flight (v0.80): the outbound ticks and the turn rate are the match's,
+  `MatchContent::bananaOutboundTicks()` / `bananaTurnRateBam()` (`sim::bananaOutboundTicksOf` /
+  `bananaTurnRateBamOf` over `ModeDef::bananaOutboundTicks` / `bananaTurnRateBam`, 0 meaning the
+  `BoomerangDef`'s), read by `ProjectileSystem`, the observation's rules block and the
+  presentation's banana arc. They are content, not `Boomerang` state, so the world state and
+  every mode that leaves them 0 play bit for bit as before (`banana_flight_scenario.cpp`). The
+  `contest` sets 3 and 15474 (85°/tick) for its banana at 2 cells a turn (§11 "Contest design").
 - Walls (v0.22): the banana moves by its velocity through `statics::moveCircle` with the
   `Bounce` response (§5.10), the same code path for interior walls and the outer box: a crossed
   wall face mirrors the overshoot and reflects that velocity component times `restitution`, a
@@ -944,7 +974,8 @@ is a defence only for a player who has thrown.
   `spawnOffset` travels the same path from the thrower's centre (interior walls only, the outer
   box stays with `ProjectileSystem` as in M1), so a throw into an adjacent wall bounces back at
   once (plus `BoomerangBounced`) instead of spawning inside or behind it. A returning banana
-  keeps homing after a bounce; its 6.6°/tick turn rate means it needs many ticks to turn back
+  keeps homing after a bounce; its 6.6°/tick turn rate (the def's; a mode may set its own,
+  v0.80, below) means it needs many ticks to turn back
   into the wall, and `maxReturnTicks` grounds one that cannot get home, so there is no extra
   bounce cap (and no new `Boomerang` state). Bananas fly over hazards.
 - Bananas fly only while the match phase is `Playing`. During `RoundStarting`, `RoundEnded`
@@ -982,8 +1013,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
     ability def while the power-up is live; the last override in slot order wins. Buttons
     belong to slots (v0.21), so the def may be of any kind, and an override of the empty third
     slot adds an ability for the power-up's duration.
-  - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd}`, each mul in
-    (0, 4].
+  - `Projectile`: `ProjectileModifier{speedMul, radiusMul, damageAdd}`, `radiusMul` in (0, 4]
+    and `speedMul` in (0, 8] (v0.80, `kMaxProjectileSpeedMul`; 4 before, which held a 1-tick
+    grid banana to about 1.07 cells a turn; moves and contacts are swept, so nothing tunnels).
   - `Tag`: `shielded` or `invulnerable` (the others belong to abilities and the damage rules).
 - State: a `ModifierList` entry is `ActiveModifier{powerUp, ticksLeft}`; the grants are read
   from the def every tick, never copied. Row 51 (`grantPowerUp`) adds an entry with
@@ -1097,6 +1129,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   replays and rollback re-emit it from the inputs, the client journal dedups it; the bot hosts
   fold it into the listeners' observations (§8), the presentation draws a shout and pings a
   local human's own call (§7).
+- v0.80 (control): `ZoneCaptured{a = the team that now owns the zone, b = the zone}`, pushed by
+  `control` on the capture tick (no player, no entity). Ownership and the capture under way are
+  read from `modeData`, not from events.
 - Consumers: presentation (VFX/SFX), scoring, the match runner's result line, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
@@ -1281,7 +1316,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   max_alive }` (`power_ups` absent = every power-up). Ability and power-up names resolve after
   every file is read, so the reference may point into a later file. Validation: unknown names,
   an unknown grant kind or stat, a `mul` or a fractional `add` on an integer stat, an override of
-  another kind than its slot's def, a tag a power-up may not grant, multipliers outside (0, 4],
+  another kind than its slot's def, a tag a power-up may not grant, multipliers outside (0, 4]
+  (a projectile `speed_mul` outside (0, 8] since v0.80),
   a spawner outside the arena (by the pickup radius), inside a wall or in a pit (v0.22 statics), spawners without any power-up defined, an
   arena's `max_alive` sum above 16.
 
@@ -1358,7 +1394,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   x = ∓11..13.5 facing each other.
 - Zones (v0.29): `zones = [{ min, max }, ...]` (`kMaxArenaZones` 8), boxes like hazards that
   block nothing and emit nothing; `zoneOccupants(s, arena, k)` returns the mask of the monkeys
-  whose centre is inside, for `onPlaying`. `hill` needs one zone, `capture` one per team.
+  whose centre is inside, for `onPlaying`. `hill` needs one zone, `capture` one per team,
+  `control` (v0.80) one and plays them all.
   As built (v0.33): `ArenaDef::zones` (`Zone{min, max}`, `Zone::centre()`) and `zoneCount`,
   visited after `spawnGroups` with `cellSize`. TOML `zones = [{ min = [x, y], max = [x, y] },
   ...]` (unknown keys are errors); validation as the statics' boxes: non-empty and inside the
@@ -1400,7 +1437,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   the box), so a spawn cell beside a wall needs a cell of at least twice the radius. Tilemaps
   play in the continuous space today; step 4's grid reads `cellSize`. `compatible(arena, mode)`
   as built: spawn groups at least `mode.teams` (v0.32), `hill` at least one zone, `capture` at
-  least `mode.teams` zones; the grid's `cellSize > 0` joins with the `space` field (step 4).
+  least `mode.teams` zones, `control` at least one zone (v0.80); the grid's `cellSize > 0` joins with the `space` field (step 4).
   The pair `outposts`/`hill` is compatible (zone 0 is the west base); the lobby's first pick for
   `hill` is `hilltop`, and judging fairness of a zone is left to content. `kMaxArenas` rose to
   16 (v0.33): `hilltop` and `outposts` filled the 8, and the loader test appends one more; the
@@ -1475,7 +1512,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   cooldown, window 0; `catcher_dash_1t`: window 1 of 1, a 4-tick cooldown; `grid_throw_1t`: no
   startup, recovery 1 rooted) and `grid_base_1t`, whose bananas fly at the projectile
   multiplier's limit of 4 (64 u/s, about 1.07 cells per turn) where 2 cells per turn would need
-  7.5 (open, §12). `quick_hands` (power-up index 5, 600 ticks) overrides the throw slot with
+  7.5 (v0.80 raised the limit to 8 and `contest_base` flies at 7.5; `grid_base_1t` keeps 4). `quick_hands` (power-up index 5, 600 ticks) overrides the throw slot with
   `quick_throw` (no startup, no recovery, no root, cooldown 1), shared by both turn lengths;
   the courtyard's two spawners drop it. The baselines are power-ups 6 and 7 with
   `duration_ticks = 1` (required, never counted for a baseline); no shipped spawner draws them:
@@ -1507,6 +1544,34 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   corpus entries' checksums once (each monkey's third `AbilityState` now names a def, and the
   scripted generator presses it); a 5v5 entry, `scripted_10p_grid_rounds_1t_1800t` on
   `courtyard`, is new.
+- Control content (v0.80, §5.3, §11 "Contest design"). `ModeDef` gains `captureTicks` (u16,
+  `capture_ticks`, 1–65535, default 60; accepted on every kind, read only by control),
+  `bananaOutboundTicks` (`banana_outbound_ticks`, 0–65535) and `bananaTurnRateBam`
+  (`banana_turn_rate`, BAM per tick, 0–32768), the last two for any kind with 0 meaning the
+  `[boomerang]` value (so a mode cannot itself ask for 0, §5.7); visited after
+  `bananaRegrowTicks` (`fieldCount<ModeDef>() == 28`). `control` is a team kind and a respawning
+  kind, `hill_ticks` (>= 1) is its zone-ticks per point, and `teams` above `kMaxControlTeams` (4)
+  is an error. The arena is `courtyard_zones` (index 10, `content/arenas/10-courtyard_zones.toml`;
+  `courtyard_control` is over the 15-character name limit), the design's draft map verbatim: the
+  courtyard's cells and spawn groups with zone 0 between the pillars at (−2, −1)..(2, 1), zone 1
+  the west home at (−8, −1)..(−5, 1) and zone 2 the east home at (5, −1)..(8, 1), symmetric under
+  a half turn with zone 1 mapping to zone 2; two spawners on the centre line at (−0.5, 3.5) and
+  (0.5, −3.5), `first_ticks` 90, `interval_ticks` 240, `max_alive` 1, drawing `big_banana_1t`,
+  `triplebanana_1t` (the name limit again), `quick_hands_1t` and `shield_1t`. `courtyard_hill`
+  (index 9, v0.69: the courtyard with zone 0 between the pillars) stays `hill`'s grid arena.
+  Power-ups: `contest_base` (index 8), `grid_base_1t` with the projectile `speed_mul` 7.5, 2
+  cells a 1-tick turn within the per-tick truncation (17476 × 7.5 = 131070 raw), and the twins
+  at 9 to 12, the originals' grants lasting one and a half times the originals' count of 15-tick
+  turns, in 1-tick turns (`big_banana_1t` and `quick_hands_1t` 60, `triplebanana_1t` and
+  `shield_1t` 90); 13 of `kMaxPowerUps` 16 are used. `speed_boost` has no twin: a walk is a cell
+  a turn on the grid whatever the speed. The twins come after the three baselines in
+  `powerups.toml`, so the lobby's toggles are no longer a prefix of the table: the lobby lists
+  every power-up no mode names as its baseline, the four twins among them, and a human room can
+  switch each per match (`lobby_test.cpp` walks the table as the lobby does). The `contest` row
+  (mode 9) is in §8 "The `contest` mode"; its `vision` is `grid_rounds_1t`'s with
+  `hearing = 1`. Pinned by
+  `tests/unit/content/contest_test.cpp` (the map, its symmetry, the spawners, the twins, the
+  baseline, the flight) and the contest pin in `loader_test.cpp`.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -2515,6 +2580,21 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   (`sim::scoresPoints`); the team score line is step 2's. The lobby's arena preview draws the
   zones (translucent, lettered); the hill holder is not drawn yet (`HillHolderChanged` is
   there for it).
+- Control in the client (v0.80): `buildZones(curr, match, out)` tints each zone in its owner's
+  team colour (white while unowned) and fills `RenderZone::challenger` and `capture` (the
+  progress over `captureTicks`, [0, 1)), which the renderer draws as a second rectangle in the
+  challenger's colour growing from the zone's centre (`kZoneCaptureOpacity`,
+  `kZoneCaptureLift` and the rim constants in `tuning.hpp`). Presentation reads control's
+  `modeData` words 2–7 through `presentation::controlZone(rules, k)`, a second copy of
+  `control.cpp`'s layout, commented as such and tested on packed words. The HUD: the mode line
+  "Control (first team to N points)", the start banner "Control the zones", the team line
+  "Team 1: 4 (2 zones)", and a row of zone chips under the clock lettered as the arena preview
+  letters them, each in its owner's colour with a bar in the challenger's for a capture under
+  way (the headless model is `client::zoneStrip()` in `core/hud_view`; the chip sizes were
+  chosen without a look at a control match on screen). The scoreboard's column is "Points" with
+  deaths, the lobby's mode summary gives the points, the capture time and the time per point,
+  and the F1 overlay's tuning has sliders for `hillTicks` and `captureTicks` and every mode's
+  banana overrides, which `contentToCpp()` prints.
 
 - The front end (v0.43, M6b step 3; `apps/client/ui_style.{hpp,cpp}`, `screens.{hpp,cpp}`,
   `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
@@ -2648,8 +2728,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   read-only overlay with a Replay panel (tick and total, checksum, phase, round, paused, speed,
   seed, players, arena/mode/loadout, power-ups, the content and build hashes). Leaving drops the
   replay; nothing in the menu returns to it. At load the client prints `kfm_client: replay SRC:
-  1800 ticks (0:30), arena courtyard_hill, mode contest, loadout base, 10 players` (v0.69;
-  `courtyard` before). Exit codes: with `--exit-after-frames` a playing replay exits 0 ("stopped
+  1800 ticks (0:30), arena courtyard_zones, mode contest, loadout base, 10 players` (v0.80;
+  `courtyard_hill` from v0.69, `courtyard` before). Exit codes: with `--exit-after-frames` a playing replay exits 0 ("stopped
   after N frames in the replay at tick T of C, checksum 0x…") and a failed one renders the error
   screen for the N frames (so `--screenshot` captures it) and exits 1; without it, quitting
   exits 0. Follow-ups are in §12.
@@ -2762,6 +2842,7 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
 | `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer); v0.57: none for a `Suicide` point | Score (coin blip); none for a `Suicide` point |
 | `BananaRegrown` (v0.57) | PickupSparkle 0.5 s in the hand (`kRegrowSparkleSeconds`), a 0.15 s flash | Regrow (a soft pop gliding up an octave, then a twinkle) |
+| `ZoneCaptured` (v0.80) | ZoneCaptured 0.7 s: a ring in the new owner's team colour racing out over the zone (`RenderEffect::size` = the zone's larger half extent) | Score, panned to the zone |
 | `BananaVanished` (v0.57) | a small white puff (ThrowPuff, `kBananaVanishSeconds` 0.3 s) where the banana was | — |
 | `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
 | `PlayerBlinked` (v0.21) | BlinkFlash 0.3 s at the origin (from the payload) and at the landing, in the slot colour; the jump exceeds `kSnapDistance`, so the body snaps | Blink (rising zap) |
@@ -2876,7 +2957,8 @@ which the contract needs.
 
 - **The contract.** A bot is a WebAssembly module (core wasm, no WASI) behind a small versioned
   C ABI. Exports: `kfm_abi_version() → u32` (the `Observation` schema version the module was
-  built against; the host refuses a mismatch), `kfm_obs_buffer() → ptr` (where the host writes
+  built against; the host refuses a version it does not speak, and since v0.80 it speaks 1
+  and 2), `kfm_obs_buffer() → ptr` (where the host writes
   the observation each tick), `kfm_init(seed: u64, slot: u32)` and
   `kfm_act(tick: u32) → u64` (the packed 5-byte `PlayerInput`, §5.4). Imports: none required;
   an optional `kfm_log(ptr, len)` whose output the host discards or captures in the result.
@@ -2986,7 +3068,7 @@ which the contract needs.
   file plus the forward pass the bot writes. No PyTorch export, no ONNX, no Python environment;
   the nanobind `VecEnv` is dropped, not deferred, unless someone asks for it with a use.
   Seed (v0.30): `tools/bots/sdk-c/kfm_bot.h` is the C SDK the bots repository starts from, a
-  single freestanding C11 header that mirrors Observation v1 with static asserts and reproduces
+  single freestanding C11 header that mirrors Observation v1 (version 2 since v0.80) with static asserts and reproduces
   the engine's sine table, atan2, `Fixed`, `Rng` and one banana flight tick bit for bit (checked
   against the engine by `example_bot_test`); `tools/bots/examples/` holds `idle.c` (the minimal
   skeleton) and `chaser.c` (approach, dodge, dash-catch, throw) with their compiled `.wasm`
@@ -3068,7 +3150,21 @@ which the contract needs.
     the pools at their full capacity, and the v0.29 reservations (team and visible flags, heard
     calls, cell and facing octant, `turnTicks`, `ticksToLatch`, role, team scores, `modeData`)
     strictly zero (since v0.31 and v0.32 the role, `modeData` and the team fields are filled,
-    below). Enum values may be appended within a version; a new `AbilityKind` trips a
+    below).
+  - *`Observation` version 2 (v0.80).* Version 1 plus a `zones` block appended at offset 5748
+    (`count`, then eight closed boxes in Q16.16: 132 bytes, 5880 in all), every zone of the
+    arena in content order, never fogged; nothing of version 1 moves and
+    `reservedModeData` words 8–15 still hold zones 0 and 1. `ObsModeKind::Control` is 7 and
+    the rules block's `bananaOutboundTicks` and `bananaTurnRateBam` are the match's (the mode's
+    override, §5.7). The host speaks both versions: `WasmAgent` sizes the write by the
+    module's `kfm_abi_version()` (`observationBytes`), and a version 1 module is written the
+    first 5748 bytes under a `{1, 5748}` header that keeps version 2's `schemaFlags` and
+    `reserved0` (so the fog flag still reaches it) and needs a buffer of only 5748 bytes; any
+    other version is `AbiMismatch`. Native agents see version 2. Not in either version:
+    `hill_ticks` and `capture_ticks`, so a bot cannot read those thresholds (hill has had the
+    same gap). Tests and fixtures: `peek_v1`/`peek_v2`, `tight_v1`/`tight_v2`, `abi_v0`/`abi_v3`,
+    and the version 1 prefix pinned by a hash taken from the original version 1 builder.
+    `docs/bot-abi.md` is normative for the layout. Enum values may be appended within a version; a new `AbilityKind` trips a
     `static_assert` in the builder so the schema is reviewed. The builder is a pure function of
     (world, content, slot, delay) in fixed-point math only: `tools/ci/check_sim_no_float.sh`
     now covers `engine/ai`, so a bot match reproduces bit for bit on every host.
@@ -3226,12 +3322,14 @@ difficulty.
   (2) with the flag's team in the pickup's `spawner` byte, tags bit 9 Carrying; the hill and
   capture `modeData` layouts are documented for `match.reservedModeData`. Zones are not in the
   v1 layout (a capture bot finds the flags in `pickups`; the zones wait for step 5's fields).
-  The reference bot ignores flags and zones: it plays hill and capture as team deathmatch.
+  The reference bot ignores flags and zones: it plays hill and capture (and, v0.80, control)
+  as team deathmatch.
   Filled since v0.35 (as built below): `header.schemaFlags` bit 0 under fog,
   `players[i].reservedVisible` and `bananas[i].reservedVisible`, `reservedHeardCalls[16]`,
   `self.reservedCellX/Y` and `reservedFacingOctant`, `match.reservedTurnTicks` and
   `reservedTicksToLatch`; `ObsAbilityKind::Call` (6) is appended. Every reserved field of the
-  v0.29 list is now filled; zones are still not in v1.
+  v0.29 list is now filled; zones are still not in v1 beyond zones 0 and 1 in words 8–15
+  (v0.69). Version 2 (v0.80, above) appends every zone.
 - **Contest knobs** are content and host settings, never code: team size, `vision` and its
   radii, call range, cooldown and alphabet (a mask over the 256 symbols), memory on respawn,
   fuel per instance, `turnTicks`, the catcher's cooldown. Tournaments pick rows; the engine
@@ -3335,7 +3433,12 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   and Carrying values, `KFM_NO_CELL` and the meaning of `KFM_SCHEMA_FLAG_FOG`; every offset
   assert is unchanged and `example_bot_test` checks the renamed fields against the engine's.
   The example bots read none of them; `build_example.sh` rebuilds `chaser.wasm` and
-  `idle.wasm` byte for byte with the emsdk clang.
+  `idle.wasm` byte for byte with the emsdk clang. v0.80: the header mirrors version 2
+  (`KFM_ABI_VERSION` 2, `KFM_OBS_SIZE` 5880, the zones block, `KFM_MODE_CONTROL` and the
+  control `modeData` words), and the checked-in examples are rebuilt against it, since the
+  README requires them to match their sources; the version 1 `chaser.wasm` is kept byte for
+  byte as `tests/fixtures/bots/chaser_v1.wasm`, never rebuilt, and `example_bot_test` plays it
+  and the version 2 build on one seed, checksum for checksum.
 - **The reference bot on the grid and under fog** (all of it gated on a grid turn clock or the
   fog flag, so every continuous mode plays bit for bit as before): it walks the eight octants
   and idle from the next latch on, a cell per turn by the sim's step rule (the target cell free
@@ -3408,12 +3511,17 @@ lives in the bots repository (above) and uses this repository through its tagged
   module is at most 4 MiB, so the cap is about tidiness, not storage.
 - **The `contest` mode.** The season's ruleset is one mode in the content, `contest`, the
   ladder's row of the contest knobs above (team size, `vision`, call range, `turnTicks`, fuel,
-  memory on respawn) on its arena; since v0.69 it is king of the hill (`kind = "hill"`) with
-  `grid_rounds_1t`'s squad on `courtyard_hill` under `own` fog with calls (before it, that row
-  renamed: team elimination on `courtyard`). Bots find the hill in `match.reservedModeData`
-  words 8–15 (the arena's zones 0 and 1, bot-abi.md §3). Designed in v0.79 and not yet built
-  (§11 "Contest design"): the row becomes `control`, three zones to capture and keep on a new
-  arena, with a faster banana and early power-ups. The ladder points at the name, so a season
+  memory on respawn) on its arena. Since v0.80 (§11 "Contest design") it is `kind = "control"`
+  with `grid_rounds_1t`'s squad (1-tick turns, the roles, fog and calls) on `courtyard_zones`
+  under `own` fog: three zones to capture and keep, `contest_base` as the baseline (the banana at
+  2 cells a turn), `capture_ticks` 30, `hill_ticks` 60, `score_to_win` 10, `time_limit_ticks`
+  3600, `respawn_ticks` 240, `respawn_invuln_ticks` 8, `vision.hearing` 1,
+  `banana_outbound_ticks` 3 and `banana_turn_rate` 15474 (85° a tick), the regrow (120), `death_bananas`
+  vanish, the space and the turns unchanged; it is a starting row, not yet tuned against the
+  design's gates. From v0.69 to v0.79 it was king of the hill on `courtyard_hill`, and before
+  that `grid_rounds_1t` renamed (team elimination on `courtyard`). Bots find the zones in
+  version 2's `zones` block, zones 0 and 1 also in `match.reservedModeData` words 8–15, and
+  control's state in words 0–7 (bot-abi.md §2.12, §3). The ladder points at the name, so a season
   changes the row, not the service, and the row may change between releases inside a season (v0.59). **A season is a
   time window, not a release** (v0.59; until then a season pinned one release and its content
   hash): the ranking freezes at a date, the service runs every match on the current tagged
@@ -3614,7 +3722,8 @@ lives in the bots repository (above) and uses this repository through its tagged
   events its name promises (the island entry a `PlayerFell`, blink/slam/parry their ability's
   event, the power-up entries a power-up taken and the powerset one only its two power-ups
   spawned, deathmatch and team deathmatch a scoring elimination and a respawn, the team and
-  round entries a round won, hill and contest the hill held and a point, capture a flag taken
+  round entries a round won, hill the hill held and a point, contest a zone captured and a
+  zone's point (the hill held until v0.80), capture a flag taken
   and a capture, the grid squad and contest a call, the empty entries no action at all) and no
   `EventSink` overflow; a manifest line without a row there fails, so a new entry states what it
   is for. v0.22 adds one 4-player scripted replay per walled arena
@@ -3924,32 +4033,34 @@ deployment: images, units, the gVisor runtime, the two VMs scripted, the runbook
 landed in v0.64 (bots PRs #3 and #4). Steps (4) scheduling and ratings, (5) the CLI and (6) the
 viewer follow as in the M7 sequencing.
 
-Contest design: zones to capture and keep (v0.79; designed, not built). The contest as
-shipped (king of the hill on `courtyard_hill`, v0.69) has three faults, each measured with
-`kfm_arena` in the ladder's shape (5v5, `--rotate`; the v0.79 changelog entry has every number).
-**It stalls**: two teams that both stand on the hill hold every clock, and 156 games of 200
-between two copies of the house bot `holder` ran to the 3600-turn clock (48 draws). **Standing
-beats fighting**: `holder` is the starter with one change, staying on the hill unarmed, and it
-beats the starter 187 to 13 while being eliminated one and a half times as often as it
-eliminates. **A banana thrown from range does not land**: of the banana hits in 100-game runs,
-1 to 5 % came from a flight of 3 to 5 turns and 53 to 92 % from one of at most 1 turn (the rest
-are ricochets and returns), which is §12's open grid item seen from the other side. The season
-has no entrant from outside the project yet, so the rules change now rather than later.
-Decided:
+Contest design: zones to capture and keep (v0.79 designed; v0.80 built, not released, not
+measured against its gates). The contest as shipped from v0.69 (king of the hill on
+`courtyard_hill`) had three faults, each measured with `kfm_arena` in the ladder's shape (5v5,
+`--rotate`; the v0.79 changelog entry has every number). **It stalled**: two teams that both
+stand on the hill hold every clock, and 156 games of 200 between two copies of the house bot
+`holder` ran to the 3600-turn clock (48 draws). **Standing beat fighting**: `holder` is the
+starter with one change, staying on the hill unarmed, and it beat the starter 187 to 13 while
+being eliminated one and a half times as often as it eliminated. **A banana thrown from range
+did not land**: of the banana hits in 100-game runs, 1 to 5 % came from a flight of 3 to 5
+turns and 53 to 92 % from one of at most 1 turn (the rest are ricochets and returns), which is
+§12's open grid item seen from the other side. The season had no entrant from outside the
+project, so the rules changed then rather than later. Decided in v0.79, built in v0.80 as
+below:
 
-- **A new kind, `control`** (`ModeKind::Control`, the ModeBehavior table of §5.3: a behaviour
-  file, a loader name, a registry line, a scenario test; `hill` stays as it is for human
-  rooms). It is hill's round, clock, respawns and roster over **every zone of the arena**. A
-  zone has an owner, nobody at the start. Each Playing tick, per zone, the monkeys in it
+- **A new kind, `control`** (`ModeKind::Control`, §5.3's table and its as-built paragraph: a
+  behaviour file, a loader name, a registry line, a scenario test; `hill` stays as it is for
+  human rooms). It is hill's round, clock, respawns and roster over **every zone of the arena**.
+  A zone has an owner, nobody at the start. Each Playing tick, per zone, the monkeys in it
   (`zoneOccupants`) decide: the team with **strictly the most** monkeys there, when it is not
   the owner, is the zone's challenger and gains a tick of capture progress (a new challenger
   starts from zero), and at `capture_ticks` it owns the zone (`ZoneCaptured{a = team, b =
   zone}`); the owner with the most, or an empty zone, clears the progress; a tie for the most
   holds it. An owned zone pays its team's clock one tick per Playing tick **whether or not
-  anyone stands on it**, and every `hill_ticks` of clock score a point (to the team's lowest
-  present slot, the remainder carried). First team to `score_to_win`, else the leader at
-  `time_limit_ticks`, a tied lead a draw; eliminations score nothing. Majority, not sole
-  occupancy, because a prototype of majority on today's hill took the stall from 80 games of
+  anyone stands on it**, from the tick it is captured, and every `hill_ticks` of clock score a
+  point (to the team's lowest present slot, the remainder carried; a team with no present slot
+  still drains its clock and nobody is credited). First team to `score_to_win`, else the leader
+  at `time_limit_ticks`, a tied lead a draw; eliminations score nothing. Majority, not sole
+  occupancy, because a prototype of majority on the old hill took the stall from 80 games of
   100 at the clock to 20, and to none with the respawn below; capture and keep, not presence,
   so that a team must leave a zone to win and five monkeys cannot cover three.
 - **Its state is `modeData`, as every objective kind's** (`.claude/rules/sim.md`): words 0-1
@@ -3957,15 +4068,17 @@ Decided:
   challengers (4 bits per zone, the team + 1, 0 nobody), words 4-7 the capture progress (u16
   per zone). So the kind plays at most four teams (`kMaxControlTeams`, a loader error past
   it) and eight zones (`kMaxArenaZones`), and bots read all of it in
-  `match.reservedModeData` words 0-7 with no layout change. One new `ModeDef` field,
-  `captureTicks` (`capture_ticks`, at least 1); `hill_ticks` is reused as the zone-ticks per
-  point. `ContentDB::compatible`: an arena with a zone. The scripted generator steers to the
-  nearest zone its team does not own, Rng-free and keyed on the kind, and a corpus entry
-  plays it.
-- **Three zones, on a new arena** (appended; `courtyard_hill` stays for `hill`). The draft is
-  the courtyard with a home zone at each team's door and the old hill between the pillars,
-  still symmetric under a half turn (zone 1 maps to zone 2); it is redrawn if the measurements
-  below say so:
+  `match.reservedModeData` words 0-7 with no layout change. One new `ModeDef` field for the
+  kind, `captureTicks` (`capture_ticks`, at least 1, default 60, accepted on every kind and
+  read only by control); `hill_ticks` is reused as the zone-ticks per point.
+  `ContentDB::compatible`: an arena with a zone. The scripted generator steers to the nearest
+  zone its team does not own (the lowest index on a distance tie), Rng-free and keyed on the
+  kind, and gives a monkey no target while it stands in any zone its team does not own (it
+  wanders there, as in hill); the corpus entry `scripted_10p_contest_1800t` plays it.
+- **Three zones, on a new arena**, `courtyard_zones` (index 10, appended; `courtyard_hill`
+  stays for `hill`; §5.10 has the numbers). The draft map shipped verbatim: the courtyard with
+  a home zone at each team's door and the old hill between the pillars, still symmetric under a
+  half turn (zone 1 maps to zone 2); it is redrawn if the measurements below say so:
 
   ```
   "...........~~...........",
@@ -3990,48 +4103,65 @@ Decided:
   `hill_ticks`, with two twice as fast.
 - **`Observation` version 2, appended** (§8, `docs/bot-abi.md`): version 1 shows zones 0 and
   1 in `reservedModeData` words 8-15 and has no room for a third. Version 2 is version 1 plus
-  a `zones` block at the end (`count`, then eight closed boxes in Q16.16: 132 bytes, 5880 in
-  all); nothing of version 1 moves, the words 8-15 stay filled, and fog never hides a zone.
-  The host speaks both: a module whose `kfm_abi_version()` is 1 is written version 1's 5748
-  bytes under a version 1 header, so the fixtures, the examples as built and any module on the
-  ladder keep running unchanged, and only a bot that wants the third zone is rebuilt. Mode
-  kind 7 is `control` (`KFM_MODE_CONTROL`); the SDK header names the `modeData` words. A third
-  version is still a refusal.
+  a `zones` block at the end (`count`, then eight closed boxes in Q16.16: 132 bytes at offset
+  5748, 5880 in all); nothing of version 1 moves, the words 8-15 stay filled, and fog never
+  hides a zone. The host speaks both: a module whose `kfm_abi_version()` is 1 is written
+  version 1's 5748 bytes under a `{1, 5748}` header that keeps version 2's `schemaFlags` and
+  `reserved0`, so the fixtures, the examples as built and any module on the ladder keep
+  running unchanged, and only a bot that wants the third zone is rebuilt. Mode kind 7 is
+  `control` (`KFM_MODE_CONTROL`); the SDK header names the `modeData` words. Any other version
+  is a refusal (`AbiMismatch`). The checked-in examples are rebuilt against version 2, and the
+  old `chaser.wasm`, kept as a fixture, plays the same match checksum for checksum.
 - **Bananas that land from range, by flight and by fog, not by size.** Three content knobs
-  tried on today's row moved nothing (hearing 3 to 1 or 0, the banana 2.3 times wider, 2 or 4
-  ticks of input delay: the 3-to-5-turn share stayed 4 to 8 %), partly because today's bots
-  only throw from 3 cells. The cause is the flight: 1.07 cells a turn against a walk of 1,
-  heard 3 cells out whatever the facing. So (a) the projectile `speed_mul` gets its own limit,
-  8 (the 4 stays for radius; moves and contacts are swept, nothing tunnels, §5.6), and the
-  contest's baseline flies the banana at 7.5, **2 cells a turn**, which is the 15-tick grid
-  mode's speed; (b) a mode may override the banana's flight, `banana_outbound_ticks` and
-  `banana_turn_rate` (0: the `BoomerangDef`'s), read by ProjectileSystem and reported in the
-  observation's rules block, because at 2 cells a turn the def's 36 outbound ticks are 72
-  cells of bouncing and its 6.6 degrees a tick cannot turn the banana home on a 24 x 14
-  arena: the contest gets 3 turns out (6 cells, the range §12 wanted) and a return that
-  turns in a few cells. These are `ModeDef` fields, not `Boomerang` fields, so the world
-  state and every existing checksum stay as they are; (c) `vision.hearing` goes from 3 to 1.
-  A banana in the cone (4 cells, 5 at rest) is then seen two turns out and side-stepped, and
-  one from outside the cone is heard a cell away, which at 2 cells a turn is too late: where
-  a monkey looks decides what it can dodge. This is §12's "per-mode `BoomerangDef` override"
-  taken up, and it is measured before the row ships (the gates below).
-- **Power-ups early and often, in turn-sized twins.** Today the arena lays `quick_hands`
-  alone, first at turn 600 of a game that lasts about 650, for 600 turns. The contest arena's
+  tried on the old row moved nothing (hearing 3 to 1 or 0, the banana 2.3 times wider, 2 or 4
+  ticks of input delay: the 3-to-5-turn share stayed 4 to 8 %), partly because the bots then
+  only threw from 3 cells. The cause is the flight: 1.07 cells a turn against a walk of 1,
+  heard 3 cells out whatever the facing. So (a) the projectile `speed_mul` has its own limit,
+  8 (`kMaxProjectileSpeedMul`; the 4 stays for radius; moves and contacts are swept, nothing
+  tunnels, §5.6), and the contest's baseline `contest_base` flies the banana at 7.5, **2 cells
+  a turn**, which is the 15-tick grid mode's speed; (b) a mode may override the banana's
+  flight, `banana_outbound_ticks` and `banana_turn_rate` (0: the `BoomerangDef`'s; §5.7), read
+  by ProjectileSystem, reported in the observation's rules block and followed by the banana's
+  drawn arc, because at 2 cells a turn the def's 36 outbound ticks are 72 cells of bouncing
+  and its 6.6 degrees a tick cannot turn the banana home on a 24 x 14 arena. These are
+  `ModeDef` fields, not `Boomerang` fields, so the world state and every existing checksum
+  stayed as they were. The contest flies 3 turns out, 6 cells of path; in the open lane the
+  banana goes 5 cells straight (the 1-cell spawn offset and two turns), bends home on the
+  third, reaches about 5.2 cells ahead, strays at most 2.3 cells off the line and is back in
+  hand 5 turns after the press, so the reach is about 5 to 5.5 cells, not §12's 6 straight
+  (which needs an outbound of 4); 3 was kept. The turn rate is 15474 BAM, 85 degrees a tick,
+  chosen by a sweep through `step()` on the shipped content (every floor cell, 8 aim
+  directions, the owner still or walking 6 turns in 4 directions, 12120 throws per rate) that
+  counted the bananas `max_return_ticks` grounds and the median and p99 turns home: 45 degrees
+  grounds 729 (median 7, p99 38), 60 degrees 267, 67.5 degrees 58, 75 degrees 36, 80 degrees
+  22, 85 degrees none (5, 13), and 90 degrees 211, because at a right angle a banana
+  square-orbits the pillars of an axis-aligned map; the def's rate gives a median of 31 and a
+  p99 of 218. (c) `vision.hearing` is 1. A banana in the cone (4 cells, 5 at rest) is then
+  seen two turns out and side-stepped, and one from outside the cone is heard a cell away,
+  which at 2 cells a turn is too late: where a monkey looks decides what it can dodge. This is
+  §12's "per-mode `BoomerangDef` override" taken up; whether it makes range throws land is
+  measured by the gates below, not yet.
+- **Power-ups early and often, in turn-sized twins.** The old arena laid `quick_hands` alone,
+  first at turn 600 of a game that lasted about 650, for 600 turns. `courtyard_zones`'
   spawners (the two on the centre line, away from every zone, so a pickup costs a monkey its
-  place) lay from about turn 90 and every 240, one alive each, from `big_banana`,
-  `triple_banana`, `quick_hands` and `shield`, each as a `_1t` twin of 60 to 90 turns (a mode's
-  numbers that scale with the turn need their own defs, as the kits have). `speed_boost` is
-  left out: a walk is a cell a turn on the grid whatever the speed.
-- **The row.** `contest` becomes `kind = "control"` on the new arena with a `contest_base`
+  place) lay from turn 90 and every 240, one alive each, from `big_banana_1t`,
+  `triplebanana_1t`, `quick_hands_1t` and `shield_1t` (power-ups 9 to 12; `triplebanana_1t`
+  for the 15-character name limit), each the original's grants for one and a half times the
+  original's count of 15-tick turns: 60, 90, 60 and 90 turns (a mode's numbers that scale with
+  the turn need their own defs, as the kits have). `speed_boost` is left out: a walk is a cell
+  a turn on the grid whatever the speed.
+- **The row.** `contest` is `kind = "control"` on `courtyard_zones` with the `contest_base`
   baseline (`grid_base_1t` is `grid_rounds_1t`'s and stays), and starts from: `capture_ticks`
   30, `hill_ticks` 60, `score_to_win` 10, `time_limit_ticks` 3600, `respawn_ticks` 240 and
-  `respawn_invuln_ticks` 8 (on today's hill 240 and 8 took the mirror's stall from 80 of 100
+  `respawn_invuln_ticks` 8 (on the old hill 240 and 8 took the mirror's stall from 80 of 100
   to 14, and 360 made the first won fight the game: a median of 414 turns against a
-  walkover's 371), the regrow, roles and calls unchanged. Every one of these is content and
-  is tuned against the gates, with control-aware `starter` and `holder` builds: over 200
-  games, at most 5 % at the clock and 5 % drawn; a median game of 400 to 900 turns; at least
-  a quarter of banana hits from a flight of 3 cells or more; no fault and `fuel_max` under
-  80 k; and the side split explained (below).
+  walkover's 371), `banana_outbound_ticks` 3, `banana_turn_rate` 15474 and hearing 1, the
+  regrow (120), roles, calls, space and turns unchanged. Pinned by
+  `tests/unit/content/contest_test.cpp` and the contest pin in `loader_test.cpp`. Every one
+  of these is content and is to be tuned against the gates, with control-aware `starter` and
+  `holder` builds: over 200 games, at most 5 % at the clock and 5 % drawn; a median game of
+  400 to 900 turns; at least a quarter of banana hits from a flight of 3 cells or more; no
+  fault and `fuel_max` under 80 k; and the side split explained (below).
 - **Not changed.** The roles (one catcher, four standard): a role is a loadout, three ability
   slots, so roles that differ in hp or size need an engine change and wait. The reference
   bot: it ignores zones as it ignores the hill, plays human rooms as it does today, and stays
@@ -4039,21 +4169,68 @@ Decided:
   it points at the row by name (v0.59).
 
 Order, one PR each, the first three here: (1) the `control` kind, its field, loader, scenario
-tests and corpus entry (the content hash moves, so the corpus is re-recorded; no existing
-checksum may change); (2) `Observation` version 2, the host's two versions, the SDK header and
+tests and corpus entry; (2) `Observation` version 2, the host's two versions, the SDK header and
 `docs/bot-abi.md`; (3) the banana's flight (the limit, the mode's override), the power-up
 twins, the arena, the row, the client (every zone tinted by its owner, the HUD's and the
 scoreboard's cases for the kind), the measurements and a release; (4) in the bots repository
 the pin bump, the C++ layer's zones and control state, `starter` and `holder` for the kind, the
-prose, a release, and the house teams resubmitted. Open, to settle in (3) by measurement:
-whether a tie should decay the capture progress instead of holding it; a tie-break at the clock
-(zones owned, then the clocks) before a draw; whether the home zones should start owned; and
-**the side bias**: in every sole-control run of `holder` against `starter` the east side won 55
-to 77 games of 100 whichever bot stood there, and a mirror of `holder`, whose goal is the same
-under the arena's half turn, split 50 to 102. `--rotate` cancels it per entrant, but it halves
-what a pair of games says, and its cause (the bots' scan orders, or the engine's slot-order
-tie-breaks) is not isolated: a scenario test that mirrored inputs give mirrored outcomes comes
-first, because every gate above is read through it.
+prose, a release, and the house teams resubmitted. Progress (v0.80): (1) to (3) are built on one
+branch, all but the release and the measurements. The content hash moved, so the corpus was
+re-recorded: `scripted_10p_contest_1800t` plays `courtyard_zones` with its seeds and length (3
+`ZoneCaptured`, 15 objective points, 11 calls, 4 power-ups taken, the match ending inside its
+1800 ticks) and its checksums changed intentionally; no other `.checksums` file did. The client
+draws the kind (§7), though nobody has yet looked at a control match on screen. Measured as a
+smoke test only, `kfm_arena --mode contest`, five against five, `--rotate --seed 1`, 40 games
+each: `ref:hard` against itself ends every game (none at the clock, no draw; a median of 1229
+ticks, 720 to 1560; 16.6 points and 33.6 eliminations a game; 20 to 20 by entrant, 16 west to
+24 east by side); `tools/bots/examples/chaser.wasm` against `ref:hard` has no fault
+(`fuel_max` 3579) and loses 40 to 0, every game 698 to 700 ticks and 10 to 0 with no
+elimination, because a `ref:hard` monkey passes through its home zone uncontested and keeps it:
+the walkover of the new rules. `ref:hard` ignores zones by design, so none of the gates is
+measured; they need step (4)'s `starter` and `holder`, and the row is tuned against them before
+it is released.
+
+Open, the rules questions to settle by measurement once step (4)'s bots exist: whether a tie should decay the
+capture progress instead of holding it (it holds); a tie-break at the clock (zones owned, then
+the clocks) before a draw; whether the home zones should start owned; that `hill_ticks` and
+`capture_ticks` are not in the observation, so a bot cannot read either threshold (hill has had
+the same gap); the walkover a zone-blind bot gives away; and **the side bias**, settled as far
+as the engine goes. In every sole-control run of `holder` against `starter` on the old hill the
+east side won 55 to 77 games of 100 whichever bot stood there, and a mirror of `holder`, whose
+goal is the same under the arena's half turn, split 50 to 102. The mirrored-inputs test that
+was to come first is `tests/scenario/side_symmetry_scenario.cpp` (v0.80): it plays the shipped
+`contest` row with each east monkey given the half turn of its west twin's input and compares
+the world with its own half turn, teams swapped, every tick. A match without banana fights is
+mirrored bit for bit to a 10 to 10 draw, with each of the four power-ups; with banana and dash
+fights every discrete outcome stays mirrored to the end, positions, velocities and facings
+within 64 raw units and 4 BAM (fights alone: 48 hits, 24 eliminations, 16 respawns and 8
+perfect catches a match) or 256 raw units and 64 BAM (with dashes). The old hill row set up on
+`courtyard_hill` is likewise mirrored bit for bit without fights (to the 3600-tick clock, 0 to
+0; a measurement, not a case). What is not mirrored, each pinned by a `[known-asymmetry]` case:
+(1) the spawn groups' offsets are two world-Rng draws (`spawnByGroups`, `systems/rules.cpp`),
+so a start is mirrored only when they agree, in 6 of seeds 1 to 50; (2) the two spawners draw
+their power-up kinds separately (`systems/lifecycle.cpp`), alike in 12 of 40 seeds; (3)
+`Fixed::operator*` floors, which nudges every banana toward (−x, −y) by about a raw unit a tick
+(negligible on this row; on the old hill row's long flights it passed a whole unit after about
+100 ticks of flight in 2 of 8 seeds); (4) a grid cell contest or swap at an equal `subTick`
+goes to the lower slot (`beats`, `spaces/grid.cpp`), which is the west's, and no bot sets
+`subTick`: in 200 `ref:hard` games 973 of 1585 enemy cell contests went west (61 %), about 8 a
+game; (5) a simultaneous dash exchange lets the lower slot strike first (contacts in pool order,
+then the HitStun row bars the return blow), 3 times in 200 games; (6) same-tick respawns run in
+slot order with an Rng tie-break (`respawnTimers`, `farthestSpawnPoint`), mirrored among
+standing monkeys and not into an empty arena, 318 same-tick pairs in 200 games. So the engine
+leans west where it leans at all, and the east bias measured on the old hill is not the
+engine's tie-breaks: it is left to the bots and to `engine/ai` (fog, line of sight, scan
+order), which the test does not cover. On the shipped row the sides split as a fair coin does:
+`kfm_arena --mode contest`, five against five, `--seed 1`, 200 games, `ref:hard` against
+itself, 105 west to 95 east (two-sided binomial p = 0.52; a fair coin's 95 % range is 86 to
+114; the 40-game smoke run's 16 to 24 above is inside its 14 to 26), 89 to 111 by entrant with
+`--rotate`, no draw, no game at the clock, a median of 1234.5 ticks (712 to 1560). `--rotate`
+still cancels what is left per entrant. The fixes are open, the owner's call, because each
+moves checksums and regenerates the corpus: neither twin moves on a tied cell contest; both
+blows land in a simultaneous exchange; respawn points chosen for every due slot before anyone
+respawns; one draw for all spawn groups, and one per spawner beat for both spawners;
+symmetric rounding in `Fixed`'s multiply (§12).
 
 M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
 test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
@@ -4121,7 +4298,9 @@ the first replay watchable from the ladder is one played after the ladder runs o
 that carries the viewer (a pin bump of the bots repository's `engine.lock` and a bots release,
 v0.64); and a bot submitted by an account outside the project through the whole path, from
 `kfm submit` to its replay in the browser. Not yet run: CI's real xvfb for the two new
-`client_smoke_replay*` tests.
+`client_smoke_replay*` tests. Since then the contest's rules were redesigned (v0.79) and built
+here (v0.80), unreleased and not yet measured against their gates; the bots repository's side
+(step (4) of that design) is next (above, "Contest design").
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
@@ -4630,14 +4809,26 @@ baseline moved to C++23 (§9).
   between teams, but its free-for-all goes 68/84/19/17: groups alternate free-for-all slots
   between the sides, a same-side bias in place of the arc bias. Spawn groups therefore fix
   team play only; the per-round shuffle stays the candidate for free-for-all and remains open
-  (it regenerates the corpus).
+  (it regenerates the corpus). The mirrored-inputs test (v0.80, §11 "Contest design",
+  `side_symmetry_scenario.cpp`) found the same kind of tie-break between the two sides of a
+  team match, each pinned by a `[known-asymmetry]` case and left open for the same reason: a
+  grid cell contest or swap at an equal `subTick` goes to the lower slot (the west's; fix:
+  neither moves); a simultaneous dash exchange lets the lower slot strike first (fix: both
+  blows land); same-tick respawns choose in slot order with their own Rng tie-breaks (fix:
+  every due slot's point chosen before anyone respawns); the spawn groups' offsets and the two
+  spawners' power-ups are separate draws (fix: one draw for all groups, one per beat); and
+  `Fixed`'s multiply floors, nudging every banana toward (−x, −y) (fix: symmetric rounding).
+  Each fix moves checksums and is the owner's call; on the shipped `contest` row the sides
+  split 105 to 95 in 200 `ref:hard` games.
 - Open (M5b step 2 follow-ups, v0.32): a non-spawnable power-up flag (or a set the spawners
   never draw from) so a friendly-fire baseline can ship without changing `dojo_powerups`'
   draws; the reference bot holding fire when a teammate is on the line under friendly fire;
   per-team places and result lines in `kfm_arena` (step 5's `--team`).
 - Open (M5b step 3 follow-ups, v0.33): the reference bot ignores zones and flags, so a bot
   `capture` match scores nothing and `hill` is won by incidental holds; an objective-aware
-  reference bot needs the zones, which Observation v1 does not carry (step 5 adds them);
+  reference bot needs the zones, which Observation v1 does not carry (step 5 adds them; v0.69
+  put zones 0 and 1 in `reservedModeData`, v0.80's version 2 every zone, and the reference bot
+  still ignores them);
   whether a dropped flag should go home when its own team touches it (classic capture the flag
   does; v0.33 returns it only by the clock); content-level fairness of a zone (`compatible`
   only counts zones, so `outposts` also accepts `hill` with the hill on a base).
@@ -4651,8 +4842,11 @@ baseline moved to C++23 (§9).
   (at 2 cells per turn a seen banana is always one side-step away); the in-cone catch.
   Mud has no effect on the grid (a walk is a cell per turn); whether it should cost a turn is
   open too.
-  v0.79 takes the first two up for the contest (§11 "Contest design": a speed limit of 8 for
-  the projectile multiplier and a per-mode outbound and turn rate), designed and not built.
+  v0.79 took the first two up for the contest and v0.80 built them (§11 "Contest design": a
+  speed limit of 8 for the projectile multiplier, `contest_base` at 2 cells a turn, a per-mode
+  outbound and turn rate, 3 turns and 85° a tick in the `contest`); whether range throws then
+  land is still to be measured with the design's gates, and the other grid modes keep the
+  def's flight.
 - Open (M5b step 5, v0.35, the fog and grid numbers as observed): with grid-aware reference
   bots under `own` fog every grid match ends (above, §8), but the fights are close-range: the
   bot only throws from three cells or nearer, because from farther a seen or heard banana is
@@ -4661,7 +4855,8 @@ baseline moved to C++23 (§9).
   three rounds) lasting 1140 ticks on average, countdowns included. The 1-tick variant still flies its bananas at about 1.07 cells per turn, so
   the same `vision` block gives it three turns of hearing where the 15-tick mode gets one and a
   half: the per-mode flight (or flight in turns) of step 4 stays the first lever, then hearing 2
-  for the 1-tick mode. Calls are cheap (894 in three 5v5 matches from bots that call at most
+  for the 1-tick mode (v0.80: the `contest` takes the flight and hearing 1; `grid_rounds_1t`
+  keeps both as they were). Calls are cheap (894 in three 5v5 matches from bots that call at most
   once per eight turns), and a call on a latch tick turns the caller's cone for that turn; an
   alphabet mask and a call cooldown measured in turns are the contest knobs to try. Whether the
   catcher's catch needs the in-cone restriction is still untested: the reference bot catches
@@ -5100,4 +5295,4 @@ void AgentHost::observe(const EventSink&, const WorldState& after, const MatchCo
 - **Cone, peripheral, hearing**: the three parts of a monkey's vision (§8), in cells; **focus**: extra cone for a monkey at rest; **banana sight**: cells around an own banana in flight.
 - **Turn window**: the ticks since the last latch over which a host ORs a bot's visibility and collects its heard calls (v0.35).
 - **Call**: a one-byte shout heard by every monkey in range, the in-game communication channel.
-- **Zone**: an arena box that blocks nothing; modes read who stands in it.
+- **Zone**: an arena box that blocks nothing; modes read who stands in it (in `control`, v0.80, a zone also has an owner, the team that last captured it).

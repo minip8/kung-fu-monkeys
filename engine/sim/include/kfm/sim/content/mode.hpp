@@ -49,6 +49,13 @@ enum class ModeKind : uint8_t {
   // home to score; an eliminated carrier drops it where it stood, a dropped
   // flag left alone for flagReturnTicks goes home.
   Capture,
+  // v0.80, control: hill's round, clock and respawns over every zone of the
+  // arena. A zone belongs to the team that last captured it: the team with
+  // strictly the most monkeys in a zone it does not own gains capture
+  // progress there and owns the zone after captureTicks of it. An owned zone
+  // pays its team one tick per Playing tick, occupied or not; hillTicks of
+  // them score a point. Up to kMaxControlTeams teams.
+  Control,
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 
@@ -57,7 +64,7 @@ enum class ModeKind : uint8_t {
 // rather than round wins (v0.33; the hosts' HUD and tools read it).
 [[nodiscard]] constexpr bool scoresPoints(ModeKind k) {
   return k == ModeKind::Deathmatch || k == ModeKind::TeamDeathmatch || k == ModeKind::Hill ||
-         k == ModeKind::Capture;
+         k == ModeKind::Capture || k == ModeKind::Control;
 }
 
 // How monkeys move in a mode (architecture §5.12, v0.29): the SpaceBehavior
@@ -115,6 +122,10 @@ enum class DeathBananas : uint8_t {
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a choice
 };
 
+// v0.80, control: the most teams the kind plays (its modeData keeps a clock
+// per team in two words, modes/control.cpp).
+inline constexpr uint8_t kMaxControlTeams = 4;
+
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
 // ModeDef::arena when the mode names no arena of its own (v0.34).
@@ -155,6 +166,8 @@ struct ModeDef {
   std::array<uint8_t, kMaxPlayers> roles{};
   uint8_t roleCount{0};
   // v0.33, hill: ticks of holding the zone alone that score a point (>= 1).
+  // v0.80, control: zone-ticks that score a point (a team's clock gains one
+  // per owned zone per Playing tick).
   uint16_t hillTicks{300};
   // v0.33, capture: ticks a dropped flag lies untouched before it goes home (>= 1).
   uint16_t flagReturnTicks{600};
@@ -194,6 +207,16 @@ struct ModeDef {
   // flight) for this many Playing ticks in a row grows one (BananaRegrown);
   // 0 = never. The clock stops while it falls and is not kept across a death.
   uint16_t bananaRegrowTicks{0};
+  // v0.80, control: ticks of majority in a zone a team does not own that
+  // make it the owner (>= 1).
+  uint16_t captureTicks{60};
+  // v0.80, every kind: the banana's flight in this mode (ProjectileSystem,
+  // §5.7): the ticks it flies out before it turns for home, and the most it
+  // turns per tick on the way back (BAM). 0 = the BoomerangDef's
+  // outboundTicks / turnRateBam, so a mode cannot set either to 0 itself.
+  // Read through bananaOutboundTicksOf() / bananaTurnRateBamOf() (content.hpp).
+  uint16_t bananaOutboundTicks{0};
+  uint16_t bananaTurnRateBam{0};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }

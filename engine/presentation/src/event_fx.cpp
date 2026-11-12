@@ -125,6 +125,8 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
       // v0.57: a suicide's point lost rides on the fall's own sounds.
       if (e.b == static_cast<uint32_t>(sim::ScoreReason::Suicide)) break;
       return cue(SoundId::Score);
+    case EventKind::ZoneCaptured:  // v0.80: a zone taken sounds like the point it pays
+      return cue(SoundId::Score);
     case EventKind::BananaRegrown:
       return cue(SoundId::Regrow);
     case EventKind::TimerWarning:
@@ -357,6 +359,22 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
     case EventKind::TimerWarning:
       addEffect(ps, makeEffect(EffectKind::TimerBanner, kNoSlot, Vec3{}, kTimerBannerSeconds));
       break;
+    case EventKind::ZoneCaptured: {
+      // v0.80 (control): a ring in the new owner's colour over the zone
+      // (a = the team, b = the zone).
+      if (e.b >= content.arena.zoneCount || e.b >= sim::kMaxArenaZones) break;
+      const sim::Zone& z = content.arena.zones[e.b];
+      const Vec2f lo = toFloat(z.min);
+      const Vec2f hi = toFloat(z.max);
+      const Vec2f at{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)};
+      const int8_t team = e.a < sim::kMaxControlTeams ? static_cast<int8_t>(e.a) : kNoSlot;
+      RenderEffect ring =
+          makeEffect(EffectKind::ZoneCaptured, team, groundAt(at), kZoneCapturedSeconds);
+      ring.size = 0.5f * std::max(hi.x - lo.x, hi.y - lo.y);
+      addEffect(ps, ring);
+      soundAt = at;
+      break;
+    }
     case EventKind::PlayerBlinked: {
       // a/b: the origin's raw Q16.16 coordinates; the landing is in curr.
       const Vec2f from = toFloat(Vec2{Fixed::fromRaw(static_cast<int32_t>(e.a)),
