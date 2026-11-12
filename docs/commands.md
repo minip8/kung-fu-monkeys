@@ -132,7 +132,8 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 - Arenas: `content/arenas.toml` (`dojo`) and `content/arenas/*.toml`, appended by file name:
   `pillars`, `corridors`, `island`, `dojo_powerups`, `standoff`, `hilltop` (`hill`), `outposts`
   (`capture`), `courtyard` (the grid modes), `courtyard_hill` (`hill` on the grid),
-  `courtyard_zones` (`contest`: three zones, v0.80). A
+  `courtyard_zones` (`contest`: three zones, v0.80), and the harvest pool's `grove`, `orchards`,
+  `gorge` and `burrows` (v0.81: a home zone per team and trees). A
   tilemap arena gives `cell = 1.0` and `map = ["..."]` (`#` wall, `.` floor, `~` pit, `:` mud,
   `0-9` spawns, `a-h` zones) in place of `half_extents`/`walls`/`hazards`/`spawn_points`/`zones`
   (format: `content/arenas/06-hilltop.toml`, architecture §5.10).

@@ -1,0 +1,55 @@
+# The harvest pool (architecture v0.81, §11 "Contest design: bananas as the
+# economy"): close walls and corridors a cell wide, trees in dead ends, so
+# catches and ambushes. 20 x 12 cells, the smallest map; its own half turn
+# (x, y) -> (-x, -y), zone 0 mapping to zone 1 and spawn point k to k + 5.
+#   - an open ring round the edge (rows 0 and 11, columns 0 and 19) and a
+#     middle lane two cells wide on rows 5-6 between the homes, narrowed to
+#     one by a post on either side of the centre; everything between is
+#     solid but for shafts a cell wide (columns 3 and 15 north, 4 and 16
+#     south) joining the ring to the lane, so a banana thrown down a shaft
+#     has nowhere to go but along it.
+#   - zone 0 (glyph a), team 0's home: columns 1-3, rows 5-6 (the west end
+#     of the lane); zone 1 (b), team 1's: columns 16-18 (the east end).
+#   - rich trees at the ends of the two dead-end tunnels off the lane by the
+#     centre, (-0.5, 3.5) up from it and its twin (0.5, -3.5) down: 9 turns
+#     from the nearer home, 10 from the other, every 30 turns, up to 3. A
+#     gatherer in one has its back to the wall and one way out.
+#   - flank trees at the ends of the dead-end tunnels down from the ring,
+#     (-3.5, 2.5) for the west (11 turns from its home, 18 from the other)
+#     and its twin (3.5, -2.5) for the east: every 60 turns, up to 2;
+#   - a poor home tree in the shaft above the west home, (-6.5, 3.5), and
+#     its twin below the east one: every 90 turns, one at a time;
+#   - two power-up spawners on the ring by the centre line, (0.5, 5.5) and
+#     (-0.5, -5.5), laying big_banana_1t, quick_hands_1t or shield_1t from
+#     turn 90 every 240, one alive each (not triplebanana_1t, grove's
+#     reason).
+# Uses 16 wall boxes, no hazard, 10 spawn points and all 8 spawners. Keys:
+# arenas/06-hilltop.toml and arenas/04-dojo_powerups.toml.
+[[arena]]
+name = "burrows"
+cell = 1.0
+spawn_groups = 2
+map = [
+  "....................",
+  ".##.##.########.###.",
+  ".##.##.##.#####.###.",
+  "0##.##.##.#####.###9",
+  "1##.#####.#####.###8",
+  "2aaa........#...bbb.",
+  ".aaa...#........bbb7",
+  "3###.#####.#####.##6",
+  "4###.#####.##.##.##5",
+  ".###.#####.##.##.##.",
+  ".###.########.##.##.",
+  "....................",
+]
+spawners = [
+  { pos = [-0.5, 3.5], tree = true, first_ticks = 30, interval_ticks = 30, max_alive = 3 },   # rich (north tunnel)
+  { pos = [0.5, -3.5], tree = true, first_ticks = 30, interval_ticks = 30, max_alive = 3 },   # rich (south tunnel)
+  { pos = [-3.5, 2.5], tree = true, first_ticks = 60, interval_ticks = 60, max_alive = 2 },   # flank (west)
+  { pos = [3.5, -2.5], tree = true, first_ticks = 60, interval_ticks = 60, max_alive = 2 },   # flank (east)
+  { pos = [-6.5, 3.5], tree = true, first_ticks = 90, interval_ticks = 90, max_alive = 1 },   # home (west)
+  { pos = [6.5, -3.5], tree = true, first_ticks = 90, interval_ticks = 90, max_alive = 1 },   # home (east)
+  { pos = [0.5, 5.5], power_ups = ["big_banana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+  { pos = [-0.5, -5.5], power_ups = ["big_banana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+]

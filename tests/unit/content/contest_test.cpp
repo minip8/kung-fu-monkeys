@@ -12,7 +12,10 @@
 #include "kfm/sim/world_state.hpp"
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+#include <catch2/generators/catch_generators_range.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -100,9 +103,8 @@ TEST_CASE("courtyard_zones: the courtyard with three zones in the designed order
   const std::optional<uint8_t> hill = db.findArena("courtyard_hill");
   REQUIRE(courtyard);
   REQUIRE(hill);
-  // Appended: the arenas before it keep their indices.
-  CHECK(arenaIndex() == db.arenaCount - 1);
-  CHECK(hill.value_or(0) < arenaIndex());
+  // Appended after courtyard_hill: the arenas before it keep their indices.
+  CHECK(arenaIndex() == hill.value_or(0) + 1);
   const sim::ArenaDef& c = db.arenas[courtyard.value_or(0)];
   const sim::ArenaDef& h = db.arenas[hill.value_or(0)];
   CHECK(a.cellSize == Fixed::one());
@@ -343,4 +345,265 @@ TEST_CASE("the contest banana flies 3 turns out and comes home within a few cell
   CHECK(maxAhead < Fixed::fromInt(6));
   CHECK(maxSide < Fixed::fromRatio(5, 2));
   CHECK(caughtAfter == 5);
+}
+
+// --- the harvest pool (v0.81, §11 "Contest design: bananas as the economy") ---
+
+namespace {
+
+// What each pool arena is drawn to be: its size, its boxes, its trees by
+// beat and where its homes lie. Positions are cell centres (half units).
+struct PoolArena {
+  std::string_view name;
+  int32_t columns;
+  int32_t rows;
+  uint8_t walls;
+  uint8_t pits;
+  uint8_t richTrees;   // every 30 turns, up to 3
+  uint8_t flankTrees;  // every 60 turns, up to 2
+};
+
+constexpr std::array<PoolArena, 4> kPool{{
+    {"grove", 24, 14, 6, 2, 2, 2},
+    {"orchards", 28, 16, 13, 0, 0, 4},
+    {"gorge", 26, 16, 6, 3, 2, 2},
+    {"burrows", 20, 12, 16, 0, 2, 2},
+}};
+
+// A tree's beat: first and interval in turns (1-tick turns), max_alive.
+struct Beat {
+  uint16_t first;
+  uint16_t interval;
+  uint8_t maxAlive;
+};
+constexpr Beat kHomeBeat{90, 90, 1};
+constexpr Beat kFlankBeat{60, 60, 2};
+constexpr Beat kRichBeat{30, 30, 3};
+
+[[nodiscard]] bool hasBeat(const sim::PickupSpawner& s, Beat b) {
+  return s.firstTicks == b.first && s.intervalTicks == b.interval && s.maxAlive == b.maxAlive;
+}
+
+[[nodiscard]] const sim::ArenaDef& arenaNamed(std::string_view name) {
+  const std::optional<uint8_t> i = shipped().findArena(name);
+  INFO("arena " << name);
+  REQUIRE(i.has_value());
+  return shipped().arenas[i.value_or(0)];
+}
+
+// A cell a monkey can stand on: its centre in no wall box and no pit.
+[[nodiscard]] bool standable(const sim::ArenaDef& a, sim::grid::Cell k) {
+  if (!sim::grid::inside(a, k)) return false;
+  const Vec2 c = sim::grid::cellCentre(a, k);
+  for (uint8_t w = 0; w < a.wallCount; ++w) {
+    if (sim::boxContains(a.walls[w].min, a.walls[w].max, c)) return false;
+  }
+  for (uint8_t h = 0; h < a.hazardCount; ++h) {
+    if (a.hazards[h].kind == sim::HazardKind::Pit &&
+        sim::boxContains(a.hazards[h].min, a.hazards[h].max, c))
+      return false;
+  }
+  return true;
+}
+
+// The standable cells reached from a zone's cells by steps to the four
+// orthogonal neighbours over standable cells (no pit is crossed).
+[[nodiscard]] std::vector<bool> reachedFrom(const sim::ArenaDef& a, const sim::Zone& z) {
+  const int32_t cols = sim::grid::columns(a);
+  const int32_t rows = sim::grid::rows(a);
+  std::vector<bool> seen(static_cast<size_t>(cols) * static_cast<size_t>(rows), false);
+  std::vector<sim::grid::Cell> queue;
+  const auto at = [&](sim::grid::Cell k) {
+    return (static_cast<size_t>(k.row) * static_cast<size_t>(cols)) + static_cast<size_t>(k.col);
+  };
+  for (int32_t r = 0; r < rows; ++r) {
+    for (int32_t c = 0; c < cols; ++c) {
+      const sim::grid::Cell k{c, r};
+      if (standable(a, k) && sim::boxContains(z.min, z.max, sim::grid::cellCentre(a, k))) {
+        seen[at(k)] = true;
+        queue.push_back(k);
+      }
+    }
+  }
+  for (size_t head = 0; head < queue.size(); ++head) {
+    const sim::grid::Cell k = queue[head];
+    for (const uint8_t o : {uint8_t{0}, uint8_t{2}, uint8_t{4}, uint8_t{6}}) {
+      const sim::grid::Cell n = sim::grid::neighbour(k, o);
+      if (!standable(a, n) || seen[at(n)]) continue;
+      seen[at(n)] = true;
+      queue.push_back(n);
+    }
+  }
+  return seen;
+}
+
+// Chebyshev distance in cells from a cell centre to the nearest cell of a
+// zone (0 inside it).
+[[nodiscard]] int32_t cellsFrom(const sim::ArenaDef& a, const sim::Zone& z, Vec2 p) {
+  const sim::grid::Cell k = sim::grid::cellOf(a, p);
+  const sim::grid::Cell lo = sim::grid::cellOf(a, Vec2{z.min.x, z.max.y});  // north-west cell
+  const sim::grid::Cell hi =
+      sim::grid::cellOf(a, Vec2{z.max.x - Fixed::fromRaw(1), z.min.y + Fixed::fromRaw(1)});
+  const int32_t dc = std::max({lo.col - k.col, k.col - hi.col, 0});
+  const int32_t dr = std::max({lo.row - k.row, k.row - hi.row, 0});
+  return std::max(dc, dr);
+}
+
+}  // namespace
+
+TEST_CASE("the harvest pool: grove, orchards, gorge and burrows appended in that order (v0.81)",
+          "[content][contest][harvest]") {
+  const ContentDB& db = shipped();
+  CHECK(db.arenaCount == 15);  // of kMaxArenas' 16
+  for (size_t k = 0; k < kPool.size(); ++k) {
+    INFO(kPool[k].name);
+    CHECK(db.findArena(kPool[k].name) == std::optional<uint8_t>{static_cast<uint8_t>(11 + k)});
+  }
+}
+
+TEST_CASE("each harvest pool arena is its own half turn", "[content][contest][harvest]") {
+  const PoolArena& want = GENERATE(from_range(kPool));
+  INFO(want.name);
+  const sim::ArenaDef& a = arenaNamed(want.name);
+  for (uint8_t i = 0; i < a.wallCount; ++i) {
+    INFO("wall " << int{i});
+    CHECK(hasTurnedTwin(a.walls, a.wallCount, a.walls[i]));
+  }
+  for (uint8_t i = 0; i < a.hazardCount; ++i) {
+    INFO("hazard " << int{i});
+    CHECK(hasTurnedTwin(a.hazards, a.hazardCount, a.hazards[i]));
+  }
+  // The two homes turn into each other.
+  REQUIRE(a.zoneCount == 2);
+  CHECK(turnsInto(a.zones[0].min, a.zones[0].max, a.zones[1].min, a.zones[1].max));
+  // Spawn point k of group 0 turns into point k of group 1.
+  REQUIRE(a.spawnGroups == 2);
+  REQUIRE(a.spawnPointCount == 10);
+  const sim::SpawnRange west = sim::spawnGroupRange(a, 0);
+  const sim::SpawnRange east = sim::spawnGroupRange(a, 1);
+  REQUIRE(west.end - west.begin == 5);
+  REQUIRE(east.end - east.begin == 5);
+  for (uint8_t k = 0; k < 5; ++k) {
+    INFO("spawn " << int{k} << " of each group");
+    CHECK(turned(a.spawnPoints[west.begin + k]) == a.spawnPoints[east.begin + k]);
+  }
+  // Every spawner turns into one that lays alike: trees into trees of the
+  // same beat (no Rng draw, so their fruit stays mirrored), power-up
+  // spawners into ones with the same set and beat.
+  for (uint8_t i = 0; i < a.pickupSpawnerCount; ++i) {
+    INFO("spawner " << int{i});
+    const sim::PickupSpawner& s = a.pickupSpawners[i];
+    int twins = 0;
+    for (uint8_t j = 0; j < a.pickupSpawnerCount; ++j) {
+      const sim::PickupSpawner& t = a.pickupSpawners[j];
+      if (j != i && turned(s.pos) == t.pos && s.tree == t.tree && s.powerUpSet == t.powerUpSet &&
+          s.firstTicks == t.firstTicks && s.intervalTicks == t.intervalTicks &&
+          s.maxAlive == t.maxAlive)
+        ++twins;
+    }
+    CHECK(twins == 1);
+  }
+}
+
+TEST_CASE("each harvest pool arena: a home per team, its trees, its spawners, its capacities",
+          "[content][contest][harvest]") {
+  const PoolArena& want = GENERATE(from_range(kPool));
+  INFO(want.name);
+  const sim::ArenaDef& a = arenaNamed(want.name);
+  CHECK(a.cellSize == Fixed::one());
+  CHECK(sim::grid::columns(a) == want.columns);
+  CHECK(sim::grid::rows(a) == want.rows);
+  // Within what bots already see: 32 walls, 16 hazards, 8 spawners, 10
+  // spawn points (the loader refuses more; these are the counts drawn).
+  CHECK(a.wallCount == want.walls);
+  CHECK(a.hazardCount == want.pits);
+  for (uint8_t h = 0; h < a.hazardCount; ++h)
+    CHECK(a.hazards[h].kind == sim::HazardKind::Pit);
+  CHECK(a.pickupSpawnerCount == sim::kMaxPickupSpawners);
+
+  // Team t's home is zone t: zone 0 in the west, zone 1 in the east, each
+  // team's spawn group near its own home (team 0 spawns from group 0).
+  REQUIRE(a.zoneCount == 2);
+  CHECK(a.zones[0].max.x < Fixed::zero());
+  CHECK(a.zones[1].min.x > Fixed::zero());
+  for (uint8_t team = 0; team < 2; ++team) {
+    CHECK(sim::homeZoneOf(a, team) == team);
+    const sim::SpawnRange g = sim::spawnGroupRange(a, team);
+    for (uint8_t i = g.begin; i < g.end; ++i) {
+      INFO("team " << int{team} << " spawn " << int{i});
+      CHECK(cellsFrom(a, a.zones[team], a.spawnPoints[i]) <= 5);
+      CHECK(cellsFrom(a, a.zones[team], a.spawnPoints[i]) <
+            cellsFrom(a, a.zones[1 - team], a.spawnPoints[i]));
+    }
+  }
+
+  // The trees: a poor home tree per team, nearer its own home than the
+  // other's; rich and flank trees in the field, at most four; and two
+  // power-up spawners laying the three _1t twins (never triplebanana_1t,
+  // whose ammo_max grant would top a hand up from nowhere).
+  const auto twins =
+      static_cast<uint16_t>(bitOf("big_banana_1t") | bitOf("quick_hands_1t") | bitOf("shield_1t"));
+  std::array<int, 2> homeTrees{};
+  int rich = 0;
+  int flank = 0;
+  int powerUps = 0;
+  for (uint8_t i = 0; i < a.pickupSpawnerCount; ++i) {
+    INFO("spawner " << int{i});
+    const sim::PickupSpawner& s = a.pickupSpawners[i];
+    // On a cell centre a monkey can stand on, outside both homes.
+    const sim::grid::Cell cell = sim::grid::cellOf(a, s.pos);
+    CHECK(sim::grid::cellCentre(a, cell) == s.pos);
+    CHECK(standable(a, cell));
+    CHECK(cellsFrom(a, a.zones[0], s.pos) > 0);
+    CHECK(cellsFrom(a, a.zones[1], s.pos) > 0);
+    if (!s.isTree()) {
+      ++powerUps;
+      CHECK(s.powerUpSet == twins);
+      CHECK(s.firstTicks == 90);
+      CHECK(s.intervalTicks == 240);
+      CHECK(s.maxAlive == 1);
+      continue;
+    }
+    CHECK(s.powerUpSet == 0);
+    if (hasBeat(s, kHomeBeat)) {
+      const uint8_t team =
+          cellsFrom(a, a.zones[0], s.pos) < cellsFrom(a, a.zones[1], s.pos) ? 0 : 1;
+      CHECK(cellsFrom(a, a.zones[team], s.pos) <= 3);
+      ++homeTrees[team];
+    } else if (hasBeat(s, kFlankBeat)) {
+      ++flank;
+    } else {
+      CHECK(hasBeat(s, kRichBeat));
+      ++rich;
+    }
+  }
+  CHECK(homeTrees == std::array<int, 2>{1, 1});
+  CHECK(rich == want.richTrees);
+  CHECK(flank == want.flankTrees);
+  CHECK(rich + flank <= 4);
+  CHECK(powerUps == 2);
+}
+
+TEST_CASE("each harvest pool arena: every floor cell is reached from both homes without a pit",
+          "[content][contest][harvest]") {
+  const PoolArena& want = GENERATE(from_range(kPool));
+  INFO(want.name);
+  const sim::ArenaDef& a = arenaNamed(want.name);
+  REQUIRE(a.zoneCount == 2);
+  const std::vector<bool> fromWest = reachedFrom(a, a.zones[0]);
+  const std::vector<bool> fromEast = reachedFrom(a, a.zones[1]);
+  int floor = 0;
+  for (int32_t r = 0; r < sim::grid::rows(a); ++r) {
+    for (int32_t c = 0; c < sim::grid::columns(a); ++c) {
+      const sim::grid::Cell k{c, r};
+      if (!standable(a, k)) continue;
+      ++floor;
+      INFO("cell " << c << ", " << r);
+      const size_t i = (static_cast<size_t>(r) * static_cast<size_t>(sim::grid::columns(a))) +
+                       static_cast<size_t>(c);
+      CHECK(fromWest[i]);
+      CHECK(fromEast[i]);
+    }
+  }
+  CHECK(floor > 0);
 }
