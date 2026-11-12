@@ -21,9 +21,9 @@ bool canTakePickup(const WorldState& s, const MatchContent& /*content*/, EntityI
 
 bool takePickup(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                 const Contact& /*contact*/, EventSink& sink) {
-  if (!canTakePickup(s, content, a, b)) return false;
   Player* p = s.players.get(a);
   const Pickup* pickup = s.pickups.get(b);
+  if (p == nullptr || pickup == nullptr || !canTakePickup(s, content, a, b)) return false;
   const uint8_t count = std::max<uint8_t>(pickup->count, 1);
   const auto take = std::min<uint8_t>(count, static_cast<uint8_t>(p->stats.ammoMax - p->ammo));
   p->ammo = static_cast<uint8_t>(p->ammo + take);

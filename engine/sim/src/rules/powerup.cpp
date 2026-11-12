@@ -38,9 +38,9 @@ bool canTakePowerUp(const WorldState& s, const MatchContent& content, EntityId a
 
 bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                   const Contact& /*contact*/, EventSink& sink) {
-  if (!canTakePowerUp(s, content, a, b)) return false;
   Player* p = s.players.get(a);
   const Pickup* pickup = s.pickups.get(b);
+  if (p == nullptr || pickup == nullptr || !canTakePowerUp(s, content, a, b)) return false;
   const uint8_t index = pickup->powerUpIndex;
   const PowerUpDef& def = content.db.powerUps[index];
 

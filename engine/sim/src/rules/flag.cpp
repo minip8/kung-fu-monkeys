@@ -20,9 +20,9 @@ bool canTakeFlag(const WorldState& s, const MatchContent& content, EntityId a, E
 
 bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
               const Contact& /*contact*/, EventSink& sink) {
-  if (!canTakeFlag(s, content, a, b)) return false;
   const Player* p = s.players.get(a);
   const Pickup* pickup = s.pickups.get(b);
+  if (p == nullptr || pickup == nullptr || !canTakeFlag(s, content, a, b)) return false;
   const Pickup taken = *pickup;  // the hook sees it after the despawn
   const PlayerId player = p->id;
   s.pickups.despawn(b);
