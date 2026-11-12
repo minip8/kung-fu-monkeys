@@ -1532,10 +1532,11 @@ cycles it under `--rotate` and its JSON match object gains an appended `arena` k
 pool is four half-turn-symmetric maps (`grove`, drafted in the section, `orchards`, `gorge`,
 `burrows`), 15 of the 16 arenas with what ships. No new `Observation` version: mode kind 8 is
 appended, a tree is a spawner whose pad byte is filled, the homes are zones 0 and 1, so a
-version 1 module plays the kind whole. The row is built as `harvest_1t` beside `contest`,
-which stays `control` until the gates pass: `bank_ticks` 2, `steal_ticks` 6, `score_to_win`
+version 1 module plays the kind whole. `contest` becomes the kind when it is built, today's
+row kept as `control_1t`: `bank_ticks` 2, `steal_ticks` 6, `score_to_win`
 40, the contest's clock, respawn, squad, fog and flight, home trees every 90 turns holding
-one, flank trees every 60 holding two, rich trees every 30 holding three. The gates, over 200
+one, flank trees every 60 holding two, rich trees every 30 holding three. What later balance
+patches aim at (targets, not a condition of the row), over 200
 games a pairing and pool member with three house bots (`gatherer`, `raider`, `keeper`): at
 most 5 % at the clock and 5 % drawn, a median of 1200 to 2700 turns, no house bot beating both
 others in more than 65 % of games, 15 to 50 % of banked bananas having changed sides, the team
@@ -1543,14 +1544,17 @@ behind at a third of the game winning at least one in five, each map's sides spl
 fair coin does, no fault and `fuel_max` under 80 k. Chosen by the project's owner: the
 direction (bananas as the economy, and a pool of maps), that it is written up before
 anything is built, and the empty-handed respawn with a home tree per team as its answer.
-Proposed in the write-up and still the owner's to confirm: stealing from a bank and the
-lone-defender rule, the global beats, four maps, the row's numbers and the gates. Step (4) of the control design (control-aware `starter` and
-`holder`) is dropped: the house bots are written for `harvest`. Considered and kept for later
+The rest was left to the write-up by the owner ("whatever is intuitively reasonable"; the
+numbers are for balance patches later): stealing from a bank and the lone-defender rule, the
+global beats, four maps, the row's numbers, and the tied cell contest's fix. Step (4) of the
+control design (control-aware `starter` and `holder`) is dropped: the house bots are written for `harvest`. Considered and kept for later
 designs, in order: spending banked bananas (a priced respawn, a loadout chosen at the
 respawn), peels as traps, bushes (fog only, no checksum), escalating trees, an opening gate,
 homes that grant. Considered and not planned: more than ten monkeys (a third ABI version), a
 painted floor, a shared team array. Not measured: anything of the design; every number is a
 starting point. Open in the section: whether stealing belongs at all, how well the home tree
 answers the empty-handed respawn, a tie-break at the clock, the capacities that bound the maps (8
-spawners a map, 16 arenas, 32 pickups), and, recommended with the kind, the tied cell
-contest's fix of §12, which moves checksums and is the owner's call.
+spawners a map, 16 arenas, 32 pickups). Decided with the kind: the tied cell contest of §12
+alternates by the turn's parity (the lower slot on an even turn, the higher on an odd one),
+not "neither moves", which would hold two deterministic bots at one banana for ever; it moves
+the grid entries' checksums.

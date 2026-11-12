@@ -4343,8 +4343,9 @@ no entrant from outside the project, so the rules change again before one arrive
   and version 2 in `zones`; the hand and its capacity are `self.ammo` and `self.ammoMax`; the
   scores, the clock and `scoreToWin` are where every kind has them. So a version 1 module
   plays the kind whole.
-- **The row.** Built as `harvest_1t` beside `contest`, which stays `control` until the gates
-  pass and then becomes this row: `kind = "harvest"`, the pool above, the contest's squad
+- **The row.** `contest` becomes this kind when it is built (today's row is kept, appended,
+  as `control_1t`, so the control kind keeps a row and a corpus entry): `kind = "harvest"`,
+  the pool above, the contest's squad
   (1-tick turns, the roles, `own` fog with hearing 1, the calls), a `harvest_base` baseline
   (`contest_base` with `ammo_max` + 2: the banana still at 2 cells a turn, three in the hand)
   and the contest's flight (outbound 3, turn rate 15474). It starts from `bank_ticks` 2,
@@ -4353,9 +4354,11 @@ no entrant from outside the project, so the rules change again before one arrive
   home trees every 90 turns holding one, flank trees every 60 holding two, rich trees every 30
   holding three. A monkey carries three bananas home from the middle and back in about twenty
   turns, far more than the trees bear, so the supply is what teams fight over. Every number is
-  content, none is measured, and all are tuned against the gates with three house bots written
-  for the kind in the bots repository (`gatherer`, which carries; `raider`, which hunts
-  carriers and the bank; `keeper`, which guards and catches): over 200 games a pairing and
+  content and none is measured, and none holds the row back: the owner's call is that the
+  rules are built as they read here and balanced by later patches. What those patches aim at,
+  with three house bots written for the kind in the bots repository (`gatherer`, which
+  carries; `raider`, which hunts carriers and the bank; `keeper`, which guards and catches):
+  over 200 games a pairing and
   pool member, at most 5 % at the clock and 5 % drawn; a median game of 1200 to 2700 turns;
   **no house bot beating both of the others in more than 65 % of games**; between 15 and 50 %
   of the bananas banked having changed sides on the way (caught, dropped at a death and taken,
@@ -4374,11 +4377,12 @@ lifecycle pass, `bananaLeft`, the observation's byte, scenario tests); (2) the `
 `respawn_ammo`, `bank_ticks` and `steal_ticks`, the scripted generator's steering (an empty
 hand to the nearest fruit, a full one home; Rng-free and keyed on the kind), a corpus entry,
 mode kind 8 and `docs/bot-abi.md`; (3) the pool (`arenas`, `kfm_arena`'s cycle and the `arena`
-key), the four arenas, `harvest_base`, the `harvest_1t` row, the mirrored-inputs test per
-member, and the client (a tree and its fruit drawn, the cargo over a monkey, the banked score
-in the HUD); (4) in the bots repository the pin, the SDK's trees and homes, the three house
-bots, the measurements and the tuning; (5) `contest` becomes the tuned row, a release, the
-house teams resubmitted.
+key), the four arenas, `harvest_base`, the row and `control_1t`, the mirrored-inputs test per
+member, a `gatherer` example bot in `tools/bots/examples` (the kind's smoke test: the
+reference bot never banks), and the client (a tree and its fruit drawn, the cargo over a
+monkey, the banked score in the HUD); (4) in the bots repository the pin, the SDK's trees and
+homes, the three house bots and the measurements; (5) a release, the house teams resubmitted,
+and balance patches toward the targets above.
 
 Later, each its own design once `harvest` passes its gates, in the order they look worth
 having: **spending** (a respawn priced in banked bananas, and a loadout chosen at the respawn:
@@ -4392,18 +4396,20 @@ observation's capacities: a third ABI version), a painted floor (per-cell world 
 competes with the bananas for the same job), and a shared team array (the ranged calls are
 the more interesting constraint).
 
-Open, to settle by measurement in (4): whether stealing from a bank belongs at all, and
-whether one defender in the zone should stop it (`steal_ticks` 0 is the kind without it);
-how well the home tree answers the empty-handed respawn (the owner's choice: a respawned
-monkey rearms at its home tree under 8 turns of invulnerability; if a leader can still camp a
+Open, for the balance patches to settle by measurement: whether stealing from a bank earns
+its place, and whether one defender in the zone should stop it (it is built as written;
+`steal_ticks` 0 is the kind without it); how well the home tree answers the empty-handed
+respawn (the owner's choice: a respawned monkey rearms at its home tree under 8 turns of invulnerability; if a leader can still camp a
 team with no bananas, the tree's beat is the knob, and `respawn_ammo` 1 the other row); a
 tie-break at the clock (bananas in hand, then a draw); whether the rich trees' yield should
 depend on anything a team holds; and the capacities, which bound the maps: 8 spawners a map
 (trees and power-ups together; more is a new ABI version), 16 arenas (15 used with this pool),
-32 pickups on the floor. Recommended with step (2), the owner's call because it moves
-checksums: the tied cell contest of §12 ("neither moves"), since two monkeys stepping onto
-one fruit cell is this kind's commonest contest and today the lower slot, the west's, takes
-it.
+32 pickups on the floor. Decided with step (2), though it moves the grid entries' checksums:
+the tied cell contest of §12, since two monkeys stepping onto one fruit cell is this kind's
+commonest contest and today the lower slot, the west's, takes it. Not "neither moves", which
+would hold two deterministic bots on either side of a banana for ever: at an equal `subTick`
+the lower slot wins on an even turn and the higher on an odd one (the turn is the tick over
+`turn_ticks`), Rng-free, and even over a match.
 
 M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
 test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
@@ -4994,9 +5000,9 @@ baseline moved to C++23 (§9).
   spawners' power-ups are separate draws (fix: one draw for all groups, one per beat); and
   `Fixed`'s multiply floors, nudging every banana toward (−x, −y) (fix: symmetric rounding).
   Each fix moves checksums and is the owner's call; on the shipped `contest` row the sides
-  split 105 to 95 in 200 `ref:hard` games. The `harvest` design (v0.81, §11) recommends the
-  first of them with its kind: two monkeys stepping onto one fruit cell is that kind's
-  commonest contest.
+  split 105 to 95 in 200 `ref:hard` games. The `harvest` design (v0.81, §11) takes up the
+  first of them with its kind, as an alternation by the turn's parity and not "neither
+  moves": two monkeys stepping onto one fruit cell is that kind's commonest contest.
 - Open (M5b step 2 follow-ups, v0.32): a non-spawnable power-up flag (or a set the spawners
   never draw from) so a friendly-fire baseline can ship without changing `dojo_powerups`'
   draws; the reference bot holding fire when a teammate is on the line under friendly fire;
