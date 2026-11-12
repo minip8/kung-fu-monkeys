@@ -1410,7 +1410,9 @@ version 2 and the host serving versions 1 and 2, as v0.79 designed it; the arena
 `triplebanana_1t`, `quick_hands_1t`, `shield_1t` (9 to 12; 13 of 16 slots used); the `contest`
 row; the client's control cases. Decisions v0.79 left unsaid: a zone pays from the tick it is
 captured (the clock gains 1 on the capture tick); a team with no present slot loses its owned
-zones' points (its clock still drains, nobody is credited); the scripted generator gives a monkey
+zones' points (its clock still drains, nobody is credited, the remainder carries; a slot of it
+present again takes the next point at once, dead or alive, and at the clock a team with no
+present slot is not judged, `teamScoreLeader` as in hill); the scripted generator gives a monkey
 no target while it stands in any zone its team does not own, and the lowest zone index wins a
 distance tie; `capture_ticks` is accepted on every kind, read only by control, default 60; a
 mode cannot itself set the banana's outbound or turn rate to 0 (0 is the def's); a version 1
@@ -1447,8 +1449,10 @@ itself: no game at the clock, no draw, a median of 1229 ticks (720 to 1560), 16.
 won 40 to 0, every game 698 to 700 ticks, 10 to 0 with no elimination, because a `ref:hard`
 monkey passes through its home zone uncontested and keeps it: the walkover of the new rules.
 `ref:hard` ignores zones by design, so none of the design's gates is measured; they need step
-(4)'s control-aware `starter` and `holder`. Verified: `tests/scenario/control_scenario.cpp` (10
-cases), `banana_flight_scenario.cpp` (a mode's override, and 0 as the def's bit for bit),
+(4)'s control-aware `starter` and `holder`. Verified: `tests/scenario/control_scenario.cpp` (13
+cases, the last three a team with no present slot, the same at the clock and the scripted
+generator's lowest-index tie), `banana_flight_scenario.cpp` (a mode's override, and 0 as the
+def's bit for bit), `side_symmetry_scenario.cpp` (the mirrored-inputs verdict below),
 `tests/unit/content/contest_test.cpp` and the rewritten contest pin in `loader_test.cpp`, the
 version 1 prefix pinned by a hash taken from the original version 1 builder, the fixtures
 `peek_v1`/`peek_v2`, `tight_v1`/`tight_v2` and `abi_v0`/`abi_v3`, `chaser_v1.wasm` and the
@@ -1457,16 +1461,48 @@ tuning and presentation tests. The corpus was re-recorded for the content hash: 
 replay's checksums are unchanged except `scripted_10p_contest_1800t`, which now plays
 `courtyard_zones` with the same seeds and length (3 `ZoneCaptured`, 15 objective points, 11
 calls, 4 power-ups taken, the match ending inside 1800 ticks) and whose checksums changed
-intentionally; its `kfm_corpus_tests` row now expects a zone captured and a zone's point. A
-headless build (GCC, Debug) passed every test in each stream of the work; the full `dev` preset
-built clean with 47 of 47 tests; clang-format 23.1.3 and clang-tidy 23.1.4 are clean on the
-touched files. Not run: `client_smoke` on the build machine (no xvfb; CI runs it), so nobody has
-looked at a control match on screen, and the HUD's zone chips were sized blind. The side bias:
-a scenario test that mirrored inputs give mirrored outcomes, the first step the design named,
-is added with this version; until its verdict the cause stays open. Not done and kept open in
-§11: the release; the gate measurements and the tuning of the row against them; step (4) in
-the bots repository; whether a tie should decay the capture progress (it holds); a tie-break at
-the clock; whether the home zones start owned; the side bias; `hill_ticks` and `capture_ticks`
-not in the observation (a bot cannot read either threshold; hill has had the same gap); the
-zone-blind walkover. The roles, the reference bot and the ladder service are deliberately
-unchanged.
+intentionally; its `kfm_corpus_tests` row now expects a zone captured and a zone's point. The
+finished branch, on one Linux machine, the way CI runs it: the lint job's three steps over the
+whole tree (clang-format 23.1.3 over 399 files and clang-tidy 23.1.4 over 253 translation units
+against the `dev` compile database, no `error` or `warning` line; `check_sim_no_float.sh`
+clean); a headless GCC 15 Debug build, 45 of 45 tests outside `soak` and `network`; the `dev`
+preset (GCC 15, Debug, the client), 55 of 55; the `release` preset (GCC 15 at -O3 with
+`-Werror`, WebRTC on), 55 of 55; `server-headless` (Release), `kfm_server --help` and 52 of 52
+with the 3 soak gates and the 4 real-socket tests; `wasm` (Emscripten 6.0.13, node 26), the
+browser client built and 48 of 48 under node, the 23 determinism tests among them; `asan`
+(address and undefined, no recovery), 52 of 52 outside `soak`; every build without a warning,
+and every determinism test green, so no `.checksums` file moved beyond the one above. Not run:
+`client_smoke` (the machine has no `xvfb-run`, so ctest does not register it; CI runs it), so
+nobody has looked at a control match on screen and the HUD's zone chips were sized blind; the
+Windows, macOS and Clang legs; the Rust lobby job (no lobby code changed). The side bias
+(§11 "Contest design", §12): the mirrored-inputs test the design put first,
+`tests/scenario/side_symmetry_scenario.cpp`, plays the shipped row with each east monkey given
+the half turn of its west twin's input and compares the world with its own half turn every
+tick. Without banana fights the match is mirrored bit for bit to a 10 to 10 draw with each of
+the four power-ups; with banana and dash fights every discrete outcome stays mirrored to the
+end, within 64 raw units and 4 BAM (48 hits, 24 eliminations, 16 respawns, 8 perfect catches a
+match) or 256 raw units and 64 BAM (with dashes); the old hill row on `courtyard_hill` is
+mirrored bit for bit without fights too (to the 3600-tick clock, 0 to 0). Six known
+asymmetries are pinned by `[known-asymmetry]` cases: the spawn groups' two offset draws
+(mirrored in 6 of seeds 1 to 50), the two spawners' separate power-up draws (alike in 12 of
+40), `Fixed::operator*`'s floor nudging every banana toward (−x, −y) by about a raw unit a tick
+(a whole unit after about 100 ticks of flight in 2 of 8 seeds on the old hill row, negligible
+on the new), a grid cell contest or swap at an equal `subTick` to the lower slot (the west's;
+no bot sets `subTick`: 973 of 1585 enemy cell contests in 200 `ref:hard` games went west, 61 %,
+about 8 a game), a simultaneous dash exchange to the lower slot (3 in 200 games) and same-tick
+respawns in slot order with an Rng tie-break (mirrored among standing monkeys, not into an empty
+arena; 318 same-tick pairs in 200 games). The engine leans west where it leans at all, so the
+east bias measured on the old hill is the bots' and `engine/ai`'s (fog, line of sight, scan
+order), which the test does not cover. On the shipped row, `kfm_arena --mode contest`, five
+against five, `--seed 1`, 200 games of `ref:hard` against itself: 105 west to 95 east
+(two-sided binomial p = 0.52; a fair coin's 95 % range is 86 to 114), 89 to 111 by entrant with
+`--rotate`, no draw, no game at the clock, a median of 1234.5 ticks (712 to 1560). The fixes
+(neither moves on a tied cell contest, both blows land in a simultaneous exchange, respawn
+points chosen before anyone respawns, one draw for all groups and one per spawner beat,
+symmetric rounding in the multiply) each move checksums and are left open, the owner's call.
+Not done and kept open in §11: the release; the gate measurements and the tuning of the row
+against them; step (4) in the bots repository; whether a tie should decay the capture progress
+(it holds); a tie-break at the clock; whether the home zones start owned; the side asymmetries'
+fixes (also in §12); `hill_ticks` and `capture_ticks` not in the observation (a bot cannot read
+either threshold; hill has had the same gap); the zone-blind walkover. The roles, the reference
+bot and the ladder service are deliberately unchanged.

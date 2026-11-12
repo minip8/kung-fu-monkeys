@@ -428,11 +428,15 @@ it owns, the capture tick included, and a team without a present slot still drai
 with nobody credited. `kMaxControlTeams` (4) is a loader error past it. The scripted generator
 adds the kind: a monkey heads for the nearest zone its team does not own (squared distance, the
 lowest index on a tie) and has no target, so wanders as in hill, while it stands in any zone its
-team does not own. Pinned by `tests/scenario/control_scenario.cpp` (10 cases: a strict majority
+team does not own. Pinned by `tests/scenario/control_scenario.cpp` (13 cases: a strict majority
 and the capture tick's payment, a tie and a new challenger, the owner's majority, an empty zone
-paying and two zones paying twice with the points to the lowest present slot, `score_to_win`,
-the clock and a tied lead, eliminations, the round start, `compatible`, the scripted
-generator).
+paying and two zones paying twice with the points to the lowest present slot, a team with no
+present slot (its clock drains and credits nobody, the remainder carried; a leaver eliminated
+while away is not respawned; a slot back again takes the next point at once, dead or alive, and
+respawns `respawn_ticks` on; at the clock only teams with a present slot are judged, so a team
+that left leading does not win), `score_to_win`, the clock and a tied lead, eliminations, the
+round start, `compatible`, the scripted generator and its lowest-index tie) and
+`side_symmetry_scenario.cpp` (the shipped row under mirrored inputs, §11 "Contest design").
 
 As built (v0.34, step 4: the grid). The space is a pair of hooks, not a system: `InputSystem`
 decodes every alive monkey's `Intent` as before and then calls `spaceBehaviorFor(mode.space)
@@ -1560,8 +1564,12 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   at 9 to 12, the originals' grants lasting one and a half times the originals' count of 15-tick
   turns, in 1-tick turns (`big_banana_1t` and `quick_hands_1t` 60, `triplebanana_1t` and
   `shield_1t` 90); 13 of `kMaxPowerUps` 16 are used. `speed_boost` has no twin: a walk is a cell
-  a turn on the grid whatever the speed. The `contest` row (mode 9) is in §8 "The `contest`
-  mode"; its `vision` is `grid_rounds_1t`'s with `hearing = 1`. Pinned by
+  a turn on the grid whatever the speed. The twins come after the three baselines in
+  `powerups.toml`, so the lobby's toggles are no longer a prefix of the table: the lobby lists
+  every power-up no mode names as its baseline, the four twins among them, and a human room can
+  switch each per match (`lobby_test.cpp` walks the table as the lobby does). The `contest` row
+  (mode 9) is in §8 "The `contest` mode"; its `vision` is `grid_rounds_1t`'s with
+  `hearing = 1`. Pinned by
   `tests/unit/content/contest_test.cpp` (the map, its symmetry, the spawners, the twins, the
   baseline, the flight) and the contest pin in `loader_test.cpp`.
 
@@ -4186,14 +4194,43 @@ Open, the rules questions to settle by measurement once step (4)'s bots exist: w
 capture progress instead of holding it (it holds); a tie-break at the clock (zones owned, then
 the clocks) before a draw; whether the home zones should start owned; that `hill_ticks` and
 `capture_ticks` are not in the observation, so a bot cannot read either threshold (hill has had
-the same gap); the walkover a zone-blind bot gives away; and **the side bias**: in every
-sole-control run of `holder` against `starter` on the old hill the east side won 55 to 77 games
-of 100 whichever bot stood there, and a mirror of `holder`, whose goal is the same under the
-arena's half turn, split 50 to 102 (the smoke run above split 16 to 24). `--rotate` cancels it
-per entrant, but it halves what a pair of games says, and its cause (the bots' scan orders, or
-the engine's slot-order tie-breaks) is not isolated. A scenario test that mirrored inputs give
-mirrored outcomes comes first, because every gate above is read through it; it is added with
-v0.80, and until its verdict the cause stays open.
+the same gap); the walkover a zone-blind bot gives away; and **the side bias**, settled as far
+as the engine goes. In every sole-control run of `holder` against `starter` on the old hill the
+east side won 55 to 77 games of 100 whichever bot stood there, and a mirror of `holder`, whose
+goal is the same under the arena's half turn, split 50 to 102. The mirrored-inputs test that
+was to come first is `tests/scenario/side_symmetry_scenario.cpp` (v0.80): it plays the shipped
+`contest` row with each east monkey given the half turn of its west twin's input and compares
+the world with its own half turn, teams swapped, every tick. A match without banana fights is
+mirrored bit for bit to a 10 to 10 draw, with each of the four power-ups; with banana and dash
+fights every discrete outcome stays mirrored to the end, positions, velocities and facings
+within 64 raw units and 4 BAM (fights alone: 48 hits, 24 eliminations, 16 respawns and 8
+perfect catches a match) or 256 raw units and 64 BAM (with dashes). The old hill row set up on
+`courtyard_hill` is likewise mirrored bit for bit without fights (to the 3600-tick clock, 0 to
+0; a measurement, not a case). What is not mirrored, each pinned by a `[known-asymmetry]` case:
+(1) the spawn groups' offsets are two world-Rng draws (`spawnByGroups`, `systems/rules.cpp`),
+so a start is mirrored only when they agree, in 6 of seeds 1 to 50; (2) the two spawners draw
+their power-up kinds separately (`systems/lifecycle.cpp`), alike in 12 of 40 seeds; (3)
+`Fixed::operator*` floors, which nudges every banana toward (−x, −y) by about a raw unit a tick
+(negligible on this row; on the old hill row's long flights it passed a whole unit after about
+100 ticks of flight in 2 of 8 seeds); (4) a grid cell contest or swap at an equal `subTick`
+goes to the lower slot (`beats`, `spaces/grid.cpp`), which is the west's, and no bot sets
+`subTick`: in 200 `ref:hard` games 973 of 1585 enemy cell contests went west (61 %), about 8 a
+game; (5) a simultaneous dash exchange lets the lower slot strike first (contacts in pool order,
+then the HitStun row bars the return blow), 3 times in 200 games; (6) same-tick respawns run in
+slot order with an Rng tie-break (`respawnTimers`, `farthestSpawnPoint`), mirrored among
+standing monkeys and not into an empty arena, 318 same-tick pairs in 200 games. So the engine
+leans west where it leans at all, and the east bias measured on the old hill is not the
+engine's tie-breaks: it is left to the bots and to `engine/ai` (fog, line of sight, scan
+order), which the test does not cover. On the shipped row the sides split as a fair coin does:
+`kfm_arena --mode contest`, five against five, `--seed 1`, 200 games, `ref:hard` against
+itself, 105 west to 95 east (two-sided binomial p = 0.52; a fair coin's 95 % range is 86 to
+114; the 40-game smoke run's 16 to 24 above is inside its 14 to 26), 89 to 111 by entrant with
+`--rotate`, no draw, no game at the clock, a median of 1234.5 ticks (712 to 1560). `--rotate`
+still cancels what is left per entrant. The fixes are open, the owner's call, because each
+moves checksums and regenerates the corpus: neither twin moves on a tied cell contest; both
+blows land in a simultaneous exchange; respawn points chosen for every due slot before anyone
+respawns; one draw for all spawn groups, and one per spawner beat for both spawners;
+symmetric rounding in `Fixed`'s multiply (§12).
 
 M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
 test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
@@ -4772,7 +4809,17 @@ baseline moved to C++23 (§9).
   between teams, but its free-for-all goes 68/84/19/17: groups alternate free-for-all slots
   between the sides, a same-side bias in place of the arc bias. Spawn groups therefore fix
   team play only; the per-round shuffle stays the candidate for free-for-all and remains open
-  (it regenerates the corpus).
+  (it regenerates the corpus). The mirrored-inputs test (v0.80, §11 "Contest design",
+  `side_symmetry_scenario.cpp`) found the same kind of tie-break between the two sides of a
+  team match, each pinned by a `[known-asymmetry]` case and left open for the same reason: a
+  grid cell contest or swap at an equal `subTick` goes to the lower slot (the west's; fix:
+  neither moves); a simultaneous dash exchange lets the lower slot strike first (fix: both
+  blows land); same-tick respawns choose in slot order with their own Rng tie-breaks (fix:
+  every due slot's point chosen before anyone respawns); the spawn groups' offsets and the two
+  spawners' power-ups are separate draws (fix: one draw for all groups, one per beat); and
+  `Fixed`'s multiply floors, nudging every banana toward (−x, −y) (fix: symmetric rounding).
+  Each fix moves checksums and is the owner's call; on the shipped `contest` row the sides
+  split 105 to 95 in 200 `ref:hard` games.
 - Open (M5b step 2 follow-ups, v0.32): a non-spawnable power-up flag (or a set the spawners
   never draw from) so a friendly-fire baseline can ship without changing `dojo_powerups`'
   draws; the reference bot holding fire when a teammate is on the line under friendly fire;
