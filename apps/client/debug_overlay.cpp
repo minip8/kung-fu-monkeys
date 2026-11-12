@@ -365,11 +365,11 @@ void tuningSection(MatchSession& s, std::string& printed) {
   }
   if (mode.kind == sim::ModeKind::Hill) sliderU16("hill ticks", mode.hillTicks, 1, 1200);
   if (mode.kind == sim::ModeKind::Control) {
-    // v0.79: the zone-ticks per point reuse hill_ticks.
+    // v0.80: the zone-ticks per point reuse hill_ticks.
     sliderU16("zone ticks per point", mode.hillTicks, 1, 1200);
     sliderU16("capture ticks", mode.captureTicks, 1, 1200);
   }
-  // v0.79: the mode's banana flight (0 = the banana's own, above).
+  // v0.80: the mode's banana flight (0 = the banana's own, above).
   sliderU16("mode outbound ticks (0 = banana's)", mode.bananaOutboundTicks, 0, 120);
   sliderU16("mode turn rate (0 = banana's)", mode.bananaTurnRateBam, 0, 4096);
   if (mode.kind == sim::ModeKind::Capture) {

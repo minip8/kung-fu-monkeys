@@ -2,7 +2,7 @@
 
 Bot tooling kept in the game repository (architecture §8). The normative contract is
 `docs/bot-abi.md` (bot ABI and `Observation` v2; the host still runs a module built against
-version 1, architecture v0.79).
+version 1, architecture v0.80).
 
 | Path | What |
 |---|---|
@@ -23,7 +23,7 @@ its integer math and banana flight step against the engine and the sim, and play
 `chaser.wasm` through `AgentHost` against the reference bot. A change to the header or to an
 example is followed by `tools/bots/build_example.sh` and a commit of the rebuilt `.wasm`.
 `tests/fixtures/bots/chaser_v1.wasm` is the chaser as built against the version 1 header (the
-`chaser.wasm` checked in before v0.79, byte for byte); it is never rebuilt, and the same test
+`chaser.wasm` checked in before v0.80, byte for byte); it is never rebuilt, and the same test
 plays it against the version 2 build to show a version 1 module runs unchanged.
 
 ## The header

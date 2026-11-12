@@ -100,12 +100,12 @@ void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out);
 
 // The arena's zones (v0.33) as floor rectangles: zone k belongs to team k in
 // a capture match (the mode's team count, as far as there are zones); in a
-// control match (v0.79) to its owner in `curr`'s modeData (controlZone()),
+// control match (v0.80) to its owner in `curr`'s modeData (controlZone()),
 // with the capture under way; to nobody otherwise. buildRenderState() calls
 // it every frame.
 void buildZones(const sim::WorldState& curr, const sim::MatchContent& match, RenderState& out);
 
-// v0.79: one zone of a control match as its modeData holds it
+// v0.80: one zone of a control match as its modeData holds it
 // (engine/sim/src/modes/control.cpp): owner and challenger as team indices
 // (kNoSlot: nobody), the capture progress in ticks.
 struct ControlZone {

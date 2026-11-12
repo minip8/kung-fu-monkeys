@@ -1,6 +1,6 @@
 ;; Test fixture for kfm_ai_wasm_tests (tests/unit/ai/wasm_agent_test.cpp).
 ;; Regenerate the .wasm beside it with tools/bots/build_fixtures.sh (wabt's wat2wasm).
-;; abi_v3: says version 3, the next one after the host's (architecture v0.79: a host that
+;; abi_v3: says version 3, the next one after the host's (architecture v0.80: a host that
 ;; speaks 1 and 2 refuses a third, AbiMismatch).
 (module
   (memory (export "memory") 2)

@@ -1,4 +1,4 @@
-// The contest's content as shipped (architecture §11 "Contest design", v0.79):
+// The contest's content as shipped (architecture §11 "Contest design", v0.80):
 // the courtyard_zones arena, its spawners and the _1t power-up twins they
 // lay, the contest_base baseline, and the banana's flight under the contest
 // row. The row's own numbers are pinned by loader_test.cpp ("content/ ships
@@ -92,7 +92,7 @@ template <class Box, size_t N>
 
 }  // namespace
 
-TEST_CASE("courtyard_zones: the courtyard with three zones in the designed order (v0.79)",
+TEST_CASE("courtyard_zones: the courtyard with three zones in the designed order (v0.80)",
           "[content][contest]") {
   const ContentDB& db = shipped();
   const sim::ArenaDef& a = zonesArena();
@@ -220,7 +220,7 @@ TEST_CASE("the contest plays on courtyard_zones", "[content][contest]") {
   }
 }
 
-TEST_CASE("the _1t power-up twins are their originals counted in 1-tick turns (v0.79)",
+TEST_CASE("the _1t power-up twins are their originals counted in 1-tick turns (v0.80)",
           "[content][contest][powerup]") {
   const ContentDB& db = shipped();
   const std::array<std::tuple<std::string_view, std::string_view, uint16_t>, 4> twins{{
@@ -247,7 +247,7 @@ TEST_CASE("the _1t power-up twins are their originals counted in 1-tick turns (v
   }
 }
 
-TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.79)",
+TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.80)",
           "[content][contest][powerup]") {
   const ContentDB& db = shipped();
   const std::optional<uint8_t> base = db.findPowerUp("contest_base");
@@ -272,7 +272,7 @@ TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.79
 
 // The flight the row's banana_outbound_ticks and banana_turn_rate give, through
 // step() on the shipped content: a monkey at rest in the open row 4 (column
-// 2) throws east. As measured when the numbers were chosen (v0.79): 2 cells a
+// 2) throws east. As measured when the numbers were chosen (v0.80): 2 cells a
 // turn, 5 cells straight out (the spawn offset and two turns), bending home
 // on the third, at most 2.34 cells off the line, back in its hand 5 turns
 // after the press.

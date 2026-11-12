@@ -4,7 +4,7 @@
 // its banana flight step reproduces the sim's ProjectileSystem exactly, and
 // the checked-in chaser.wasm, built from the header, loads and plays a whole
 // match against the reference bot within budget, deterministically, and the
-// version 1 build of it kept as a fixture plays the same match (v0.79). The
+// version 1 build of it kept as a fixture plays the same match (v0.80). The
 // win counts and the fuel and wall numbers are printed, never asserted.
 #include "kfm/ai/agent_host.hpp"
 #include "kfm/ai/observation.hpp"
@@ -52,7 +52,7 @@ static_assert(sizeof(kfm_observation) == sizeof(Observation));
 static_assert(KFM_OBS_SIZE == sizeof(Observation));
 static_assert(KFM_ABI_VERSION == kObservationVersion);
 static_assert(KFM_ZONE_WORD == kObsZoneWord && KFM_ZONES == kObsZones);  // v0.69
-// v0.79 (version 2): the zones block appended at version 1's end, and the
+// v0.80 (version 2): the zones block appended at version 1's end, and the
 // control kind's modeData words (docs/bot-abi.md §3, modes/control.cpp).
 static_assert(KFM_MAX_ZONES == kObsMaxZones);
 static_assert(offsetof(kfm_observation, zones) == offsetof(Observation, zones));
@@ -544,10 +544,10 @@ TEST_CASE("the chaser plays matches against the reference bot", "[ai][sdk][wasm]
   CHECK(again.checksums == firstChecksums);
 }
 
-TEST_CASE("the chaser built against version 1 plays as the version 2 build (v0.79)",
+TEST_CASE("the chaser built against version 1 plays as the version 2 build (v0.80)",
           "[ai][sdk][wasm]") {
   // tests/fixtures/bots/chaser_v1.wasm is the chaser.wasm checked in before
-  // v0.79, byte for byte: chaser.c built against the version 1 header. Its
+  // v0.80, byte for byte: chaser.c built against the version 1 header. Its
   // kfm_obs_ok wants version 1 and 5748 bytes, and the chaser reads nothing
   // version 2 added, so when the host serves it version 1's prefix it plays
   // exactly what the version 2 build plays.

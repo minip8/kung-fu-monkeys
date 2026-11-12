@@ -673,7 +673,7 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   survival.roundsToWin = 3;
   survival.timeLimitTicks = 3600;
   CHECK(client::modeSummary(survival) == "first to 3 rounds of 1:00, last monkey standing");
-  sim::ModeDef control;  // v0.79
+  sim::ModeDef control;  // v0.80
   control.kind = sim::ModeKind::Control;
   control.teams = 2;
   control.scoreToWin = 5;

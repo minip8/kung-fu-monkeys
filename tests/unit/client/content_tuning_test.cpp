@@ -51,7 +51,7 @@ TEST_CASE("tuning: contentToCpp prints the tuned fields in content.cpp style", "
   CHECK(tuned.find("  c.player.moveSpeed = Fixed::fromRaw(") != std::string::npos);
 }
 
-TEST_CASE("tuning: contentToCpp prints a control mode's clocks and banana flight (v0.79)",
+TEST_CASE("tuning: contentToCpp prints a control mode's clocks and banana flight (v0.80)",
           "[client][tuning]") {
   sim::ContentDB c = sim::defaultContent();
   REQUIRE(c.modeCount < sim::kMaxModes);

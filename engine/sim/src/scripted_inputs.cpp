@@ -80,7 +80,7 @@ namespace {
 // The objective kinds (v0.33): a target to walk to instead of wandering,
 // read from the state alone (no Rng draw, so every other mode is unchanged).
 // Hill: zone 0 while outside it. Capture: a carrier its own team's zone,
-// anyone else the nearest flag of another team. Control (v0.79): the nearest
+// anyone else the nearest flag of another team. Control (v0.80): the nearest
 // zone the monkey's team does not own.
 [[nodiscard]] bool objectiveTarget(const WorldState& s, const MatchContent& content,
                                    const Player& p, Vec2& target) {
@@ -94,7 +94,7 @@ namespace {
   }
   const uint8_t team = content.teamOf(p.id);
   if (content.mode.kind == ModeKind::Control) {
-    // v0.79: the nearest zone its team does not own (word 2 of modeData: a
+    // v0.80: the nearest zone its team does not own (word 2 of modeData: a
     // nibble per zone, the owner + 1), while outside it.
     uint64_t nearest = std::numeric_limits<uint64_t>::max();
     bool any = false;

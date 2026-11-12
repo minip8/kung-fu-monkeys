@@ -62,7 +62,7 @@ inline constexpr float kPitRimWidth = 0.18f;
 inline constexpr float kZoneOpacity = 0.22f;
 inline constexpr float kZoneRimOpacity = 0.75f;
 inline constexpr float kZoneRimStart = 0.9f;
-// v0.79, control: a capture under way is a second rectangle in the
+// v0.80, control: a capture under way is a second rectangle in the
 // challenger's colour growing from the zone's centre with the progress
 // (side × capture), drawn just above the zone (kZoneCaptureLift) at this
 // opacity and rim.
@@ -212,7 +212,7 @@ inline constexpr float kBounceSparkSeconds = 0.15f;
 // Mode effects (v0.23).
 inline constexpr float kRespawnBurstSeconds = 0.6f;
 inline constexpr float kScorePopSeconds = 0.5f;
-inline constexpr float kZoneCapturedSeconds = 0.7f;  // v0.79: the ZoneCaptured ring
+inline constexpr float kZoneCapturedSeconds = 0.7f;  // v0.80: the ZoneCaptured ring
 inline constexpr float kTimerBannerSeconds = 0.8f;
 // Spark and puff counts per burst (each is one billboard draw call).
 inline constexpr int kPerfectCatchSparks = 8;
@@ -268,7 +268,7 @@ inline constexpr Color kDustColor{0.62f, 0.52f, 0.38f};   // ground dust
 // Decal layers above the floor (units), each over the one before, plus the
 // decal pipelines' depth bias (constant and slope-scaled, toward the camera).
 inline constexpr float kZoneLift = 0.006f;         // v0.33: zones lie under the shadows
-inline constexpr float kZoneCaptureLift = 0.009f;  // v0.79: a capture under way, over its zone
+inline constexpr float kZoneCaptureLift = 0.009f;  // v0.80: a capture under way, over its zone
 inline constexpr float kShadowLift = 0.012f;       // blob shadows
 inline constexpr float kDecalLift = 0.022f;        // rings and trails sit above the shadows
 inline constexpr float kDecalDepthBias = -1.0f;
@@ -349,7 +349,7 @@ inline constexpr EffectDisc kPowerUpBurstRing{kPowerUpRingRadius, 2.2f, 0.9f, 0.
 inline constexpr EffectDisc kShieldShatterRing{1.5f, 2.8f, 0.9f, 0.85f};  // × radius, eased
 inline constexpr EffectDisc kRespawnRing{3.0f, 1.0f, 0.9f, 0.8f};         // × radius, eased
 inline constexpr EffectDisc kScorePopRing{1.2f, 3.2f, 0.9f, 0.85f};       // × radius, eased
-// v0.79: × the zone's larger half extent (RenderEffect::size), eased.
+// v0.80: × the zone's larger half extent (RenderEffect::size), eased.
 inline constexpr EffectDisc kZoneCapturedRing{0.3f, 1.4f, 0.9f, 0.85f};
 inline constexpr EffectDisc kSlamRing{0.3f, 1.0f, 0.9f, 0.9f};         // × the reach, eased
 inline constexpr EffectDisc kParryGuardRing{1.0f, 1.8f, 0.8f, 0.85f};  // × radius, eased
@@ -383,7 +383,7 @@ inline constexpr float kDashAnticipationWhiten = 0.5f;
 inline constexpr float kPitFallWhiten = 0.55f;
 inline constexpr float kDashTrailWhiten = 0.3f;
 inline constexpr float kRespawnWhiten = 0.35f;
-inline constexpr float kZoneCapturedWhiten = 0.25f;  // v0.79
+inline constexpr float kZoneCapturedWhiten = 0.25f;  // v0.80
 inline constexpr float kSlamWhiten = 0.4f;
 inline constexpr float kParryGuardWhiten = 0.6f;
 inline constexpr float kBlinkWhiten = 0.5f;

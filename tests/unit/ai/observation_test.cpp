@@ -2,7 +2,7 @@
 // documented layout, a hand-built world mapped field by field, the
 // closest-approach math against a brute-force reference, every
 // present/absent/dead combination, the host delay copied through, and
-// version 2's zones block over a version 1 prefix that did not move (v0.79).
+// version 2's zones block over a version 1 prefix that did not move (v0.80).
 #include "kfm/ai/observation.hpp"
 
 #include "../sim/sim_test_util.hpp"
@@ -58,7 +58,7 @@ TEST_CASE("Observation v2 matches the documented layout", "[ai][observation]") {
   // static_asserted in observation.hpp.
   CHECK(kObservationVersion == 2);
   CHECK(sizeof(Observation) == 5880);
-  // v0.79: version 2 appends the zones block to version 1's 5748 bytes.
+  // v0.80: version 2 appends the zones block to version 1's 5748 bytes.
   CHECK(kObservationV1Version == 1);
   CHECK(kObservationV1Size == 5748);
   CHECK(offsetof(Observation, zones) == kObservationV1Size);
@@ -581,7 +581,7 @@ void checkZone(const ObsZone& got, const Zone& want) {
 
 }  // namespace
 
-TEST_CASE("version 2 lists every zone of the arena (v0.79)", "[ai][observation][zones]") {
+TEST_CASE("version 2 lists every zone of the arena (v0.80)", "[ai][observation][zones]") {
   ContentDB c = defaultContent();
   ArenaDef& zoned = c.arenas[1];
   zoned = c.arenas[0];
@@ -631,7 +631,7 @@ TEST_CASE("version 2 lists every zone of the arena (v0.79)", "[ai][observation][
     CHECK(zeroZone(z));
 }
 
-TEST_CASE("a control match reports kind 7 and its state in words 0-7 (v0.79)",
+TEST_CASE("a control match reports kind 7 and its state in words 0-7 (v0.80)",
           "[ai][observation][zones]") {
   // The documented modeData layout of the control kind (docs/bot-abi.md §3),
   // read off a real match: team 0 takes zone 0, then team 1 challenges it.
@@ -700,13 +700,13 @@ TEST_CASE("a control match reports kind 7 and its state in words 0-7 (v0.79)",
         zoneNumber(1).min.x.raw);
 }
 
-TEST_CASE("version 2's first 5748 bytes are version 1's observation (v0.79)",
+TEST_CASE("version 2's first 5748 bytes are version 1's observation (v0.80)",
           "[ai][observation][zones]") {
   // A team hill match on an arena with three zones, walls, a hazard and a
   // spawner, with scores, deaths, respawns, modeData, a power-up, bananas and
   // pickups: most of version 1's fields hold something. The hash of bytes
   // [16, 5748) below was computed with the version 1 builder (the tree
-  // before v0.79, 650ffde) on this world, so the zones block and the version
+  // before v0.80, 650ffde) on this world, so the zones block and the version
   // 2 header are all version 2 changed. A deliberate change to what version
   // 1 shows (a reserved field filled) updates it; anything else that moves
   // it changes what every version 1 module sees.
@@ -763,7 +763,7 @@ TEST_CASE("version 2's first 5748 bytes are version 1's observation (v0.79)",
   CHECK(fnv1a(obs, sizeof(ObsHeader), kObservationV1Size) == 0x28715d37u);
 }
 
-TEST_CASE("the rules block reports the mode's banana flight, else the def's (v0.79)",
+TEST_CASE("the rules block reports the mode's banana flight, else the def's (v0.80)",
           "[ai][observation][flight]") {
   // fillRules reads MatchContent::bananaOutboundTicks() / bananaTurnRateBam():
   // a mode that sets banana_outbound_ticks / banana_turn_rate shows its own,
@@ -796,7 +796,7 @@ TEST_CASE("the rules block reports the mode's banana flight, else the def's (v0.
   CHECK(obs.rules.bananaTurnRateBam == c.boomerang.turnRateBam);
 }
 
-TEST_CASE("a bot in the shipped contest is told 3 turns out and 85 degrees a turn home (v0.79)",
+TEST_CASE("a bot in the shipped contest is told 3 turns out and 85 degrees a turn home (v0.80)",
           "[ai][observation][flight][contest]") {
   ContentDB db{};
   content::Diagnostics diag;

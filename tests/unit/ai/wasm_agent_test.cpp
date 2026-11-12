@@ -64,7 +64,7 @@ PlayerInput mustAct(WasmAgent& agent, const Observation& obs, Tick tick) {
 }
 
 // An observation whose match.tick (byte 16) is `word`. Not the header: a
-// version 1 module's header is the host's (v0.79), and the fixtures are
+// version 1 module's header is the host's (v0.80), and the fixtures are
 // version 1 modules.
 Observation patternObservation(uint32_t word) {
   Observation obs{};
@@ -246,7 +246,7 @@ TEST_CASE("WasmAgent act round trip", "[ai][wasm]") {
   }
 }
 
-TEST_CASE("WasmAgent serves each module its own version's observation (v0.79)", "[ai][wasm]") {
+TEST_CASE("WasmAgent serves each module its own version's observation (v0.80)", "[ai][wasm]") {
   // A host that speaks 2 writes a version 2 module all 5880 bytes and a
   // version 1 module version 1's 5748 under a version 1 header, nothing past
   // them (version 2 only appends). The peek fixtures return the u32 at any

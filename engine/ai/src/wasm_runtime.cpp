@@ -305,7 +305,7 @@ struct AbiCheck {
   std::string message;
   uint32_t obsAddr{0};
   // The bytes of the observation the module takes: all of it, or version
-  // 1's prefix (v0.79: version 2 only appends).
+  // 1's prefix (v0.80: version 2 only appends).
   uint32_t obsSize{0};
 };
 
@@ -546,7 +546,7 @@ std::optional<sim::PlayerInput> WasmAgent::act(const Observation& obs, Tick tick
   void* dst = wasm_runtime_addr_app_to_native(in.inst, a.obsAddr);
   std::memcpy(dst, &obs, a.obsSize);
   if (a.obsSize == kObservationV1Size) {
-    // A version 1 module (v0.79): version 2's prefix under version 1's header.
+    // A version 1 module (v0.80): version 2's prefix under version 1's header.
     const ObsHeader v1{kObservationV1Version, kObservationV1Size, obs.header.schemaFlags,
                        obs.header.reserved0};
     std::memcpy(dst, &v1, sizeof v1);

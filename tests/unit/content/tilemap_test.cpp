@@ -356,7 +356,7 @@ TEST_CASE("capture: mode keys and validation (v0.33)", "[content][modes][capture
   CHECK(zero.format().contains("'flag_return_ticks'"));
 }
 
-TEST_CASE("control: mode keys and validation (v0.79)", "[content][modes][control]") {
+TEST_CASE("control: mode keys and validation (v0.80)", "[content][modes][control]") {
   const std::string arena = "name = \"z\"\ncell = 1\nspawn_groups = 2\nmap = [\"a0b1c\"]";
   const auto mode = [&](std::string_view m) {
     return withArena(arena) + "\n[[mode]]\nname = \"k\"\nkind = \"control\"\n" + std::string(m);

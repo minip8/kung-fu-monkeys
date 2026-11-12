@@ -1227,7 +1227,7 @@ TEST_CASE("a pit fall sinks the monkey under the floor, then bursts from the pit
   CHECK(deepest < -radius * kMonkeyHeightOverRadius * kFallEndScale);
 }
 
-// v0.79: a mode that overrides the banana's outbound ticks peaks the arc at
+// v0.80: a mode that overrides the banana's outbound ticks peaks the arc at
 // its own turn-for-home, not the BoomerangDef's.
 TEST_CASE("the banana arc follows the mode's outbound ticks", "[presentation][builder]") {
   ContentDB c = defaultContent();
@@ -1252,7 +1252,7 @@ TEST_CASE("the banana arc follows the mode's outbound ticks", "[presentation][bu
   CHECK(heightIn(0) < kBananaArcPeak - 0.05f);
 }
 
-// v0.79, control: every zone is drawn in its owner's colour from modeData
+// v0.80, control: every zone is drawn in its owner's colour from modeData
 // (words 2/3 a nibble per zone, team + 1; words 4-7 a u16 of progress per
 // zone), neutral while unowned, with the capture under way; hand-built
 // content with all eight zones and four teams.

@@ -108,7 +108,7 @@ TEST_CASE("hud view: the clock is urgent in the last ten seconds of play", "[cli
   CHECK_FALSE(client::clockUrgent(hud));
 }
 
-TEST_CASE("control: the zone strip, a chip per zone (v0.79)", "[client][hud][control]") {
+TEST_CASE("control: the zone strip, a chip per zone (v0.80)", "[client][hud][control]") {
   presentation::RenderState rs;
   rs.hud.mode = sim::ModeKind::Control;
   rs.hud.teamCount = 4;

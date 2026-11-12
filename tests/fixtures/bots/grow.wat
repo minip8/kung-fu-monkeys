@@ -4,7 +4,7 @@
 ;; low 32 bits (the old size in pages, or 0xffffffff once the cap is reached) and the
 ;; first byte of the observation's match.tick (byte 16) in byte 4, read after the
 ;; growth (the host must re-resolve the buffer, which may have moved). Not the header's
-;; first byte: a version 1 module's header is the host's (architecture v0.79).
+;; first byte: a version 1 module's header is the host's (architecture v0.80).
 (module
   (memory (export "memory") 2)
   (func (export "kfm_abi_version") (result i32) (i32.const 1))

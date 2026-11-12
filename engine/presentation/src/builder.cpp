@@ -387,7 +387,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
   }
 }
 
-// bananaArcHeight() over the outbound ticks the match flies (v0.79: a mode
+// bananaArcHeight() over the outbound ticks the match flies (v0.80: a mode
 // may override the BoomerangDef's, MatchContent::bananaOutboundTicks).
 [[nodiscard]] float bananaArc(const Boomerang& b, float distanceToOwner, float returnStartDistance,
                               uint16_t outboundTicks) {
@@ -413,7 +413,7 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
 void buildBananas(PresentationState& ps, const WorldState& prev, const WorldState& curr,
                   float alpha, const sim::MatchContent& match, float dt, RenderState& out) {
   const ContentDB& content = match.db;
-  const uint16_t outboundTicks = match.bananaOutboundTicks();  // v0.79: the mode's
+  const uint16_t outboundTicks = match.bananaOutboundTicks();  // v0.80: the mode's
   const float radius = content.boomerang.radius.toFloat();
   for (uint16_t i = 0; i < sim::kMaxBoomerangs; ++i) {
     if (!curr.boomerangs.isAliveIndex(i)) {

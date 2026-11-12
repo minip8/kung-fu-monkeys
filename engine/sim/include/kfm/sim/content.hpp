@@ -230,7 +230,7 @@ struct ContentDB {
 
   // Whether a match may pair this arena with this mode (v0.32, v0.33,
   // v0.34): a team mode needs a spawn group per team, hill a zone (zone 0),
-  // capture a zone per team (team t's is zone t), control (v0.79) a zone
+  // capture a zone per team (team t's is zone t), control (v0.80) a zone
   // (it plays every zone the arena has), a grid mode cells
   // (`cellSize > 0`, §5.12), and so does a fog vision (v0.35: its radii are
   // cells, §8). An incompatible pair is a configuration error of the
@@ -272,7 +272,7 @@ using TeamSet = std::array<uint8_t, kMaxPlayers>;
 }
 inline constexpr TeamSet kFreeForAllTeams = freeForAllTeams();
 
-// v0.79: the banana's flight a mode plays with (ProjectileSystem, and the
+// v0.80: the banana's flight a mode plays with (ProjectileSystem, and the
 // readers outside the sim: the observation's rules block, the banana's arc):
 // the mode's override (ModeDef::bananaOutboundTicks / ::bananaTurnRateBam),
 // or the BoomerangDef's where the mode leaves it 0.
@@ -352,7 +352,7 @@ struct MatchContent {
     return db.loadoutAbilities(loadoutIndexFor(id));
   }
 
-  // v0.79: the banana's flight in this match (bananaOutboundTicksOf()).
+  // v0.80: the banana's flight in this match (bananaOutboundTicksOf()).
   [[nodiscard]] constexpr uint16_t bananaOutboundTicks() const {
     return bananaOutboundTicksOf(db.boomerang, mode);
   }

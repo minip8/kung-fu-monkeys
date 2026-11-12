@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Bot ABI
 
-Status: normative, ABI and `Observation` version 2 (2026-11-12, architecture v0.79: version 1
+Status: normative, ABI and `Observation` version 2 (2026-11-12, architecture v0.80: version 1
 with the `zones` block appended, §2.12; a host that speaks 2 still serves a version 1 module
 version 1's 5748 bytes, §4). Version 1 is everything before the `zones` block, byte for byte:
 every reserved field filled since architecture v0.35, the arena's zones 0 and 1 in
@@ -23,7 +23,7 @@ the seed, the match configuration, the content hash and the modules.
 
 | Export | Wasm signature | Meaning |
 |---|---|---|
-| `kfm_abi_version` | `() -> i32` | The `Observation` schema version the module was built against, as a u32: `2`, or `1` for a module built against version 1 (architecture v0.79, §4). The host refuses to load a module that returns anything else. |
+| `kfm_abi_version` | `() -> i32` | The `Observation` schema version the module was built against, as a u32: `2`, or `1` for a module built against version 1 (architecture v0.80, §4). The host refuses to load a module that returns anything else. |
 | `kfm_obs_buffer` | `() -> i32` | Address in the module's linear memory of a buffer of at least the size of its version's observation, 4-byte aligned: `sizeof(Observation)` = 5880 bytes for version 2, 5748 for version 1. The host writes the observation there before every `kfm_act` (a version 1 module: the first 5748 bytes only, §4). The address must stay the same for the life of the instance. |
 | `kfm_init` | `(seed: i64, slot: i32) -> ()` | Called once before the first `kfm_act` (and again, on a fresh instance with the same seed, when the host wipes the bot's memory on respawn: `memory_on_respawn = wipe`, `kfm_arena`/`kfm_server --memory-on-respawn`, architecture v0.35). `seed` is a u64 the host derives from the match seed; `slot` is the monkey's player slot, 0..9. |
 | `kfm_act` | `(tick: i32) -> i64` | The input for sim tick `tick` (a u32, equal to `match.tick` of the observation just written), packed as below. |
@@ -132,7 +132,7 @@ for a given slot.
 
 ## 2. Observation v2
 
-Version 2 (architecture v0.79) is version 1 with one block appended, `zones` (§2.12). Nothing
+Version 2 (architecture v0.80) is version 1 with one block appended, `zones` (§2.12). Nothing
 before it moved, changed size or changed meaning, so §2.1 to §2.11 describe version 1 as well,
 with the version 1 numbers given beside version 2's where they differ (the header and the
 total size). A version 1 module is written the first 5748 bytes, those sections exactly.
@@ -175,7 +175,7 @@ Enumerations (byte values):
 |---|---|
 | relation | 0 None (empty slot), 1 Self, 2 Ally (a teammate in a team mode, since architecture v0.32; a free-for-all has none), 3 Enemy |
 | match phase | 0 Lobby, 1 RoundStarting (spawned, frozen), 2 Playing, 3 RoundEnded, 4 MatchEnded |
-| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.79: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else") |
+| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else") |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup) |
@@ -196,7 +196,7 @@ Enumerations (byte values):
 | 4440 | 1116 | `arena` | the arena's statics |
 | 5556 | 192 | `reservedHeardCalls[16]` | the calls heard this turn (§3.2), 12 bytes each |
 | 5748 | | | end of version 1 |
-| 5748 | 132 | `zones` | version 2 (architecture v0.79): every objective zone of the arena (§2.12) |
+| 5748 | 132 | `zones` | version 2 (architecture v0.80): every objective zone of the arena (§2.12) |
 | 5880 | | | end |
 
 In the tables below "Offset" is relative to the block; the absolute offset is the block's plus
@@ -256,9 +256,9 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 16 | i32 | `bananaSpawnOffset` | Q16.16: a thrown banana appears this far ahead of the thrower's centre |
 | 20 | i32 | `bananaRestitution` | Q16.16: wall bounce speed scale |
 | 24 | i32 | `pickupRadius` | Q16.16: pickup contact radius |
-| 28 | u16 | `bananaOutboundTicks` | ticks a banana flies straight before it turns home: the match's effective value (architecture v0.79: the mode's `banana_outbound_ticks` when it sets one, else the banana def's) |
+| 28 | u16 | `bananaOutboundTicks` | ticks a banana flies straight before it turns home: the match's effective value (architecture v0.80: the mode's `banana_outbound_ticks` when it sets one, else the banana def's) |
 | 30 | u16 | `bananaMaxReturnTicks` | ticks returning before it drops; it drops at once when its owner is gone |
-| 32 | u16 | `bananaTurnRateBam` | bam per tick: the most a returning banana turns toward its owner; the match's effective value (architecture v0.79: the mode's `banana_turn_rate` when it sets one, else the banana def's) |
+| 32 | u16 | `bananaTurnRateBam` | bam per tick: the most a returning banana turns toward its owner; the match's effective value (architecture v0.80: the mode's `banana_turn_rate` when it sets one, else the banana def's) |
 | 34 | u16 | `hitStunTicks` | ticks of HitStun after a hit |
 | 36 | u8 | `bananaDamage` | base hp per banana hit |
 | 37 | u8 | `dashAttackDamage` | hp per dash attack |
@@ -277,7 +277,7 @@ otherwise it turns its heading toward its owner by at most `bananaTurnRateBam` a
 `speed` along it. Then it moves by its velocity, bouncing off walls and the outer box (the
 crossed face mirrors the overshoot and scales that velocity component by `bananaRestitution`).
 
-The flight numbers are the match's, not the content defaults': since architecture v0.79 a mode
+The flight numbers are the match's, not the content defaults': since architecture v0.80 a mode
 may override the banana's outbound ticks and turn rate (`banana_outbound_ticks`,
 `banana_turn_rate` in `modes.toml`, 0 = the `[boomerang]` def's), and `bananaOutboundTicks`
 and `bananaTurnRateBam` report what the sim flies in this match, the override when there is
@@ -506,7 +506,7 @@ The calls heard in the current turn window, oldest first (§3.2); the unused ent
 
 ### 2.12 `zones` (offset 5748, 132 bytes; version 2)
 
-Architecture v0.79. Every objective zone of the arena, in content order: zone 0 is the hill, a
+Architecture v0.80. Every objective zone of the arena, in content order: zone 0 is the hill, a
 capture team t's home is zone t, and the control kind plays them all (§3). Zones are arena
 statics, constant for a match and the same for every monkey: fog never hides them (§3.1). A
 version 1 module is not written this block; it has zones 0 and 1 only, in
@@ -540,7 +540,7 @@ grid fields and `header.schemaFlags` bit 0 (§3.1, §3.2). A field a mode does n
 | `match.reservedTurnTicks`, `match.reservedTicksToLatch` | a grid mode's turn length and the ticks from this observation's tick to the next latch: 0 when the input answering this observation is latched; while Playing `(turn − ticksInPhase mod turn) mod turn`, in the countdown `roundStartTicks − ticksInPhase`, between rounds `roundEndTicks − ticksInPhase + roundStartTicks`, before the first round `roundStartTicks`, 0 once the match ended (a round that ends early moves it). Filled since architecture v0.35; both 0 in a continuous mode |
 | `self.reservedRole` | the loadout index the slot plays; filled since architecture v0.31 (the match's `MatchConfig::loadout`; since v0.32 the role's in a team mode with `roles`: the slot's position within its team, round-robin) |
 | `match.reservedTeamScores[10]` | a team's score (the sum of its slots' `scores`), by team index; filled since architecture v0.32 (in a free-for-all team i is slot i, so entry i equals `scores[i]`) |
-| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`. The shipped kinds (rounds, deathmatch, survival) leave words 0–7 at 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). Architecture v0.69: words 8–15 hold the arena's zones 0 and 1 in every mode (zones are arena statics, never fogged): zone k is the closed box `minX`, `minY`, `maxX`, `maxY` (Q16.16, read as i32) in words 8 + 4k to 11 + 4k, all four 0 when the arena has no zone k (a real zone is never all zero: min < max). Before v0.69 these words were always 0, so a bot reading them on an older host sees "no zone". The hill is zone 0 (a monkey whose centre is in the box stands on it), a capture team t's home zone t; zones past 1 are not shown in these words (version 2 lists every zone in `zones`, §2.12, and keeps words 8–15 exactly as they are). A capture bot finds the flags in `pickups`. Architecture v0.79, control (mode kind 7, at most 4 teams and 8 zones): words 0–1 hold the clocks of teams 0 to 3, a u16 each, team 2w in the low half of word w and team 2w + 1 in the high half (hill's layout; a team's clock gains one per zone it owns per Playing tick, owned zones pay whether or not anyone stands on them, and every `hill_ticks` of clock score a point, the remainder kept; `hill_ticks` and `capture_ticks` are the mode's content, not in the observation); word 2 the zones' owners and word 3 their challengers, 4 bits per zone, zone k in bits 4k..4k+3, holding the team + 1 (0: nobody owns it, no capture under way); words 4–7 the capture progress, a u16 per zone (Playing ticks the challenger has had strictly the most monkeys there; a tie for the most holds it, the owner having the most or an empty zone clears it, and at `capture_ticks` the challenger owns the zone), zone k in word 4 + k/2, the low half for an even k. The round start clears all eight. Words 8–15 still hold zones 0 and 1 |
+| `match.reservedModeData[16]` | the mode's own state (`MatchRules::modeData`: a hill's clock, a flag's state); filled since architecture v0.31: words 0–7 are `modeData[0..8)`. The shipped kinds (rounds, deathmatch, survival) leave words 0–7 at 0. Architecture v0.33: hill keeps team t's hold clock in the low (t even) or high (t odd) u16 of word t/2 and the team holding the zone alone plus one (0: nobody) in word 5; capture keeps team t's flag in word t (bits 0–1 state: 0 home, 1 carried, 2 dropped; bits 8–15 the carrier's slot; bits 16–31 ticks since the drop). Architecture v0.69: words 8–15 hold the arena's zones 0 and 1 in every mode (zones are arena statics, never fogged): zone k is the closed box `minX`, `minY`, `maxX`, `maxY` (Q16.16, read as i32) in words 8 + 4k to 11 + 4k, all four 0 when the arena has no zone k (a real zone is never all zero: min < max). Before v0.69 these words were always 0, so a bot reading them on an older host sees "no zone". The hill is zone 0 (a monkey whose centre is in the box stands on it), a capture team t's home zone t; zones past 1 are not shown in these words (version 2 lists every zone in `zones`, §2.12, and keeps words 8–15 exactly as they are). A capture bot finds the flags in `pickups`. Architecture v0.80, control (mode kind 7, at most 4 teams and 8 zones): words 0–1 hold the clocks of teams 0 to 3, a u16 each, team 2w in the low half of word w and team 2w + 1 in the high half (hill's layout; a team's clock gains one per zone it owns per Playing tick, owned zones pay whether or not anyone stands on them, and every `hill_ticks` of clock score a point, the remainder kept; `hill_ticks` and `capture_ticks` are the mode's content, not in the observation); word 2 the zones' owners and word 3 their challengers, 4 bits per zone, zone k in bits 4k..4k+3, holding the team + 1 (0: nobody owns it, no capture under way); words 4–7 the capture progress, a u16 per zone (Playing ticks the challenger has had strictly the most monkeys there; a tie for the most holds it, the owner having the most or an empty zone clears it, and at `capture_ticks` the challenger owns the zone), zone k in word 4 + k/2, the low half for an even k. The round start clears all eight. Words 8–15 still hold zones 0 and 1 |
 | `header.reserved0` | nothing yet |
 
 A field a mode does not use is 0; a module reads every filled field with the meaning above.
@@ -608,7 +608,7 @@ the bot author's business.
 ## 4. Versioning
 
 - `kfm_abi_version` and `header.version` are the same number: the `Observation` schema version
-  the module reads. The host speaks versions 1 and 2 (architecture v0.79) and refuses a module
+  the module reads. The host speaks versions 1 and 2 (architecture v0.80) and refuses a module
   whose number is anything else (0, 3, ...: `AbiMismatch`, at load).
 - A host that speaks 2 still serves a version 1 module version 1's observation: before every
   `kfm_act` it writes the first 5748 bytes of the version 2 observation, which are version 1's

@@ -125,7 +125,7 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
       // v0.57: a suicide's point lost rides on the fall's own sounds.
       if (e.b == static_cast<uint32_t>(sim::ScoreReason::Suicide)) break;
       return cue(SoundId::Score);
-    case EventKind::ZoneCaptured:  // v0.79: a zone taken sounds like the point it pays
+    case EventKind::ZoneCaptured:  // v0.80: a zone taken sounds like the point it pays
       return cue(SoundId::Score);
     case EventKind::BananaRegrown:
       return cue(SoundId::Regrow);
@@ -360,7 +360,7 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       addEffect(ps, makeEffect(EffectKind::TimerBanner, kNoSlot, Vec3{}, kTimerBannerSeconds));
       break;
     case EventKind::ZoneCaptured: {
-      // v0.79 (control): a ring in the new owner's colour over the zone
+      // v0.80 (control): a ring in the new owner's colour over the zone
       // (a = the team, b = the zone).
       if (e.b >= content.arena.zoneCount || e.b >= sim::kMaxArenaZones) break;
       const sim::Zone& z = content.arena.zones[e.b];

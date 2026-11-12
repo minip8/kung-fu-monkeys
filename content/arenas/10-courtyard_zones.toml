@@ -1,4 +1,4 @@
-# The contest's three zones (architecture v0.79, §11 "Contest design"): the
+# The contest's three zones (architecture v0.80, §11 "Contest design"): the
 # courtyard (arenas/08-courtyard.toml) with its middle 2 x 2 block taken out
 # and three zones for the control kind. Zone 0 (glyph a) is the 4 x 2 floor
 # between the two 1 x 4 pillars, courtyard_hill's hill; zone 1 (b) is the

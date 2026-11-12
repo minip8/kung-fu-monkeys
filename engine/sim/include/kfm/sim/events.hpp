@@ -61,7 +61,7 @@ enum class EventKind : uint8_t {
                    // in flight went with it (ModeDef::deathBananas = vanish)
   BananaRegrown,   // player, entity = player: an empty hand grew a banana
                    // (ModeDef::bananaRegrowTicks)
-  // v0.79 (control, §5.3):
+  // v0.80 (control, §5.3):
   ZoneCaptured,  // a = the team that now owns the zone, b = the zone
 };
 

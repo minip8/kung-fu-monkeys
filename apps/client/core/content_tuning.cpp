@@ -104,7 +104,7 @@ std::string contentToCpp(const sim::ContentDB& c) {
   appendLine(out, "rounds.roundEndTicks", rounds.roundEndTicks);
   appendLine(out, "rounds.roundStartTicks", rounds.roundStartTicks);
 
-  // v0.79: the objective clocks the overlay tunes (hill's and control's
+  // v0.80: the objective clocks the overlay tunes (hill's and control's
   // hillTicks, control's captureTicks) and a mode's banana flight when it
   // overrides the banana's, per mode by index.
   for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {

@@ -89,7 +89,7 @@ grants = [
 
 # The same at 1-tick turns, grid_rounds_1t's. Its bananas keep the v0.34
 # speed of 4 x 16 u/s = 64 u/s, about 1.07 cells per turn (the projectile
-# speed limit was 4 until v0.79 made it 8); contest_base below flies them at
+# speed limit was 4 until v0.80 made it 8); contest_base below flies them at
 # 2 cells per turn.
 [[powerup]]
 name = "grid_base_1t"
@@ -102,7 +102,7 @@ grants = [
   { kind = "projectile", radius_mul = 0.4286, speed_mul = 4 },
 ]
 
-# v0.79, the contest (architecture §11 "Contest design"): grid_base_1t with
+# v0.80, the contest (architecture §11 "Contest design"): grid_base_1t with
 # the banana at 2 cells per 1-tick turn, the 15-tick grid's speed: 16 u/s x
 # 7.5 = 120 u/s (17476 raw per tick x 7.5 = 131070, 2 cells within the
 # per-tick truncation). The contest row (modes.toml) also shortens the
@@ -118,7 +118,7 @@ grants = [
   { kind = "projectile", radius_mul = 0.4286, speed_mul = 7.5 },
 ]
 
-# v0.79, the contest's pickups (arenas/10-courtyard_zones.toml): the 1-tick
+# v0.80, the contest's pickups (arenas/10-courtyard_zones.toml): the 1-tick
 # twins of four power-ups, the same grants counted in 1-tick turns. A grant
 # here does not depend on the turn's length (a projectile multiplier, an
 # ammo top-up, a tag, an ability override), so only duration_ticks changes:

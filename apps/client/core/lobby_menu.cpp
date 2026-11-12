@@ -419,7 +419,7 @@ std::string modeSummary(const sim::ModeDef& mode) {
       return buf;
     }
     case sim::ModeKind::Control: {
-      // v0.79: capture zones and keep them.
+      // v0.80: capture zones and keep them.
       const std::string clock =
           mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
       std::snprintf(buf, sizeof buf,

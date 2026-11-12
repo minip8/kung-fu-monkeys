@@ -749,7 +749,7 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
       loadErrors(replaced(withPowerUp(), "{ kind = \"stat\", stat = \"move_speed\", mul = 1.5 }",
                           "{ kind = \"projectile\", radius_mul = 5 }")),
       "'radius_mul' = 5.000 is outside"));
-  // v0.79: the projectile speed multiplier has its own limit, 8; the radius
+  // v0.80: the projectile speed multiplier has its own limit, 8; the radius
   // multiplier keeps 4.
   const auto projectile = [](std::string_view grant) {
     return replaced(withPowerUp(), R"({ kind = "stat", stat = "move_speed", mul = 1.5 })", grant);
@@ -814,7 +814,7 @@ TEST_CASE("content/ ships the power-ups and an arena that spawns them",
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
-  // v0.34 appended quick_hands and the grid modes' two baselines, v0.79 the
+  // v0.34 appended quick_hands and the grid modes' two baselines, v0.80 the
   // contest's baseline and the _1t twins its arena lays.
   const std::array<std::string_view, 13> names = {
       "speed_boost",     "big_banana",     "triple_banana", "shield",       "fast_hands",
@@ -1072,7 +1072,7 @@ score_to_win = 0
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nscore_limit = 3\n"),
                  "unknown key 'score_limit'"));
 
-  // v0.79: a mode may override the banana's flight (0, the default, keeps
+  // v0.80: a mode may override the banana's flight (0, the default, keeps
   // the [boomerang] def's), within the [boomerang] keys' bounds.
   {
     ContentDB flight{};
@@ -1159,13 +1159,13 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
 }
 
 // M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset.
-// Since v0.79 it is the control kind (§11 "Contest design") with
+// Since v0.80 it is the control kind (§11 "Contest design") with
 // grid_rounds_1t's squad: the space, turns, kits and the vision's radii are
 // that row's; the baseline is contest_base (the banana at 2 cells a turn),
 // the arena courtyard_zones (three zones), hearing 1 and the banana's flight
 // the mode's own. A season's change to the row is a deliberate edit here;
 // the arena, the twins and the flight are pinned in contest_test.cpp.
-TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0.79)",
+TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0.80)",
           "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;

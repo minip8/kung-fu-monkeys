@@ -97,7 +97,7 @@ constexpr std::array<ModeKindName, 8> kModeKinds = {{
     {"team_deathmatch", sim::ModeKind::TeamDeathmatch},  // v0.32
     {"hill", sim::ModeKind::Hill},                       // v0.33
     {"capture", sim::ModeKind::Capture},                 // v0.33
-    {"control", sim::ModeKind::Control},                 // v0.79
+    {"control", sim::ModeKind::Control},                 // v0.80
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -162,7 +162,7 @@ constexpr std::array<std::string_view, sim::kAbilitySlots> kSlotNames = {"dash",
 }
 
 // Projectile radius multipliers (and v0.34 the radius stat's) stay in
-// (0, kMaxProjectileMul]. v0.79: the speed multiplier's limit is its own, 8,
+// (0, kMaxProjectileMul]. v0.80: the speed multiplier's limit is its own, 8,
 // so a one-tick grid mode can fly a banana at two cells a turn (7.5 x the
 // def's 16 u/s on a unit cell); moves and contacts are swept, so nothing
 // tunnels at any speed (§5.6).
@@ -1383,7 +1383,7 @@ class Builder {
       }
     }
     s.integer("banana_regrow_ticks", m.bananaRegrowTicks, 0, 65535);
-    // v0.79: the banana's flight in this mode, the [boomerang] keys'
+    // v0.80: the banana's flight in this mode, the [boomerang] keys'
     // bounds (0 = the def's outbound_ticks / turn_rate_bam).
     s.integer("banana_outbound_ticks", m.bananaOutboundTicks, 0, 65535);
     s.integer("banana_turn_rate", m.bananaTurnRateBam, 0, 32768);
@@ -1392,7 +1392,7 @@ class Builder {
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);
     s.integer("hill_ticks", m.hillTicks, 1, 65535);  // v0.33
     s.integer("flag_return_ticks", m.flagReturnTicks, 1, 65535);
-    s.integer("capture_ticks", m.captureTicks, 1, 65535);  // v0.79
+    s.integer("capture_ticks", m.captureTicks, 1, 65535);  // v0.80
     // v0.34: the space, and the grid's turn and dash.
     if (const std::optional<std::string> space = s.string("space")) {
       if (*space == "continuous") {
@@ -2032,7 +2032,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if ((m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Control) && m.hillTicks < 1) {
       fail(where + ": hill_ticks must be at least 1");
     }
-    // v0.79: control keeps a clock per team in two words of modeData.
+    // v0.80: control keeps a clock per team in two words of modeData.
     if (m.kind == sim::ModeKind::Control && m.captureTicks < 1) {
       fail(where + ": capture_ticks must be at least 1");
     }

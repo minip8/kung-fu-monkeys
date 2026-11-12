@@ -180,7 +180,7 @@ void fillRules(const sim::ContentDB& db, const sim::ModeDef& mode, ObsRules& r) 
   r.bananaSpawnOffset = db.boomerang.spawnOffset.raw;
   r.bananaRestitution = db.boomerang.restitution.raw;
   r.pickupRadius = db.pickup.radius.raw;
-  r.bananaOutboundTicks = sim::bananaOutboundTicksOf(db.boomerang, mode);  // v0.79: the mode's
+  r.bananaOutboundTicks = sim::bananaOutboundTicksOf(db.boomerang, mode);  // v0.80: the mode's
   r.bananaMaxReturnTicks = db.boomerang.maxReturnTicks;
   r.bananaTurnRateBam = sim::bananaTurnRateBamOf(db.boomerang, mode);
   r.hitStunTicks = db.player.hitStunTicks;
@@ -485,7 +485,7 @@ void buildObservation(const sim::WorldState& world, const sim::MatchContent& con
   out = Observation{};
   out.header.version = kObservationVersion;
   out.header.size = sizeof(Observation);
-  // bot-abi.md §3.3 (version 2, v0.79): every zone of the arena.
+  // bot-abi.md §3.3 (version 2, v0.80): every zone of the arena.
   static_assert(sim::kMaxArenaZones <= kObsMaxZones);
   out.zones.count = std::min<uint8_t>(content.arena.zoneCount, sim::kMaxArenaZones);
   for (uint8_t k = 0; k < out.zones.count; ++k) {

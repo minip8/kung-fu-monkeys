@@ -60,7 +60,7 @@ extern "C" {
 
 /* ---- ABI constants -------------------------------------------------------- */
 
-/* Version 2 (architecture v0.79) is version 1 with the `zones` block appended:
+/* Version 2 (architecture v0.80) is version 1 with the `zones` block appended:
    nothing of version 1 moved. A host that speaks 2 still runs a module built
    against version 1 (it writes it version 1's 5748 bytes under a version 1
    header and nothing past them); a module built with this header is version
@@ -86,10 +86,10 @@ extern "C" {
    Version 2 still fills them. */
 #define KFM_ZONE_WORD 8
 #define KFM_ZONES 2
-/* v0.79 (version 2): every zone of the arena, zones 0 and 1 included, is in
+/* v0.80 (version 2): every zone of the arena, zones 0 and 1 included, is in
    observation.zones. */
 #define KFM_MAX_ZONES 8
-/* v0.79, the control mode's state in match.modeData (bot-abi.md §3):
+/* v0.80, the control mode's state in match.modeData (bot-abi.md §3):
    words 0-1 the teams' clocks (u16 each, team 2w low, 2w+1 high), word
    KFM_CONTROL_OWNER_WORD the owners and KFM_CONTROL_CHALLENGER_WORD the
    challengers (4 bits per zone, zone k in bits 4k..4k+3, the team + 1, 0 =
@@ -130,7 +130,7 @@ enum {
   KFM_MODE_TEAM_DEATHMATCH = 4,
   KFM_MODE_HILL = 5,
   KFM_MODE_CAPTURE = 6,
-  KFM_MODE_CONTROL = 7 /* architecture v0.79 */
+  KFM_MODE_CONTROL = 7 /* architecture v0.80 */
 };
 enum {
   KFM_ABILITY_NONE = 0,
@@ -341,13 +341,13 @@ typedef struct kfm_obs_heard_call {
   int16_t cellX, cellY;
 } kfm_obs_heard_call;
 
-/* v0.79 (version 2): an objective zone, the closed box in Q16.16. */
+/* v0.80 (version 2): an objective zone, the closed box in Q16.16. */
 typedef struct kfm_obs_zone {
   int32_t minX, minY;
   int32_t maxX, maxY;
 } kfm_obs_zone;
 
-/* v0.79 (version 2): the arena's zones in content order (zone 0 is the hill,
+/* v0.80 (version 2): the arena's zones in content order (zone 0 is the hill,
    a capture team t's home is zone t, control plays them all); entries past
    `count` are zero. Fog never hides them. */
 typedef struct kfm_obs_zones {

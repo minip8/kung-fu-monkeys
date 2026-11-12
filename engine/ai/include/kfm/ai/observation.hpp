@@ -45,7 +45,7 @@
 
 namespace kfm::ai {
 
-// v0.79: version 2 is version 1 with the `zones` block appended (every
+// v0.80: version 2 is version 1 with the `zones` block appended (every
 // zone of the arena; version 1 shows only zones 0 and 1, in
 // match.reservedModeData). Nothing of version 1 moved, so a host serves a
 // version 1 module the first kObservationV1Size bytes with its header saying
@@ -73,7 +73,7 @@ inline constexpr uint32_t kObsModeDataWords = 16;
 // (docs/bot-abi.md §3).
 inline constexpr uint32_t kObsZoneWord = 8;
 inline constexpr uint32_t kObsZones = 2;
-// v0.79 (version 2): every zone an arena may have, in the `zones` block.
+// v0.80 (version 2): every zone an arena may have, in the `zones` block.
 inline constexpr uint32_t kObsMaxZones = 8;
 static_assert(kObsZoneWord + (4 * kObsZones) == kObsModeDataWords);
 
@@ -101,7 +101,7 @@ enum class ObsModeKind : uint8_t {
   TeamDeathmatch = 4,  // v0.32
   Hill = 5,            // architecture v0.33
   Capture = 6,         // architecture v0.33
-  Control = 7,         // architecture v0.79
+  Control = 7,         // architecture v0.80
 };
 enum class ObsAbilityKind : uint8_t {
   None = 0,
@@ -392,14 +392,14 @@ struct ObsHeardCall {
   int16_t cellY;
 };
 
-// v0.79 (version 2): an objective zone of the arena, the closed box in Q16.16
+// v0.80 (version 2): an objective zone of the arena, the closed box in Q16.16
 // (the boxes of match.reservedModeData words 8-15, for every zone).
 struct ObsZone {
   int32_t minX, minY;
   int32_t maxX, maxY;
 };
 
-// v0.79 (version 2): the arena's zones in content order (zone 0 is the hill,
+// v0.80 (version 2): the arena's zones in content order (zone 0 is the hill,
 // a capture team t's home is zone t, control plays them all); entries past
 // `count` are zero. Static geometry: fog never hides it.
 struct ObsZones {
@@ -418,7 +418,7 @@ struct Observation {
   ObsPickup pickups[kObsMaxPickups];  // by pool slot
   ObsArena arena;
   ObsHeardCall reservedHeardCalls[kObsMaxHeardCalls];  // this turn's, oldest first (v0.35)
-  ObsZones zones;  // version 2 (v0.79): everything above is version 1, byte for byte
+  ObsZones zones;  // version 2 (v0.80): everything above is version 1, byte for byte
 };
 
 // --- layout -------------------------------------------------------------------

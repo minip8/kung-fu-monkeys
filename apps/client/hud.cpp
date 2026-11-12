@@ -80,7 +80,7 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       std::snprintf(line, sizeof line, "Capture  (first team to %u flags)",
                     static_cast<unsigned>(hud.scoreToWin));
       break;
-    case sim::ModeKind::Control:  // v0.79
+    case sim::ModeKind::Control:  // v0.80
       std::snprintf(line, sizeof line, "Control  (first team to %u points)",
                     static_cast<unsigned>(hud.scoreToWin));
       break;
@@ -100,7 +100,7 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
       break;
   }
   centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y), kWhite, line);
-  // v0.79: control's zones at a glance (empty in every other kind).
+  // v0.80: control's zones at a glance (empty in every other kind).
   const ZoneStrip zones = zoneStrip(state);
   if (hud.teamCount > 0) {
     // v0.32: the team scores, each in its team's colour, side by side;

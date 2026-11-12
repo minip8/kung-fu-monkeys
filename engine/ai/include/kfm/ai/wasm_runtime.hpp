@@ -18,7 +18,7 @@
 //                                   kObservationV1Size for version 1); the
 //                                   host writes the observation there each
 //                                   tick: all of it, or for a version 1
-//                                   module (v0.79) its first
+//                                   module (v0.80) its first
 //                                   kObservationV1Size bytes under a version
 //                                   1 header, nothing past them
 //   kfm_init(seed: i64, slot: i32)  once per instance, before the first act

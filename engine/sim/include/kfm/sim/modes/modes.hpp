@@ -52,7 +52,7 @@ void captureOnEliminated(WorldState& s, const MatchContent& content, PlayerId vi
 void captureOnPickupTaken(WorldState& s, const MatchContent& content, PlayerId player,
                           const Pickup& pickup, EventSink& sink);
 
-// Control (modes/control.cpp, v0.79): capture zones and keep them.
+// Control (modes/control.cpp, v0.80): capture zones and keep them.
 void controlOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
 void controlOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
 void controlOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,

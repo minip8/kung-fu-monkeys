@@ -1,4 +1,4 @@
-// A mode's banana flight (architecture §11 "Contest design", v0.79): a mode
+// A mode's banana flight (architecture §11 "Contest design", v0.80): a mode
 // may override the BoomerangDef's outbound ticks and return turn rate
 // (ModeDef::bananaOutboundTicks / ::bananaTurnRateBam, 0 = the def's), read
 // by ProjectileSystem; nothing of it is in the world state.

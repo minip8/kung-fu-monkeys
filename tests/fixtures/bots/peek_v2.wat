@@ -1,6 +1,6 @@
 ;; Test fixture for kfm_ai_wasm_tests (tests/unit/ai/wasm_agent_test.cpp), bot ABI v2.
 ;; Regenerate the .wasm beside it with tools/bots/build_fixtures.sh (wabt's wat2wasm).
-;; peek_v2: a version 2 module (architecture v0.79) that returns the u32 at byte `tick`
+;; peek_v2: a version 2 module (architecture v0.80) that returns the u32 at byte `tick`
 ;; of its observation buffer, so the test reads back what the host wrote. The 256 bytes
 ;; after version 1's 5748 are 0xA5 from the start: the host writes the 132 of version
 ;; 2's zones block over the first of them and nothing past 5880.

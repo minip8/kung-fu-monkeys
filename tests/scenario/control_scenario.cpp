@@ -1,4 +1,4 @@
-// Control (architecture §5.3, §11 "Contest design", v0.79): every zone of the
+// Control (architecture §5.3, §11 "Contest design", v0.80): every zone of the
 // arena has an owner; the team with strictly the most monkeys in a zone it
 // does not own captures it after captureTicks; an owned zone pays its team's
 // clock whether or not anyone stands on it, hillTicks of clock a point. The

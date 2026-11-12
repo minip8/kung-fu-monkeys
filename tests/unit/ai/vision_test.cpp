@@ -275,7 +275,7 @@ TEST_CASE("team vision is the union of the allies' sight", "[ai][vision]") {
 
 TEST_CASE("vision all is the pre-fog observation byte for byte", "[ai][vision]") {
   ContentDB c = fogContent(VisionKind::All);
-  c.arenas[0].zones[0] = Zone{centre(2, 2), centre(3, 3)};  // v0.79: the zones block too
+  c.arenas[0].zones[0] = Zone{centre(2, 2), centre(3, 3)};  // v0.80: the zones block too
   c.arenas[0].zoneCount = 1;
   WorldState s = makePlayingWorld(8, 0b111, c);
   put(s, kP0, 1, 5, 0);
@@ -302,7 +302,7 @@ TEST_CASE("vision all is the pre-fog observation byte for byte", "[ai][vision]")
   CHECK(plain.self.reservedFacingOctant == 0);
 }
 
-TEST_CASE("fog never hides a zone (v0.79)", "[ai][vision][zones]") {
+TEST_CASE("fog never hides a zone (v0.80)", "[ai][vision][zones]") {
   // Three zones, one behind the wall from P0 and one at its back: under own
   // and team vision the zones block and words 8-15 are those of vision all.
   ContentDB c = fogContent(VisionKind::Own);

@@ -1,4 +1,4 @@
-// Control (architecture §5.3, v0.79): capture the arena's zones and keep
+// Control (architecture §5.3, v0.80): capture the arena's zones and keep
 // them. One round on a clock with deathmatch's respawns and roster (a leaver
 // keeps its score: it is the team's), over every zone of the arena.
 //

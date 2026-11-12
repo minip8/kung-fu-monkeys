@@ -20,7 +20,7 @@
 // every match phase, so it finishes sinking even if the round is decided;
 // LifecycleSystem despawns it after BoomerangDef::pitSinkTicks.
 //
-// v0.79: the outbound ticks and the return's turn rate are the mode's when
+// v0.80: the outbound ticks and the return's turn rate are the mode's when
 // it overrides them (MatchContent::bananaOutboundTicks / ::bananaTurnRateBam:
 // ModeDef's, else the BoomerangDef's), so a mode reshapes the flight with
 // nothing new in the world state.

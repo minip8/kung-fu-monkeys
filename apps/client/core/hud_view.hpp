@@ -96,7 +96,7 @@ struct WinnerTitle {
 inline constexpr float kClockUrgentSeconds = 10.0f;
 [[nodiscard]] bool clockUrgent(const presentation::RenderHud& hud);
 
-// v0.79, control: the zones at a glance, a chip per zone under the clock in
+// v0.80, control: the zones at a glance, a chip per zone under the clock in
 // the arena's order, lettered as the arena preview letters them (a, b, ...):
 // filled in its owner's colour (team t is palette colour t; none: neutral),
 // with a bar in the challenger's colour while a capture is under way. Empty
