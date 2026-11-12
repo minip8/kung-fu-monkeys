@@ -1391,3 +1391,82 @@ cells a turn, the power-up twins); the numbers in the row are starting points. N
 kept open in the section: the side bias's cause (a mirrored-inputs scenario test comes first),
 a tie-break at the clock, whether a tie decays the capture progress, whether home zones start
 owned. The roles, the reference bot and the ladder service are deliberately unchanged.
+
+v0.80 changes: the contest's control rules are built (§11 "Contest design", now "v0.79
+designed; v0.80 built"; §5.3's `control` row and as-built paragraph, §5.7's per-mode flight,
+§5.8's speed limit, §5.9's `ZoneCaptured`, §5.10's control content, §7's control in the client
+and its effect row, §8's `Observation` version 2, the C SDK and the `contest` row, §9's corpus
+expectation, §12's grid items), steps (1) to (3) of that design's order except the release and
+the measurements; step (4), in the bots repository, is not started. Built: the `control` kind
+(`src/modes/control.cpp`, the loader name, the registry row, `kMaxControlTeams` 4, `capture_ticks`);
+the per-mode banana flight (`ModeDef::bananaOutboundTicks` and `bananaTurnRateBam`, TOML
+`banana_outbound_ticks` 0..65535 and `banana_turn_rate` in BAM per tick 0..32768, 0 meaning the
+`[boomerang]` value, through `sim::bananaOutboundTicksOf`/`bananaTurnRateBamOf` and
+`MatchContent::bananaOutboundTicks()`/`bananaTurnRateBam()`, read by ProjectileSystem, the
+observation's rules block and the drawn banana arc; `fieldCount<ModeDef>()` 25 to 28) and the
+projectile `speed_mul` limit of 8 (`kMaxProjectileSpeedMul`, `radius_mul` still 4); `Observation`
+version 2 and the host serving versions 1 and 2, as v0.79 designed it; the arena
+`courtyard_zones` (index 10), the power-ups `contest_base` (8) and the twins `big_banana_1t`,
+`triplebanana_1t`, `quick_hands_1t`, `shield_1t` (9 to 12; 13 of 16 slots used); the `contest`
+row; the client's control cases. Decisions v0.79 left unsaid: a zone pays from the tick it is
+captured (the clock gains 1 on the capture tick); a team with no present slot loses its owned
+zones' points (its clock still drains, nobody is credited); the scripted generator gives a monkey
+no target while it stands in any zone its team does not own, and the lowest zone index wins a
+distance tie; `capture_ticks` is accepted on every kind, read only by control, default 60; a
+mode cannot itself set the banana's outbound or turn rate to 0 (0 is the def's); a version 1
+module's header keeps version 2's `schemaFlags` and `reserved0`, so the fog flag still reaches
+it, and its buffer needs only 5748 bytes; versions other than 1 and 2 are `AbiMismatch`; the
+arena is `courtyard_zones` because `courtyard_control` is over the 15-character name limit, and
+`triplebanana_1t` for the same reason; the twins last one and a half times their originals'
+count of 15-tick turns (`big_banana_1t` and `quick_hands_1t` 60 turns, `triplebanana_1t` and
+`shield_1t` 90); `contest_base` is `grid_base_1t` with `speed_mul` 7.5 (17476 × 7.5 = 131070
+raw, 2 cells a turn within the per-tick truncation); the checked-in examples `chaser.wasm` and
+`idle.wasm` are rebuilt against the version 2 header (the README requires them to match their
+sources) and the old `chaser.wasm` is kept byte for byte as
+`tests/fixtures/bots/chaser_v1.wasm`. The numbers chosen: the map is the design's draft
+verbatim (zone 0 (−2, −1)..(2, 1), zone 1 (−8, −1)..(−5, 1), zone 2 (5, −1)..(8, 1); spawners
+at (−0.5, 3.5) and (0.5, −3.5), first 90, every 240, one alive each); the row `capture_ticks`
+30, `hill_ticks` 60, `score_to_win` 10, `time_limit_ticks` 3600, `respawn_ticks` 240,
+`respawn_invuln_ticks` 8, `vision.hearing` 1, `banana_outbound_ticks` 3, `banana_turn_rate`
+15474 (85° a tick), the roles, calls, regrow 120, vanishing death bananas, space and turns
+unchanged. What was measured: (a) the turn rate, by a sweep through `step()` on the shipped
+content (every floor cell, 8 aim directions, the owner still or walking 6 turns in 4
+directions, 12120 throws per rate), counting the bananas `max_return_ticks` grounds and the
+median and p99 turns home: 8192 BAM (45°) 729, 7, 38; 10923 (60°) 267, 6, 25; 12288 (67.5°) 58,
+6, 18; 13653 (75°) 36, 5, 16; 14564 (80°) 22, 5, 13; 15474 (85°) 0, 5, 13; 16384 (90°) 211, 5,
+12, since at exactly a right angle the banana square-orbits the pillars of an axis-aligned map;
+the def's 1200 gives a median of 31 and a p99 of 218. (b) The flight at 85° in the open lane:
+5 cells straight out (the 1-cell spawn offset and two turns), bending home on the third turn,
+5.17 cells ahead at most, 2.34 cells off the line at most, back in hand 5 turns after the
+press; so "3 turns out" is 6 cells of path but a reach of about 5 to 5.5 cells, not 6 straight
+(which needs an outbound of 4), and 3 was kept. (c) A smoke run, not the gates: `kfm_arena
+--mode contest`, five against five, `--rotate --seed 1`, 40 games each. `ref:hard` against
+itself: no game at the clock, no draw, a median of 1229 ticks (720 to 1560), 16.6 points and
+33.6 eliminations a game, 20 to 20 by entrant, 16 west to 24 east by side.
+`tools/bots/examples/chaser.wasm` against `ref:hard`: no fault, `fuel_max` 3579; `ref:hard`
+won 40 to 0, every game 698 to 700 ticks, 10 to 0 with no elimination, because a `ref:hard`
+monkey passes through its home zone uncontested and keeps it: the walkover of the new rules.
+`ref:hard` ignores zones by design, so none of the design's gates is measured; they need step
+(4)'s control-aware `starter` and `holder`. Verified: `tests/scenario/control_scenario.cpp` (10
+cases), `banana_flight_scenario.cpp` (a mode's override, and 0 as the def's bit for bit),
+`tests/unit/content/contest_test.cpp` and the rewritten contest pin in `loader_test.cpp`, the
+version 1 prefix pinned by a hash taken from the original version 1 builder, the fixtures
+`peek_v1`/`peek_v2`, `tight_v1`/`tight_v2` and `abi_v0`/`abi_v3`, `chaser_v1.wasm` and the
+rebuilt chaser playing one seed checksum for checksum, and the client's HUD, scoreboard, lobby,
+tuning and presentation tests. The corpus was re-recorded for the content hash: every existing
+replay's checksums are unchanged except `scripted_10p_contest_1800t`, which now plays
+`courtyard_zones` with the same seeds and length (3 `ZoneCaptured`, 15 objective points, 11
+calls, 4 power-ups taken, the match ending inside 1800 ticks) and whose checksums changed
+intentionally; its `kfm_corpus_tests` row now expects a zone captured and a zone's point. A
+headless build (GCC, Debug) passed every test in each stream of the work; the full `dev` preset
+built clean with 47 of 47 tests; clang-format 23.1.3 and clang-tidy 23.1.4 are clean on the
+touched files. Not run: `client_smoke` on the build machine (no xvfb; CI runs it), so nobody has
+looked at a control match on screen, and the HUD's zone chips were sized blind. The side bias:
+a scenario test that mirrored inputs give mirrored outcomes, the first step the design named,
+is added with this version; until its verdict the cause stays open. Not done and kept open in
+§11: the release; the gate measurements and the tuning of the row against them; step (4) in
+the bots repository; whether a tie should decay the capture progress (it holds); a tie-break at
+the clock; whether the home zones start owned; the side bias; `hill_ticks` and `capture_ticks`
+not in the observation (a bot cannot read either threshold; hill has had the same gap); the
+zone-blind walkover. The roles, the reference bot and the ladder service are deliberately
+unchanged.
