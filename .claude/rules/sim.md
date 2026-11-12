@@ -22,7 +22,7 @@ screen"), which always apply.
   `MatchConfig::teams` with `sim::teamsFor(mode, present)` (or through `resolveMatchNames`).
   There is no friendly fire unless the mode's `baseline` power-up grants tag `friendly_fire`.
 - Objective kinds keep their state in `MatchRules::modeData` (layouts in `src/modes/hill.cpp`,
-  `capture.cpp` and `docs/bot-abi.md` §3), never in a new world-state field; a capture flag is a
+  `capture.cpp`, `control.cpp` and `docs/bot-abi.md` §3), never in a new world-state field; a capture flag is a
   `PickupKind::Flag` pickup whose `spawner` byte is its team. The scripted generator's objective
   steering must stay Rng-free and keyed on the mode kind, or every other corpus entry moves.
 - Spaces: how monkeys move is `spaceBehaviorFor(mode.space)` (`src/spaces/`), nothing else;

@@ -281,7 +281,7 @@ The flight numbers are the match's, not the content defaults': since architectur
 may override the banana's outbound ticks and turn rate (`banana_outbound_ticks`,
 `banana_turn_rate` in `modes.toml`, 0 = the `[boomerang]` def's), and `bananaOutboundTicks`
 and `bananaTurnRateBam` report what the sim flies in this match, the override when there is
-one. Before v0.79 no mode overrode them, so the fields hold what they always held for every
+one. Before v0.80 no mode overrode them, so the fields hold what they always held for every
 existing mode; a flight helper that reads them, rather than hard-coding the def's numbers,
 stays exact in a mode that overrides. This is a value, not a layout or meaning change: version
 1 modules see the same numbers.
