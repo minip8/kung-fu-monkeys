@@ -328,6 +328,33 @@ TEST_CASE("lobby menu: new content clamps the settings and keeps the focus", "[c
   CHECK_FALSE(m.apply(MenuAction::Right));  // a single arena cycles onto itself
 }
 
+TEST_CASE("lobby menu: a mode with an arena pool brings its first member (v0.81)",
+          "[client][lobby]") {
+  // Hand-built: three copies of the dojo; mode 1 pools arenas 2 and 1.
+  sim::ContentDB db = sim::defaultContent();
+  for (uint8_t i = 1; i <= 2; ++i) {
+    db.arenas[i] = db.arenas[0];
+    db.arenas[i].name = sim::ContentName::of(i == 1 ? "pool_a" : "pool_b");
+  }
+  db.arenaCount = 3;
+  db.modes[1] = db.modes[0];
+  db.modes[1].name = sim::ContentName::of("pooled");
+  db.modes[1].arenaSet = (1u << 1) | (1u << 2);
+  db.modeCount = 2;
+  LobbyMenu m;
+  m.setContent(db);
+  const std::size_t mode = rowOf(m, LobbyRowKind::Mode);
+  REQUIRE(m.settings().arena == 0);
+  CHECK(m.change(mode, +1));  // to the pooled mode: arena 0 is not a member
+  CHECK(m.settings().mode == 1);
+  CHECK(m.settings().arena == 1);  // the pool's first suitable member
+  CHECK(m.change(mode, +1));       // back: the rounds mode keeps the arena
+  CHECK(m.settings().arena == 1);
+  m.settings().arena = 2;
+  CHECK(m.change(mode, +1));  // a member already: kept
+  CHECK(m.settings().arena == 2);
+}
+
 // v8 (issue #83): the online room's Bots row stops where the server's
 // validRoomSettings() does under its player cap (RoomStateMsg::maxPlayers):
 // at most cap − 1 bots, so the host never asks for bots Start cannot place.

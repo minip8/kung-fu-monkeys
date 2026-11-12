@@ -255,8 +255,12 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       break;
     case LobbyRowKind::Mode:
       settings_.mode = cycle(settings_.mode, db.modeCount);
-      // v0.34: a mode that names its arena (ModeDef::arena) brings it.
-      if (db.modeAt(settings_.mode).hasArena() || !db.compatible(settings_.arena, settings_.mode)) {
+      // v0.34: a mode that names its arena (ModeDef::arena) brings it;
+      // v0.81: a mode with a pool brings its first member unless the
+      // arena already is one.
+      if (const sim::ModeDef& m = db.modeAt(settings_.mode);
+          m.hasArena() || (m.hasArenaSet() && !m.inArenaSet(settings_.arena)) ||
+          !db.compatible(settings_.arena, settings_.mode)) {
         settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(settings_.arena);
       }
       break;
