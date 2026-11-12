@@ -22,17 +22,19 @@ screen"), which always apply.
   `MatchConfig::teams` with `sim::teamsFor(mode, present)` (or through `resolveMatchNames`).
   There is no friendly fire unless the mode's `baseline` power-up grants tag `friendly_fire`.
 - Objective kinds keep their state in `MatchRules::modeData` (layouts in `src/modes/hill.cpp`,
-  `capture.cpp`, `control.cpp` and `docs/bot-abi.md` §3), never in a new world-state field; a capture flag is a
-  `PickupKind::Flag` pickup whose `spawner` byte is its team. The scripted generator's objective
-  steering must stay Rng-free and keyed on the mode kind, or every other corpus entry moves.
+  `capture.cpp`, `control.cpp`, `harvest.cpp` (word 0 holds its two beats) and `docs/bot-abi.md`
+  §3), never in a new world-state field; a capture flag is a `PickupKind::Flag` pickup whose
+  `spawner` byte is its team. The scripted generator's objective steering must stay Rng-free
+  and keyed on the mode kind, or every other corpus entry moves.
 - Spaces: how monkeys move is `spaceBehaviorFor(mode.space)` (`src/spaces/`), nothing else;
   the continuous row must stay the sim as built bit for bit. Cells come only from
   `kfm/sim/spaces/grid_cells.hpp` (column 0 west, row 0 north, a cell centre = a tilemap spawn
   point). The grid latch reads the frame and the world state only (rollback-exact); contested
-  cells are not rule rows. Grid content counts in turns: a grid throw's recovery equals
-  `turn_ticks` and roots, a grid dash's active ticks are the slide; a mode's numbers that must
-  scale with the turn need their own defs (the `_1t` twins). The contact radius is
-  `Stats::radius`, never `PlayerDef::radius`, in sim code.
+  cells are not rule rows, and a tie at an equal press is drawn from the world Rng (one
+  Fisher-Yates order of the tied monkeys a latch), never given to a slot. Grid content counts
+  in turns: a grid throw's recovery equals `turn_ticks` and roots, a grid dash's active ticks
+  are the slide; a mode's numbers that must scale with the turn need their own defs (the `_1t`
+  twins). The contact radius is `Stats::radius`, never `PlayerDef::radius`, in sim code.
 - Pits: a pit starts a fall (`Tag::Falling`, `Player::fallTicks` from `[player]
   fall_ticks`, `PlayerFell`), never an elimination on the spot, and only once the whole contact
   disc is over the union of the pit boxes (`discOverPits` / `discWithinBoxes` in
@@ -43,13 +45,21 @@ screen"), which always apply.
   once (`releaseBananasOf`: dropped as pickups, or gone in a mode whose `death_bananas` is
   vanish), and held ones at a non-pit death in a drop mode, a catch past `ammoMax` and a full
   pickup pool all drop or stack (`rules/bananas.hpp`). A new path that would destroy a banana
-  must drop it instead; the exceptions are a vanish mode's death and an ammo power-up's extra
-  bananas when it runs out. A grounded banana wholly over a pit sinks instead
-  (`BoomerangPhase::Sinking`, never a pickup); a new Boomerang row must name an
-  Outbound/Returning phase mask so it never touches a sinking one (a test pins it).
+  must drop it instead; the exceptions are a vanish mode's death, an ammo power-up's extra
+  bananas when it runs out and a banana harvest banks (a point now; a theft gives it back). A
+  grounded banana wholly over a pit sinks instead (`BoomerangPhase::Sinking`, never a pickup);
+  a new Boomerang row must name an Outbound/Returning phase mask so it never touches a sinking
+  one (a test pins it).
 - A new round-ending rule must wait for falls (`anyFalling`), or a doomed last monkey wins; the
   round kinds also end a dry round (no banana left anywhere, `roundRanDry`, `[[mode]]
   dry_round_ticks`), and anything new that makes bananas must count in `bananaLeft`.
+- Trees (`PickupSpawner::tree`) lay bananas on their beat with no Rng draw (twin trees stay
+  mirrored), need an arena with cells (a loader error otherwise) and count in `bananaLeft`
+  while a beat is to come. A mode's `baseline` raises `ammo_max` without topping the hand up
+  (`grantBaseline`), or every respawn would mint bananas; a picked-up power-up still does.
+- A pickup several monkeys could take on one tick goes in an order the world Rng draws
+  (`InteractionRule::contend`, `interactionSystem`), never by pool order: a new taking row needs
+  its `contend` (the checks its handler makes).
 - Serialised structs: every `visit()` overload in `kfm/sim/visit.hpp` is followed by a
   `static_assert(fieldCount<T>() == n)`; a new field means the visitor line, the count and a
   mutation in `visit_test.cpp` / `content_test.cpp` (the tests pin their count the same way).
