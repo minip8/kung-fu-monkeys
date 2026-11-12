@@ -890,11 +890,16 @@ TEST_CASE("a team of gatherers spreads over its trees under fog (v0.82)",
          << ", team 0 on the trees " << m.team0OnTree[0] << " " << m.team0OnTree[1] << " "
          << m.team0OnTree[2] << " " << m.team0OnTree[3] << " " << m.team0OnTree[4] << " "
          << m.team0OnTree[5] << " ticks, " << worked << " trees worked");
+    // The match ends by score: against the reference bots team 0's; in the
+    // mirror whichever team's (the world Rng draws its tied cells and
+    // fruit, v0.82, so the winner is the seed's), and the winner banks
+    // faster than its home tree's beat: more than one banana a beat.
+    const int winner = std::max(m.teamScores[0], m.teamScores[1]);
     CHECK(m.ended);
-    CHECK(m.teamScores[0] >= kHarvestScore);
+    CHECK(winner >= kHarvestScore);
+    if (!mirror) CHECK(m.teamScores[0] >= kHarvestScore);
     CHECK(worked >= 2);
-    // Faster than the home tree's beat: more than one banana a beat.
-    CHECK(m.teamScores[0] * kHomeTreeBeat > m.ticks);
+    CHECK(winner * kHomeTreeBeat > m.ticks);
     checkGatherers(m, fuelMax, fuel, acts);
   }
   WARN("gatherer fuel per act: mean " << (acts == 0 ? 0 : fuel / acts) << ", max " << fuelMax);

@@ -22,10 +22,16 @@
 // Contested cells, judged in one pass over the steps taken above: a step
 // loses to another that targets the same cell, or that swaps cells with it,
 // and was pressed earlier (the frame's subTick of the latch tick, lower
-// first); at an equal press (v0.81) the lower slot wins on an even turn and
-// the higher slot on an odd one, the turn being ticksInPhase / turnTicks at
-// the latch (Rng-free, and even over a match, so neither side of a mirrored
-// arena keeps the tie). The loser stays; a winner keeps its
+// first), or (v0.82) was pressed at the same subTick and drew the earlier
+// place. The draw: two such rivals pressed alike are a tie, unless each of
+// them already loses to an earlier press (then the tie decides nothing and
+// is dropped); the monkeys in at least one kept tie, in slot order, are
+// shuffled by Fisher-Yates on the world Rng (one Rng::below(i + 1) for i
+// from their count less one down to 1, so count - 1 draws for the latch,
+// one for a pair), and the shuffled order is their place. One permutation
+// serves every contest of the latch, so three monkeys into one cell each
+// take it one time in three and a chain of swaps is judged by one order;
+// a latch with no kept tie draws nothing. The loser stays; a winner keeps its
 // target even if the loser stays in it. Moving into a cell another monkey
 // stands in is not a contest (monkeys overlap as in the continuous space;
 // a dash attack needs exactly that). A commitment is moveTarget = the cell
@@ -55,6 +61,7 @@
 
 #include <array>
 #include <cstdint>
+#include <utility>
 
 namespace kfm::sim {
 namespace {
@@ -97,12 +104,49 @@ struct Step {
   uint8_t subTick{0};
 };
 
-// Whether step j beats step i for a contested cell: the earlier press, then
-// (v0.81) the lower slot on an even turn and the higher slot on an odd one.
-[[nodiscard]] constexpr bool beats(const Step& j, uint8_t slotJ, const Step& i, uint8_t slotI,
-                                   bool oddTurn) {
-  if (j.subTick != i.subTick) return j.subTick < i.subTick;
-  return oddTurn ? slotJ > slotI : slotJ < slotI;
+// Whether steps i and j contest a cell: one target, or a swap.
+[[nodiscard]] constexpr bool rivals(const Step& i, const Step& j) {
+  return i.to == j.to || (j.to == i.from && i.to == j.from);
+}
+
+// The steps' places in the latch's draw (kNoPlace for a monkey in no kept
+// tie): the earlier press wins a contest, then (v0.82) the earlier place.
+constexpr uint8_t kNoPlace = 0xFF;
+
+[[nodiscard]] std::array<uint8_t, kMaxPlayers> drawPlaces(
+    WorldState& s, const std::array<Step, kMaxPlayers>& steps) {
+  std::array<bool, kMaxPlayers> pressLost{};
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (!steps[i].taken) continue;
+    for (uint8_t j = 0; j < kMaxPlayers && !pressLost[i]; ++j) {
+      pressLost[i] =
+          steps[j].taken && rivals(steps[i], steps[j]) && steps[j].subTick < steps[i].subTick;
+    }
+  }
+  std::array<bool, kMaxPlayers> tied{};
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    for (uint8_t j = i + 1; j < kMaxPlayers; ++j) {
+      if (!steps[i].taken || !steps[j].taken || steps[i].subTick != steps[j].subTick ||
+          !rivals(steps[i], steps[j]) || (pressLost[i] && pressLost[j])) {
+        continue;
+      }
+      tied[i] = true;
+      tied[j] = true;
+    }
+  }
+  std::array<uint8_t, kMaxPlayers> order{};
+  uint8_t count = 0;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (tied[i]) order[count++] = i;
+  }
+  for (uint8_t n = count; n > 1; --n) {  // i = n - 1 from count - 1 down to 1
+    std::swap(order[n - 1], order[s.rng.below(n)]);
+  }
+  std::array<uint8_t, kMaxPlayers> place{};
+  place.fill(kNoPlace);
+  for (uint8_t r = 0; r < count; ++r)
+    place[order[r]] = r;
+  return place;
 }
 
 // A dash that started this tick commits to its cells.
@@ -133,7 +177,6 @@ void gridLatch(WorldState& s, const MatchContent& content, const InputFrame& fra
   if (!grid::hasCells(a)) return;  // an incompatible pair (§5.10): nobody moves
 
   const auto turnTicks = static_cast<uint16_t>(turn);
-  const bool oddTurn = ((s.rules.ticksInPhase / turn) & 1u) != 0;
   std::array<Step, kMaxPlayers> steps{};
   for (uint8_t i = 0; i < kMaxPlayers; ++i) {
     Player* p = s.playerBySlot(PlayerId{i});
@@ -150,14 +193,14 @@ void gridLatch(WorldState& s, const MatchContent& content, const InputFrame& fra
     }
     steps[i] = Step{true, here, grid::neighbour(here, octant), in.subTick};
   }
+  const std::array<uint8_t, kMaxPlayers> place = drawPlaces(s, steps);
   for (uint8_t i = 0; i < kMaxPlayers; ++i) {
     if (!steps[i].taken) continue;
     bool lost = false;
     for (uint8_t j = 0; j < kMaxPlayers && !lost; ++j) {
-      if (j == i || !steps[j].taken) continue;
-      const bool sameCell = steps[j].to == steps[i].to;
-      const bool swap = steps[j].to == steps[i].from && steps[i].to == steps[j].from;
-      lost = (sameCell || swap) && beats(steps[j], j, steps[i], i, oddTurn);
+      if (j == i || !steps[j].taken || !rivals(steps[i], steps[j])) continue;
+      lost = steps[j].subTick != steps[i].subTick ? steps[j].subTick < steps[i].subTick
+                                                  : place[j] < place[i];
     }
     Player* p = s.playerBySlot(PlayerId{i});
     if (p == nullptr) continue;
