@@ -6,6 +6,7 @@
 
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <optional>
 #include <span>
 #include <string>
@@ -104,6 +105,85 @@ WinnerTitle winnerTitle(const HudView& view, const presentation::RenderHud& hud,
 
 bool clockUrgent(const presentation::RenderHud& hud) {
   return hud.phase == presentation::HudPhase::Playing && hud.clockSeconds <= kClockUrgentSeconds;
+}
+
+std::string modeLineText(const presentation::RenderHud& hud) {
+  char line[96];
+  const auto target = static_cast<unsigned>(hud.scoreToWin);
+  switch (hud.mode) {
+    case sim::ModeKind::Deathmatch:
+      std::snprintf(line, sizeof line, "Deathmatch  (first to %u)", target);
+      return line;
+    case sim::ModeKind::TeamDeathmatch:
+      std::snprintf(line, sizeof line, "Team deathmatch  (first team to %u)", target);
+      return line;
+    case sim::ModeKind::Hill:
+      std::snprintf(line, sizeof line, "Hill  (first team to %u points)", target);
+      return line;
+    case sim::ModeKind::Capture:
+      std::snprintf(line, sizeof line, "Capture  (first team to %u flags)", target);
+      return line;
+    case sim::ModeKind::Control:  // v0.80
+      std::snprintf(line, sizeof line, "Control  (first team to %u points)", target);
+      return line;
+    case sim::ModeKind::Harvest:  // v0.81
+      std::snprintf(line, sizeof line, "Harvest  (first team to %u bananas banked)", target);
+      return line;
+    case sim::ModeKind::TeamRounds:
+      std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
+                    static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
+      return line;
+    case sim::ModeKind::Survival:
+      std::snprintf(line, sizeof line, "Round %u  (first to %u)  %u alive",
+                    static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin),
+                    static_cast<unsigned>(hud.aliveCount));
+      return line;
+    case sim::ModeKind::Rounds:
+    case sim::ModeKind::kCount:
+      break;
+  }
+  std::snprintf(line, sizeof line, "Round %u  (first to %u)", static_cast<unsigned>(hud.round),
+                static_cast<unsigned>(hud.roundsToWin));
+  return line;
+}
+
+std::string roundStartTitle(const presentation::RenderHud& hud) {
+  switch (hud.mode) {
+    case sim::ModeKind::Deathmatch:
+      return "Deathmatch";
+    case sim::ModeKind::TeamDeathmatch:
+      return "Team deathmatch";
+    case sim::ModeKind::Hill:
+      return "King of the hill";
+    case sim::ModeKind::Capture:
+      return "Capture the flag";
+    case sim::ModeKind::Control:
+      return "Control the zones";
+    case sim::ModeKind::Harvest:  // v0.81
+      return "Harvest: bank " + std::to_string(static_cast<unsigned>(hud.scoreToWin)) + " bananas";
+    case sim::ModeKind::Rounds:
+    case sim::ModeKind::Survival:
+    case sim::ModeKind::TeamRounds:
+    case sim::ModeKind::kCount:
+      break;
+  }
+  return "Round " + std::to_string(static_cast<unsigned>(hud.round));
+}
+
+std::string teamScoreText(const presentation::RenderHud& hud, uint8_t team,
+                          std::optional<uint8_t> zonesOwned) {
+  char text[48];
+  const unsigned name = static_cast<unsigned>(team) + 1U;
+  const int score = team < sim::kMaxPlayers ? static_cast<int>(hud.teamScores[team]) : 0;
+  if (zonesOwned) {
+    std::snprintf(text, sizeof text, "Team %u: %d (%u %s)", name, score,
+                  static_cast<unsigned>(*zonesOwned), *zonesOwned == 1 ? "zone" : "zones");
+  } else if (hud.mode == sim::ModeKind::Harvest) {
+    std::snprintf(text, sizeof text, "Team %u: %d banked", name, score);
+  } else {
+    std::snprintf(text, sizeof text, "Team %u: %d", name, score);
+  }
+  return text;
 }
 
 ZoneStrip zoneStrip(const presentation::RenderState& state) {

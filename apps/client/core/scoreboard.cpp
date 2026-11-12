@@ -24,10 +24,11 @@ using presentation::HudPhase;
       return "Points";
     case sim::ModeKind::Capture:
       return "Flags";
+    case sim::ModeKind::Harvest:  // v0.81: bananas banked (less the stolen ones)
+      return "Bananas";
     case sim::ModeKind::Rounds:
     case sim::ModeKind::Survival:
     case sim::ModeKind::TeamRounds:
-    case sim::ModeKind::Harvest:  // v0.81: a minimal case until the client draws the kind
     case sim::ModeKind::kCount:
       break;
   }

@@ -62,65 +62,21 @@ void clockText(float seconds, char (&out)[16]) {
 // the last ten seconds.
 void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float viewW, float y) {
   const presentation::RenderHud& hud = state.hud;
-  char line[96];
-  switch (hud.mode) {
-    case sim::ModeKind::Deathmatch:
-      std::snprintf(line, sizeof line, "Deathmatch  (first to %u)",
-                    static_cast<unsigned>(hud.scoreToWin));
-      break;
-    case sim::ModeKind::TeamDeathmatch:
-      std::snprintf(line, sizeof line, "Team deathmatch  (first team to %u)",
-                    static_cast<unsigned>(hud.scoreToWin));
-      break;
-    case sim::ModeKind::Hill:
-      std::snprintf(line, sizeof line, "Hill  (first team to %u points)",
-                    static_cast<unsigned>(hud.scoreToWin));
-      break;
-    case sim::ModeKind::Capture:
-      std::snprintf(line, sizeof line, "Capture  (first team to %u flags)",
-                    static_cast<unsigned>(hud.scoreToWin));
-      break;
-    case sim::ModeKind::Control:  // v0.80
-      std::snprintf(line, sizeof line, "Control  (first team to %u points)",
-                    static_cast<unsigned>(hud.scoreToWin));
-      break;
-    case sim::ModeKind::TeamRounds:
-      std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
-                    static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
-      break;
-    case sim::ModeKind::Survival:
-      std::snprintf(line, sizeof line, "Round %u  (first to %u)  %u alive",
-                    static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin),
-                    static_cast<unsigned>(hud.aliveCount));
-      break;
-    case sim::ModeKind::Rounds:
-    case sim::ModeKind::Harvest:  // v0.81: a minimal case until the client draws the kind
-    case sim::ModeKind::kCount:
-      std::snprintf(line, sizeof line, "Round %u  (first to %u)", static_cast<unsigned>(hud.round),
-                    static_cast<unsigned>(hud.roundsToWin));
-      break;
-  }
-  centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y), kWhite, line);
+  centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y), kWhite, modeLineText(hud).c_str());
   // v0.80: control's zones at a glance (empty in every other kind).
   const ZoneStrip zones = zoneStrip(state);
   if (hud.teamCount > 0) {
     // v0.32: the team scores, each in its team's colour, side by side;
-    // control adds the zones each team owns.
+    // control adds the zones each team owns, harvest says "banked".
     y += 22.0f;
-    const float teamW = zones.count > 0 ? 176.0f : 128.0f;
+    const bool wide = zones.count > 0 || hud.mode == sim::ModeKind::Harvest;
+    const float teamW = wide ? 176.0f : 128.0f;
     const uint8_t teams = std::min<uint8_t>(hud.teamCount, sim::kMaxPlayers);
     float x = (viewW * 0.5f) - (static_cast<float>(teams - 1) * teamW * 0.5f);
     for (uint8_t t = 0; t < teams; ++t) {
-      char text[48];
-      if (zones.count > 0) {
-        std::snprintf(text, sizeof text, "Team %u: %d (%u %s)", static_cast<unsigned>(t) + 1U,
-                      static_cast<int>(hud.teamScores[t]), static_cast<unsigned>(zones.owned[t]),
-                      zones.owned[t] == 1 ? "zone" : "zones");
-      } else {
-        std::snprintf(text, sizeof text, "Team %u: %d", static_cast<unsigned>(t) + 1U,
-                      static_cast<int>(hud.teamScores[t]));
-      }
-      centredText(dl, 18.0f, ImVec2(x, y), teamColor(t), text);
+      const std::string text = teamScoreText(
+          hud, t, zones.count > 0 ? std::optional<uint8_t>(zones.owned[t]) : std::nullopt);
+      centredText(dl, 18.0f, ImVec2(x, y), teamColor(t), text.c_str());
       x += teamW;
     }
   }
@@ -481,20 +437,8 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
   switch (hud.phase) {
     case HudPhase::RoundStarting: {
       const float pop = presentation::bannerScale(state, EffectKind::RoundStartBanner);
-      if (hud.mode == sim::ModeKind::Deathmatch) {
-        std::snprintf(text, sizeof text, "Deathmatch");
-      } else if (hud.mode == sim::ModeKind::TeamDeathmatch) {
-        std::snprintf(text, sizeof text, "Team deathmatch");
-      } else if (hud.mode == sim::ModeKind::Hill) {
-        std::snprintf(text, sizeof text, "King of the hill");
-      } else if (hud.mode == sim::ModeKind::Capture) {
-        std::snprintf(text, sizeof text, "Capture the flag");
-      } else if (hud.mode == sim::ModeKind::Control) {
-        std::snprintf(text, sizeof text, "Control the zones");
-      } else {
-        std::snprintf(text, sizeof text, "Round %u", static_cast<unsigned>(hud.round));
-      }
-      centredText(dl, 40.0f * pop, ImVec2(centre.x, centre.y - 50.0f), kWhite, text);
+      centredText(dl, 40.0f * pop, ImVec2(centre.x, centre.y - 50.0f), kWhite,
+                  roundStartTitle(hud).c_str());
       const int n = std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)));
       std::snprintf(text, sizeof text, "%d", n);
       centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), ui::kGold, text);
@@ -729,10 +673,17 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   const uint32_t all = (uint32_t{1} << std::min<uint8_t>(db.powerUpCount, sim::kMaxPowerUps)) - 1u;
   for (uint8_t i = 0; i < arena.pickupSpawnerCount; ++i) {
     const sim::PickupSpawner& sp = arena.pickupSpawners[i];
-    const uint32_t own = sp.powerUpSet == 0 ? all : (sp.powerUpSet & all);
-    const bool live = (own & powerUps) != 0;
     const ImVec2 q = at(sp.pos.x.toFloat(), sp.pos.y.toFloat());
     constexpr float kR = 5.0f;
+    if (sp.isTree()) {
+      // v0.81: a tree bears bananas whatever the power-up set.
+      dl->AddCircleFilled(q, kR + 1.0f, ui::kPreviewTree);
+      dl->AddCircle(q, kR + 1.0f, ui::kOutline, 0, 1.5f);
+      dl->AddCircleFilled(q, 2.0f, kBanana);
+      continue;
+    }
+    const uint32_t own = sp.powerUpSet == 0 ? all : (sp.powerUpSet & all);
+    const bool live = (own & powerUps) != 0;
     const ImVec2 top{q.x, q.y - kR};
     const ImVec2 right{q.x + kR, q.y};
     const ImVec2 bottom{q.x, q.y + kR};
@@ -774,11 +725,14 @@ void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   ImGui::TextWrapped("%s", modeSummary(mode).c_str());
   line("Kit", std::string(db.loadoutAt(config.loadout).name.cStr()) + " (" +
                   loadoutSummary(db, config.loadout) + ")");
-  if (arena.pickupSpawnerCount == 0) {
+  const ArenaSpawners spawners = arenaSpawners(arena);
+  if (spawners.powerUps == 0) {
     ImGui::TextDisabled("No power-up spawners in this arena.");
   } else {
     ImGui::TextWrapped("Power-ups: %s", content::powerUpListText(db, config.powerUps).c_str());
   }
+  // v0.81: the trees, whatever the power-up set.
+  if (spawners.trees > 0) ImGui::TextWrapped("%s", treesText(spawners.trees).c_str());
 }
 
 // The local settings rows (LobbyMenu): the focused row on the focus bar,

@@ -377,8 +377,32 @@ std::string ticksClock(uint32_t ticks) {
   return buf;
 }
 
+ArenaSpawners arenaSpawners(const sim::ArenaDef& arena) {
+  ArenaSpawners n;
+  for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < sim::kMaxPickupSpawners; ++i) {
+    if (arena.pickupSpawners[i].isTree()) {
+      ++n.trees;
+    } else {
+      ++n.powerUps;
+    }
+  }
+  return n;
+}
+
+std::string treesText(uint8_t trees) {
+  return trees == 1 ? std::string("1 tree bears bananas")
+                    : std::to_string(static_cast<unsigned>(trees)) + " trees bear bananas";
+}
+
+std::string beatText(uint32_t ticks) {
+  char buf[24];
+  const double s = static_cast<double>(ticks) / static_cast<double>(sim::kTickHz);
+  std::snprintf(buf, sizeof buf, s >= 1.0 ? "%.1f s" : "%.2f s", s);
+  return buf;
+}
+
 std::string modeSummary(const sim::ModeDef& mode) {
-  char buf[128];
+  char buf[160];
   const auto secs = [](uint32_t ticks) {
     return static_cast<double>(ticks) / static_cast<double>(sim::kTickHz);
   };
@@ -428,6 +452,24 @@ std::string modeSummary(const sim::ModeDef& mode) {
                     secs(mode.hillTicks), clock.c_str());
       return buf;
     }
+    case sim::ModeKind::Harvest: {
+      // v0.81: bananas carried home and banked; a lone raider takes them back.
+      const std::string clock =
+          mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      char steal[64];
+      if (mode.stealTicks == 0) {
+        std::snprintf(steal, sizeof steal, "no stealing");
+      } else {
+        std::snprintf(steal, sizeof steal, "a lone raider steals one per %s",
+                      beatText(mode.stealTicks).c_str());
+      }
+      const char* respawn = mode.respawnAmmo == 0 ? ", respawn empty-handed" : "";
+      std::snprintf(buf, sizeof buf,
+                    "first team to %u bananas banked, one per %s at home, %s%s, %s",
+                    static_cast<unsigned>(mode.scoreToWin), beatText(mode.bankTicks).c_str(), steal,
+                    respawn, clock.c_str());
+      return buf;
+    }
     case sim::ModeKind::TeamRounds:
       std::snprintf(buf, sizeof buf, "first team to %u rounds, last team standing",
                     static_cast<unsigned>(mode.roundsToWin));
@@ -441,7 +483,6 @@ std::string modeSummary(const sim::ModeDef& mode) {
       }
       [[fallthrough]];
     case sim::ModeKind::Rounds:
-    case sim::ModeKind::Harvest:  // v0.81: a minimal case until the client describes the kind
     case sim::ModeKind::kCount:
       break;
   }

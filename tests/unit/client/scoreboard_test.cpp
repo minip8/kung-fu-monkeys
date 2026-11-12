@@ -159,6 +159,9 @@ TEST_CASE("round kinds count rounds and no deaths; nobody wins mid-match", "[cli
   hud.mode = sim::ModeKind::Control;  // v0.80
   CHECK(std::string(buildScoreboard(hud, labels(), 0, 0).scoreLabel) == "Points");
   CHECK(buildScoreboard(hud, labels(), 0, 0).showDeaths);
+  hud.mode = sim::ModeKind::Harvest;  // v0.81: banked bananas, and the deaths kept
+  CHECK(std::string(buildScoreboard(hud, labels(), 0, 0).scoreLabel) == "Bananas");
+  CHECK(buildScoreboard(hud, labels(), 0, 0).showDeaths);
   hud.mode = sim::ModeKind::Survival;
   CHECK(buildScoreboard(hud, labels(), 0, 0).showDeaths);
 }

@@ -686,6 +686,32 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   control.timeLimitTicks = 0;
   CHECK(client::modeSummary(control) ==
         "first team to 5 points, a zone taken in 1.5 s pays a point per 5.0 s, no clock");
+  sim::ModeDef harvest;  // v0.81
+  harvest.kind = sim::ModeKind::Harvest;
+  harvest.teams = 2;
+  harvest.scoreToWin = 30;
+  harvest.bankTicks = 20;
+  harvest.stealTicks = 30;
+  harvest.respawnAmmo = 0;
+  harvest.timeLimitTicks = 3600;
+  CHECK(client::modeSummary(harvest) ==
+        "first team to 30 bananas banked, one per 0.33 s at home, a lone raider steals one per "
+        "0.50 s, respawn empty-handed, 1:00");
+  harvest.stealTicks = 0;
+  harvest.bankTicks = 90;
+  harvest.respawnAmmo = sim::kRespawnAmmoStart;
+  harvest.timeLimitTicks = 0;
+  CHECK(client::modeSummary(harvest) ==
+        "first team to 30 bananas banked, one per 1.5 s at home, no stealing, no clock");
+  // v0.81: an arena's trees are not power-up spawners.
+  sim::ArenaDef orchard;
+  CHECK(client::arenaSpawners(orchard) == client::ArenaSpawners{});
+  orchard.pickupSpawners[0].tree = 1;
+  orchard.pickupSpawners[2].tree = 1;
+  orchard.pickupSpawnerCount = 3;
+  CHECK(client::arenaSpawners(orchard) == client::ArenaSpawners{.powerUps = 1, .trees = 2});
+  CHECK(client::treesText(1) == "1 tree bears bananas");
+  CHECK(client::treesText(2) == "2 trees bear bananas");
   CHECK(client::ticksClock(61) == "0:02");
   CHECK(client::ticksClock(0) == "0:00");
 }
