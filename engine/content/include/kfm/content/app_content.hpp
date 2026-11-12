@@ -42,10 +42,13 @@ struct LoadedContent {
 // Resolves --arena / --mode names into config.arena / config.mode. An empty
 // name keeps index 0 (the default). On an unknown name returns false with a
 // message that lists the names the content defines. v0.32: the pair must be
-// compatible (ContentDB::compatible): with no arena named, a mode the
-// default arena does not suit takes the first arena that does, and a named
-// arena that does not suit it is an error; config.teams becomes the mode's
-// (sim::teamsFor over config.players: the free-for-all without teams).
+// compatible (ContentDB::compatible): with no arena named, a mode that
+// names an arena or a pool of them (ModeDef::arena, ::arenaSet) takes
+// ContentDB::firstCompatibleArena (its arena, else the pool's first member
+// that suits it), any other mode keeps the default arena when it suits and
+// else takes the first arena that does; a named arena that does not suit it
+// is an error; config.teams becomes the mode's (sim::teamsFor over
+// config.players: the free-for-all without teams).
 [[nodiscard]] bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena,
                                      std::string_view mode, sim::MatchConfig& config,
                                      std::string& error);

@@ -353,6 +353,98 @@ rounds_to_win = 1
   CHECK(&m.mode == &db.modes[1]);
 }
 
+TEST_CASE("without --arena a mode that names its arena or a pool takes it, even when arena 0 suits",
+          "[content][app][arena-set]") {
+  // Every arena here suits every mode, so only the mode's own choice can
+  // move the pick off arena 0 (v0.81's pools; before, arena 0 was kept
+  // whenever it suited).
+  const std::string more = R"(
+[[arena]]
+name = "pit"
+half_extents = [4, 4]
+spawn_ellipse = { radii = [2, 2], step_degrees = 90, order = [0, 2] }
+
+[[arena]]
+name = "den"
+half_extents = [4, 4]
+spawn_ellipse = { radii = [2, 2], step_degrees = 90, order = [0, 2] }
+
+[[mode]]
+name = "own"
+
+[[mode]]
+name = "pool"
+
+[[mode]]
+name = "both"
+)";
+  const std::array<ContentSource, 2> sources = {
+      ContentSource{"a.toml", std::string(kMinimal)},
+      ContentSource{"b.toml", more},
+  };
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(sources, db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  REQUIRE(db.arenaCount == 3);
+  REQUIRE(db.modeCount == 4);
+  db.modes[1].arena = 2;                                     // own: den
+  db.modes[2].arenaSet = (1u << 2) | (1u << 1);              // pool: pit, den
+  db.modes[3].arenaSet = (1u << 0) | (1u << 1) | (1u << 2);  // both: the lot, den first
+  db.modes[3].arena = 2;
+  for (uint8_t a = 0; a < db.arenaCount; ++a) {
+    for (uint8_t m = 0; m < db.modeCount; ++m)
+      REQUIRE(db.compatible(a, m));
+  }
+  const auto arenaFor = [&](std::string_view arena, std::string_view mode) {
+    sim::MatchConfig config{.players = 0b11};
+    std::string error;
+    const bool resolved = resolveMatchNames(db, arena, mode, config, error);
+    INFO(arena << " / " << mode << ": " << error);
+    CHECK(resolved);
+    return int{config.arena};
+  };
+  CHECK(arenaFor("", "rounds") == 0);  // names neither: arena 0, as before
+  CHECK(arenaFor("", "own") == 2);     // its arena
+  CHECK(arenaFor("", "pool") == 1);    // the pool's first member
+  CHECK(arenaFor("", "both") == 2);    // its arena, a pool member
+  CHECK(arenaFor("box", "own") == 0);  // a named arena is kept
+  CHECK(arenaFor("pit", "both") == 1);
+
+  SECTION("a mode's arena that does not suit gives way to the first arena that does") {
+    db.modes[1].arena = 2;
+    db.arenas[2].spawnGroups = 1;
+    db.modes[1].teams = 2;  // den has one spawn group: no longer suits "own"
+    db.arenas[1].spawnGroups = 2;
+    db.arenas[0].spawnGroups = 1;
+    REQUIRE_FALSE(db.compatible(2, 1));
+    CHECK(arenaFor("", "own") == 1);
+  }
+}
+
+TEST_CASE("the shipped modes pick their arenas without --arena; a misfit names trees",
+          "[content][app][arena-set]") {
+  sim::ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadEmbeddedContent(db, diag));
+  const auto named = [&](std::string_view arena, std::string_view mode, std::string& error) {
+    sim::MatchConfig config{.players = 0x3FF};
+    const bool resolved = resolveMatchNames(db, arena, mode, config, error);
+    return resolved ? std::string(db.arenaAt(config.arena).name.view()) : std::string{};
+  };
+  std::string error;
+  CHECK(named("", "rounds", error) == "dojo");
+  CHECK(named("", "contest", error) == "grove");
+  CHECK(named("", "control_1t", error) == "courtyard_zones");
+  CHECK(named("", "grid_rounds", error) == "courtyard");
+  CHECK(named("orchards", "contest", error) == "orchards");
+  CHECK(named("dojo", "contest", error).empty());
+  CHECK(contains(error, "arena 'dojo' does not suit mode 'contest'"));
+  CHECK(contains(error, "the mode's zones and trees"));
+  CHECK(contains(error, "grove"));
+}
+
 TEST_CASE("--powerups lists resolve to a MatchConfig::powerUps set and back",
           "[content][app][powerup]") {
   sim::ContentDB db{};
