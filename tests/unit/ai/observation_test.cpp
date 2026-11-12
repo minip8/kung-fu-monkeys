@@ -879,7 +879,7 @@ TEST_CASE("a harvest match reports kind 8, its beats, homes and trees (v0.82)",
   CHECK(obs.pickups[fruit].valid == 0);
   // Carried home, a beat banks one: a banana out of the hand, a point on the board.
   placePlayer(h.s, kP0, kWestHome.centre());
-  for (uint16_t i = 0; i < kBankBeat && h.s.playerBySlot(kP0)->ammo == 2; ++i)
+  for (uint16_t i = 0; i < kBankBeat && playerAt(h.s, kP0).ammo == 2; ++i)
     runTicks(h.s, frameFor(h.s), 1, h.content, h.log);
   obs = h.observe(kP0);
   CHECK(obs.self.ammo == 1);
