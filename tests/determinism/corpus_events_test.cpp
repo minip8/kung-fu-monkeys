@@ -213,6 +213,9 @@ bool parries(const Tally& t, const ContentDB& /*db*/) {
 bool hillHeld(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::HillHolderChanged) > 0;
 }
+bool zoneCaptured(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::ZoneCaptured) > 0;
+}
 bool flagTaken(const Tally& t, const ContentDB& /*db*/) {
   return t.flagsTaken > 0;
 }
@@ -256,7 +259,7 @@ const std::vector<Entry>& expectations() {
         {"a round won", roundWon},
         {"a call", calls}}},
       {"scripted_10p_contest_1800t",
-       {{"the hill held", hillHeld}, {"a hill point", objectivePoint}, {"a call", calls}}},
+       {{"a zone captured", zoneCaptured}, {"a zone point", objectivePoint}, {"a call", calls}}},
   };
   return table;
 }

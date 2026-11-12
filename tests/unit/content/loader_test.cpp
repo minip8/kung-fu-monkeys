@@ -1159,11 +1159,13 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
 }
 
 // M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset.
-// Since v0.69 it is king of the hill with grid_rounds_1t's squad: the space,
-// turns, kits, baseline and vision are that row's, the rules hill's, the arena
-// courtyard_hill (the courtyard with the hill in its middle). A season's
-// change to the row is a deliberate edit here.
-TEST_CASE("content/ ships contest as hill with grid_rounds_1t's squad (M7, v0.69)",
+// Since v0.79 it is the control kind (§11 "Contest design") with
+// grid_rounds_1t's squad: the space, turns, kits and the vision's radii are
+// that row's; the baseline is contest_base (the banana at 2 cells a turn),
+// the arena courtyard_zones (three zones), hearing 1 and the banana's flight
+// the mode's own. A season's change to the row is a deliberate edit here;
+// the arena, the twins and the flight are pinned in contest_test.cpp.
+TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0.79)",
           "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
@@ -1171,34 +1173,64 @@ TEST_CASE("content/ ships contest as hill with grid_rounds_1t's squad (M7, v0.69
   const std::optional<uint8_t> contest = db.findMode("contest");
   const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
   const std::optional<uint8_t> courtyard = db.findArena("courtyard");
-  const std::optional<uint8_t> hillArena = db.findArena("courtyard_hill");
+  const std::optional<uint8_t> zones = db.findArena("courtyard_zones");
+  const std::optional<uint8_t> base = db.findPowerUp("contest_base");
   REQUIRE(contest);
   REQUIRE(grid);
   REQUIRE(courtyard);
-  REQUIRE(hillArena);
+  REQUIRE(zones);
+  REQUIRE(base);
   const sim::ModeDef& g = db.modes[grid.value_or(0)];
   const sim::ModeDef& m = db.modes[contest.value_or(0)];
-  CHECK(m.kind == sim::ModeKind::Hill);
+  CHECK(m.kind == sim::ModeKind::Control);
   CHECK(m.space == g.space);
   CHECK(m.turnTicks == g.turnTicks);
+  CHECK(m.turnTicks == 1);
   CHECK(m.dashCells == g.dashCells);
   CHECK(m.teams == g.teams);
   CHECK(m.roleCount == g.roleCount);
   CHECK(m.roles == g.roles);
-  CHECK(m.baseline == g.baseline);
-  CHECK(m.vision == g.vision);
+  CHECK(m.baseline == base);
   CHECK(m.vision.kind == sim::VisionKind::Own);
+  CHECK(m.vision.peripheral == g.vision.peripheral);
+  CHECK(m.vision.cone == g.vision.cone);
+  CHECK(m.vision.focus == g.vision.focus);
+  CHECK(m.vision.bananaSight == g.vision.bananaSight);
+  CHECK(m.vision.hearing == 1);
+  CHECK(m.captureTicks == 30);
   CHECK(m.hillTicks == 60);
-  CHECK(m.scoreToWin == 5);
+  CHECK(m.scoreToWin == 10);
   CHECK(m.timeLimitTicks == 3600);
-  CHECK(m.respawnTicks == 120);
+  CHECK(m.respawnTicks == 240);
+  CHECK(m.respawnInvulnTicks == 8);
   CHECK(m.deathBananas == sim::DeathBananas::Vanish);
   CHECK(m.bananaRegrowTicks == 120);
-  CHECK(db.firstCompatibleArena(contest.value_or(0)) == hillArena);
-  CHECK(db.compatible(hillArena.value_or(0), contest.value_or(0)));
+  CHECK(m.catchScore == 0);
+  CHECK(m.suicideScore == 0);
+  CHECK(m.bananaOutboundTicks == 3);
+  CHECK(m.bananaTurnRateBam == 15474);
+  CHECK(m.roundStartTicks == 60);
+  CHECK(m.arena == zones);
+  CHECK(db.firstCompatibleArena(contest.value_or(0)) == zones);
+  CHECK(db.compatible(zones.value_or(0), contest.value_or(0)));
   CHECK_FALSE(db.compatible(courtyard.value_or(0), contest.value_or(0)));  // no zone
   CHECK_FALSE(db.compatible(0, contest.value_or(0)));                      // the dojo has no cells
+}
 
+// v0.69's hill, kept for the hill kind: the courtyard with its middle block
+// taken out and the floor between the pillars made zone 0.
+TEST_CASE("content/ ships courtyard_hill as the courtyard with a hill (v0.69)",
+          "[content][loader][arena]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> courtyard = db.findArena("courtyard");
+  const std::optional<uint8_t> hillArena = db.findArena("courtyard_hill");
+  const std::optional<uint8_t> hill = db.findMode("hill");
+  REQUIRE(courtyard);
+  REQUIRE(hillArena);
+  REQUIRE(hill);
+  CHECK(db.compatible(hillArena.value_or(0), hill.value_or(0)));
   // The arena is the courtyard but for its middle: same box, spawns and
   // spawners, one zone (4 x 2 cells between the pillars), one wall box fewer.
   const sim::ArenaDef& a = db.arenas[hillArena.value_or(0)];

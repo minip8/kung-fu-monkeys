@@ -243,29 +243,45 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banan
 # M7: the row the bot ladder points at (architecture §8 "The ladder"), the
 # contest knobs in one place (team size, vision, the call range of the kits,
 # turn_ticks, the arena). A season changes this row, not the service, and the
-# row may change between releases inside a season (v0.59). Since v0.69 it is
-# king of the hill on the grid: grid_rounds_1t's squad (1-tick turns, roles,
-# baseline, fog and calls) under hill's rules on courtyard_hill. Counted in
-# 1-tick turns: a monkey crosses the arena in 24, so a point takes 60 turns
-# alone on the hill, a respawn 120 (long enough that a kill costs the team
-# about two points' worth of holding), a match at most 3600.
+# row may change between releases inside a season (v0.59). Since v0.79 it is
+# capture and keep on the grid (§11 "Contest design"): grid_rounds_1t's squad
+# (1-tick turns, roles, fog and calls) under the control kind on
+# courtyard_zones, three zones (the centre, then the west and east homes).
+# The team with strictly the most monkeys in a zone it does not own captures
+# it after 30 turns; an owned zone pays its team a tick of clock every turn
+# whether or not anyone stands on it, and 60 of them score a point, so two
+# zones score twice as fast. First to 10 points, else the leader at 3600
+# turns (a tied lead is a draw); eliminations score nothing. A monkey
+# crosses the arena in 24 turns; a respawn takes 240, then 8 turns of
+# protection. The baseline, contest_base, is grid_base_1t with the banana at
+# 2 cells a turn. It flies out for 3 turns (6 cells of flight; the third
+# turn already bends home, so it reaches about 5 cells from the thrower,
+# the 1-cell spawn offset included) and turns for home at up to 85 degrees
+# a turn, a U-turn about 2.3 cells wide, so a banana is back in about 5
+# turns. 85, not 90: at a right angle a returning banana on this
+# axis-aligned map can square-orbit a pillar until max_return_ticks grounds
+# it. A banana is heard only a cell away (hearing 1), so where a monkey
+# looks decides what it can dodge.
 [[mode]]
 name = "contest"
-kind = "hill"
+kind = "control"
 space = "grid"
 turn_ticks = 1
 dash_cells = 2
 teams = 2
 roles = ["catcher_1t", "grid_1t", "grid_1t", "grid_1t", "grid_1t"]
-baseline = "grid_base_1t"
-arena = "courtyard_hill"
-hill_ticks = 60             # 60 turns alone on the hill scores a point
-score_to_win = 5            # the first team to five points wins
+baseline = "contest_base"
+arena = "courtyard_zones"
+capture_ticks = 30          # 30 turns with the most monkeys in a zone takes it
+hill_ticks = 60             # 60 turns of owned zone score a point
+score_to_win = 10           # the first team to ten points wins
 time_limit_ticks = 3600     # else the leading team after 3600 turns (a tie is a draw)
-respawn_ticks = 120
-respawn_invuln_ticks = 30
+respawn_ticks = 240
+respawn_invuln_ticks = 8
 death_bananas = "vanish"
 banana_regrow_ticks = 120   # an empty hand grows a banana after 120 turns
+banana_outbound_ticks = 3   # 3 turns out at 2 cells a turn: 6 cells
+banana_turn_rate = 15474    # BAM a turn on the way home: 85 degrees
 round_start_ticks = 60
 round_end_ticks = 180
-vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banana_sight = 1 }
+vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 1, banana_sight = 1 }

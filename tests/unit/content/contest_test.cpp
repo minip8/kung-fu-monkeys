@@ -1,8 +1,15 @@
 // The contest's content as shipped (architecture §11 "Contest design", v0.79):
-// the _1t power-up twins and the contest_base baseline.
+// the courtyard_zones arena, its spawners and the _1t power-up twins they
+// lay, the contest_base baseline, and the banana's flight under the contest
+// row. The row's own numbers are pinned by loader_test.cpp ("content/ ships
+// contest as control ...").
 #include "kfm/content/loader.hpp"
 #include "kfm/sim/content.hpp"
+#include "kfm/sim/events.hpp"
+#include "kfm/sim/spaces/grid_cells.hpp"
+#include "kfm/sim/step.hpp"
 #include "kfm/sim/visit.hpp"
+#include "kfm/sim/world_state.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -38,7 +45,180 @@ const ContentDB& shipped() {
   return db;
 }
 
+[[nodiscard]] Vec2 at(int32_t x, int32_t y) {
+  return Vec2{Fixed::fromInt(x), Fixed::fromInt(y)};
+}
+
+// The point under the arena's half turn about its centre (the origin).
+[[nodiscard]] Vec2 turned(Vec2 p) {
+  return Vec2{-p.x, -p.y};
+}
+
+// Whether the box [min, max] turns into the box [min2, max2].
+[[nodiscard]] bool turnsInto(Vec2 min, Vec2 max, Vec2 min2, Vec2 max2) {
+  return turned(max) == min2 && turned(min) == max2;
+}
+
+template <class Box, size_t N>
+[[nodiscard]] bool hasTurnedTwin(const std::array<Box, N>& boxes, uint8_t count, const Box& b) {
+  for (uint8_t i = 0; i < count; ++i) {
+    if (turnsInto(b.min, b.max, boxes[i].min, boxes[i].max)) return true;
+  }
+  return false;
+}
+
+[[nodiscard]] uint8_t arenaIndex() {
+  const std::optional<uint8_t> i = shipped().findArena("courtyard_zones");
+  REQUIRE(i.has_value());
+  return i.value_or(0);
+}
+
+[[nodiscard]] const sim::ArenaDef& zonesArena() {
+  return shipped().arenas[arenaIndex()];
+}
+
+[[nodiscard]] uint8_t contestIndex() {
+  const std::optional<uint8_t> i = shipped().findMode("contest");
+  REQUIRE(i.has_value());
+  return i.value_or(0);
+}
+
+[[nodiscard]] uint16_t bitOf(std::string_view powerUp) {
+  const std::optional<uint8_t> i = shipped().findPowerUp(powerUp);
+  INFO("power-up " << powerUp);
+  REQUIRE(i.has_value());
+  return static_cast<uint16_t>(1u << i.value_or(0));
+}
+
 }  // namespace
+
+TEST_CASE("courtyard_zones: the courtyard with three zones in the designed order (v0.79)",
+          "[content][contest]") {
+  const ContentDB& db = shipped();
+  const sim::ArenaDef& a = zonesArena();
+  const std::optional<uint8_t> courtyard = db.findArena("courtyard");
+  const std::optional<uint8_t> hill = db.findArena("courtyard_hill");
+  REQUIRE(courtyard);
+  REQUIRE(hill);
+  // Appended: the arenas before it keep their indices.
+  CHECK(arenaIndex() == db.arenaCount - 1);
+  CHECK(hill.value_or(0) < arenaIndex());
+  const sim::ArenaDef& c = db.arenas[courtyard.value_or(0)];
+  const sim::ArenaDef& h = db.arenas[hill.value_or(0)];
+  CHECK(a.cellSize == Fixed::one());
+  CHECK(a.halfExtents == c.halfExtents);  // 24 x 14 cells
+  CHECK(a.spawnGroups == 2);
+  CHECK(a.spawnPointCount == 10);
+  for (uint8_t i = 0; i < c.spawnPointCount; ++i)
+    CHECK(a.spawnPoints[i] == c.spawnPoints[i]);
+  CHECK(a.hazardCount == c.hazardCount);
+  for (uint8_t i = 0; i < c.hazardCount; ++i)
+    CHECK((a.hazards[i].min == c.hazards[i].min && a.hazards[i].max == c.hazards[i].max &&
+           a.hazards[i].kind == c.hazards[i].kind));
+  // The hill's walls: the courtyard's less its middle block.
+  REQUIRE(a.wallCount == h.wallCount);
+  for (uint8_t i = 0; i < h.wallCount; ++i)
+    CHECK((a.walls[i].min == h.walls[i].min && a.walls[i].max == h.walls[i].max));
+  // Zone 0 the centre (courtyard_hill's hill, between the pillars), zone 1
+  // the west home (columns 4-6), zone 2 the east home (columns 17-19), all
+  // on rows 6-7.
+  REQUIRE(a.zoneCount == 3);
+  CHECK(a.zones[0].min == h.zones[0].min);
+  CHECK(a.zones[0].max == h.zones[0].max);
+  CHECK(a.zones[0].min == at(-2, -1));
+  CHECK(a.zones[0].max == at(2, 1));
+  CHECK(a.zones[1].min == at(-8, -1));
+  CHECK(a.zones[1].max == at(-5, 1));
+  CHECK(a.zones[2].min == at(5, -1));
+  CHECK(a.zones[2].max == at(8, 1));
+  // Each home zone is on its own team's side: team 0 (group 0) spawns in
+  // the west, team 1 in the east.
+  const sim::SpawnRange west = sim::spawnGroupRange(a, 0);
+  const sim::SpawnRange east = sim::spawnGroupRange(a, 1);
+  for (uint8_t i = west.begin; i < west.end; ++i)
+    CHECK(a.spawnPoints[i].x < a.zones[1].min.x);
+  for (uint8_t i = east.begin; i < east.end; ++i)
+    CHECK(a.spawnPoints[i].x > a.zones[2].max.x);
+}
+
+TEST_CASE("courtyard_zones is symmetric under a half turn, zone 1 mapping to zone 2",
+          "[content][contest]") {
+  const sim::ArenaDef& a = zonesArena();
+  for (uint8_t i = 0; i < a.wallCount; ++i) {
+    INFO("wall " << int{i});
+    CHECK(hasTurnedTwin(a.walls, a.wallCount, a.walls[i]));
+  }
+  for (uint8_t i = 0; i < a.hazardCount; ++i) {
+    INFO("hazard " << int{i});
+    CHECK(hasTurnedTwin(a.hazards, a.hazardCount, a.hazards[i]));
+  }
+  REQUIRE(a.zoneCount == 3);
+  CHECK(turnsInto(a.zones[0].min, a.zones[0].max, a.zones[0].min, a.zones[0].max));
+  CHECK(turnsInto(a.zones[1].min, a.zones[1].max, a.zones[2].min, a.zones[2].max));
+  CHECK(turnsInto(a.zones[2].min, a.zones[2].max, a.zones[1].min, a.zones[1].max));
+  // Spawn point k of group 0 turns into point k of group 1.
+  const sim::SpawnRange west = sim::spawnGroupRange(a, 0);
+  const sim::SpawnRange east = sim::spawnGroupRange(a, 1);
+  REQUIRE(west.end - west.begin == east.end - east.begin);
+  for (uint8_t k = 0; k < west.end - west.begin; ++k) {
+    INFO("spawn " << int{k} << " of each group");
+    CHECK(turned(a.spawnPoints[west.begin + k]) == a.spawnPoints[east.begin + k]);
+  }
+  // The two spawners turn into each other and lay alike.
+  REQUIRE(a.pickupSpawnerCount == 2);
+  const sim::PickupSpawner& s0 = a.pickupSpawners[0];
+  const sim::PickupSpawner& s1 = a.pickupSpawners[1];
+  CHECK(turned(s0.pos) == s1.pos);
+  CHECK(s0.powerUpSet == s1.powerUpSet);
+  CHECK(s0.firstTicks == s1.firstTicks);
+  CHECK(s0.intervalTicks == s1.intervalTicks);
+  CHECK(s0.maxAlive == s1.maxAlive);
+}
+
+TEST_CASE("courtyard_zones lays the _1t twins early and often, away from every zone",
+          "[content][contest][powerup]") {
+  const sim::ArenaDef& a = zonesArena();
+  const auto twins = static_cast<uint16_t>(bitOf("big_banana_1t") | bitOf("triplebanana_1t") |
+                                           bitOf("quick_hands_1t") | bitOf("shield_1t"));
+  REQUIRE(a.pickupSpawnerCount == 2);
+  for (uint8_t i = 0; i < a.pickupSpawnerCount; ++i) {
+    INFO("spawner " << int{i});
+    const sim::PickupSpawner& s = a.pickupSpawners[i];
+    CHECK(s.powerUpSet == twins);
+    CHECK((s.powerUpSet & bitOf("speed_boost")) == 0);  // a walk is a cell a turn regardless
+    CHECK(s.firstTicks == 90);
+    CHECK(s.intervalTicks == 240);
+    CHECK(s.maxAlive == 1);
+    // On a cell centre in the centre columns (11 or 12), three cells or more
+    // (Chebyshev) from every zone cell.
+    const sim::grid::Cell cell = sim::grid::cellOf(a, s.pos);
+    CHECK(sim::grid::cellCentre(a, cell) == s.pos);
+    CHECK((cell.col == 11 || cell.col == 12));
+    // A cell centre three cells from a zone cell is 2.5 units from the zone's
+    // edge, one two cells away 1.5: the box grown by 2.25 holds the second.
+    const Fixed reach = Fixed::fromRatio(9, 4);
+    for (uint8_t z = 0; z < a.zoneCount; ++z) {
+      INFO("zone " << int{z});
+      CHECK_FALSE(sim::boxContains(a.zones[z].min - Vec2{reach, reach},
+                                   a.zones[z].max + Vec2{reach, reach}, s.pos));
+    }
+  }
+}
+
+TEST_CASE("the contest plays on courtyard_zones", "[content][contest]") {
+  const ContentDB& db = shipped();
+  const uint8_t contest = contestIndex();
+  CHECK(db.modes[contest].arena == arenaIndex());
+  CHECK(db.compatible(arenaIndex(), contest));
+  CHECK(db.firstCompatibleArena(contest) == std::optional<uint8_t>{arenaIndex()});
+  // The other team modes play there too (two spawn groups, cells, zones).
+  for (const std::string_view name : {"hill", "grid_rounds_1t", "team_rounds"}) {
+    INFO(name);
+    const std::optional<uint8_t> m = db.findMode(name);
+    REQUIRE(m);
+    CHECK(db.compatible(arenaIndex(), m.value_or(0)));
+  }
+}
 
 TEST_CASE("the _1t power-up twins are their originals counted in 1-tick turns (v0.79)",
           "[content][contest][powerup]") {
@@ -74,6 +254,7 @@ TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.79
   const std::optional<uint8_t> grid = db.findPowerUp("grid_base_1t");
   REQUIRE(base);
   REQUIRE(grid);
+  CHECK(db.modes[contestIndex()].baseline == base.value_or(0));
   const sim::PowerUpDef& g = db.powerUps[grid.value_or(0)];
   sim::PowerUpDef twin = db.powerUps[base.value_or(0)];
   REQUIRE(twin.grantCount == 3);
@@ -87,4 +268,79 @@ TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.79
   twin.name = g.name;
   twin.grants[2].projectile.speedMul = g.grants[2].projectile.speedMul;
   CHECK(bytesOf(twin) == bytesOf(g));
+}
+
+// The flight the row's banana_outbound_ticks and banana_turn_rate give, through
+// step() on the shipped content: a monkey at rest in the open row 4 (column
+// 2) throws east. As measured when the numbers were chosen (v0.79): 2 cells a
+// turn, 5 cells straight out (the spawn offset and two turns), bending home
+// on the third, at most 2.34 cells off the line, back in its hand 5 turns
+// after the press.
+TEST_CASE("the contest banana flies 3 turns out and comes home within a few cells",
+          "[content][contest][flight]") {
+  const ContentDB& db = shipped();
+  const uint8_t mode = contestIndex();
+  const uint8_t arena = arenaIndex();
+  const sim::PlayerMask players = 0b11;
+  const sim::MatchConfig cfg{.seed = 7,
+                             .players = players,
+                             .arena = arena,
+                             .mode = mode,
+                             .teams = sim::teamsFor(db.modes[mode], players)};
+  const sim::MatchContent m(db, arena, mode, sim::kAllPowerUps, 0, cfg.teams);
+  CHECK(m.bananaOutboundTicks() == 3);
+  CHECK(m.bananaTurnRateBam() == 15474);  // 85 degrees
+  sim::WorldState s = sim::initialWorld(cfg);
+  sim::EventSink sink;
+  const auto tick = [&](sim::PlayerInput p0) {
+    sim::InputFrame f;
+    f.tick = s.tick;
+    f.present = s.rules.present;
+    f.inputs[0] = p0;
+    sink.clear();
+    sim::step(s, f, m, sink);
+    REQUIRE(sink.dropped == 0);
+  };
+  for (int i = 0; i < 200 && s.rules.phase != sim::MatchPhase::Playing; ++i)
+    tick({});
+  REQUIRE(s.rules.phase == sim::MatchPhase::Playing);
+  const auto put = [&](PlayerId id, sim::grid::Cell cell) {
+    sim::Player* p = s.playerBySlot(id);
+    REQUIRE(p != nullptr);
+    if (p == nullptr) return;  // for the analysers: REQUIRE has thrown
+    p->transform.pos = sim::grid::cellCentre(m.arena, cell);
+    p->transform.prevPos = p->transform.pos;
+    p->moveTicks = 0;
+  };
+  const sim::grid::Cell home{2, 4};
+  put(PlayerId{0}, home);
+  put(PlayerId{1}, sim::grid::Cell{22, 12});  // out of the way
+  tick({});
+  const Vec2 from = sim::grid::cellCentre(m.arena, home);
+  sim::PlayerInput press{};
+  press.buttons = sim::buttonBit(sim::Button::Throw);
+  press.aimDir = 0;  // east, along the open row
+  tick(press);
+
+  int caughtAfter = 0;
+  int returningFrom = 0;
+  Fixed maxAhead{};
+  Fixed maxSide{};
+  for (int t = 1; t <= 20 && caughtAfter == 0; ++t) {
+    tick({});
+    for (const sim::SimEvent& e : sink) {
+      if (e.kind == sim::EventKind::BoomerangCaught && e.player == PlayerId{0}) caughtAfter = t;
+    }
+    s.boomerangs.forEachAlive([&](EntityId /*id*/, const sim::Boomerang& b) {
+      if (b.phase == sim::BoomerangPhase::Returning && returningFrom == 0) returningFrom = t;
+      const Vec2 d = b.transform.pos - from;
+      maxAhead = max(maxAhead, d.x);
+      maxSide = max(maxSide, abs(d.y));
+    });
+  }
+  CHECK(returningFrom == 2);  // the press tick, the next, then the turn home
+  CHECK(maxAhead >= Fixed::fromInt(5));
+  CHECK(maxAhead < Fixed::fromInt(6));
+  CHECK(maxSide < Fixed::fromRatio(5, 2));
+  CHECK(caughtAfter == 5);
 }
