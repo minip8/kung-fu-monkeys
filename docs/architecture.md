@@ -596,7 +596,7 @@ frame once per turn, on the Playing tick where `ticksInPhase % turnTicks == 0`: 
 `moveDir` (quantised to the nearest of the eight neighbours, idle when `moveMag == 0`) is the
 cell the monkey commits to for the turn. Presses are still edge-detected every tick, so a tap
 inside a turn is not lost, and the `subTick` of the latch tick breaks ties for a contested cell
-(then, v0.82, the turn's parity).
+(then, v0.82, a draw from the world Rng, §5.12).
 Facing follows `aimDir` quantised to eight directions at the latch; the SDKs set aim to move by
 default, so facing follows movement unless the bot or player aims. On a one-tick turn a bot
 sees no difference from the continuous mode.
@@ -790,13 +790,17 @@ the `gatherer` mirror on `grove` went 40 to 12 for side 0). The three pickup row
 are *taking rows*: `InteractionRule::contend` is a state-only test of whether the player could
 take the pickup now (`canTakePickup`: a banana and room in the hand; `canTakePowerUp`;
 `canTakeFlag`: a flag of another team and no flag in hand), the same checks its handler makes
-first. When two or more contacts with one pickup contend on a tick, whatever their times of
-impact, `InteractionSystem` resolves them at the place of the first of them, in an order the
-world Rng draws (a Fisher-Yates shuffle of the contenders in contact order, one
-`Rng::below(i + 1)` for i from the count less one down to 1: one draw for two), each through the
-table in turn (a stack as far as it fits, the rest to the next). A monkey that could not take it
-is no contender and resolves in its own place; a single contender draws nothing, so a tick
-without such a tie resolves exactly as before.
+first. In `interactionSystem`, when the first contender for a pickup comes up in the sort order,
+it gathers every other contender for that pickup this tick, whatever their times of impact; two
+or more are shuffled by Fisher-Yates on the world Rng, in contact order (one `Rng::below(i + 1)`
+for i from the count less one down to 1: one draw for two), and resolved in the drawn order at
+that point, each through the table in turn (a stack going to the first as far as it fits, the
+rest to the next). A monkey that cannot take it is no contender and resolves in its own place; a
+single contender draws nothing, so a tick without such a tie resolves exactly as before. A
+contested pickup is therefore decided by the draw, not by time of impact or §5.11's press
+tie-break. `ContactObserver` (an optional argument of `interactionSystem`; `step()` passes none)
+lets `kfm_replay stats` watch the contacts in the order they resolve: its own copy of the
+contact sort, which had also drifted from the system's, is gone.
 
 Relation (v0.29). Every row carries a `relationB` mask over {Self, Ally, Enemy}, judged between
 A and B's owner (B itself for a player pair) through `MatchContent::relation`; the default is
@@ -1445,10 +1449,12 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   in [1, 10] and validated against the point count; group g holds points [g·n/G, (g+1)·n/G)
   (`spawnGroupRange`). `ContentDB::compatible(arena, mode)` is `mode.teams == 0 ||
   spawnGroups >= mode.teams`, with `firstCompatibleArena(mode)`; the sim itself plays any pair.
-  `content::resolveMatchNames` (every command line, the client's flags and `?mode=`) takes the
-  first compatible arena when no arena is named (v0.34: the mode's own `arena` first; v0.82:
-  then its pool's first suitable member, `firstCompatibleArena`) and refuses a named
-  incompatible one with the list of arenas that suit; the client's lobby settings let a saved arena give way instead; the
+  `content::resolveMatchNames` (every command line, the client's flags and `?mode=`), when no
+  arena is named, gives a mode that names an arena or a pool `firstCompatibleArena` (v0.34: the
+  mode's own `arena`; v0.82: else its pool's first suitable member) and keeps arena 0 for a mode
+  that names neither when it suits, else the first arena that does; it refuses a named
+  incompatible one with the list of arenas that suit (the message names what suiting takes: a
+  spawn group per team, the mode's zones and trees, cells for a grid mode or fog); the client's lobby settings let a saved arena give way instead; the
   lobby's Arena row skips incompatible arenas and a mode change moves the arena to the first
   compatible one. `dojo` keeps one group: in a free-for-all team t is slot t, so two groups would
   move slots 1 and 3 to the other half and change every dojo checksum. The team arena is new,
@@ -1724,8 +1730,8 @@ centre happens to rest on a cell centre.
   its disc is inside the pit cell, as in the continuous space, near the end of the slide).
   Contested
   cells resolve at the latch: two monkeys that target one cell, or each other's cell, keep the
-  earlier press (`subTick` of the latch tick), then (v0.82) the lower slot on an even turn and
-  the higher on an odd one; the loser stays. Nothing
+  earlier press (`subTick` of the latch tick), then (v0.82) a draw from the world Rng among the
+  monkeys tied; the loser stays. Nothing
   about this is a rule row: the table says what happens when things touch, the space says who
   gets to move. The commitment is state, `Player::moveTarget` (Vec2) and `Player::moveTicks`
   (0 = at rest), visited like every field; the continuous space leaves them zero, so its
@@ -1783,11 +1789,18 @@ differs from or adds to the design above:
   centre (a slam's push, a stun that cut a slide, a blink) commits to that centre, so the turn
   boundary puts it back on a cell.
 - **Contested cells** are judged in one pass over the steps taken at the latch: a step loses to
-  another that targets the same cell or swaps with it and has the lower key (`subTick` of the
-  latch tick, then slot: the lower slot until v0.82; since then the lower slot on an even turn
-  and the higher on an odd one, the turn being `ticksInPhase / turnTicks` at the latch, `beats`
-  in `spaces/grid.cpp`, Rng-free and even over a match, so neither side of a mirrored arena
-  keeps the tie; §11 "Contest design: bananas as the economy"). No cascade: a winner keeps its target even when the loser of a swap
+  a rival (another step that targets the same cell or swaps with it) pressed earlier (`subTick`
+  of the latch tick), or (v0.82) pressed at the same `subTick` and drawn ahead of it. The draw
+  (`drawPlaces`, `spaces/grid.cpp`): two rivals pressed alike are a tie, dropped when both
+  already lose to an earlier press (it would decide nothing); the monkeys in a kept tie, in slot
+  order, are shuffled by Fisher-Yates on the world Rng (one `Rng::below(i + 1)` for i from their
+  count less one down to 1: count − 1 draws a latch, one for a pair), and the shuffled order is
+  their place. One permutation serves every contest of the latch, so three monkeys into one
+  cell each take it one time in three, and a chain of swaps and shared targets is judged by one
+  order; a latch without a kept tie draws nothing, so a match without such a tie plays as it did
+  before either rule. Until v0.82 the tie went to the lower slot, the west's on a mirrored map;
+  v0.81 decided to alternate it by the turn's parity, and the build showed that this locks onto
+  a kind's even beats (§11 "Contest design: bananas as the economy"). No cascade: a winner keeps its target even when the loser of a swap
   stays in it (they then share the cell), and a step that loses one contest still blocks the
   steps it beat. Moving into a cell another monkey stands in is no contest: monkeys overlap in
   the continuous space too, and the dash attack needs exactly that. A dash bypasses the
@@ -2697,7 +2710,9 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   apart from power-up spawners and counts them, and choosing a pooled mode brings the pool's
   first member; the F1 overlay and `contentToCpp()` learn `bankTicks`, `stealTicks` and
   `respawnAmmo`. The four pool arenas take themes (`grove` and `orchards` jungle, `gorge` beach,
-  `burrows` temple). Nobody has yet looked at a harvest match on screen beyond the smoke test.
+  `burrows` temple). Looked at by hand on the shipped row (v0.82): the homes tinted, the trees
+  with ripening fruit, the bunch in hand, the HUD line and the banked scores and the "Bananas"
+  column all read as above; a monkey standing on a tree is half hidden under its canopy (open).
 
 - The front end (v0.43, M6b step 3; `apps/client/ui_style.{hpp,cpp}`, `screens.{hpp,cpp}`,
   `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
@@ -4355,9 +4370,12 @@ the world with its own half turn, teams swapped, every tick. A match without ban
 mirrored bit for bit to a 10 to 10 draw, with each of the four power-ups; with banana and dash
 fights every discrete outcome stays mirrored to the end, positions, velocities and facings
 within 64 raw units and 4 BAM (fights alone: 48 hits, 24 eliminations, 16 respawns and 8
-perfect catches a match) or 256 raw units and 64 BAM (with dashes). Since v0.82 the tied cell
-contest alternates (item 4 below), the matches walk other paths, and the fights case plays
-seeds 3 and 5 within 256 raw units and 64 BAM, the dashing case seeds 5 and 55. The old hill row set up on
+perfect catches a match) or 256 raw units and 64 BAM (with dashes). Since v0.82 a tied cell
+contest is drawn (item 4 below), each side's separately, so the mirrored matches stagger every
+input's `subTick` by rank (allies' contests go to the earlier press, the lower rank, as the lower
+slot did, and no tie arises): the match without fights is still mirrored bit for bit to its 10
+to 10 draw, the fights case plays seed 3 within 256 raw units and 64 BAM (of seeds 1 to 120 the
+only match that runs to the end mirrored), the dashing case seeds 4 and 69. The old hill row set up on
 `courtyard_hill` is likewise mirrored bit for bit without fights (to the 3600-tick clock, 0 to
 0; a measurement, not a case). What is not mirrored, each pinned by a `[known-asymmetry]` case:
 (1) the spawn groups' offsets are two world-Rng draws (`spawnByGroups`, `systems/rules.cpp`),
@@ -4368,7 +4386,7 @@ their power-up kinds separately (`systems/lifecycle.cpp`), alike in 12 of 40 see
 100 ticks of flight in 2 of 8 seeds); (4) a grid cell contest or swap at an equal `subTick`
 went to the lower slot (`beats`, `spaces/grid.cpp`), which is the west's, and no bot sets
 `subTick`: in 200 `ref:hard` games 973 of 1585 enemy cell contests went west (61 %), about 8 a
-game (v0.82: it alternates by the turn's parity, and the case pins the alternation); (5) a simultaneous dash exchange lets the lower slot strike first (contacts in pool order,
+game (v0.82: the world Rng draws it, and the case pins the draw); (5) a simultaneous dash exchange lets the lower slot strike first (contacts in pool order,
 then the HitStun row bars the return blow), 3 times in 200 games; (6) same-tick respawns run in
 slot order with an Rng tie-break (`respawnTimers`, `farthestSpawnPoint`), mirrored among
 standing monkeys and not into an empty arena, 318 same-tick pairs in 200 games. So the engine
@@ -4382,7 +4400,7 @@ itself, 105 west to 95 east (two-sided binomial p = 0.52; a fair coin's 95 % ran
 `--rotate`, no draw, no game at the clock, a median of 1234.5 ticks (712 to 1560). `--rotate`
 still cancels what is left per entrant. The fixes are open, the owner's call, because each
 moves checksums and regenerates the corpus: neither twin moves on a tied cell contest (v0.82
-took this one up as an alternation instead); both
+took this one up as a draw from the world Rng instead); both
 blows land in a simultaneous exchange; respawn points chosen for every due slot before anyone
 respawns; one draw for all spawn groups, and one per spawner beat for both spawners;
 symmetric rounding in `Fixed`'s multiply (§12).
@@ -4578,22 +4596,42 @@ and balance patches toward the targets above.
 Progress (v0.82): (1) to (3) are built on one branch, all but the release; (4) is not started,
 so none of the targets is measured. Decided while building, beyond the bullets above:
 
-- **The tied cell contest** (§5.12, §12), decided with the kind in v0.81 because two monkeys
+- **The tied cell contest** (§5.12, §12), taken up with the kind in v0.81 because two monkeys
   stepping onto one fruit cell is its commonest contest, and the lower slot, the west's, took
   it. Not "neither moves", which would hold two deterministic bots on either side of a banana
-  for ever: at an equal `subTick` the lower slot wins on an even turn and the higher on an odd
-  one (the turn is `ticksInPhase / turn_ticks` at the latch; `beats`, `spaces/grid.cpp`),
-  Rng-free, and even over a match. It moved the checksums of `scripted_10p_contest_1800t` and
-  `scripted_10p_grid_rounds_1t_1800t`; the other grid entries met no such contest. The
+  for ever. v0.81 decided an alternation: at an equal `subTick` the lower slot on an even turn
+  and the higher on an odd one, the turn being `ticksInPhase / turn_ticks` at the latch,
+  Rng-free and even over the turns. Built, it was not even over the contests: the kind's beats
+  are even (`turn_ticks` 1, `bank_ticks` 2, trees every 30, 60 and 90 ticks), so the ties that
+  matter fall on one parity. The scripted gather-and-bank policy, its world Rng re-seeded 60
+  ways at the first contest, gave `grove` to the west 60 times of 60 (with the parity inverted
+  as a probe, to the east 60 of 60), `gorge` 23 west, 14 east and 23 drawn, `orchards` and
+  `burrows` 60 draws; the `gatherer` mirror on `grove` went 16 to 3 for side 0 in 20 rotated
+  games and 28 to 11 in 40 (two-sided p = 0.009), though 100 to 92 over 200. So v0.82 draws
+  instead, as for a pickup: the monkeys tied for a cell or a swap are put in an order drawn from
+  the world Rng (one Fisher-Yates permutation a latch, count − 1 draws, §5.12), an earlier press
+  still wins without a draw, and a latch without such a tie draws nothing. After: the same probe
+  gives `grove` 23 west, 22 east, 15 drawn, `gorge` 18, 20 and 22, `orchards` and `burrows` 60
+  draws; the `gatherer` mirror (five a side, 40 rotated games, seed 1, Release) `grove` 15 to 23
+  (p = 0.26), `orchards` 18 to 16 (0.86), `gorge` 24 to 14 (0.14), `burrows` 16 to 19 (0.74),
+  and over 200 rotated games 92 to 104 (0.43), 95 to 83 (0.41), 105 to 87 (0.22) and 84 to 102
+  (0.21). The alternation had moved `scripted_10p_contest_1800t` and
+  `scripted_10p_grid_rounds_1t_1800t`; the draw moved every grid entry with a tie (below). The
   mirrored-inputs test's cases moved with it (below).
 - **A pickup touched by several monkeys on one tick** goes in an order the world Rng draws
   (§5.6), found by measurement: the `gatherer` mirror on `grove` ended 40 to 12 for side 0 in
   every game, because both teams' first picks are the same rich tree and the lower slot took
   the fruit both teams' monkeys were touching when it was laid. A taking row (50, 51, 52) has a
-  contend test; two or more monkeys that could take one pickup on one tick are resolved in a
-  Fisher-Yates order drawn from the world Rng, at the place of the first of them; a single
-  contender draws nothing, so a tick without such a tie resolves exactly as before. It moved
-  the checksums of the corpus entries in which such a tie happens, and of no other.
+  contend test (`canTakePickup`, `canTakePowerUp`, `canTakeFlag`); two or more monkeys that
+  could take one pickup on one tick are resolved in a Fisher-Yates order drawn from the world
+  Rng, at the place of the first of them in the contact order, whatever their times of impact;
+  a single contender draws nothing, so a tick without such a tie resolves exactly as before.
+  `kfm_replay stats` follows the same order through a `ContactObserver` (§5.6) instead of its
+  own copy of the contact sort. It moved the checksums of the corpus entries in which such a
+  tie happens, each from the tick of its first draw: `scripted_10p_contest_1800t` (5 draws, the
+  first at tick 121), `scripted_10p_contest_gorge_1800t` (11),
+  `scripted_10p_contest_burrows_1800t` (4) and `scripted_10p_grid_rounds_1t_1800t` (1, at
+  tick 119); the other 22 drew nothing.
 - **The scripted generator** (§5.3) steers harvest from state alone, Rng-free and keyed on the
   kind, so every other mode's inputs are unchanged. In the continuous space a hand with room
   goes for the nearest banana pickup and a full hand (or one with nothing left to pick) goes
@@ -4605,11 +4643,19 @@ so none of the targets is measured. Decided while building, beyond the bullets a
   the team has points), the rest gather (the nearest fruit with room; home with a banana, where
   it stands until it has banked them all; empty-handed with nothing to fetch, the nearest tree).
 - **The mirrored-inputs test** (`side_symmetry_scenario.cpp`) adds the kind: a gather-and-bank
-  match on each pool arena stays its own half turn bit for bit to a 40 to 40 draw (grove at
-  tick 676, orchards 874, gorge 676, burrows 672); the control cases moved to `control_1t`. With
-  the tied cell contest alternating, the twins' swap case pins the alternation, the banana-fight
-  case plays seeds 3 and 5 within 256 raw units and 64 BAM (v0.80: 64 and 4), and the dashing
-  case seeds 5 and 55. Its bot-side twin, `tests/unit/ai/side_symmetry_test.cpp`, builds
+  match on each pool arena stays its own half turn bit for bit until the world Rng first draws
+  a tie, the world leaving its half turn there; that tick replayed under 256 other Rng states
+  has outcomes that pair up by the half turn (the outcome and its half turn among them), and
+  the match plays on to its end. It runs two ways: with every input's `subTick` staggered by
+  rank no cell is tied, and the first draw is the first fruit twins contend for (tick 121 on
+  `grove`, `gorge` and `burrows`, 181 on `orchards`; played on, `grove` ends 40 to 36 at tick
+  614, `gorge` 40 to 37 at 644, `burrows` 40 to 40 at 672, `orchards` 40 to 40 at 874); with
+  every step at `subTick` 0 it is the first tied cell between allies (tick 61 or 62). The control cases moved to `control_1t`, and stagger
+  their inputs the same way: the match without fights is mirrored bit for bit to its draw, the
+  banana-fight case plays seed 3 within 256 raw units and 64 BAM (v0.80: 64 and 4), and the
+  dashing case seeds 4 and 69. Two `[known-asymmetry]` cases pin the draws: twins touching one
+  banana on one tick, and twins swapping cells at an equal press: one twin wins each of 200
+  re-seeded trials, never both, the west within 70 to 130 of them. Its bot-side twin, `tests/unit/ai/side_symmetry_test.cpp`, builds
   half-turn worlds on the pool arenas and checks that a slot's sight and whole observation
   (heard calls included) under `own` and `team` fog are the half turn of its twin's, and that
   the reference bot, given one seed and mirrored observations, gives mirrored inputs. It found
@@ -4638,22 +4684,42 @@ so none of the targets is measured. Decided while building, beyond the bullets a
   side, 20 rotated games a map, seed 1, before the reference-bot fix): against `ref:hard` the
   gatherers win all 80, none at the clock, no fault (grove a median of 971 ticks and 40.1 to
   3.1 points; orchards 853, 40.1 to 1.8; gorge 1146, 40.1 to 1.2; burrows 794, 40.1 to 5.2),
-  `fuel_max` 27 500 to 34 411 of 100 000. The gatherer ignores its seed, so its mirror is one
+  `fuel_max` 27 500 to 34 411 of 100 000. The gatherer ignores its seed, so its mirror was one
   game a map: a 40 to 40 draw on `orchards` (874 ticks), `gorge` (788) and `burrows` (672), and
   on `grove` 40 to 12 for side 0 in every game (490), which exposed the pickup order above.
-- **The corpus** (§9). The content hash moved, so every entry was re-recorded.
-  `scripted_10p_contest_1800t` plays harvest on `grove` (68 fruit taken, 80 banked, 3 stolen,
-  team 1 winning 40 to 37 at tick 641); new `scripted_10p_contest_gorge_1800t` (50 taken, 68
-  banked, 10 stolen, a pit fall, 40 to 18 at 505) and `scripted_10p_contest_burrows_1800t` (46,
-  65, 15, 40 to 10 at 477); new `scripted_10p_control_1t_1800t`, whose checksums are
-  byte-identical to the old contest entry's. Their expectation rows
-  require fruit taken off the floor, more banked than the ten opening hands, and a theft.
-- **The client** draws the kind (§7), and `kfm_replay stats` prints objective points and
-  thefts.
+  With both tie-breaks drawn the mirror varies with the match seed and splits as a fair coin
+  does (the numbers in the cell-contest bullet). Re-run on the finished branch (Release, the
+  same flags): against `ref:hard` the gatherers still win all 80, none at the clock, no fault
+  (medians grove 1304, orchards 1468, gorge 1285, burrows 1100 ticks; 40.0 to 40.2 points
+  against 1.2 to 5.5). The pool end to end, five `gatherer` against five `ref:hard` with no
+  `--arena`, 16 rotated matches, seed 1: the `arena` key cycles grove, grove, orchards,
+  orchards, gorge, gorge, burrows, burrows and repeats; every game ended by score, no fault,
+  the gatherers winning all 16 (medians grove 1051, orchards 1591, gorge 1414, burrows 1270
+  ticks; before the cell draw 1042, 1609, 1397 and 1033).
+- **The corpus** (§9). The content hash moved, so every entry was re-recorded; the tied cell
+  contest and the pickup order moved the entries with such ties again (above). The cell draw
+  moved `scripted_10p_contest_burrows_1800t` (66 latches with a tie, 96 draws, the first at tick
+  61), `scripted_10p_control_1t_1800t` (14, 38, tick 63), `scripted_10p_grid_rounds_1t_1800t`
+  (6, 6, tick 61) and `scripted_4p_grid_rounds_1t_1800t` (2, 4, tick 556), each from the tick
+  after its first tie; `scripted_4p_grid_rounds_3600t` has none, and no entry in the continuous
+  space moved. On their old input seeds the grove and gorge entries moved the same way (first
+  ties at ticks 62 and 61) and lost a theft and a pit fall, so they were given new input seeds
+  (0x5C12C1, 0x5C12C2). As recorded: `scripted_10p_contest_1800t` plays harvest on `grove` (32
+  fruit laid and taken, 53 banked, 13 stolen, team 0 winning 40 to 0 at tick 351; 32 latches
+  with a tie, 47 draws); `scripted_10p_contest_gorge_1800t` (46 taken, 76 banked, 21 stolen, a
+  pit fall, 40 to 15 at 475; 36 latches, 54 draws) and `scripted_10p_contest_burrows_1800t` (56
+  of 59 taken, 85 banked, 23 stolen, team 1 winning 40 to 22 at 573);
+  `scripted_10p_control_1t_1800t` replays the old contest entry, whose checksums it matched byte
+  for byte until the cell draw moved it. The harvest expectation rows require fruit taken off
+  the floor, more banked than the ten opening hands and a theft (gorge also a pit fall).
+- **The client** draws the kind (§7), looked at by hand on the shipped row: the homes tinted,
+  the trees with their ripening fruit, the bunch in a carrier's hand, the HUD line and the
+  banked scores, the scoreboard's "Bananas" column. A monkey standing on a tree is half hidden
+  under its canopy (open). `kfm_replay stats` prints objective points and thefts.
 
 Still open: the release; step (4) and with it every target above; two teams reaching
-`score_to_win` on one tick draw, so a mirror of identical deterministic bots always draws (a
-tie-break is a balance-patch question); the reference bot does not gather, so it loses every
+`score_to_win` on one tick draw (a `gatherer` mirror draws 2 to 11 % of its games a map; a
+tie-break is a balance-patch question); a monkey on a tree is half hidden under the canopy; the reference bot does not gather, so it loses every
 game to `gatherer` and is a weak opponent in human rooms of this kind; the remaining pinned sim
 asymmetries of §12 (the rounding, the dash exchange, the respawn order, the two Rng draws).
 
@@ -5265,20 +5331,23 @@ baseline moved to C++23 (§9).
   (it regenerates the corpus). The mirrored-inputs test (v0.80, §11 "Contest design",
   `side_symmetry_scenario.cpp`) found the same kind of tie-break between the two sides of a
   team match, each pinned by a `[known-asymmetry]` case and left open for the same reason: a
-  grid cell contest or swap at an equal `subTick` goes to the lower slot (the west's; fix:
-  neither moves); a simultaneous dash exchange lets the lower slot strike first (fix: both
+  grid cell contest or swap at an equal `subTick` went to the lower slot (the west's; fix
+  considered: neither moves; built in v0.82: a draw, below); a simultaneous dash exchange lets the lower slot strike first (fix: both
   blows land); same-tick respawns choose in slot order with their own Rng tie-breaks (fix:
   every due slot's point chosen before anyone respawns); the spawn groups' offsets and the two
   spawners' power-ups are separate draws (fix: one draw for all groups, one per beat); and
   `Fixed`'s multiply floors, nudging every banana toward (−x, −y) (fix: symmetric rounding).
   Each fix moves checksums and is the owner's call; on the then shipped `contest` row
-  (`control_1t` since v0.82) the sides split 105 to 95 in 200 `ref:hard` games. Decided in
-  v0.81 and built in v0.82 (§11 "Contest design: bananas as the economy"): the tied cell contest
-  alternates by the turn's parity (the lower slot on an even turn, the higher on an odd one),
-  not "neither moves", since two monkeys stepping onto one fruit cell is harvest's commonest
-  contest; it moved the grid entries' checksums that met one. Found and fixed in v0.82: a
-  pickup several monkeys touch on one tick went to the earlier contact or lower pool index;
-  the world Rng now draws their order (§5.6). The others stay open: the dash exchange, the
+  (`control_1t` since v0.82) the sides split 105 to 95 in 200 `ref:hard` games. Taken up with
+  harvest (§11 "Contest design: bananas as the economy"), since two monkeys stepping onto one
+  fruit cell is that kind's commonest contest: v0.81 decided to alternate the tied cell contest
+  by the turn's parity (the lower slot on an even turn, the higher on an odd one), not "neither
+  moves"; built, the alternation locked onto harvest's even beats (the west took `grove` in 60
+  of 60 re-seeded scripted matches), so v0.82 draws it from the world Rng instead (§5.12; the
+  same probe 23 west, 22 east, 15 drawn), moving the grid entries' checksums that met a tie.
+  Found and fixed in v0.82: a pickup several monkeys touch on one tick went to the earlier
+  contact or lower pool index; the world Rng now draws their order (§5.6), whatever their
+  times of impact. The others stay open: the dash exchange, the
   respawn order, the two Rng draws and the rounding. The east bias measured on every contest
   row since the old hill was the reference bot's, not the engine's, and is fixed (§8, §11): on
   the harvest pool `ref:hard` went 243 west to 422 east before and 321 to 329 after.
