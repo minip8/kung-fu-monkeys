@@ -165,7 +165,8 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].powerUpSet ^= 1; },
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].firstTicks += 1; },
       [](ContentDB& c) { c.arenas[1].pickupSpawners[0].intervalTicks += 1; },
-      [](ContentDB& c) { c.arenas[1].pickupSpawners[0].maxAlive += 1; });
+      [](ContentDB& c) { c.arenas[1].pickupSpawners[0].maxAlive += 1; },
+      [](ContentDB& c) { c.arenas[1].pickupSpawners[0].tree ^= 1; });
   everyFieldReachesTheHash<ModeDef>(
       [](ContentDB& c) { c.modes[0].name.chars[0] ^= 1; },
       [](ContentDB& c) { c.modes[0].kind = ModeKind::Capture; },

@@ -28,6 +28,7 @@ kfm_add_test_exe(kfm_scenario_tests
   team_scenario.cpp
   objective_scenario.cpp
   control_scenario.cpp
+  tree_scenario.cpp
   banana_flight_scenario.cpp
   grid_scenario.cpp
   side_symmetry_scenario.cpp

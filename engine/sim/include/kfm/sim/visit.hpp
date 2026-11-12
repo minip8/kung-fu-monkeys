@@ -274,8 +274,9 @@ void visit(V& v, PickupSpawner& d) {
   v.u16(d.firstTicks);
   v.u16(d.intervalTicks);
   v.u8(d.maxAlive);
+  v.u8(d.tree);  // v0.81
 }
-static_assert(fieldCount<PickupSpawner>() == 5, "visit the new field, then update the count");
+static_assert(fieldCount<PickupSpawner>() == 6, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, StatModifier& m) {
   visit(v, m.stat);

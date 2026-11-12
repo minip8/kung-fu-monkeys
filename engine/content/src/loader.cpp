@@ -1091,8 +1091,10 @@ class Builder {
   }
 
   // spawners = [{ pos = [x, y], power_ups = ["name", ...], first_ticks,
-  //               interval_ticks, max_alive }, ...] (§5.8). power_ups is
+  //               interval_ticks, max_alive, tree }, ...] (§5.8). power_ups is
   // optional (every power-up); names resolve once every file is read.
+  // v0.81: tree = true makes the spawner a tree, which lays bananas and so
+  // takes no power_ups.
   void parseSpawners(Section& outer, const toml::node& n, ArenaDef& a, uint8_t arenaIndex) {
     const toml::array* arr = n.as_array();
     if (arr == nullptr || arr->size() > sim::kMaxPickupSpawners) {
@@ -1112,7 +1114,11 @@ class Builder {
       s.integer("first_ticks", sp.firstTicks, 0, 65535);
       s.integer("interval_ticks", sp.intervalTicks, 0, 65535);
       s.integer("max_alive", sp.maxAlive, 1, sim::kMaxPickups);
+      s.flag("tree", sp.tree);  // v0.81
       if (const toml::node* set = s.take("power_ups")) {
+        if (sp.isTree()) {
+          s.error(*set, "'power_ups' belongs to a power-up spawner: a tree lays bananas");
+        }
         const toml::array* names = set->as_array();
         if (names == nullptr || names->empty()) {
           s.error(*set, "'power_ups' must be a non-empty list of power-up names");
@@ -1745,7 +1751,11 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
       fail(where + ": more than " + std::to_string(sim::kMaxPickupSpawners) + " spawners");
       continue;
     }
-    if (a.pickupSpawnerCount > 0 && c.powerUpCount == 0) {
+    bool powerUpSpawner = false;
+    for (uint8_t k = 0; k < a.pickupSpawnerCount; ++k) {
+      if (!a.pickupSpawners[k].isTree()) powerUpSpawner = true;
+    }
+    if (powerUpSpawner && c.powerUpCount == 0) {
       fail(where + ": has spawners but no [[powerup]] is defined");
     }
     uint32_t alive = 0;
@@ -1753,8 +1763,16 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
     for (uint8_t k = 0; k < a.pickupSpawnerCount; ++k) {
       const PickupSpawner& sp = a.pickupSpawners[k];
       const std::string at = where + " spawner " + std::to_string(k);
-      alive += sp.maxAlive;
+      // v0.81: a tree's fruit is bananas, which the half of the pool below
+      // is kept for, so only the power-up spawners count toward it.
+      if (!sp.isTree()) alive += sp.maxAlive;
       if (sp.maxAlive < 1) fail(at + ": max_alive must be at least 1");
+      if (sp.tree > 1) fail(at + ": tree is a 0/1 switch");
+      if (sp.isTree() && sp.powerUpSet != 0) fail(at + ": a tree takes no power_ups");
+      // A tree counts the bananas on its cell, so the arena needs cells.
+      if (sp.isTree() && a.cellSize <= Fixed::zero()) {
+        fail(at + ": a tree needs an arena with cells (a tilemap, `cell`)");
+      }
       if ((sp.powerUpSet & ~defined) != 0) fail(at + ": names a power-up that is not defined");
       const Fixed limitX = a.halfExtents.x - c.pickup.radius;
       const Fixed limitY = a.halfExtents.y - c.pickup.radius;

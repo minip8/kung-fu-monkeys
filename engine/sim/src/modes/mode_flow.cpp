@@ -139,11 +139,13 @@ namespace {
   });
   if (left) return true;
   // A spawner with a beat still to come (LifecycleSystem::runSpawners) that
-  // may draw a power-up laying bananas.
+  // may draw a power-up laying bananas, or a tree (v0.81) with one: it lays
+  // a banana whatever the match's power-up set.
   const ArenaDef& arena = content.arena;
   for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {
     const PickupSpawner& sp = arena.pickupSpawners[i];
     if (sp.intervalTicks == 0 && s.rules.ticksInPhase > sp.firstTicks) continue;
+    if (sp.isTree()) return true;
     const uint32_t all = db.powerUpCount >= 32 ? UINT32_MAX : (uint32_t{1} << db.powerUpCount) - 1u;
     const uint32_t set =
         (sp.powerUpSet == 0 ? all : (uint32_t{sp.powerUpSet} & all)) & content.powerUps;

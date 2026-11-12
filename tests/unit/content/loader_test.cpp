@@ -809,6 +809,100 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                  "spawner 0: pos (3.000, 1.000) is in pit hazard 0"));
 }
 
+// --- trees (v0.81) --------------------------------------------------------
+
+namespace {
+
+// kMinimal plus a tilemap arena with one tree and no [[powerup]] at all.
+std::string withTree() {
+  return std::string(kMinimal) + R"(
+[[arena]]
+name = "orchard"
+cell = 1.0
+map = [
+  "........",
+  ".0....1.",
+  "........",
+  "........",
+]
+spawners = [{ pos = [0.5, 0.5], tree = true, first_ticks = 30, interval_ticks = 90, max_alive = 2 }]
+)";
+}
+
+}  // namespace
+
+TEST_CASE("trees load: tree = true, no power-ups needed", "[content][loader][tree]") {
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(withTree(), "test.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  REQUIRE(db.findArena("orchard"));
+  const sim::ArenaDef& a = db.arenas[db.findArena("orchard").value_or(0)];
+  REQUIRE(a.pickupSpawnerCount == 1);
+  const sim::PickupSpawner& sp = a.pickupSpawners[0];
+  CHECK(sp.tree == 1);
+  CHECK(sp.isTree());
+  CHECK(sp.powerUpSet == 0);
+  CHECK(sp.firstTicks == 30);
+  CHECK(sp.intervalTicks == 90);
+  CHECK(sp.maxAlive == 2);
+  CHECK(sim::hasTree(a));
+  CHECK_FALSE(sim::hasTree(db.arenas[0]));
+  // tree = false is a power-up spawner, and the default.
+  ContentDB off{};
+  Diagnostics offDiag;
+  REQUIRE(
+      parseContent(replaced(withPowerUp(), "first_ticks = 60", "tree = false, first_ticks = 60"),
+                   "test.toml", off, offDiag));
+  CHECK(off.arenas[off.findArena("box_pu").value_or(0)].pickupSpawners[0].tree == 0);
+  CHECK(off.arenas[off.findArena("box_pu").value_or(0)].pickupSpawners[0].powerUpSet == 1);
+}
+
+TEST_CASE("tree validation", "[content][loader][tree]") {
+  // A tree takes no power-ups.
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "power_ups = [\"boost\"]",
+                                     "tree = true, power_ups = [\"boost\"]")),
+                 "'power_ups' belongs to a power-up spawner: a tree lays bananas"));
+  // A tree needs cells: the hand-placed box_pu has none.
+  CHECK(
+      contains(loadErrors(replaced(withPowerUp(), "power_ups = [\"boost\"]", "tree = true")),
+               "arena \"box_pu\" spawner 0: a tree needs an arena with cells (a tilemap, `cell`)"));
+  // A boolean.
+  CHECK(contains(loadErrors(replaced(withTree(), "tree = true", "tree = 1")),
+                 "'tree' must be true or false"));
+  // The statics' checks hold for a tree as for any spawner.
+  CHECK(contains(loadErrors(replaced(withTree(), "pos = [0.5, 0.5]", "pos = [9.5, 0.5]")),
+                 "spawner 0: pos (9.500, 0.500) is outside the arena"));
+  // A tree's max_alive does not count toward the power-ups' half of the pool.
+  CHECK(loads(replaced(withTree(), "max_alive = 2", "max_alive = 32")));
+  CHECK(contains(loadErrors(replaced(withTree(), "max_alive = 2", "max_alive = 33")),
+                 "'max_alive' must be an integer in [1, 32]"));
+  {
+    // validateContent() holds content built in code to the same rules.
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(parseContent(withTree(), "t.toml", db, diag));
+    sim::ArenaDef& a = db.arenas[db.findArena("orchard").value_or(0)];
+    Diagnostics ok;
+    CHECK(validateContent(db, ok));
+    a.pickupSpawners[0].tree = 2;
+    Diagnostics two;
+    CHECK_FALSE(validateContent(db, two));
+    CHECK(two.format().contains("tree is a 0/1 switch"));
+    a.pickupSpawners[0].tree = 1;
+    a.pickupSpawners[0].powerUpSet = 1;
+    Diagnostics set;
+    CHECK_FALSE(validateContent(db, set));
+    CHECK(set.format().contains("a tree takes no power_ups"));
+    a.pickupSpawners[0].powerUpSet = 0;
+    a.cellSize = Fixed::zero();
+    Diagnostics cells;
+    CHECK_FALSE(validateContent(db, cells));
+    CHECK(cells.format().contains("a tree needs an arena with cells"));
+  }
+}
+
 TEST_CASE("content/ ships the power-ups and an arena that spawns them",
           "[content][loader][powerup]") {
   ContentDB db{};

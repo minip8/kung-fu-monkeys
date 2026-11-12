@@ -87,6 +87,15 @@ struct ArenaDef {
   Fixed cellSize{};
 };
 
+// v0.81: whether the arena has a tree (a spawner that lays bananas,
+// PickupSpawner::tree) among its spawners.
+[[nodiscard]] constexpr bool hasTree(const ArenaDef& arena) {
+  for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {
+    if (arena.pickupSpawners[i].isTree()) return true;
+  }
+  return false;
+}
+
 // Spawn points [begin, end) of group g (taken mod the group count) of an
 // arena: group g holds points [g·n/G, (g+1)·n/G) of the n points.
 struct SpawnRange {

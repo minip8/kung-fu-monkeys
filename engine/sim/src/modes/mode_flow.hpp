@@ -40,7 +40,8 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
 // returning or grounded (one sinking into a pit counts as gone), no banana
 // pickup, no power-up pickup lying around that tops ammo
 // up (a stat grant on ammo_max with add > 0), and no spawner that can still
-// lay one (a candidate that tops ammo up and a beat still to come). The
+// lay one (a candidate that tops ammo up and a beat still to come, or a tree,
+// v0.81, with a beat still to come). The
 // round kinds then end the round as their clock-out would (rounds and team
 // rounds: a draw; survival: its timeout winner). Bananas are the only thing
 // that hurts (a dash attack needs one), so on an arena without pits nothing
