@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -335,6 +336,94 @@ TEST_CASE("control: an owned zone pays with nobody on it, two pay twice as fast"
   CHECK(m.teamScore(s.rules.scores, 0) == 4);  // a leaver's points stay the team's
 }
 
+// A team with no present slot keeps its zones and its clock drains as ever,
+// but a full clock credits nobody (lowestPresentOf finds no slot), so those
+// points are gone; the remainder carries. Its leavers' monkeys stay in the
+// arena, idle, and one eliminated while away is not respawned. A slot of the
+// team present again is scheduled like a late joiner (deathmatchRoster) and
+// takes the team's next point at once, dead or alive, from the clock where
+// the absence left it.
+TEST_CASE("control: a team with no present slot drains its clock, credits nobody",
+          "[scenario][control]") {
+  const MatchConfig config = controlConfig(kControl);
+  const MatchContent m = matchContent(content(), config);
+  EventLog log;
+  WorldState s = playing(config, log);
+  captureWithP2(s, m, 0, log);                        // clock 1
+  runTicks(s, frameFor(s), kPointTicks - 1, m, log);  // 20: a point to kP0
+  REQUIRE(m.teamScore(s.rules.scores, 0) == 1);
+  REQUIRE(clockOf(s, 0) == 0);
+
+  // Both of team 0 leave: two points' worth of zone-ticks and five more.
+  InputFrame away = frameFor(s);
+  away.present = 0b1010;
+  size_t before = log.size();
+  runTicks(s, away, (2 * kPointTicks) + 5, m, log);
+  CHECK(scoresSince(log, before).empty());
+  CHECK(clockOf(s, 0) == 5);
+  CHECK(ownerOf(s, 0) == 0);  // the zone stays the team's
+  CHECK(s.rules.scores[kP0.value] == 1);
+  CHECK(m.teamScore(s.rules.scores, 0) == 1);  // what it scored before stays
+  CHECK(s.playerBySlot(kP0) != nullptr);       // the leavers' monkeys stay
+  CHECK(s.playerBySlot(kP2) != nullptr);
+
+  // kP2, away, is eliminated: no respawn while its slot is absent.
+  const Vec2 victim = playerAt(s, kP2).transform.pos;
+  spawnBanana(s, kP1, victim - Vec2{Fixed::one(), Fixed::zero()},
+              Vec2{Fixed::fromRatio(1, 2), Fixed::zero()}, BoomerangPhase::Outbound, m.db);
+  runTicks(s, away, 5, m, log);
+  REQUIRE(firstEvent(log, EventKind::PlayerEliminated).player == kP2);
+  CHECK(s.playerBySlot(kP2) == nullptr);
+  runTicks(s, away, 40, m, log);  // 5 + 5 + 40 = 50: two more points gone, 10 carried
+  CHECK(countEvents(log, EventKind::PlayerRespawned) == 0);
+  CHECK(s.playerBySlot(kP2) == nullptr);
+  CHECK(clockOf(s, 0) == 10);
+  CHECK(scoresSince(log, before).empty());
+  CHECK(m.teamScore(s.rules.scores, 0) == 1);
+
+  // kP2 comes back alone (kP0 stays away): the next point, 10 ticks on, is
+  // kP2's while it still waits for its respawn, which comes respawnTicks on.
+  InputFrame back = frameFor(s);
+  back.present = 0b1110;
+  before = log.size();
+  runTicks(s, back, 9, m, log);
+  CHECK(scoresSince(log, before).empty());
+  runTicks(s, back, 1, m, log);
+  std::vector<SimEvent> scores = scoresSince(log, before);
+  REQUIRE(scores.size() == 1);
+  CHECK(scores[0].player == kP2);
+  CHECK(scores[0].b == static_cast<uint32_t>(ScoreReason::Objective));
+  CHECK(s.playerBySlot(kP2) == nullptr);
+  CHECK(clockOf(s, 0) == 0);
+  CHECK(m.teamScore(s.rules.scores, 0) == 2);
+  runTicks(s, back, 15, m, log);
+  CHECK(countEvents(log, EventKind::PlayerRespawned) == 1);
+  CHECK(firstEvent(log, EventKind::PlayerRespawned).player == kP2);
+  CHECK(s.playerBySlot(kP2) != nullptr);
+}
+
+// At the clock only the teams with a present slot are judged
+// (teamScoreLeader over teamsPresent): a team that left leading does not win.
+TEST_CASE("control: at the clock a team with no present slot is not judged",
+          "[scenario][control]") {
+  const MatchConfig config = controlConfig(kControlClock);
+  const MatchContent m = matchContent(content(), config);
+  EventLog log;
+  WorldState s = playing(config, log);
+  captureWithP2(s, m, 0, log);
+  runTicks(s, frameFor(s), 2 * kPointTicks, m, log);
+  REQUIRE(m.teamScore(s.rules.scores, 0) == 2);
+  REQUIRE(m.teamScore(s.rules.scores, 1) == 0);
+  InputFrame away = frameFor(s);
+  away.present = 0b1010;
+  runTicks(s, away, 100, m, log);
+  REQUIRE(s.rules.phase == MatchPhase::MatchEnded);
+  CHECK(m.teamScore(s.rules.scores, 0) == 2);  // nothing more was credited
+  const SimEvent& ended = firstEvent(log, EventKind::MatchEnded);
+  REQUIRE(ended.player.isValid());
+  CHECK(m.teamOf(ended.player) == 1);  // the only team judged, at 0 points
+}
+
 TEST_CASE("control: score_to_win ends the match", "[scenario][control]") {
   const MatchConfig config = controlConfig(kControlWin);
   const MatchContent m = matchContent(content(), config);
@@ -492,4 +581,34 @@ TEST_CASE("control: the scripted generator steers to the nearest zone not owned,
   s.rules.modeData[2] = 0;
   placePlayer(s, kP0, at(0, 1));
   expectWander();
+}
+
+// Two zones the team does not own at exactly the same squared distance: the
+// lower index is the target (the strict < in objectiveTarget), whichever side
+// of the arena it lies on.
+TEST_CASE("control: the scripted generator breaks a distance tie by the lowest zone index",
+          "[scenario][control][scripted]") {
+  const MatchConfig config = controlConfig(kControl);
+  EventLog log;
+  WorldState s = playing(config, log);
+  // kP0 (team 0) on the centre line, north of the centre: the west zone's
+  // centre (-13, 0) and the east zone's (13, 0) are equally far.
+  placePlayer(s, kP0, at(0, 6));
+  const auto steerWith = [&](const ContentDB& db, uint32_t owners) {
+    const MatchContent m(db, kZoned, kControl, kAllPowerUps, 0, config.teams);
+    s.rules.modeData[2] = owners;
+    Rng rng = Rng::seeded(7);
+    return scriptedInput(rng, s, m, kP0).moveDir;
+  };
+  // Team 0 owns the centre and one side: the other side is the only target.
+  const uint8_t toWest = steerWith(content(), 0x101u);  // zones 0 and 2 owned
+  const uint8_t toEast = steerWith(content(), 0x011u);  // zones 0 and 1 owned
+  REQUIRE(toWest != toEast);
+  // Both sides open: zone 1, the west.
+  CHECK(steerWith(content(), 0x001u) == toWest);
+  // The same arena with the side zones' indices swapped: zone 1, now the east.
+  ContentDB swapped = content();
+  std::swap(swapped.arenas[kZoned].zones[1], swapped.arenas[kZoned].zones[2]);
+  CHECK(steerWith(swapped, 0x001u) == toEast);
+  CHECK(steerWith(swapped, 0x101u) == toEast);  // zone 2 (the west) owned: the east
 }
