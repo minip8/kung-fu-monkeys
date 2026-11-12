@@ -110,6 +110,16 @@ struct Lab {
     while (s.rules.ticksInPhase % kTurn != 0)
       runTicks(s, frameFor(s), 1, m, log);
   }
+  // v0.81: idle turns until the next latch opens an even (odd = false) or
+  // odd turn (ticksInPhase / turnTicks), which settles an equal-press
+  // contest.
+  void toTurn(bool odd) {
+    toLatch();
+    if (((s.rules.ticksInPhase / kTurn) % 2 != 0) != odd) {
+      runTicks(s, frameFor(s), kTurn, m, log);
+    }
+    REQUIRE(((s.rules.ticksInPhase / kTurn) % 2 != 0) == odd);
+  }
   // Puts a monkey at rest on a cell centre.
   void put(PlayerId id, Cell k) {
     Player& p = placePlayer(s, id, centreOf(arena(), k));
@@ -273,7 +283,7 @@ TEST_CASE("grid: a dash slides over a one-cell pit, and falls if it ends in one"
   }
 }
 
-TEST_CASE("grid: a contested cell goes to the earlier press, then the lower slot",
+TEST_CASE("grid: a contested cell goes to the earlier press, then the turn's slot",
           "[scenario][grid]") {
   SECTION("the earlier press wins") {
     Lab lab(0b11);
@@ -283,8 +293,18 @@ TEST_CASE("grid: a contested cell goes to the earlier press, then the lower slot
     CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{3, 2}));
     CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{2, 2}));
   }
-  SECTION("an equal press goes to the lower slot") {
+  SECTION("the earlier press wins on an odd turn too") {
+    Lab lab(0b11);
+    lab.toTurn(true);
+    lab.put(kP0, Cell{2, 2});
+    lab.put(kP1, Cell{4, 2});
+    lab.turn(walk(0, 0, 10), walk(4, 0, 200));  // slot 0 pressed first
+    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{3, 2}));
+    CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{4, 2}));
+  }
+  SECTION("an equal press goes to the lower slot on an even turn") {
     Lab lab(0b111);
+    lab.toTurn(false);
     lab.put(kP0, Cell{2, 2});
     lab.put(kP1, Cell{4, 2});
     lab.put(kP2, Cell{3, 1});
@@ -293,13 +313,43 @@ TEST_CASE("grid: a contested cell goes to the earlier press, then the lower slot
     CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{4, 2}));
     CHECK(lab.pos(kP2) == centreOf(lab.arena(), Cell{3, 1}));
   }
+  SECTION("an equal press goes to the higher slot on an odd turn") {
+    Lab lab(0b111);
+    lab.toTurn(true);
+    lab.put(kP0, Cell{2, 2});
+    lab.put(kP1, Cell{4, 2});
+    lab.put(kP2, Cell{3, 1});
+    lab.turn(walk(0, 0, 7), walk(4, 0, 7), walk(6, 0, 7));
+    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{2, 2}));
+    CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{4, 2}));
+    CHECK(lab.pos(kP2) == centreOf(lab.arena(), Cell{3, 2}));
+  }
+  SECTION("the same two alternate turn by turn") {
+    Lab lab(0b11);
+    lab.toTurn(false);
+    for (int k = 0; k < 4; ++k) {
+      INFO("turn " << k);
+      lab.put(kP0, Cell{2, 2});
+      lab.put(kP1, Cell{4, 2});
+      lab.turn(walk(0, 0, 7), walk(4, 0, 7));
+      const PlayerId winner = k % 2 == 0 ? kP0 : kP1;
+      CHECK(lab.pos(winner) == centreOf(lab.arena(), Cell{3, 2}));
+    }
+  }
   SECTION("a swap is blocked: the loser stays, the winner moves in") {
     Lab lab(0b11);
+    lab.toTurn(false);
     lab.put(kP0, Cell{5, 5});
     lab.put(kP1, Cell{6, 5});
     lab.turn(walk(0), walk(4));
     CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{6, 5}));
     CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{6, 5}));
+    // On an odd turn the higher slot swaps in instead.
+    lab.put(kP0, Cell{5, 5});
+    lab.put(kP1, Cell{6, 5});
+    lab.turn(walk(0), walk(4));
+    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{5, 5}));
+    CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{5, 5}));
   }
   SECTION("following into a cell being vacated is no contest") {
     Lab lab(0b11);

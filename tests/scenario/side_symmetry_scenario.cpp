@@ -28,10 +28,12 @@
 // Findings (v0.79's side-bias question): the engine is mirror-symmetric
 // except for the known asymmetries pinned at the end of this file: two
 // world-Rng draws that the two sides take separately (the spawn offsets, the
-// spawners' power-ups), three slot-order tie-breaks that the lower slot (the
-// west, team 0) wins (a swap of cells, a simultaneous dash exchange, the
-// order of simultaneous respawns), and the floor rounding of Fixed's
-// multiply, which nudges every banana toward (-x, -y).
+// spawners' power-ups), two slot-order tie-breaks that the lower slot (the
+// west, team 0) wins (a simultaneous dash exchange, the order of
+// simultaneous respawns), a cell contest or swap at an equal press, which
+// since v0.81 alternates by the turn's parity (the west on even turns, the
+// east on odd ones), and the floor rounding of Fixed's multiply, which
+// nudges every banana toward (-x, -y).
 #include "kfm/content/loader.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/zones.hpp"
@@ -929,18 +931,24 @@ TEST_CASE("side symmetry: banana fights stay mirrored to the end, up to fixed-po
   // Throws that hit, own bananas caught home, perfect catches by the
   // catchers, eliminations and respawns, bounces, pickups and captures, a
   // full match: every discrete outcome is the twin's, and every position,
-  // velocity and facing is within 64 raw units (1/1024 of a cell) and 4 BAM
+  // velocity and facing is within 256 raw units (1/256 of a cell) and 64 BAM
   // of the twin's. The rounding itself is a known asymmetry (below), there
   // from the first throw on, so these matches are not mirrored bit for bit.
   // The script never steps into a cell an enemy stands in (a swap with the
   // twin is a known asymmetry below), and on these seeds no twins respawn
-  // into an empty side (another).
-  const uint64_t seed = GENERATE(3ull, 16ull);
+  // into an empty side (another). v0.81: since an equal-press cell contest
+  // between allies alternates by the turn (mirrored, as the lower slot
+  // was), these matches walk other paths: seed 3's needs the dashing
+  // test's slack (a banana drifts 65 raw units by tick 376, 128 by 395),
+  // seed 5 stays within 96 raw units and 4 BAM (seed 16 plays seed 3's
+  // match); the other mirrored starts tried (4, 54, 55, 58) meet another
+  // known asymmetry, twins respawning into an emptier side.
+  const uint64_t seed = GENERATE(3ull, 5ull);
   const std::string_view powerUp =
       GENERATE(as<std::string_view>{}, "big_banana_1t", "triplebanana_1t", "shield_1t");
   INFO("seed " << seed << ", " << powerUp);
   Run run(contestArena(), contestMode(), seed, onlyPowerUp(powerUp));
-  run.slack = Slack{.ulps = 64, .bam = 4};
+  run.slack = Slack{.ulps = 256, .bam = 64};
   run.play(Script{.noSwaps = true}, 4000);
   INFO("tick " << run.firstAsymmetricTick << ": " << run.firstAsymmetry);
   CHECK_FALSE(run.asymmetric);
@@ -965,8 +973,12 @@ TEST_CASE("side symmetry: dashing fights stay mirrored to the end, up to fixed-p
   // by rank (the earlier press wins a contested cell). Dashes put bananas
   // past wall corners more often, where the bounce's normal magnifies the
   // rounding: the slack is 256 raw units and 64 BAM here (still 1/256 of a
-  // cell and a third of a degree), and the outcomes stay the twin's.
-  const uint64_t seed = GENERATE(3ull, 55ull);
+  // cell and a third of a degree), and the outcomes stay the twin's. v0.81:
+  // with ally contests alternating by the turn, seed 3's match now meets
+  // the simultaneous dash exchange below (slot 0's hp at tick 356) and the
+  // mirrored starts that run to the end are seeds 5, 55, 74 and 92 (one
+  // match: 88 dashes, 24 eliminations).
+  const uint64_t seed = GENERATE(5ull, 55ull);
   INFO("seed " << seed);
   Run run(contestArena(), contestMode(), seed, onlyPowerUp("big_banana_1t"));
   run.slack = Slack{.ulps = 256, .bam = 64};
@@ -1072,39 +1084,60 @@ TEST_CASE("known asymmetry: a throw's velocity rounds toward minus infinity on b
   CHECK_FALSE(asymmetry(run.world, run.mirror, run.kind(), Slack{.ulps = 1, .bam = 1}).empty());
 }
 
-TEST_CASE("known asymmetry: twins swapping cells, the lower slot steps and the other stays",
+TEST_CASE("known asymmetry: twins swapping cells, the turn's slot steps and the other stays",
           "[scenario][symmetry][known-asymmetry]") {
   // The grid latch (spaces/grid.cpp, beats()) settles a contested cell or a
-  // swap by the earlier press (the frame's subTick), then the lower slot.
-  // Twins press alike, so between them the lower slot, team 0's (the
-  // west), always wins: here slot 2 and its twin slot 3 stand on the two
-  // centre cells that are each other's half turn and step into each other's.
-  // Between other slots the order is mirrored (rank a against rank b of the
-  // other team: the lower slot is the same rank's on either side), so only
-  // equal ranks break it; but in a match whose inputs are not mirrored,
-  // every same-subTick contest between slot 2a (west) and 2b + 1 (east)
-  // goes west when a <= b: 15 of the 25 rank pairs.
-  Run run(contestArena(), contestMode(), kMirroredStart);
-  run.untilPlaying();
-  run.place(PlayerId{2}, halves(1, -1));  // column 12 row 7; slot 3 on column 11 row 6
-  REQUIRE(run.asymmetryNow().empty());
-  std::array<PlayerInput, 5> in{};
-  in[1] = PlayerInput{.moveDir = 96, .moveMag = 255, .aimDir = 96};  // north-west, into the twin
-  run.tick(run.mirrored(in));
-  CHECK(playerAt(run.world, PlayerId{2}).transform.pos == halves(-1, 1));  // stepped
-  CHECK(playerAt(run.world, PlayerId{3}).transform.pos == halves(-1, 1));  // stayed
-  CHECK(run.asymmetryNow().starts_with("slot 2 pos:"));
-
-  // The earlier press wins whichever slot it is: the twin with the lower
-  // subTick steps instead.
-  Run early(contestArena(), contestMode(), kMirroredStart);
-  early.untilPlaying();
-  early.place(PlayerId{2}, halves(1, -1));
-  InputFrame f = early.mirrored(in);
-  f.inputs[2].subTick = 10;
-  early.tick(f);
-  CHECK(playerAt(early.world, PlayerId{2}).transform.pos == halves(1, -1));  // stayed
-  CHECK(playerAt(early.world, PlayerId{3}).transform.pos == halves(1, -1));  // stepped
+  // swap by the earlier press (the frame's subTick), then (v0.81) by the
+  // turn: the lower slot on an even turn (ticksInPhase / turn_ticks), the
+  // higher on an odd one. Twins press alike, so between them one side wins
+  // each turn and the world leaves its half turn for that contest, but the
+  // win alternates: team 0's slot (the west) on even turns, its twin (the
+  // east) on odd ones, Rng-free and even over a match. Here slot 2 and its
+  // twin slot 3 stand on the two centre cells that are each other's half
+  // turn and step into each other's. (Before v0.81 the lower slot won every
+  // time: 973 of 1585 enemy contests went west in 200 ref:hard games.)
+  const std::array<PlayerInput, 5> in = [] {
+    std::array<PlayerInput, 5> a{};
+    a[1] = PlayerInput{.moveDir = 96, .moveMag = 255, .aimDir = 96};  // north-west, into the twin
+    return a;
+  }();
+  const auto contest = [&](Run& run, bool odd) {
+    run.untilPlaying();
+    // The contest row's turn is one tick: a mirrored idle tick changes the
+    // parity.
+    if ((run.world.rules.ticksInPhase % 2 != 0) != odd) run.tick(run.mirrored({}));
+    REQUIRE((run.world.rules.ticksInPhase % 2 != 0) == odd);
+    run.place(PlayerId{2}, halves(1, -1));  // column 12 row 7; slot 3 on column 11 row 6
+    REQUIRE(run.asymmetryNow().empty());
+  };
+  SECTION("an even turn: the lower slot (west) steps, its twin stays") {
+    Run run(contestArena(), contestMode(), kMirroredStart);
+    contest(run, false);
+    run.tick(run.mirrored(in));
+    CHECK(playerAt(run.world, PlayerId{2}).transform.pos == halves(-1, 1));  // stepped
+    CHECK(playerAt(run.world, PlayerId{3}).transform.pos == halves(-1, 1));  // stayed
+    CHECK(run.asymmetryNow().starts_with("slot 2 pos:"));
+  }
+  SECTION("an odd turn: the higher slot (east) steps, its twin stays") {
+    Run run(contestArena(), contestMode(), kMirroredStart);
+    contest(run, true);
+    run.tick(run.mirrored(in));
+    CHECK(playerAt(run.world, PlayerId{2}).transform.pos == halves(1, -1));  // stayed
+    CHECK(playerAt(run.world, PlayerId{3}).transform.pos == halves(1, -1));  // stepped
+    CHECK_FALSE(run.asymmetryNow().empty());
+  }
+  SECTION("the earlier press wins whichever slot it is and whatever the turn") {
+    for (const bool odd : {false, true}) {
+      INFO("odd turn " << odd);
+      Run early(contestArena(), contestMode(), kMirroredStart);
+      contest(early, odd);
+      InputFrame f = early.mirrored(in);
+      f.inputs[2].subTick = 10;  // the twin presses first
+      early.tick(f);
+      CHECK(playerAt(early.world, PlayerId{2}).transform.pos == halves(1, -1));  // stayed
+      CHECK(playerAt(early.world, PlayerId{3}).transform.pos == halves(1, -1));  // stepped
+    }
+  }
 }
 
 TEST_CASE("known asymmetry: twins dashing into each other, the lower slot strikes first",

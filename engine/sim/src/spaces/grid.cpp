@@ -22,7 +22,10 @@
 // Contested cells, judged in one pass over the steps taken above: a step
 // loses to another that targets the same cell, or that swaps cells with it,
 // and was pressed earlier (the frame's subTick of the latch tick, lower
-// first), then by the lower slot. The loser stays; a winner keeps its
+// first); at an equal press (v0.81) the lower slot wins on an even turn and
+// the higher slot on an odd one, the turn being ticksInPhase / turnTicks at
+// the latch (Rng-free, and even over a match, so neither side of a mirrored
+// arena keeps the tie). The loser stays; a winner keeps its
 // target even if the loser stays in it. Moving into a cell another monkey
 // stands in is not a contest (monkeys overlap as in the continuous space;
 // a dash attack needs exactly that). A commitment is moveTarget = the cell
@@ -95,9 +98,11 @@ struct Step {
 };
 
 // Whether step j beats step i for a contested cell: the earlier press, then
-// the lower slot.
-[[nodiscard]] constexpr bool beats(const Step& j, uint8_t slotJ, const Step& i, uint8_t slotI) {
-  return j.subTick < i.subTick || (j.subTick == i.subTick && slotJ < slotI);
+// (v0.81) the lower slot on an even turn and the higher slot on an odd one.
+[[nodiscard]] constexpr bool beats(const Step& j, uint8_t slotJ, const Step& i, uint8_t slotI,
+                                   bool oddTurn) {
+  if (j.subTick != i.subTick) return j.subTick < i.subTick;
+  return oddTurn ? slotJ > slotI : slotJ < slotI;
 }
 
 // A dash that started this tick commits to its cells.
@@ -128,6 +133,7 @@ void gridLatch(WorldState& s, const MatchContent& content, const InputFrame& fra
   if (!grid::hasCells(a)) return;  // an incompatible pair (§5.10): nobody moves
 
   const auto turnTicks = static_cast<uint16_t>(turn);
+  const bool oddTurn = ((s.rules.ticksInPhase / turn) & 1u) != 0;
   std::array<Step, kMaxPlayers> steps{};
   for (uint8_t i = 0; i < kMaxPlayers; ++i) {
     Player* p = s.playerBySlot(PlayerId{i});
@@ -151,7 +157,7 @@ void gridLatch(WorldState& s, const MatchContent& content, const InputFrame& fra
       if (j == i || !steps[j].taken) continue;
       const bool sameCell = steps[j].to == steps[i].to;
       const bool swap = steps[j].to == steps[i].from && steps[i].to == steps[j].from;
-      lost = (sameCell || swap) && beats(steps[j], j, steps[i], i);
+      lost = (sameCell || swap) && beats(steps[j], j, steps[i], i, oddTurn);
     }
     Player* p = s.playerBySlot(PlayerId{i});
     if (p == nullptr) continue;
