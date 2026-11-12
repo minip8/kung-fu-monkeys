@@ -236,6 +236,8 @@ void Stats::merge(const Stats& o) {
   parryPresses += o.parryPresses;
   calls += o.calls;
   parries += o.parries;
+  objectivePoints += o.objectivePoints;
+  bananasStolen += o.bananasStolen;
 }
 
 void StatsCollector::beginContacts(const WorldState& s) {
@@ -445,6 +447,12 @@ void StatsCollector::afterStep(const WorldState& s, const EventSink& sink) {
         break;
       case EventKind::BoomerangParried:
         ++stats_.parries;
+        break;
+      case EventKind::ScoreChanged:  // v0.81
+        if (e.b == static_cast<uint32_t>(ScoreReason::Objective)) ++stats_.objectivePoints;
+        break;
+      case EventKind::BananaStolen:  // v0.81
+        ++stats_.bananasStolen;
         break;
       default:
         break;
@@ -670,6 +678,9 @@ void printSummary(const Stats& st, uint32_t players, const MatchContent& content
       "abilities (v0.21): blinks %llu, slams %llu (monkeys pushed %llu), parries %llu of %llu "
       "presses, calls %llu\n",
       u(st.blinks), u(st.slams), u(st.slammed), u(st.parries), u(st.parryPresses), u(st.calls));
+  std::printf(
+      "objectives (v0.81): points scored %llu (harvest: bananas banked), bananas stolen %llu\n",
+      u(st.objectivePoints), u(st.bananasStolen));
 }
 
 }  // namespace kfm::replay
