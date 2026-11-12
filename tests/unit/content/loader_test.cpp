@@ -356,7 +356,7 @@ rounds_to_win = 1
 TEST_CASE("without --arena a mode that names its arena or a pool takes it, even when arena 0 suits",
           "[content][app][arena-set]") {
   // Every arena here suits every mode, so only the mode's own choice can
-  // move the pick off arena 0 (v0.81's pools; before, arena 0 was kept
+  // move the pick off arena 0 (v0.82's pools; before, arena 0 was kept
   // whenever it suited).
   const std::string more = R"(
 [[arena]]
@@ -901,7 +901,7 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                  "spawner 0: pos (3.000, 1.000) is in pit hazard 0"));
 }
 
-// --- trees (v0.81) --------------------------------------------------------
+// --- trees (v0.82) --------------------------------------------------------
 
 namespace {
 
@@ -1001,7 +1001,7 @@ TEST_CASE("content/ ships the power-ups and an arena that spawns them",
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
   // v0.34 appended quick_hands and the grid modes' two baselines, v0.80 the
-  // contest's baseline and the _1t twins its arena lays, v0.81 the harvest
+  // contest's baseline and the _1t twins its arena lays, v0.82 the harvest
   // baseline.
   const std::array<std::string_view, 14> names = {
       "speed_boost",     "big_banana",     "triple_banana", "shield",       "fast_hands",
@@ -1300,7 +1300,7 @@ score_to_win = 0
                  "too many modes (at most 32, kMaxModes)"));
 }
 
-// --- harvest (v0.81) -------------------------------------------------------
+// --- harvest (v0.82) -------------------------------------------------------
 
 namespace {
 
@@ -1343,7 +1343,7 @@ arena = "grove2"
 
 }  // namespace
 
-TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.81)", "[content][loader][modes]") {
+TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
   const bool ok = parseContent(withHarvest(), "modes.toml", db, diag);
@@ -1500,14 +1500,14 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
 }
 
 // M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset.
-// Since v0.81 it is the harvest kind (§11 "Contest design: bananas as the
+// Since v0.82 it is the harvest kind (§11 "Contest design: bananas as the
 // economy") with grid_rounds_1t's squad: the space, turns, kits and the
 // vision's radii are that row's; the baseline is harvest_base (three in the
 // hand, the banana at 2 cells a turn), the arenas the pool of four with
 // grove the default, hearing 1 and the banana's flight the mode's own. A
 // season's change to the row is a deliberate edit here; the arenas, the
 // baseline and the flight are pinned in contest_test.cpp.
-TEST_CASE("content/ ships contest as harvest on the pool with grid_rounds_1t's squad (M7, v0.81)",
+TEST_CASE("content/ ships contest as harvest on the pool with grid_rounds_1t's squad (M7, v0.82)",
           "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
@@ -1577,9 +1577,9 @@ TEST_CASE("content/ ships contest as harvest on the pool with grid_rounds_1t's s
 }
 
 // v0.80's contest row, appended as control_1t when the contest became harvest
-// (v0.81) so the control kind keeps a shipped row: the control kind with
+// (v0.82) so the control kind keeps a shipped row: the control kind with
 // grid_rounds_1t's squad on courtyard_zones, every number as it was.
-TEST_CASE("content/ ships control_1t as v0.80's contest row (v0.81)", "[content][loader][modes]") {
+TEST_CASE("content/ ships control_1t as v0.80's contest row (v0.82)", "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));

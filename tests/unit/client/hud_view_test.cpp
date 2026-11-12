@@ -155,7 +155,7 @@ TEST_CASE("hud: the mode line, the countdown title and the team scores by kind",
   hud.aliveCount = 4;
   CHECK(client::modeLineText(hud) == "Round 2  (first to 3)  4 alive");
 
-  // v0.81, harvest: the target is bananas banked, and so is each team's score.
+  // v0.82, harvest: the target is bananas banked, and so is each team's score.
   hud.mode = sim::ModeKind::Harvest;
   hud.teamCount = 2;
   hud.teamScores[0] = 12;

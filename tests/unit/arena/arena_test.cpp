@@ -3,7 +3,7 @@
 // match with a winner, the placement rule and its ties, the result line and
 // JSON formats, the summary, rotation (every bot through every slot, totals
 // per bot), the replay runMatch writes plays back to the same final state,
-// v0.81 a mode's arena pool cycled over the matches (and the arena each
+// v0.82 a mode's arena pool cycled over the matches (and the arena each
 // played, in the line and the JSON), and, with KFM_WASM_BOTS, the module path over the fixtures in
 // tests/fixtures/bots (fuel, traps, over-budget, load errors).
 #include "arena_core.hpp"
@@ -241,7 +241,7 @@ constexpr std::string_view kMatchTail[] = {
     "slots:array",
     "content_hash:string",  // v0.60
     "build_hash:string",    // v0.60
-    "arena:string",         // v0.81
+    "arena:string",         // v0.82
 };
 constexpr std::string_view kTeam[] = {"team:number",  "entrant:number", "spec:string",
                                       "place:number", "score:number",   "kills:number",
@@ -882,7 +882,7 @@ TEST_CASE("without KFM_WASM_BOTS a module spec is refused", "[arena]") {
 
 #endif
 
-// v0.81: the arena pool. Hand-built content: four copies of the dojo with two
+// v0.82: the arena pool. Hand-built content: four copies of the dojo with two
 // spawn groups (arenas 1..4), a team deathmatch of two teams pooling arenas
 // 1, 3 and 4 (arena 4 left with one spawn group, so it does not suit the mode
 // and drops out: the pool is [1, 3]), and a free-for-all deathmatch pooling

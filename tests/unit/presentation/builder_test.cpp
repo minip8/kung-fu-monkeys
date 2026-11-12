@@ -1372,7 +1372,7 @@ TEST_CASE("control: a zone captured rings in its team's colour and sounds",
   CHECK(countEffects(none, EffectKind::ZoneCaptured) == 0);
 }
 
-// v0.81, harvest: trees (in every mode), a tree's fruit stacking into a
+// v0.82, harvest: trees (in every mode), a tree's fruit stacking into a
 // column, the homes in their teams' colours, and a theft's own feedback;
 // hand-built content (the dojo with 1-unit cells, two homes, a tree).
 namespace {

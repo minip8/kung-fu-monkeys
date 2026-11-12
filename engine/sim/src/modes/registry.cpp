@@ -28,7 +28,7 @@ constexpr std::array<ModeBehavior, static_cast<size_t>(ModeKind::kCount)> kBehav
     hillBehavior(),            // ModeKind::Hill (v0.33)
     captureBehavior(),         // ModeKind::Capture (v0.33)
     controlBehavior(),         // ModeKind::Control (v0.80)
-    harvestBehavior(),         // ModeKind::Harvest (v0.81)
+    harvestBehavior(),         // ModeKind::Harvest (v0.82)
 };
 
 // Every hook is called unconditionally: a row missing from the list above (a

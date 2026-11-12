@@ -137,7 +137,7 @@ namespace {
   return found;
 }
 
-// Harvest (v0.81) in the continuous space: where a monkey goes, read from
+// Harvest (v0.82) in the continuous space: where a monkey goes, read from
 // the state alone (no Rng draw, keyed on the kind, so every other mode is
 // unchanged). A hand with room goes for the nearest banana pickup anywhere;
 // a full hand, or one with nothing left to pick, goes home (its team's zone,
@@ -517,7 +517,7 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
     }
   });
   // Else the objective (v0.33), with the same hands-full condition. Harvest
-  // (v0.81) steers by its own rule instead: routed over the cells in the
+  // (v0.82) steers by its own rule instead: routed over the cells in the
   // grid space, straight at the goal in the continuous one.
   if (content.mode.kind == ModeKind::Harvest) {
     const bool routed = content.mode.space == Space::Grid && gridHarvestSteer(s, content, p, in);

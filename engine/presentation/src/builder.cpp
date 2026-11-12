@@ -510,7 +510,7 @@ void buildPickups(PresentationState& ps, const WorldState& curr, const ContentDB
     const Vec2f simPos = toFloat(cp.pos);
     const Vec2f drawn = simPos + track.visualOffset;
     track.lastDrawn = drawn;
-    // v0.81: banana pickups lying on one spot (a tree lays one per banana)
+    // v0.82: banana pickups lying on one spot (a tree lays one per banana)
     // stack into a column over the lowest-indexed one, bobbing with it.
     uint16_t base = i;
     uint32_t below = 0;
@@ -790,7 +790,7 @@ ControlZone controlZone(const sim::MatchRules& rules, uint8_t zone) {
 
 void buildZones(const WorldState& curr, const sim::MatchContent& match, RenderState& out) {
   const sim::ArenaDef& arena = match.arena;
-  // Capture's flag homes and (v0.81) harvest's banking homes: zone t is team
+  // Capture's flag homes and (v0.82) harvest's banking homes: zone t is team
   // t's (a free-for-all harvest: slot t's, each slot its own team).
   uint8_t teamZones = 0;
   if (match.mode.kind == sim::ModeKind::Capture) teamZones = match.mode.teams;

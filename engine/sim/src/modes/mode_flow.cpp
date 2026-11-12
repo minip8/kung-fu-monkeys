@@ -91,7 +91,7 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
   if (!e.isValid()) return false;
   Player& p = s.players.items[e.index];
   resetPlayer(p, id, pos, content);
-  // v0.81: the mode's respawn hand (ModeDef::respawnAmmo), within the
+  // v0.82: the mode's respawn hand (ModeDef::respawnAmmo), within the
   // capacity the baseline gave; absent, resetPlayer's ammo_start stands.
   if (content.mode.respawnAmmo != kRespawnAmmoStart) {
     p.ammo = std::min(respawnAmmoOf(content.db.player, content.mode), p.stats.ammoMax);
@@ -144,7 +144,7 @@ namespace {
   });
   if (left) return true;
   // A spawner with a beat still to come (LifecycleSystem::runSpawners) that
-  // may draw a power-up laying bananas, or a tree (v0.81) with one: it lays
+  // may draw a power-up laying bananas, or a tree (v0.82) with one: it lays
   // a banana whatever the match's power-up set.
   const ArenaDef& arena = content.arena;
   for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {

@@ -105,7 +105,7 @@ std::string contentToCpp(const sim::ContentDB& c) {
   appendLine(out, "rounds.roundStartTicks", rounds.roundStartTicks);
 
   // v0.80: the objective clocks the overlay tunes (hill's and control's
-  // hillTicks, control's captureTicks; v0.81 harvest's bankTicks and
+  // hillTicks, control's captureTicks; v0.82 harvest's bankTicks and
   // stealTicks, and a mode's respawnAmmo when it sets one) and a mode's
   // banana flight when it overrides the banana's, per mode by index.
   for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {
@@ -119,12 +119,12 @@ std::string contentToCpp(const sim::ContentDB& c) {
       line("hillTicks", m.hillTicks);
     }
     if (m.kind == sim::ModeKind::Control) line("captureTicks", m.captureTicks);
-    // v0.81, harvest: the bank and steal beats.
+    // v0.82, harvest: the bank and steal beats.
     if (m.kind == sim::ModeKind::Harvest) {
       line("bankTicks", m.bankTicks);
       line("stealTicks", m.stealTicks);
     }
-    // v0.81, any respawning kind: the respawn's hand when the mode sets one.
+    // v0.82, any respawning kind: the respawn's hand when the mode sets one.
     if (m.respawnAmmo != sim::kRespawnAmmoStart) line("respawnAmmo", m.respawnAmmo);
     if (m.bananaOutboundTicks != 0 || m.bananaTurnRateBam != 0) {
       line("bananaOutboundTicks", m.bananaOutboundTicks);

@@ -48,7 +48,7 @@
 //   --log          print each module's captured kfm_log output at the end
 //                  (stderr)
 //   --content DIR, --arena, --mode, --loadout, --powerups: as kfm_replay; the content
-//                  defaults to the copy built into the binary. v0.81: without
+//                  defaults to the copy built into the binary. v0.82: without
 //                  --arena, a mode with an arena pool (`arenas`) plays match k
 //                  on pool member (k / T) mod P in content order (T the teams,
 //                  or the slots of a free-for-all; P the members), so with
@@ -331,7 +331,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
   setup.tickCap = a.ticks;
   setup.delayTicks = static_cast<uint8_t>(a.delay);
-  // v0.81: without --arena a mode's arena pool is cycled, match k on member
+  // v0.82: without --arena a mode's arena pool is cycled, match k on member
   // (k / T) mod P (T: the teams, or the slots of a free-for-all), so with
   // --rotate every entrant plays every side of a member before the next.
   const arena::ArenaCycle cycle = arena::arenaCycle(loaded.db, setup, !a.arenaName.empty());

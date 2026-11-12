@@ -256,7 +256,7 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     case LobbyRowKind::Mode:
       settings_.mode = cycle(settings_.mode, db.modeCount);
       // v0.34: a mode that names its arena (ModeDef::arena) brings it;
-      // v0.81: a mode with a pool brings its first member unless the
+      // v0.82: a mode with a pool brings its first member unless the
       // arena already is one.
       if (const sim::ModeDef& m = db.modeAt(settings_.mode);
           m.hasArena() || (m.hasArenaSet() && !m.inArenaSet(settings_.arena)) ||
@@ -457,7 +457,7 @@ std::string modeSummary(const sim::ModeDef& mode) {
       return buf;
     }
     case sim::ModeKind::Harvest: {
-      // v0.81: bananas carried home and banked; a lone raider takes them back.
+      // v0.82: bananas carried home and banked; a lone raider takes them back.
       const std::string clock =
           mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
       char steal[64];

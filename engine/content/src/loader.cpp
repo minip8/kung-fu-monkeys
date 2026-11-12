@@ -98,7 +98,7 @@ constexpr std::array<ModeKindName, 9> kModeKinds = {{
     {"hill", sim::ModeKind::Hill},                       // v0.33
     {"capture", sim::ModeKind::Capture},                 // v0.33
     {"control", sim::ModeKind::Control},                 // v0.80
-    {"harvest", sim::ModeKind::Harvest},                 // v0.81
+    {"harvest", sim::ModeKind::Harvest},                 // v0.82
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -1094,7 +1094,7 @@ class Builder {
   // spawners = [{ pos = [x, y], power_ups = ["name", ...], first_ticks,
   //               interval_ticks, max_alive, tree }, ...] (§5.8). power_ups is
   // optional (every power-up); names resolve once every file is read.
-  // v0.81: tree = true makes the spawner a tree, which lays bananas and so
+  // v0.82: tree = true makes the spawner a tree, which lays bananas and so
   // takes no power_ups.
   void parseSpawners(Section& outer, const toml::node& n, ArenaDef& a, uint8_t arenaIndex) {
     const toml::array* arr = n.as_array();
@@ -1115,7 +1115,7 @@ class Builder {
       s.integer("first_ticks", sp.firstTicks, 0, 65535);
       s.integer("interval_ticks", sp.intervalTicks, 0, 65535);
       s.integer("max_alive", sp.maxAlive, 1, sim::kMaxPickups);
-      s.flag("tree", sp.tree);  // v0.81
+      s.flag("tree", sp.tree);  // v0.82
       if (const toml::node* set = s.take("power_ups")) {
         if (sp.isTree()) {
           s.error(*set, "'power_ups' belongs to a power-up spawner: a tree lays bananas");
@@ -1400,7 +1400,7 @@ class Builder {
     s.integer("hill_ticks", m.hillTicks, 1, 65535);  // v0.33
     s.integer("flag_return_ticks", m.flagReturnTicks, 1, 65535);
     s.integer("capture_ticks", m.captureTicks, 1, 65535);  // v0.80
-    // v0.81: the respawn's hand (absent: [player] ammo_start; 255 is that
+    // v0.82: the respawn's hand (absent: [player] ammo_start; 255 is that
     // sentinel) and harvest's two beats.
     s.integer("respawn_ammo", m.respawnAmmo, 0, sim::kRespawnAmmoStart - 1);
     s.integer("bank_ticks", m.bankTicks, 1, 65535);
@@ -1452,7 +1452,7 @@ class Builder {
         s.error(*n, "'arena' must be an arena name");
       }
     }
-    // v0.81: the pool of arenas, by name.
+    // v0.82: the pool of arenas, by name.
     std::vector<PendingName> arenas;
     if (const toml::node* n = s.take("arenas")) {
       const toml::array* arr = n->as_array();
@@ -1551,7 +1551,7 @@ class Builder {
                       n.arena->where + ": 'arena' names unknown arena " + inQuotes(n.arena->name));
         }
       }
-      m.arenaSet = sim::kNoArenaSet;  // v0.81
+      m.arenaSet = sim::kNoArenaSet;  // v0.82
       for (const PendingName& a : n.arenas) {
         if (const std::optional<uint8_t> i = db_.findArena(a.name)) {
           if (m.inArenaSet(*i)) {
@@ -1666,7 +1666,7 @@ class Builder {
     std::optional<PendingName> baseline;
     std::vector<PendingName> roles;
     std::optional<PendingName> arena;  // v0.34
-    std::vector<PendingName> arenas;   // v0.81
+    std::vector<PendingName> arenas;   // v0.82
   };
 
   Diagnostics& diag_;
@@ -1800,7 +1800,7 @@ void validatePowerUps(const ContentDB& c, const Fail& fail) {
     for (uint8_t k = 0; k < a.pickupSpawnerCount; ++k) {
       const PickupSpawner& sp = a.pickupSpawners[k];
       const std::string at = where + " spawner " + std::to_string(k);
-      // v0.81: a tree's fruit is bananas, which the half of the pool below
+      // v0.82: a tree's fruit is bananas, which the half of the pool below
       // is kept for, so only the power-up spawners count toward it.
       if (!sp.isTree()) alive += sp.maxAlive;
       if (sp.maxAlive < 1) fail(at + ": max_alive must be at least 1");
@@ -2094,7 +2094,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (m.kind == sim::ModeKind::Control && m.teams > sim::kMaxControlTeams) {
       fail(where + ": control plays at most " + std::to_string(sim::kMaxControlTeams) + " teams");
     }
-    // v0.81: harvest banks on a beat of at least one tick.
+    // v0.82: harvest banks on a beat of at least one tick.
     if (m.kind == sim::ModeKind::Harvest && m.bankTicks < 1) {
       fail(where + ": bank_ticks must be at least 1");
     }
@@ -2120,7 +2120,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
       fail(where + ": its arena " + inQuotes(c.arenas[m.arena].name.view()) +
            " does not suit it (ContentDB::compatible)");
     }
-    // v0.81: the pool of arenas: defined, each suiting the mode, and the
+    // v0.82: the pool of arenas: defined, each suiting the mode, and the
     // mode's own arena one of them.
     const uint32_t definedArenas =
         c.arenaCount >= 16 ? 0xFFFFu : (uint32_t{1} << c.arenaCount) - 1u;

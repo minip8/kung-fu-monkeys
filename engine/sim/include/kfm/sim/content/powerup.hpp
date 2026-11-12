@@ -85,7 +85,7 @@ struct PowerUpDef {
 // drawn uniformly with the world RNG from powerUpSet (bit i = power-up i;
 // 0 = every power-up).
 //
-// v0.81, a tree (tree = 1; the arena spawner key `tree = true`, exclusive
+// v0.82, a tree (tree = 1; the arena spawner key `tree = true`, exclusive
 // with `power_ups`, so powerUpSet stays 0): on the same beat it lays one
 // banana pickup at pos instead, while fewer than maxAlive bananas (the
 // counts of the banana pickups, whoever dropped them) lie on pos's cell
@@ -99,7 +99,7 @@ struct PickupSpawner {
   uint16_t firstTicks{0};
   uint16_t intervalTicks{0};
   uint8_t maxAlive{1};
-  uint8_t tree{0};  // v0.81: 0 = a power-up spawner, 1 = a tree
+  uint8_t tree{0};  // v0.82: 0 = a power-up spawner, 1 = a tree
 
   [[nodiscard]] constexpr bool isTree() const { return tree != 0; }
 };

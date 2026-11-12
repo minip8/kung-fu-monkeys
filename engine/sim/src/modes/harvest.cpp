@@ -1,5 +1,5 @@
 // Harvest (architecture §5.3, §11 "Contest design: bananas as the economy",
-// v0.81): bananas are the resource as well as the ammunition. One round on a
+// v0.82): bananas are the resource as well as the ammunition. One round on a
 // clock with deathmatch's respawns and roster (a leaver keeps its score: it
 // is the team's). Team t's home is zone t (homeZoneOf, content/arena.hpp).
 //

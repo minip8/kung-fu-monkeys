@@ -58,7 +58,7 @@ void controlOnPlaying(WorldState& s, const MatchContent& content, EventSink& sin
 void controlOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
                          PlayerId killer, EventSink& sink);
 
-// Harvest (modes/harvest.cpp, v0.81): bank bananas at home, steal them back.
+// Harvest (modes/harvest.cpp, v0.82): bank bananas at home, steal them back.
 void harvestOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
 void harvestOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
 void harvestOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,

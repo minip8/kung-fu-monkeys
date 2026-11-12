@@ -176,7 +176,7 @@ TEST_CASE("triple banana: ammoMax +2 with a top-up, clamped back on expiry",
   CHECK(playerAt(s, kP0).ammo == 1);
 }
 
-TEST_CASE("an ammo_max baseline raises the capacity without filling the hand (v0.81)",
+TEST_CASE("an ammo_max baseline raises the capacity without filling the hand (v0.82)",
           "[scenario][powerup]") {
   // A pickup of the same grant tops the hand up (above); a mode's baseline,
   // granted at every spawn, does not, or every respawn would mint bananas.

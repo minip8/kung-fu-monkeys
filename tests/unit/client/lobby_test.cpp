@@ -102,7 +102,7 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   m.setContent(db);
   const auto rows = m.rows();
   // v0.34: a mode's baseline gets no toggle (the grid modes name two, v0.80
-  // the contest a third, kept by control_1t, and v0.81 the harvest contest a
+  // the contest a third, kept by control_1t, and v0.82 the harvest contest a
   // fourth). The rest keep their content order: the contest's _1t twins come
   // after the first three baselines in powerups.toml.
   std::vector<uint8_t> toggled;
@@ -328,7 +328,7 @@ TEST_CASE("lobby menu: new content clamps the settings and keeps the focus", "[c
   CHECK_FALSE(m.apply(MenuAction::Right));  // a single arena cycles onto itself
 }
 
-TEST_CASE("lobby menu: a mode with an arena pool brings its first member (v0.81)",
+TEST_CASE("lobby menu: a mode with an arena pool brings its first member (v0.82)",
           "[client][lobby]") {
   // Hand-built: three copies of the dojo; mode 1 pools arenas 2 and 1.
   sim::ContentDB db = sim::defaultContent();
@@ -713,7 +713,7 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   control.timeLimitTicks = 0;
   CHECK(client::modeSummary(control) ==
         "first team to 5 points, a zone taken in 1.5 s pays a point per 5.0 s, no clock");
-  sim::ModeDef harvest;  // v0.81
+  sim::ModeDef harvest;  // v0.82
   harvest.kind = sim::ModeKind::Harvest;
   harvest.teams = 2;
   harvest.scoreToWin = 30;
@@ -730,7 +730,7 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   harvest.timeLimitTicks = 0;
   CHECK(client::modeSummary(harvest) ==
         "first team to 30 bananas banked, one per 1.5 s at home, no stealing, no clock");
-  // v0.81: an arena's trees are not power-up spawners.
+  // v0.82: an arena's trees are not power-up spawners.
   sim::ArenaDef orchard;
   CHECK(client::arenaSpawners(orchard) == client::ArenaSpawners{});
   orchard.pickupSpawners[0].tree = 1;

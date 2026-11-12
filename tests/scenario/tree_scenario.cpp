@@ -1,4 +1,4 @@
-// Trees (architecture §11 "Contest design: bananas as the economy", v0.81): a
+// Trees (architecture §11 "Contest design: bananas as the economy", v0.82): a
 // pickup spawner with PickupSpawner::tree lays one banana pickup on its cell
 // on the spawner's beat (firstTicks, then every intervalTicks) while fewer
 // than maxAlive bananas lie on that cell, whoever dropped them. No RNG draw;

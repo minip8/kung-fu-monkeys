@@ -98,14 +98,14 @@ inline constexpr float kClockUrgentSeconds = 10.0f;
 
 // The mode line under the score cards, by kind: the round and its target
 // ("Round 2  (first to 3)"), or the kind and what wins ("Hill  (first team
-// to 5 points)"; v0.81 harvest: "Harvest  (first team to 30 bananas
+// to 5 points)"; v0.82 harvest: "Harvest  (first team to 30 bananas
 // banked)"), survival with the monkeys still in.
 [[nodiscard]] std::string modeLineText(const presentation::RenderHud& hud);
 // The countdown banner's title: the kind's name ("King of the hill",
-// v0.81 "Harvest: bank 30 bananas") or "Round N" for the round kinds.
+// v0.82 "Harvest: bank 30 bananas") or "Round N" for the round kinds.
 [[nodiscard]] std::string roundStartTitle(const presentation::RenderHud& hud);
 // A team's score in the mode line: "Team 1: 4", control adds the zones it
-// owns ("Team 1: 4 (2 zones)", `zonesOwned`), v0.81 harvest says what the
+// owns ("Team 1: 4 (2 zones)", `zonesOwned`), v0.82 harvest says what the
 // score is ("Team 1: 12 banked").
 [[nodiscard]] std::string teamScoreText(const presentation::RenderHud& hud, uint8_t team,
                                         std::optional<uint8_t> zonesOwned);

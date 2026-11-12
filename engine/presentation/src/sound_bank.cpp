@@ -323,7 +323,7 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         break;
       }
       case SoundId::Steal: {
-        // v0.81: a sly "uh-oh": two plucked notes a minor third apart going
+        // v0.82: a sly "uh-oh": two plucked notes a minor third apart going
         // down (E5, C#5), each bending flat, over a soft band-passed swipe,
         // unlike the bright rising blip of a point scored.
         const bool second = t >= 0.14f;

@@ -25,7 +25,7 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content);
 // Respawns the dead slot `id` (LifecycleSystem): at the spawn point of its
 // group (spawnRangeOf) farthest from every alive monkey, the world RNG
 // breaking ties, with the mode's spawn
-// protection (Tag::Invulnerable for respawnInvulnTicks) and, v0.81, the
+// protection (Tag::Invulnerable for respawnInvulnTicks) and, v0.82, the
 // mode's respawn hand (ModeDef::respawnAmmo, capped at ammoMax). Pushes
 // PlayerRespawned. Returns false if the slot could not be spawned.
 bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, EventSink& sink);
@@ -42,7 +42,7 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
 // pickup, no power-up pickup lying around that tops ammo
 // up (a stat grant on ammo_max with add > 0), and no spawner that can still
 // lay one (a candidate that tops ammo up and a beat still to come, or a tree,
-// v0.81, with a beat still to come). The
+// v0.82, with a beat still to come). The
 // round kinds then end the round as their clock-out would (rounds and team
 // rounds: a draw; survival: its timeout winner). Bananas are the only thing
 // that hurts (a dash attack needs one), so on an arena without pits nothing

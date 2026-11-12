@@ -24,7 +24,7 @@ using presentation::HudPhase;
       return "Points";
     case sim::ModeKind::Capture:
       return "Flags";
-    case sim::ModeKind::Harvest:  // v0.81: bananas banked (less the stolen ones)
+    case sim::ModeKind::Harvest:  // v0.82: bananas banked (less the stolen ones)
       return "Bananas";
     case sim::ModeKind::Rounds:
     case sim::ModeKind::Survival:

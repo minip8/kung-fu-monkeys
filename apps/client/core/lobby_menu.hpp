@@ -163,7 +163,7 @@ class LobbyMenu {
 // The key numbers of a mode, one line: "first to 3 rounds",
 // "first to 10 eliminations, 3:00, respawn 2.0 s (1.5 s protected)" (v0.57:
 // "points" when the mode has a catch or suicide score),
-// "first to 3 rounds of 1:00", v0.81 harvest: "first team to 30 bananas
+// "first to 3 rounds of 1:00", v0.82 harvest: "first team to 30 bananas
 // banked, one per 0.33 s at home, a lone raider steals one per 0.50 s,
 // respawn empty-handed, 1:00" ("no stealing" without a steal beat).
 [[nodiscard]] std::string modeSummary(const sim::ModeDef& mode);
@@ -172,7 +172,7 @@ class LobbyMenu {
 // empty third slot is left out).
 [[nodiscard]] std::string loadoutSummary(const sim::ContentDB& db, uint8_t loadout);
 
-// v0.81: an arena's spawners by kind: power-up spawners and trees (which
+// v0.82: an arena's spawners by kind: power-up spawners and trees (which
 // bear bananas whatever the match's power-up set), and the line the match
 // preview gives the trees ("1 tree bears bananas", "4 trees bear bananas").
 struct ArenaSpawners {
@@ -185,7 +185,7 @@ struct ArenaSpawners {
 
 // "m:ss" of a tick count.
 [[nodiscard]] std::string ticksClock(uint32_t ticks);
-// v0.81: a beat in seconds, "0.03 s" under a second, "1.5 s" from one.
+// v0.82: a beat in seconds, "0.03 s" under a second, "1.5 s" from one.
 [[nodiscard]] std::string beatText(uint32_t ticks);
 
 }  // namespace kfm::client

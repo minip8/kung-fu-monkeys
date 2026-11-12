@@ -1,7 +1,7 @@
 // The contest's content as shipped. v0.80's control contest (architecture §11
-// "Contest design"), kept as the control_1t row since v0.81: the
+// "Contest design"), kept as the control_1t row since v0.82: the
 // courtyard_zones arena, its spawners and the _1t power-up twins they lay,
-// the contest_base baseline, and the banana's flight under that row. v0.81's
+// the contest_base baseline, and the banana's flight under that row. v0.82's
 // harvest contest (§11 "Contest design: bananas as the economy"), the
 // contest row since: harvest_base and the pool of four arenas, each its own
 // half turn. The rows' own numbers are pinned by loader_test.cpp ("content/
@@ -84,7 +84,7 @@ template <class Box, size_t N>
   return shipped().arenas[arenaIndex()];
 }
 
-// v0.80's contest row, control_1t since v0.81.
+// v0.80's contest row, control_1t since v0.82.
 [[nodiscard]] uint8_t controlIndex() {
   const std::optional<uint8_t> i = shipped().findMode("control_1t");
   REQUIRE(i.has_value());
@@ -277,7 +277,7 @@ TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.80
   CHECK(bytesOf(twin) == bytesOf(g));
 }
 
-TEST_CASE("harvest_base is contest_base with two more bananas in the hand (v0.81)",
+TEST_CASE("harvest_base is contest_base with two more bananas in the hand (v0.82)",
           "[content][contest][harvest][powerup]") {
   const ContentDB& db = shipped();
   const std::optional<uint8_t> harvest = db.findPowerUp("harvest_base");
@@ -379,7 +379,7 @@ TEST_CASE("the contest banana flies 3 turns out and comes home within a few cell
   CHECK(caughtAfter == 5);
 }
 
-// --- the harvest pool (v0.81, §11 "Contest design: bananas as the economy") ---
+// --- the harvest pool (v0.82, §11 "Contest design: bananas as the economy") ---
 
 namespace {
 
@@ -483,7 +483,7 @@ constexpr Beat kRichBeat{30, 30, 3};
 
 }  // namespace
 
-TEST_CASE("the harvest pool: grove, orchards, gorge and burrows appended in that order (v0.81)",
+TEST_CASE("the harvest pool: grove, orchards, gorge and burrows appended in that order (v0.82)",
           "[content][contest][harvest]") {
   const ContentDB& db = shipped();
   CHECK(db.arenaCount == 15);  // of kMaxArenas' 16
@@ -640,7 +640,7 @@ TEST_CASE("each harvest pool arena: every floor cell is reached from both homes 
   CHECK(floor > 0);
 }
 
-TEST_CASE("the contest plays harvest on the pool, grove when a host picks one (v0.81)",
+TEST_CASE("the contest plays harvest on the pool, grove when a host picks one (v0.82)",
           "[content][contest][harvest]") {
   const ContentDB& db = shipped();
   const std::optional<uint8_t> contest = db.findMode("contest");

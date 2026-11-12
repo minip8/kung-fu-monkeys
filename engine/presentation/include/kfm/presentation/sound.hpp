@@ -41,7 +41,7 @@ enum class SoundId : uint8_t {
   Fall,        // a monkey went down a pit: a falling slide whistle
   BananaPlop,  // a faller's banana dropped into its pit: a short falling bloop
   Regrow,      // an empty hand grew a banana: a soft rising pop with a twinkle
-  // v0.81 (harvest):
+  // v0.82 (harvest):
   Steal,  // a banked banana taken back out of a home: a sly falling two-note slide
   Count,
 };

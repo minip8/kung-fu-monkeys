@@ -83,12 +83,12 @@
 #                        lowest present slot). At most 4 teams; plays only on
 #                        an arena with a zone; respawns and the clock as
 #                        deathmatch, score_to_win counts points
-#   respawn_ammo         v0.81, the respawning kinds: the bananas a respawned
+#   respawn_ammo         v0.82, the respawning kinds: the bananas a respawned
 #                        monkey holds, 0 to 254, capped at its ammo_max
 #                        (absent, the default: [player] ammo_start, as every
-#                        mode before v0.81). A round start's spawn always
+#                        mode before v0.82). A round start's spawn always
 #                        holds ammo_start
-#   bank_ticks           v0.81, harvest: team t's home is zone t. On every
+#   bank_ticks           v0.82, harvest: team t's home is zone t. On every
 #                        Playing tick that is a multiple of this (>= 1,
 #                        default 2) each living monkey in its own home with a
 #                        banana in hand banks one: a banana fewer in its hand,
@@ -97,7 +97,7 @@
 #                        a zone per team and at least one tree; respawns and
 #                        the clock as deathmatch, score_to_win counts banked
 #                        bananas, eliminations score nothing
-#   steal_ticks          v0.81, harvest: on every Playing tick that is a
+#   steal_ticks          v0.82, harvest: on every Playing tick that is a
 #                        multiple of this (0, the default: never) each living
 #                        monkey with room in its hand standing in an enemy's
 #                        home takes one banana back out, when that team's
@@ -105,7 +105,7 @@
 #                        stands in the zone: the point comes off the team's
 #                        highest-scoring slot (the lowest on a tie), the
 #                        banana goes into the raider's hand (one a beat)
-#   arenas               v0.81, optional: a pool of arena names (1 to 16, each
+#   arenas               v0.82, optional: a pool of arena names (1 to 16, each
 #                        once, every one suiting the mode; `arena`, when also
 #                        given, must be one of them). kfm_arena cycles a pool;
 #                        the other hosts pick one arena (`arena`, else the
@@ -270,7 +270,7 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banan
 # M7: the row the bot ladder points at (architecture §8 "The ladder"), the
 # contest knobs in one place (team size, vision, the call range of the kits,
 # turn_ticks, the arenas). A season changes this row, not the service, and
-# the row may change between releases inside a season (v0.59). Since v0.81
+# the row may change between releases inside a season (v0.59). Since v0.82
 # it is harvest (§11 "Contest design: bananas as the economy"): bananas are
 # the resource as well as the ammunition. grid_rounds_1t's squad (1-tick
 # turns, the roles, fog and calls) plays on a pool of four maps (grove,
@@ -317,7 +317,7 @@ round_start_ticks = 60
 round_end_ticks = 180
 vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 1, banana_sight = 1 }
 
-# v0.80's contest, kept for the control kind (v0.81: appended under a new
+# v0.80's contest, kept for the control kind (v0.82: appended under a new
 # name when the contest became harvest, every number unchanged): capture and
 # keep on the grid (§11 "Contest design"), grid_rounds_1t's squad under the
 # control kind on courtyard_zones, three zones (the centre, then the west

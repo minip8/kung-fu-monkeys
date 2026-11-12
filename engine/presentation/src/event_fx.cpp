@@ -122,14 +122,14 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::PlayerRespawned:
       return cue(SoundId::Respawn);
     case EventKind::ScoreChanged:
-      // v0.57: a suicide's point lost rides on the fall's own sounds; v0.81:
+      // v0.57: a suicide's point lost rides on the fall's own sounds; v0.82:
       // a banked banana stolen rides on BananaStolen's.
       if (e.b == static_cast<uint32_t>(sim::ScoreReason::Suicide) ||
           e.b == static_cast<uint32_t>(sim::ScoreReason::Stolen)) {
         break;
       }
       return cue(SoundId::Score);
-    case EventKind::BananaStolen:  // v0.81
+    case EventKind::BananaStolen:  // v0.82
       return cue(SoundId::Steal);
     case EventKind::ZoneCaptured:  // v0.80: a zone taken sounds like the point it pays
       return cue(SoundId::Score);
@@ -340,7 +340,7 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
     }
     case EventKind::ScoreChanged:
       // v0.57: no gold ring for a point lost to a suicide (the slot may be
-      // gone: the fall's burst is the news); v0.81: nor for a banked banana
+      // gone: the fall's burst is the news); v0.82: nor for a banked banana
       // stolen (the robbed slot may stand anywhere: BananaStolen is the news,
       // at the robbed home).
       if (e.b != static_cast<uint32_t>(sim::ScoreReason::Suicide) &&
@@ -350,7 +350,7 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
       soundAt = player;
       break;
     case EventKind::BananaStolen: {
-      // v0.81 (harvest): rings closing in over the robbed home (b = the
+      // v0.82 (harvest): rings closing in over the robbed home (b = the
       // zone) and a flash at the raider, both in the raider's team colour.
       const int8_t team = slot != kNoSlot ? static_cast<int8_t>(content.teamOf(e.player)) : kNoSlot;
       addEffect(ps, makeEffect(EffectKind::StealFlash, team, bodyAt(player), kStealFlashSeconds));

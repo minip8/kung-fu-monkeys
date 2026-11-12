@@ -370,12 +370,12 @@ void tuningSection(MatchSession& s, std::string& printed) {
     sliderU16("capture ticks", mode.captureTicks, 1, 1200);
   }
   if (mode.kind == sim::ModeKind::Harvest) {
-    // v0.81: the global beats of banking and stealing (0 = no stealing).
+    // v0.82: the global beats of banking and stealing (0 = no stealing).
     sliderU16("bank ticks", mode.bankTicks, 1, 600);
     sliderU16("steal ticks (0 = never)", mode.stealTicks, 0, 600);
   }
   if (frags) {
-    // v0.81: the respawn's hand, or [player] ammo_start (kRespawnAmmoStart).
+    // v0.82: the respawn's hand, or [player] ammo_start (kRespawnAmmoStart).
     bool ammoStart = mode.respawnAmmo == sim::kRespawnAmmoStart;
     if (ImGui::Checkbox("respawn holds ammo_start", &ammoStart)) {
       mode.respawnAmmo = ammoStart ? sim::kRespawnAmmoStart : 0;

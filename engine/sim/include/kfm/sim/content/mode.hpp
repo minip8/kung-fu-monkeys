@@ -56,7 +56,7 @@ enum class ModeKind : uint8_t {
   // pays its team one tick per Playing tick, occupied or not; hillTicks of
   // them score a point. Up to kMaxControlTeams teams.
   Control,
-  // v0.81, harvest: hill's round, clock, respawns and roster, with bananas
+  // v0.82, harvest: hill's round, clock, respawns and roster, with bananas
   // as the resource. A team's home is the zone of its index. On every
   // Playing tick that is a multiple of bankTicks each living monkey in its
   // own home zone with a banana in hand banks one (ammo - 1, a point to it);
@@ -138,10 +138,10 @@ enum class DeathBananas : uint8_t {
 // per team in two words, modes/control.cpp).
 inline constexpr uint8_t kMaxControlTeams = 4;
 
-// v0.81: ModeDef::respawnAmmo when the mode leaves the respawn's hand at
-// [player] ammo_start (every mode before v0.81).
+// v0.82: ModeDef::respawnAmmo when the mode leaves the respawn's hand at
+// [player] ammo_start (every mode before v0.82).
 inline constexpr uint8_t kRespawnAmmoStart = 0xFF;
-// v0.81: ModeDef::arenaSet when the mode names no pool of arenas.
+// v0.82: ModeDef::arenaSet when the mode names no pool of arenas.
 inline constexpr uint16_t kNoArenaSet = 0;
 
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
@@ -235,17 +235,17 @@ struct ModeDef {
   // Read through bananaOutboundTicksOf() / bananaTurnRateBamOf() (content.hpp).
   uint16_t bananaOutboundTicks{0};
   uint16_t bananaTurnRateBam{0};
-  // v0.81, every respawning kind: the bananas a respawned monkey holds
+  // v0.82, every respawning kind: the bananas a respawned monkey holds
   // (capped at its ammoMax), or kRespawnAmmoStart: [player] ammo_start, as
-  // every mode before v0.81. A round start's spawn always holds ammo_start.
+  // every mode before v0.82. A round start's spawn always holds ammo_start.
   // Read through respawnAmmoOf() (content.hpp).
   uint8_t respawnAmmo{kRespawnAmmoStart};
-  // v0.81, harvest: the global beats (Playing ticks that are a multiple of
+  // v0.82, harvest: the global beats (Playing ticks that are a multiple of
   // them) on which every monkey in its own home banks one banana (>= 1) and
   // every lone raider in an enemy home takes one back out (0 = never).
   uint16_t bankTicks{2};
   uint16_t stealTicks{0};
-  // v0.81: a pool of arenas the mode plays (bit i = arena i, over
+  // v0.82: a pool of arenas the mode plays (bit i = arena i, over
   // kMaxArenas), or kNoArenaSet. Every member suits the mode
   // (ContentDB::compatible), and `arena`, when given, is one of them. Never
   // read by the sim: a host that cycles maps reads it (kfm_arena), the

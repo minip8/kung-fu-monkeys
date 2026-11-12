@@ -1,5 +1,5 @@
 // Harvest (architecture §5.3, §11 "Contest design: bananas as the economy",
-// v0.81): team t's home is zone t. On every Playing tick that is a multiple
+// v0.82): team t's home is zone t. On every Playing tick that is a multiple
 // of bankTicks each living monkey in its own home with a banana banks one (a
 // point to it); on every one that is a multiple of stealTicks each living
 // monkey with room in its hand in an enemy home takes one back out, when that

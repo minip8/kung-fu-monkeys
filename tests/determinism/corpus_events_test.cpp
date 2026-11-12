@@ -42,7 +42,7 @@ struct Tally {
   uint32_t roundsWon{0};        // RoundEnded with a winner
   uint32_t perfectCatches{0};
   uint32_t powerUpsSpawned{0};  // bit i: power-up i was laid by a spawner
-  uint32_t treeFruit{0};        // v0.81: banana pickups laid on a tree
+  uint32_t treeFruit{0};        // v0.82: banana pickups laid on a tree
   uint32_t treeFruitTaken{0};   // picked up off the floor (PickupTaken of one of those)
   uint32_t bananasTaken{0};     // every banana pickup taken (a tree's, a drop, a stack)
   uint32_t eventsDropped{0};    // EventSink overflow, summed over the ticks
@@ -146,7 +146,7 @@ Tally play(const std::string& name) {
           if (e.a == static_cast<uint32_t>(PickupKind::PowerUp) && e.b < 32) {
             t.powerUpsSpawned |= 1u << e.b;
           }
-          // v0.81: a banana laid on a tree's position (a tree's fruit).
+          // v0.82: a banana laid on a tree's position (a tree's fruit).
           if (e.a == static_cast<uint32_t>(PickupKind::Banana) && world.pickups.isAlive(e.entity)) {
             const Vec2 at = world.pickups.items[e.entity.index].pos;
             for (uint8_t n = 0; n < content.arena.pickupSpawnerCount; ++n) {
@@ -303,7 +303,7 @@ const std::vector<Entry>& expectations() {
        {{"throws, dashes, hits, eliminations", fights},
         {"a round won", roundWon},
         {"a call", calls}}},
-      // v0.81: harvest on grove, the scripted steering routed over the cells:
+      // v0.82: harvest on grove, the scripted steering routed over the cells:
       // the trees bear, the gatherers carry fruit home, the raiders steal.
       {"scripted_10p_contest_1800t",
        {{"a tree's fruit", fruit},

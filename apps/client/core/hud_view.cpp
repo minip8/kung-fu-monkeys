@@ -126,7 +126,7 @@ std::string modeLineText(const presentation::RenderHud& hud) {
     case sim::ModeKind::Control:  // v0.80
       std::snprintf(line, sizeof line, "Control  (first team to %u points)", target);
       return line;
-    case sim::ModeKind::Harvest:  // v0.81
+    case sim::ModeKind::Harvest:  // v0.82
       std::snprintf(line, sizeof line, "Harvest  (first team to %u bananas banked)", target);
       return line;
     case sim::ModeKind::TeamRounds:
@@ -159,7 +159,7 @@ std::string roundStartTitle(const presentation::RenderHud& hud) {
       return "Capture the flag";
     case sim::ModeKind::Control:
       return "Control the zones";
-    case sim::ModeKind::Harvest:  // v0.81
+    case sim::ModeKind::Harvest:  // v0.82
       return "Harvest: bank " + std::to_string(static_cast<unsigned>(hud.scoreToWin)) + " bananas";
     case sim::ModeKind::Rounds:
     case sim::ModeKind::Survival:

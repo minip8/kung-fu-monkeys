@@ -1,4 +1,4 @@
-# The harvest pool (architecture v0.81, §11 "Contest design: bananas as the
+# The harvest pool (architecture v0.82, §11 "Contest design: bananas as the
 # economy"): close walls and corridors a cell wide, trees in dead ends, so
 # catches and ambushes. 20 x 12 cells, the smallest map; its own half turn
 # (x, y) -> (-x, -y), zone 0 mapping to zone 1 and spawn point k to k + 5.

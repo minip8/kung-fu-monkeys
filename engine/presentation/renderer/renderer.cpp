@@ -681,7 +681,7 @@ void drawPowerUp(FrameDrawer& d, const RenderPickup& p, float playerRadius, floa
   }
 }
 
-// v0.81: a tree (RenderTree): a trunk at the back of its cell, a canopy of
+// v0.82: a tree (RenderTree): a trunk at the back of its cell, a canopy of
 // three balls round its top, and the next fruit ripening under the canopy's
 // front. playerRadius and playerHeight are the capsule mesh's dimensions
 // (the canopy balls are scaled capsules, as a power-up orb is).
@@ -1007,7 +1007,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
     }
   }
 
-  // v0.81: the arena's trees, after the walls (they stand like them).
+  // v0.82: the arena's trees, after the walls (they stand like them).
   for (uint8_t i = 0; i < state.treeCount; ++i)
     drawTree(d, state.trees[i], state.playerRadius, state.playerHeight);
 
@@ -1096,7 +1096,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
       d.outline(kCubeMesh, m, kOutlinePowerUp, Hull::Box);
     }
     // A banana in hand while the player has ammo: in the skinned hand when
-    // there is one (v0.53), else beside the capsule along the aim. v0.81:
+    // there is one (v0.53), else beside the capsule along the aim. v0.82:
     // the cargo, several held bananas fan out from the grip as a bunch (up
     // to kHeldBunchShown), each a little higher, so the count reads.
     if (p.has(PlayerFlag::HasAmmo)) {
@@ -1165,7 +1165,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
                    kZoneCaptureRimStart, kZoneCaptureOpacity / kZoneCaptureRimOpacity);
     }
   }
-  // v0.81: a tree's shade over the cell its fruit is laid on, and a ring
+  // v0.82: a tree's shade over the cell its fruit is laid on, and a ring
   // round it in banana yellow marking the spot.
   for (uint8_t i = 0; i < state.treeCount; ++i) {
     const RenderTree& t = state.trees[i];
@@ -1300,7 +1300,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
              whitened(e.slot, kZoneCapturedWhiten), kZoneCapturedRing, fade);
         break;
       case EffectKind::BananaStolen: {
-        // v0.81: two rings closing in over the robbed home, the inner a beat
+        // v0.82: two rings closing in over the robbed home, the inner a beat
         // behind, in the raider's team colour: the opposite of a capture's.
         const float size = std::max(e.size, r);
         const Color c = whitened(e.slot, kBananaStolenWhiten);
@@ -1388,7 +1388,7 @@ void Renderer::draw(const RenderState& state, const Camera& camera, int width, i
               kBlinkFlashDisc, fade);
         break;
       case EffectKind::StealFlash:
-        // v0.81: the raider lights up in its team colour as the banana jumps
+        // v0.82: the raider lights up in its team colour as the banana jumps
         // into its hand.
         flare(e.position, discSize(kStealFlashDisc, easeOut(t)),
               whitened(e.slot, kStealFlashWhiten), kStealFlashDisc, fade);

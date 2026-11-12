@@ -676,7 +676,7 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
     const ImVec2 q = at(sp.pos.x.toFloat(), sp.pos.y.toFloat());
     constexpr float kR = 5.0f;
     if (sp.isTree()) {
-      // v0.81: a tree bears bananas whatever the power-up set.
+      // v0.82: a tree bears bananas whatever the power-up set.
       dl->AddCircleFilled(q, kR + 1.0f, ui::kPreviewTree);
       dl->AddCircle(q, kR + 1.0f, ui::kOutline, 0, 1.5f);
       dl->AddCircleFilled(q, 2.0f, kBanana);
@@ -731,7 +731,7 @@ void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   } else {
     ImGui::TextWrapped("Power-ups: %s", content::powerUpListText(db, config.powerUps).c_str());
   }
-  // v0.81: the trees, whatever the power-up set.
+  // v0.82: the trees, whatever the power-up set.
   if (spawners.trees > 0) ImGui::TextWrapped("%s", treesText(spawners.trees).c_str());
 }
 

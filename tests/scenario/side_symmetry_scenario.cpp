@@ -1,14 +1,14 @@
 // Mirrored inputs give a mirrored world (architecture §11 "Contest design",
 // v0.79: "a scenario test that mirrored inputs give mirrored outcomes comes
 // first, because every gate above is read through it"). v0.80's contest row,
-// control_1t since v0.81, on courtyard_zones, whose map is its own half turn
+// control_1t since v0.82, on courtyard_zones, whose map is its own half turn
 // (x, y) -> (-x, -y) with zone 1 and zone 2 exchanged and spawn point k of
 // group 0 turning into point k of group 1 (tests/unit/content/contest_test.cpp),
 // played through the real step() with every team-1 monkey given the half turn
 // of the input its team-0 twin gets. Where the engine treats the two sides
 // alike, the world stays its own half turn with the teams swapped on every
 // tick; where it does not, the first tick and field that differ is the
-// asymmetry. Since v0.81 the same for the contest row, harvest, on each
+// asymmetry. Since v0.82 the same for the contest row, harvest, on each
 // arena of its pool (§11 "Contest design: bananas as the economy"), each its
 // own half turn with zone 0 mapping to zone 1, under a gather-and-bank policy
 // (the end of this file's "what holds"), up to the first tie the world Rng
@@ -182,7 +182,7 @@ struct Mirror {
 // harvest every word.
 [[nodiscard]] std::array<uint32_t, kModeDataWords> mirroredModeData(
     const std::array<uint32_t, kModeDataWords>& d, const Mirror& mi, ModeKind kind) {
-  // Harvest (v0.81) keeps only its two beats in word 0, the same for both
+  // Harvest (v0.82) keeps only its two beats in word 0, the same for both
   // sides.
   if (kind == ModeKind::Harvest) return d;
   std::array<uint32_t, kModeDataWords> out{};
@@ -534,7 +534,7 @@ struct Script {
   uint8_t throwEvery{3};    // a throw only on ticks where (tick + rank) % throwEvery == 0
   uint8_t subTickStep{0};   // subTick = rank * subTickStep on a press
   bool stepsByRank{false};  // v0.82: and on every input, so allies never tie for a cell
-  bool harvest{false};      // v0.81: gather and bank instead (harvestDecide), nothing else
+  bool harvest{false};      // v0.82: gather and bank instead (harvestDecide), nothing else
 };
 
 [[nodiscard]] Fixed chebyshev(Vec2 a, Vec2 b) {
@@ -631,7 +631,7 @@ class Steering {
   std::array<bool, kCells> free_{};
 };
 
-// v0.81, harvest: one team-0 monkey gathering and banking, no fight (no
+// v0.82, harvest: one team-0 monkey gathering and banking, no fight (no
 // throw, no dash). In its home with a banana it stays (banking them all);
 // else, with room in its hand, it heads for the nearest banana pickup
 // (Chebyshev, ties by position); with a full hand, or nothing to pick up
@@ -986,7 +986,7 @@ struct Run {
   return static_cast<uint16_t>(1u << i.value_or(0));
 }
 
-// v0.80's contest: control_1t on courtyard_zones since v0.81.
+// v0.80's contest: control_1t on courtyard_zones since v0.82.
 [[nodiscard]] uint8_t contestArena() {
   return arenaNamed("courtyard_zones");
 }
@@ -1302,7 +1302,7 @@ TEST_CASE("known asymmetry: twins swapping cells at an equal press, the world Rn
   // draw on the world Rng of the monkeys tied, one below(2) for two. Twins
   // press alike, so one of them steps, the other stays, the world leaves its
   // half turn by that contest, and which twin it is is the Rng's, even by
-  // construction. (Before v0.81 the lower slot, the west, won every such
+  // construction. (Before v0.82 the lower slot, the west, won every such
   // tie: 973 of 1585 enemy contests in 200 ref:hard games. v0.81's
   // alternation by the turn's parity was even over the turns but not over
   // the contests: on harvest's even beats the west took grove's 60 of 60.)

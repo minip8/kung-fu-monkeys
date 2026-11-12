@@ -178,7 +178,7 @@ enum class EffectKind : uint8_t {
   // v0.80 (control):
   ZoneCaptured,  // a ring racing out over a zone a team just took (slot = the team, its
                  // palette colour; size = the zone's larger half extent, units)
-  // v0.81 (harvest):
+  // v0.82 (harvest):
   BananaStolen,  // rings closing in over the robbed home (slot = the raider's team, its
                  // palette colour; size = the zone's larger half extent, units)
   StealFlash,    // a flash at the raider as the banana comes into its hand (slot = its team)
@@ -216,7 +216,7 @@ struct RenderArenaPiece {
 };
 
 // An objective zone (v0.33): a translucent floor rectangle in world space,
-// tinted with its team's colour when it is a team's (capture and, v0.81,
+// tinted with its team's colour when it is a team's (capture and, v0.82,
 // harvest: zone t is team t's home; control, v0.80: its owner's, from
 // modeData), neutral otherwise (hill, an unowned control zone). Team t is palette colour t.
 struct RenderZone {
@@ -229,7 +229,7 @@ struct RenderZone {
   float capture{0.0f};
 };
 
-// v0.81: a tree (sim::PickupSpawner::tree), arena content drawn in every
+// v0.82: a tree (sim::PickupSpawner::tree), arena content drawn in every
 // mode: a trunk and canopy at the back of its cell, a shade on the cell its
 // fruit (ordinary banana pickups) is laid on, and the next fruit ripening in
 // the canopy as the tree's beat nears. Built from content and the state.
@@ -294,7 +294,7 @@ struct RenderState {
   uint16_t arenaPieceCount{0};
   std::array<RenderZone, sim::kMaxArenaZones> zones{};  // v0.33, in content order
   uint8_t zoneCount{0};
-  std::array<RenderTree, sim::kMaxPickupSpawners> trees{};  // v0.81, in spawner order
+  std::array<RenderTree, sim::kMaxPickupSpawners> trees{};  // v0.82, in spawner order
   uint8_t treeCount{0};
   // v0.54: the cell size whose edges the floor draws (the arena's cells under
   // a grid-space mode, §5.12); 0 draws no grid.

@@ -415,7 +415,7 @@ std::string formatResultLine(const MatchResult& r) {
                   r.ticks, r.checksum, outcomeText(r.outcome), winnerText(r.winner));
   const bool teams = !r.teams.empty();
   if (teams) out += " winner_team " + winnerTeamText(r);
-  if (!r.arena.empty()) out += " arena " + r.arena;  // v0.81
+  if (!r.arena.empty()) out += " arena " + r.arena;  // v0.82
   for (const TeamResult& t : r.teams) {
     std::format_to(std::back_inserter(out),
                    " | team {} entrant {} {} place {} score {} kills {} deaths {}", t.team,
@@ -479,7 +479,7 @@ std::string formatResultJson(const MatchResult& r) {
   // v0.60, appended: the replay header's hashes, so a record names its content and build.
   std::format_to(std::back_inserter(out), R"(],"content_hash":"{:08x}","build_hash":"{:08x}")",
                  r.contentHash, r.buildHash);
-  // v0.81, appended: the arena the match played (a pooled mode cycles them).
+  // v0.82, appended: the arena the match played (a pooled mode cycles them).
   out += R"(,"arena":)" + jsonString(r.arena) + "}";
   return out;
 }

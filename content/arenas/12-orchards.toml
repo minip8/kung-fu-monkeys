@@ -1,4 +1,4 @@
-# The harvest pool (architecture v0.81, §11 "Contest design: bananas as the
+# The harvest pool (architecture v0.82, §11 "Contest design: bananas as the
 # economy"): no rich tree, four middling ones on the flanks, so the routes
 # cross. 28 x 16 cells, the widest map; its own half turn (x, y) -> (-x, -y),
 # zone 0 mapping to zone 1 and spawn point k to k + 5.

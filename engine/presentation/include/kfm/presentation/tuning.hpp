@@ -74,7 +74,7 @@ inline constexpr float kZoneCaptureRimStart = 0.85f;
 inline constexpr float kFlagCarrySize = 0.32f;  // units
 inline constexpr float kFlagCarryLift = 0.35f;  // above the head, units
 inline constexpr float kFlagCarrySpinRadPerSec = 2.0f;
-// v0.81, trees (render_state.hpp RenderTree), × the arena's cell side: a
+// v0.82, trees (render_state.hpp RenderTree), × the arena's cell side: a
 // trunk standing this far behind (north of, away from the camera) its cell's
 // centre, so the fruit laid on the centre stays in view in front of it,
 // this thick and tall; a canopy of balls of this diameter round its top,
@@ -98,7 +98,7 @@ inline constexpr float kTreeFruitDrop = 0.12f;  // the fruit hangs this far unde
 // kPickupStackLift higher and kPickupStackTurn further turned, up to this
 // many high (more lie at the top).
 inline constexpr int kPickupColumnMax = 6;
-// v0.81, the cargo: a monkey's bananas in hand are drawn as a bunch, up to
+// v0.82, the cargo: a monkey's bananas in hand are drawn as a bunch, up to
 // this many fanned about the grip this far apart (radians) and lifted this
 // much each (× the player radius), so 0 to 5 read at a glance.
 inline constexpr int kHeldBunchShown = 5;
@@ -243,7 +243,7 @@ inline constexpr float kBounceSparkSeconds = 0.15f;
 inline constexpr float kRespawnBurstSeconds = 0.6f;
 inline constexpr float kScorePopSeconds = 0.5f;
 inline constexpr float kZoneCapturedSeconds = 0.7f;  // v0.80: the ZoneCaptured ring
-// v0.81, harvest: a theft's rings closing in over the robbed home, and the
+// v0.82, harvest: a theft's rings closing in over the robbed home, and the
 // flash at the raider.
 inline constexpr float kBananaStolenSeconds = 0.8f;
 inline constexpr float kStealFlashSeconds = 0.4f;
@@ -299,7 +299,7 @@ inline constexpr Color kShieldBlue{0.45f, 0.85f, 1.0f};
 inline constexpr Color kSparkColor{1.0f, 0.62f, 0.25f};   // hit sparks
 inline constexpr Color kSmokeColor{0.72f, 0.72f, 0.74f};  // elimination poof
 inline constexpr Color kDustColor{0.62f, 0.52f, 0.38f};   // ground dust
-// v0.81, trees: bark, two leaf greens darker and bluer than any arena's floor
+// v0.82, trees: bark, two leaf greens darker and bluer than any arena's floor
 // so a canopy stands out over grass, and the shade's ring.
 inline constexpr Color kTreeTrunk{0.42f, 0.26f, 0.12f};
 inline constexpr Color kTreeLeaf{0.10f, 0.42f, 0.24f};
@@ -391,7 +391,7 @@ inline constexpr EffectDisc kRespawnRing{3.0f, 1.0f, 0.9f, 0.8f};         // × 
 inline constexpr EffectDisc kScorePopRing{1.2f, 3.2f, 0.9f, 0.85f};       // × radius, eased
 // v0.80: × the zone's larger half extent (RenderEffect::size), eased.
 inline constexpr EffectDisc kZoneCapturedRing{0.3f, 1.4f, 0.9f, 0.85f};
-// v0.81: a theft, × the robbed zone's larger half extent, eased: an outer
+// v0.82: a theft, × the robbed zone's larger half extent, eased: an outer
 // ring closing in, and an inner one a beat behind.
 inline constexpr EffectDisc kBananaStolenRing{1.5f, 0.15f, 0.95f, 0.8f};
 inline constexpr EffectDisc kBananaStolenInnerRing{1.0f, 0.05f, 0.7f, 0.7f};
@@ -423,15 +423,15 @@ inline constexpr EffectDisc kBounceSparkDisc{0.15f, 0.45f, 0.8f, 0.1f};
 inline constexpr EffectDisc kShieldShatterFlash{0.7f, 1.5f, 0.8f, 0.3f};
 inline constexpr EffectDisc kBlinkFlashDisc{1.1f, 0.2f, 0.9f, 0.3f};  // eased
 inline constexpr EffectDisc kParrySparkFlash{0.5f, 1.2f, 0.9f, 0.2f};
-inline constexpr EffectDisc kStealFlashDisc{0.4f, 1.3f, 0.9f, 0.2f};  // v0.81, eased
+inline constexpr EffectDisc kStealFlashDisc{0.4f, 1.3f, 0.9f, 0.2f};  // v0.82, eased
 // An effect tinted with its player's colour is whitened this much.
 inline constexpr float kDashAnticipationWhiten = 0.5f;
 inline constexpr float kPitFallWhiten = 0.55f;
 inline constexpr float kDashTrailWhiten = 0.3f;
 inline constexpr float kRespawnWhiten = 0.35f;
 inline constexpr float kZoneCapturedWhiten = 0.25f;  // v0.80
-inline constexpr float kBananaStolenWhiten = 0.15f;  // v0.81
-inline constexpr float kStealFlashWhiten = 0.2f;     // v0.81
+inline constexpr float kBananaStolenWhiten = 0.15f;  // v0.82
+inline constexpr float kStealFlashWhiten = 0.2f;     // v0.82
 inline constexpr float kSlamWhiten = 0.4f;
 inline constexpr float kParryGuardWhiten = 0.6f;
 inline constexpr float kBlinkWhiten = 0.5f;

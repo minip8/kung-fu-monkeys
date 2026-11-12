@@ -43,7 +43,7 @@
 // spawner's timeline is a function of ticksInPhase, not state of its own; a
 // power-up pickup remembers its spawner.
 //
-// v0.81, trees (PickupSpawner::tree): on the same beat a tree lays one banana
+// v0.82, trees (PickupSpawner::tree): on the same beat a tree lays one banana
 // pickup at its position (layBananaPickup: PickupSpawned, or, with the pool
 // full, one more on the nearest banana pickup), while the bananas lying on
 // its cell (the counts of every banana pickup whose position grid::cellOf
@@ -144,7 +144,7 @@ void regrowBananas(WorldState& s, const MatchContent& content, EventSink& sink) 
   return static_cast<uint8_t>(std::countr_zero(bits));
 }
 
-// v0.81: the bananas lying on a tree's cell, whoever dropped them.
+// v0.82: the bananas lying on a tree's cell, whoever dropped them.
 [[nodiscard]] uint32_t fruitOn(const WorldState& s, const ArenaDef& arena, Vec2 treePos) {
   const grid::Cell cell = grid::cellOf(arena, treePos);
   uint32_t n = 0;

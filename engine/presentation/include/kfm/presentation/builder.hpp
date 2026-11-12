@@ -99,14 +99,14 @@ void buildRenderState(PresentationState& ps, const sim::WorldState& prev,
 void buildArenaPieces(const sim::ArenaDef& arena, RenderState& out);
 
 // The arena's zones (v0.33) as floor rectangles: zone k belongs to team k in
-// a capture or (v0.81) harvest match (its home: the mode's team count, as
+// a capture or (v0.82) harvest match (its home: the mode's team count, as
 // far as there are zones; a free-for-all harvest: slot k's); in a
 // control match (v0.80) to its owner in `curr`'s modeData (controlZone()),
 // with the capture under way; to nobody otherwise. buildRenderState() calls
 // it every frame.
 void buildZones(const sim::WorldState& curr, const sim::MatchContent& match, RenderState& out);
 
-// v0.81: the arena's trees (sim::PickupSpawner::tree) in spawner order, in
+// v0.82: the arena's trees (sim::PickupSpawner::tree) in spawner order, in
 // every mode: where each stands, the bananas on its cell (whoever dropped
 // them) and how ripe its next fruit is (treeRipeness()). buildRenderState()
 // calls it every frame.

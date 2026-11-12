@@ -28,7 +28,7 @@ namespace kfm::client {
 // (dash.*, thr.*, c.boomerang.*, c.player.*, rounds.* = modes[0], then
 // c.modes[i].* for the objective clocks of a hill or control mode and a
 // mode's banana flight override, v0.80; a harvest mode's bank and steal
-// beats and a mode's respawn hand when set, v0.81), one per line.
+// beats and a mode's respawn hand when set, v0.82), one per line.
 // content/*.toml is the source of truth; these lines keep defaultContent()
 // (the test fixture) in step with it.
 [[nodiscard]] std::string contentToCpp(const sim::ContentDB& c);

@@ -173,7 +173,7 @@ void grantBaseline(Player& p, const MatchContent& content) {
   p.modifiers.count = 1;
   p.stats = deriveStats(db, p.modifiers, statics::speedMulAt(content.arena, p.transform.pos));
   p.hp = p.stats.maxHp;
-  // v0.81: an ammo_max grant raises the capacity without filling the hand
+  // v0.82: an ammo_max grant raises the capacity without filling the hand
   // (a pickup's grant tops it up, rules/powerup.cpp; a baseline is not a
   // pickup, and topping up at every respawn would mint bananas).
   p.ammo = std::min(p.ammo, p.stats.ammoMax);

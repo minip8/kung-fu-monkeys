@@ -63,7 +63,7 @@ enum class EventKind : uint8_t {
                    // (ModeDef::bananaRegrowTicks)
   // v0.80 (control, §5.3):
   ZoneCaptured,  // a = the team that now owns the zone, b = the zone
-  // v0.81 (harvest, §5.3):
+  // v0.82 (harvest, §5.3):
   BananaStolen,  // player = the raider, entity = the raider's player, a = the slot whose
                  // point it took (its ScoreChanged, ScoreReason::Stolen, comes first),
                  // b = the zone (the robbed team's home)
@@ -77,7 +77,7 @@ enum class ScoreReason : uint8_t {
   Objective = 0,  // the kind's own point: an elimination, a hill point, a capture
   Catch = 1,      // ModeDef::catchScore: a perfect catch of an enemy's banana
   Suicide = 2,    // ModeDef::suicideScore: an elimination with no killer (a pit fall)
-  Stolen = 3,     // v0.81, harvest: a banked banana a raider took back out (-1)
+  Stolen = 3,     // v0.82, harvest: a banked banana a raider took back out (-1)
 };
 
 struct SimEvent {

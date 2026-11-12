@@ -142,11 +142,11 @@ struct MatchResult {
   // (kfm::kBuildId, KFM_BUILD_ID: 0 for an unstamped build, v0.70).
   uint32_t contentHash{0};
   uint32_t buildHash{0};
-  // v0.81: the name of the arena the match played (MatchConfig::arena).
+  // v0.82: the name of the arena the match played (MatchConfig::arena).
   std::string arena;
 };
 
-// v0.81, the arena pool (ModeDef::arenaSet): kfm_arena without --arena, on a
+// v0.82, the arena pool (ModeDef::arenaSet): kfm_arena without --arena, on a
 // mode with a pool, plays match k on member (k / T) mod P, the members in
 // content order (P of them) and T the rotation's period: the team count with
 // --team, else the slot count (a free-for-all's slots are its sides). With
@@ -241,7 +241,7 @@ struct Summary {
 //   place 1 score 3 kills 5 deaths 1 acts 5432 subs 3 traps 1 over 2 bad 0 fuel_mean 61234
 //   fuel_max 62731 fuel_init 13 log 0 dead no
 // checksum: the final state's, 8 hex digits; result: ended (MatchEnded) or
-// cap; winner: a slot, or none (a draw, the cap). v0.81: " arena NAME" (the
+// cap; winner: a slot, or none (a draw, the cap). v0.82: " arena NAME" (the
 // arena played) ends the first segment, after winner and winner_team.
 // The module fields (traps .. dead) follow a module slot only; dead is the
 // death cause (init-trap, ...) or no.
