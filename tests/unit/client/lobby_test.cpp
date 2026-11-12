@@ -101,18 +101,18 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   LobbyMenu m;
   m.setContent(db);
   const auto rows = m.rows();
-  // v0.34: a mode's baseline gets no toggle (the grid modes name two).
-  uint8_t baselines = 0;
+  // v0.34: a mode's baseline gets no toggle (the grid modes name two, and
+  // v0.80 the contest a third). The rest keep their content order: the
+  // contest's _1t twins come after the baselines in powerups.toml.
+  std::vector<uint8_t> toggled;
   for (uint8_t i = 0; i < db.powerUpCount; ++i) {
-    for (uint8_t k = 0; k < db.modeCount; ++k) {
-      if (db.modes[k].baseline == i) {
-        ++baselines;
-        break;
-      }
-    }
+    bool baseline = false;
+    for (uint8_t k = 0; k < db.modeCount; ++k)
+      baseline = baseline || db.modes[k].baseline == i;
+    if (!baseline) toggled.push_back(i);
   }
-  CHECK(baselines == 2);
-  const uint8_t toggles = static_cast<uint8_t>(db.powerUpCount - baselines);
+  CHECK(db.powerUpCount - toggled.size() == 3u);
+  const auto toggles = static_cast<uint8_t>(toggled.size());
   REQUIRE(rows.size() == 9u + toggles);
   CHECK(rows[0].kind == LobbyRowKind::Arena);
   CHECK(rows[1].kind == LobbyRowKind::Mode);
@@ -122,9 +122,9 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   CHECK(rows[3].kind == LobbyRowKind::Loadout);
   CHECK(m.rowLabel(rows[3]) == "Loadout");
   CHECK(m.rowValue(rows[3]) == "base");
-  for (uint8_t i = 0; i < toggles; ++i) {  // the baselines come last in powerups.toml
-    CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, i});
-    CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[i].name.view());
+  for (uint8_t i = 0; i < toggles; ++i) {
+    CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, toggled[i]});
+    CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[toggled[i]].name.view());
   }
   CHECK(rows[rows.size() - 5].kind == LobbyRowKind::Bots);
   CHECK(rows[rows.size() - 4].kind == LobbyRowKind::BotDifficulty);
