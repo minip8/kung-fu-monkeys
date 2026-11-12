@@ -32,4 +32,5 @@ scripted_4p_capture_3600t          scripted  0x4B464D82  0x5C1282  4  3600  outp
 scripted_4p_grid_rounds_3600t      scripted  0x4B464D91  0x5C1291  4  3600  courtyard  grid_rounds
 scripted_4p_grid_rounds_1t_1800t   scripted  0x4B464D92  0x5C1292  4  1800  courtyard  grid_rounds_1t
 scripted_10p_grid_rounds_1t_1800t  scripted  0x4B464DA1  0x5C12A1  10  1800  courtyard  grid_rounds_1t
-scripted_10p_contest_1800t         scripted  0x4B464DB1  0x5C12B1  10  1800  courtyard_zones  contest
+scripted_10p_contest_1800t         scripted  0x4B464DB1  0x5C12B1  10  1800  grove            contest
+scripted_10p_control_1t_1800t      scripted  0x4B464DB1  0x5C12B1  10  1800  courtyard_zones  control_1t

@@ -1408,29 +1408,101 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
 }
 
 // M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset.
-// Since v0.80 it is the control kind (§11 "Contest design") with
-// grid_rounds_1t's squad: the space, turns, kits and the vision's radii are
-// that row's; the baseline is contest_base (the banana at 2 cells a turn),
-// the arena courtyard_zones (three zones), hearing 1 and the banana's flight
-// the mode's own. A season's change to the row is a deliberate edit here;
-// the arena, the twins and the flight are pinned in contest_test.cpp.
-TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0.80)",
+// Since v0.81 it is the harvest kind (§11 "Contest design: bananas as the
+// economy") with grid_rounds_1t's squad: the space, turns, kits and the
+// vision's radii are that row's; the baseline is harvest_base (three in the
+// hand, the banana at 2 cells a turn), the arenas the pool of four with
+// grove the default, hearing 1 and the banana's flight the mode's own. A
+// season's change to the row is a deliberate edit here; the arenas, the
+// baseline and the flight are pinned in contest_test.cpp.
+TEST_CASE("content/ ships contest as harvest on the pool with grid_rounds_1t's squad (M7, v0.81)",
           "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
   const std::optional<uint8_t> contest = db.findMode("contest");
   const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
+  const std::optional<uint8_t> control = db.findMode("control_1t");
+  const std::optional<uint8_t> grove = db.findArena("grove");
+  const std::optional<uint8_t> base = db.findPowerUp("harvest_base");
+  REQUIRE(contest);
+  REQUIRE(grid);
+  REQUIRE(control);
+  REQUIRE(grove);
+  REQUIRE(base);
+  // The ladder points at the name, and the row keeps its index; control_1t
+  // is appended.
+  CHECK(contest.value_or(0) < control.value_or(0));
+  CHECK(control.value_or(0) == db.modeCount - 1);
+  const sim::ModeDef& g = db.modes[grid.value_or(0)];
+  const sim::ModeDef& m = db.modes[contest.value_or(0)];
+  CHECK(m.kind == sim::ModeKind::Harvest);
+  CHECK(m.space == g.space);
+  CHECK(m.turnTicks == g.turnTicks);
+  CHECK(m.turnTicks == 1);
+  CHECK(m.dashCells == g.dashCells);
+  CHECK(m.teams == g.teams);
+  CHECK(m.roleCount == g.roleCount);
+  CHECK(m.roles == g.roles);
+  CHECK(m.baseline == base);
+  CHECK(m.vision.kind == sim::VisionKind::Own);
+  CHECK(m.vision.peripheral == g.vision.peripheral);
+  CHECK(m.vision.cone == g.vision.cone);
+  CHECK(m.vision.focus == g.vision.focus);
+  CHECK(m.vision.bananaSight == g.vision.bananaSight);
+  CHECK(m.vision.hearing == 1);
+  CHECK(m.bankTicks == 2);
+  CHECK(m.stealTicks == 6);
+  CHECK(m.scoreToWin == 40);
+  CHECK(m.timeLimitTicks == 3600);
+  CHECK(m.respawnTicks == 240);
+  CHECK(m.respawnInvulnTicks == 8);
+  CHECK(m.respawnAmmo == 0);
+  CHECK(m.deathBananas == sim::DeathBananas::Drop);
+  CHECK(m.bananaRegrowTicks == 0);
+  CHECK(m.catchScore == 0);
+  CHECK(m.suicideScore == 0);
+  CHECK(m.bananaOutboundTicks == 3);
+  CHECK(m.bananaTurnRateBam == 15474);
+  CHECK(m.roundStartTicks == 60);
+  // The pool: grove, orchards, gorge and burrows, each suiting the row, and
+  // nothing else; grove is the default.
+  uint16_t pool = 0;
+  for (const std::string_view name : {"grove", "orchards", "gorge", "burrows"}) {
+    INFO(name);
+    const std::optional<uint8_t> a = db.findArena(name);
+    REQUIRE(a);
+    pool = static_cast<uint16_t>(pool | (1u << a.value_or(0)));
+    CHECK(db.compatible(a.value_or(0), contest.value_or(0)));
+  }
+  CHECK(m.arenaSet == pool);
+  CHECK(m.arena == grove);
+  CHECK(db.firstCompatibleArena(contest.value_or(0)) == grove);
+  for (const std::string_view name : {"courtyard", "courtyard_zones", "dojo"}) {
+    INFO(name);  // no home zone per team or no tree
+    CHECK_FALSE(db.compatible(db.findArena(name).value_or(0), contest.value_or(0)));
+  }
+}
+
+// v0.80's contest row, appended as control_1t when the contest became harvest
+// (v0.81) so the control kind keeps a shipped row: the control kind with
+// grid_rounds_1t's squad on courtyard_zones, every number as it was.
+TEST_CASE("content/ ships control_1t as v0.80's contest row (v0.81)", "[content][loader][modes]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> control = db.findMode("control_1t");
+  const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
   const std::optional<uint8_t> courtyard = db.findArena("courtyard");
   const std::optional<uint8_t> zones = db.findArena("courtyard_zones");
   const std::optional<uint8_t> base = db.findPowerUp("contest_base");
-  REQUIRE(contest);
+  REQUIRE(control);
   REQUIRE(grid);
   REQUIRE(courtyard);
   REQUIRE(zones);
   REQUIRE(base);
   const sim::ModeDef& g = db.modes[grid.value_or(0)];
-  const sim::ModeDef& m = db.modes[contest.value_or(0)];
+  const sim::ModeDef& m = db.modes[control.value_or(0)];
   CHECK(m.kind == sim::ModeKind::Control);
   CHECK(m.space == g.space);
   CHECK(m.turnTicks == g.turnTicks);
@@ -1452,6 +1524,7 @@ TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0
   CHECK(m.timeLimitTicks == 3600);
   CHECK(m.respawnTicks == 240);
   CHECK(m.respawnInvulnTicks == 8);
+  CHECK(m.respawnAmmo == sim::kRespawnAmmoStart);
   CHECK(m.deathBananas == sim::DeathBananas::Vanish);
   CHECK(m.bananaRegrowTicks == 120);
   CHECK(m.catchScore == 0);
@@ -1460,10 +1533,11 @@ TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0
   CHECK(m.bananaTurnRateBam == 15474);
   CHECK(m.roundStartTicks == 60);
   CHECK(m.arena == zones);
-  CHECK(db.firstCompatibleArena(contest.value_or(0)) == zones);
-  CHECK(db.compatible(zones.value_or(0), contest.value_or(0)));
-  CHECK_FALSE(db.compatible(courtyard.value_or(0), contest.value_or(0)));  // no zone
-  CHECK_FALSE(db.compatible(0, contest.value_or(0)));                      // the dojo has no cells
+  CHECK(m.arenaSet == sim::kNoArenaSet);
+  CHECK(db.firstCompatibleArena(control.value_or(0)) == zones);
+  CHECK(db.compatible(zones.value_or(0), control.value_or(0)));
+  CHECK_FALSE(db.compatible(courtyard.value_or(0), control.value_or(0)));  // no zone
+  CHECK_FALSE(db.compatible(0, control.value_or(0)));                      // the dojo has no cells
 }
 
 // v0.69's hill, kept for the hill kind: the courtyard with its middle block

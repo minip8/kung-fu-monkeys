@@ -122,18 +122,20 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 
 - Modes (`content/modes.toml`): `rounds` (default), `deathmatch`, `survival`, `team_rounds`,
   `team_deathmatch`, `hill`, `capture`, `grid_rounds`, `grid_rounds_1t` (the grid at 1-tick
-  turns, for `kfm_arena`), `contest` (the bot ladder's row, the `control` kind on
-  `courtyard_zones` since v0.80: a loader test pins it, so a season's change to it is a
-  deliberate edit of both).
+  turns, for `kfm_arena`), `contest` (the bot ladder's row, the `harvest` kind on the pool
+  `grove`, `orchards`, `gorge`, `burrows` since v0.81: a loader test pins it, so a season's
+  change to it is a deliberate edit of both), `control_1t` (v0.80's contest, the `control` kind
+  on `courtyard_zones`, appended in v0.81).
 - A team mode needs an arena with a spawn group per team, `hill`, `capture` and `control` need
-  their zones, a grid mode needs an arena with cells (a tilemap): `ContentDB::compatible`. Without
-  `--arena` every host picks the first arena that suits; a named arena that does not suit is a
-  configuration error (non-zero exit).
+  their zones, `harvest` a zone per team and a tree, a grid mode needs an arena with cells (a
+  tilemap): `ContentDB::compatible`. Without `--arena` every host picks the mode's `arena`, else
+  the first member of its pool (`arenas`) that suits, else the first arena that suits; a named
+  arena that does not suit is a configuration error (non-zero exit).
 - Arenas: `content/arenas.toml` (`dojo`) and `content/arenas/*.toml`, appended by file name:
   `pillars`, `corridors`, `island`, `dojo_powerups`, `standoff`, `hilltop` (`hill`), `outposts`
   (`capture`), `courtyard` (the grid modes), `courtyard_hill` (`hill` on the grid),
-  `courtyard_zones` (`contest`: three zones, v0.80), and the harvest pool's `grove`, `orchards`,
-  `gorge` and `burrows` (v0.81: a home zone per team and trees). A
+  `courtyard_zones` (`control_1t`: three zones, v0.80), and the harvest pool's `grove`,
+  `orchards`, `gorge` and `burrows` (`contest`, v0.81: a home zone per team and trees). A
   tilemap arena gives `cell = 1.0` and `map = ["..."]` (`#` wall, `.` floor, `~` pit, `:` mud,
   `0-9` spawns, `a-h` zones) in place of `half_extents`/`walls`/`hazards`/`spawn_points`/`zones`
   (format: `content/arenas/06-hilltop.toml`, architecture §5.10).

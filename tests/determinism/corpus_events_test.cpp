@@ -41,6 +41,7 @@ struct Tally {
   uint32_t roundsWon{0};        // RoundEnded with a winner
   uint32_t perfectCatches{0};
   uint32_t powerUpsSpawned{0};  // bit i: power-up i was laid by a spawner
+  uint32_t treeFruit{0};        // v0.81: banana pickups laid on a tree
   uint32_t eventsDropped{0};    // EventSink overflow, summed over the ticks
   uint32_t contactsDropped{0};  // StepStats: contact-list overflow, summed
   MatchPhase finalPhase{MatchPhase::Lobby};
@@ -130,6 +131,14 @@ Tally play(const std::string& name) {
         case EventKind::PickupSpawned:
           if (e.a == static_cast<uint32_t>(PickupKind::PowerUp) && e.b < 32) {
             t.powerUpsSpawned |= 1u << e.b;
+          }
+          // v0.81: a banana laid on a tree's position (a tree's fruit).
+          if (e.a == static_cast<uint32_t>(PickupKind::Banana) && world.pickups.isAlive(e.entity)) {
+            const Vec2 at = world.pickups.items[e.entity.index].pos;
+            for (uint8_t n = 0; n < content.arena.pickupSpawnerCount; ++n) {
+              const PickupSpawner& sp = content.arena.pickupSpawners[n];
+              if (sp.isTree() && sp.pos == at) ++t.treeFruit;
+            }
           }
           break;
         case EventKind::ScoreChanged:
@@ -222,6 +231,13 @@ bool flagTaken(const Tally& t, const ContentDB& /*db*/) {
 bool calls(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::MonkeyCalled) > 0;
 }
+// v0.81, harvest: a banana banked is a point with ScoreReason::Objective.
+bool banked(const Tally& t, const ContentDB& /*db*/) {
+  return t.objectivePoints > 0;
+}
+bool fruit(const Tally& t, const ContentDB& /*db*/) {
+  return t.treeFruit > 0;
+}
 
 const std::vector<Entry>& expectations() {
   static const std::vector<Entry> table = {
@@ -258,7 +274,13 @@ const std::vector<Entry>& expectations() {
        {{"throws, dashes, hits, eliminations", fights},
         {"a round won", roundWon},
         {"a call", calls}}},
+      // v0.81: harvest on grove. The scripted steering walks straight at its
+      // goal, so on grove it banks the opening hands and then stands at the
+      // pillars between the homes and the rich trees: no fruit is gathered
+      // and nothing is stolen.
       {"scripted_10p_contest_1800t",
+       {{"a tree's fruit", fruit}, {"a banana banked", banked}, {"a call", calls}}},
+      {"scripted_10p_control_1t_1800t",
        {{"a zone captured", zoneCaptured}, {"a zone point", objectivePoint}, {"a call", calls}}},
   };
   return table;

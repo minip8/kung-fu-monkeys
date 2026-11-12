@@ -101,9 +101,10 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   LobbyMenu m;
   m.setContent(db);
   const auto rows = m.rows();
-  // v0.34: a mode's baseline gets no toggle (the grid modes name two, and
-  // v0.80 the contest a third). The rest keep their content order: the
-  // contest's _1t twins come after the baselines in powerups.toml.
+  // v0.34: a mode's baseline gets no toggle (the grid modes name two, v0.80
+  // the contest a third, kept by control_1t, and v0.81 the harvest contest a
+  // fourth). The rest keep their content order: the contest's _1t twins come
+  // after the first three baselines in powerups.toml.
   std::vector<uint8_t> toggled;
   for (uint8_t i = 0; i < db.powerUpCount; ++i) {
     bool baseline = false;
@@ -111,7 +112,7 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
       baseline = baseline || db.modes[k].baseline == i;
     if (!baseline) toggled.push_back(i);
   }
-  CHECK(db.powerUpCount - toggled.size() == 3u);
+  CHECK(db.powerUpCount - toggled.size() == 4u);
   const auto toggles = static_cast<uint8_t>(toggled.size());
   REQUIRE(rows.size() == 9u + toggles);
   CHECK(rows[0].kind == LobbyRowKind::Arena);

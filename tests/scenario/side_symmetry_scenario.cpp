@@ -1,13 +1,14 @@
 // Mirrored inputs give a mirrored world (architecture §11 "Contest design",
 // v0.79: "a scenario test that mirrored inputs give mirrored outcomes comes
-// first, because every gate above is read through it"). The shipped contest
-// row on courtyard_zones, whose map is its own half turn (x, y) -> (-x, -y)
-// with zone 1 and zone 2 exchanged and spawn point k of group 0 turning into
-// point k of group 1 (tests/unit/content/contest_test.cpp), played through
-// the real step() with every team-1 monkey given the half turn of the input
-// its team-0 twin gets. Where the engine treats the two sides alike, the
-// world stays its own half turn with the teams swapped on every tick; where
-// it does not, the first tick and field that differ is the asymmetry.
+// first, because every gate above is read through it"). v0.80's contest row,
+// control_1t since v0.81, on courtyard_zones, whose map is its own half turn
+// (x, y) -> (-x, -y) with zone 1 and zone 2 exchanged and spawn point k of
+// group 0 turning into point k of group 1 (tests/unit/content/contest_test.cpp),
+// played through the real step() with every team-1 monkey given the half turn
+// of the input its team-0 twin gets. Where the engine treats the two sides
+// alike, the world stays its own half turn with the teams swapped on every
+// tick; where it does not, the first tick and field that differ is the
+// asymmetry.
 //
 // The slots: with ten present, teamsFor() deals them round-robin, so slot
 // 2k is team 0's k-th monkey (the west, spawn group 0) and slot 2k + 1 team
@@ -855,11 +856,12 @@ struct Run {
   return static_cast<uint16_t>(1u << i.value_or(0));
 }
 
+// v0.80's contest: control_1t on courtyard_zones since v0.81.
 [[nodiscard]] uint8_t contestArena() {
   return arenaNamed("courtyard_zones");
 }
 [[nodiscard]] uint8_t contestMode() {
-  return modeNamed("contest");
+  return modeNamed("control_1t");
 }
 
 // A seed whose start is mirrored (both spawn groups draw the same offset:

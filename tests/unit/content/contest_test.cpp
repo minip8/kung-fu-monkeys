@@ -1,8 +1,11 @@
-// The contest's content as shipped (architecture §11 "Contest design", v0.80):
-// the courtyard_zones arena, its spawners and the _1t power-up twins they
-// lay, the contest_base baseline, and the banana's flight under the contest
-// row. The row's own numbers are pinned by loader_test.cpp ("content/ ships
-// contest as control ...").
+// The contest's content as shipped. v0.80's control contest (architecture §11
+// "Contest design"), kept as the control_1t row since v0.81: the
+// courtyard_zones arena, its spawners and the _1t power-up twins they lay,
+// the contest_base baseline, and the banana's flight under that row. v0.81's
+// harvest contest (§11 "Contest design: bananas as the economy"), the
+// contest row since: harvest_base and the pool of four arenas, each its own
+// half turn. The rows' own numbers are pinned by loader_test.cpp ("content/
+// ships contest as harvest ...", "content/ ships control_1t ...").
 #include "kfm/content/loader.hpp"
 #include "kfm/sim/content.hpp"
 #include "kfm/sim/events.hpp"
@@ -17,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -80,8 +84,9 @@ template <class Box, size_t N>
   return shipped().arenas[arenaIndex()];
 }
 
-[[nodiscard]] uint8_t contestIndex() {
-  const std::optional<uint8_t> i = shipped().findMode("contest");
+// v0.80's contest row, control_1t since v0.81.
+[[nodiscard]] uint8_t controlIndex() {
+  const std::optional<uint8_t> i = shipped().findMode("control_1t");
   REQUIRE(i.has_value());
   return i.value_or(0);
 }
@@ -207,12 +212,12 @@ TEST_CASE("courtyard_zones lays the _1t twins early and often, away from every z
   }
 }
 
-TEST_CASE("the contest plays on courtyard_zones", "[content][contest]") {
+TEST_CASE("control_1t plays on courtyard_zones", "[content][contest]") {
   const ContentDB& db = shipped();
-  const uint8_t contest = contestIndex();
-  CHECK(db.modes[contest].arena == arenaIndex());
-  CHECK(db.compatible(arenaIndex(), contest));
-  CHECK(db.firstCompatibleArena(contest) == std::optional<uint8_t>{arenaIndex()});
+  const uint8_t control = controlIndex();
+  CHECK(db.modes[control].arena == arenaIndex());
+  CHECK(db.compatible(arenaIndex(), control));
+  CHECK(db.firstCompatibleArena(control) == std::optional<uint8_t>{arenaIndex()});
   // The other team modes play there too (two spawn groups, cells, zones).
   for (const std::string_view name : {"hill", "grid_rounds_1t", "team_rounds"}) {
     INFO(name);
@@ -256,7 +261,7 @@ TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.80
   const std::optional<uint8_t> grid = db.findPowerUp("grid_base_1t");
   REQUIRE(base);
   REQUIRE(grid);
-  CHECK(db.modes[contestIndex()].baseline == base.value_or(0));
+  CHECK(db.modes[controlIndex()].baseline == base.value_or(0));
   const sim::PowerUpDef& g = db.powerUps[grid.value_or(0)];
   sim::PowerUpDef twin = db.powerUps[base.value_or(0)];
   REQUIRE(twin.grantCount == 3);
@@ -280,6 +285,7 @@ TEST_CASE("harvest_base is contest_base with two more bananas in the hand (v0.81
   REQUIRE(harvest);
   REQUIRE(contest);
   CHECK(harvest.value_or(0) == db.powerUpCount - 1);  // appended: 14 of kMaxPowerUps' 16
+  CHECK(db.modes[db.findMode("contest").value_or(0)].baseline == harvest.value_or(0));
   CHECK(db.powerUpCount == 14);
   const sim::PowerUpDef& c = db.powerUps[contest.value_or(0)];
   sim::PowerUpDef h = db.powerUps[harvest.value_or(0)];
@@ -307,7 +313,7 @@ TEST_CASE("harvest_base is contest_base with two more bananas in the hand (v0.81
 TEST_CASE("the contest banana flies 3 turns out and comes home within a few cells",
           "[content][contest][flight]") {
   const ContentDB& db = shipped();
-  const uint8_t mode = contestIndex();
+  const uint8_t mode = controlIndex();
   const uint8_t arena = arenaIndex();
   const sim::PlayerMask players = 0b11;
   const sim::MatchConfig cfg{.seed = 7,
@@ -632,4 +638,53 @@ TEST_CASE("each harvest pool arena: every floor cell is reached from both homes 
     }
   }
   CHECK(floor > 0);
+}
+
+TEST_CASE("the contest plays harvest on the pool, grove when a host picks one (v0.81)",
+          "[content][contest][harvest]") {
+  const ContentDB& db = shipped();
+  const std::optional<uint8_t> contest = db.findMode("contest");
+  REQUIRE(contest);
+  const uint8_t mode = contest.value_or(0);
+  const sim::ModeDef& m = db.modes[mode];
+  CHECK(m.kind == sim::ModeKind::Harvest);
+  for (const PoolArena& want : kPool) {
+    INFO(want.name);
+    const uint8_t a = db.findArena(want.name).value_or(0xFF);
+    CHECK(m.inArenaSet(a));
+    CHECK(db.compatible(a, mode));
+    // The pool plays the other team grid rows too (two spawn groups, cells,
+    // zones), and control_1t (a zone).
+    for (const std::string_view other : {"grid_rounds_1t", "control_1t", "hill", "team_rounds"}) {
+      INFO(other);
+      CHECK(db.compatible(a, db.findMode(other).value_or(0)));
+    }
+  }
+  CHECK(std::popcount(static_cast<uint32_t>(m.arenaSet)) == 4);
+  CHECK(db.firstCompatibleArena(mode) == db.findArena("grove"));
+  // A match of the row on each member gets the row's flight and three in
+  // the hand from harvest_base, and starts with ammo_start.
+  for (const PoolArena& want : kPool) {
+    INFO(want.name);
+    const sim::PlayerMask players = 0b11;
+    const sim::MatchConfig cfg{.seed = 7,
+                               .players = players,
+                               .arena = db.findArena(want.name).value_or(0),
+                               .mode = mode,
+                               .teams = sim::teamsFor(m, players)};
+    const sim::MatchContent mc(db, cfg.arena, mode, sim::kAllPowerUps, 0, cfg.teams);
+    CHECK(mc.bananaOutboundTicks() == 3);
+    CHECK(mc.bananaTurnRateBam() == 15474);
+    sim::WorldState s = sim::initialWorld(cfg);
+    sim::EventSink sink;
+    sim::InputFrame f;
+    f.tick = s.tick;
+    f.present = s.rules.present;
+    sim::step(s, f, mc, sink);
+    const sim::Player* p = s.playerBySlot(PlayerId{0});
+    REQUIRE(p != nullptr);
+    if (p == nullptr) continue;  // for the analysers: REQUIRE has thrown
+    CHECK(p->stats.ammoMax == 3);
+    CHECK(p->ammo == db.player.ammoStart);
+  }
 }
