@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.81 (2026-11-12), a living document: it describes the system as built and deployed,
+Status: v0.82 (2026-11-12), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -320,6 +320,7 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 | `hill` (v0.33) | one round; every Playing tick, if the monkeys in zone 0 are of exactly one team, that team's hold clock advances, and at `hillTicks` the team scores a point (credited to its lowest slot in the zone) and that clock alone restarts; a contested or empty zone holds every clock; the first team to `scoreToWin` points, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch; nobody scores | `HillHolderChanged` when the sole holder changes; a leaver keeps its score |
 | `capture` (v0.33) | one round; team t's flag starts at the centre of zone t; a carrier in its own team's zone while its own flag is home scores a capture (credited to the carrier) and the flag goes home; the first team to `scoreToWin` captures, or the leading team once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch, nobody scores; a carrier drops the flag as a pickup where it stood | a dropped flag no enemy picks up for `flagReturnTicks` goes home; its own team cannot touch it |
 | `control` (v0.80) | one round over every zone of the arena, each owned by a team or nobody (nobody at the start); every Playing tick, per zone, the team with strictly the most monkeys in it, when not the owner, gains a tick of capture progress (a new challenger starts from zero) and at `captureTicks` owns the zone; the owner with the most, or an empty zone, clears the progress, a tie for the most holds it; an owned zone pays its team's clock one tick, occupied or not, from the tick it is captured, and every `hillTicks` of clock is a point to the team's lowest present slot (none present: the clock drains, nobody is credited); the first team to `scoreToWin`, or the leader once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch; nobody scores | `ZoneCaptured` on a capture; at most `kMaxControlTeams` (4) teams; a leaver keeps its score |
+| `harvest` (v0.82) | one round; team t's home is zone t; on every Playing tick that is a multiple of `bankTicks`, each living monkey in its own home holding a banana banks one (its ammo −1, its score +1); then on every multiple of `stealTicks` (0: never), each living monkey with room in its hand in another team's home, when that team's score is above zero and none of its living monkeys stands there, takes one back out (+1 ammo, −1 to that team's highest-scoring slot); the first team to `scoreToWin` banked, or the leader once `timeLimitTicks` pass (a tied lead: draw) | +1 death, respawn as deathmatch with `respawnAmmo` in hand; nobody scores | `ScoreChanged` (`Objective` a bank, `Stolen` −1 a theft), then `BananaStolen`; a banked banana leaves the world; a leaver keeps its score |
 | (v0.57, every kind: the banana economy) | the point kinds' `catch_score` (a perfect catch of an enemy's banana) and `suicide_score` (an elimination with no killer, after the kind's own hook: `reportElimination`) move the slot's signed score and count toward `scoreToWin`; shipped: deathmatch and team_deathmatch +1 / −1 | `death_bananas`: drop (the round kinds) or vanish (the respawn kinds: held and in flight go with it) | `banana_regrow_ticks` (hill, capture: 480): an empty hand grows a banana (`Player::regrowTicks`, `LifecycleSystem`); a regrowing mode never runs dry; hill and capture respawn in 300 ticks |
 
 Respawn (`LifecycleSystem`, v0.23) is driven only by the timers: during Playing a dead present slot
@@ -436,7 +437,35 @@ while away is not respawned; a slot back again takes the next point at once, dea
 respawns `respawn_ticks` on; at the clock only teams with a present slot are judged, so a team
 that left leading does not win), `score_to_win`, the clock and a tied lead, eliminations, the
 round start, `compatible`, the scripted generator and its lowest-index tie) and
-`side_symmetry_scenario.cpp` (the shipped row under mirrored inputs, §11 "Contest design").
+`side_symmetry_scenario.cpp` (the shipped row under mirrored inputs, §11 "Contest design"; the
+row is `control_1t` since v0.82).
+
+As built (v0.82, the contest's harvest kind, §11 "Contest design: bananas as the economy"):
+`harvest` (`src/modes/harvest.cpp`, `ModeKind::Harvest` = 8, loader name `harvest`) is hill's
+flow (`deathmatchRoster` without forfeit, `clockWarnings`, `teamScoreLeader`, `endMatch`) with
+two global beats in `onPlaying`: banking on `ticksInPhase % bankTicks == 0` (the first Playing
+tick is 1), then stealing on `ticksInPhase % stealTicks == 0`, each in slot order over the
+monkeys `zoneOccupants` counts (not eliminated, not falling). A bank is `ScoreChanged`
+(`ScoreReason::Objective`) to the banker; a theft takes one banana a beat per raider, from the
+lowest-numbered home it qualifies in, a −1 `ScoreChanged` (`ScoreReason::Stolen`) to the robbed
+team's highest scorer among all its slots, present or not (the lowest slot on a tie), then
+`BananaStolen`; a team at or below zero is never robbed. Its `modeData`: word 0 `bankTicks |
+stealTicks << 16`, written by its round start, the rest 0; no world-state field. The respawn
+hand is `respawnPlayer`'s (`mode_flow.cpp`): `respawnAmmoOf(player, mode)` capped at the
+monkey's `ammoMax` when the mode sets `respawnAmmo`, `resetPlayer`'s `ammo_start` otherwise.
+`compatible`: a zone per team and a tree (`sim::homeZoneOf`, `sim::hasTree`). The scripted
+generator adds the kind (§11: the nearest fruit with room, home with a banana; on the grid a
+breadth-first route over the cells and roles by rank). Pinned by
+`tests/scenario/harvest_scenario.cpp` (`compatible`, word 0, the baseline's capacity, banking
+and who banks, a lone raider, several raiders, the defender (a dead or falling one stops
+nothing), the thefts that do not happen, a team with no present slot, the win and the clock,
+the respawn hand, the dropped cargo and the pit, the catch that needs room, the dash attack
+that needs a banana, a stack taken as far as the hand holds, the scripted generator),
+`tree_scenario.cpp` (the beat and `max_alive`, no Rng draw, every mode and power-up set, a full
+pool, a round kind that never runs dry), `powerup_scenario.cpp` (the baseline raises
+`ammoMax` without filling the hand), `grid_pathing_scenario.cpp` (the generator's routes and
+roles, a scripted match that gathers, banks and steals) and the harvest case of
+`side_symmetry_scenario.cpp`.
 
 As built (v0.34, step 4: the grid). The space is a pair of hooks, not a system: `InputSystem`
 decodes every alive monkey's `Intent` as before and then calls `spaceBehaviorFor(mode.space)
@@ -566,7 +595,8 @@ Grid space (v0.29, §5.12): `PlayerInput` is unchanged. In a grid mode `InputSys
 frame once per turn, on the Playing tick where `ticksInPhase % turnTicks == 0`: the latched
 `moveDir` (quantised to the nearest of the eight neighbours, idle when `moveMag == 0`) is the
 cell the monkey commits to for the turn. Presses are still edge-detected every tick, so a tap
-inside a turn is not lost, and the `subTick` of the latch tick breaks ties for a contested cell.
+inside a turn is not lost, and the `subTick` of the latch tick breaks ties for a contested cell
+(then, v0.82, the turn's parity).
 Facing follows `aimDir` quantised to eight directions at the latch; the SDKs set aim to move by
 default, so facing follows movement unless the bot or player aims. On a one-tick turn a bot
 sees no difference from the continuous mode.
@@ -752,6 +782,21 @@ in `MovementSystem` and bananas bouncing in `ProjectileSystem`, through one func
 (`statics::moveCircle`, §5.10), so a wall never produces a contact. A `Boomerang × Wall` row
 would come back only when some banana kind should not bounce; it would then be a
 `MoveParams::response` choice made from the banana's modifiers rather than a contact.
+
+Contended pickups (v0.82). A pickup goes to one monkey, so the contact order above (time of
+impact, then pool index) handed a pickup two monkeys touched on one tick to the earlier or
+lower one, which on a mirrored map is a side's (§11 "Contest design: bananas as the economy":
+the `gatherer` mirror on `grove` went 40 to 12 for side 0). The three pickup rows (50, 51, 52)
+are *taking rows*: `InteractionRule::contend` is a state-only test of whether the player could
+take the pickup now (`canTakePickup`: a banana and room in the hand; `canTakePowerUp`;
+`canTakeFlag`: a flag of another team and no flag in hand), the same checks its handler makes
+first. When two or more contacts with one pickup contend on a tick, whatever their times of
+impact, `InteractionSystem` resolves them at the place of the first of them, in an order the
+world Rng draws (a Fisher-Yates shuffle of the contenders in contact order, one
+`Rng::below(i + 1)` for i from the count less one down to 1: one draw for two), each through the
+table in turn (a stack as far as it fits, the rest to the next). A monkey that could not take it
+is no contender and resolves in its own place; a single contender draws nothing, so a tick
+without such a tie resolves exactly as before.
 
 Relation (v0.29). Every row carries a `relationB` mask over {Self, Ally, Enemy}, judged between
 A and B's owner (B itself for a player pair) through `MatchContent::relation`; the default is
@@ -1039,7 +1084,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   a cooldown already running). Expiry restores the loadout's def the same way.
 - Ammo: an `AmmoMax` add tops the ammo up by the same amount on every pickup (rule 51), then
   `ModifierSystem` caps it at the new `ammoMax`; on expiry the cap falls back and extra bananas in
-  hand are lost (bananas in flight still return and are caught up to the cap).
+  hand are lost (bananas in flight still return and are caught up to the cap). A baseline's
+  `AmmoMax` add (v0.82) raises the capacity only and never fills the hand (below).
 - Projectile modifiers are combined at the throw (`abilities/throw.cpp`) over the thrower's live
   `Projectile` grants in slot order (muls multiply, `damageAdd` adds onto `BoomerangDef::damage`
   saturating at 255) and stored on the `Boomerang` (`damage`, `speedMul`,
@@ -1056,7 +1102,15 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   before). Per match (v0.24) `MatchConfig::powerUps` (bit i = power-up i, `kAllPowerUps` by
   default, carried to the systems in `MatchContent::powerUps`) narrows every spawner's set: the
   def is drawn from the intersection, and a spawner whose intersection is empty skips its beat
-  without touching the RNG. The lobby's power-up toggles and `--powerups` set it.
+  without touching the RNG. The lobby's power-up toggles and `--powerups` set it. A spawner
+  that meets a full pickup pool skips its beat (v0.82; it used to end the pass, so no later
+  spawner fired that tick; the draws are the same). Trees (v0.82, `PickupSpawner::tree`, §11
+  "Contest design: bananas as the economy"): on the same beat a tree lays one banana pickup at
+  its `pos` (`layBananaPickup`: `PickupSpawned{a = Banana}`, or with the pool full one more on
+  the nearest banana pickup) while fewer than `maxAlive` bananas, stack counts summed, lie on
+  its cell, whoever dropped them; no Rng draw and no candidate set, so the match's power-up set
+  does not touch it and it bears in every mode. The loader's half-of-the-pool sum counts the
+  power-up spawners only, and a tree needs an arena with cells.
 - Shield: rows 20 and 24, §5.6.
 - The shipped set (`content/powerups.toml`), picked up in `dojo_powerups` (the dojo plus four
   spawners near the corners, first at 1 s and 4 s into a round, then every 8 s, one alive each):
@@ -1075,8 +1129,10 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   slot of its own. `resetPlayer` (every round-start spawn and every respawn) ends with
   `grantBaseline`, which, for a mode with a baseline only, makes the list `{baseline,
   ticksLeft = kPermanentModifierTicks (0xFFFF)}` and applies it at once the way
-  `ModifierSystem` would (stats with hp at the new `maxHp`, ammo topped up like a pickup,
-  ability overrides, tags recorded in `grantedTags`), so a respawned monkey is covered on its
+  `ModifierSystem` would (stats with hp at the new `maxHp`, ammo capped at the new `ammoMax`
+  but never topped up, since v0.82: until then it was topped up like a pickup, which at every
+  respawn would mint bananas; no shipped baseline granted `ammo_max` before `harvest_base`, so
+  no checksum moved; ability overrides, tags recorded in `grantedTags`), so a respawned monkey is covered on its
   first tick rather than after the next `ModifierSystem` pass. `ModifierSystem` never counts a
   permanent entry down (so never drops it); a pickup of the same power-up leaves it permanent
   and only adds its ammo top-up; a shield block may still remove it like any shield. Power-up
@@ -1104,7 +1160,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `RoundEnded{winner}`, `MatchEnded{winner}` (an invalid winner is a draw),
   ... v0.23 (modes): `ScoreChanged{player, score}` (a deathmatch elimination scored; round wins
   are carried by `RoundEnded`; v0.57: `a` is the signed score after as int32 bits and `b` a
-  `ScoreReason`: Objective, Catch, Suicide), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
+  `ScoreReason`: Objective, Catch, Suicide, v0.82 Stolen), `PlayerRespawned{player, entity, spawn point}` (a deathmatch
   respawn or late join; `PlayerSpawned` stays the round-start spawn), `TimerWarning{seconds}`
   (10, 3, 2, 1 s left on the mode clock).
   v0.21 (abilities): `PlayerBlinked{player, entity = the player, a/b = the origin's raw x/y}`,
@@ -1132,6 +1188,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
 - v0.80 (control): `ZoneCaptured{a = the team that now owns the zone, b = the zone}`, pushed by
   `control` on the capture tick (no player, no entity). Ownership and the capture under way are
   read from `modeData`, not from events.
+- v0.82 (harvest): `BananaStolen{player = the raider, entity = its player, a = the slot whose
+  point it took, b = the zone (the robbed team's home)}`, pushed after that slot's
+  `ScoreChanged` with the appended `ScoreReason::Stolen` (3) and −1; a bank is a
+  `ScoreChanged` with `Objective`. A tree's fruit is an ordinary `PickupSpawned{a = Banana}`
+  (b 0), told from a drop only by where it lies.
 - Consumers: presentation (VFX/SFX), scoring, the match runner's result line, telemetry.
 - Under rollback, presentation keys events by `(tick, hash)`. Events re-emitted during
   re-simulation are deduplicated; events from an abandoned timeline that have not played yet
@@ -1319,7 +1380,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   another kind than its slot's def, a tag a power-up may not grant, multipliers outside (0, 4]
   (a projectile `speed_mul` outside (0, 8] since v0.80),
   a spawner outside the arena (by the pickup radius), inside a wall or in a pit (v0.22 statics), spawners without any power-up defined, an
-  arena's `max_alive` sum above 16.
+  arena's `max_alive` sum above 16 (the power-up spawners' since v0.82). v0.82: a spawner may
+  be a tree, `tree = true` (exclusive with `power_ups`, an arena with cells required; §5.8).
 
 - Modes, second cut (v0.29, §5.3): `ModeDef` gains `space` (`continuous` | `grid`), `turnTicks`
   (grid, 1–60), `teams` (0 = free-for-all, else the team count the lobby distributes the slots
@@ -1384,8 +1446,9 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   (`spawnGroupRange`). `ContentDB::compatible(arena, mode)` is `mode.teams == 0 ||
   spawnGroups >= mode.teams`, with `firstCompatibleArena(mode)`; the sim itself plays any pair.
   `content::resolveMatchNames` (every command line, the client's flags and `?mode=`) takes the
-  first compatible arena when no arena is named and refuses a named incompatible one with the
-  list of arenas that suit; the client's lobby settings let a saved arena give way instead; the
+  first compatible arena when no arena is named (v0.34: the mode's own `arena` first; v0.82:
+  then its pool's first suitable member, `firstCompatibleArena`) and refuses a named
+  incompatible one with the list of arenas that suit; the client's lobby settings let a saved arena give way instead; the
   lobby's Arena row skips incompatible arenas and a mode change moves the arena to the first
   compatible one. `dojo` keeps one group: in a free-for-all team t is slot t, so two groups would
   move slots 1 and 3 to the other half and change every dojo checksum. The team arena is new,
@@ -1395,7 +1458,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
 - Zones (v0.29): `zones = [{ min, max }, ...]` (`kMaxArenaZones` 8), boxes like hazards that
   block nothing and emit nothing; `zoneOccupants(s, arena, k)` returns the mask of the monkeys
   whose centre is inside, for `onPlaying`. `hill` needs one zone, `capture` one per team,
-  `control` (v0.80) one and plays them all.
+  `control` (v0.80) one and plays them all, `harvest` (v0.82) one per team (team t's home is
+  zone t, `homeZoneOf`) and a tree.
   As built (v0.33): `ArenaDef::zones` (`Zone{min, max}`, `Zone::centre()`) and `zoneCount`,
   visited after `spawnGroups` with `cellSize`. TOML `zones = [{ min = [x, y], max = [x, y] },
   ...]` (unknown keys are errors); validation as the statics' boxes: non-empty and inside the
@@ -1563,7 +1627,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   cells a 1-tick turn within the per-tick truncation (17476 × 7.5 = 131070 raw), and the twins
   at 9 to 12, the originals' grants lasting one and a half times the originals' count of 15-tick
   turns, in 1-tick turns (`big_banana_1t` and `quick_hands_1t` 60, `triplebanana_1t` and
-  `shield_1t` 90); 13 of `kMaxPowerUps` 16 are used. `speed_boost` has no twin: a walk is a cell
+  `shield_1t` 90); 13 of `kMaxPowerUps` 16 were used (14 since v0.82). `speed_boost` has no twin: a walk is a cell
   a turn on the grid whatever the speed. The twins come after the three baselines in
   `powerups.toml`, so the lobby's toggles are no longer a prefix of the table: the lobby lists
   every power-up no mode names as its baseline, the four twins among them, and a human room can
@@ -1571,7 +1635,25 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   (mode 9) is in §8 "The `contest` mode"; its `vision` is `grid_rounds_1t`'s with
   `hearing = 1`. Pinned by
   `tests/unit/content/contest_test.cpp` (the map, its symmetry, the spawners, the twins, the
-  baseline, the flight) and the contest pin in `loader_test.cpp`.
+  baseline, the flight) and the contest pin in `loader_test.cpp`. Since v0.82 that row is
+  `control_1t` (mode 10, appended, every number unchanged) and `contest` is harvest (below).
+- Harvest content (v0.82, §5.3, §11 "Contest design: bananas as the economy"). `ModeDef` gains
+  `respawnAmmo` (u8, `respawn_ammo` 0..254, default `kRespawnAmmoStart` 0xFF = `[player]
+  ammo_start`), `bankTicks` (`bank_ticks` 1..65535, default 2), `stealTicks` (`steal_ticks`,
+  0..65535, 0 never, the default) and `arenaSet` (u16, `arenas = ["<name>", ...]`, a bit set
+  over `kMaxArenas`, which a `static_assert` holds at 16; every member must suit the mode, and
+  `arena`, when both are given, must be a member), all four accepted on every kind, visited
+  after `bananaTurnRateBam` (`fieldCount<ModeDef>() == 32`); `PickupSpawner` gains `tree` (u8,
+  `fieldCount` 6). The arenas, appended at 11 to 14 (15 of 16 used), are the pool: `grove`
+  (24 × 14, the design's draft verbatim), `orchards` (28 × 16), `gorge` (26 × 16) and `burrows`
+  (20 × 12), each its own half turn with zone 0 mapping to zone 1, each with all 8 spawners (6
+  trees, 2 power-up spawners drawing `big_banana_1t`, `quick_hands_1t` and `shield_1t`, first
+  at 90, every 240, one alive); home trees every 90 ticks holding one, flank trees every 60
+  holding two, rich trees every 30 holding three, `first_ticks` equal to the interval (§11 has
+  the maps). Power-up 13 is `harvest_base` (14 of 16 used), `contest_base` plus `ammo_max` + 2.
+  Mode 9, `contest`, is `kind = "harvest"` on the pool (§8 "The `contest` mode"). Pinned by
+  `contest_test.cpp` (each map's half turn, homes, trees, capacities and reachability, the
+  baseline, both rows) and the contest pin in `loader_test.cpp`.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -1642,7 +1724,8 @@ centre happens to rest on a cell centre.
   its disc is inside the pit cell, as in the continuous space, near the end of the slide).
   Contested
   cells resolve at the latch: two monkeys that target one cell, or each other's cell, keep the
-  earlier press (`subTick` of the latch tick), then the lower slot; the loser stays. Nothing
+  earlier press (`subTick` of the latch tick), then (v0.82) the lower slot on an even turn and
+  the higher on an odd one; the loser stays. Nothing
   about this is a rule row: the table says what happens when things touch, the space says who
   gets to move. The commitment is state, `Player::moveTarget` (Vec2) and `Player::moveTicks`
   (0 = at rest), visited like every field; the continuous space leaves them zero, so its
@@ -1701,7 +1784,10 @@ differs from or adds to the design above:
   boundary puts it back on a cell.
 - **Contested cells** are judged in one pass over the steps taken at the latch: a step loses to
   another that targets the same cell or swaps with it and has the lower key (`subTick` of the
-  latch tick, then slot). No cascade: a winner keeps its target even when the loser of a swap
+  latch tick, then slot: the lower slot until v0.82; since then the lower slot on an even turn
+  and the higher on an odd one, the turn being `ticksInPhase / turnTicks` at the latch, `beats`
+  in `spaces/grid.cpp`, Rng-free and even over a match, so neither side of a mirrored arena
+  keeps the tie; §11 "Contest design: bananas as the economy"). No cascade: a winner keeps its target even when the loser of a swap
   stays in it (they then share the cell), and a step that loses one contest still blocks the
   steps it beat. Moving into a cell another monkey stands in is no contest: monkeys overlap in
   the continuous space too, and the dash attack needs exactly that. A dash bypasses the
@@ -2595,6 +2681,23 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   deaths, the lobby's mode summary gives the points, the capture time and the time per point,
   and the F1 overlay's tuning has sliders for `hillTicks` and `captureTicks` and every mode's
   banana overrides, which `contentToCpp()` prints.
+- Harvest in the client (v0.82): trees are arena content and drawn in every mode
+  (`RenderState`'s trees, `RenderTree`: a trunk at the back of the cell, a canopy, a ring on the
+  cell its fruit is laid on, and the next fruit ripening under the canopy toward the tree's beat,
+  `treeRipeness()`); banana pickups lying on one spot stack into a column, so a tree's fruit
+  reads as several; the held cargo is a fanned bunch of up to five over the ammo pips; harvest's
+  homes are tinted in their team's colour (zone t for team t, as capture's). A banked banana is
+  the gold pop and coin of a point; a theft's −1 has no pop (`BananaStolen` is the news):
+  rings closing in over the robbed home in the raider's team colour, `SoundId::Steal` and a
+  flash on the raider (the constants in `tuning.hpp`). The HUD's mode line "Harvest (first team
+  to N bananas banked)", the countdown title "Harvest: bank N bananas" and the team line "Team 1:
+  12 banked" (`modeLineText`, `roundStartTitle`, `teamScoreText` in `core/hud_view`); the
+  scoreboard's column is "Bananas" with the deaths; the lobby's mode summary gives the bank beat,
+  the steal beat or none, an empty-handed respawn and the clock, its arena preview draws trees
+  apart from power-up spawners and counts them, and choosing a pooled mode brings the pool's
+  first member; the F1 overlay and `contentToCpp()` learn `bankTicks`, `stealTicks` and
+  `respawnAmmo`. The four pool arenas take themes (`grove` and `orchards` jungle, `gorge` beach,
+  `burrows` temple). Nobody has yet looked at a harvest match on screen beyond the smoke test.
 
 - The front end (v0.43, M6b step 3; `apps/client/ui_style.{hpp,cpp}`, `screens.{hpp,cpp}`,
   `hud.cpp`, the headless models `core/menus.hpp`, `core/online_menu.hpp`,
@@ -2728,8 +2831,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   read-only overlay with a Replay panel (tick and total, checksum, phase, round, paused, speed,
   seed, players, arena/mode/loadout, power-ups, the content and build hashes). Leaving drops the
   replay; nothing in the menu returns to it. At load the client prints `kfm_client: replay SRC:
-  1800 ticks (0:30), arena courtyard_zones, mode contest, loadout base, 10 players` (v0.80;
-  `courtyard_hill` from v0.69, `courtyard` before). Exit codes: with `--exit-after-frames` a playing replay exits 0 ("stopped
+  1800 ticks (0:30), arena grove, mode contest, loadout base, 10 players` (v0.82;
+  `courtyard_zones` in v0.80 and v0.81, `courtyard_hill` from v0.69, `courtyard` before). Exit codes: with `--exit-after-frames` a playing replay exits 0 ("stopped
   after N frames in the replay at tick T of C, checksum 0x…") and a failed one renders the error
   screen for the N frames (so `--screenshot` captures it) and exits 1; without it, quitting
   exits 0. Follow-ups are in §12.
@@ -2840,9 +2943,10 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 | `BoomerangBounced` | BounceSpark 0.15 s | WallBounce |
 | `RoundStarted`, `RoundEnded`, `MatchEnded` | banners 1 / 1.5 / 3 s; the HUD text pops in at 1.35× and settles over the first quarter (`bannerScale`) | — , RoundEnd, MatchEnd |
 | `PlayerRespawned` (v0.23) | RespawnBurst 0.6 s at the spawn point (a ring collapsing in the slot colour and a rising glow); the spawn protection then blinks the body (the `Invulnerable` flag) | Respawn (rising shimmer) |
-| `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer); v0.57: none for a `Suicide` point | Score (coin blip); none for a `Suicide` point |
+| `ScoreChanged` (v0.23) | ScorePop 0.5 s (gold ring at the scorer); v0.57: none for a `Suicide` point; v0.82: none for a `Stolen` point | Score (coin blip); none for a `Suicide` or `Stolen` point |
 | `BananaRegrown` (v0.57) | PickupSparkle 0.5 s in the hand (`kRegrowSparkleSeconds`), a 0.15 s flash | Regrow (a soft pop gliding up an octave, then a twinkle) |
 | `ZoneCaptured` (v0.80) | ZoneCaptured 0.7 s: a ring in the new owner's team colour racing out over the zone (`RenderEffect::size` = the zone's larger half extent) | Score, panned to the zone |
+| `BananaStolen` (v0.82) | BananaStolen 0.8 s: rings closing in over the robbed home in the raider's team colour (`RenderEffect::size` = the zone's larger half extent), StealFlash 0.4 s at the raider and its body flashed | Steal, at the raider |
 | `BananaVanished` (v0.57) | a small white puff (ThrowPuff, `kBananaVanishSeconds` 0.3 s) where the banana was | — |
 | `TimerWarning` (v0.23) | TimerBanner 0.8 s: the HUD clock pops | TimerWarning (beep) |
 | `PlayerBlinked` (v0.21) | BlinkFlash 0.3 s at the origin (from the payload) and at the landing, in the slot colour; the jump exceeds `kSnapDistance`, so the body snaps | Blink (rising zap) |
@@ -3162,7 +3266,11 @@ which the contract needs.
     `reserved0` (so the fog flag still reaches it) and needs a buffer of only 5748 bytes; any
     other version is `AbiMismatch`. Native agents see version 2. Not in either version:
     `hill_ticks` and `capture_ticks`, so a bot cannot read those thresholds (hill has had the
-    same gap). Tests and fixtures: `peek_v1`/`peek_v2`, `tight_v1`/`tight_v2`, `abi_v0`/`abi_v3`,
+    same gap). v0.82, within version 2 and so within version 1's prefix: `ObsModeKind::Harvest`
+    is 8 and `ObsSpawner::pad0` is now `tree` (offset 15 of a spawner; 1 on a tree, 0 on every
+    power-up spawner, so no observation of an arena without trees changed); harvest's `modeData`
+    word 0 holds its beats (bot-abi.md §2.10, §3, §3.3). Not in either version: a stacked
+    pickup's count (missing since v0.57) and `respawn_ammo`. Tests and fixtures: `peek_v1`/`peek_v2`, `tight_v1`/`tight_v2`, `abi_v0`/`abi_v3`,
     and the version 1 prefix pinned by a hash taken from the original version 1 builder.
     `docs/bot-abi.md` is normative for the layout. Enum values may be appended within a version; a new `AbilityKind` trips a
     `static_assert` in the builder so the schema is reviewed. The builder is a pure function of
@@ -3322,8 +3430,8 @@ difficulty.
   (2) with the flag's team in the pickup's `spawner` byte, tags bit 9 Carrying; the hill and
   capture `modeData` layouts are documented for `match.reservedModeData`. Zones are not in the
   v1 layout (a capture bot finds the flags in `pickups`; the zones wait for step 5's fields).
-  The reference bot ignores flags and zones: it plays hill and capture (and, v0.80, control)
-  as team deathmatch.
+  The reference bot ignores flags and zones: it plays hill and capture (and, v0.80, control;
+  v0.82, harvest, whose trees and homes it ignores too, so it never banks) as team deathmatch.
   Filled since v0.35 (as built below): `header.schemaFlags` bit 0 under fog,
   `players[i].reservedVisible` and `bananas[i].reservedVisible`, `reservedHeardCalls[16]`,
   `self.reservedCellX/Y` and `reservedFacingOctant`, `match.reservedTurnTicks` and
@@ -3340,7 +3448,11 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
 `apps/arena`). Where it pins or adds to the design above:
 
 - **Geometry.** Cells are `kfm/sim/spaces/grid_cells.hpp`'s; a monkey's, a banana's and a
-  pickup's cell is the cell of its centre; the facing octant is `octantOf` of the aim byte (a
+  pickup's cell is the cell of its centre (v0.82: a centre lying exactly on a cell edge lies in
+  the cells on both sides, all four on a corner, and is seen when either is, heard and banana
+  sight measured to the nearest; `cellOf` alone had put it in the east and south cell only, so
+  the two sides of a half-turn map saw an edge pickup at different distances; the observer's
+  own cell is still `cellOf`'s; bot-abi.md §3.1); the facing octant is `octantOf` of the aim byte (a
   half-way byte rounds counter-clockwise, as a `moveDir` does). `inCone(dc, dr, octant, R)` on
   column and row offsets (rows grow southward): a cardinal cone is `forward >= |side|`, a
   diagonal one the closed quadrant, both within Chebyshev R and without the own cell; a unit test
@@ -3426,7 +3538,11 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   D`: team places by the `MatchEnded` winner's team, then team score, then fewer deaths, then
   team index; kills count enemies only), and a slot segment its `team`; the summary adds
   `entrant E SPECS wins W mean_place X ...`; the JSON mirrors it (`winner_team`, `teams`,
-  `entrants`). A slot's bot index is entrant × team size + its position.
+  `entrants`). A slot's bot index is entrant × team size + its position. v0.82: without
+  `--arena`, a mode with an arena pool plays match k on member (k / T) mod P in content order (T
+  the team count with `--team`, else the slot count; P the members that suit the mode), so with
+  `--rotate` every entrant plays every side of a member before the next; the text line names the
+  arena and the JSON match object appends `arena` (`docs/arena-result.md`).
 - **The C SDK** (`tools/bots/sdk-c/kfm_bot.h`) names the filled fields without the prefix
   (`turnTicks`, `ticksToLatch`, `teamScores`, `modeData`, `facingOctant`, `role`, `team`,
   `cellX`/`cellY`, `visible`, `heardCalls`), adds `KFM_ABILITY_CALL`, the hill, capture, flag
@@ -3438,7 +3554,20 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   control `modeData` words), and the checked-in examples are rebuilt against it, since the
   README requires them to match their sources; the version 1 `chaser.wasm` is kept byte for
   byte as `tests/fixtures/bots/chaser_v1.wasm`, never rebuilt, and `example_bot_test` plays it
-  and the version 2 build on one seed, checksum for checksum.
+  and the version 2 build on one seed, checksum for checksum. v0.82: the header names harvest
+  (`KFM_MODE_HARVEST`, `kfm_obs_spawner.tree`, `KFM_HARVEST_BEATS_WORD` and
+  `KFM_HARVEST_BANK_TICKS(word)` / `KFM_HARVEST_STEAL_TICKS(word)`), and a third example,
+  `gatherer.c` (`.wasm` checked in), is the kind's smoke test, since the reference bot never
+  banks: a cell map from `arena.walls` and `arena.hazards` (a cell open when the monkey's circle
+  at its centre overlaps no wall and the centre is on no pit, diagonals by the grid's rule),
+  breadth-first distance fields built over the countdown and grown at most 96 cells a tick;
+  with room in its hand it fetches the nearest banana it sees; the team's monkeys share the
+  trees out with no call (each tree's cost is its beat plus twice its walking distance from the
+  home, and the r-th monkey by slot takes the r-th pick of a D'Hondt share-out, so five a side
+  put three on the two rich trees and one on each flank tree on most maps); it goes home with a
+  full hand, or with something when nothing is left to fetch, and stands there until empty;
+  holding two or more it throws at a visible enemy with a clear line; no dash, no catch.
+  `fuel_max` 27 500 to 34 411 of 100 000 on the pool; `example_bot_test` plays it.
 - **The reference bot on the grid and under fog** (all of it gated on a grid turn clock or the
   fog flag, so every continuous mode plays bit for bit as before): it walks the eight octants
   and idle from the next latch on, a cell per turn by the sim's step rule (the target cell free
@@ -3453,7 +3582,18 @@ As built (v0.35, M5b step 5; `kfm/ai/vision.hpp`, `src/vision.cpp`,
   for the last enemy it saw or an ally called out (600 ticks), else the arena's centre, its cone
   turned there and sweeping a quarter turn every four turns once there. With a call on the
   ability button it calls out a seen enemy's coarse cell, symbol `(col / 2) | (row / 2) << 4`,
-  at most once per eight turns and, at 15-tick turns, never on a latch tick. Measured (Release,
+  at most once per eight turns and, at 15-tick turns, never on a latch tick. v0.82, both sides
+  of a half-turn map alike (the east bias of §11 "Contest design: bananas as the economy"): the
+  centre goal is every free cell nearest the map's centre point (the search starts from all of
+  them and arrival counts on any; it had been the cell east and south of the centre, a wall on
+  `orchards`), and a bot that has swept and seen nobody patrols to the half turn of where it
+  stands and back; a target on its own cell is aimed along its facing, not +x; there is no
+  hysteresis before the first walk, the sweep starts from the way in, and direction loops (the
+  walk, the dodge, the blink) start from the bot's own frame, west first on the east side; equal
+  fetches and power-ups are drawn from its seed, not the lowest pool slot; a bot that first stood
+  east of the centre encodes its calls on the half-turned map with bit 7 set. So one seed and
+  mirrored observations give mirrored inputs (`tests/unit/ai/side_symmetry_test.cpp`); every
+  reference-bot match plays differently from before, with no sim checksum moved. Measured (Release,
   this machine): `kfm_arena --mode grid_rounds_1t --bots 4 --matches 5` ends 5 of 5 (572–1591
   ticks), `--mode grid_rounds --matches 3` 3 of 3 (1064–1746), from 0 of 8 in v0.34; 20 rotated
   5v5 matches on `grid_rounds_1t` under `own` fog all end (mean 1140 ticks, 10 wins a side) at
@@ -3511,19 +3651,21 @@ lives in the bots repository (above) and uses this repository through its tagged
   module is at most 4 MiB, so the cap is about tidiness, not storage.
 - **The `contest` mode.** The season's ruleset is one mode in the content, `contest`, the
   ladder's row of the contest knobs above (team size, `vision`, call range, `turnTicks`, fuel,
-  memory on respawn) on its arena. Since v0.80 (§11 "Contest design") it is `kind = "control"`
-  with `grid_rounds_1t`'s squad (1-tick turns, the roles, fog and calls) on `courtyard_zones`
-  under `own` fog: three zones to capture and keep, `contest_base` as the baseline (the banana at
-  2 cells a turn), `capture_ticks` 30, `hill_ticks` 60, `score_to_win` 10, `time_limit_ticks`
-  3600, `respawn_ticks` 240, `respawn_invuln_ticks` 8, `vision.hearing` 1,
-  `banana_outbound_ticks` 3 and `banana_turn_rate` 15474 (85° a tick), the regrow (120), `death_bananas`
-  vanish, the space and the turns unchanged; it is a starting row, not yet tuned against the
-  design's gates. From v0.69 to v0.79 it was king of the hill on `courtyard_hill`, and before
-  that `grid_rounds_1t` renamed (team elimination on `courtyard`). Bots find the zones in
-  version 2's `zones` block, zones 0 and 1 also in `match.reservedModeData` words 8–15, and
-  control's state in words 0–7 (bot-abi.md §2.12, §3). Designed in v0.81 and not yet built
-  (§11 "Contest design: bananas as the economy"): the row becomes `harvest`, bananas borne by
-  trees, carried home and banked, on a pool of four maps. The ladder points at the name, so a season
+  memory on respawn) on its arena. Since v0.82 (§11 "Contest design: bananas as the economy")
+  it is `kind = "harvest"` with `grid_rounds_1t`'s squad (1-tick turns, the roles, fog and
+  calls) on a pool of four maps (`arenas = ["grove", "orchards", "gorge", "burrows"]`, `arena =
+  "grove"`) under `own` fog: bananas borne by trees, carried home and banked, one taken back out
+  of an undefended enemy home every `steal_ticks`; `harvest_base` as the baseline (the banana at
+  2 cells a turn, three in the hand), `bank_ticks` 2, `steal_ticks` 6, `score_to_win` 40,
+  `time_limit_ticks` 3600, `respawn_ticks` 240, `respawn_invuln_ticks` 8, `respawn_ammo` 0,
+  `banana_regrow_ticks` 0, `death_bananas` drop, `catch_score` 0, `vision.hearing` 1,
+  `banana_outbound_ticks` 3 and `banana_turn_rate` 15474 (85° a tick); a starting row, not yet
+  balanced against the design's targets. In v0.80 and v0.81 it was `kind = "control"` on
+  `courtyard_zones` (three zones to capture and keep), kept unchanged as `control_1t` (mode 10);
+  from v0.69 to v0.79 king of the hill on `courtyard_hill`, and before that `grid_rounds_1t`
+  renamed (team elimination on `courtyard`). Bots find the homes (zones 0 and 1) in version 2's
+  `zones` block and in `match.reservedModeData` words 8–15, the trees in `arena.spawners`
+  (`tree` 1) and the beats in word 0 (bot-abi.md §2.10, §3, §3.3). The ladder points at the name, so a season
   changes the row, not the service, and the row may change between releases inside a season (v0.59). **A season is a
   time window, not a release** (v0.59; until then a season pinned one release and its content
   hash): the ranking freezes at a date, the service runs every match on the current tagged
@@ -3611,7 +3753,7 @@ lives in the bots repository (above) and uses this repository through its tagged
   catch attempts and their conversion, `tHit − pressTime` for every attempt, throw-to-outcome
   times, time spent without ammo and the banana supply floor; v0.16 adds catches declined at
   full ammo and dash attacks (dashes that met a hittable player, with and without ammo, hits and
-  eliminations by dash). The catch inputs exist only
+  eliminations by dash); v0.82 objective points and thefts (`BananaStolen`). The catch inputs exist only
   inside `step()`, so the tool runs the ten systems itself and resolves the contact list one
   contact at a time in `InteractionSystem`'s order, judging each against the state the rules
   table sees (a contact whose banana or player an earlier contact of the tick removed or
@@ -3724,9 +3866,13 @@ lives in the bots repository (above) and uses this repository through its tagged
   events its name promises (the island entry a `PlayerFell`, blink/slam/parry their ability's
   event, the power-up entries a power-up taken and the powerset one only its two power-ups
   spawned, deathmatch and team deathmatch a scoring elimination and a respawn, the team and
-  round entries a round won, hill the hill held and a point, contest a zone captured and a
-  zone's point (the hill held until v0.80), capture a flag taken
-  and a capture, the grid squad and contest a call, the empty entries no action at all) and no
+  round entries a round won, hill the hill held and a point, `control_1t` a zone captured and a
+  zone's point (the contest entry's row from v0.80 to v0.81, the hill held until v0.80), the
+  three harvest entries (v0.82: `scripted_10p_contest_1800t` on `grove`,
+  `scripted_10p_contest_gorge_1800t`, `scripted_10p_contest_burrows_1800t`) a tree's fruit taken
+  off the floor, more banked than the ten opening hands and a theft (gorge's also a pit fall),
+  capture a flag taken
+  and a capture, the grid squad, contest and `control_1t` a call, the empty entries no action at all) and no
   `EventSink` overflow; a manifest line without a row there fails, so a new entry states what it
   is for. v0.22 adds one 4-player scripted replay per walled arena
   (`scripted_4p_pillars_1800t`, `scripted_4p_corridors_1800t`, `scripted_4p_island_1800t`), so
@@ -4076,7 +4222,8 @@ below:
   `ContentDB::compatible`: an arena with a zone. The scripted generator steers to the nearest
   zone its team does not own (the lowest index on a distance tie), Rng-free and keyed on the
   kind, and gives a monkey no target while it stands in any zone its team does not own (it
-  wanders there, as in hill); the corpus entry `scripted_10p_contest_1800t` plays it.
+  wanders there, as in hill); the corpus entry `scripted_10p_contest_1800t` played it, and
+  since v0.82 `scripted_10p_control_1t_1800t` does, checksum for checksum.
 - **Three zones, on a new arena**, `courtyard_zones` (index 10, appended; `courtyard_hill`
   stays for `hill`; §5.10 has the numbers). The draft map shipped verbatim: the courtyard with
   a home zone at each team's door and the old hill between the pillars, still symmetric under a
@@ -4152,7 +4299,8 @@ below:
   original's count of 15-tick turns: 60, 90, 60 and 90 turns (a mode's numbers that scale with
   the turn need their own defs, as the kits have). `speed_boost` is left out: a walk is a cell
   a turn on the grid whatever the speed.
-- **The row.** `contest` is `kind = "control"` on `courtyard_zones` with the `contest_base`
+- **The row.** `contest` was `kind = "control"` (since v0.82 the row is `control_1t`, mode 10,
+  every number unchanged, and `contest` is harvest, below) on `courtyard_zones` with the `contest_base`
   baseline (`grid_base_1t` is `grid_rounds_1t`'s and stays), and starts from: `capture_ticks`
   30, `hill_ticks` 60, `score_to_win` 10, `time_limit_ticks` 3600, `respawn_ticks` 240 and
   `respawn_invuln_ticks` 8 (on the old hill 240 and 8 took the mirror's stall from 80 of 100
@@ -4178,7 +4326,8 @@ scoreboard's cases for the kind), the measurements and a release; (4) in the bot
 the pin bump, the C++ layer's zones and control state, `starter` and `holder` for the kind, the
 prose, a release, and the house teams resubmitted. Progress (v0.80): (1) to (3) are built on one
 branch, all but the release and the measurements. The content hash moved, so the corpus was
-re-recorded: `scripted_10p_contest_1800t` plays `courtyard_zones` with its seeds and length (3
+re-recorded: `scripted_10p_contest_1800t` played `courtyard_zones` with its seeds and length
+(since v0.82 `scripted_10p_control_1t_1800t` does, with the same checksums; 3
 `ZoneCaptured`, 15 objective points, 11 calls, 4 power-ups taken, the match ending inside its
 1800 ticks) and its checksums changed intentionally; no other `.checksums` file did. The client
 draws the kind (§7), though nobody has yet looked at a control match on screen. Measured as a
@@ -4201,12 +4350,14 @@ as the engine goes. In every sole-control run of `holder` against `starter` on t
 east side won 55 to 77 games of 100 whichever bot stood there, and a mirror of `holder`, whose
 goal is the same under the arena's half turn, split 50 to 102. The mirrored-inputs test that
 was to come first is `tests/scenario/side_symmetry_scenario.cpp` (v0.80): it plays the shipped
-`contest` row with each east monkey given the half turn of its west twin's input and compares
+`contest` row (`control_1t` since v0.82) with each east monkey given the half turn of its west twin's input and compares
 the world with its own half turn, teams swapped, every tick. A match without banana fights is
 mirrored bit for bit to a 10 to 10 draw, with each of the four power-ups; with banana and dash
 fights every discrete outcome stays mirrored to the end, positions, velocities and facings
 within 64 raw units and 4 BAM (fights alone: 48 hits, 24 eliminations, 16 respawns and 8
-perfect catches a match) or 256 raw units and 64 BAM (with dashes). The old hill row set up on
+perfect catches a match) or 256 raw units and 64 BAM (with dashes). Since v0.82 the tied cell
+contest alternates (item 4 below), the matches walk other paths, and the fights case plays
+seeds 3 and 5 within 256 raw units and 64 BAM, the dashing case seeds 5 and 55. The old hill row set up on
 `courtyard_hill` is likewise mirrored bit for bit without fights (to the 3600-tick clock, 0 to
 0; a measurement, not a case). What is not mirrored, each pinned by a `[known-asymmetry]` case:
 (1) the spawn groups' offsets are two world-Rng draws (`spawnByGroups`, `systems/rules.cpp`),
@@ -4215,104 +4366,142 @@ their power-up kinds separately (`systems/lifecycle.cpp`), alike in 12 of 40 see
 `Fixed::operator*` floors, which nudges every banana toward (−x, −y) by about a raw unit a tick
 (negligible on this row; on the old hill row's long flights it passed a whole unit after about
 100 ticks of flight in 2 of 8 seeds); (4) a grid cell contest or swap at an equal `subTick`
-goes to the lower slot (`beats`, `spaces/grid.cpp`), which is the west's, and no bot sets
+went to the lower slot (`beats`, `spaces/grid.cpp`), which is the west's, and no bot sets
 `subTick`: in 200 `ref:hard` games 973 of 1585 enemy cell contests went west (61 %), about 8 a
-game; (5) a simultaneous dash exchange lets the lower slot strike first (contacts in pool order,
+game (v0.82: it alternates by the turn's parity, and the case pins the alternation); (5) a simultaneous dash exchange lets the lower slot strike first (contacts in pool order,
 then the HitStun row bars the return blow), 3 times in 200 games; (6) same-tick respawns run in
 slot order with an Rng tie-break (`respawnTimers`, `farthestSpawnPoint`), mirrored among
 standing monkeys and not into an empty arena, 318 same-tick pairs in 200 games. So the engine
 leans west where it leans at all, and the east bias measured on the old hill is not the
 engine's tie-breaks: it is left to the bots and to `engine/ai` (fog, line of sight, scan
-order), which the test does not cover. On the shipped row the sides split as a fair coin does:
+order), which the test does not cover (v0.82 found it: the reference bot's absolute-direction
+choices, §11 "Contest design: bananas as the economy"). On the shipped row the sides split as a fair coin does:
 `kfm_arena --mode contest`, five against five, `--seed 1`, 200 games, `ref:hard` against
 itself, 105 west to 95 east (two-sided binomial p = 0.52; a fair coin's 95 % range is 86 to
 114; the 40-game smoke run's 16 to 24 above is inside its 14 to 26), 89 to 111 by entrant with
 `--rotate`, no draw, no game at the clock, a median of 1234.5 ticks (712 to 1560). `--rotate`
 still cancels what is left per entrant. The fixes are open, the owner's call, because each
-moves checksums and regenerates the corpus: neither twin moves on a tied cell contest; both
+moves checksums and regenerates the corpus: neither twin moves on a tied cell contest (v0.82
+took this one up as an alternation instead); both
 blows land in a simultaneous exchange; respawn points chosen for every due slot before anyone
 respawns; one draw for all spawn groups, and one per spawner beat for both spawners;
 symmetric rounding in `Fixed`'s multiply (§12).
 
-Contest design: bananas as the economy (v0.81; designed, not built). The control contest of
-v0.80 plays and ends, but it is a thin game for a bot contest. That is the owner's judgement on
-seeing it run, not a measurement: **nothing compounds** (five monkeys respawn free, and nothing
-a team does changes what it can do next); **the units are alike** but for one catcher; **the
-objective stands still** (a rectangle to out-number); and **there is one small map**, known in
-full, which a bot can hard-code. What v0.80 measured agrees as far as it goes: a zone-blind bot
-loses 10 to 0 in 700 turns to a monkey that crosses its home zone once, and `ref:hard` against
-itself, ignoring every zone, still ends a game in a median of 1234 turns. The banana fight (the
-throw, the side-step, the perfect dash catch) is the deep part and stays. The season still has
-no entrant from outside the project, so the rules change again before one arrives. Decided:
+Contest design: bananas as the economy (v0.81 designed; v0.82 built, not released, not
+measured against its targets). The control contest of v0.80 plays and ends, but it is a thin
+game for a bot contest. That is the owner's judgement on seeing it run, not a measurement:
+**nothing compounds** (five monkeys respawn free, and nothing a team does changes what it can
+do next); **the units are alike** but for one catcher; **the objective stands still** (a
+rectangle to out-number); and **there is one small map**, known in full, which a bot can
+hard-code. What v0.80 measured agrees as far as it goes: a zone-blind bot loses 10 to 0 in 700
+turns to a monkey that crosses its home zone once, and `ref:hard` against itself, ignoring
+every zone, still ends a game in a median of 1234 turns. The banana fight (the throw, the
+side-step, the perfect dash catch) is the deep part and stays. The season still has no entrant
+from outside the project, so the rules change again before one arrives. Decided in v0.81, built
+in v0.82 as below:
 
-- **A new kind, `harvest`** (`ModeKind::Harvest`, the ModeBehavior table of §5.3: a behaviour
-  file, a loader name, a registry line, scenario tests; `control` and `hill` stay as they are
-  for human rooms). The banana is the resource as well as the ammunition. It is hill's round,
-  clock, respawns and roster. Bananas come into a match two ways only, the opening hands and
-  the arena's trees (below): the row turns the regrow off, and a respawn comes back
-  empty-handed (a new `ModeDef` field, `respawn_ammo`, absent: `[player] ammo_start`, as every
-  mode today), or dying would mint a banana. A team's home is the zone of its index (capture's
-  convention), so the kind plays on an arena with a zone per team and at least one tree
-  (`ContentDB::compatible`). The first team to `score_to_win` banked bananas wins, else the
+- **A new kind, `harvest`** (`ModeKind::Harvest` = 8, `src/modes/harvest.cpp`, §5.3's table
+  and its as-built paragraph; `control` and `hill` stay as they are for human rooms, and
+  v0.80's contest row is kept as `control_1t`). The banana is the resource as well as the
+  ammunition. It is hill's round, clock, respawns and roster. Bananas come into a match two
+  ways only, the opening hands and the arena's trees (below): the row turns the regrow off, and
+  a respawn comes back empty-handed (`ModeDef::respawnAmmo`, `respawn_ammo` 0..254; absent,
+  `kRespawnAmmoStart` 0xFF, `[player] ammo_start` as every other mode; capped at the monkey's
+  `ammoMax`, late joiners included, since they spawn as a respawn), or dying would mint a
+  banana. A team's home is the zone of its index (capture's convention, `sim::homeZoneOf`,
+  `kNoZone` past the arena's zones), so the kind plays on an arena with a zone per team and at
+  least one tree (`ContentDB::compatible`). It is a team kind (`teams` >= 2, `score_to_win`
+  and `respawn_ticks` >= 1). The first team to `score_to_win` banked bananas wins, else the
   leader at `time_limit_ticks`, a tied lead a draw; eliminations and catches score nothing
   (`catch_score` 0), because both already pay in bananas.
 - **Trees** are pickup spawners that lay a banana instead of drawing a power-up
-  (`PickupSpawner::tree`, the arena spawner key `tree = true`, exclusive with `power_ups`): on
-  the spawner's beat (`first_ticks`, then every `interval_ticks`) a tree lays one banana
-  pickup on its cell while fewer than `max_alive` banana pickups lie there, whoever dropped
-  them. No Rng draw, so two trees that are each other's half turn stay mirrored (the two
-  power-up spawners of v0.80 do not, §12). Trees are arena content and bear in every mode; a
-  match's power-up set does not turn them off; a full pickup pool stacks the fruit as it stacks
-  a drop (`rules/bananas.hpp`); and a tree counts in `bananaLeft`, so a round kind on such an
-  arena never runs dry. A tree needs an arena with cells.
-- **Carrying, banking, stealing.** The cargo is the hand: `Player::ammo`, up to `Stats::ammoMax`,
-  1 in the base kit and 3 under the kind's baseline (an `ammo_max` grant; a baseline must
-  raise the capacity without filling the hand, which a test is to pin). On every Playing tick
-  that is a multiple of `bank_ticks`, each living monkey in its own home zone with a banana
-  banks one:
-  its ammo drops by one and its score gains one (`ScoreChanged`, `ScoreReason::Objective`, to
-  the banker, so the board shows who carried). On every Playing tick that is a multiple of
-  `steal_ticks` (0: never), each living monkey in an enemy home zone with room in its hand
-  takes one banana back out, when that team's score is above zero and no living monkey of that
-  team stands in the zone: the point comes off that team's highest-scoring slot (the lowest
-  slot on a tie) and the raider's ammo gains one. Both are global beats, so the kind adds no
-  per-monkey state: nothing in `WorldState` changes and every existing checksum stays as it
-  is. A banked banana leaves the world, the third exception to "bananas never disappear"
-  (`.claude/rules/sim.md`, with a vanish mode's death and an ammo power-up's extras). The kind
-  keeps no state of its own; `modeData` word 0 carries `bank_ticks` (low half) and
-  `steal_ticks` (high), written at the round start, so a bot reads the two numbers the
-  observation has no field for (the gap hill and control have, §11 above).
+  (`PickupSpawner::tree`, a u8 0/1 visited after `maxAlive`, `isTree()`; the arena spawner key
+  `tree = true`, exclusive with `power_ups`; `sim::hasTree(arena)`): on the spawner's beat
+  (`first_ticks`, then every `interval_ticks`) a tree lays one banana pickup at its `pos` while
+  fewer than `max_alive` bananas lie on its cell (the counts of every banana pickup there,
+  stacks summed, whoever dropped them). No Rng draw, so two trees that are each other's half
+  turn stay mirrored (the two power-up spawners do not, §12). Trees are arena content and bear
+  in every mode, whatever the match's power-up set; a full pickup pool stacks the fruit as it
+  stacks a drop (`layBananaPickup`, `rules/bananas.hpp`); a tree counts in `bananaLeft` while it
+  has a beat to come, so a round kind on such an arena does not run dry before its trees do;
+  its `max_alive` does not count toward the power-ups' half of the pickup pool (the half kept
+  for bananas, which its fruit is). A tree needs an arena with cells (a loader error
+  otherwise). Built with it (v0.82): a power-up spawner that meets a full pickup pool skips its
+  beat instead of ending the tick's spawner pass, so a later tree still stacks its fruit (the
+  same Rng draws as before, so no checksum moved).
+- **Carrying, banking, stealing.** The cargo is the hand: `Player::ammo`, up to
+  `Stats::ammoMax`, 1 in the base kit and 3 under the kind's baseline (an `ammo_max` grant).
+  A baseline raises the capacity without filling the hand: `grantBaseline`
+  (`systems/modifier.cpp`) had topped the hand up by an `ammo_max` grant the way a pickup does,
+  which at every respawn would have minted bananas, and v0.82 stopped it (a picked-up power-up
+  still tops up; no shipped baseline granted `ammo_max`, so no checksum moved; a scenario test
+  pins it). The beats are `ticksInPhase % beat == 0` as `onPlaying` sees it (the first Playing
+  tick is 1), judged after the tick's move; banking runs before stealing on a tick, both in slot
+  order, and "living" is `zoneOccupants`' (not eliminated, not falling). On every bank beat
+  (`bank_ticks`, 1..65535, default 2) each living monkey in its own home with a banana banks
+  one: its ammo drops by one and its score gains one (`ScoreChanged`, `ScoreReason::Objective`,
+  to the banker, so the board shows who carried). On every steal beat (`steal_ticks`, 0 =
+  never, the default) each living monkey in an enemy home with room in its hand takes one
+  banana back out, when that team's score is above zero and no living monkey of that team
+  stands in the zone: the point comes off that team's highest-scoring slot among all its slots,
+  present or not (the lowest slot on a tie; `ScoreChanged` −1 with the appended
+  `ScoreReason::Stolen` 3), the raider's ammo gains one, then the appended
+  `EventKind::BananaStolen` (player = the raider, a = the robbed slot, b = the zone, §5.9). A
+  raider takes at most one a beat, from the lowest-numbered home it qualifies in; a team at or
+  below zero cannot be robbed. Both are global beats, so the kind adds no per-monkey state:
+  nothing in `WorldState` changed. A banked banana leaves the world, the third exception to
+  "bananas never disappear" (`.claude/rules/sim.md`, with a vanish mode's death and an ammo
+  power-up's extras). The kind keeps no state of its own; `modeData` word 0 carries
+  `bank_ticks | steal_ticks << 16`, written at the round start (the rest 0), so a bot reads the
+  two numbers the observation has no field for (the gap hill and control have, §11 above).
+  `bank_ticks`, `steal_ticks` and `respawn_ammo` are accepted on every kind; only harvest reads
+  the beats.
 - **What the fight is worth, with no new rule.** Every one of these is the sim as built, and
   the kind makes each a matter of bananas. A throw is a loan: under the contest's flight the
   banana is back in hand five turns after the press (v0.80), unless it is caught, grounded or
-  its thrower dies. A perfect dash catch puts the enemy's banana in the catcher's hand (past
-  `ammoMax` it drops at its feet): the signature rule becomes theft, and the catcher role the
-  team's thief. An eliminated monkey drops what it held where it stood (`death_bananas =
-  "drop"`) and its bananas in flight come down as pickups, so a kill is worth the cargo and an
-  escort is worth a monkey; a pit takes the monkey's cargo with it. A dash attack needs a
-  banana in hand (`min_ammo` 1), so a monkey that banks its last banana cannot strike until it
-  picks another: banking everything disarms the team, which is the choice the kind is built
-  on. Five monkeys cannot gather, carry, guard the bank and hold the trees at once.
-- **A pool of maps, not one.** A mode may name several arenas, `arenas = [...]` beside
-  `arena` (`ModeDef::arenaSet`, a bit set over `kMaxArenas`; every member `compatible`, and
-  `arena`, when given, one of them). `kfm_arena` without `--arena` plays match k of such a
-  mode on member (k / T) mod P in content order (T teams, P members), so `--rotate` gives a
-  member every entrant on every side before the next member, and a run of a multiple of T x P
-  matches is balanced; the match object of the JSON result gains an appended `arena` key (the
-  name, `docs/arena-result.md`). The other hosts keep choosing one arena as today. The first
-  pool is four arenas, each its own half turn (the test of `contest_test.cpp`, per member, and
-  the mirrored-inputs test run on each), each with a home zone and a poor home tree per team,
-  up to four trees in the field and two power-up spawners, inside the capacities bots already
-  see (8 spawners, 32 walls, 16 hazards, 10 spawn points): `grove` (the courtyard, two rich
-  trees between the pillars: the fight is for the middle), `orchards` (no rich tree; four
-  middling ones on the flanks, so the routes cross), `gorge` (a band of pit across the middle
-  with two bridges and the rich trees on them: a shove takes the cargo), `burrows` (close
-  walls and corridors a cell wide, trees in dead ends: catches and ambushes). The draft of
-  `grove` is below: homes `a` and `b`; trees at (-0.5, 0.5) and (0.5, -0.5) (rich), (-6.5,
-  2.5) and (6.5, -2.5) (home), (-3.5, -4.5) and (3.5, 4.5) (flank); the courtyard's two
-  spawners, drawing `big_banana_1t`, `quick_hands_1t` and `shield_1t` (`triplebanana_1t` is
-  left out: its `ammo_max` tops the hand up, two bananas from nowhere). The other three are
-  drawn when they are built, and every one is redrawn if the measurements say so:
+  its thrower dies. A perfect dash catch puts the enemy's banana in the catcher's hand: the
+  signature rule becomes theft, and the catcher role the team's thief. It needs room in the
+  hand: v0.81 wrote that a catch past `ammoMax` drops the banana at the catcher's feet, but the
+  engine since v0.16 (`rules/catch.cpp`, §12) has a full-handed dasher decline the catch, so
+  the banana falls through to the damage row, and v0.82 kept that deliberately: a fully loaded
+  carrier cannot catch, which is a trade the kind wants, and no checksum moves (a scenario test
+  pins it). An eliminated monkey drops what it held where it stood (`death_bananas = "drop"`)
+  and its bananas in flight come down as pickups, so a kill is worth the cargo and an escort is
+  worth a monkey; a pit takes the monkey's cargo with it. A dash attack needs a banana in hand
+  (`min_ammo` 1), so a monkey that banks its last banana cannot strike until it picks another:
+  banking everything disarms the team, which is the choice the kind is built on. Five monkeys
+  cannot gather, carry, guard the bank and hold the trees at once.
+- **A pool of maps, not one.** A mode may name several arenas, `arenas = [...]` beside `arena`
+  (`ModeDef::arenaSet`, a u16 bit set over `kMaxArenas`, `hasArenaSet()`, `inArenaSet(i)`;
+  every member `compatible`, and `arena`, when both are given, one of them; accepted on every
+  kind). `firstCompatibleArena` prefers the mode's `arena`, then the pool's first suitable
+  member, so a host that names no arena plays the pool's first (the client's lobby brings it
+  when a pooled mode is chosen, and `content::resolveMatchNames` takes it). `kfm_arena` without
+  `--arena` plays match k of such a mode on member (k / T) mod P in content order (T the team
+  count with `--team`, else the slot count; P the suitable members), so `--rotate` gives a
+  member every entrant on every side before the next member, and a run of a multiple of T × P
+  matches is balanced; `--arena` or an unpooled mode plays one arena as before. The match object
+  of the JSON result gains the appended `arena` key (the name, `docs/arena-result.md`) and the
+  text line names the arena. The other hosts keep choosing one arena. The first pool is four
+  arenas (indices 11 to 14, so 15 of `kMaxArenas`' 16), each its own half turn with zone 0
+  mapping to zone 1, each with a home zone and a poor home tree per team, every one using all 8
+  spawners (6 trees and 2 power-up spawners, inside the capacities bots already see: 8
+  spawners, 32 walls, 16 hazards, 10 spawn points): `grove` (24 × 14, the draft below verbatim:
+  the courtyard with two rich trees between the pillars, so the fight is for the middle),
+  `orchards` (28 × 16: no rich tree, four flank trees at (±2.5, ±6.5) and a 2 × 4 hedge in the
+  centre, so the routes cross), `gorge` (26 × 16: a band of pit on columns 11 to 14 with two
+  2 × 4 bridges carrying the rich trees, so a shove takes the cargo), `burrows` (20 × 12: a
+  ring, a narrowed middle lane and trees at the ends of dead-end tunnels: catches and
+  ambushes). Home trees bear every 90 turns holding one, flank trees every 60 holding two, rich
+  trees every 30 holding three, each tree's `first_ticks` equal to its interval; the two
+  power-up spawners draw `big_banana_1t`, `quick_hands_1t` and `shield_1t`, first at 90, every
+  240, one alive (`triplebanana_1t` is left out: its `ammo_max` tops the hand up, two bananas
+  from nowhere). The positions are in the TOML (`content/arenas/11-grove.toml` to
+  `14-burrows.toml`) and pinned, with each map's half turn, homes, trees, capacities and
+  reachability, by `tests/unit/content/contest_test.cpp`. Themes: `grove` and `orchards`
+  jungle, `gorge` beach, `burrows` temple. `grove`, homes `a` and `b`; trees at (−0.5, 0.5) and
+  (0.5, −0.5) (rich), (−6.5, 2.5) and (6.5, −2.5) (home), (−3.5, −4.5) and (3.5, 4.5) (flank);
+  the courtyard's two spawners:
 
   ```
   "...........~~...........",
@@ -4331,58 +4520,142 @@ no entrant from outside the project, so the rules change again before one arrive
   "...........~~...........",
   ```
 
-  With 11 arenas shipped the four make 15 of `kMaxArenas`' 16. The content is public and
-  hashed, so a map cannot be hidden; a map joins or leaves the pool with a release, which a
-  season allows (v0.59).
-- **No new `Observation` version.** Mode kind 8 is `harvest` (`KFM_MODE_HARVEST`; an appended
-  enumeration value stays within a version, bot-abi.md §4). A tree is an entry of
-  `arena.spawners` whose pad byte is filled, `tree` 1 (0 for every spawner today, so no
-  observation of an existing arena changes by a byte); its fruit is a banana pickup, seen
-  under fog as any pickup is, so where the fruit lies is scouted and where the trees stand is
-  known. The homes are zones 0 and 1, which version 1 shows in `reservedModeData` words 8-15
-  and version 2 in `zones`; the hand and its capacity are `self.ammo` and `self.ammoMax`; the
-  scores, the clock and `scoreToWin` are where every kind has them. So a version 1 module
-  plays the kind whole.
-- **The row.** `contest` becomes this kind when it is built (today's row is kept, appended,
-  as `control_1t`, so the control kind keeps a row and a corpus entry): `kind = "harvest"`,
-  the pool above, the contest's squad
-  (1-tick turns, the roles, `own` fog with hearing 1, the calls), a `harvest_base` baseline
-  (`contest_base` with `ammo_max` + 2: the banana still at 2 cells a turn, three in the hand)
-  and the contest's flight (outbound 3, turn rate 15474). It starts from `bank_ticks` 2,
-  `steal_ticks` 6, `score_to_win` 40, `time_limit_ticks` 3600, `respawn_ticks` 240,
-  `respawn_invuln_ticks` 8, `respawn_ammo` 0, `banana_regrow_ticks` 0, `death_bananas` drop;
-  home trees every 90 turns holding one, flank trees every 60 holding two, rich trees every 30
-  holding three. A monkey carries three bananas home from the middle and back in about twenty
-  turns, far more than the trees bear, so the supply is what teams fight over. Every number is
-  content and none is measured, and none holds the row back: the owner's call is that the
-  rules are built as they read here and balanced by later patches. What those patches aim at,
-  with three house bots written for the kind in the bots repository (`gatherer`, which
-  carries; `raider`, which hunts carriers and the bank; `keeper`, which guards and catches):
-  over 200 games a pairing and
-  pool member, at most 5 % at the clock and 5 % drawn; a median game of 1200 to 2700 turns;
-  **no house bot beating both of the others in more than 65 % of games**; between 15 and 50 %
-  of the bananas banked having changed sides on the way (caught, dropped at a death and taken,
-  or stolen from a bank); the team behind at a third of the game winning at least one game in
-  five; each member's sides splitting as a fair coin does in a mirror; no fault and `fuel_max`
-  under 80 k.
+  Every map is redrawn if the measurements say so. The content is public and hashed, so a map
+  cannot be hidden; a map joins or leaves the pool with a release, which a season allows (v0.59).
+- **No new `Observation` version.** Mode kind 8 is `harvest` (`ObsModeKind::Harvest`,
+  `KFM_MODE_HARVEST`; an appended enumeration value stays within a version, bot-abi.md §4). A
+  tree is an entry of `arena.spawners` whose pad byte is filled: `ObsSpawner::pad0` is now
+  `tree` (offset 15), 1 on a tree and 0 for every power-up spawner, so no observation of an
+  existing arena changed by a byte; its fruit is a banana pickup, seen under fog as any pickup
+  is, so where the fruit lies is scouted and where the trees stand is known. The homes are zones
+  0 and 1, which version 1 shows in `reservedModeData` words 8-15 and version 2 in `zones`; the
+  hand and its capacity are `self.ammo` and `self.ammoMax`; the scores, the clock and
+  `scoreToWin` are where every kind has them; the beats are word 0 (`KFM_HARVEST_BEATS_WORD`,
+  `KFM_HARVEST_BANK_TICKS(word)`, `KFM_HARVEST_STEAL_TICKS(word)` in the SDK, which also names
+  `kfm_obs_spawner.tree`). So a version 1 module plays the kind whole. Not in the observation: a
+  stacked pickup's count (missing since v0.57) and `respawn_ammo`. `docs/bot-abi.md` §2.10, §3
+  and §3.3 (the bot's view of the kind) are normative.
+- **The row.** `contest` keeps index 9 and is this kind (`control_1t`, index 10, appended, is
+  v0.80's contest row unchanged on `courtyard_zones`, so the control kind keeps a row and a
+  corpus entry): `kind = "harvest"`, the pool above with `arena = "grove"`, the contest's squad
+  (1-tick turns, the roles, `own` fog with hearing 1, the calls), the `harvest_base` baseline
+  (power-up 13, so 14 of 16 used: `contest_base` with `ammo_max` + 2, the banana still at 2
+  cells a turn, three in the hand) and the contest's flight (outbound 3, turn rate 15474);
+  `bank_ticks` 2, `steal_ticks` 6, `score_to_win` 40, `time_limit_ticks` 3600, `respawn_ticks`
+  240, `respawn_invuln_ticks` 8, `respawn_ammo` 0, `banana_regrow_ticks` 0, `death_bananas`
+  drop, `catch_score` 0. A monkey carries three bananas home from the middle and back in about
+  twenty turns, far more than the trees bear, so the supply is what teams fight over. Every
+  number is content and none is measured against the targets, and none holds the row back: the
+  owner's call is that the rules are built as they read here and balanced by later patches. What
+  those patches aim at, with three house bots written for the kind in the bots repository
+  (`gatherer`, which carries; `raider`, which hunts carriers and the bank; `keeper`, which
+  guards and catches): over 200 games a pairing and pool member, at most 5 % at the clock and
+  5 % drawn; a median game of 1200 to 2700 turns; **no house bot beating both of the others in
+  more than 65 % of games**; between 15 and 50 % of the bananas banked having changed sides on
+  the way (caught, dropped at a death and taken, or stolen from a bank); the team behind at a
+  third of the game winning at least one game in five; each member's sides splitting as a fair
+  coin does in a mirror; no fault and `fuel_max` under 80 k. Pinned by `contest_test.cpp` and
+  the contest pin in `loader_test.cpp`.
 - **Not changed.** The roles (one catcher, four standard; the kind gives them different work
-  without touching a loadout). The reference bot: it ignores trees and homes as it ignores
-  zones, and stays the validation opponent. The ladder service: it points at `contest` by
-  name. `control`: the kind, its arena and its tests stay, and step (4) of its order (the
-  bots repository's control-aware `starter` and `holder`) is not done; the house bots are
-  written for `harvest` instead.
+  without touching a loadout). The ladder service: it points at `contest` by name. `control`:
+  the kind, its arena and its tests stay, now on `control_1t`, and step (4) of its order (the
+  bots repository's control-aware `starter` and `holder`) is dropped; the house bots are
+  written for `harvest` instead. The reference bot ignores trees and homes as it ignores zones
+  and stays the validation opponent; it was made to play both sides of a half-turn map alike
+  (below), which is a fix, not a change of what it plays.
 
 Order, one PR each, the first three here: (1) trees (the spawner's product, the loader, the
 lifecycle pass, `bananaLeft`, the observation's byte, scenario tests); (2) the `harvest` kind,
-`respawn_ammo`, `bank_ticks` and `steal_ticks`, the scripted generator's steering (an empty
-hand to the nearest fruit, a full one home; Rng-free and keyed on the kind), a corpus entry,
-mode kind 8 and `docs/bot-abi.md`; (3) the pool (`arenas`, `kfm_arena`'s cycle and the `arena`
-key), the four arenas, `harvest_base`, the row and `control_1t`, the mirrored-inputs test per
-member, a `gatherer` example bot in `tools/bots/examples` (the kind's smoke test: the
+`respawn_ammo`, `bank_ticks` and `steal_ticks`, the scripted generator's steering, a corpus
+entry, mode kind 8 and `docs/bot-abi.md`; (3) the pool (`arenas`, `kfm_arena`'s cycle and the
+`arena` key), the four arenas, `harvest_base`, the row and `control_1t`, the mirrored-inputs
+test per member, a `gatherer` example bot in `tools/bots/examples` (the kind's smoke test: the
 reference bot never banks), and the client (a tree and its fruit drawn, the cargo over a
 monkey, the banked score in the HUD); (4) in the bots repository the pin, the SDK's trees and
 homes, the three house bots and the measurements; (5) a release, the house teams resubmitted,
 and balance patches toward the targets above.
+
+Progress (v0.82): (1) to (3) are built on one branch, all but the release; (4) is not started,
+so none of the targets is measured. Decided while building, beyond the bullets above:
+
+- **The tied cell contest** (§5.12, §12), decided with the kind in v0.81 because two monkeys
+  stepping onto one fruit cell is its commonest contest, and the lower slot, the west's, took
+  it. Not "neither moves", which would hold two deterministic bots on either side of a banana
+  for ever: at an equal `subTick` the lower slot wins on an even turn and the higher on an odd
+  one (the turn is `ticksInPhase / turn_ticks` at the latch; `beats`, `spaces/grid.cpp`),
+  Rng-free, and even over a match. It moved the checksums of `scripted_10p_contest_1800t` and
+  `scripted_10p_grid_rounds_1t_1800t`; the other grid entries met no such contest. The
+  mirrored-inputs test's cases moved with it (below).
+- **A pickup touched by several monkeys on one tick** goes in an order the world Rng draws
+  (§5.6), found by measurement: the `gatherer` mirror on `grove` ended 40 to 12 for side 0 in
+  every game, because both teams' first picks are the same rich tree and the lower slot took
+  the fruit both teams' monkeys were touching when it was laid. A taking row (50, 51, 52) has a
+  contend test; two or more monkeys that could take one pickup on one tick are resolved in a
+  Fisher-Yates order drawn from the world Rng, at the place of the first of them; a single
+  contender draws nothing, so a tick without such a tie resolves exactly as before. It moved
+  the checksums of the corpus entries in which such a tie happens, and of no other.
+- **The scripted generator** (§5.3) steers harvest from state alone, Rng-free and keyed on the
+  kind, so every other mode's inputs are unchanged. In the continuous space a hand with room
+  goes for the nearest banana pickup and a full hand (or one with nothing left to pick) goes
+  home and stays. In the grid space it routes by a breadth-first search over the cells with the
+  grid's rules (walls and pit cells closed, no corner cutting, the lowest octant on a tie, a
+  62 × 62 cap, `gridStepToward`), about 30 µs a call in Debug (a corpus regeneration 2.7 to 3.9
+  s), with roles by rank among a team's present slots: the second raids (the nearest enemy home
+  holding points, while it has room), the third defends (home while an enemy stands in it and
+  the team has points), the rest gather (the nearest fruit with room; home with a banana, where
+  it stands until it has banked them all; empty-handed with nothing to fetch, the nearest tree).
+- **The mirrored-inputs test** (`side_symmetry_scenario.cpp`) adds the kind: a gather-and-bank
+  match on each pool arena stays its own half turn bit for bit to a 40 to 40 draw (grove at
+  tick 676, orchards 874, gorge 676, burrows 672); the control cases moved to `control_1t`. With
+  the tied cell contest alternating, the twins' swap case pins the alternation, the banana-fight
+  case plays seeds 3 and 5 within 256 raw units and 64 BAM (v0.80: 64 and 4), and the dashing
+  case seeds 5 and 55. Its bot-side twin, `tests/unit/ai/side_symmetry_test.cpp`, builds
+  half-turn worlds on the pool arenas and checks that a slot's sight and whole observation
+  (heard calls included) under `own` and `team` fog are the half turn of its twin's, and that
+  the reference bot, given one seed and mirrored observations, gives mirrored inputs. It found
+  fog placing a centre lying exactly on a cell edge in the east and south cell only (§8: an
+  edge centre now lies in both cells, all four on a corner).
+- **The east bias, explained.** `ref:hard` five against five on the harvest row, 200 rotated
+  games a map, seed 1, Release, won 243 games from the west and 422 from the east (grove 94/82,
+  orchards 22/143, gorge 84/101, burrows 43/96; two-sided p = 4e-12). It followed the geometry,
+  not the slots (with the sides exchanged in the maps, team 0 won 404 to 260), survived
+  `vision = all` (312 to 402), and vanished when one team's bots were fed the half-turned
+  observation and their inputs turned back (orchards 61/69 and 69/78, burrows 73/64 and 74/71):
+  it was the reference bot (`engine/ai/src/reference_bot.cpp`), not the sim and not the fog.
+  Its absolute-direction choices: the explore goal (the map's centre floored to the cell east
+  and south of it, inside a wall on `orchards`, so the west team walked round into the east half
+  while the east stayed home and banked: west monkeys stood in the east home 1416 monkey-ticks
+  against 135, and the east banked 757 to 287); a zero vector to a target on the bot's own cell
+  read as east; one compass encoding of the call symbol for both sides; an east-first
+  hysteresis, sweep, dodge and blink; lowest-pool-slot ties on a fetch. All fixed (§8). After:
+  321 to 329 (p = 0.78; grove 96/80, orchards 75/93, gorge 82/84, burrows 68/72), seed 1001 329
+  to 314, sides exchanged 321 to 316, `vision = all` 367 to 336, one against one 131 to 145,
+  `control_1t` 102 to 98. So the east bias measured since the old hill row was the reference
+  bot's (and presumably the like in the bots repository's house bots, which were not re-run).
+  Sim checksums unchanged; every reference-bot match plays differently from before.
+- **The `gatherer` example** (`tools/bots/examples/gatherer.c` and `.wasm`, §8) is the kind's
+  smoke test. A smoke run, not the targets (`kfm_arena --mode contest --arena NAME`, five a
+  side, 20 rotated games a map, seed 1, before the reference-bot fix): against `ref:hard` the
+  gatherers win all 80, none at the clock, no fault (grove a median of 971 ticks and 40.1 to
+  3.1 points; orchards 853, 40.1 to 1.8; gorge 1146, 40.1 to 1.2; burrows 794, 40.1 to 5.2),
+  `fuel_max` 27 500 to 34 411 of 100 000. The gatherer ignores its seed, so its mirror is one
+  game a map: a 40 to 40 draw on `orchards` (874 ticks), `gorge` (788) and `burrows` (672), and
+  on `grove` 40 to 12 for side 0 in every game (490), which exposed the pickup order above.
+- **The corpus** (§9). The content hash moved, so every entry was re-recorded.
+  `scripted_10p_contest_1800t` plays harvest on `grove` (68 fruit taken, 80 banked, 3 stolen,
+  team 1 winning 40 to 37 at tick 641); new `scripted_10p_contest_gorge_1800t` (50 taken, 68
+  banked, 10 stolen, a pit fall, 40 to 18 at 505) and `scripted_10p_contest_burrows_1800t` (46,
+  65, 15, 40 to 10 at 477); new `scripted_10p_control_1t_1800t`, whose checksums are
+  byte-identical to the old contest entry's. Their expectation rows
+  require fruit taken off the floor, more banked than the ten opening hands, and a theft.
+- **The client** draws the kind (§7), and `kfm_replay stats` prints objective points and
+  thefts.
+
+Still open: the release; step (4) and with it every target above; two teams reaching
+`score_to_win` on one tick draw, so a mirror of identical deterministic bots always draws (a
+tie-break is a balance-patch question); the reference bot does not gather, so it loses every
+game to `gatherer` and is a weak opponent in human rooms of this kind; the remaining pinned sim
+asymmetries of §12 (the rounding, the dash exchange, the respawn order, the two Rng draws).
 
 Later, each its own design once `harvest` passes its gates, in the order they look worth
 having: **spending** (a respawn priced in banked bananas, and a loadout chosen at the respawn:
@@ -4399,17 +4672,13 @@ the more interesting constraint).
 Open, for the balance patches to settle by measurement: whether stealing from a bank earns
 its place, and whether one defender in the zone should stop it (it is built as written;
 `steal_ticks` 0 is the kind without it); how well the home tree answers the empty-handed
-respawn (the owner's choice: a respawned monkey rearms at its home tree under 8 turns of invulnerability; if a leader can still camp a
-team with no bananas, the tree's beat is the knob, and `respawn_ammo` 1 the other row); a
-tie-break at the clock (bananas in hand, then a draw); whether the rich trees' yield should
-depend on anything a team holds; and the capacities, which bound the maps: 8 spawners a map
-(trees and power-ups together; more is a new ABI version), 16 arenas (15 used with this pool),
-32 pickups on the floor. Decided with step (2), though it moves the grid entries' checksums:
-the tied cell contest of §12, since two monkeys stepping onto one fruit cell is this kind's
-commonest contest and today the lower slot, the west's, takes it. Not "neither moves", which
-would hold two deterministic bots on either side of a banana for ever: at an equal `subTick`
-the lower slot wins on an even turn and the higher on an odd one (the turn is the tick over
-`turn_ticks`), Rng-free, and even over a match.
+respawn (the owner's choice: a respawned monkey rearms at its home tree under 8 turns of
+invulnerability; if a leader can still camp a team with no bananas, the tree's beat is the
+knob, and `respawn_ammo` 1 the other row); a tie-break at the clock (bananas in hand, then a
+draw) and for two teams reaching `score_to_win` on one tick; whether the rich trees' yield
+should depend on anything a team holds; and the capacities, which bound the maps: 8 spawners a
+map (trees and power-ups together; more is a new ABI version), 16 arenas (15 used with this
+pool), 32 pickups on the floor.
 
 M6a sequencing (v0.37), one PR per step: (1) the lobby service and its protocol, with a Rust
 test suite over an in-process client and a fake server; (2) the server's lobby-fed signaling
@@ -4478,10 +4747,13 @@ that carries the viewer (a pin bump of the bots repository's `engine.lock` and a
 v0.64); and a bot submitted by an account outside the project through the whole path, from
 `kfm submit` to its replay in the browser. Not yet run: CI's real xvfb for the two new
 `client_smoke_replay*` tests. Since then the contest's rules were redesigned (v0.79) and built
-here (v0.80), unreleased and not yet measured against their gates. v0.81 then designs the
+here (v0.80), unreleased and not yet measured against their gates. v0.81 then designed the
 contest's next rules, `harvest` on a pool of maps (above, "Contest design: bananas as the
-economy"), and drops step (4) of the control design: the bots repository's house bots are
-written for `harvest`, after its three engine steps.
+economy"), and dropped step (4) of the control design, and v0.82 built that design's three
+engine steps here, unreleased: the kind, trees, the pool, the row, `control_1t`, the `gatherer`
+example and the client, with the reference bot made to play both sides of a half-turn map
+alike. Next: a release and step (4) in the bots repository (the pin, the SDK's trees and homes,
+the house bots `gatherer`, `raider` and `keeper`), against which the targets are measured.
 
 Progress: M6a's code landed in v0.38 (steps 1 to 3 of the v0.37 sequencing and the files of
 step 4): the lobby protocol and service, the transport's lobby modes, `LobbyLink` and
@@ -4999,10 +5271,17 @@ baseline moved to C++23 (§9).
   every due slot's point chosen before anyone respawns); the spawn groups' offsets and the two
   spawners' power-ups are separate draws (fix: one draw for all groups, one per beat); and
   `Fixed`'s multiply floors, nudging every banana toward (−x, −y) (fix: symmetric rounding).
-  Each fix moves checksums and is the owner's call; on the shipped `contest` row the sides
-  split 105 to 95 in 200 `ref:hard` games. The `harvest` design (v0.81, §11) takes up the
-  first of them with its kind, as an alternation by the turn's parity and not "neither
-  moves": two monkeys stepping onto one fruit cell is that kind's commonest contest.
+  Each fix moves checksums and is the owner's call; on the then shipped `contest` row
+  (`control_1t` since v0.82) the sides split 105 to 95 in 200 `ref:hard` games. Decided in
+  v0.81 and built in v0.82 (§11 "Contest design: bananas as the economy"): the tied cell contest
+  alternates by the turn's parity (the lower slot on an even turn, the higher on an odd one),
+  not "neither moves", since two monkeys stepping onto one fruit cell is harvest's commonest
+  contest; it moved the grid entries' checksums that met one. Found and fixed in v0.82: a
+  pickup several monkeys touch on one tick went to the earlier contact or lower pool index;
+  the world Rng now draws their order (§5.6). The others stay open: the dash exchange, the
+  respawn order, the two Rng draws and the rounding. The east bias measured on every contest
+  row since the old hill was the reference bot's, not the engine's, and is fixed (§8, §11): on
+  the harvest pool `ref:hard` went 243 west to 422 east before and 321 to 329 after.
 - Open (M5b step 2 follow-ups, v0.32): a non-spawnable power-up flag (or a set the spawners
   never draw from) so a friendly-fire baseline can ship without changing `dojo_powerups`'
   draws; the reference bot holding fire when a teammate is on the line under friendly fire;
@@ -5011,7 +5290,9 @@ baseline moved to C++23 (§9).
   `capture` match scores nothing and `hill` is won by incidental holds; an objective-aware
   reference bot needs the zones, which Observation v1 does not carry (step 5 adds them; v0.69
   put zones 0 and 1 in `reservedModeData`, v0.80's version 2 every zone, and the reference bot
-  still ignores them);
+  still ignores them; v0.82: it ignores harvest's trees and homes too, never banks, and so
+  loses every game to the `gatherer` example and is a weak opponent in a human room of that
+  kind);
   whether a dropped flag should go home when its own team touches it (classic capture the flag
   does; v0.33 returns it only by the clock); content-level fairness of a zone (`compatible`
   only counts zones, so `outposts` also accepts `hill` with the hill on a base).
@@ -5478,4 +5759,5 @@ void AgentHost::observe(const EventSink&, const WorldState& after, const MatchCo
 - **Cone, peripheral, hearing**: the three parts of a monkey's vision (§8), in cells; **focus**: extra cone for a monkey at rest; **banana sight**: cells around an own banana in flight.
 - **Turn window**: the ticks since the last latch over which a host ORs a bot's visibility and collects its heard calls (v0.35).
 - **Call**: a one-byte shout heard by every monkey in range, the in-game communication channel.
-- **Zone**: an arena box that blocks nothing; modes read who stands in it (in `control`, v0.80, a zone also has an owner, the team that last captured it).
+- **Zone**: an arena box that blocks nothing; modes read who stands in it (in `control`, v0.80, a zone also has an owner, the team that last captured it; in `harvest`, v0.82, zone t is team t's **home**).
+- **Tree** (v0.82): a pickup spawner that lays banana pickups on its cell on a beat, with no Rng draw; **bank**: a banana a monkey in its own home turns into a point; **steal**: one a raider takes back out of an undefended enemy home; **arena pool**: the arenas a mode names (`arenas`), cycled by `kfm_arena`.
