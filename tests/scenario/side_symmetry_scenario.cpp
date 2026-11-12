@@ -8,7 +8,10 @@
 // of the input its team-0 twin gets. Where the engine treats the two sides
 // alike, the world stays its own half turn with the teams swapped on every
 // tick; where it does not, the first tick and field that differ is the
-// asymmetry.
+// asymmetry. Since v0.81 the same for the contest row, harvest, on each
+// arena of its pool (§11 "Contest design: bananas as the economy"), each its
+// own half turn with zone 0 mapping to zone 1, under a gather-and-bank policy
+// (the end of this file's "what holds").
 //
 // The slots: with ten present, teamsFor() deals them round-robin, so slot
 // 2k is team 0's k-th monkey (the west, spawn group 0) and slot 2k + 1 team
@@ -170,9 +173,13 @@ struct Mirror {
 // modeData under the half turn: words 0-1 the clocks of teams 0-3 (u16
 // each), swapped between the teams; for control, words 2-3 a nibble per zone
 // (the team + 1, 0 nobody) and words 4-7 a u16 of progress per zone, the
-// zones exchanged and the teams swapped. Other kinds keep words 2-7.
+// zones exchanged and the teams swapped. Other kinds keep words 2-7, and
+// harvest every word.
 [[nodiscard]] std::array<uint32_t, kModeDataWords> mirroredModeData(
     const std::array<uint32_t, kModeDataWords>& d, const Mirror& mi, ModeKind kind) {
+  // Harvest (v0.81) keeps only its two beats in word 0, the same for both
+  // sides.
+  if (kind == ModeKind::Harvest) return d;
   std::array<uint32_t, kModeDataWords> out{};
   for (uint32_t t = 0; t < 4; ++t) {
     const uint32_t clock = (d[t / 2] >> ((t % 2) * 16)) & 0xFFFFu;
@@ -514,6 +521,7 @@ struct Script {
   uint8_t throwRange{4};   // cells, Chebyshev
   uint8_t throwEvery{3};   // a throw only on ticks where (tick + rank) % throwEvery == 0
   uint8_t subTickStep{0};  // subTick = rank * subTickStep on a press
+  bool harvest{false};     // v0.81: gather and bank instead (harvestDecide), nothing else
 };
 
 [[nodiscard]] Fixed chebyshev(Vec2 a, Vec2 b) {
@@ -610,11 +618,65 @@ class Steering {
   std::array<bool, kCells> free_{};
 };
 
+// v0.81, harvest: one team-0 monkey gathering and banking, no fight (no
+// throw, no dash). In its home with a banana it stays (banking them all);
+// else, with room in its hand, it heads for the nearest banana pickup
+// (Chebyshev, ties by position); with a full hand, or nothing to pick up
+// and a banana in it, it heads home; empty-handed with nothing to pick up,
+// it waits on the nearest tree. It never steps into a cell an enemy stands
+// in: a twin stepping into its twin's cell across the centre is the swap
+// pinned among the known asymmetries.
+[[nodiscard]] PlayerInput harvestDecide(const WorldState& s, const MatchContent& m, PlayerId me) {
+  PlayerInput in{};
+  const Player* self = s.playerBySlot(me);
+  if (self == nullptr || !inPlay(*self)) return in;
+  const Vec2 pos = self->transform.pos;
+  const uint8_t team = m.teamOf(me);
+  const Zone& home = m.arena.zones[homeZoneOf(m.arena, team)];
+  const bool inHome = boxContains(home.min, home.max, pos);
+  if (inHome && self->ammo > 0) return in;
+
+  const auto nearest = [&](std::optional<Vec2>& best, Vec2 p) {
+    const Fixed d = chebyshev(p, pos);
+    if (!best || d < chebyshev(*best, pos) || (d == chebyshev(*best, pos) && before(p, *best)))
+      best = p;
+  };
+  std::optional<Vec2> goal;
+  if (self->ammo < self->stats.ammoMax) {
+    s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+      if (k.kind == PickupKind::Banana) nearest(goal, k.pos);
+    });
+  }
+  if (!goal && self->ammo > 0) goal = home.centre();
+  if (!goal) {
+    for (uint8_t i = 0; i < m.arena.pickupSpawnerCount; ++i) {
+      if (m.arena.pickupSpawners[i].isTree()) nearest(goal, m.arena.pickupSpawners[i].pos);
+    }
+  }
+  if (!goal) return in;
+  const Steering steer(m.arena, self->stats.radius);
+  if (const std::optional<uint8_t> dir = steer.toward(pos, *goal)) {
+    const grid::Cell next = grid::neighbour(grid::cellOf(m.arena, pos), grid::octantOf(*dir));
+    bool taken = false;
+    s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+      if (m.teamOf(p.id) != team && inPlay(p) && grid::cellOf(m.arena, p.transform.pos) == next)
+        taken = true;
+    });
+    if (!taken) {
+      in.moveDir = *dir;
+      in.moveMag = 255;
+    }
+  }
+  in.aimDir = in.moveDir;
+  return in;
+}
+
 // One team-0 monkey's input from the world as it stands. Rng-free and
 // deterministic; ties go by the rank of a slot, the index of a zone or the
 // order of positions, all of which the mirror carries over.
 [[nodiscard]] PlayerInput decide(const WorldState& s, const MatchContent& m, PlayerId me,
                                  const Script& script) {
+  if (script.harvest) return harvestDecide(s, m, me);
   PlayerInput in{};
   const Player* self = s.playerBySlot(me);
   if (self == nullptr || !inPlay(*self)) return in;
@@ -991,6 +1053,42 @@ TEST_CASE("side symmetry: dashing fights stay mirrored to the end, up to fixed-p
   CHECK_FALSE(run.world.rules.lastRoundWinner.isValid());
   CHECK(run.count(EventKind::PlayerDashed) >= 50);
   CHECK(run.count(EventKind::PlayerEliminated) >= 10);
+}
+
+TEST_CASE(
+    "side symmetry: a harvest of gathering and banking is its own half turn, bit for bit, "
+    "on every arena of the contest's pool",
+    "[scenario][symmetry][harvest]") {
+  // v0.81: the contest row (harvest) on each member of its pool, with the
+  // gather-and-bank policy (harvestDecide) and one power-up in the
+  // spawners' set (the two spawners draw separately, a known asymmetry
+  // below). Trees bear on their beats with no Rng draw, monkeys walk to the
+  // fruit and carry it home, and bank there on the global beat: the whole
+  // match is mirrored exactly, every tick to its end.
+  const std::string_view arena =
+      GENERATE(as<std::string_view>{}, "grove", "orchards", "gorge", "burrows");
+  INFO(arena);
+  Run run(arenaNamed(arena), modeNamed("contest"), kMirroredStart, onlyPowerUp("shield_1t"));
+  REQUIRE(run.kind() == ModeKind::Harvest);
+  REQUIRE(run.mirror.zoneCount == 2);
+  CHECK(run.mirror.zone[0] == 1);
+  CHECK(run.mirror.zone[1] == 0);
+  run.play(Script{.harvest = true}, 5000);
+  INFO("tick " << run.firstInexactTick << ": " << run.firstInexact);
+  CHECK_FALSE(run.inexact);
+  CHECK(run.world.rules.phase == MatchPhase::MatchEnded);
+  CHECK_FALSE(run.world.rules.lastRoundWinner.isValid());  // a mirror draws
+  const int banked = countEvents(run.log, EventKind::ScoreChanged);
+  INFO("score changes " << banked << ", team scores "
+                        << run.content.teamScore(run.world.rules.scores, 0) << " and "
+                        << run.content.teamScore(run.world.rules.scores, 1));
+  CHECK(run.content.teamScore(run.world.rules.scores, 0) ==
+        run.content.teamScore(run.world.rules.scores, 1));
+  CHECK(run.content.teamScore(run.world.rules.scores, 0) >= 10);
+  CHECK(run.count(EventKind::PickupSpawned) >= 20);
+  CHECK(run.count(EventKind::PickupTaken) >= 20);
+  CHECK(run.count(EventKind::BoomerangThrown) == 0);
+  CHECK(run.count(EventKind::PlayerEliminated) == 0);
 }
 
 // --- known asymmetries ---------------------------------------------------------------

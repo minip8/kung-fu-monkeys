@@ -34,6 +34,6 @@ kfm_add_test_exe(kfm_scenario_tests
   grid_scenario.cpp
   side_symmetry_scenario.cpp
 )
-# side_symmetry_scenario.cpp plays the shipped contest row (the embedded
-# content) and steers with the sim's own angleOf.
+# side_symmetry_scenario.cpp plays the shipped contest and control_1t rows
+# (the embedded content) and steers with the sim's own angleOf.
 target_link_libraries(kfm_scenario_tests PRIVATE kfm::sim kfm::content kfm::sim_internal)
