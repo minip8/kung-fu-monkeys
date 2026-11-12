@@ -3,7 +3,8 @@
 // match with a winner, the placement rule and its ties, the result line and
 // JSON formats, the summary, rotation (every bot through every slot, totals
 // per bot), the replay runMatch writes plays back to the same final state,
-// and, with KFM_WASM_BOTS, the module path over the fixtures in
+// v0.81 a mode's arena pool cycled over the matches (and the arena each
+// played, in the line and the JSON), and, with KFM_WASM_BOTS, the module path over the fixtures in
 // tests/fixtures/bots (fuel, traps, over-budget, load errors).
 #include "arena_core.hpp"
 #include "kfm/ai/bot_spec.hpp"
@@ -240,6 +241,7 @@ constexpr std::string_view kMatchTail[] = {
     "slots:array",
     "content_hash:string",  // v0.60
     "build_hash:string",    // v0.60
+    "arena:string",         // v0.81
 };
 constexpr std::string_view kTeam[] = {"team:number",  "entrant:number", "spec:string",
                                       "place:number", "score:number",   "kills:number",
@@ -326,7 +328,7 @@ TEST_CASE("the tick cap ends a match without a winner", "[arena]") {
   CHECK(r.ticks == 90);
   CHECK(!r.winner.isValid());
   CHECK(contains(formatResultLine(r), " ticks 90 "));
-  CHECK(contains(formatResultLine(r), " result cap winner none | "));
+  CHECK(contains(formatResultLine(r), " result cap winner none arena dojo | "));
 }
 
 TEST_CASE("placements: winner, score, fewer deaths, lower slot", "[arena]") {
@@ -374,10 +376,11 @@ TEST_CASE("the result line and its JSON", "[arena]") {
   r.slots[1].fuelInit = 13;
   r.contentHash = 0x5e1f00d2;
   r.buildHash = 0xabcd;
+  r.arena = "dojo";
   assignPlaces(r);
 
   CHECK(formatResultLine(r) ==
-        "match 4 seed 7 ticks 5432 checksum 00c0ffee result ended winner 1"
+        "match 4 seed 7 ticks 5432 checksum 00c0ffee result ended winner 1 arena dojo"
         " | slot 0 bot 0 ref:hard place 2 score 1 kills 3 deaths 2 acts 5432 subs 0"
         R"( | slot 1 bot 1 bots\x "y".wasm place 1 score 3 kills 5 deaths 1 acts 5432 subs 3)"
         " traps 1 over 2 bad 0 fuel_mean 61234 fuel_max 62731 fuel_init 13 log 0 dead no");
@@ -388,11 +391,11 @@ TEST_CASE("the result line and its JSON", "[arena]") {
         R"("spec":"bots\\x \"y\".wasm","module":true,)"
         R"("place":1,"score":3,"kills":5,"deaths":1,"acts":5432,"subs":3,"traps":1,"over":2,)"
         R"("bad":0,"fuel_mean":61234,"fuel_max":62731,"fuel_init":13,"log":0,"dead":null}],)"
-        R"("content_hash":"5e1f00d2","build_hash":"0000abcd"})");
+        R"("content_hash":"5e1f00d2","build_hash":"0000abcd","arena":"dojo"})");
 
   r.winner = PlayerId::invalid();
   r.slots[1].dead = "init-trap";
-  CHECK(contains(formatResultLine(r), " result ended winner none | "));
+  CHECK(contains(formatResultLine(r), " result ended winner none arena dojo | "));
   CHECK(contains(formatResultLine(r), " dead init-trap"));
   CHECK(contains(formatResultJson(r), R"("winner":null,)"));
   CHECK(contains(formatResultJson(r), R"("dead":"init-trap"})"));
@@ -876,3 +879,153 @@ TEST_CASE("without KFM_WASM_BOTS a module spec is refused", "[arena]") {
 }
 
 #endif
+
+// v0.81: the arena pool. Hand-built content: four copies of the dojo with two
+// spawn groups (arenas 1..4), a team deathmatch of two teams pooling arenas
+// 1, 3 and 4 (arena 4 left with one spawn group, so it does not suit the mode
+// and drops out: the pool is [1, 3]), and a free-for-all deathmatch pooling
+// 2 and 1.
+namespace {
+
+constexpr uint8_t kPooledTeams = 1;
+constexpr uint8_t kPooledFfa = 2;
+constexpr uint8_t kUnpooled = 3;
+
+[[nodiscard]] sim::ContentDB pooledContent() {
+  sim::ContentDB c = sim::defaultContent();
+  for (uint8_t i = 1; i <= 4; ++i) {
+    c.arenas[i] = c.arenas[0];
+    c.arenas[i].name = sim::ContentName::of(std::format("pool{}", i));
+    c.arenas[i].spawnGroups = i == 4 ? 1 : 2;
+  }
+  c.arenaCount = 5;
+  sim::ModeDef dm = c.modes[0];
+  dm.kind = sim::ModeKind::TeamDeathmatch;
+  dm.teams = 2;
+  dm.scoreToWin = 50;
+  dm.timeLimitTicks = 0;
+  dm.name = sim::ContentName::of("pooled");
+  dm.arenaSet = (1u << 1) | (1u << 3) | (1u << 4);
+  c.modes[kPooledTeams] = dm;
+  sim::ModeDef ffa = dm;
+  ffa.kind = sim::ModeKind::Deathmatch;
+  ffa.teams = 0;
+  ffa.name = sim::ContentName::of("pooled_ffa");
+  ffa.arenaSet = (1u << 2) | (1u << 1);
+  c.modes[kPooledFfa] = ffa;
+  sim::ModeDef plain = ffa;
+  plain.name = sim::ContentName::of("plain");
+  plain.arenaSet = sim::kNoArenaSet;
+  c.modes[kUnpooled] = plain;
+  c.modeCount = 4;
+  return c;
+}
+
+// Plays `matches` matches of `setup` the way kfm_arena does (seed + k,
+// --rotate's rotation, the cycle's arena) and returns each one's result.
+std::vector<MatchResult> tournament(const sim::ContentDB& content, MatchSetup setup,
+                                    uint32_t matches, bool rotate, bool arenaNamed) {
+  BotFactory factory;
+  const ArenaCycle cycle = arenaCycle(content, setup, arenaNamed);
+  const uint64_t seed = setup.config.seed;
+  std::vector<MatchResult> out;
+  for (uint32_t k = 0; k < matches; ++k) {
+    setup.config.seed = seed + k;
+    setup.rotation = rotate ? k : 0;
+    setup.config.arena = cycle.arenaFor(k);
+    auto r = runMatch(setup, content, factory, k);
+    if (!r) FAIL(r.error().message);
+    out.push_back(std::move(r).value_or(MatchResult{}));
+  }
+  return out;
+}
+
+}  // namespace
+
+TEST_CASE("a mode's arena pool: its members that suit it, in content order", "[arena][pool]") {
+  const sim::ContentDB c = pooledContent();
+  CHECK(arenaPool(c, kPooledTeams) == std::vector<uint8_t>{1, 3});
+  CHECK(arenaPool(c, kPooledFfa) == std::vector<uint8_t>{1, 2});
+  CHECK(arenaPool(c, kUnpooled).empty());
+  // The other hosts pick one: the pool's first that suits the mode.
+  CHECK(c.firstCompatibleArena(kPooledTeams) == std::optional<uint8_t>(1));
+
+  ArenaCycle cycle;
+  cycle.pool = {1, 3};
+  cycle.period = 2;
+  cycle.fixed = 4;
+  const std::vector<uint8_t> want{1, 1, 3, 3, 1, 1, 3};
+  for (uint32_t k = 0; k < want.size(); ++k) {
+    INFO("match " << k);
+    CHECK(cycle.arenaFor(k) == want[k]);
+  }
+  cycle.period = 0;  // counts as 1
+  CHECK(cycle.arenaFor(1) == 3);
+  cycle.pool.clear();
+  CHECK(cycle.arenaFor(5) == 4);
+}
+
+TEST_CASE("a team tournament plays every side of a pool member before the next",
+          "[arena][pool][teams]") {
+  const sim::ContentDB c = pooledContent();
+  MatchSetup setup;
+  setup.config.seed = 5;
+  setup.config.mode = kPooledTeams;
+  setup.config.arena = 1;
+  setup.teams = {{spec("ref:hard")}, {spec("ref:easy")}};
+  setup.tickCap = 30;
+
+  const ArenaCycle cycle = arenaCycle(c, setup, false);
+  CHECK(cycle.pool == std::vector<uint8_t>{1, 3});
+  CHECK(cycle.period == 2);
+
+  SECTION("--rotate, matches not a multiple of T x P") {
+    const std::vector<MatchResult> rs = tournament(c, setup, 7, true, false);
+    const std::vector<std::string> arenas{"pool1", "pool1", "pool3", "pool3",
+                                          "pool1", "pool1", "pool3"};
+    for (uint32_t k = 0; k < rs.size(); ++k) {
+      INFO("match " << k);
+      CHECK(rs[k].arena == arenas[k]);
+      REQUIRE(rs[k].teams.size() == 2);
+      // Entrant e plays team (e + k) mod 2: both sides of each member.
+      CHECK(rs[k].teams[0].entrant == (k % 2 == 0 ? 0 : 1));
+      CHECK(contains(formatResultLine(rs[k]), " arena " + arenas[k] + " | "));
+      CHECK(contains(formatResultJson(rs[k]), R"("arena":")" + arenas[k] + R"("})"));
+    }
+  }
+  SECTION("without --rotate the pool still turns every T matches") {
+    const std::vector<MatchResult> rs = tournament(c, setup, 5, false, false);
+    const std::vector<std::string> arenas{"pool1", "pool1", "pool3", "pool3", "pool1"};
+    for (uint32_t k = 0; k < rs.size(); ++k) {
+      INFO("match " << k);
+      CHECK(rs[k].arena == arenas[k]);
+      CHECK(rs[k].teams[0].entrant == 0);
+    }
+  }
+  SECTION("--arena NAME plays that arena every match") {
+    setup.config.arena = 3;
+    const std::vector<MatchResult> rs = tournament(c, setup, 4, true, true);
+    for (const MatchResult& r : rs)
+      CHECK(r.arena == "pool3");
+  }
+}
+
+TEST_CASE("a free-for-all pool turns once every slot has played every seat", "[arena][pool]") {
+  const sim::ContentDB c = pooledContent();
+  MatchSetup setup = setupOf({"ref:hard", "ref:easy", "ref"}, 9, 20);
+  setup.config.mode = kPooledFfa;
+  const ArenaCycle cycle = arenaCycle(c, setup, false);
+  CHECK(cycle.period == 3);
+  const std::vector<MatchResult> rs = tournament(c, setup, 8, true, false);
+  const std::vector<std::string> arenas{"pool1", "pool1", "pool1", "pool2",
+                                        "pool2", "pool2", "pool1", "pool1"};
+  for (uint32_t k = 0; k < rs.size(); ++k) {
+    INFO("match " << k);
+    CHECK(rs[k].arena == arenas[k]);
+  }
+
+  // A mode without a pool plays its one arena every match.
+  setup.config.mode = kUnpooled;
+  for (const MatchResult& r : tournament(c, setup, 3, true, false))
+    CHECK(r.arena == "dojo");
+}

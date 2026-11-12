@@ -142,7 +142,32 @@ struct MatchResult {
   // (kfm::kBuildId, KFM_BUILD_ID: 0 for an unstamped build, v0.70).
   uint32_t contentHash{0};
   uint32_t buildHash{0};
+  // v0.81: the name of the arena the match played (MatchConfig::arena).
+  std::string arena;
 };
+
+// v0.81, the arena pool (ModeDef::arenaSet): kfm_arena without --arena, on a
+// mode with a pool, plays match k on member (k / T) mod P, the members in
+// content order (P of them) and T the rotation's period: the team count with
+// --team, else the slot count (a free-for-all's slots are its sides). With
+// --rotate every entrant so plays every side of a member before the next
+// member; without it the matches still walk the pool T at a time. Members
+// that do not suit the mode (ContentDB::compatible; the loader refuses
+// them, hand-built content may not) are left out.
+[[nodiscard]] std::vector<uint8_t> arenaPool(const sim::ContentDB& content, uint8_t mode);
+// The arena of every match of a tournament: the pool and its period, or no
+// pool (--arena NAME, or a mode without one: every match plays `fixed`).
+struct ArenaCycle {
+  std::vector<uint8_t> pool;  // empty: no cycle
+  uint32_t period{1};         // T, at least 1
+  uint8_t fixed{0};           // the arena without a cycle (MatchSetup::config.arena)
+  // Match k's arena: pool[(k / period) mod P], else `fixed`.
+  [[nodiscard]] uint8_t arenaFor(uint32_t match) const;
+};
+// The cycle of `setup` (its mode, its teams or bots, its arena as fixed):
+// none when `arenaNamed` (the CLI's --arena) or the mode has no pool.
+[[nodiscard]] ArenaCycle arenaCycle(const sim::ContentDB& content, const MatchSetup& setup,
+                                    bool arenaNamed);
 
 // Plays one match. `index` is only carried into the result. Fails only when
 // the setup has no bots or too many, or a bot cannot be built (the
@@ -216,7 +241,8 @@ struct Summary {
 //   place 1 score 3 kills 5 deaths 1 acts 5432 subs 3 traps 1 over 2 bad 0 fuel_mean 61234
 //   fuel_max 62731 fuel_init 13 log 0 dead no
 // checksum: the final state's, 8 hex digits; result: ended (MatchEnded) or
-// cap; winner: a slot, or none (a draw, the cap).
+// cap; winner: a slot, or none (a draw, the cap). v0.81: " arena NAME" (the
+// arena played) ends the first segment, after winner and winner_team.
 // The module fields (traps .. dead) follow a module slot only; dead is the
 // death cause (init-trap, ...) or no.
 [[nodiscard]] std::string formatResultLine(const MatchResult& result);
@@ -224,7 +250,7 @@ struct Summary {
 // The same as one JSON object on one line:
 //   {"match":0,"seed":7,"ticks":5432,"checksum":"0c0ffee1","result":"ended","winner":1,
 //   "slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":2,...},...],
-//   "content_hash":"5e1f00d2","build_hash":"00000000"}
+//   "content_hash":"5e1f00d2","build_hash":"00000000","arena":"dojo"}
 // winner and dead are null when none; module slots carry the module fields.
 // The JSON objects are a contract with the ladder (docs/arena-result.md):
 // keys are only ever appended, never renamed, removed or retyped. The text

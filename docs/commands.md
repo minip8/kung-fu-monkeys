@@ -113,6 +113,16 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
   1 on a bad replay (the error screen is still rendered); seeks step from a keyframe every 600
   ticks. The ctests `client_smoke_replay` and `client_smoke_replay_bad` match the client's
   output (`PASS_REGULAR_EXPRESSION`).
+- Harvest (v0.81): every tree of the arena is drawn (in any mode) as a trunk and canopy at the
+  back of its cell, a ring on the cell its fruit is laid on and the next banana ripening under
+  the canopy; bananas lying on one spot stack into a column. A monkey's bananas in hand are a
+  bunch (up to five drawn) beside the pips over its head; each team's home is tinted in its
+  colour; a banked banana pops gold like a point, a theft rings closing over the robbed home in
+  the raider's team colour with its own sound. The HUD says "Harvest (first team to N bananas
+  banked)" and "Team 1: 12 banked"; the scoreboard's column is "Bananas". To look at one
+  locally, copy `content/` to a scratch directory, add a harvest row and an arena with two
+  homes and a tree, and run `kfm_client --content DIR --mode NAME --bots 9 --bot-module
+  tools/bots/examples/gatherer.wasm`.
 - `kfm_render_probe` renders a scripted match. `--exit-on`: `dash-ring|perfect-catch|auto-catch|
   hit|throw|elimination|catch-window|charge|pit-fall|fall|scatter` (`--fall-at PERCENT`, default
   40, stops once a monkey's pit fall is that far through). `--arena pillars|corridors|island`
@@ -202,6 +212,13 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
   favours some slots). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
   fill that team's slots in order, the last repeating, and `--rotate` moves entrants across
   sides.
+- Arena pools (v0.81): a mode with an `arenas` pool, run without `--arena`, plays match k on
+  pool member (k / T) mod P in content order (P the members that suit the mode, T the teams with
+  `--team`, else the slots of a free-for-all), so with `--rotate` every entrant plays every side
+  of a member before the next member (`--matches` a multiple of T x P plays each member equally).
+  `--arena NAME` plays that arena for every match; a mode without a pool plays one arena as
+  before. Each result line names the arena after `winner` / `winner_team` (`... winner 1 arena
+  orchard | slot 0 ...`), and the JSON match object ends with `"arena":"orchard"`.
 - Also `--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR`, `--fuel N`,
   `--delay T`, `--memory-on-respawn keep|wipe`, `--replay out.kfmr | --replay-dir DIR`,
   `--result FILE`, `--json`, `--quiet`, `--log`. One result line per match and a summary; exit
@@ -212,7 +229,11 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
   freezes every key, its order and type): a new key is appended to the code, the doc and the
   test, never inserted or renamed. The match object carries `content_hash` and `build_hash`
   (the build id: 0 unless configured with `-DKFM_BUILD_ID=<hex>`, as releases are; peers of
-  different build ids are refused and told to reload).
+  different build ids are refused and told to reload) and, since v0.81, `arena`.
+- The other hosts play one arena of a pooled mode: `kfm_client`, `kfm_server`, `kfm_replay`
+  and `kfm_netsim` resolve a mode without `--arena` to arena 0 when it suits the mode, else to
+  `ContentDB::firstCompatibleArena` (the mode's `arena`, else the pool's first member that
+  suits it); the client's lobby moves to that arena when the mode changes.
 
 ## Releases
 

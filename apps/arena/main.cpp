@@ -48,7 +48,12 @@
 //   --log          print each module's captured kfm_log output at the end
 //                  (stderr)
 //   --content DIR, --arena, --mode, --loadout, --powerups: as kfm_replay; the content
-//                  defaults to the copy built into the binary
+//                  defaults to the copy built into the binary. v0.81: without
+//                  --arena, a mode with an arena pool (`arenas`) plays match k
+//                  on pool member (k / T) mod P in content order (T the teams,
+//                  or the slots of a free-for-all; P the members), so with
+//                  --rotate every entrant plays every side of a member before
+//                  the next; --arena NAME plays that arena for every match
 //
 // Exit codes: 0 ok (a capped match is a result, not an error), 2 bad
 // arguments (or content that fails to load), 3 a module failed to load (the
@@ -96,7 +101,8 @@ constexpr const char* kUsage =
     "  SPEC: ref | ref:easy | ref:medium | ref:hard | path/to/bot.wasm\n"
     "  --rotate: match k moves bot b to slot (b + k) mod n; the summary adds per-bot totals\n"
     "  --team: one per team of a team mode, its specs fill the team's slots in order\n"
-    "  --json: one object per line, the summary last (docs/arena-result.md)\n";
+    "  --json: one object per line, the summary last (docs/arena-result.md)\n"
+    "  a mode's arena pool: without --arena, match k plays member (k / T) mod P\n";
 
 struct Args {
   std::vector<std::string> bots;
@@ -325,6 +331,10 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
   setup.tickCap = a.ticks;
   setup.delayTicks = static_cast<uint8_t>(a.delay);
+  // v0.81: without --arena a mode's arena pool is cycled, match k on member
+  // (k / T) mod P (T: the teams, or the slots of a free-for-all), so with
+  // --rotate every entrant plays every side of a member before the next.
+  const arena::ArenaCycle cycle = arena::arenaCycle(loaded.db, setup, !a.arenaName.empty());
 
   // Every module loads before the first match.
   arena::BotFactory factory(a.fuel);
@@ -362,6 +372,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   for (uint32_t k = 0; k < a.matches; ++k) {
     setup.config.seed = a.seed + k;
     setup.rotation = a.rotate ? k : 0;
+    setup.config.arena = cycle.arenaFor(k);
     std::filesystem::path replayPath;
     if (!a.replayDir.empty()) {
       replayPath = std::filesystem::path(a.replayDir) / std::format("match_{}.kfmr", k);
