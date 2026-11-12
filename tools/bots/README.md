@@ -111,17 +111,20 @@ clock.
 
 | Arena | Pairing | fuel_max | Draws | Median ticks | Mean score (side 0 - 1, or gatherer - ref) | Kills (gatherer / other) | Wins side 0 / 1 |
 |---|---|---:|---:|---:|---|---|---|
-| `grove` | mirror | 33 668 | 0 | 490 | 40 - 12 | 0 / 0 | 20 / 0 |
-| `grove` | vs `ref:hard` | 33 668 | 0 | 971 | 40.1 - 3.1 | 128 / 374 | 10 / 10 |
-| `orchards` | mirror | 34 411 | 20 | 874 | 40 - 40 | 0 / 0 | 0 / 0 |
-| `orchards` | vs `ref:hard` | 34 411 | 0 | 853 | 40.1 - 1.8 | 38 / 210 | 10 / 10 |
-| `gorge` | mirror | 33 745 | 20 | 788 | 40 - 40 | 0 / 0 | 0 / 0 |
-| `gorge` | vs `ref:hard` | 33 745 | 0 | 1146 | 40.1 - 1.2 | 97 / 405 | 10 / 10 |
-| `burrows` | mirror | 27 500 | 20 | 672 | 40 - 40 | 0 / 0 | 0 / 0 |
-| `burrows` | vs `ref:hard` | 27 500 | 0 | 794 | 40.1 - 5.2 | 19 / 156 | 10 / 10 |
+| `grove` | mirror | 33 668 | 1 | 712 | 35.5 - 37.7 | 0 / 0 | 5 / 14 |
+| `grove` | vs `ref:hard` | 34 227 | 0 | 1304 | 40.2 - 2.8 | 143 / 470 | 10 / 10 |
+| `orchards` | mirror | 34 411 | 5 | 852 | 37.9 - 37.6 | 0 / 0 | 9 / 6 |
+| `orchards` | vs `ref:hard` | 34 411 | 0 | 1468 | 40.1 - 2.0 | 109 / 483 | 10 / 10 |
+| `gorge` | mirror | 33 745 | 0 | 715 | 37.9 - 34.3 | 0 / 0 | 14 / 6 |
+| `gorge` | vs `ref:hard` | 33 745 | 0 | 1285 | 40.2 - 1.2 | 129 / 487 | 10 / 10 |
+| `burrows` | mirror | 27 500 | 1 | 614 | 36.6 - 38.7 | 0 / 0 | 6 / 13 |
+| `burrows` | vs `ref:hard` | 27 500 | 0 | 1100 | 40.0 - 5.5 | 42 / 295 | 10 / 10 |
 
-The gatherer ignores its seed, so a mirror of gatherers is one game twenty times: the mirror
-maps' half turn and the tie-free share-out give both sides the same bananas on the same turn and
-a 40-40 draw, but on `grove` both teams' first picks are the same rich tree (equal costs, the
-lower spawner) and, standing on its cell together, side 0's lower slots take its fruit. Against
-`ref:hard` the gatherers win all 80 games; the side split there is `--rotate`'s.
+The gatherer ignores its seed, but a mirror of gatherers is not one game twenty times: the
+mirror maps' half turn and the tie-free share-out send both sides to the same trees on the same
+turn, and the engine draws every tie between them from the world Rng (a fruit two monkeys touch
+on one tick, a cell two step into at an equal press), so the match's seed decides who gets
+there first. Over 200 rotated mirror games a map the sides split as a fair coin does: `grove`
+92 to 104 (two-sided binomial p = 0.43), `orchards` 95 to 83 (0.41), `gorge` 105 to 87 (0.22),
+`burrows` 84 to 102 (0.21). Against `ref:hard` the gatherers win all 80 games; the side split
+there is `--rotate`'s.
