@@ -7,6 +7,7 @@
 
 #include "../sim/sim_test_util.hpp"
 #include "kfm/ai/observation_builder.hpp"
+#include "kfm/content/loader.hpp"
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/content.hpp"
 
@@ -16,6 +17,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <optional>
 #include <utility>
 
 using namespace kfm;
@@ -759,4 +761,66 @@ TEST_CASE("version 2's first 5748 bytes are version 1's observation (v0.79)",
   CHECK(obs.header.schemaFlags == 0);
   CHECK(obs.header.reserved0 == 0);
   CHECK(fnv1a(obs, sizeof(ObsHeader), kObservationV1Size) == 0x28715d37u);
+}
+
+TEST_CASE("the rules block reports the mode's banana flight, else the def's (v0.79)",
+          "[ai][observation][flight]") {
+  // fillRules reads MatchContent::bananaOutboundTicks() / bananaTurnRateBam():
+  // a mode that sets banana_outbound_ticks / banana_turn_rate shows its own,
+  // a mode that leaves them 0 shows the BoomerangDef's.
+  ContentDB c = defaultContent();
+  REQUIRE(c.boomerang.outboundTicks != 7);
+  REQUIRE(c.boomerang.turnRateBam != 12345);
+  ModeDef& flown = c.modes[1];
+  flown = c.modes[0];
+  flown.name = ContentName::of("flown");
+  flown.bananaOutboundTicks = 7;
+  flown.bananaTurnRateBam = 12345;
+  c.modeCount = 2;
+  REQUIRE(c.modes[0].bananaOutboundTicks == 0);
+  REQUIRE(c.modes[0].bananaTurnRateBam == 0);
+  const WorldState s = makePlayingWorld(5, 0b11);
+
+  Observation obs{};
+  buildObservation(s, MatchContent(c, 0, 1), kP0, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == 7);
+  CHECK(obs.rules.bananaTurnRateBam == 12345);
+  buildObservation(s, MatchContent(c, 0, 0), kP0, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == c.boomerang.outboundTicks);
+  CHECK(obs.rules.bananaTurnRateBam == c.boomerang.turnRateBam);
+
+  // Only one of the two set: each falls back on its own.
+  flown.bananaTurnRateBam = 0;
+  buildObservation(s, MatchContent(c, 0, 1), kP0, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == 7);
+  CHECK(obs.rules.bananaTurnRateBam == c.boomerang.turnRateBam);
+}
+
+TEST_CASE("a bot in the shipped contest is told 3 turns out and 85 degrees a turn home (v0.79)",
+          "[ai][observation][flight][contest]") {
+  ContentDB db{};
+  content::Diagnostics diag;
+  const bool loaded = content::loadEmbeddedContent(db, diag);
+  REQUIRE(loaded);
+  const std::optional<uint8_t> contest = db.findMode("contest");
+  REQUIRE(contest);
+  const uint8_t mode = contest.value_or(0);
+  const PlayerMask players = 0b11;
+  const MatchConfig config{.seed = 3,
+                           .players = players,
+                           .arena = db.modes[mode].arena,
+                           .mode = mode,
+                           .teams = teamsFor(db.modes[mode], players)};
+  const MatchContent match = matchContent(db, config);
+  WorldState s = initialWorld(config);
+  EventLog log;
+  runTicks(s, frameFor(s), 1, match, log);  // the round start spawns the monkeys
+
+  Observation obs{};
+  buildObservation(s, match, kP1, 0, obs);
+  CHECK(obs.rules.bananaOutboundTicks == 3);
+  CHECK(obs.rules.bananaTurnRateBam == 15474);
+  // Neither is the def's: the row overrides both.
+  CHECK(db.boomerang.outboundTicks != 3);
+  CHECK(db.boomerang.turnRateBam != 15474);
 }
