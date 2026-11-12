@@ -1506,3 +1506,51 @@ against them; step (4) in the bots repository; whether a tie should decay the ca
 fixes (also in §12); `hill_ticks` and `capture_ticks` not in the observation (a bot cannot read
 either threshold; hill has had the same gap); the zone-blind walkover. The roles, the reference
 bot and the ladder service are deliberately unchanged.
+
+v0.81 changes: the contest's next rules are designed, not built (§11 "Contest design: bananas
+as the economy"; pointers in §8 "The `contest` mode", §11's M7 progress and §12's slot-bias
+item). Nothing in the tree changes with this version but the two documents. Why: the control
+contest built in v0.80 plays and ends, but the owner, on seeing it run, judged it too thin for
+a contest of bots: nothing a team does compounds, the monkeys are alike but for the catcher,
+the objective is a rectangle to out-number, and the one small map can be hard-coded. No
+measurement was made for this version; the two of v0.80 that bear on it are the zone-blind
+`chaser` losing 10 to 0 in 700 turns to a monkey that crosses its home zone once, and
+`ref:hard`, which ignores zones, ending a game against itself in a median of 1234 turns. The
+design: a new mode kind `harvest`, in which the banana is the resource as well as the
+ammunition. Bananas come from the opening hands and from trees (pickup spawners that lay a
+banana on a beat, with no Rng draw; arena content, bearing in every mode); the hand is the
+cargo (`ammo`, three under the kind's baseline); a monkey in its home zone banks one banana
+for a point every `bank_ticks`, and a monkey alone in an enemy home takes one back out every
+`steal_ticks`; the regrow is off and a respawn is empty-handed (`respawn_ammo`), so nothing
+else mints a banana. The beats are global, so the kind keeps no state, `WorldState` does not
+change and no existing checksum moves; `modeData` word 0 carries the two beats for bots. The
+fight needs no new rule, because the sim as built already prices it in bananas: a throw comes
+home in five turns unless it is caught, a perfect dash catch takes the enemy's banana, a death
+drops the cargo, a pit takes it, and a dash attack needs a banana in hand, so banking the last
+one disarms a monkey. A mode may name a pool of arenas (`arenas`, a bit set), `kfm_arena`
+cycles it under `--rotate` and its JSON match object gains an appended `arena` key; the first
+pool is four half-turn-symmetric maps (`grove`, drafted in the section, `orchards`, `gorge`,
+`burrows`), 15 of the 16 arenas with what ships. No new `Observation` version: mode kind 8 is
+appended, a tree is a spawner whose pad byte is filled, the homes are zones 0 and 1, so a
+version 1 module plays the kind whole. The row is built as `harvest_1t` beside `contest`,
+which stays `control` until the gates pass: `bank_ticks` 2, `steal_ticks` 6, `score_to_win`
+40, the contest's clock, respawn, squad, fog and flight, home trees every 90 turns holding
+one, flank trees every 60 holding two, rich trees every 30 holding three. The gates, over 200
+games a pairing and pool member with three house bots (`gatherer`, `raider`, `keeper`): at
+most 5 % at the clock and 5 % drawn, a median of 1200 to 2700 turns, no house bot beating both
+others in more than 65 % of games, 15 to 50 % of banked bananas having changed sides, the team
+behind at a third of the game winning at least one in five, each map's sides splitting as a
+fair coin does, no fault and `fuel_max` under 80 k. Chosen by the project's owner: the
+direction (bananas as the economy, and a pool of maps) and that it is written up before
+anything is built. Proposed in the write-up and still the owner's to confirm: stealing from a
+bank and the lone-defender rule, the empty-handed respawn, the global beats, four maps, the
+row's numbers and the gates. Step (4) of the control design (control-aware `starter` and
+`holder`) is dropped: the house bots are written for `harvest`. Considered and kept for later
+designs, in order: spending banked bananas (a priced respawn, a loadout chosen at the
+respawn), peels as traps, bushes (fog only, no checksum), escalating trees, an opening gate,
+homes that grant. Considered and not planned: more than ten monkeys (a third ABI version), a
+painted floor, a shared team array. Not measured: anything of the design; every number is a
+starting point. Open in the section: whether stealing belongs at all, whether an empty-handed
+respawn lets a leader camp, a tie-break at the clock, the capacities that bound the maps (8
+spawners a map, 16 arenas, 32 pickups), and, recommended with the kind, the tied cell
+contest's fix of §12, which moves checksums and is the owner's call.
