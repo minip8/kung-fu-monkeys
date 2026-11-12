@@ -312,10 +312,11 @@ ChaserMatch playChaserMatch(const WasmModule& chaser, uint64_t seed, int maxTick
 // A 24 x 14 cell arena (1-unit cells, the box [-12, 12] x [-7, 7], the size
 // of the contest's draft map), its own half turn: two homes (zone 0 west,
 // zone 1 east), walls round the centre and in front of each home, two pits,
-// six trees (a home, a flank and a middle one a side). Team 0 spawns in
-// zone 0, team 1 in zone 1. A grid harvest mode of one-tick turns over two
-// teams, banking every 2 ticks, stealing every 6, to 15 banked; the same in
-// the continuous space; and the grid one under the contest's fog (own eyes).
+// six trees a side as the contest's maps have them: a poor home tree (every
+// 90 ticks, one at a time), a flank tree (every 60, two) and a rich middle
+// one (every 30, three). Team 0 spawns in zone 0, team 1 in zone 1. A grid harvest mode of one-tick
+// turns over two teams, banking every 2 ticks, stealing every 6, to 15 banked; the same in the
+// continuous space; and the grid one under the contest's fog (own eyes).
 constexpr uint8_t kOrchard = 1;
 constexpr uint8_t kGridHarvest = 1;
 constexpr uint8_t kFreeHarvest = 2;
@@ -329,6 +330,12 @@ constexpr int kHarvestScore = 15;
   return Wall{Vec2{Fixed::fromInt(x0), Fixed::fromInt(y0)},
               Vec2{Fixed::fromInt(x1), Fixed::fromInt(y1)}};
 }
+
+// Home, flank and middle trees, west then east, and their beats.
+constexpr std::array<Vec2, 6> kOrchardTrees = {at2(-21, -9), at2(21, 9), at2(-5, -9),
+                                               at2(5, 9),    at2(-1, 5), at2(1, -5)};
+constexpr std::array<uint16_t, 6> kOrchardBeats = {90, 90, 60, 60, 30, 30};
+constexpr uint16_t kHomeTreeBeat = 90;
 
 [[nodiscard]] ContentDB orchardContent() {
   ContentDB c = defaultContent();
@@ -348,9 +355,11 @@ constexpr int kHarvestScore = 15;
   a.cellSize = Fixed::one();
   a.spawnPoints[0] = at2(-21, 1);
   a.spawnPoints[1] = at2(-21, -1);
-  a.spawnPoints[2] = at2(21, -1);
-  a.spawnPoints[3] = at2(21, 1);
-  a.spawnPointCount = 4;
+  a.spawnPoints[2] = at2(-21, 3);
+  a.spawnPoints[3] = at2(21, -1);
+  a.spawnPoints[4] = at2(21, 1);
+  a.spawnPoints[5] = at2(21, -3);
+  a.spawnPointCount = 6;
   a.spawnGroups = 2;
   a.zones[0] = Zone{at2(-24, -2), at2(-18, 4)};
   a.zones[1] = Zone{at2(18, -4), at2(24, 2)};
@@ -364,14 +373,12 @@ constexpr int kHarvestScore = 15;
   a.hazards[0] = Hazard{at2(-2, 6), at2(2, 10), HazardKind::Pit, Fixed::one()};
   a.hazards[1] = Hazard{at2(-2, -10), at2(2, -6), HazardKind::Pit, Fixed::one()};
   a.hazardCount = 2;
-  const std::array<Vec2, 6> trees = {at2(-21, -9), at2(21, 9), at2(-5, -9),
-                                     at2(5, 9),    at2(-1, 5), at2(1, -5)};
-  for (const Vec2 pos : trees) {
+  for (size_t i = 0; i < kOrchardTrees.size(); ++i) {
     PickupSpawner& t = a.pickupSpawners[a.pickupSpawnerCount++];
-    t.pos = pos;
-    t.firstTicks = 30;
-    t.intervalTicks = 90;
-    t.maxAlive = 2;
+    t.pos = kOrchardTrees[i];
+    t.intervalTicks = kOrchardBeats[i];
+    t.firstTicks = t.intervalTicks;
+    t.maxAlive = static_cast<uint8_t>(90 / t.intervalTicks);
     t.tree = 1;
   }
   c.arenaCount = 2;
@@ -418,34 +425,37 @@ struct HarvestMatch {
   int laid{0};    // banana pickups laid by a tree or a drop
   int eliminations{0};
   int gathererFalls{0};  // PlayerFell of a gatherer
-  std::array<WasmAgentStats, 2> stats{};
-  std::array<AgentSlotStats, 2> slotStats{};
+  // Per tree: Playing ticks a monkey of team 0 stood on its cell.
+  std::array<int, kOrchardTrees.size()> team0OnTree{};
+  std::vector<WasmAgentStats> stats;  // team 0's gatherers, by slot
+  std::vector<AgentSlotStats> slotStats;
   std::vector<uint32_t> checksums;
 };
 
-// Gatherers in slots 0 and 2 (team 0) against team 1 (slots 1 and 3):
-// gatherers too, or medium reference bots.
-HarvestMatch playHarvestMatch(const WasmModule& gatherer, uint8_t mode, bool mirror,
-                              uint64_t seed) {
+// `perTeam` gatherers in the even slots (team 0) against team 1 in the odd
+// ones: gatherers too, or medium reference bots.
+HarvestMatch playHarvestMatch(const WasmModule& gatherer, uint8_t mode, bool mirror, uint64_t seed,
+                              uint8_t perTeam = 2) {
   const ContentDB& db = orchard();
   REQUIRE(db.compatible(kOrchard, mode));
+  const auto players = static_cast<PlayerMask>((1u << (2u * perTeam)) - 1u);
   const MatchConfig config{.seed = seed,
-                           .players = 0b1111,
+                           .players = players,
                            .arena = kOrchard,
                            .mode = mode,
-                           .teams = teamsFor(db.modes[mode], 0b1111)};
-  REQUIRE(config.teams[0] == 0);
-  REQUIRE(config.teams[1] == 1);
+                           .teams = teamsFor(db.modes[mode], players)};
+  for (uint8_t i = 0; i < 2 * perTeam; ++i)
+    REQUIRE(config.teams[i] == i % 2);
   const MatchContent content = matchContent(db, config);
   WorldState s = initialWorld(config);
   AgentHost host;
   HarvestMatch r;
-  std::array<WasmAgent*, 2> wasm{};
-  for (uint8_t i = 0; i < 4; ++i) {
+  std::vector<WasmAgent*> wasm;
+  for (uint8_t i = 0; i < 2 * perTeam; ++i) {
     const uint64_t botSeed = agentSeed(seed, PlayerId{i});
     if (i % 2 == 0 || mirror) {
       auto agent = std::make_unique<WasmAgent>(gatherer);
-      if (i % 2 == 0) wasm[i / 2] = agent.get();
+      if (i % 2 == 0) wasm.push_back(agent.get());
       host.attach(PlayerId{i}, std::move(agent), botSeed);
     } else {
       host.attach(PlayerId{i}, std::make_unique<ReferenceBot>(ReferenceBotConfig::medium()),
@@ -476,6 +486,13 @@ HarvestMatch playHarvestMatch(const WasmModule& gatherer, uint8_t mode, bool mir
         ++r.gathererFalls;
       }
     }
+    if (s.rules.phase == MatchPhase::Playing) {
+      for (uint8_t i = 0; i < 2 * perTeam; i += 2) {
+        const Player* p = s.playerBySlot(PlayerId{i});
+        for (size_t t = 0; p != nullptr && t < kOrchardTrees.size(); ++t)
+          r.team0OnTree[t] += p->transform.pos == kOrchardTrees[t] ? 1 : 0;
+      }
+    }
     r.checksums.push_back(checksum(s));
     r.ticks = k + 1;
   }
@@ -483,10 +500,27 @@ HarvestMatch playHarvestMatch(const WasmModule& gatherer, uint8_t mode, bool mir
   for (uint8_t t = 0; t < 2; ++t)
     r.teamScores[t] = content.teamScore(s.rules.scores, t);
   for (size_t i = 0; i < wasm.size(); ++i) {
-    r.stats[i] = wasm[i]->stats();
-    r.slotStats[i] = host.stats(PlayerId{static_cast<uint8_t>(2 * i)});
+    r.stats.push_back(wasm[i]->stats());
+    r.slotStats.push_back(host.stats(PlayerId{static_cast<uint8_t>(2 * i)}));
   }
   return r;
+}
+
+// Faults and fuel of every gatherer of team 0.
+void checkGatherers(const HarvestMatch& m, uint32_t& fuelMax, uint64_t& fuel, uint64_t& acts) {
+  for (size_t i = 0; i < m.stats.size(); ++i) {
+    const WasmAgentStats& st = m.stats[i];
+    INFO("gatherer in slot " << 2 * i);
+    CHECK(st.acts + m.slotStats[i].paused == static_cast<uint64_t>(m.ticks));
+    CHECK(st.traps == 0);
+    CHECK(st.overBudget == 0);
+    CHECK(st.badReturns == 0);
+    CHECK(st.substitutions == 0);
+    CHECK(st.fuelMax < 80'000u);
+    fuelMax = std::max(fuelMax, st.fuelMax);
+    fuel += st.fuelTotal;
+    acts += st.acts;
+  }
 }
 
 }  // namespace
@@ -815,19 +849,7 @@ TEST_CASE("the gatherer banks a harvest match to its score (v0.82)", "[ai][sdk][
         CHECK(m.banked - m.stolen == m.teamScores[0] + m.teamScores[1]);
         if (!mirror) CHECK(m.teamScores[0] >= kHarvestScore);
         if (mirror) CHECK(m.gathererFalls == 0);
-        for (size_t i = 0; i < m.stats.size(); ++i) {
-          const WasmAgentStats& st = m.stats[i];
-          INFO("gatherer in slot " << 2 * i);
-          CHECK(st.acts + m.slotStats[i].paused == static_cast<uint64_t>(m.ticks));
-          CHECK(st.traps == 0);
-          CHECK(st.overBudget == 0);
-          CHECK(st.badReturns == 0);
-          CHECK(st.substitutions == 0);
-          CHECK(st.fuelMax < 80'000u);
-          fuelMax = std::max(fuelMax, st.fuelMax);
-          fuel += st.fuelTotal;
-          acts += st.acts;
-        }
+        checkGatherers(m, fuelMax, fuel, acts);
         if (first.empty()) first = m.checksums;
       }
     }
@@ -836,4 +858,40 @@ TEST_CASE("the gatherer banks a harvest match to its score (v0.82)", "[ai][sdk][
                                       << " (budget 100000)");
   const HarvestMatch again = playHarvestMatch(*gatherer, kGridHarvest, true, 81);
   CHECK(again.checksums == first);
+}
+
+TEST_CASE("a team of gatherers spreads over its trees under fog (v0.82)",
+          "[ai][sdk][wasm][harvest]") {
+  // Three gatherers a side under the contest's fog, where a monkey sees no
+  // fruit from its home: each works the tree its rank gives it (the rich
+  // middle tree, the flank tree, the rich one again by the team's share-out),
+  // so team 0 stands for a long while on more than one tree, and a team
+  // banks faster than its home tree alone could feed it (one banana a beat).
+  const WasmRuntime runtime;
+  REQUIRE(runtime.ok());
+  auto gatherer = WasmModule::load(readExample("gatherer"));
+  if (!gatherer) FAIL("gatherer: " << gatherer.error().message);
+  if (!gatherer) return;
+  uint32_t fuelMax = 0;
+  uint64_t fuel = 0;
+  uint64_t acts = 0;
+  for (const bool mirror : {true, false}) {
+    const HarvestMatch m = playHarvestMatch(*gatherer, kFogHarvest, mirror, 83, 3);
+    INFO((mirror ? "mirror" : "vs reference"));
+    int worked = 0;
+    for (size_t t = 0; t < kOrchardTrees.size(); ++t)
+      worked += m.team0OnTree[t] >= 60 ? 1 : 0;
+    WARN((mirror ? "mirror" : "vs reference")
+         << ": " << m.ticks << " ticks, " << m.teamScores[0] << " - " << m.teamScores[1]
+         << ", team 0 on the trees " << m.team0OnTree[0] << " " << m.team0OnTree[1] << " "
+         << m.team0OnTree[2] << " " << m.team0OnTree[3] << " " << m.team0OnTree[4] << " "
+         << m.team0OnTree[5] << " ticks, " << worked << " trees worked");
+    CHECK(m.ended);
+    CHECK(m.teamScores[0] >= kHarvestScore);
+    CHECK(worked >= 2);
+    // Faster than the home tree's beat: more than one banana a beat.
+    CHECK(m.teamScores[0] * kHomeTreeBeat > m.ticks);
+    checkGatherers(m, fuelMax, fuel, acts);
+  }
+  WARN("gatherer fuel per act: mean " << (acts == 0 ? 0 : fuel / acts) << ", max " << fuelMax);
 }

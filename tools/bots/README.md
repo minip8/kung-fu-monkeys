@@ -7,7 +7,7 @@ version 1, architecture v0.80).
 | Path | What |
 |---|---|
 | `sdk-c/kfm_bot.h` | The seed of the C SDK: one freestanding C11 header (no libc). |
-| `examples/chaser.c`, `examples/idle.c`, `examples/gatherer.c` | Example bots built from the header, with the `.wasm` built from each checked in beside it. `gatherer` (architecture v0.82) is the harvest kind's smoke test: it carries bananas from the trees to its home zone and does nothing else. |
+| `examples/chaser.c`, `examples/idle.c`, `examples/gatherer.c` | Example bots built from the header, with the `.wasm` built from each checked in beside it. `gatherer` (architecture v0.82) is the harvest kind's smoke test: it carries bananas from the trees to its home zone, each monkey working the tree its rank in the team gives it, and throws at an enemy in a clear line when it holds two or more. |
 | `examples/BUILT_WITH.txt` | The compiler that built the checked-in `.wasm` files. |
 | `build_example.sh` | Builds the examples (`tools/bots/build_example.sh [name...]`). |
 | `build_fixtures.sh`, `check_fixtures.cmake` | The hand-written ABI test modules in `tests/fixtures/bots` (`.wat` to `.wasm`, wabt). |
@@ -90,7 +90,38 @@ A module must:
 Budgets (host defaults, `docs/bot-abi.md` §1.4): 100 000 wasm instructions per `kfm_act`,
 10 000 000 for instantiation and for `kfm_init`, a 4 MiB file and 16 MiB of memory. The chaser
 uses about 7 000 instructions per act on average and under 30 000 at most. The gatherer uses about
-2 000 on average and under 32 000 at most on a 24 x 14 cell arena: it builds its cell map over
-two ticks of their own and grows each breadth-first distance field (to the home, the trees, the
-banana it fetches) by at most 96 cells a tick, walking straight at the goal until the field
-reaches it.
+3 000 to 4 000 on average and under 35 000 at most on the contest's maps (28 x 16 cells at the
+largest): it builds its cell map and its distance field to the home over ticks of their own in
+the round's countdown (the map, the steps in two halves, the wall cells, then the field 128
+cells a tick), and grows the field to the tree it works or the banana it fetches by at most 96
+cells a tick, walking straight at the goal until the field reaches it.
+
+The tree a gatherer works is a share-out every monkey of a team computes alike, from the
+statics and the roster, with no call: the trees are weighted by what a trip to one costs, its
+beat plus twice its walking distance from the home, and the team's r-th monkey by slot takes the
+r-th pick of a highest-averages (D'Hondt) share-out, so the rich and near trees get more
+monkeys. Five a side on the contest's pool, a team sends three monkeys to the two rich trees and
+one to each flank tree (on `orchards`, with no rich tree, one to each of the four flank trees
+and one to the home tree), so the two teams meet at the best trees.
+
+The smoke run on the `contest` row (`kfm_arena --mode contest --arena NAME --team G,G,G,G,G
+--team G,G,G,G,G` or `--team ref:hard,...`, `--matches 20 --rotate --seed 1`; `own` fog, 40 banked
+to win, a 3600-turn clock), architecture v0.82: no fault in any of the 160 games, no game at the
+clock.
+
+| Arena | Pairing | fuel_max | Draws | Median ticks | Mean score (side 0 - 1, or gatherer - ref) | Kills (gatherer / other) | Wins side 0 / 1 |
+|---|---|---:|---:|---:|---|---|---|
+| `grove` | mirror | 33 668 | 0 | 490 | 40 - 12 | 0 / 0 | 20 / 0 |
+| `grove` | vs `ref:hard` | 33 668 | 0 | 971 | 40.1 - 3.1 | 128 / 374 | 10 / 10 |
+| `orchards` | mirror | 34 411 | 20 | 874 | 40 - 40 | 0 / 0 | 0 / 0 |
+| `orchards` | vs `ref:hard` | 34 411 | 0 | 853 | 40.1 - 1.8 | 38 / 210 | 10 / 10 |
+| `gorge` | mirror | 33 745 | 20 | 788 | 40 - 40 | 0 / 0 | 0 / 0 |
+| `gorge` | vs `ref:hard` | 33 745 | 0 | 1146 | 40.1 - 1.2 | 97 / 405 | 10 / 10 |
+| `burrows` | mirror | 27 500 | 20 | 672 | 40 - 40 | 0 / 0 | 0 / 0 |
+| `burrows` | vs `ref:hard` | 27 500 | 0 | 794 | 40.1 - 5.2 | 19 / 156 | 10 / 10 |
+
+The gatherer ignores its seed, so a mirror of gatherers is one game twenty times: the mirror
+maps' half turn and the tie-free share-out give both sides the same bananas on the same turn and
+a 40-40 draw, but on `grove` both teams' first picks are the same rich tree (equal costs, the
+lower spawner) and, standing on its cell together, side 0's lower slots take its fruit. Against
+`ref:hard` the gatherers win all 80 games; the side split there is `--rotate`'s.
