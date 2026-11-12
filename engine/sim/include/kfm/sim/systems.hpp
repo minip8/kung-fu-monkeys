@@ -43,14 +43,23 @@ void movementSystem(WorldState& s, const MatchContent& content);
 void projectileSystem(WorldState& s, const MatchContent& content, EventSink& sink);
 // 6. Broadphase + swept narrowphase; reads state only (systems/collision.cpp).
 void collisionSystem(const WorldState& s, const MatchContent& content, Contacts& out);
+// kfm_replay stats' window on InteractionSystem: fn(ctx, ...) sees each
+// oriented contact just before it resolves, in the order it resolves (the
+// drawn order among a contended pickup's takers), while both its entities
+// are still there. step() passes none.
+struct ContactObserver {
+  void (*fn)(void* ctx, const WorldState& s, const MatchContent& content,
+             const Contact& c){nullptr};
+  void* ctx{nullptr};
+};
 // 7. Contacts resolved through the rules table (systems/interaction.cpp, rules/).
 //    A Player x Player contact is tried in both orientations (§5.6).
 void interactionSystem(WorldState& s, const MatchContent& content, const Contacts& contacts,
-                       EventSink& sink);
+                       EventSink& sink, ContactObserver observer = {});
 // InteractionSystem's step for one contact, in the orientation given: scan the
 // rows by priority until a handler returns true or an entity is gone. Exported
-// for kfm_replay stats, which resolves contacts one at a time in
-// InteractionSystem's order; the caller checks MatchPhase::Playing.
+// for tests that resolve one contact by hand; the caller checks
+// MatchPhase::Playing.
 void interactionResolveContact(WorldState& s, const MatchContent& content, const Contact& c,
                                EventSink& sink);
 // 8. Power-up expiry and timers, derived Stats, HP clamp, ability overrides,

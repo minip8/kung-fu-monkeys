@@ -45,6 +45,10 @@ enum class Ownership : uint8_t { Any = 0, Own, NotOwn };
 // a/b are the contact's entities in the rule's (kindA, kindB) order.
 using InteractionResolveFn = bool (*)(WorldState& s, const MatchContent& content, EntityId a,
                                       EntityId b, const Contact& contact, EventSink& sink);
+// A taking row's test of whether the player a could take b now (the checks
+// its handler makes before it takes anything); reads state only.
+using InteractionContendFn = bool (*)(const WorldState& s, const MatchContent& content, EntityId a,
+                                      EntityId b);
 
 struct InteractionRule {
   uint8_t priority{0};
@@ -66,6 +70,11 @@ struct InteractionRule {
   // banana); pickups and hazards have no relation and match any mask. Every
   // bit by default. A free-for-all makes every other slot an enemy.
   uint8_t relationB{kRelationAny};
+  // A taking row (the pickup rows): B goes to one monkey, so monkeys that
+  // touch it on one tick contend for it. Two or more for which a taking row
+  // matches and says they could take it are resolved in an order the world
+  // Rng draws (InteractionSystem); nullptr for every other row.
+  InteractionContendFn contend{nullptr};
 };
 
 // The M1 rows, sorted by ascending priority.

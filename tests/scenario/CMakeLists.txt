@@ -33,6 +33,7 @@ kfm_add_test_exe(kfm_scenario_tests
   grid_pathing_scenario.cpp
   banana_flight_scenario.cpp
   grid_scenario.cpp
+  pickup_contest_scenario.cpp
   side_symmetry_scenario.cpp
 )
 # side_symmetry_scenario.cpp plays the shipped contest and control_1t rows

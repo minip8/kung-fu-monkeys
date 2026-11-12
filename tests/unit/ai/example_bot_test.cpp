@@ -878,9 +878,13 @@ TEST_CASE("a team of gatherers spreads over its trees under fog (v0.82)",
   for (const bool mirror : {true, false}) {
     const HarvestMatch m = playHarvestMatch(*gatherer, kFogHarvest, mirror, 83, 3);
     INFO((mirror ? "mirror" : "vs reference"));
+    // A tree is worked when a monkey of team 0 stands on it for a fifth of
+    // the match or more. (A fixed second was too near the flank trees'
+    // share once a fruit two monkeys touch at once went to a drawn one, no
+    // longer always to the lower slot: 57 ticks each of a 222-tick match.)
     int worked = 0;
     for (size_t t = 0; t < kOrchardTrees.size(); ++t)
-      worked += m.team0OnTree[t] >= 60 ? 1 : 0;
+      worked += m.team0OnTree[t] * 5 >= m.ticks ? 1 : 0;
     WARN((mirror ? "mirror" : "vs reference")
          << ": " << m.ticks << " ticks, " << m.teamScores[0] << " - " << m.teamScores[1]
          << ", team 0 on the trees " << m.team0OnTree[0] << " " << m.team0OnTree[1] << " "

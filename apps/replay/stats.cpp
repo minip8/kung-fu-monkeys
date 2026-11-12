@@ -7,9 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-#include <limits>
 #include <optional>
-#include <tuple>
 #include <utility>
 
 namespace kfm::replay {
@@ -36,59 +34,6 @@ void mergeWait(Stats::ThrowerWait& to, const Stats::ThrowerWait& from) {
   append(to.regainSeconds, from.regainSeconds);
   to.eliminatedFirst += from.eliminatedFirst;
   to.roundEndedFirst += from.roundEndedFirst;
-}
-
-// InteractionSystem's resolution order (systems/interaction.cpp, §5.6,
-// §5.11): every contact, plus each Player x Player contact seen from B; time
-// of impact, then the earlier dash press of A when A holds the tag its rows
-// key on (PerfectDash against a banana or pickup, Dashing against a player),
-// then pool indices, then list position and orientation; keys are taken from
-// the state before any contact resolves. Returns the oriented contacts.
-[[nodiscard]] std::vector<Contact> interactionOrder(const WorldState& s, const Contacts& contacts) {
-  using Key = std::tuple<Fixed, uint64_t, uint8_t, uint16_t, uint8_t, uint16_t, uint16_t, bool>;
-  std::vector<std::pair<Key, Contact>> keyed;
-  keyed.reserve(contacts.count);
-  const auto add = [&](const Contact& c, uint16_t index, bool reversed) {
-    uint64_t press = std::numeric_limits<uint64_t>::max();
-    if (c.kindA == EntityKind::Player) {
-      const Player* p = s.players.get(c.a);
-      const Tag keyedTag = c.kindB == EntityKind::Player ? Tag::Dashing : Tag::PerfectDash;
-      if (p != nullptr && p->tags.has(keyedTag)) {
-        const AbilityState& dash = p->abilities[kAbilitySlotDash];
-        press = (static_cast<uint64_t>(dash.activatedTick.value) << 8) | dash.activatedSubTick;
-      }
-    }
-    keyed.emplace_back(Key{c.tHit, press, static_cast<uint8_t>(c.kindA), c.a.index,
-                           static_cast<uint8_t>(c.kindB), c.b.index, index, reversed},
-                       c);
-  };
-  for (uint16_t i = 0; i < contacts.count; ++i) {
-    const Contact& c = contacts.items[i];
-    add(c, i, false);
-    if (c.kindA == EntityKind::Player && c.kindB == EntityKind::Player) {
-      add(reversedContact(c), i, true);
-    }
-  }
-  std::ranges::sort(keyed, {}, &std::pair<Key, Contact>::first);
-  std::vector<Contact> order;
-  order.reserve(keyed.size());
-  for (const auto& k : keyed)
-    order.push_back(k.second);
-  return order;
-}
-
-[[nodiscard]] bool entityAlive(const WorldState& s, EntityKind kind, EntityId id) {
-  switch (kind) {
-    case EntityKind::Player:
-      return s.players.isAlive(id);
-    case EntityKind::Boomerang:
-      return s.boomerangs.isAlive(id);
-    case EntityKind::Pickup:
-      return s.pickups.isAlive(id);
-    case EntityKind::Hazard:
-      return true;  // arena statics never despawn
-  }
-  return false;
 }
 
 // The dash press as a fractional tick (§5.11).
@@ -550,18 +495,17 @@ void statsStep(WorldState& s, const InputFrame& in, const MatchContent& content,
   collisionSystem(s, content, contacts);
   stepStats.contactsDropped = contacts.dropped;
   collector.beginContacts(s);
-  // InteractionSystem one oriented contact at a time, in its resolution order, so each
-  // contact is judged against the state the rules table would see: a contact
+  // InteractionSystem itself, watched one oriented contact at a time in its
+  // resolution order (the drawn order among a contended pickup's takers), so
+  // each contact is judged against the state the rules table sees: a contact
   // whose banana was caught, or whose player was eliminated, earlier in the
-  // same tick is not counted as consulted. The shadow checksum proves the
-  // split resolution matches interactionSystem() over the whole list.
-  if (s.rules.phase == MatchPhase::Playing) {
-    for (const Contact& c : interactionOrder(s, contacts)) {
-      if (!entityAlive(s, c.kindA, c.a) || !entityAlive(s, c.kindB, c.b)) continue;
-      collector.observeContact(s, content, c);
-      interactionResolveContact(s, content, c, sink);
-    }
-  }
+  // same tick is not counted as consulted.
+  interactionSystem(
+      s, content, contacts, sink,
+      ContactObserver{[](void* ctx, const WorldState& w, const MatchContent& m, const Contact& c) {
+                        static_cast<StatsCollector*>(ctx)->observeContact(w, m, c);
+                      },
+                      &collector});
   modifierSystem(s, content);
   lifecycleSystem(s, content, sink);
   rulesPostTick(s, content, sink);

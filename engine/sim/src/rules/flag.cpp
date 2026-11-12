@@ -3,18 +3,26 @@
 // takes it: the pickup despawns, PickupTaken (a = Flag, b = the flag's team)
 // and the mode's onPickupTaken, where capture makes the taker the carrier.
 // A flag of the monkey's own team declines and stays where it lies. Like
-// the other pickup rows it ignores HitStun and dashing.
+// the other pickup rows it ignores HitStun and dashing. canTakeFlag is the
+// row's contend test: two enemies of the flag's team touching it on one
+// tick draw who takes it.
 #include "kfm/sim/modes/registry.hpp"
 #include "kfm/sim/rules/handlers.hpp"
 
 namespace kfm::sim {
 
-bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
-              const Contact& /*contact*/, EventSink& sink) {
+bool canTakeFlag(const WorldState& s, const MatchContent& content, EntityId a, EntityId b) {
   const Player* p = s.players.get(a);
   const Pickup* pickup = s.pickups.get(b);
-  if (p == nullptr || pickup == nullptr || pickup->kind != PickupKind::Flag) return false;
-  if (p->tags.has(Tag::Carrying) || content.teamOf(p->id) == pickup->spawner) return false;
+  return p != nullptr && pickup != nullptr && pickup->kind == PickupKind::Flag &&
+         !p->tags.has(Tag::Carrying) && content.teamOf(p->id) != pickup->spawner;
+}
+
+bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
+              const Contact& /*contact*/, EventSink& sink) {
+  if (!canTakeFlag(s, content, a, b)) return false;
+  const Player* p = s.players.get(a);
+  const Pickup* pickup = s.pickups.get(b);
   const Pickup taken = *pickup;  // the hook sees it after the despawn
   const PlayerId player = p->id;
   s.pickups.despawn(b);

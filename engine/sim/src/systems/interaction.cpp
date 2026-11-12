@@ -11,6 +11,18 @@
 // entities an earlier contact despawned are skipped. Outside
 // MatchPhase::Playing no contact resolves: the round is decided (or not yet
 // started) and nothing may hit, catch or pick up.
+//
+// Contended pickups: a pickup goes to one monkey, so when two or more
+// monkeys that could take it (a taking row, InteractionRule::contend,
+// matches and says yes: a hand with room, a flag of another team) touch it
+// on one tick, whatever their times of impact, the world Rng draws the order
+// they take it in. The draw happens at the place of the first of them in the
+// order above: a Fisher-Yates shuffle of the contenders in that order, one
+// Rng::below(i + 1) for i from the count less one down to 1 (one draw for
+// two), and each resolves through the table in the drawn order there (a
+// stack as far as it fits, the rest to the next). A monkey that could not
+// take it is no contender and resolves in its own place. One contender
+// draws nothing, so a tick without such a tie resolves exactly as before.
 #include "kfm/sim/rules/interaction.hpp"
 
 #include "kfm/sim/systems.hpp"
@@ -20,6 +32,7 @@
 #include <cstdint>
 #include <limits>
 #include <tuple>
+#include <utility>
 
 namespace kfm::sim {
 namespace {
@@ -120,6 +133,18 @@ struct SortKey {
   return rule.ownership == Ownership::Own ? own : !own;
 }
 
+// A contact a taking row would resolve now: the first matching taking row's
+// contend test says A could take B.
+[[nodiscard]] bool contends(const WorldState& s, const MatchContent& content, const Contact& c) {
+  if (c.kindB != EntityKind::Pickup || !isAlive(s, c.kindA, c.a) || !isAlive(s, c.kindB, c.b)) {
+    return false;
+  }
+  return std::ranges::any_of(interactionRules(), [&](const InteractionRule& rule) {
+    return rule.contend != nullptr && ruleMatches(s, content, rule, c) &&
+           rule.contend(s, content, c.a, c.b);
+  });
+}
+
 }  // namespace
 
 void interactionResolveContact(WorldState& s, const MatchContent& content, const Contact& c,
@@ -132,7 +157,7 @@ void interactionResolveContact(WorldState& s, const MatchContent& content, const
 }
 
 void interactionSystem(WorldState& s, const MatchContent& content, const Contacts& contacts,
-                       EventSink& sink) {
+                       EventSink& sink, ContactObserver observer) {
   if (s.rules.phase != MatchPhase::Playing) return;
   // Each Player × Player contact appears twice (both orientations).
   std::array<SortKey, kMaxContacts + kMaxPlayerPairs> order{};
@@ -156,9 +181,44 @@ void interactionSystem(WorldState& s, const MatchContent& content, const Contact
   }
   std::sort(order.begin(), order.begin() + n);
 
+  const auto resolve = [&](const Contact& c) {
+    if (observer.fn != nullptr && isAlive(s, c.kindA, c.a) && isAlive(s, c.kindB, c.b)) {
+      observer.fn(observer.ctx, s, content, c);
+    }
+    interactionResolveContact(s, content, c, sink);
+  };
+  // Contacts already resolved as a contender of a drawn pickup.
+  std::array<bool, kMaxContacts + kMaxPlayerPairs> drawn{};
   for (uint16_t k = 0; k < n; ++k) {
+    if (drawn[k]) continue;
     const Contact& c = contacts.items[order[k].contact];
-    interactionResolveContact(s, content, order[k].reversed ? reversedContact(c) : c, sink);
+    if (order[k].reversed || !contends(s, content, c)) {
+      resolve(order[k].reversed ? reversedContact(c) : c);
+      continue;
+    }
+    // The contenders for c's pickup, in the resolution order (Player x
+    // Pickup contacts are never reversed); the first is c.
+    std::array<uint16_t, kMaxPlayers> rivals{};
+    uint8_t count = 0;
+    rivals[count++] = k;
+    for (uint16_t j = k + 1; j < n && count < rivals.size(); ++j) {
+      const Contact& other = contacts.items[order[j].contact];
+      if (drawn[j] || order[j].reversed || other.kindB != EntityKind::Pickup || other.b != c.b) {
+        continue;
+      }
+      if (contends(s, content, other)) rivals[count++] = j;
+    }
+    if (count == 1) {
+      resolve(c);
+      continue;
+    }
+    for (uint8_t i = count - 1; i > 0; --i) {
+      std::swap(rivals[i], rivals[s.rng.below(uint32_t{i} + 1)]);
+    }
+    for (uint8_t i = 0; i < count; ++i) {
+      drawn[rivals[i]] = true;
+      resolve(contacts.items[order[rivals[i]].contact]);
+    }
   }
 }
 
