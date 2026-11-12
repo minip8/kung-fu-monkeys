@@ -222,7 +222,7 @@ struct MirrorWorld {
 [[nodiscard]] uint16_t twinMask(uint16_t m) {
   uint16_t out = 0;
   for (uint8_t i = 0; i < kMaxPlayers; ++i) {
-    if ((m >> i & 1u) != 0) out = static_cast<uint16_t>(out | (1u << twinSlot(i)));
+    if (((uint32_t{m} >> i) & 1u) != 0) out = static_cast<uint16_t>(out | (1u << twinSlot(i)));
   }
   return out;
 }
