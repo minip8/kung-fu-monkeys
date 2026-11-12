@@ -909,11 +909,12 @@ TEST_CASE("content/ ships the power-ups and an arena that spawns them",
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
   // v0.34 appended quick_hands and the grid modes' two baselines, v0.80 the
-  // contest's baseline and the _1t twins its arena lays.
-  const std::array<std::string_view, 13> names = {
+  // contest's baseline and the _1t twins its arena lays, v0.81 the harvest
+  // baseline.
+  const std::array<std::string_view, 14> names = {
       "speed_boost",     "big_banana",     "triple_banana", "shield",       "fast_hands",
       "quick_hands",     "grid_base",      "grid_base_1t",  "contest_base", "big_banana_1t",
-      "triplebanana_1t", "quick_hands_1t", "shield_1t"};
+      "triplebanana_1t", "quick_hands_1t", "shield_1t",     "harvest_base"};
   REQUIRE(db.powerUpCount == names.size());
   for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);

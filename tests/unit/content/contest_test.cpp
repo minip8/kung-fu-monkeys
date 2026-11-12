@@ -272,6 +272,32 @@ TEST_CASE("contest_base is grid_base_1t with the banana at 2 cells a turn (v0.80
   CHECK(bytesOf(twin) == bytesOf(g));
 }
 
+TEST_CASE("harvest_base is contest_base with two more bananas in the hand (v0.81)",
+          "[content][contest][harvest][powerup]") {
+  const ContentDB& db = shipped();
+  const std::optional<uint8_t> harvest = db.findPowerUp("harvest_base");
+  const std::optional<uint8_t> contest = db.findPowerUp("contest_base");
+  REQUIRE(harvest);
+  REQUIRE(contest);
+  CHECK(harvest.value_or(0) == db.powerUpCount - 1);  // appended: 14 of kMaxPowerUps' 16
+  CHECK(db.powerUpCount == 14);
+  const sim::PowerUpDef& c = db.powerUps[contest.value_or(0)];
+  sim::PowerUpDef h = db.powerUps[harvest.value_or(0)];
+  // Three in the hand: the base kit's ammo_max of 1, plus 2.
+  REQUIRE(h.grantCount == c.grantCount + 1);
+  const sim::PowerUpGrant& extra = h.grants[c.grantCount];
+  REQUIRE(extra.kind == sim::GrantKind::Stat);
+  CHECK(extra.stat.stat == sim::StatKind::AmmoMax);
+  CHECK(extra.stat.add == Fixed::fromInt(2));
+  CHECK(extra.stat.mul == Fixed::one());
+  CHECK(db.player.ammoMax + 2 == 3);
+  // Everything else, the banana at 2 cells a turn included, is contest_base's.
+  h.name = c.name;
+  h.grants[c.grantCount] = sim::PowerUpGrant{};
+  h.grantCount = c.grantCount;
+  CHECK(bytesOf(h) == bytesOf(c));
+}
+
 // The flight the row's banana_outbound_ticks and banana_turn_rate give, through
 // step() on the shipped content: a monkey at rest in the open row 4 (column
 // 2) throws east. As measured when the numbers were chosen (v0.80): 2 cells a

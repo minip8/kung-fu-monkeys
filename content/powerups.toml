@@ -155,3 +155,21 @@ duration_ticks = 90         # 90 turns (or the first hit it absorbs)
 color = 1
 shape = "orb"
 grants = [{ kind = "tag", tag = "shielded" }]
+
+# v0.81, the harvest contest's baseline (architecture §11 "Contest design:
+# bananas as the economy"): contest_base with two more bananas in the hand,
+# three in all, the banana still at 2 cells a turn. The hand is the cargo. A
+# baseline's ammo_max raises the capacity without filling the hand (the
+# top-up is a pickup's, rule 51), so a monkey still starts its match with
+# [player] ammo_start and fills the rest at the trees.
+[[powerup]]
+name = "harvest_base"
+duration_ticks = 1
+color = 8
+shape = "orb"
+grants = [
+  { kind = "stat", stat = "radius", mul = 0.7 },
+  { kind = "stat", stat = "max_hp", add = 1 },
+  { kind = "projectile", radius_mul = 0.4286, speed_mul = 7.5 },
+  { kind = "stat", stat = "ammo_max", add = 2 },
+]
