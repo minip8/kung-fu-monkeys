@@ -7,7 +7,7 @@ version 1, architecture v0.80).
 | Path | What |
 |---|---|
 | `sdk-c/kfm_bot.h` | The seed of the C SDK: one freestanding C11 header (no libc). |
-| `examples/chaser.c`, `examples/idle.c` | Example bots built from the header, with the `.wasm` built from each checked in beside it. |
+| `examples/chaser.c`, `examples/idle.c`, `examples/gatherer.c` | Example bots built from the header, with the `.wasm` built from each checked in beside it. `gatherer` (architecture v0.82) is the harvest kind's smoke test: it carries bananas from the trees to its home zone and does nothing else. |
 | `examples/BUILT_WITH.txt` | The compiler that built the checked-in `.wasm` files. |
 | `build_example.sh` | Builds the examples (`tools/bots/build_example.sh [name...]`). |
 | `build_fixtures.sh`, `check_fixtures.cmake` | The hand-written ABI test modules in `tests/fixtures/bots` (`.wat` to `.wasm`, wabt). |
@@ -19,8 +19,11 @@ its `engine.lock` names), the C++ layer, the example bots, the build recipe and 
 later the ladder. What is here is the seed copied there, and the in-repo proof that a module
 built from it loads and plays: `tests/unit/ai/example_bot_test.cpp` (in `kfm_ai_wasm_tests`)
 checks the header's layout and constants against `engine/ai/include/kfm/ai/observation.hpp`,
-its integer math and banana flight step against the engine and the sim, and plays the checked-in
-`chaser.wasm` through `AgentHost` against the reference bot. A change to the header or to an
+its integer math and banana flight step against the engine and the sim, plays the checked-in
+`chaser.wasm` through `AgentHost` against the reference bot, and plays `gatherer.wasm` through
+harvest matches on a hand-built arena with walls, pits, trees and two homes (in the grid, in the
+continuous space and under fog, against itself and against the reference bot), each to its
+`score_to_win`. A change to the header or to an
 example is followed by `tools/bots/build_example.sh` and a commit of the rebuilt `.wasm`.
 `tests/fixtures/bots/chaser_v1.wasm` is the chaser as built against the version 1 header (the
 `chaser.wasm` checked in before v0.80, byte for byte); it is never rebuilt, and the same test
@@ -86,4 +89,8 @@ A module must:
 
 Budgets (host defaults, `docs/bot-abi.md` §1.4): 100 000 wasm instructions per `kfm_act`,
 10 000 000 for instantiation and for `kfm_init`, a 4 MiB file and 16 MiB of memory. The chaser
-uses about 7 000 instructions per act on average and under 30 000 at most.
+uses about 7 000 instructions per act on average and under 30 000 at most. The gatherer uses about
+2 000 on average and under 32 000 at most on a 24 x 14 cell arena: it builds its cell map over
+two ticks of their own and grows each breadth-first distance field (to the home, the trees, the
+banana it fetches) by at most 96 cells a tick, walking straight at the goal until the field
+reaches it.
