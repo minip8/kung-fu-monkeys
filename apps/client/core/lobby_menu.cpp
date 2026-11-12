@@ -441,6 +441,7 @@ std::string modeSummary(const sim::ModeDef& mode) {
       }
       [[fallthrough]];
     case sim::ModeKind::Rounds:
+    case sim::ModeKind::Harvest:  // v0.81: a minimal case until the client describes the kind
     case sim::ModeKind::kCount:
       break;
   }

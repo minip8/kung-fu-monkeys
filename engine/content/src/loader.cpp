@@ -89,7 +89,7 @@ struct ModeKindName {
   std::string_view name;
   sim::ModeKind kind;
 };
-constexpr std::array<ModeKindName, 8> kModeKinds = {{
+constexpr std::array<ModeKindName, 9> kModeKinds = {{
     {"rounds", sim::ModeKind::Rounds},
     {"deathmatch", sim::ModeKind::Deathmatch},
     {"survival", sim::ModeKind::Survival},
@@ -98,6 +98,7 @@ constexpr std::array<ModeKindName, 8> kModeKinds = {{
     {"hill", sim::ModeKind::Hill},                       // v0.33
     {"capture", sim::ModeKind::Capture},                 // v0.33
     {"control", sim::ModeKind::Control},                 // v0.80
+    {"harvest", sim::ModeKind::Harvest},                 // v0.81
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -1351,8 +1352,8 @@ class Builder {
       const auto* const entry = findNamed(kModeKinds, *kind);
       if (entry == nullptr) {
         s.error("unknown kind " + inQuotes(*kind) +
-                " (rounds, deathmatch, survival, team_rounds, team_deathmatch, hill, capture or "
-                "control)");
+                " (rounds, deathmatch, survival, team_rounds, team_deathmatch, hill, capture, "
+                "control or harvest)");
       } else {
         m.kind = entry->kind;
       }
@@ -1384,7 +1385,7 @@ class Builder {
         if (const toml::node* n = s.take(key)) {
           s.error(*n, "'" + std::string(key) +
                           "' belongs to a point-scoring kind (deathmatch, team_deathmatch, hill, "
-                          "capture, control): a round kind's score counts round wins");
+                          "capture, control, harvest): a round kind's score counts round wins");
         }
       }
     }
@@ -1399,6 +1400,11 @@ class Builder {
     s.integer("hill_ticks", m.hillTicks, 1, 65535);  // v0.33
     s.integer("flag_return_ticks", m.flagReturnTicks, 1, 65535);
     s.integer("capture_ticks", m.captureTicks, 1, 65535);  // v0.80
+    // v0.81: the respawn's hand (absent: [player] ammo_start; 255 is that
+    // sentinel) and harvest's two beats.
+    s.integer("respawn_ammo", m.respawnAmmo, 0, sim::kRespawnAmmoStart - 1);
+    s.integer("bank_ticks", m.bankTicks, 1, 65535);
+    s.integer("steal_ticks", m.stealTicks, 0, 65535);
     // v0.34: the space, and the grid's turn and dash.
     if (const std::optional<std::string> space = s.string("space")) {
       if (*space == "continuous") {
@@ -1446,6 +1452,23 @@ class Builder {
         s.error(*n, "'arena' must be an arena name");
       }
     }
+    // v0.81: the pool of arenas, by name.
+    std::vector<PendingName> arenas;
+    if (const toml::node* n = s.take("arenas")) {
+      const toml::array* arr = n->as_array();
+      if (arr == nullptr || arr->empty() || arr->size() > sim::kMaxArenas) {
+        s.error(*n, "'arenas' must list 1 to " + std::to_string(sim::kMaxArenas) + " arena names");
+      } else {
+        for (const toml::node& el : *arr) {
+          if (const toml::value<std::string>* str = el.as_string()) {
+            arenas.push_back(
+                PendingName{str->get(), s.where(), lineOf(el), std::string(s.file().name)});
+          } else {
+            s.error(el, "'arenas' entries must be arena names");
+          }
+        }
+      }
+    }
     std::vector<PendingName> roles;
     if (const toml::node* n = s.take("roles")) {
       const toml::array* arr = n->as_array();
@@ -1476,8 +1499,8 @@ class Builder {
       s.error("too many modes (at most " + std::to_string(sim::kMaxModes) + ", kMaxModes)");
       return;
     }
-    modeNames_.push_back(
-        ModeNames{db_.modeCount, std::move(baseline), std::move(roles), std::move(arena)});
+    modeNames_.push_back(ModeNames{db_.modeCount, std::move(baseline), std::move(roles),
+                                   std::move(arena), std::move(arenas)});
     db_.modes[db_.modeCount++] = m;
   }
 
@@ -1526,6 +1549,19 @@ class Builder {
         } else {
           diag_.error(n.arena->file, n.arena->line,
                       n.arena->where + ": 'arena' names unknown arena " + inQuotes(n.arena->name));
+        }
+      }
+      m.arenaSet = sim::kNoArenaSet;  // v0.81
+      for (const PendingName& a : n.arenas) {
+        if (const std::optional<uint8_t> i = db_.findArena(a.name)) {
+          if (m.inArenaSet(*i)) {
+            diag_.error(a.file, a.line,
+                        a.where + ": 'arenas' names arena " + inQuotes(a.name) + " twice");
+          }
+          m.arenaSet = static_cast<uint16_t>(m.arenaSet | (1u << *i));
+        } else {
+          diag_.error(a.file, a.line,
+                      a.where + ": 'arenas' names unknown arena " + inQuotes(a.name));
         }
       }
       m.roleCount = 0;
@@ -1630,6 +1666,7 @@ class Builder {
     std::optional<PendingName> baseline;
     std::vector<PendingName> roles;
     std::optional<PendingName> arena;  // v0.34
+    std::vector<PendingName> arenas;   // v0.81
   };
 
   Diagnostics& diag_;
@@ -2032,7 +2069,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     const bool respawning = m.kind == sim::ModeKind::Deathmatch ||
                             m.kind == sim::ModeKind::TeamDeathmatch ||
                             m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture ||
-                            m.kind == sim::ModeKind::Control;
+                            m.kind == sim::ModeKind::Control || m.kind == sim::ModeKind::Harvest;
     if (respawning) {
       const auto atLeastOne = [&](std::string_view key) {
         std::string message = where;
@@ -2057,6 +2094,10 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     if (m.kind == sim::ModeKind::Control && m.teams > sim::kMaxControlTeams) {
       fail(where + ": control plays at most " + std::to_string(sim::kMaxControlTeams) + " teams");
     }
+    // v0.81: harvest banks on a beat of at least one tick.
+    if (m.kind == sim::ModeKind::Harvest && m.bankTicks < 1) {
+      fail(where + ": bank_ticks must be at least 1");
+    }
     if (m.kind == sim::ModeKind::Capture && m.flagReturnTicks < 1) {
       fail(where + ": flag_return_ticks must be at least 1");
     }
@@ -2079,6 +2120,20 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
       fail(where + ": its arena " + inQuotes(c.arenas[m.arena].name.view()) +
            " does not suit it (ContentDB::compatible)");
     }
+    // v0.81: the pool of arenas: defined, each suiting the mode, and the
+    // mode's own arena one of them.
+    const uint32_t definedArenas =
+        c.arenaCount >= 16 ? 0xFFFFu : (uint32_t{1} << c.arenaCount) - 1u;
+    if ((m.arenaSet & ~definedArenas) != 0) fail(where + ": arenas names an undefined arena");
+    for (uint8_t a = 0; a < c.arenaCount && a < sim::kMaxArenas; ++a) {
+      if (m.inArenaSet(a) && !c.compatible(a, i)) {
+        fail(where + ": arenas member " + inQuotes(c.arenas[a].name.view()) +
+             " does not suit it (ContentDB::compatible)");
+      }
+    }
+    if (m.hasArenaSet() && m.hasArena() && !m.inArenaSet(m.arena)) {
+      fail(where + ": its arena must be one of its arenas");
+    }
     // v0.32: teams, baseline, roles.
     if (m.teams == 1 || m.teams > sim::kMaxPlayers) {
       fail(where + ": teams must be 0 (free-for-all) or 2 to " + std::to_string(sim::kMaxPlayers));
@@ -2086,7 +2141,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     const bool teamKind = m.kind == sim::ModeKind::TeamRounds ||
                           m.kind == sim::ModeKind::TeamDeathmatch ||
                           m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Capture ||
-                          m.kind == sim::ModeKind::Control;
+                          m.kind == sim::ModeKind::Control || m.kind == sim::ModeKind::Harvest;
     if (teamKind && m.teams == 0) fail(where + ": a team kind needs teams of 2 or more");
     if (m.hasBaseline() && m.baseline >= c.powerUpCount) {
       fail(where + ": baseline names an undefined power-up");

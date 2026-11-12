@@ -132,6 +132,41 @@ namespace {
   return found;
 }
 
+// Harvest (v0.81): where a monkey goes, read from the state alone (no Rng
+// draw, keyed on the kind, so every other mode is unchanged). A hand with
+// room goes for the nearest banana pickup anywhere; a full hand, or one
+// with nothing left to pick, goes home (its team's zone, homeZoneOf) and
+// stays there, banking. Returns false when it has no home either (it
+// wanders); `stay` is set when it should stand still.
+[[nodiscard]] bool harvestTarget(const WorldState& s, const MatchContent& content, const Player& p,
+                                 Vec2& target, bool& stay) {
+  const Vec2 pos = p.transform.pos;
+  stay = false;
+  if (p.ammo < p.stats.ammoMax) {
+    uint64_t best = std::numeric_limits<uint64_t>::max();
+    bool found = false;
+    s.pickups.forEachAlive([&](EntityId /*kid*/, const Pickup& k) {
+      if (k.kind != PickupKind::Banana) return;
+      const uint64_t d = lengthSqRaw(k.pos - pos);
+      if (d < best) {
+        best = d;
+        target = k.pos;
+        found = true;
+      }
+    });
+    if (found) return true;
+  }
+  const uint8_t home = homeZoneOf(content.arena, content.teamOf(p.id));
+  if (home == kNoZone) return false;
+  const Zone& zone = content.arena.zones[home];
+  if (boxContains(zone.min, zone.max, pos)) {
+    stay = true;
+    return true;
+  }
+  target = zone.centre();
+  return true;
+}
+
 // The third slot (v0.21): only when the loadout or a power-up put an ability
 // there, so a base-kit match draws nothing extra from the Rng.
 void useExtraAbility(Rng& rng, const WorldState& s, const MatchContent& content, const Player& p,
@@ -209,10 +244,23 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
       found = true;
     }
   });
-  // Else the objective (v0.33), with the same hands-full condition.
-  const bool chase = found && target != pos;
-  if (chase || (!wantBanana && objectiveTarget(s, content, p, target) && target != pos)) {
-    in.moveDir = directionTo(pos, target);
+  // Else the objective (v0.33), with the same hands-full condition. Harvest
+  // (v0.81) steers by its own rule instead.
+  if (content.mode.kind == ModeKind::Harvest) {
+    bool stay = false;
+    Vec2 goal{};
+    if (harvestTarget(s, content, p, goal, stay)) {
+      if (stay) {
+        in.moveMag = 0;
+      } else if (goal != pos) {
+        in.moveDir = directionTo(pos, goal);
+      }
+    }
+  } else {
+    const bool chase = found && target != pos;
+    if (chase || (!wantBanana && objectiveTarget(s, content, p, target) && target != pos)) {
+      in.moveDir = directionTo(pos, target);
+    }
   }
 
   // Aim at the nearest other alive player, with a little jitter.

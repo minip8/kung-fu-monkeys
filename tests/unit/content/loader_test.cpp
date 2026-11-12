@@ -1207,6 +1207,160 @@ score_to_win = 0
                  "too many modes (at most 32, kMaxModes)"));
 }
 
+// --- harvest (v0.81) -------------------------------------------------------
+
+namespace {
+
+// kMinimal plus four tilemap arenas (two that suit harvest, one without a
+// tree, one with a single zone) and a harvest mode over a pool of two.
+std::string withHarvest() {
+  std::string text(kMinimal);
+  const auto arena = [&](std::string_view name, std::string_view top, bool tree) {
+    const bool b = top.ends_with("bb");
+    text += "[[arena]]\nname = \"";
+    text += name;
+    text += "\"\ncell = 1.0\nspawn_groups = 2\nmap = [\n  \"";
+    text += top;
+    text += b ? "\",\n  \"aa....bb\"," : "\",\n  \"aa......\",";
+    text += "\n  \"........\",\n  \"........\",\n]\n";
+    if (tree) {
+      text +=
+          "spawners = [{ pos = [0.5, 0.5], tree = true, first_ticks = 0, "
+          "interval_ticks = 60 }]\n";
+    }
+  };
+  arena("grove", "aa0..1bb", true);
+  arena("grove2", "aa0..1bb", true);
+  arena("bare", "aa0..1bb", false);
+  arena("lone", "aa0..1..", true);
+  text += R"(
+[[mode]]
+name = "harvest"
+kind = "harvest"
+teams = 2
+score_to_win = 40
+bank_ticks = 3
+steal_ticks = 9
+respawn_ammo = 0
+arenas = ["grove", "grove2"]
+arena = "grove2"
+)";
+  return text;
+}
+
+}  // namespace
+
+TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.81)", "[content][loader][modes]") {
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(withHarvest(), "modes.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  const std::optional<uint8_t> index = db.findMode("harvest");
+  REQUIRE(index);
+  const uint8_t mi = index.value_or(0);
+  const sim::ModeDef& m = db.modes[mi];
+  const uint8_t grove = db.findArena("grove").value_or(0);
+  const uint8_t grove2 = db.findArena("grove2").value_or(0);
+  const uint8_t bare = db.findArena("bare").value_or(0);
+  const uint8_t lone = db.findArena("lone").value_or(0);
+  CHECK(m.kind == sim::ModeKind::Harvest);
+  CHECK(m.bankTicks == 3);
+  CHECK(m.stealTicks == 9);
+  CHECK(m.respawnAmmo == 0);
+  CHECK(m.arena == grove2);
+  CHECK(m.arenaSet == ((1u << grove) | (1u << grove2)));
+  CHECK(m.hasArenaSet());
+  CHECK(m.inArenaSet(grove));
+  CHECK_FALSE(m.inArenaSet(bare));
+  CHECK(sim::respawnAmmoOf(db.player, m) == 0);
+  // compatible(): a zone per team and a tree.
+  CHECK(db.compatible(grove, mi));
+  CHECK_FALSE(db.compatible(bare, mi));
+  CHECK_FALSE(db.compatible(lone, mi));
+  CHECK_FALSE(db.compatible(0, mi));  // the box: no zones, no cells
+  // The defaults: no pool, the respawn's hand ammo_start, banking every 2
+  // ticks, no stealing.
+  const sim::ModeDef& rounds = db.modes[0];
+  CHECK(rounds.respawnAmmo == sim::kRespawnAmmoStart);
+  CHECK(sim::respawnAmmoOf(db.player, rounds) == db.player.ammoStart);
+  CHECK(rounds.bankTicks == 2);
+  CHECK(rounds.stealTicks == 0);
+  CHECK(rounds.arenaSet == sim::kNoArenaSet);
+  CHECK_FALSE(rounds.hasArenaSet());
+  CHECK(db.firstCompatibleArena(mi) == std::optional<uint8_t>{grove2});  // its own arena
+
+  // Without `arena`, a host's pick is the pool's first member that suits it,
+  // ahead of an earlier arena outside the pool.
+  {
+    ContentDB pool{};
+    Diagnostics poolDiag;
+    REQUIRE(parseContent(replaced(replaced(withHarvest(), "arena = \"grove2\"\n", ""),
+                                  "arenas = [\"grove\", \"grove2\"]", "arenas = [\"grove2\"]"),
+                         "modes.toml", pool, poolDiag));
+    const uint8_t h = pool.findMode("harvest").value_or(0);
+    CHECK_FALSE(pool.modes[h].hasArena());
+    CHECK(pool.firstCompatibleArena(h) == pool.findArena("grove2"));
+  }
+  // Key bounds.
+  CHECK(loads(replaced(withHarvest(), "respawn_ammo = 0", "respawn_ammo = 254")));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "respawn_ammo = 0", "respawn_ammo = 255")),
+                 "'respawn_ammo' must be an integer in [0, 254]"));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "respawn_ammo = 0", "respawn_ammo = -1")),
+                 "'respawn_ammo' must be an integer in [0, 254]"));
+  CHECK(loads(replaced(withHarvest(), "bank_ticks = 3", "bank_ticks = 65535")));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "bank_ticks = 3", "bank_ticks = 0")),
+                 "'bank_ticks' must be an integer in [1, 65535]"));
+  CHECK(loads(replaced(withHarvest(), "steal_ticks = 9", "steal_ticks = 0")));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "steal_ticks = 9", "steal_ticks = 65536")),
+                 "'steal_ticks' must be an integer in [0, 65535]"));
+  // The pool.
+  const auto pooled = [](std::string_view list) {
+    return replaced(withHarvest(), R"(arenas = ["grove", "grove2"])", list);
+  };
+  CHECK(contains(loadErrors(pooled("arenas = []")), "'arenas' must list 1 to 16 arena names"));
+  CHECK(
+      contains(loadErrors(pooled("arenas = \"grove\"")), "'arenas' must list 1 to 16 arena names"));
+  CHECK(contains(loadErrors(pooled("arenas = [3]")), "'arenas' entries must be arena names"));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"nowhere\"]")),
+                 "'arenas' names unknown arena \"nowhere\""));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"grove2\"]")),
+                 "'arenas' names arena \"grove2\" twice"));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"bare\"]")),
+                 "mode \"harvest\": arenas member \"bare\" does not suit it"));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove\"]")),
+                 "mode \"harvest\": its arena must be one of its arenas"));
+  // A pool needs no harvest: any mode may name one its members suit.
+  CHECK(loads(std::string(kMinimal) + "[[mode]]\nname = \"free\"\narenas = [\"box\"]\n"));
+  // The kind: a team kind that respawns, scoring points.
+  CHECK(contains(loadErrors(replaced(withHarvest(), "teams = 2\n", "")),
+                 "mode \"harvest\": a team kind needs teams of 2 or more"));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "score_to_win = 40",
+                                     "score_to_win = 40\nrespawn_ticks = 0")),
+                 "respawn_ticks must be at least 1 in harvest"));
+  CHECK(loads(replaced(withHarvest(), "score_to_win = 40", "score_to_win = 40\ncatch_score = 1")));
+  CHECK(contains(loadErrors(std::string(kMinimal) + "[[mode]]\nname = \"x\"\nkind = \"farm\"\n"),
+                 "control or harvest)"));
+  {
+    // validateContent() holds content built in code to the same rules.
+    ContentDB v{};
+    Diagnostics vDiag;
+    REQUIRE(parseContent(withHarvest(), "modes.toml", v, vDiag));
+    sim::ModeDef& h = v.modes[v.findMode("harvest").value_or(0)];
+    Diagnostics fine;
+    CHECK(validateContent(v, fine));
+    h.bankTicks = 0;
+    Diagnostics zero;
+    CHECK_FALSE(validateContent(v, zero));
+    CHECK(zero.format().contains("bank_ticks must be at least 1"));
+    h.bankTicks = 2;
+    h.arenaSet = static_cast<uint16_t>(h.arenaSet | (1u << 15));
+    Diagnostics undefined;
+    CHECK_FALSE(validateContent(v, undefined));
+    CHECK(undefined.format().contains("arenas names an undefined arena"));
+  }
+}
+
 TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][modes]") {
   ContentDB loaded{};
   Diagnostics diag;

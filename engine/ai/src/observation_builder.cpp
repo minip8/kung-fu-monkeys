@@ -42,7 +42,7 @@ static_assert(
     static_cast<uint8_t>(sim::ModeKind::Hill) == static_cast<uint8_t>(ObsModeKind::Hill) &&
     static_cast<uint8_t>(sim::ModeKind::Capture) == static_cast<uint8_t>(ObsModeKind::Capture) &&
     static_cast<uint8_t>(sim::ModeKind::Control) == static_cast<uint8_t>(ObsModeKind::Control) &&
-    static_cast<uint8_t>(sim::ModeKind::kCount) == 8);
+    static_cast<uint8_t>(sim::ModeKind::kCount) == 9);  // v0.81: harvest is 8
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::Call) ==

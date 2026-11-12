@@ -51,6 +51,7 @@ static_assert(kAbilitySlots == 3);
 inline constexpr uint8_t kMaxAbilityDefs = 32;  // v0.70 (16 before: content/ filled it)
 inline constexpr uint8_t kMaxArenas = 16;       // v0.33 (8 before: the objective arenas filled it)
 inline constexpr uint8_t kMaxModes = 32;        // v0.31 (8 before)
+static_assert(kMaxArenas <= 16, "ModeDef::arenaSet is a uint16_t bit set over the arenas");
 
 enum class AbilityKind : uint8_t {
   None = 0,
@@ -231,7 +232,8 @@ struct ContentDB {
   // Whether a match may pair this arena with this mode (v0.32, v0.33,
   // v0.34): a team mode needs a spawn group per team, hill a zone (zone 0),
   // capture a zone per team (team t's is zone t), control (v0.80) a zone
-  // (it plays every zone the arena has), a grid mode cells
+  // (it plays every zone the arena has), harvest (v0.81) a zone per team
+  // and a tree (PickupSpawner::tree), a grid mode cells
   // (`cellSize > 0`, §5.12), and so does a fog vision (v0.35: its radii are
   // cells, §8). An incompatible pair is a configuration error of the
   // host (the lobby skips it, a command line refuses it), never a load
@@ -243,16 +245,25 @@ struct ContentDB {
     if (m.kind == ModeKind::Hill && a.zoneCount < 1) return false;
     if (m.kind == ModeKind::Capture && a.zoneCount < (m.teams > 0 ? m.teams : 1)) return false;
     if (m.kind == ModeKind::Control && a.zoneCount < 1) return false;
+    // v0.81: harvest banks in a home zone per team (team t's is zone t) and
+    // needs a tree to bear the bananas.
+    if (m.kind == ModeKind::Harvest && (a.zoneCount < (m.teams > 0 ? m.teams : 1) || !hasTree(a))) {
+      return false;
+    }
     if (m.space == Space::Grid && a.cellSize <= Fixed::zero()) return false;
     if (m.vision.fog() && a.cellSize <= Fixed::zero()) return false;
     return true;
   }
   // The arena a host picks for the mode when the match names none: the
-  // mode's own (ModeDef::arena, v0.34) when it suits, else the first
-  // compatible one, if any.
+  // mode's own (ModeDef::arena, v0.34) when it suits, else (v0.81) the
+  // first member of its pool (ModeDef::arenaSet) that suits it, else the
+  // first compatible one, if any.
   [[nodiscard]] constexpr std::optional<uint8_t> firstCompatibleArena(uint8_t mode) const {
     const ModeDef& m = modeAt(mode);
     if (m.hasArena() && m.arena < arenaCount && compatible(m.arena, mode)) return m.arena;
+    for (uint8_t i = 0; i < arenaCount; ++i) {
+      if (m.inArenaSet(i) && compatible(i, mode)) return i;
+    }
     for (uint8_t i = 0; i < arenaCount; ++i) {
       if (compatible(i, mode)) return i;
     }
@@ -282,6 +293,13 @@ inline constexpr TeamSet kFreeForAllTeams = freeForAllTeams();
 }
 [[nodiscard]] constexpr uint16_t bananaTurnRateBamOf(const BoomerangDef& def, const ModeDef& mode) {
   return mode.bananaTurnRateBam != 0 ? mode.bananaTurnRateBam : def.turnRateBam;
+}
+
+// v0.81: the bananas a respawn puts in the hand before the cap at the
+// monkey's ammoMax: the mode's respawnAmmo, or [player] ammo_start where the
+// mode leaves it at kRespawnAmmoStart.
+[[nodiscard]] constexpr uint8_t respawnAmmoOf(const PlayerDef& player, const ModeDef& mode) {
+  return mode.respawnAmmo != kRespawnAmmoStart ? mode.respawnAmmo : player.ammoStart;
 }
 
 // How one monkey stands to another (or to a banana's owner): the rules

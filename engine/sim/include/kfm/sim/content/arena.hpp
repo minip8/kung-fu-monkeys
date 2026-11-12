@@ -87,6 +87,15 @@ struct ArenaDef {
   Fixed cellSize{};
 };
 
+// v0.81: homeZoneOf() for a team whose home zone the arena does not have.
+inline constexpr uint8_t kNoZone = 0xFF;
+
+// v0.81: the home zone of team `team` (harvest, as capture: team t's home is
+// zone t), or kNoZone when the arena has no zone of that index.
+[[nodiscard]] constexpr uint8_t homeZoneOf(const ArenaDef& arena, uint8_t team) {
+  return team < arena.zoneCount && team < kMaxArenaZones ? team : kNoZone;
+}
+
 // v0.81: whether the arena has a tree (a spawner that lays bananas,
 // PickupSpawner::tree) among its spawners.
 [[nodiscard]] constexpr bool hasTree(const ArenaDef& arena) {

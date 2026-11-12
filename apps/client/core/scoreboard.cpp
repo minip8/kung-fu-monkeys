@@ -27,6 +27,7 @@ using presentation::HudPhase;
     case sim::ModeKind::Rounds:
     case sim::ModeKind::Survival:
     case sim::ModeKind::TeamRounds:
+    case sim::ModeKind::Harvest:  // v0.81: a minimal case until the client draws the kind
     case sim::ModeKind::kCount:
       break;
   }

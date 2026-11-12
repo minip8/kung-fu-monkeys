@@ -193,7 +193,11 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.modes[0].bananaRegrowTicks += 1; },
       [](ContentDB& c) { c.modes[0].captureTicks += 1; },
       [](ContentDB& c) { c.modes[0].bananaOutboundTicks += 1; },
-      [](ContentDB& c) { c.modes[0].bananaTurnRateBam += 1; });
+      [](ContentDB& c) { c.modes[0].bananaTurnRateBam += 1; },
+      [](ContentDB& c) { c.modes[0].respawnAmmo = 0; },
+      [](ContentDB& c) { c.modes[0].bankTicks += 1; },
+      [](ContentDB& c) { c.modes[0].stealTicks += 1; },
+      [](ContentDB& c) { c.modes[0].arenaSet ^= 1; });
   everyFieldReachesTheHash<VisionDef>(
       [](ContentDB& c) { c.modes[1].vision.kind = VisionKind::Team; },
       [](ContentDB& c) { c.modes[1].vision.peripheral += 1; },

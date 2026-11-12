@@ -25,7 +25,8 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content);
 // Respawns the dead slot `id` (LifecycleSystem): at the spawn point of its
 // group (spawnRangeOf) farthest from every alive monkey, the world RNG
 // breaking ties, with the mode's spawn
-// protection (Tag::Invulnerable for respawnInvulnTicks). Pushes
+// protection (Tag::Invulnerable for respawnInvulnTicks) and, v0.81, the
+// mode's respawn hand (ModeDef::respawnAmmo, capped at ammoMax). Pushes
 // PlayerRespawned. Returns false if the slot could not be spawned.
 bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, EventSink& sink);
 

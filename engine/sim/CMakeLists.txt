@@ -24,6 +24,7 @@ add_library(kfm_sim STATIC
   src/modes/hill.cpp
   src/modes/capture.cpp
   src/modes/control.cpp
+  src/modes/harvest.cpp
   src/spaces/registry.cpp
   src/spaces/continuous.cpp
   src/spaces/grid.cpp

@@ -94,6 +94,7 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
                     static_cast<unsigned>(hud.aliveCount));
       break;
     case sim::ModeKind::Rounds:
+    case sim::ModeKind::Harvest:  // v0.81: a minimal case until the client draws the kind
     case sim::ModeKind::kCount:
       std::snprintf(line, sizeof line, "Round %u  (first to %u)", static_cast<unsigned>(hud.round),
                     static_cast<unsigned>(hud.roundsToWin));

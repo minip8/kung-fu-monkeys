@@ -56,6 +56,18 @@ enum class ModeKind : uint8_t {
   // pays its team one tick per Playing tick, occupied or not; hillTicks of
   // them score a point. Up to kMaxControlTeams teams.
   Control,
+  // v0.81, harvest: hill's round, clock, respawns and roster, with bananas
+  // as the resource. A team's home is the zone of its index. On every
+  // Playing tick that is a multiple of bankTicks each living monkey in its
+  // own home zone with a banana in hand banks one (ammo - 1, a point to it);
+  // on every one that is a multiple of stealTicks (0: never) each living
+  // monkey in an enemy home zone with room in its hand takes one back out,
+  // when that team's score is above zero and none of its living monkeys
+  // stands in the zone (the point comes off the team's highest-scoring
+  // slot, the raider's ammo gains one). The first team to scoreToWin wins,
+  // else the leader at timeLimitTicks (a tied lead is a draw); eliminations
+  // score nothing.
+  Harvest,
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 
@@ -64,7 +76,7 @@ enum class ModeKind : uint8_t {
 // rather than round wins (v0.33; the hosts' HUD and tools read it).
 [[nodiscard]] constexpr bool scoresPoints(ModeKind k) {
   return k == ModeKind::Deathmatch || k == ModeKind::TeamDeathmatch || k == ModeKind::Hill ||
-         k == ModeKind::Capture || k == ModeKind::Control;
+         k == ModeKind::Capture || k == ModeKind::Control || k == ModeKind::Harvest;
 }
 
 // How monkeys move in a mode (architecture §5.12, v0.29): the SpaceBehavior
@@ -125,6 +137,12 @@ enum class DeathBananas : uint8_t {
 // v0.80, control: the most teams the kind plays (its modeData keeps a clock
 // per team in two words, modes/control.cpp).
 inline constexpr uint8_t kMaxControlTeams = 4;
+
+// v0.81: ModeDef::respawnAmmo when the mode leaves the respawn's hand at
+// [player] ammo_start (every mode before v0.81).
+inline constexpr uint8_t kRespawnAmmoStart = 0xFF;
+// v0.81: ModeDef::arenaSet when the mode names no pool of arenas.
+inline constexpr uint16_t kNoArenaSet = 0;
 
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
@@ -217,9 +235,30 @@ struct ModeDef {
   // Read through bananaOutboundTicksOf() / bananaTurnRateBamOf() (content.hpp).
   uint16_t bananaOutboundTicks{0};
   uint16_t bananaTurnRateBam{0};
+  // v0.81, every respawning kind: the bananas a respawned monkey holds
+  // (capped at its ammoMax), or kRespawnAmmoStart: [player] ammo_start, as
+  // every mode before v0.81. A round start's spawn always holds ammo_start.
+  // Read through respawnAmmoOf() (content.hpp).
+  uint8_t respawnAmmo{kRespawnAmmoStart};
+  // v0.81, harvest: the global beats (Playing ticks that are a multiple of
+  // them) on which every monkey in its own home banks one banana (>= 1) and
+  // every lone raider in an enemy home takes one back out (0 = never).
+  uint16_t bankTicks{2};
+  uint16_t stealTicks{0};
+  // v0.81: a pool of arenas the mode plays (bit i = arena i, over
+  // kMaxArenas), or kNoArenaSet. Every member suits the mode
+  // (ContentDB::compatible), and `arena`, when given, is one of them. Never
+  // read by the sim: a host that cycles maps reads it (kfm_arena), the
+  // others pick one arena (ContentDB::firstCompatibleArena prefers the
+  // pool's first member that suits the mode).
+  uint16_t arenaSet{kNoArenaSet};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }
+  [[nodiscard]] constexpr bool hasArenaSet() const { return arenaSet != kNoArenaSet; }
+  [[nodiscard]] constexpr bool inArenaSet(uint8_t index) const {
+    return index < 16 && (arenaSet & (1u << index)) != 0;
+  }
 };
 
 }  // namespace kfm::sim

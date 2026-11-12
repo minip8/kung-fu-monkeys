@@ -6,7 +6,7 @@
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
 #   kind                 rounds (default), deathmatch, survival, team_rounds,
-#                        team_deathmatch, hill, capture or control
+#                        team_deathmatch, hill, capture, control or harvest
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      rounds, survival, team_rounds: pause after a round
 #                        before the next one (the round's scoreboard); the
@@ -33,7 +33,7 @@
 #                        A pit fall always takes the held ones down; the ones
 #                        in flight follow this key from the fall's start
 #   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture,
-#                        control:
+#                        control, harvest:
 #                        points for a perfect dash catch of an enemy's banana
 #                        (the own one or an ally's scores nothing; default 0)
 #   suicide_score        v0.57, the same kinds: points for an elimination with
@@ -83,6 +83,33 @@
 #                        lowest present slot). At most 4 teams; plays only on
 #                        an arena with a zone; respawns and the clock as
 #                        deathmatch, score_to_win counts points
+#   respawn_ammo         v0.81, the respawning kinds: the bananas a respawned
+#                        monkey holds, 0 to 254, capped at its ammo_max
+#                        (absent, the default: [player] ammo_start, as every
+#                        mode before v0.81). A round start's spawn always
+#                        holds ammo_start
+#   bank_ticks           v0.81, harvest: team t's home is zone t. On every
+#                        Playing tick that is a multiple of this (>= 1,
+#                        default 2) each living monkey in its own home with a
+#                        banana in hand banks one: a banana fewer in its hand,
+#                        a point to it (whoever else stands there). A banked
+#                        banana leaves the world. Plays only on an arena with
+#                        a zone per team and at least one tree; respawns and
+#                        the clock as deathmatch, score_to_win counts banked
+#                        bananas, eliminations score nothing
+#   steal_ticks          v0.81, harvest: on every Playing tick that is a
+#                        multiple of this (0, the default: never) each living
+#                        monkey with room in its hand standing in an enemy's
+#                        home takes one banana back out, when that team's
+#                        score is above zero and none of its living monkeys
+#                        stands in the zone: the point comes off the team's
+#                        highest-scoring slot (the lowest on a tie), the
+#                        banana goes into the raider's hand (one a beat)
+#   arenas               v0.81, optional: a pool of arena names (1 to 16, each
+#                        once, every one suiting the mode; `arena`, when also
+#                        given, must be one of them). kfm_arena cycles a pool;
+#                        the other hosts pick one arena (`arena`, else the
+#                        pool's first that suits the mode)
 #   space                v0.34: how monkeys move, "continuous" (default, the
 #                        stick) or "grid": a monkey at rest commits to one of
 #                        its eight neighbouring cells at every turn's latch
