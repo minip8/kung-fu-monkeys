@@ -311,6 +311,17 @@ const std::vector<Entry>& expectations() {
         {"more banked than the opening hands", bankedBeyondHands},
         {"a theft", steals},
         {"a call", calls}}},
+      // The same on two more of the pool: gorge's pits and bridges (a monkey
+      // falls), burrows' one-cell corridors and dead-end tunnels.
+      {"scripted_10p_contest_gorge_1800t",
+       {{"fruit taken off the floor", fruitTaken},
+        {"more banked than the opening hands", bankedBeyondHands},
+        {"a theft", steals},
+        {"a monkey falls into a pit", falls}}},
+      {"scripted_10p_contest_burrows_1800t",
+       {{"fruit taken off the floor", fruitTaken},
+        {"more banked than the opening hands", bankedBeyondHands},
+        {"a theft", steals}}},
       {"scripted_10p_control_1t_1800t",
        {{"a zone captured", zoneCaptured}, {"a zone point", objectivePoint}, {"a call", calls}}},
   };
