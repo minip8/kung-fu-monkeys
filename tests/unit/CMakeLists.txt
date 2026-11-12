@@ -32,6 +32,7 @@ kfm_add_test_exe(kfm_sim_tests
 target_link_libraries(kfm_sim_tests PRIVATE kfm::sim kfm::sim_internal)
 
 kfm_add_test_exe(kfm_content_tests
+  content/contest_test.cpp
   content/decimal_test.cpp
   content/loader_test.cpp
   content/mirror_test.cpp

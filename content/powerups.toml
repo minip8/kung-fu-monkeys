@@ -87,9 +87,10 @@ grants = [
   { kind = "projectile", radius_mul = 0.4286, speed_mul = 0.5 },
 ]
 
-# The same at 1-tick turns. 2 cells per turn would be 120 u/s, beyond the
-# projectile multiplier's limit of 4 (64 u/s, about 1.07 cells per turn):
-# the fast variant's bananas are the fastest content allows (§12).
+# The same at 1-tick turns, grid_rounds_1t's. Its bananas keep the v0.34
+# speed of 4 x 16 u/s = 64 u/s, about 1.07 cells per turn (the projectile
+# speed limit was 4 until v0.79 made it 8); contest_base below flies them at
+# 2 cells per turn.
 [[powerup]]
 name = "grid_base_1t"
 duration_ticks = 1
@@ -100,3 +101,57 @@ grants = [
   { kind = "stat", stat = "max_hp", add = 1 },
   { kind = "projectile", radius_mul = 0.4286, speed_mul = 4 },
 ]
+
+# v0.79, the contest (architecture §11 "Contest design"): grid_base_1t with
+# the banana at 2 cells per 1-tick turn, the 15-tick grid's speed: 16 u/s x
+# 7.5 = 120 u/s (17476 raw per tick x 7.5 = 131070, 2 cells within the
+# per-tick truncation). The contest row (modes.toml) also shortens the
+# banana's flight out and sharpens its return to fit that speed.
+[[powerup]]
+name = "contest_base"
+duration_ticks = 1
+color = 8
+shape = "orb"
+grants = [
+  { kind = "stat", stat = "radius", mul = 0.7 },
+  { kind = "stat", stat = "max_hp", add = 1 },
+  { kind = "projectile", radius_mul = 0.4286, speed_mul = 7.5 },
+]
+
+# v0.79, the contest's pickups (arenas/10-courtyard_zones.toml): the 1-tick
+# twins of four power-ups, the same grants counted in 1-tick turns. A grant
+# here does not depend on the turn's length (a projectile multiplier, an
+# ammo top-up, a tag, an ability override), so only duration_ticks changes:
+# half again the turns the 15-tick originals last (big_banana and
+# quick_hands 40 turns, triple_banana and shield 60), so 60 and 90 turns, a
+# quarter to three eighths of the spawners' 240-turn beat. On the contest's
+# baseline a big banana flies at 7.5 x 0.85 = 6.375 (1.7 cells a turn) with
+# a contact radius of 0.35 x 0.4286 x 2 = 0.30. quick_throw is shared with
+# the 15-tick grid: it has no rooted phase at either turn length.
+[[powerup]]
+name = "big_banana_1t"
+duration_ticks = 60         # 60 turns
+color = 2
+shape = "orb"
+grants = [{ kind = "projectile", radius_mul = 2, speed_mul = 0.85 }]
+
+[[powerup]]
+name = "triplebanana_1t"
+duration_ticks = 90         # 90 turns
+color = 4
+shape = "coin"
+grants = [{ kind = "stat", stat = "ammo_max", add = 2 }]
+
+[[powerup]]
+name = "quick_hands_1t"
+duration_ticks = 60         # 60 turns
+color = 7
+shape = "cube"
+grants = [{ kind = "ability", slot = "throw", ability = "quick_throw" }]
+
+[[powerup]]
+name = "shield_1t"
+duration_ticks = 90         # 90 turns (or the first hit it absorbs)
+color = 1
+shape = "orb"
+grants = [{ kind = "tag", tag = "shielded" }]
