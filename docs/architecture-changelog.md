@@ -1724,3 +1724,36 @@ under the canopy; the reference bot does not gather, so it loses every game to `
 a weak opponent in human rooms of this kind; the capacities that bound the maps; the later
 layers (spending, peels, bushes, escalation, a gate, homes that grant); the remaining pinned sim
 asymmetries of §12 (the rounding, the dash exchange, the respawn order, the two Rng draws).
+
+v0.83 changes: a ladder pair is one game on a drawn arena and drawn sides (§8 "The ladder"
+"Matches and ratings", §11 "Scheduling and ratings" and the M7 row; §11 "Contest design:
+bananas as the economy" records the release). Found while planning a contest bot: the match
+job ran `kfm_arena --matches 2 --rotate`, and `kfm_arena` plays match k of a pooled mode on
+member (k / T) mod P, so with two teams a two-game job never leaves member 0. Measured with
+the released v0.10.0 runner: the ladder's command line, five `gatherer` a side, played `grove`
+twice (786 and 732 ticks), and the live ladder's first three rounds on v0.10.0 (102 to 104)
+recorded six games, every one on `grove`; 32 one-tick matches without `--arena` name the pool in its order (grove, grove,
+orchards, orchards, gorge, gorge, burrows, burrows, and again). Chosen by the project's owner:
+a random arena for each ladder match, and random sides, so a pair need not be played from both.
+Decided with it: the draw comes from the job's seed by SHA-256 (the side from one bit, the
+arena from eight bytes modulo the pool's size), so a retry records the same game and nothing
+new is stored but the arena the result already names; the worker passes `--arena` and orders
+the two `--team` lists, with no `--rotate`; the pool is asked of the runner (the one-tick
+probe above, once per mode and worker) rather than configured in the service, which would be
+a second copy of this repository's content; a runner without the `arena` key gets no
+`--arena`. Considered and not taken: asking for 8 games a pair (every arena from both sides:
+four times the compute and replays, and the owner asked for one game); rotating the arena by
+round number (even, but predictable); a `kfm_arena` flag that draws the member itself (an
+engine release for what the service can do with the documented `--arena`). Not changed: the
+engine (no code, no content hash, no release), the pairing, the seed, Glicko-2 a game, the
+validation smoke match (one game against `ref:hard` on the runner's default arena), `kfm
+test`. Built in the bots repository as ladder API v1.6 and release v0.1.8: a match object gains
+`arena`, `game` is 0 from there on, no migration. A pair now rates one game a round where it
+rated two; `KFM_LADDER_ROUND_OPPONENTS` and the round interval are left as they are. Also
+recorded here: v0.82's work is released as v0.10.0 (2026-11-13: the page, the VM, the
+`kfm_arena` archives), the bots repository is pinned to it and the ladder runs it since its
+v0.1.7; step (4) of the harvest order beyond the pin is not started. Verified in the bots
+repository: its service's 190 tests and its CLI's 57 against Postgres 17, MinIO and the
+released v0.10.0 `kfm_arena`, among them real games whose seeds draw each of the four arenas
+from either side. Not done: the house bots for harvest and the balance targets; a tie-break
+when both teams reach `score_to_win` on one tick.

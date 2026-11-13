@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.82 (2026-11-12), a living document: it describes the system as built and deployed,
+Status: v0.83 (2026-11-13), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -3689,19 +3689,33 @@ lives in the bots repository (above) and uses this repository through its tagged
   needs that exact content. A release changes the game for every entrant at once; the service
   announces it to them, and the CLI's `test` runs the current release by default so an author
   sees a bot broken by the change before the scheduler does.
-- **Matches and ratings.** The service schedules two-sided matches between active submissions
-  with `kfm_arena --mode contest --team A --team B --rotate --json --replay-dir`, deterministic
-  seeds recorded per match, and parses the per-match JSON object (`match`, `seed`, `ticks`,
+- **Matches and ratings.** The service schedules matches between active submissions with
+  `kfm_arena --mode contest --arena NAME --team X --team Y --matches 1 --json --replay-dir`,
+  deterministic seeds recorded per match, and parses the per-match JSON object (`match`, `seed`, `ticks`,
   `checksum`, `winner_team`, `teams[]` with `entrant`, `place`, `score`, `kills`, `deaths`,
   `slots[]` with the module's `traps`, `over`, `bad`, `fuel_*` and `dead`); from v0.36 that
   object's keys are append-only, like the ABI. The rating is per entrant (switching the active
-  submission keeps the rank), Elo or Glicko-2 over the two-sided pairs, with the submission ids
+  submission keeps the rank), Glicko-2 a game, with the submission ids
   on both sides and the release tag recorded on every match so a disputed result is re-run bit
   for bit with that tag's `kfm_arena` from the GitHub release (v0.59). Ratings persist across a
   release inside a season (v0.59): an update is the same shock to every entrant, and a reset
   would charge the leaders for the project's own changes; under Glicko-2 the rating deviation
-  widens at a release instead. The free-
-  for-all slot bias of §12 does not reach the ladder: `--rotate` plays every pair from both sides.
+  widens at a release instead. **A pair is one game on a drawn arena and drawn sides (v0.83).**
+  Until then a pair was two games through `--matches 2 --rotate`, the second with the sides
+  exchanged; `kfm_arena` plays match k of a pooled mode on member (k / T) mod P (§11 "Contest
+  design: bananas as the economy"), so from v0.10.0, when the contest became harvest on a pool
+  of four arenas, every ranked game was on the pool's first, `grove` (measured, v0.83's
+  changelog line). The owner's call: pick the arena at random, and the sides too, which makes
+  the second game unnecessary. The match worker draws both from the job's seed (SHA-256 over
+  `kfm-ladder match draw v1\0` and the seed, big-endian: the lowest bit of byte 0 is the team
+  index side A plays, bytes 8 to 15 modulo the pool's size the arena, in content order), names
+  the arena with `--arena` and gives the two `--team` lists in the drawn order, so the draw is
+  the same on every attempt of a job and a recorded game is re-run from its seed, arena and
+  sides. The pool stays this repository's content and is never copied into the service: a
+  worker asks its runner once per mode, with 32 one-tick matches of reference bots (two teams
+  by `kMaxArenas`) and the `arena` key of their match objects, and a runner whose objects carry
+  no such key (before v0.10.0) is given no `--arena`. The side biases of §12 reach a ladder
+  game as a coin flip does: even over a season's games, not within one pair.
 - **Replays.** A match's `.kfmr` is served with the content of the release it ran under (v0.59;
   its season's until then); the CLI downloads it and prints the viewer URL, and the browser
   client plays a replay by URL (v0.68, M7 step 6, §7 "Replay viewer": `?replay=<url>` is the
@@ -4064,7 +4078,7 @@ instantiates modules through the browser's `WebAssembly` API behind a JS shim (a
 | M5b Teams, modes and the grid | Teams and relations, the loadout axis, `onRoundStart`/`onPickupTaken` and `modeData`, zones, spawn groups, the tilemap arena format, `team_rounds`, `team_deathmatch`, `hill`, `capture`; the `grid` space with turns, commitments and the catcher role; fog and calls in the observation builder; `kfm_arena --team` (§5.3, §5.10, §5.12, §8) | A 5v5 bot match on a tilemap arena with `own` vision and calls replays identically across the determinism gate at one-tick turns; a human lobby plays `hill` and a 15-tick grid round |
 | M6a Ship on the web | The client on Cloudflare Pages (v0.39); the Rust lobby service (room codes, connection tokens, signaling relay, server registry); the server's lobby-fed signaling and `--lobby` mode; the client's `?room=` / `--room` join flow and the `web` `IPlatformServices`; `deploy/` (images, units, Caddyfile, VM script); one VM, then 2–3 regions; Sentry (§13.5) | Send a link, friends are in a match within a minute, no install |
 | M6b Play with friends | The online room: a waiting state on the server, the host's settings (arena, mode, loadout, power-ups, bots) sent over the wire and a host role that passes on; the code with copy-link and share in the client; every region listed with its availability (lobby protocol v1.1); nicknames on the scoreboard, a between-rounds scoreboard and a match-over screen with play again; a main menu and a game-looking lobby; bots yield slots to joining humans; reconnect from the UI; the lead control checked at high RTT (§6.6, §13.5, "M6b design" below) | A group of friends plays a full evening from one link without help: create, invite, pick the mode, start, play again |
-| M7 The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer (v0.68), a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team --rotate`, ratings per entrant, the release tag on every match and replays served with their release's content and client (v0.59), the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
+| M7 The bot ladder | In this repository: the `contest` mode, the client's replay-by-URL viewer (v0.68), a released headless `kfm_arena`, the append-only JSON result. In the bots repository: accounts and teams with per-user tokens, source submissions built in a throwaway container from the pinned C++ recipe, retention of five plus the active one, the scheduler over `kfm_arena --team` (one game a pair on a drawn arena and sides, v0.83), ratings per entrant, the release tag on every match and replays served with their release's content and client (v0.59), the Rust CLI on PyPI (§8 "The ladder") | A bot submitted as source through the CLI by an account outside the project is built, ranked against the reference bot and other entrants, and its match is replayed in the browser from the ladder's link |
 | M8 Steam build (optional) | Steamworks `IPlatformServices`, `GnsTransport` against the Steamworks SDK, SteamPipe from CI, store page | Same game with Steam lobbies and invites; Remote Play Together for local mode |
 
 M6b design (v0.40). A room has three states on the server, kept in the host beside
@@ -4169,8 +4183,9 @@ every hosted bot ladder converges on, sized so that growing is adding workers.
 - **Scheduling and ratings.** A scheduler tick (every few minutes) makes one round: every
   team with an active, validated submission is paired with up to k opponents near its rating
   (Swiss-style, k = 3 to start, never the same pair twice in a round), each pair is one `match`
-  job played both sides through `--rotate`, so match volume is linear in entrants. The rating
-  is Glicko-2 per team over the two-sided results, updated as each match lands; at an engine
+  job of one game on a drawn arena and sides (v0.83; two games through `--rotate` until then,
+  §8 "The ladder"), so match volume is linear in entrants. The rating
+  is Glicko-2 per team, a game a rating period, updated as each match lands; at an engine
   release the deviation is widened (v0.59), never reset. `seasons` freezes the ladder at its end
   date; a new season starts ratings afresh.
 - **Deployment.** Two VMs, as `deploy/` does for the lobby: `kfm-ladder-1` runs Caddy, the API
@@ -4405,8 +4420,8 @@ blows land in a simultaneous exchange; respawn points chosen for every due slot 
 respawns; one draw for all spawn groups, and one per spawner beat for both spawners;
 symmetric rounding in `Fixed`'s multiply (§12).
 
-Contest design: bananas as the economy (v0.81 designed; v0.82 built, not released, not
-measured against its targets). The control contest of v0.80 plays and ends, but it is a thin
+Contest design: bananas as the economy (v0.81 designed; v0.82 built; released as v0.10.0 on
+2026-11-13, the ladder on it from its v0.1.7; not measured against its targets). The control contest of v0.80 plays and ends, but it is a thin
 game for a bot contest. That is the owner's judgement on seeing it run, not a measurement:
 **nothing compounds** (five monkeys respawn free, and nothing a team does changes what it can
 do next); **the units are alike** but for one catcher; **the objective stands still** (a
@@ -4594,7 +4609,11 @@ homes, the three house bots and the measurements; (5) a release, the house teams
 and balance patches toward the targets above.
 
 Progress (v0.82): (1) to (3) are built on one branch, all but the release; (4) is not started,
-so none of the targets is measured. Decided while building, beyond the bullets above:
+so none of the targets is measured. Progress (v0.83): the release is made (v0.10.0; the bots
+repository pinned to it and the ladder released as v0.1.7, its season carried over with its
+ratings); of (4) only the pin is done (the C SDK header copied, the C++ layer and the examples
+not brought along, no house bot written), so the house teams on the board still play the hill
+and no target is measured; the ladder now reaches the whole pool (§8 "The ladder", v0.83). Decided while building, beyond the bullets above:
 
 - **The tied cell contest** (§5.12, §12), taken up with the kind in v0.81 because two monkeys
   stepping onto one fruit cell is its commonest contest, and the lower slot, the west's, took
