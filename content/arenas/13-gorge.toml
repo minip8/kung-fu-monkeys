@@ -1,0 +1,58 @@
+# The harvest pool (architecture v0.82, §11 "Contest design: bananas as the
+# economy"): a band of pit across the middle with two bridges and the rich
+# trees on them, so a shove takes the cargo. 26 x 16 cells; its own half turn
+# (x, y) -> (-x, -y), zone 0 mapping to zone 1 and spawn point k to k + 5.
+#   - the gorge: columns 11-14 (four cells, wider than a grid dash's two)
+#     are pit on every row but the two bridges, rows 3-4 in the north and
+#     11-12 in the south, each two cells wide and four long. A monkey on a
+#     bridge stands a cell from the drop; a dash attack's knockback puts it
+#     over the edge, and a pit takes the bananas in its hand with it.
+#   - zone 0 (glyph a), team 0's home: columns 2-4, rows 7-8 (the west);
+#     zone 1 (b), team 1's: columns 21-23, rows 7-8 (the east).
+#   - rich trees on the bridges, (-0.5, 4.5) on the north one and its twin
+#     (0.5, -4.5) on the south: 8 turns from the nearer home, 9 from the
+#     other, every 30 turns, up to 3;
+#   - a flank tree on each team's lip of the gorge, (-2.5, -1.5) for the
+#     west and (2.5, 1.5) for the east: 6 turns from its own home and 13 from
+#     the other (over a bridge), every 60 turns, up to 2, beside a 1 x 2
+#     post;
+#   - a poor home tree two cells north of the west home, (-9.5, 2.5), and its
+#     twin: every 90 turns, one at a time;
+#   - a power-up spawner at the land end of each bridge, (-3.5, 4.5) and
+#     (3.5, -4.5), laying big_banana_1t, quick_hands_1t or shield_1t from
+#     turn 90 every 240, one alive each (not triplebanana_1t, grove's
+#     reason). Two 2 x 2 blocks of cover on each bank.
+# Uses 6 wall and 3 pit boxes, 10 spawn points and all 8 spawners. Keys:
+# arenas/06-hilltop.toml and arenas/04-dojo_powerups.toml.
+[[arena]]
+name = "gorge"
+cell = 1.0
+spawn_groups = 2
+map = [
+  "...........~~~~...........",
+  "...........~~~~...........",
+  ".....##....~~~~...........",
+  ".0...##...........##....8.",
+  "..................##......",
+  ".1.........~~~~.........9.",
+  "...........~~~~...........",
+  "2.aaa...#..~~~~..#...bbb..",
+  "..aaa...#..~~~~..#...bbb.7",
+  "...........~~~~...........",
+  ".4.........~~~~.........6.",
+  "......##..................",
+  ".3....##...........##...5.",
+  "...........~~~~....##.....",
+  "...........~~~~...........",
+  "...........~~~~...........",
+]
+spawners = [
+  { pos = [-0.5, 4.5], tree = true, first_ticks = 30, interval_ticks = 30, max_alive = 3 },   # rich (north bridge)
+  { pos = [0.5, -4.5], tree = true, first_ticks = 30, interval_ticks = 30, max_alive = 3 },   # rich (south bridge)
+  { pos = [-2.5, -1.5], tree = true, first_ticks = 60, interval_ticks = 60, max_alive = 2 },  # flank (west lip)
+  { pos = [2.5, 1.5], tree = true, first_ticks = 60, interval_ticks = 60, max_alive = 2 },    # flank (east lip)
+  { pos = [-9.5, 2.5], tree = true, first_ticks = 90, interval_ticks = 90, max_alive = 1 },   # home (west)
+  { pos = [9.5, -2.5], tree = true, first_ticks = 90, interval_ticks = 90, max_alive = 1 },   # home (east)
+  { pos = [-3.5, 4.5], power_ups = ["big_banana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+  { pos = [3.5, -4.5], power_ups = ["big_banana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+]

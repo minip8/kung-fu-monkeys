@@ -15,6 +15,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -41,9 +42,14 @@ struct Tally {
   uint32_t roundsWon{0};        // RoundEnded with a winner
   uint32_t perfectCatches{0};
   uint32_t powerUpsSpawned{0};  // bit i: power-up i was laid by a spawner
+  uint32_t treeFruit{0};        // v0.82: banana pickups laid on a tree
+  uint32_t treeFruitTaken{0};   // picked up off the floor (PickupTaken of one of those)
+  uint32_t bananasTaken{0};     // every banana pickup taken (a tree's, a drop, a stack)
   uint32_t eventsDropped{0};    // EventSink overflow, summed over the ticks
   uint32_t contactsDropped{0};  // StepStats: contact-list overflow, summed
   MatchPhase finalPhase{MatchPhase::Lobby};
+  uint32_t endTick{0};                       // MatchEnded's tick (0: the match did not end)
+  std::array<int8_t, kMaxPlayers> scores{};  // the final per-slot scores
 
   [[nodiscard]] uint32_t of(EventKind k) const { return kinds[static_cast<size_t>(k)]; }
 };
@@ -57,8 +63,12 @@ std::string describe(const Tally& t) {
   }
   o << "; power-ups taken " << t.powerUpsTaken << ", flags taken " << t.flagsTaken
     << ", objective points " << t.objectivePoints << ", rounds won " << t.roundsWon
-    << ", perfect catches " << t.perfectCatches << ", power-ups spawned 0x" << std::hex
-    << t.powerUpsSpawned << std::dec << ", final phase " << static_cast<int>(t.finalPhase);
+    << ", perfect catches " << t.perfectCatches << ", tree fruit " << t.treeFruit << " (taken "
+    << t.treeFruitTaken << "), bananas taken " << t.bananasTaken << ", power-ups spawned 0x"
+    << std::hex << t.powerUpsSpawned << std::dec << ", final phase "
+    << static_cast<int>(t.finalPhase) << ", match ended at tick " << t.endTick << ", scores";
+  for (const int8_t score : t.scores)
+    o << ' ' << int{score};
   return o.str();
 }
 
@@ -111,6 +121,7 @@ Tally play(const std::string& name) {
   WorldState world = initialWorld(header.matchConfig());
   EventSink sink;
   Tally t;
+  std::vector<EntityId> fruitIds;  // the tree fruit laid so far
   for (uint32_t i = 0; i < header.tickCount; ++i) {
     InputFrame frame;
     REQUIRE(readReplayFrame(r, frame));
@@ -126,10 +137,25 @@ Tally play(const std::string& name) {
         case EventKind::PickupTaken:
           if (e.a == static_cast<uint32_t>(PickupKind::PowerUp)) ++t.powerUpsTaken;
           if (e.a == static_cast<uint32_t>(PickupKind::Flag)) ++t.flagsTaken;
+          if (e.a == static_cast<uint32_t>(PickupKind::Banana)) {
+            ++t.bananasTaken;
+            if (std::ranges::find(fruitIds, e.entity) != fruitIds.end()) ++t.treeFruitTaken;
+          }
           break;
         case EventKind::PickupSpawned:
           if (e.a == static_cast<uint32_t>(PickupKind::PowerUp) && e.b < 32) {
             t.powerUpsSpawned |= 1u << e.b;
+          }
+          // v0.82: a banana laid on a tree's position (a tree's fruit).
+          if (e.a == static_cast<uint32_t>(PickupKind::Banana) && world.pickups.isAlive(e.entity)) {
+            const Vec2 at = world.pickups.items[e.entity.index].pos;
+            for (uint8_t n = 0; n < content.arena.pickupSpawnerCount; ++n) {
+              const PickupSpawner& sp = content.arena.pickupSpawners[n];
+              if (sp.isTree() && sp.pos == at) {
+                ++t.treeFruit;
+                fruitIds.push_back(e.entity);
+              }
+            }
           }
           break;
         case EventKind::ScoreChanged:
@@ -137,6 +163,9 @@ Tally play(const std::string& name) {
           break;
         case EventKind::RoundEnded:
           if (e.player.isValid()) ++t.roundsWon;
+          break;
+        case EventKind::MatchEnded:
+          t.endTick = e.tick.value;
           break;
         case EventKind::BoomerangCaught:
           if (e.a == static_cast<uint32_t>(CatchHow::Perfect)) ++t.perfectCatches;
@@ -147,6 +176,7 @@ Tally play(const std::string& name) {
     }
   }
   t.finalPhase = world.rules.phase;
+  t.scores = world.rules.scores;
   return t;
 }
 
@@ -222,6 +252,21 @@ bool flagTaken(const Tally& t, const ContentDB& /*db*/) {
 bool calls(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::MonkeyCalled) > 0;
 }
+bool fruit(const Tally& t, const ContentDB& /*db*/) {
+  return t.treeFruit > 0;
+}
+// The scripted harvest steering routes over the grid (gridStepToward): a
+// tree's fruit picked up off the floor, more banked than the ten opening
+// hands (one banana each) could have been, and a theft.
+bool fruitTaken(const Tally& t, const ContentDB& /*db*/) {
+  return t.treeFruitTaken > 0;
+}
+bool bankedBeyondHands(const Tally& t, const ContentDB& /*db*/) {
+  return t.objectivePoints > 10;
+}
+bool steals(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::BananaStolen) > 0;
+}
 
 const std::vector<Entry>& expectations() {
   static const std::vector<Entry> table = {
@@ -258,7 +303,26 @@ const std::vector<Entry>& expectations() {
        {{"throws, dashes, hits, eliminations", fights},
         {"a round won", roundWon},
         {"a call", calls}}},
+      // v0.82: harvest on grove, the scripted steering routed over the cells:
+      // the trees bear, the gatherers carry fruit home, the raiders steal.
       {"scripted_10p_contest_1800t",
+       {{"a tree's fruit", fruit},
+        {"fruit taken off the floor", fruitTaken},
+        {"more banked than the opening hands", bankedBeyondHands},
+        {"a theft", steals},
+        {"a call", calls}}},
+      // The same on two more of the pool: gorge's pits and bridges (a monkey
+      // falls), burrows' one-cell corridors and dead-end tunnels.
+      {"scripted_10p_contest_gorge_1800t",
+       {{"fruit taken off the floor", fruitTaken},
+        {"more banked than the opening hands", bankedBeyondHands},
+        {"a theft", steals},
+        {"a monkey falls into a pit", falls}}},
+      {"scripted_10p_contest_burrows_1800t",
+       {{"fruit taken off the floor", fruitTaken},
+        {"more banked than the opening hands", bankedBeyondHands},
+        {"a theft", steals}}},
+      {"scripted_10p_control_1t_1800t",
        {{"a zone captured", zoneCaptured}, {"a zone point", objectivePoint}, {"a call", calls}}},
   };
   return table;

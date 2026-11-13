@@ -48,6 +48,7 @@ constexpr std::array<Recipe, kSoundCount> kRecipes = {{
     {0.62f, 0.55f},   // Fall
     {0.20f, 0.45f},   // BananaPlop
     {0.30f, 0.45f},   // Regrow
+    {0.42f, 0.55f},   // Steal
 }};
 
 constexpr float kFadeInSeconds = 0.001f;
@@ -319,6 +320,20 @@ void synthesise(SoundId id, std::span<float> out, float sr) {
         osc.next(hz, sr);
         v = (env(t, 0.006f, 0.1f) * harmonics(osc.phase(), 0.15f, 0.0f)) +
             (0.5f * bell(t - 0.12f, 2093.0f, 0.07f));
+        break;
+      }
+      case SoundId::Steal: {
+        // v0.82: a sly "uh-oh": two plucked notes a minor third apart going
+        // down (E5, C#5), each bending flat, over a soft band-passed swipe,
+        // unlike the bright rising blip of a point scored.
+        const bool second = t >= 0.14f;
+        const float start = second ? 0.14f : 0.0f;
+        const float base = second ? 554.4f : 659.3f;
+        const float hz = base * (1.0f - (0.06f * clamp01((t - start) / 0.12f)));
+        osc.next(hz, sr);
+        svf.step(noise.next(), 1400.0f + (1600.0f * (1.0f - u)), sr, 0.6f);
+        v = (env(t - start, 0.004f, second ? 0.14f : 0.07f) * harmonics(osc.phase(), 0.45f, 0.2f)) +
+            (0.2f * env(t, 0.01f, 0.06f) * svf.band());
         break;
       }
       case SoundId::Count:

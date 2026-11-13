@@ -84,12 +84,24 @@ struct PowerUpDef {
 // as long as fewer than maxAlive of its pickups are lying there. The def is
 // drawn uniformly with the world RNG from powerUpSet (bit i = power-up i;
 // 0 = every power-up).
+//
+// v0.82, a tree (tree = 1; the arena spawner key `tree = true`, exclusive
+// with `power_ups`, so powerUpSet stays 0): on the same beat it lays one
+// banana pickup at pos instead, while fewer than maxAlive bananas (the
+// counts of the banana pickups, whoever dropped them) lie on pos's cell
+// (grid::cellOf). No RNG draw; a tree bears in every mode and whatever the
+// match's power-up set (MatchConfig::powerUps); a full pickup pool stacks
+// the fruit on the nearest banana pickup (layBananaPickup, rules/
+// bananas.hpp). A tree needs an arena with cells (the loader's check).
 struct PickupSpawner {
   Vec2 pos{};
   uint16_t powerUpSet{0};
   uint16_t firstTicks{0};
   uint16_t intervalTicks{0};
   uint8_t maxAlive{1};
+  uint8_t tree{0};  // v0.82: 0 = a power-up spawner, 1 = a tree
+
+  [[nodiscard]] constexpr bool isTree() const { return tree != 0; }
 };
 static_assert(kMaxPowerUps <= 16, "PickupSpawner::powerUpSet is a uint16_t bit set");
 

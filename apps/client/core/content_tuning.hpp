@@ -27,8 +27,10 @@ namespace kfm::client {
 // The tunable fields of `c` as assignment lines in makeDefaultContent()'s style
 // (dash.*, thr.*, c.boomerang.*, c.player.*, rounds.* = modes[0], then
 // c.modes[i].* for the objective clocks of a hill or control mode and a
-// mode's banana flight override, v0.80), one per line. content/*.toml is the source of truth; these
-// lines keep defaultContent() (the test fixture) in step with it.
+// mode's banana flight override, v0.80; a harvest mode's bank and steal
+// beats and a mode's respawn hand when set, v0.82), one per line.
+// content/*.toml is the source of truth; these lines keep defaultContent()
+// (the test fixture) in step with it.
 [[nodiscard]] std::string contentToCpp(const sim::ContentDB& c);
 
 }  // namespace kfm::client

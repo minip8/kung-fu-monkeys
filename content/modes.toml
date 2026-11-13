@@ -6,7 +6,7 @@
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
 #   kind                 rounds (default), deathmatch, survival, team_rounds,
-#                        team_deathmatch, hill, capture or control
+#                        team_deathmatch, hill, capture, control or harvest
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
 #   round_end_ticks      rounds, survival, team_rounds: pause after a round
 #                        before the next one (the round's scoreboard); the
@@ -33,7 +33,7 @@
 #                        A pit fall always takes the held ones down; the ones
 #                        in flight follow this key from the fall's start
 #   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture,
-#                        control:
+#                        control, harvest:
 #                        points for a perfect dash catch of an enemy's banana
 #                        (the own one or an ally's scores nothing; default 0)
 #   suicide_score        v0.57, the same kinds: points for an elimination with
@@ -83,6 +83,33 @@
 #                        lowest present slot). At most 4 teams; plays only on
 #                        an arena with a zone; respawns and the clock as
 #                        deathmatch, score_to_win counts points
+#   respawn_ammo         v0.82, the respawning kinds: the bananas a respawned
+#                        monkey holds, 0 to 254, capped at its ammo_max
+#                        (absent, the default: [player] ammo_start, as every
+#                        mode before v0.82). A round start's spawn always
+#                        holds ammo_start
+#   bank_ticks           v0.82, harvest: team t's home is zone t. On every
+#                        Playing tick that is a multiple of this (>= 1,
+#                        default 2) each living monkey in its own home with a
+#                        banana in hand banks one: a banana fewer in its hand,
+#                        a point to it (whoever else stands there). A banked
+#                        banana leaves the world. Plays only on an arena with
+#                        a zone per team and at least one tree; respawns and
+#                        the clock as deathmatch, score_to_win counts banked
+#                        bananas, eliminations score nothing
+#   steal_ticks          v0.82, harvest: on every Playing tick that is a
+#                        multiple of this (0, the default: never) each living
+#                        monkey with room in its hand standing in an enemy's
+#                        home takes one banana back out, when that team's
+#                        score is above zero and none of its living monkeys
+#                        stands in the zone: the point comes off the team's
+#                        highest-scoring slot (the lowest on a tie), the
+#                        banana goes into the raider's hand (one a beat)
+#   arenas               v0.82, optional: a pool of arena names (1 to 16, each
+#                        once, every one suiting the mode; `arena`, when also
+#                        given, must be one of them). kfm_arena cycles a pool;
+#                        the other hosts pick one arena (`arena`, else the
+#                        pool's first that suits the mode)
 #   space                v0.34: how monkeys move, "continuous" (default, the
 #                        stick) or "grid": a monkey at rest commits to one of
 #                        its eight neighbouring cells at every turn's latch
@@ -242,28 +269,75 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banan
 
 # M7: the row the bot ladder points at (architecture §8 "The ladder"), the
 # contest knobs in one place (team size, vision, the call range of the kits,
-# turn_ticks, the arena). A season changes this row, not the service, and the
-# row may change between releases inside a season (v0.59). Since v0.80 it is
-# capture and keep on the grid (§11 "Contest design"): grid_rounds_1t's squad
-# (1-tick turns, roles, fog and calls) under the control kind on
-# courtyard_zones, three zones (the centre, then the west and east homes).
-# The team with strictly the most monkeys in a zone it does not own captures
-# it after 30 turns; an owned zone pays its team a tick of clock every turn
-# whether or not anyone stands on it, and 60 of them score a point, so two
-# zones score twice as fast. First to 10 points, else the leader at 3600
-# turns (a tied lead is a draw); eliminations score nothing. A monkey
-# crosses the arena in 24 turns; a respawn takes 240, then 8 turns of
-# protection. The baseline, contest_base, is grid_base_1t with the banana at
-# 2 cells a turn. It flies out for 3 turns (6 cells of flight; the third
-# turn already bends home, so it reaches about 5 cells from the thrower,
-# the 1-cell spawn offset included) and turns for home at up to 85 degrees
-# a turn, a U-turn about 2.3 cells wide, so a banana is back in about 5
-# turns. 85, not 90: at a right angle a returning banana on this
-# axis-aligned map can square-orbit a pillar until max_return_ticks grounds
-# it. A banana is heard only a cell away (hearing 1), so where a monkey
-# looks decides what it can dodge.
+# turn_ticks, the arenas). A season changes this row, not the service, and
+# the row may change between releases inside a season (v0.59). Since v0.82
+# it is harvest (§11 "Contest design: bananas as the economy"): bananas are
+# the resource as well as the ammunition. grid_rounds_1t's squad (1-tick
+# turns, the roles, fog and calls) plays on a pool of four maps (grove,
+# orchards, gorge, burrows; kfm_arena cycles it, the other hosts take grove),
+# each its own half turn with a home zone per team (zone t is team t's) and
+# trees that lay bananas: a home tree per team every 90 turns, holding one,
+# flank trees every 60 holding two, rich trees every 30 holding three. The
+# hand is the cargo, three bananas under harvest_base (contest_base with
+# ammo_max + 2). Every 2 turns a monkey in its own home banks one banana for
+# a point; every 6 a monkey with room in its hand, standing in the enemy's
+# home with no defender there, takes one back out (the point comes off that
+# team). First to 40 banked, else the leader at 3600 turns (a tied lead is a
+# draw); eliminations and catches score nothing, because both already pay
+# in bananas: a death drops the cargo where it falls, a perfect catch takes
+# the enemy's banana, a pit takes the cargo down. Nothing else mints a
+# banana: no regrow, and a respawn (240 turns, then 8 of protection) comes
+# back empty-handed, to rearm at its home tree. The banana flies as in
+# control_1t below: 3 turns out at 2 cells a turn, home at up to 85 degrees
+# a turn, back in about 5 turns; heard a cell away (hearing 1).
 [[mode]]
 name = "contest"
+kind = "harvest"
+space = "grid"
+turn_ticks = 1
+dash_cells = 2
+teams = 2
+roles = ["catcher_1t", "grid_1t", "grid_1t", "grid_1t", "grid_1t"]
+baseline = "harvest_base"
+arenas = ["grove", "orchards", "gorge", "burrows"]
+arena = "grove"
+bank_ticks = 2              # a banana banked every 2 turns in the own home
+steal_ticks = 6             # one taken back out of an undefended enemy home every 6
+score_to_win = 40           # the first team to forty banked bananas wins
+time_limit_ticks = 3600     # else the leading team after 3600 turns (a tie is a draw)
+respawn_ticks = 240
+respawn_invuln_ticks = 8
+respawn_ammo = 0            # a respawn comes back empty-handed
+death_bananas = "drop"      # a death drops the cargo where it falls
+catch_score = 0
+banana_regrow_ticks = 0     # no regrow: the trees are the only supply
+banana_outbound_ticks = 3   # 3 turns out at 2 cells a turn: 6 cells
+banana_turn_rate = 15474    # BAM a turn on the way home: 85 degrees
+round_start_ticks = 60
+round_end_ticks = 180
+vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 1, banana_sight = 1 }
+
+# v0.80's contest, kept for the control kind (v0.82: appended under a new
+# name when the contest became harvest, every number unchanged): capture and
+# keep on the grid (§11 "Contest design"), grid_rounds_1t's squad under the
+# control kind on courtyard_zones, three zones (the centre, then the west
+# and east homes). The team with strictly the most monkeys in a zone it does
+# not own captures it after 30 turns; an owned zone pays its team a tick of
+# clock every turn whether or not anyone stands on it, and 60 of them score
+# a point, so two zones score twice as fast. First to 10 points, else the
+# leader at 3600 turns (a tied lead is a draw); eliminations score nothing.
+# A monkey crosses the arena in 24 turns; a respawn takes 240, then 8 turns
+# of protection. The baseline, contest_base, is grid_base_1t with the banana
+# at 2 cells a turn. It flies out for 3 turns (6 cells of flight; the third
+# turn already bends home, so it reaches about 5 cells from the thrower, the
+# 1-cell spawn offset included) and turns for home at up to 85 degrees a
+# turn, a U-turn about 2.3 cells wide, so a banana is back in about 5 turns.
+# 85, not 90: at a right angle a returning banana on this axis-aligned map
+# can square-orbit a pillar until max_return_ticks grounds it. A banana is
+# heard only a cell away (hearing 1), so where a monkey looks decides what it
+# can dodge.
+[[mode]]
+name = "control_1t"
 kind = "control"
 space = "grid"
 turn_ticks = 1

@@ -49,15 +49,21 @@ bool autoCatch(WorldState& s, const MatchContent& content, EntityId a, EntityId 
 // Prio 50, rules/pickup.cpp: a grounded banana restores ammo.
 bool takePickup(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                 const Contact& contact, EventSink& sink);
+// Row 50's contend test: a banana pickup and a hand with room.
+bool canTakePickup(const WorldState& s, const MatchContent& content, EntityId a, EntityId b);
 // Prio 51, rules/powerup.cpp: a power-up pickup adds (or refreshes) a
 // ModifierList entry; declines with the list full (§5.8).
 bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
                   const Contact& contact, EventSink& sink);
+// Row 51's contend test: a known power-up and room for it (or its entry).
+bool canTakePowerUp(const WorldState& s, const MatchContent& content, EntityId a, EntityId b);
 // Prio 52, rules/flag.cpp (v0.33): an enemy of a flag's team takes it;
 // declines for the flag's own team (the mode's onPickupTaken makes the
 // taker its carrier).
 bool takeFlag(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
               const Contact& contact, EventSink& sink);
+// Row 52's contend test: a flag of another team, and no flag in hand.
+bool canTakeFlag(const WorldState& s, const MatchContent& content, EntityId a, EntityId b);
 // Prio 60, rules/hazard.cpp (v0.22, v0.57): a player whose whole contact disc
 // is over the pits (CollisionSystem, discOverPits) and that is not Dashing
 // starts to fall (Tag::Falling, PlayerFell);

@@ -1371,3 +1371,223 @@ TEST_CASE("control: a zone captured rings in its team's colour and sounds",
   const RenderState none = buildRenderState(ps2, s, s, 1.0f, bad, control, kDt);
   CHECK(countEffects(none, EffectKind::ZoneCaptured) == 0);
 }
+
+// v0.82, harvest: trees (in every mode), a tree's fruit stacking into a
+// column, the homes in their teams' colours, and a theft's own feedback;
+// hand-built content (the dojo with 1-unit cells, two homes, a tree).
+namespace {
+
+[[nodiscard]] Vec2 half2(int32_t x2, int32_t y2) {  // (x2 / 2, y2 / 2)
+  return Vec2{Fixed::fromRatio(x2, 2), Fixed::fromRatio(y2, 2)};
+}
+
+[[nodiscard]] ContentDB harvestContent(uint8_t teams) {
+  ContentDB content = defaultContent();
+  ArenaDef& a = content.arenas[0];
+  a.cellSize = Fixed::one();
+  a.zones[0] = Zone{half2(-28, -4), half2(-20, 4)};  // x in [-14, -10], y in [-2, 2]
+  a.zones[1] = Zone{half2(20, -2), half2(28, 6)};    // x in [10, 14], y in [-1, 3]
+  a.zoneCount = 2;
+  PickupSpawner tree;
+  tree.pos = half2(1, 1);  // the centre of a cell
+  tree.firstTicks = 30;
+  tree.intervalTicks = 120;
+  tree.maxAlive = 3;
+  tree.tree = 1;
+  a.pickupSpawners[0] = tree;
+  PickupSpawner powerUps;  // a power-up spawner: not a tree
+  powerUps.pos = half2(9, 9);
+  powerUps.firstTicks = 60000;
+  a.pickupSpawners[1] = powerUps;
+  a.pickupSpawnerCount = 2;
+  content.modes[1] = content.modes[0];
+  content.modes[1].name = ContentName::of("harvest");
+  content.modes[1].kind = ModeKind::Harvest;
+  content.modes[1].teams = teams;
+  content.modes[1].scoreToWin = 20;
+  content.modes[1].stealTicks = 30;
+  content.modeCount = std::max<uint8_t>(content.modeCount, 2);
+  return content;
+}
+
+void layBanana(WorldState& s, Vec2 at, uint8_t count = 1) {
+  const EntityId id = s.pickups.spawn();
+  REQUIRE(id.isValid());
+  s.pickups.items[id.index] = Pickup{PickupKind::Banana, at, 0, 0, count};
+}
+
+}  // namespace
+
+TEST_CASE("harvest: trees render with their fruit and the next one ripening",
+          "[presentation][builder][harvest]") {
+  const ContentDB content = harvestContent(2);
+  WorldState s = makePlayingWorld(41, 0b11, content);
+  // Trees are arena content: drawn in a rounds match too, the power-up
+  // spawner not.
+  for (const uint8_t mode : {uint8_t{0}, uint8_t{1}}) {
+    auto rs = std::make_unique<RenderState>();
+    buildTrees(s, MatchContent(content, 0, mode), *rs);
+    REQUIRE(rs->treeCount == 1);
+    const RenderTree& t = rs->trees[0];
+    CHECK(worldToSim(t.ground).x == Approx(0.5f));
+    CHECK(worldToSim(t.ground).y == Approx(0.5f));
+    CHECK(t.ground.y == 0.0f);
+    CHECK(t.cell == Approx(1.0f));
+    CHECK(t.maxFruit == 3);
+  }
+
+  // Ripening toward the first beat, then from beat to beat.
+  const PickupSpawner& tree = content.arenas[0].pickupSpawners[0];
+  MatchRules r = s.rules;
+  r.phase = MatchPhase::Playing;
+  r.ticksInPhase = 15;
+  CHECK(treeRipeness(tree, r, 0) == Approx(0.5f));
+  r.ticksInPhase = 30;  // the beat: the fruit is laid, the next starts
+  CHECK(treeRipeness(tree, r, 0) == 0.0f);
+  r.ticksInPhase = 30 + 90;
+  CHECK(treeRipeness(tree, r, 2) == Approx(0.75f));
+  CHECK(treeRipeness(tree, r, 3) == 0.0f);  // full: the beat lays nothing
+  r.phase = MatchPhase::RoundStarting;
+  CHECK(treeRipeness(tree, r, 0) == 0.0f);
+  PickupSpawner once = tree;
+  once.intervalTicks = 0;  // bears once
+  r.phase = MatchPhase::Playing;
+  CHECK(treeRipeness(once, r, 0) == 0.0f);
+
+  // The fruit on its cell, whoever dropped it, counted with stacks; a
+  // banana on the next cell is not its.
+  layBanana(s, half2(1, 1));
+  layBanana(s, half2(3, 1));                                             // the next cell east
+  layBanana(s, Vec2{Fixed::fromRatio(9, 10), Fixed::fromRatio(1, 10)});  // its cell, off-centre
+  s.rules.ticksInPhase = 30 + 60;
+  auto rs = std::make_unique<RenderState>();
+  buildTrees(s, MatchContent(content, 0, 1), *rs);
+  REQUIRE(rs->treeCount == 1);
+  CHECK(rs->trees[0].fruit == 2);
+  CHECK(rs->trees[0].ripeness == Approx(0.5f));
+  layBanana(s, half2(1, 1), 2);
+  buildTrees(s, MatchContent(content, 0, 1), *rs);
+  CHECK(rs->trees[0].fruit == 4);
+  CHECK(rs->trees[0].ripeness == 0.0f);
+}
+
+TEST_CASE("harvest: bananas lying on one spot stack into a column",
+          "[presentation][builder][harvest]") {
+  const ContentDB content = harvestContent(2);
+  WorldState s = makePlayingWorld(42, 0b11, content);
+  layBanana(s, half2(1, 1));
+  layBanana(s, half2(1, 1), 2);
+  layBanana(s, half2(1, 1));
+  layBanana(s, half2(9, 1));  // another spot
+  PresentationState ps;
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, {}, MatchContent(content, 0, 1), kDt);
+  REQUIRE(rs.pickupCount == 4);
+  // In pool order: the first lies at the bottom, the next over its one
+  // banana, the third over the three below it; they bob together.
+  const float bottom = rs.pickups[0].position.y;
+  CHECK(rs.pickups[1].position.y == Approx(bottom + kPickupStackLift));
+  CHECK(rs.pickups[2].position.y == Approx(bottom + (3.0f * kPickupStackLift)));
+  CHECK(rs.pickups[3].position.y <= kPickupHeight + kPickupBobHeight + 1e-4f);
+  // The column casts one shadow, the lone banana its own.
+  int pickupShadows = 0;
+  for (uint16_t i = 0; i < rs.shadowCount; ++i)
+    pickupShadows += rs.shadows[i].owner == ShadowOwner::Pickup ? 1 : 0;
+  CHECK(pickupShadows == 2);
+}
+
+TEST_CASE("harvest: each team's home is tinted in its colour", "[presentation][builder][harvest]") {
+  const ContentDB content = harvestContent(2);
+  const WorldState s = makePlayingWorld(43, 0b11, content);
+  auto rs = std::make_unique<RenderState>();
+  buildZones(s, MatchContent(content, 0, 1), *rs);
+  REQUIRE(rs->zoneCount == 2);
+  CHECK(rs->zones[0].team == 0);
+  CHECK(rs->zones[1].team == 1);
+  CHECK(rs->zones[0].challenger == kNoSlot);
+  // A free-for-all harvest: zone k is slot k's home.
+  const ContentDB ffa = harvestContent(0);
+  buildZones(s, MatchContent(ffa, 0, 1), *rs);
+  CHECK(rs->zones[0].team == 0);
+  CHECK(rs->zones[1].team == 1);
+  // The same zones in a rounds match are nobody's.
+  buildZones(s, MatchContent(content, 0, 0), *rs);
+  CHECK(rs->zones[0].team == kNoSlot);
+}
+
+TEST_CASE("harvest: a banked banana pops gold, a theft rings in the raider's colour",
+          "[presentation][builder][harvest]") {
+  const ContentDB content = harvestContent(2);
+  // Slot 0 on team 1 (the robbed one is team 0's slot 1).
+  TeamSet teams = kFreeForAllTeams;
+  teams[0] = 1;
+  teams[1] = 0;
+  const MatchContent harvest(content, 0, 1, kAllPowerUps, 0, teams);
+  const WorldState s = makePlayingWorld(44, 0b11, content);
+  const auto hasSound = [](const RenderState& rs, SoundId id) {
+    for (uint16_t i = 0; i < rs.soundCount; ++i) {
+      if (rs.sounds[i].id == id) return true;
+    }
+    return false;
+  };
+
+  // Banking: the kind's own point, a gold pop at the banker and the coin.
+  const SimEvent banked{EventKind::ScoreChanged,
+                        s.tick,
+                        kP1,
+                        EntityId{},
+                        4,
+                        static_cast<uint32_t>(ScoreReason::Objective)};
+  {
+    PresentationState ps;
+    const std::array events{banked};
+    const RenderState rs = buildRenderState(ps, s, s, 1.0f, events, harvest, kDt);
+    CHECK(countEffects(rs, EffectKind::ScorePop) == 1);
+    CHECK(hasSound(rs, SoundId::Score));
+  }
+
+  // A theft: the robbed slot's -1 neither pops nor sounds; BananaStolen
+  // rings over the robbed home (zone 0) in the raider's team colour (team
+  // 1), flashes the raider and plays its own cue.
+  const SimEvent lost{EventKind::ScoreChanged,
+                      s.tick,
+                      kP1,
+                      EntityId{},
+                      static_cast<uint32_t>(3),
+                      static_cast<uint32_t>(ScoreReason::Stolen)};
+  const SimEvent stolen{EventKind::BananaStolen, s.tick, kP0, s.players.idAt(0), 1, 0};
+  CHECK_FALSE(soundForEvent(lost).has_value());
+  CHECK(soundForEvent(stolen).value_or(SoundCue{SoundId::Count, 0.0f, 0.0f}).id == SoundId::Steal);
+  PresentationState ps;
+  const std::array events{lost, stolen};
+  const RenderState rs = buildRenderState(ps, s, s, 1.0f, events, harvest, kDt);
+  CHECK(countEffects(rs, EffectKind::ScorePop) == 0);
+  CHECK_FALSE(hasSound(rs, SoundId::Score));
+  CHECK(hasSound(rs, SoundId::Steal));
+  REQUIRE(countEffects(rs, EffectKind::BananaStolen) == 1);
+  REQUIRE(countEffects(rs, EffectKind::StealFlash) == 1);
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& fx = rs.effects[i];
+    if (fx.kind == EffectKind::BananaStolen) {
+      CHECK(fx.slot == 1);  // the raider's team
+      CHECK(worldToSim(fx.position).x == Approx(-12.0f));
+      CHECK(worldToSim(fx.position).y == Approx(0.0f));
+      CHECK(fx.size == Approx(2.0f));
+    } else if (fx.kind == EffectKind::StealFlash) {
+      CHECK(fx.slot == 1);
+      const Vec2f raider = worldToSim(fx.position);
+      const Vec2f at = toFloat(playerAt(s, kP0).transform.pos);
+      CHECK(raider.x == Approx(at.x).margin(1e-3));
+      CHECK(raider.y == Approx(at.y).margin(1e-3));
+    }
+  }
+  CHECK(playerIn(rs, 0).flash > 0.0f);
+
+  // A zone past the arena's: the raider still flashes, no rings.
+  SimEvent bad = stolen;
+  bad.b = 7;
+  PresentationState ps2;
+  const std::array badEvents{bad};
+  const RenderState none = buildRenderState(ps2, s, s, 1.0f, badEvents, harvest, kDt);
+  CHECK(countEffects(none, EffectKind::BananaStolen) == 0);
+  CHECK(countEffects(none, EffectKind::StealFlash) == 1);
+}

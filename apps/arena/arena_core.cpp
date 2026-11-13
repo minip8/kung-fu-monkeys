@@ -68,6 +68,32 @@ void assignTeamPlaces(MatchResult& result) {
   }
 }
 
+std::vector<uint8_t> arenaPool(const sim::ContentDB& content, uint8_t mode) {
+  std::vector<uint8_t> pool;
+  const sim::ModeDef& m = content.modeAt(mode);
+  if (!m.hasArenaSet()) return pool;
+  for (uint8_t i = 0; i < content.arenaCount && i < sim::kMaxArenas; ++i) {
+    if (m.inArenaSet(i) && content.compatible(i, mode)) pool.push_back(i);
+  }
+  return pool;
+}
+
+uint8_t ArenaCycle::arenaFor(uint32_t match) const {
+  if (pool.empty()) return fixed;
+  return pool[(match / std::max<uint32_t>(period, 1)) % pool.size()];
+}
+
+ArenaCycle arenaCycle(const sim::ContentDB& content, const MatchSetup& setup, bool arenaNamed) {
+  ArenaCycle cycle;
+  cycle.fixed = setup.config.arena;
+  if (arenaNamed) return cycle;
+  cycle.pool = arenaPool(content, setup.config.mode);
+  // A free-for-all's sides are its slots; a team match's its teams.
+  const size_t sides = setup.teams.empty() ? setup.bots.size() : setup.teams.size();
+  cycle.period = static_cast<uint32_t>(std::max<size_t>(sides, 1));
+  return cycle;
+}
+
 std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
                                               const sim::ContentDB& content, BotFactory& factory,
                                               uint32_t index) {
@@ -147,6 +173,7 @@ std::expected<MatchResult, BotError> runMatch(const MatchSetup& setup,
   result.seed = config.seed;
   result.contentHash = contentHash(content);
   result.buildHash = kfm::kBuildId;  // KFM_BUILD_ID: 0 unless a release stamped it
+  result.arena = std::string(content.arenaAt(config.arena).name.view());
   result.slots.resize(n);
   for (size_t i = 0; i < n; ++i) {
     const ai::BotSpec& bot = *specOf[i];
@@ -388,6 +415,7 @@ std::string formatResultLine(const MatchResult& r) {
                   r.ticks, r.checksum, outcomeText(r.outcome), winnerText(r.winner));
   const bool teams = !r.teams.empty();
   if (teams) out += " winner_team " + winnerTeamText(r);
+  if (!r.arena.empty()) out += " arena " + r.arena;  // v0.82
   for (const TeamResult& t : r.teams) {
     std::format_to(std::back_inserter(out),
                    " | team {} entrant {} {} place {} score {} kills {} deaths {}", t.team,
@@ -449,8 +477,10 @@ std::string formatResultJson(const MatchResult& r) {
     out.push_back('}');
   }
   // v0.60, appended: the replay header's hashes, so a record names its content and build.
-  std::format_to(std::back_inserter(out), R"(],"content_hash":"{:08x}","build_hash":"{:08x}"}})",
+  std::format_to(std::back_inserter(out), R"(],"content_hash":"{:08x}","build_hash":"{:08x}")",
                  r.contentHash, r.buildHash);
+  // v0.82, appended: the arena the match played (a pooled mode cycles them).
+  out += R"(,"arena":)" + jsonString(r.arena) + "}";
   return out;
 }
 

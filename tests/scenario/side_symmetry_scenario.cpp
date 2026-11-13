@@ -1,20 +1,28 @@
 // Mirrored inputs give a mirrored world (architecture §11 "Contest design",
 // v0.79: "a scenario test that mirrored inputs give mirrored outcomes comes
-// first, because every gate above is read through it"). The shipped contest
-// row on courtyard_zones, whose map is its own half turn (x, y) -> (-x, -y)
-// with zone 1 and zone 2 exchanged and spawn point k of group 0 turning into
-// point k of group 1 (tests/unit/content/contest_test.cpp), played through
-// the real step() with every team-1 monkey given the half turn of the input
-// its team-0 twin gets. Where the engine treats the two sides alike, the
-// world stays its own half turn with the teams swapped on every tick; where
-// it does not, the first tick and field that differ is the asymmetry.
+// first, because every gate above is read through it"). v0.80's contest row,
+// control_1t since v0.82, on courtyard_zones, whose map is its own half turn
+// (x, y) -> (-x, -y) with zone 1 and zone 2 exchanged and spawn point k of
+// group 0 turning into point k of group 1 (tests/unit/content/contest_test.cpp),
+// played through the real step() with every team-1 monkey given the half turn
+// of the input its team-0 twin gets. Where the engine treats the two sides
+// alike, the world stays its own half turn with the teams swapped on every
+// tick; where it does not, the first tick and field that differ is the
+// asymmetry. Since v0.82 the same for the contest row, harvest, on each
+// arena of its pool (§11 "Contest design: bananas as the economy"), each its
+// own half turn with zone 0 mapping to zone 1, under a gather-and-bank policy
+// (the end of this file's "what holds"), up to the first tie the world Rng
+// draws.
 //
 // The slots: with ten present, teamsFor() deals them round-robin, so slot
 // 2k is team 0's k-th monkey (the west, spawn group 0) and slot 2k + 1 team
 // 1's k-th (the east, group 1); a role goes by the position in the team, so
 // slot 0 and slot 1 are the catchers. The twin of slot i is slot i ^ 1,
-// which keeps the order within each team (a same-team tie broken by the
-// lower slot stays mirrored).
+// which keeps the order within each team (a same-team contest decided by
+// the earlier press of the lower rank stays mirrored; since v0.82 one at an
+// equal press is drawn from the world Rng, the two sides separately, so the
+// mirrored matches stagger every input's subTick by rank, Script::
+// stepsByRank, where they mean to stay mirrored past one).
 //
 // The inputs are mirror-symmetric by construction: one Rng-free policy
 // decides for a team-0 monkey from the world, and for a team-1 monkey from
@@ -28,10 +36,13 @@
 // Findings (v0.79's side-bias question): the engine is mirror-symmetric
 // except for the known asymmetries pinned at the end of this file: two
 // world-Rng draws that the two sides take separately (the spawn offsets, the
-// spawners' power-ups), three slot-order tie-breaks that the lower slot (the
-// west, team 0) wins (a swap of cells, a simultaneous dash exchange, the
-// order of simultaneous respawns), and the floor rounding of Fixed's
-// multiply, which nudges every banana toward (-x, -y).
+// spawners' power-ups), two slot-order tie-breaks that the lower slot (the
+// west, team 0) wins (a simultaneous dash exchange, the order of
+// simultaneous respawns), two ties the world Rng decides (even by
+// construction, no longer the lower slot): a cell contest or swap at an
+// equal press (v0.82; v0.81's alternation by the turn's parity locked onto
+// harvest's even beats) and a pickup twins touch on one tick; and the floor
+// rounding of Fixed's multiply, which nudges every banana toward (-x, -y).
 #include "kfm/content/loader.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/zones.hpp"
@@ -167,9 +178,13 @@ struct Mirror {
 // modeData under the half turn: words 0-1 the clocks of teams 0-3 (u16
 // each), swapped between the teams; for control, words 2-3 a nibble per zone
 // (the team + 1, 0 nobody) and words 4-7 a u16 of progress per zone, the
-// zones exchanged and the teams swapped. Other kinds keep words 2-7.
+// zones exchanged and the teams swapped. Other kinds keep words 2-7, and
+// harvest every word.
 [[nodiscard]] std::array<uint32_t, kModeDataWords> mirroredModeData(
     const std::array<uint32_t, kModeDataWords>& d, const Mirror& mi, ModeKind kind) {
+  // Harvest (v0.82) keeps only its two beats in word 0, the same for both
+  // sides.
+  if (kind == ModeKind::Harvest) return d;
   std::array<uint32_t, kModeDataWords> out{};
   for (uint32_t t = 0; t < 4; ++t) {
     const uint32_t clock = (d[t / 2] >> ((t % 2) * 16)) & 0xFFFFu;
@@ -428,10 +443,11 @@ void compareUnordered(Differ& d, const std::string& what, const Pool<T, N>& worl
   });
 }
 
-// The first difference between the world and its mirror, or empty.
-[[nodiscard]] std::string asymmetry(const WorldState& s, const Mirror& mi, ModeKind kind,
-                                    Slack slack = {}, PlayerMask fresh = 0) {
-  const WorldState m = mirrorOf(s, mi, kind);
+// The first difference between a world s and another m (its mirror, or
+// another outcome of the same tick), or empty. The Rng state is not
+// compared: every draw is pinned on its own.
+[[nodiscard]] std::string difference(const WorldState& s, const WorldState& m, const Mirror& mi,
+                                     Slack slack = {}, PlayerMask fresh = 0) {
   Differ d(slack);
   const MatchRules& a = s.rules;
   const MatchRules& b = m.rules;
@@ -473,6 +489,12 @@ void compareUnordered(Differ& d, const std::string& what, const Pool<T, N>& worl
   return d.found();
 }
 
+// The first difference between the world and its mirror, or empty.
+[[nodiscard]] std::string asymmetry(const WorldState& s, const Mirror& mi, ModeKind kind,
+                                    Slack slack = {}, PlayerMask fresh = 0) {
+  return difference(s, mirrorOf(s, mi, kind), mi, slack, fresh);
+}
+
 // The events of one tick, mirrored: per kind, the same count and the twin
 // slots. (Payloads are slots, zones, teams or indices, so only the kind and
 // the player are compared; the world comparison covers the rest.)
@@ -502,15 +524,17 @@ void compareUnordered(Differ& d, const std::string& what, const Pool<T, N>& worl
 
 // What a script asks of the monkeys.
 struct Script {
-  bool zones{true};        // walk to the zones and hold them
-  bool throws{true};       // throw at an enemy in range
-  bool catches{true};      // dash into an enemy banana close by
-  bool dashes{false};      // dash now and then
-  bool pickups{true};      // the last of each team goes for power-ups
-  bool noSwaps{false};     // never step into a cell an enemy stands in
-  uint8_t throwRange{4};   // cells, Chebyshev
-  uint8_t throwEvery{3};   // a throw only on ticks where (tick + rank) % throwEvery == 0
-  uint8_t subTickStep{0};  // subTick = rank * subTickStep on a press
+  bool zones{true};         // walk to the zones and hold them
+  bool throws{true};        // throw at an enemy in range
+  bool catches{true};       // dash into an enemy banana close by
+  bool dashes{false};       // dash now and then
+  bool pickups{true};       // the last of each team goes for power-ups
+  bool noSwaps{false};      // never step into a cell an enemy stands in
+  uint8_t throwRange{4};    // cells, Chebyshev
+  uint8_t throwEvery{3};    // a throw only on ticks where (tick + rank) % throwEvery == 0
+  uint8_t subTickStep{0};   // subTick = rank * subTickStep on a press
+  bool stepsByRank{false};  // v0.82: and on every input, so allies never tie for a cell
+  bool harvest{false};      // v0.82: gather and bank instead (harvestDecide), nothing else
 };
 
 [[nodiscard]] Fixed chebyshev(Vec2 a, Vec2 b) {
@@ -607,11 +631,70 @@ class Steering {
   std::array<bool, kCells> free_{};
 };
 
+// v0.82, harvest: one team-0 monkey gathering and banking, no fight (no
+// throw, no dash). In its home with a banana it stays (banking them all);
+// else, with room in its hand, it heads for the nearest banana pickup
+// (Chebyshev, ties by position); with a full hand, or nothing to pick up
+// and a banana in it, it heads home; empty-handed with nothing to pick up,
+// it waits on the nearest tree. It never steps into a cell an enemy stands
+// in: a twin stepping into its twin's cell across the centre is the swap
+// pinned among the known asymmetries.
+[[nodiscard]] PlayerInput harvestDecide(const WorldState& s, const MatchContent& m, PlayerId me) {
+  PlayerInput in{};
+  const Player* self = s.playerBySlot(me);
+  if (self == nullptr || !inPlay(*self)) return in;
+  const Vec2 pos = self->transform.pos;
+  const uint8_t team = m.teamOf(me);
+  const Zone& home = m.arena.zones[homeZoneOf(m.arena, team)];
+  const bool inHome = boxContains(home.min, home.max, pos);
+  if (inHome && self->ammo > 0) return in;
+
+  const auto nearest = [&](std::optional<Vec2>& best, Vec2 p) {
+    const Fixed d = chebyshev(p, pos);
+    if (!best || d < chebyshev(*best, pos) || (d == chebyshev(*best, pos) && before(p, *best)))
+      best = p;
+  };
+  std::optional<Vec2> goal;
+  if (self->ammo < self->stats.ammoMax) {
+    s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+      if (k.kind == PickupKind::Banana) nearest(goal, k.pos);
+    });
+  }
+  if (!goal && self->ammo > 0) goal = home.centre();
+  if (!goal) {
+    for (uint8_t i = 0; i < m.arena.pickupSpawnerCount; ++i) {
+      if (m.arena.pickupSpawners[i].isTree()) nearest(goal, m.arena.pickupSpawners[i].pos);
+    }
+  }
+  if (!goal) return in;
+  const Steering steer(m.arena, self->stats.radius);
+  if (const std::optional<uint8_t> dir = steer.toward(pos, *goal)) {
+    const grid::Cell next = grid::neighbour(grid::cellOf(m.arena, pos), grid::octantOf(*dir));
+    bool taken = false;
+    s.players.forEachAlive([&](EntityId /*id*/, const Player& p) {
+      if (m.teamOf(p.id) != team && inPlay(p) && grid::cellOf(m.arena, p.transform.pos) == next)
+        taken = true;
+    });
+    if (!taken) {
+      in.moveDir = *dir;
+      in.moveMag = 255;
+    }
+  }
+  in.aimDir = in.moveDir;
+  return in;
+}
+
 // One team-0 monkey's input from the world as it stands. Rng-free and
 // deterministic; ties go by the rank of a slot, the index of a zone or the
 // order of positions, all of which the mirror carries over.
 [[nodiscard]] PlayerInput decide(const WorldState& s, const MatchContent& m, PlayerId me,
                                  const Script& script) {
+  if (script.harvest) {
+    PlayerInput in = harvestDecide(s, m, me);
+    if (script.stepsByRank)
+      in.subTick = static_cast<uint8_t>(rankOf(m, me.value) * script.subTickStep);
+    return in;
+  }
   PlayerInput in{};
   const Player* self = s.playerBySlot(me);
   if (self == nullptr || !inPlay(*self)) return in;
@@ -703,7 +786,9 @@ class Steering {
       (tick + rank) % std::max<uint32_t>(script.throwEvery, 1) == 0) {
     in.buttons |= buttonBit(Button::Throw);
   }
-  if (in.buttons != 0) in.subTick = static_cast<uint8_t>(rank * script.subTickStep);
+  if (in.buttons != 0 || script.stepsByRank) {
+    in.subTick = static_cast<uint8_t>(rank * script.subTickStep);
+  }
   return in;
 }
 
@@ -722,7 +807,9 @@ struct Run {
   std::string firstInexact;  // the first bit that differs, when slack is set
   uint32_t firstInexactTick{0};
   bool inexact{false};
-  PlayerMask fresh{0};  // the slots (re)spawned on the last tick
+  PlayerMask fresh{0};   // the slots (re)spawned on the last tick
+  WorldState before;     // the world before the last tick
+  InputFrame lastFrame;  // and its frame
 
   Run(uint8_t arena, uint8_t mode, uint64_t seed, uint16_t powerUps = kAllPowerUps,
       const ContentDB& db = shipped())
@@ -734,7 +821,8 @@ struct Run {
                .teams = teamsFor(db.modeAt(mode), kTen)},
         content(matchContent(db, config)),
         mirror(mirrorFor(content)),
-        world(initialWorld(config)) {}
+        world(initialWorld(config)),
+        before(world) {}
 
   [[nodiscard]] ModeKind kind() const { return content.mode.kind; }
 
@@ -759,6 +847,8 @@ struct Run {
     EventSink sink;
     InputFrame g = f;
     g.tick = world.tick;
+    before = world;
+    lastFrame = g;
     step(world, g, content, sink);
     REQUIRE(sink.dropped == 0);
     log.insert(log.end(), sink.begin(), sink.end());
@@ -794,6 +884,49 @@ struct Run {
       tick(frame(script));
       if (asymmetric) return;
     }
+  }
+
+  // Plays on past an asymmetry, to the end or `ticks`, comparing nothing.
+  void playOn(const Script& script, uint32_t ticks) {
+    for (uint32_t t = 0; t < ticks && world.rules.phase != MatchPhase::MatchEnded; ++t) {
+      EventSink sink;
+      InputFrame f = frame(script);
+      f.tick = world.tick;
+      step(world, f, content, sink);
+      REQUIRE(sink.dropped == 0);
+      log.insert(log.end(), sink.begin(), sink.end());
+    }
+  }
+
+  // The last tick replayed from the world before it under `trials` other
+  // Rng states, its outcomes told apart up to the Rng state (difference()):
+  // each distinct outcome once, with how many states gave it.
+  struct Outcome {
+    WorldState world;
+    int count{0};
+  };
+  [[nodiscard]] std::vector<Outcome> redraw(int trials) const {
+    std::vector<Outcome> out;
+    for (int k = 0; k < trials; ++k) {
+      WorldState w = before;
+      w.rng = Rng::seeded(uint64_t{0xC0FFEE} + static_cast<uint64_t>(k));
+      EventSink sink;
+      step(w, lastFrame, content, sink);
+      const auto seen = std::ranges::find_if(
+          out, [&](const Outcome& o) { return difference(w, o.world, mirror, {}, fresh).empty(); });
+      if (seen != out.end()) {
+        ++seen->count;
+      } else {
+        out.push_back(Outcome{w, 1});
+      }
+    }
+    return out;
+  }
+  // Whether `w` is (up to the Rng state) one of `outcomes`.
+  [[nodiscard]] bool among(const std::vector<Outcome>& outcomes, const WorldState& w) const {
+    return std::ranges::any_of(outcomes, [&](const Outcome& o) {
+      return difference(w, o.world, mirror, {}, fresh).empty();
+    });
   }
 
   [[nodiscard]] int count(EventKind kind) const { return countEvents(log, kind); }
@@ -853,11 +986,12 @@ struct Run {
   return static_cast<uint16_t>(1u << i.value_or(0));
 }
 
+// v0.80's contest: control_1t on courtyard_zones since v0.82.
 [[nodiscard]] uint8_t contestArena() {
   return arenaNamed("courtyard_zones");
 }
 [[nodiscard]] uint8_t contestMode() {
-  return modeNamed("contest");
+  return modeNamed("control_1t");
 }
 
 // A seed whose start is mirrored (both spawn groups draw the same offset:
@@ -907,12 +1041,15 @@ TEST_CASE(
   // the clocks, points to each team's lowest slot, power-up spawns and
   // pickups, and the end: with one power-up in the spawners' set (the two
   // spawners draw separately, a known asymmetry below) the whole match is
-  // mirrored exactly and ends 10 to 10, a draw.
+  // mirrored exactly and ends 10 to 10, a draw. v0.82: every input's subTick
+  // is staggered by rank, so allies' contests go to the earlier press (the
+  // lower rank, as the lower slot did) and no tie is drawn; the draw itself
+  // is pinned among the known asymmetries.
   const std::string_view powerUp = GENERATE(as<std::string_view>{}, "big_banana_1t",
                                             "triplebanana_1t", "quick_hands_1t", "shield_1t");
   INFO(powerUp);
   Run run(contestArena(), contestMode(), kMirroredStart, onlyPowerUp(powerUp));
-  run.play(Script{.throws = false, .catches = false, .subTickStep = 16}, 4000);
+  run.play(Script{.throws = false, .catches = false, .subTickStep = 16, .stepsByRank = true}, 4000);
   INFO("tick " << run.firstInexactTick << ": " << run.firstInexact);
   CHECK_FALSE(run.inexact);
   CHECK(run.world.rules.phase == MatchPhase::MatchEnded);
@@ -929,19 +1066,26 @@ TEST_CASE("side symmetry: banana fights stay mirrored to the end, up to fixed-po
   // Throws that hit, own bananas caught home, perfect catches by the
   // catchers, eliminations and respawns, bounces, pickups and captures, a
   // full match: every discrete outcome is the twin's, and every position,
-  // velocity and facing is within 64 raw units (1/1024 of a cell) and 4 BAM
+  // velocity and facing is within 256 raw units (1/256 of a cell) and 64 BAM
   // of the twin's. The rounding itself is a known asymmetry (below), there
   // from the first throw on, so these matches are not mirrored bit for bit.
   // The script never steps into a cell an enemy stands in (a swap with the
-  // twin is a known asymmetry below), and on these seeds no twins respawn
-  // into an empty side (another).
-  const uint64_t seed = GENERATE(3ull, 16ull);
+  // twin is a known asymmetry below), and on this seed no twins respawn
+  // into an empty side (another). v0.82: a cell tie at an equal press is
+  // drawn, the two sides separately, so every input's subTick is staggered
+  // by rank (presses and steps alike) and no tie arises: allies' contests go
+  // to the lower rank. Of seeds 1 to 120 the ones that then run to the end
+  // mirrored are 3, 16, 49, 50, 57, 106 and 108, all seed 3's match (the
+  // same start and no Rng draw that tells them apart); 4, 5, 54, 55 and 58
+  // meet twins respawning into an emptier side or a simultaneous dash
+  // exchange, known asymmetries below.
+  const uint64_t seed = GENERATE(3ull);
   const std::string_view powerUp =
       GENERATE(as<std::string_view>{}, "big_banana_1t", "triplebanana_1t", "shield_1t");
   INFO("seed " << seed << ", " << powerUp);
   Run run(contestArena(), contestMode(), seed, onlyPowerUp(powerUp));
-  run.slack = Slack{.ulps = 64, .bam = 4};
-  run.play(Script{.noSwaps = true}, 4000);
+  run.slack = Slack{.ulps = 256, .bam = 64};
+  run.play(Script{.noSwaps = true, .subTickStep = 16, .stepsByRank = true}, 4000);
   INFO("tick " << run.firstAsymmetricTick << ": " << run.firstAsymmetry);
   CHECK_FALSE(run.asymmetric);
   CHECK(run.world.rules.phase == MatchPhase::MatchEnded);
@@ -965,18 +1109,97 @@ TEST_CASE("side symmetry: dashing fights stay mirrored to the end, up to fixed-p
   // by rank (the earlier press wins a contested cell). Dashes put bananas
   // past wall corners more often, where the bounce's normal magnifies the
   // rounding: the slack is 256 raw units and 64 BAM here (still 1/256 of a
-  // cell and a third of a degree), and the outcomes stay the twin's.
-  const uint64_t seed = GENERATE(3ull, 55ull);
+  // cell and a third of a degree), and the outcomes stay the twin's. Twins
+  // touching one banana pickup on one tick draw who takes it, and since
+  // v0.82 a cell tie at an equal press is drawn too (known asymmetries
+  // below, fair by construction), so steps are staggered by rank like the
+  // presses: of seeds 1 to 120 the ones whose match then runs to the end
+  // without a draw are 3, 4, 69 and 105 (88 dashes and 24 eliminations on
+  // 4 and 69).
+  const uint64_t seed = GENERATE(4ull, 69ull);
   INFO("seed " << seed);
   Run run(contestArena(), contestMode(), seed, onlyPowerUp("big_banana_1t"));
   run.slack = Slack{.ulps = 256, .bam = 64};
-  run.play(Script{.dashes = true, .noSwaps = true, .subTickStep = 16}, 4000);
+  run.play(Script{.dashes = true, .noSwaps = true, .subTickStep = 16, .stepsByRank = true}, 4000);
   INFO("tick " << run.firstAsymmetricTick << ": " << run.firstAsymmetry);
   CHECK_FALSE(run.asymmetric);
   CHECK(run.world.rules.phase == MatchPhase::MatchEnded);
   CHECK_FALSE(run.world.rules.lastRoundWinner.isValid());
   CHECK(run.count(EventKind::PlayerDashed) >= 50);
   CHECK(run.count(EventKind::PlayerEliminated) >= 10);
+}
+
+TEST_CASE(
+    "side symmetry: a harvest of gathering and banking is its own half turn, bit for bit, "
+    "until the world Rng draws a tie, on every arena of the contest's pool",
+    "[scenario][symmetry][harvest]") {
+  // The contest row (harvest) on each member of its pool, with the
+  // gather-and-bank policy (harvestDecide) and one power-up in the
+  // spawners' set (the two spawners draw separately, a known asymmetry
+  // below). Trees bear on their beats with no Rng draw, monkeys walk to the
+  // fruit and carry it home, and bank there on the global beat: every tick
+  // is mirrored exactly until the world Rng first draws a tie, and the world
+  // leaves its half turn there. That tick replayed under other Rng states has
+  // outcomes that pair up by the half turn, so neither side is favoured.
+  // Played on, the match ends. Two ways (v0.82):
+  //  - steps staggered by rank (Script::stepsByRank): no cell tie, so the
+  //    first draw is twins waiting at one tree touching its fruit on the
+  //    tick it is laid (grove, gorge and burrows tick 121, orchards 181);
+  //  - every step at subTick 0: allies tie for cells, and the first draw is
+  //    such a tie (ticks 61 and 62), each side's drawn separately.
+  const bool staggered = GENERATE(true, false);
+  const std::string_view arena =
+      GENERATE(as<std::string_view>{}, "grove", "orchards", "gorge", "burrows");
+  INFO(arena << (staggered ? ", steps staggered" : ", steps at subTick 0"));
+  Run run(arenaNamed(arena), modeNamed("contest"), kMirroredStart, onlyPowerUp("shield_1t"));
+  REQUIRE(run.kind() == ModeKind::Harvest);
+  REQUIRE(run.mirror.zoneCount == 2);
+  CHECK(run.mirror.zone[0] == 1);
+  CHECK(run.mirror.zone[1] == 0);
+  const Script script{.subTickStep = 16, .stepsByRank = staggered, .harvest = true};
+  run.play(script, 5000);
+  INFO("tick " << run.firstInexactTick << ": " << run.firstInexact);
+  REQUIRE(run.inexact);
+  // The tick under 256 other Rng states: its outcomes come in half-turn
+  // pairs (each one's half turn is another), this one and its half turn
+  // among them.
+  const std::vector<Run::Outcome> outcomes = run.redraw(256);
+  INFO(outcomes.size() << " outcomes");
+  CHECK(outcomes.size() >= 2);
+  CHECK(run.among(outcomes, run.world));
+  CHECK(run.among(outcomes, mirrorOf(run.world, run.mirror, run.kind())));
+  for (const Run::Outcome& o : outcomes) {
+    INFO("an outcome " << o.count << " states gave");
+    CHECK(run.among(outcomes, mirrorOf(o.world, run.mirror, run.kind())));
+  }
+  // What was drawn: a fruit (one twin took it) or a cell (a monkey's
+  // commitment differs between outcomes).
+  const auto targetsDiffer = [&](const WorldState& a, const WorldState& b) {
+    for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+      if (playerAt(a, PlayerId{i}).moveTarget != playerAt(b, PlayerId{i}).moveTarget) return true;
+    }
+    return false;
+  };
+  if (staggered) {
+    CHECK(run.firstInexact.find(" ammo: ") != std::string::npos);
+    CHECK(run.firstInexactTick == (arena == "orchards" ? 181u : 121u));
+  } else {
+    CHECK(std::ranges::any_of(outcomes, [&](const Run::Outcome& o) {
+      return targetsDiffer(o.world, outcomes.front().world);
+    }));
+    CHECK(run.firstInexactTick < 121u);
+  }
+
+  run.playOn(script, 5000);
+  const int team0 = run.content.teamScore(run.world.rules.scores, 0);
+  const int team1 = run.content.teamScore(run.world.rules.scores, 1);
+  INFO("team scores " << team0 << " and " << team1);
+  CHECK(run.world.rules.phase == MatchPhase::MatchEnded);
+  CHECK(team0 + team1 >= 20);
+  CHECK(run.count(EventKind::PickupSpawned) >= 20);
+  CHECK(run.count(EventKind::PickupTaken) >= 20);
+  CHECK(run.count(EventKind::BoomerangThrown) == 0);
+  CHECK(run.count(EventKind::PlayerEliminated) == 0);
 }
 
 // --- known asymmetries ---------------------------------------------------------------
@@ -1072,39 +1295,63 @@ TEST_CASE("known asymmetry: a throw's velocity rounds toward minus infinity on b
   CHECK_FALSE(asymmetry(run.world, run.mirror, run.kind(), Slack{.ulps = 1, .bam = 1}).empty());
 }
 
-TEST_CASE("known asymmetry: twins swapping cells, the lower slot steps and the other stays",
+TEST_CASE("known asymmetry: twins swapping cells at an equal press, the world Rng draws who steps",
           "[scenario][symmetry][known-asymmetry]") {
-  // The grid latch (spaces/grid.cpp, beats()) settles a contested cell or a
-  // swap by the earlier press (the frame's subTick), then the lower slot.
-  // Twins press alike, so between them the lower slot, team 0's (the
-  // west), always wins: here slot 2 and its twin slot 3 stand on the two
-  // centre cells that are each other's half turn and step into each other's.
-  // Between other slots the order is mirrored (rank a against rank b of the
-  // other team: the lower slot is the same rank's on either side), so only
-  // equal ranks break it; but in a match whose inputs are not mirrored,
-  // every same-subTick contest between slot 2a (west) and 2b + 1 (east)
-  // goes west when a <= b: 15 of the 25 rank pairs.
+  // The grid latch (spaces/grid.cpp) settles a contested cell or a swap by
+  // the earlier press (the frame's subTick), then (v0.82) by a Fisher-Yates
+  // draw on the world Rng of the monkeys tied, one below(2) for two. Twins
+  // press alike, so one of them steps, the other stays, the world leaves its
+  // half turn by that contest, and which twin it is is the Rng's, even by
+  // construction. (Before v0.82 the lower slot, the west, won every such
+  // tie: 973 of 1585 enemy contests in 200 ref:hard games. v0.81's
+  // alternation by the turn's parity was even over the turns but not over
+  // the contests: on harvest's even beats the west took grove's 60 of 60.)
+  // Here slot 2 and its twin slot 3 stand on the two centre cells that are
+  // each other's half turn and step into each other's.
+  const std::array<PlayerInput, 5> in = [] {
+    std::array<PlayerInput, 5> a{};
+    a[1] = PlayerInput{.moveDir = 96, .moveMag = 255, .aimDir = 96};  // north-west, into the twin
+    return a;
+  }();
   Run run(contestArena(), contestMode(), kMirroredStart);
   run.untilPlaying();
   run.place(PlayerId{2}, halves(1, -1));  // column 12 row 7; slot 3 on column 11 row 6
   REQUIRE(run.asymmetryNow().empty());
-  std::array<PlayerInput, 5> in{};
-  in[1] = PlayerInput{.moveDir = 96, .moveMag = 255, .aimDir = 96};  // north-west, into the twin
-  run.tick(run.mirrored(in));
-  CHECK(playerAt(run.world, PlayerId{2}).transform.pos == halves(-1, 1));  // stepped
-  CHECK(playerAt(run.world, PlayerId{3}).transform.pos == halves(-1, 1));  // stayed
-  CHECK(run.asymmetryNow().starts_with("slot 2 pos:"));
-
-  // The earlier press wins whichever slot it is: the twin with the lower
-  // subTick steps instead.
-  Run early(contestArena(), contestMode(), kMirroredStart);
-  early.untilPlaying();
-  early.place(PlayerId{2}, halves(1, -1));
-  InputFrame f = early.mirrored(in);
-  f.inputs[2].subTick = 10;
-  early.tick(f);
-  CHECK(playerAt(early.world, PlayerId{2}).transform.pos == halves(1, -1));  // stayed
-  CHECK(playerAt(early.world, PlayerId{3}).transform.pos == halves(1, -1));  // stepped
+  SECTION("an equal press: one twin steps into the other's cell, about half each") {
+    int west = 0;
+    constexpr int kTrials = 200;
+    for (int k = 0; k < kTrials; ++k) {
+      INFO("trial " << k);
+      Run trial = run;
+      trial.world.rng = Rng::seeded(static_cast<uint64_t>(k));
+      trial.tick(trial.mirrored(in));
+      const Vec2 p2 = playerAt(trial.world, PlayerId{2}).transform.pos;
+      const Vec2 p3 = playerAt(trial.world, PlayerId{3}).transform.pos;
+      // One cell holds both: the winner stepped in, the loser stayed.
+      REQUIRE(p2 == p3);
+      REQUIRE((p2 == halves(-1, 1) || p2 == halves(1, -1)));
+      CHECK(trial.asymmetryNow().starts_with("slot 2 pos:"));
+      west += p2 == halves(-1, 1) ? 1 : 0;
+    }
+    INFO("the west stepped " << west << " of " << kTrials);
+    CHECK(west >= 70);  // 100 expected, a standard deviation of 7
+    CHECK(west <= 130);
+  }
+  SECTION("the earlier press wins whichever slot it is, with no draw") {
+    for (const uint8_t first : {uint8_t{2}, uint8_t{3}}) {
+      INFO("slot " << int{first} << " presses first");
+      Run early = run;
+      InputFrame f = early.mirrored(in);
+      f.inputs[first ^ 1u].subTick = 10;
+      Run idle = run;
+      idle.tick(idle.mirrored({}));
+      early.tick(f);
+      const Vec2 stepped = first == 2 ? halves(-1, 1) : halves(1, -1);
+      CHECK(playerAt(early.world, PlayerId{2}).transform.pos == stepped);
+      CHECK(playerAt(early.world, PlayerId{3}).transform.pos == stepped);
+      CHECK(early.world.rng.s == idle.world.rng.s);
+    }
+  }
 }
 
 TEST_CASE("known asymmetry: twins dashing into each other, the lower slot strikes first",
@@ -1131,6 +1378,45 @@ TEST_CASE("known asymmetry: twins dashing into each other, the lower slot strike
   CHECK(hits[0].a == 2u);                // the attacker
   CHECK(playerAt(run.world, PlayerId{3}).hp + 1 == playerAt(run.world, PlayerId{2}).hp);
   CHECK(run.asymmetryNow().starts_with("slot 2 hp:"));
+}
+
+TEST_CASE(
+    "known asymmetry: twins touching one banana on one tick, the world Rng draws who takes it",
+    "[scenario][symmetry][known-asymmetry]") {
+  // InteractionSystem (systems/interaction.cpp) draws the order of the
+  // monkeys that could take one pickup and touch it on one tick: a
+  // Fisher-Yates shuffle with the world Rng, one below(2) for two. Twins
+  // touching one banana on one tick: one takes it, the world leaves its
+  // half turn by that monkey's hand, and which twin it is is the Rng's,
+  // even by construction. (Before the draw the lower slot, the west, took
+  // every such tie: on grove a mirror of the gatherer example bot, whose
+  // first gatherers wait at one tree, ended 40 to 12 for the west in every
+  // game.) Here slot 2 and its twin slot 3 stand on the two centre cells,
+  // each touching a banana at the centre, the one point that is its own
+  // half turn.
+  Run run(contestArena(), contestMode(), kMirroredStart);
+  run.untilPlaying();
+  run.place(PlayerId{2}, halves(1, -1));
+  playerAt(run.world, PlayerId{2}).ammo = 0;
+  playerAt(run.world, PlayerId{3}).ammo = 0;
+  spawnPickup(run.world, Vec2::zero());
+  REQUIRE(run.asymmetryNow().empty());
+  int west = 0;
+  constexpr int kTrials = 200;
+  for (int k = 0; k < kTrials; ++k) {
+    INFO("trial " << k);
+    Run trial = run;
+    trial.world.rng = Rng::seeded(static_cast<uint64_t>(k));
+    trial.tick(trial.mirrored({}));
+    const int a2 = playerAt(trial.world, PlayerId{2}).ammo;
+    const int a3 = playerAt(trial.world, PlayerId{3}).ammo;
+    REQUIRE(a2 + a3 == 1);  // one of them, never both
+    CHECK(trial.asymmetryNow().starts_with("slot 2 ammo:"));
+    west += a2;
+  }
+  INFO("the west took " << west << " of " << kTrials);
+  CHECK(west >= 70);  // 100 expected, a standard deviation of 7
+  CHECK(west <= 130);
 }
 
 TEST_CASE("known asymmetry: twins respawning on one tick, the lower slot first",

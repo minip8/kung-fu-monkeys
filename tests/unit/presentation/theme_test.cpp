@@ -46,6 +46,10 @@ TEST_CASE("auto follows the arena; a fixed choice overrides it", "[presentation]
   CHECK(suggestedTheme("courtyard") == ArenaTheme::Temple);
   CHECK(suggestedTheme("courtyard_hill") == ArenaTheme::Temple);
   CHECK(suggestedTheme("courtyard_zones") == ArenaTheme::Temple);
+  CHECK(suggestedTheme("grove") == ArenaTheme::Jungle);  // v0.82, the harvest pool
+  CHECK(suggestedTheme("orchards") == ArenaTheme::Jungle);
+  CHECK(suggestedTheme("gorge") == ArenaTheme::Beach);
+  CHECK(suggestedTheme("burrows") == ArenaTheme::Temple);
   CHECK(suggestedTheme("a_new_toml_arena") == ArenaTheme::Jungle);  // the default
   CHECK(resolveTheme(ThemeChoice::Auto, "island") == ArenaTheme::Beach);
   CHECK(resolveTheme(ThemeChoice::Jungle, "island") == ArenaTheme::Jungle);

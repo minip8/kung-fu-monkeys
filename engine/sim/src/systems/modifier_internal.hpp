@@ -10,7 +10,9 @@ namespace kfm::sim {
 // Gives a freshly reset monkey its mode's baseline power-up (ModeDef::
 // baseline) as a permanent ModifierList entry (kPermanentModifierTicks) and
 // applies it at once, as ModifierSystem would: derived stats with hp at the
-// new maxHp, ammo topped up like a pickup, ability overrides, granted tags.
+// new maxHp, ammo capped at the new ammoMax (v0.82: never topped up, so an
+// ammo_max baseline raises the capacity without filling the hand), ability
+// overrides, granted tags.
 // Nothing happens for a mode without a baseline, so a free-for-all spawn is
 // untouched.
 void grantBaseline(Player& p, const MatchContent& content);

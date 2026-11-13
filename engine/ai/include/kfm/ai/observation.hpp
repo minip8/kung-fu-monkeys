@@ -102,6 +102,7 @@ enum class ObsModeKind : uint8_t {
   Hill = 5,            // architecture v0.33
   Capture = 6,         // architecture v0.33
   Control = 7,         // architecture v0.80
+  Harvest = 8,         // architecture v0.82 (designed v0.81)
 };
 enum class ObsAbilityKind : uint8_t {
   None = 0,
@@ -358,13 +359,16 @@ struct ObsHazard {
   uint8_t pad2;
 };
 
+// A pickup spawner: a power-up spawner, or (v0.82, tree 1) a tree that lays
+// one banana pickup on its cell on the same beat while fewer than maxAlive
+// bananas lie there (powerUpSet 0 for a tree).
 struct ObsSpawner {
   ObsPoint pos;
   uint16_t powerUpSet;     // bit i: power-up i may spawn (0 = any)
   uint16_t firstTicks;     // Playing tick of the first spawn
   uint16_t intervalTicks;  // ticks between spawns, 0 = once
-  uint8_t maxAlive;        // its pickups lying at most at once
-  uint8_t pad0;
+  uint8_t maxAlive;        // its pickups (a tree: bananas on its cell) lying at most at once
+  uint8_t tree;            // v0.82 (was pad0, always 0): 1 a tree, 0 a power-up spawner
 };
 
 // The arena's statics (immutable for the match).
@@ -510,6 +514,7 @@ static_assert(offsetof(ObsHazard, speedMul) == 16);
 static_assert(offsetof(ObsHazard, kind) == 20);
 static_assert(offsetof(ObsSpawner, powerUpSet) == 8);
 static_assert(offsetof(ObsSpawner, maxAlive) == 14);
+static_assert(offsetof(ObsSpawner, tree) == 15);
 
 static_assert(offsetof(ObsArena, spawnPointCount) == 8);
 static_assert(offsetof(ObsArena, spawnPoints) == 12);

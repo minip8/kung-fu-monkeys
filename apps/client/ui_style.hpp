@@ -74,6 +74,8 @@ inline constexpr ImU32 kPreviewZoneRim = IM_COL32(255, 255, 255, 190);
 inline constexpr ImU32 kPreviewZoneLetter = IM_COL32(255, 255, 255, 220);
 inline constexpr ImU32 kPreviewSpawnerOn = IM_COL32(255, 255, 255, 230);
 inline constexpr ImU32 kPreviewSpawnerOff = IM_COL32(170, 170, 170, 200);
+// v0.82: a tree, a leaf-green disc with a banana dot.
+inline constexpr ImU32 kPreviewTree = IM_COL32(40, 120, 70, 255);
 
 // A button's colour by role: Lead is the screen's loudest action (Play
 // online, Create room, Start match, Play again, Resume, Reconnect), Second

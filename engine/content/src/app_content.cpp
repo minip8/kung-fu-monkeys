@@ -106,8 +106,15 @@ bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena, st
     c.mode = *i;
   }
   // v0.32: the arena must suit the mode (ContentDB::compatible). Without an
-  // --arena a team mode takes the first arena that does; a named arena that
-  // does not is a configuration error.
+  // --arena a mode that names its arena or a pool of them takes that one
+  // (ContentDB::firstCompatibleArena: the mode's arena, else the pool's
+  // first member that suits it), and any other mode keeps arena 0 when it
+  // suits and else takes the first arena that does; a named arena that does
+  // not suit is a configuration error.
+  const sim::ModeDef& wanted = content.modeAt(c.mode);
+  if (arena.empty() && (wanted.hasArena() || wanted.hasArenaSet())) {
+    if (const std::optional<uint8_t> own = content.firstCompatibleArena(c.mode)) c.arena = *own;
+  }
   if (!content.compatible(c.arena, c.mode)) {
     const sim::ModeDef& m = content.modeAt(c.mode);
     const std::optional<uint8_t> first = content.firstCompatibleArena(c.mode);
@@ -120,8 +127,8 @@ bool resolveMatchNames(const sim::ContentDB& content, std::string_view arena, st
       }
       error = "arena '" + std::string(content.arenaAt(c.arena).name.view()) +
               "' does not suit mode '" + std::string(m.name.view()) +
-              "' (a spawn group per team, the mode's zones, cells for a grid mode; arenas that "
-              "do: " +
+              "' (a spawn group per team, the mode's zones and trees, cells for a grid mode or "
+              "fog; arenas that do: " +
               (fits.empty() ? std::string("none") : fits) + ")";
       return false;
     }

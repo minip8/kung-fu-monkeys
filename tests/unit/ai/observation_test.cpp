@@ -1,8 +1,10 @@
 // Observation v2 and its builder (architecture §8, docs/bot-abi.md): the
 // documented layout, a hand-built world mapped field by field, the
 // closest-approach math against a brute-force reference, every
-// present/absent/dead combination, the host delay copied through, and
-// version 2's zones block over a version 1 prefix that did not move (v0.80).
+// present/absent/dead combination, the host delay copied through,
+// version 2's zones block over a version 1 prefix that did not move (v0.80),
+// and the harvest kind within version 2: kind 8, its beats, its homes, the
+// spawner's tree byte and the fruit under fog (v0.82).
 #include "kfm/ai/observation.hpp"
 
 #include "../sim/sim_test_util.hpp"
@@ -13,6 +15,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -698,6 +701,221 @@ TEST_CASE("a control match reports kind 7 and its state in words 0-7 (v0.80)",
   CHECK(static_cast<int32_t>(obs.match.reservedModeData[kObsZoneWord]) == zoneNumber(0).min.x.raw);
   CHECK(static_cast<int32_t>(obs.match.reservedModeData[kObsZoneWord + 4]) ==
         zoneNumber(1).min.x.raw);
+}
+
+namespace {
+
+// Harvest (v0.82): the dojo with 1-unit cells, two homes (zone 0 west, zone 1
+// east), a power-up spawner and two trees; a harvest mode over two teams
+// whose baseline raises the hand to 3 without filling it.
+constexpr uint8_t kHarvestArena = 1;
+constexpr uint8_t kHarvestMode = 1;
+constexpr uint16_t kBankBeat = 4;
+constexpr uint16_t kStealBeat = 6;
+constexpr uint8_t kTreeFirst = 2;
+
+[[nodiscard]] constexpr Vec2 halves(int32_t x2, int32_t y2) {  // (x2 / 2, y2 / 2)
+  return Vec2{Fixed::fromRatio(x2, 2), Fixed::fromRatio(y2, 2)};
+}
+constexpr Vec2 kTreeA = halves(1, 1);    // (0.5, 0.5)
+constexpr Vec2 kTreeB = halves(-13, 7);  // (-6.5, 3.5)
+constexpr Zone kWestHome{halves(-30, -4), halves(-22, 4)};
+constexpr Zone kEastHome{halves(22, -4), halves(30, 4)};
+
+[[nodiscard]] ContentDB harvestObsContent(VisionKind vision) {
+  ContentDB c = defaultContent();
+  const uint8_t base = addPowerUp(c, "harvest_base", 1,
+                                  {statGrant(StatKind::AmmoMax, Fixed::one(), Fixed::fromInt(2))});
+  ArenaDef& a = c.arenas[kHarvestArena];
+  a = c.arenas[0];
+  a.name = ContentName::of("orchard");
+  a.cellSize = Fixed::one();
+  a.spawnGroups = 2;
+  a.zones[0] = kWestHome;
+  a.zones[1] = kEastHome;
+  a.zoneCount = 2;
+  PickupSpawner powerUps;  // never within the test: it would draw the baseline
+  powerUps.pos = halves(7, -9);
+  powerUps.firstTicks = 6000;
+  powerUps.intervalTicks = 600;
+  powerUps.maxAlive = 1;
+  PickupSpawner tree;
+  tree.pos = kTreeA;
+  tree.firstTicks = kTreeFirst;
+  tree.intervalTicks = 600;
+  tree.maxAlive = 1;
+  tree.tree = 1;
+  a.pickupSpawners[0] = powerUps;
+  a.pickupSpawners[1] = tree;
+  tree.pos = kTreeB;
+  tree.maxAlive = 2;
+  a.pickupSpawners[2] = tree;
+  a.pickupSpawnerCount = 3;
+  c.arenaCount = 2;
+  ModeDef& m = c.modes[kHarvestMode];
+  m.name = ContentName::of("harvest");
+  m.kind = ModeKind::Harvest;
+  m.teams = 2;
+  m.bankTicks = kBankBeat;
+  m.stealTicks = kStealBeat;
+  m.scoreToWin = 20;
+  m.timeLimitTicks = 36000;
+  m.respawnTicks = 60;
+  m.respawnAmmo = 0;
+  m.deathBananas = DeathBananas::Drop;
+  m.baseline = base;
+  m.arena = kHarvestArena;
+  m.vision = VisionDef{vision, 1, 3, 1, 1, 1};
+  c.modeCount = 2;
+  REQUIRE(c.compatible(kHarvestArena, kHarvestMode));
+  return c;
+}
+
+// A harvest match run to its first Playing tick, every monkey parked away
+// from the trees and the homes.
+struct HarvestObsMatch {
+  MatchConfig config;
+  MatchContent content;
+  WorldState s;
+  EventLog log;
+
+  explicit HarvestObsMatch(const ContentDB& db)
+      : config{.seed = 82,
+               .players = 0b1111,
+               .arena = kHarvestArena,
+               .mode = kHarvestMode,
+               .teams = balancedTeams(2, 0b1111)},  // slots 0, 2 against 1, 3
+        content(matchContent(db, config)),
+        s(initialWorld(config)) {
+    for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::Playing; ++i)
+      runTicks(s, frameFor(s), 1, content, log);
+    REQUIRE(s.rules.phase == MatchPhase::Playing);
+    REQUIRE(s.rules.ticksInPhase < kTreeFirst);
+    const std::array<Vec2, 4> spots = {halves(-17, -13), halves(17, -13), halves(-25, 13),
+                                       halves(25, 13)};
+    for (uint8_t i = 0; i < 4; ++i) {
+      Player& p = placePlayer(s, PlayerId{i}, spots[i]);
+      p.transform.facing = Angle::fromInput8(192);  // south, away from every tree
+    }
+  }
+
+  [[nodiscard]] Observation observe(PlayerId self) const {
+    Observation obs{};
+    buildObservation(s, content, self, 0, obs);
+    return obs;
+  }
+};
+
+// The pool slot of the banana pickup lying at `pos`, else -1.
+[[nodiscard]] int bananaPickupAt(const WorldState& s, Vec2 pos) {
+  int found = -1;
+  s.pickups.forEachAlive([&](EntityId id, const Pickup& k) {
+    if (k.kind == PickupKind::Banana && k.pos == pos) found = id.index;
+  });
+  return found;
+}
+
+}  // namespace
+
+TEST_CASE("a harvest match reports kind 8, its beats, homes and trees (v0.82)",
+          "[ai][observation][harvest]") {
+  const ContentDB db = harvestObsContent(VisionKind::All);
+  HarvestObsMatch h(db);
+  Observation obs = h.observe(kP0);
+  CHECK(obs.match.modeKind == 8);
+  CHECK(obs.match.modeKind == static_cast<uint8_t>(ObsModeKind::Harvest));
+  CHECK(obs.header.schemaFlags == 0);
+  // Word 0: bank_ticks in the low half, steal_ticks in the high; nothing else.
+  CHECK(obs.match.reservedModeData[0] == (uint32_t{kBankBeat} | (uint32_t{kStealBeat} << 16)));
+  for (uint32_t i = 1; i < kObsZoneWord; ++i)
+    CHECK(obs.match.reservedModeData[i] == 0);
+  // The homes: team t's is zone t, in the zones block and in words 8-15.
+  CHECK(obs.self.reservedTeam == 0);
+  CHECK(obs.players[1].reservedTeam == 1);
+  CHECK(obs.zones.count == 2);
+  checkZone(obs.zones.zone[0], kWestHome);
+  checkZone(obs.zones.zone[1], kEastHome);
+  const auto word = [&](uint32_t i) { return static_cast<int32_t>(obs.match.reservedModeData[i]); };
+  CHECK(word(kObsZoneWord + 0) == kWestHome.min.x.raw);
+  CHECK(word(kObsZoneWord + 3) == kWestHome.max.y.raw);
+  CHECK(word(kObsZoneWord + 4) == kEastHome.min.x.raw);
+  CHECK(word(kObsZoneWord + 7) == kEastHome.max.y.raw);
+  // The spawners: the tree byte on the two trees only.
+  CHECK(obs.arena.spawnerCount == 3);
+  CHECK(obs.arena.spawners[0].tree == 0);
+  CHECK(obs.arena.spawners[1].tree == 1);
+  CHECK(obs.arena.spawners[2].tree == 1);
+  CHECK(obs.arena.spawners[1].pos.x == kTreeA.x.raw);
+  CHECK(obs.arena.spawners[1].pos.y == kTreeA.y.raw);
+  CHECK(obs.arena.spawners[1].firstTicks == kTreeFirst);
+  CHECK(obs.arena.spawners[1].powerUpSet == 0);
+  CHECK(obs.arena.spawners[2].maxAlive == 2);
+  for (uint32_t i = 3; i < kObsMaxSpawners; ++i)
+    CHECK(obs.arena.spawners[i].tree == 0);
+  // The hand: the opening banana under a capacity of 3 the baseline raised.
+  CHECK(obs.rules.playerAmmoMax == 1);
+  CHECK(obs.self.ammo == 1);
+  CHECK(obs.self.ammoMax == 3);
+  CHECK(obs.players[1].ammoMax == 3);
+
+  // The fruit is an ordinary banana pickup on the tree's position.
+  runTicks(h.s, frameFor(h.s), kTreeFirst, h.content, h.log);
+  const int fruit = bananaPickupAt(h.s, kTreeA);
+  REQUIRE(fruit >= 0);
+  REQUIRE(bananaPickupAt(h.s, kTreeB) >= 0);
+  obs = h.observe(kP0);
+  const ObsPickup& k = obs.pickups[fruit];
+  CHECK(k.valid == 1);
+  CHECK(k.kind == static_cast<uint8_t>(ObsPickupKind::Banana));
+  CHECK(k.posX == kTreeA.x.raw);
+  CHECK(k.posY == kTreeA.y.raw);
+
+  // Picked up, it is cargo: 2 of 3 in the hand.
+  placePlayer(h.s, kP0, kTreeA);
+  runTicks(h.s, frameFor(h.s), 1, h.content, h.log);
+  obs = h.observe(kP0);
+  CHECK(obs.self.ammo == 2);
+  CHECK(obs.self.ammoMax == 3);
+  CHECK(obs.pickups[fruit].valid == 0);
+  // Carried home, a beat banks one: a banana out of the hand, a point on the board.
+  placePlayer(h.s, kP0, kWestHome.centre());
+  for (uint16_t i = 0; i < kBankBeat && playerAt(h.s, kP0).ammo == 2; ++i)
+    runTicks(h.s, frameFor(h.s), 1, h.content, h.log);
+  obs = h.observe(kP0);
+  CHECK(obs.self.ammo == 1);
+  CHECK(obs.match.scores[0] == 1);
+  CHECK(obs.match.reservedTeamScores[0] == 1);
+}
+
+TEST_CASE("fog hides a tree's fruit like any pickup, never the tree (v0.82)",
+          "[ai][observation][harvest][vision]") {
+  const ContentDB clearDb = harvestObsContent(VisionKind::All);
+  const ContentDB fogDb = harvestObsContent(VisionKind::Own);
+  HarvestObsMatch clear(clearDb);
+  HarvestObsMatch fog(fogDb);
+  runTicks(clear.s, frameFor(clear.s), kTreeFirst, clear.content, clear.log);
+  runTicks(fog.s, frameFor(fog.s), kTreeFirst, fog.content, fog.log);
+  const int fruit = bananaPickupAt(fog.s, kTreeA);
+  REQUIRE(fruit >= 0);
+  REQUIRE(bananaPickupAt(clear.s, kTreeA) == fruit);
+
+  // P0 at (-8.5, -6.5) facing south sees neither tree's cell.
+  const Observation seen = clear.observe(kP0);
+  Observation obs = fog.observe(kP0);
+  CHECK((obs.header.schemaFlags & kObsFlagFog) != 0);
+  CHECK(seen.pickups[fruit].valid == 1);
+  const ObsPickup none{};
+  CHECK(std::memcmp(&obs.pickups[fruit], &none, sizeof none) == 0);
+  // The trees are arena statics: the block is the full-information one.
+  CHECK(std::memcmp(&obs.arena, &seen.arena, sizeof(ObsArena)) == 0);
+  CHECK(obs.arena.spawners[1].tree == 1);
+  CHECK(obs.arena.spawners[1].pos.x == kTreeA.x.raw);
+
+  // Next to the tree (peripheral sight) the fruit is seen.
+  placePlayer(fog.s, kP0, kTreeA + Vec2{fx(1), Fixed{}});
+  obs = fog.observe(kP0);
+  CHECK(obs.pickups[fruit].valid == 1);
+  CHECK(obs.pickups[fruit].posX == kTreeA.x.raw);
 }
 
 TEST_CASE("version 2's first 5748 bytes are version 1's observation (v0.80)",

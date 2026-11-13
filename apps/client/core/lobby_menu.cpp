@@ -255,8 +255,12 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       break;
     case LobbyRowKind::Mode:
       settings_.mode = cycle(settings_.mode, db.modeCount);
-      // v0.34: a mode that names its arena (ModeDef::arena) brings it.
-      if (db.modeAt(settings_.mode).hasArena() || !db.compatible(settings_.arena, settings_.mode)) {
+      // v0.34: a mode that names its arena (ModeDef::arena) brings it;
+      // v0.82: a mode with a pool brings its first member unless the
+      // arena already is one.
+      if (const sim::ModeDef& m = db.modeAt(settings_.mode);
+          m.hasArena() || (m.hasArenaSet() && !m.inArenaSet(settings_.arena)) ||
+          !db.compatible(settings_.arena, settings_.mode)) {
         settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(settings_.arena);
       }
       break;
@@ -377,8 +381,32 @@ std::string ticksClock(uint32_t ticks) {
   return buf;
 }
 
+ArenaSpawners arenaSpawners(const sim::ArenaDef& arena) {
+  ArenaSpawners n;
+  for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < sim::kMaxPickupSpawners; ++i) {
+    if (arena.pickupSpawners[i].isTree()) {
+      ++n.trees;
+    } else {
+      ++n.powerUps;
+    }
+  }
+  return n;
+}
+
+std::string treesText(uint8_t trees) {
+  return trees == 1 ? std::string("1 tree bears bananas")
+                    : std::to_string(static_cast<unsigned>(trees)) + " trees bear bananas";
+}
+
+std::string beatText(uint32_t ticks) {
+  char buf[24];
+  const double s = static_cast<double>(ticks) / static_cast<double>(sim::kTickHz);
+  std::snprintf(buf, sizeof buf, s >= 1.0 ? "%.1f s" : "%.2f s", s);
+  return buf;
+}
+
 std::string modeSummary(const sim::ModeDef& mode) {
-  char buf[128];
+  char buf[160];
   const auto secs = [](uint32_t ticks) {
     return static_cast<double>(ticks) / static_cast<double>(sim::kTickHz);
   };
@@ -426,6 +454,24 @@ std::string modeSummary(const sim::ModeDef& mode) {
                     "first team to %u points, a zone taken in %.1f s pays a point per %.1f s, %s",
                     static_cast<unsigned>(mode.scoreToWin), secs(mode.captureTicks),
                     secs(mode.hillTicks), clock.c_str());
+      return buf;
+    }
+    case sim::ModeKind::Harvest: {
+      // v0.82: bananas carried home and banked; a lone raider takes them back.
+      const std::string clock =
+          mode.timeLimitTicks == 0 ? std::string("no clock") : ticksClock(mode.timeLimitTicks);
+      char steal[64];
+      if (mode.stealTicks == 0) {
+        std::snprintf(steal, sizeof steal, "no stealing");
+      } else {
+        std::snprintf(steal, sizeof steal, "a lone raider steals one per %s",
+                      beatText(mode.stealTicks).c_str());
+      }
+      const char* respawn = mode.respawnAmmo == 0 ? ", respawn empty-handed" : "";
+      std::snprintf(buf, sizeof buf,
+                    "first team to %u bananas banked, one per %s at home, %s%s, %s",
+                    static_cast<unsigned>(mode.scoreToWin), beatText(mode.bankTicks).c_str(), steal,
+                    respawn, clock.c_str());
       return buf;
     }
     case sim::ModeKind::TeamRounds:

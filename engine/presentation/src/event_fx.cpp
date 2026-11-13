@@ -122,9 +122,15 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
     case EventKind::PlayerRespawned:
       return cue(SoundId::Respawn);
     case EventKind::ScoreChanged:
-      // v0.57: a suicide's point lost rides on the fall's own sounds.
-      if (e.b == static_cast<uint32_t>(sim::ScoreReason::Suicide)) break;
+      // v0.57: a suicide's point lost rides on the fall's own sounds; v0.82:
+      // a banked banana stolen rides on BananaStolen's.
+      if (e.b == static_cast<uint32_t>(sim::ScoreReason::Suicide) ||
+          e.b == static_cast<uint32_t>(sim::ScoreReason::Stolen)) {
+        break;
+      }
       return cue(SoundId::Score);
+    case EventKind::BananaStolen:  // v0.82
+      return cue(SoundId::Steal);
     case EventKind::ZoneCaptured:  // v0.80: a zone taken sounds like the point it pays
       return cue(SoundId::Score);
     case EventKind::BananaRegrown:
@@ -334,12 +340,33 @@ void applyEventFx(PresentationState& ps, const WorldState& prev, const WorldStat
     }
     case EventKind::ScoreChanged:
       // v0.57: no gold ring for a point lost to a suicide (the slot may be
-      // gone: the fall's burst is the news).
-      if (e.b != static_cast<uint32_t>(sim::ScoreReason::Suicide)) {
+      // gone: the fall's burst is the news); v0.82: nor for a banked banana
+      // stolen (the robbed slot may stand anywhere: BananaStolen is the news,
+      // at the robbed home).
+      if (e.b != static_cast<uint32_t>(sim::ScoreReason::Suicide) &&
+          e.b != static_cast<uint32_t>(sim::ScoreReason::Stolen)) {
         addEffect(ps, makeEffect(EffectKind::ScorePop, slot, groundAt(player), kScorePopSeconds));
       }
       soundAt = player;
       break;
+    case EventKind::BananaStolen: {
+      // v0.82 (harvest): rings closing in over the robbed home (b = the
+      // zone) and a flash at the raider, both in the raider's team colour.
+      const int8_t team = slot != kNoSlot ? static_cast<int8_t>(content.teamOf(e.player)) : kNoSlot;
+      addEffect(ps, makeEffect(EffectKind::StealFlash, team, bodyAt(player), kStealFlashSeconds));
+      flashPlayer(ps, e.player, kStealFlashSeconds);
+      soundAt = player;
+      if (e.b >= content.arena.zoneCount || e.b >= sim::kMaxArenaZones) break;
+      const sim::Zone& z = content.arena.zones[e.b];
+      const Vec2f lo = toFloat(z.min);
+      const Vec2f hi = toFloat(z.max);
+      RenderEffect rings = makeEffect(EffectKind::BananaStolen, team,
+                                      groundAt(Vec2f{0.5f * (lo.x + hi.x), 0.5f * (lo.y + hi.y)}),
+                                      kBananaStolenSeconds);
+      rings.size = 0.5f * std::max(hi.x - lo.x, hi.y - lo.y);
+      addEffect(ps, rings);
+      break;
+    }
     case EventKind::BananaRegrown:
       // v0.57: twinkles in the monkey's hand and a short flash.
       addEffect(ps,

@@ -274,8 +274,9 @@ void visit(V& v, PickupSpawner& d) {
   v.u16(d.firstTicks);
   v.u16(d.intervalTicks);
   v.u8(d.maxAlive);
+  v.u8(d.tree);  // v0.82
 }
-static_assert(fieldCount<PickupSpawner>() == 5, "visit the new field, then update the count");
+static_assert(fieldCount<PickupSpawner>() == 6, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, StatModifier& m) {
   visit(v, m.stat);
@@ -383,9 +384,13 @@ void visit(V& v, ModeDef& d) {
   v.u16(d.captureTicks);  // v0.80
   v.u16(d.bananaOutboundTicks);
   v.u16(d.bananaTurnRateBam);
+  v.u8(d.respawnAmmo);  // v0.82
+  v.u16(d.bankTicks);
+  v.u16(d.stealTicks);
+  v.u16(d.arenaSet);
 }
 static_assert(fieldCount<VisionDef>() == 6, "visit the new field, then update the count");
-static_assert(fieldCount<ModeDef>() == 28, "visit the new field, then update the count");
+static_assert(fieldCount<ModeDef>() == 32, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, LoadoutDef& d) {
   visit(v, d.name);

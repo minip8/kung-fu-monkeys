@@ -176,6 +176,31 @@ TEST_CASE("triple banana: ammoMax +2 with a top-up, clamped back on expiry",
   CHECK(playerAt(s, kP0).ammo == 1);
 }
 
+TEST_CASE("an ammo_max baseline raises the capacity without filling the hand (v0.82)",
+          "[scenario][powerup]") {
+  // A pickup of the same grant tops the hand up (above); a mode's baseline,
+  // granted at every spawn, does not, or every respawn would mint bananas.
+  ContentDB content = powerUpContent();
+  ModeDef& m = content.modes[1];
+  m = content.modes[0];
+  m.name = ContentName::of("big_hands");
+  m.baseline = kTriple;
+  content.modeCount = 2;
+  const MatchContent match =
+      matchContent(content, MatchConfig{.seed = 45, .players = 0b11, .mode = 1});
+  WorldState s = initialWorld(MatchConfig{.seed = 45, .players = 0b11, .mode = 1});
+  EventLog log;
+  for (int i = 0; i < 1000 && s.rules.phase != MatchPhase::Playing; ++i)
+    runTicks(s, frameFor(s), 1, match, log);
+  REQUIRE(s.rules.phase == MatchPhase::Playing);
+  for (const PlayerId id : {kP0, kP1}) {
+    CHECK(playerAt(s, id).stats.ammoMax == 3);
+    CHECK(playerAt(s, id).ammo == content.player.ammoStart);
+  }
+  runTicks(s, frameFor(s), 10, match, log);
+  CHECK(playerAt(s, kP0).ammo == content.player.ammoStart);  // and it stays so
+}
+
 TEST_CASE("shield: absorbs exactly one banana hit, then hits land", "[scenario][powerup]") {
   const ContentDB content = powerUpContent();
   WorldState s = makePlayingWorld(45, 0b111, content);

@@ -10,9 +10,10 @@ constexpr std::array<std::string_view, kThemeChoiceCount> kChoiceNames = {"auto"
                                                                           "temple", "beach"};
 
 // Each built-in arena's suggested theme (content/arenas.toml and
-// content/arenas/*.toml): dojos and courtyards are temples, island and the
-// capture outposts beaches, the rest jungle.
-constexpr std::array<std::pair<std::string_view, ArenaTheme>, 11> kSuggested = {{
+// content/arenas/*.toml): dojos, courtyards and the burrows are temples,
+// island, the capture outposts and the gorge beaches, the rest jungle (the
+// harvest pool's grove and orchards among them).
+constexpr std::array<std::pair<std::string_view, ArenaTheme>, 15> kSuggested = {{
     {"dojo", ArenaTheme::Temple},
     {"pillars", ArenaTheme::Jungle},
     {"corridors", ArenaTheme::Temple},
@@ -24,6 +25,10 @@ constexpr std::array<std::pair<std::string_view, ArenaTheme>, 11> kSuggested = {
     {"courtyard", ArenaTheme::Temple},
     {"courtyard_hill", ArenaTheme::Temple},
     {"courtyard_zones", ArenaTheme::Temple},
+    {"grove", ArenaTheme::Jungle},
+    {"orchards", ArenaTheme::Jungle},
+    {"gorge", ArenaTheme::Beach},
+    {"burrows", ArenaTheme::Temple},
 }};
 
 }  // namespace

@@ -353,6 +353,98 @@ rounds_to_win = 1
   CHECK(&m.mode == &db.modes[1]);
 }
 
+TEST_CASE("without --arena a mode that names its arena or a pool takes it, even when arena 0 suits",
+          "[content][app][arena-set]") {
+  // Every arena here suits every mode, so only the mode's own choice can
+  // move the pick off arena 0 (v0.82's pools; before, arena 0 was kept
+  // whenever it suited).
+  const std::string more = R"(
+[[arena]]
+name = "pit"
+half_extents = [4, 4]
+spawn_ellipse = { radii = [2, 2], step_degrees = 90, order = [0, 2] }
+
+[[arena]]
+name = "den"
+half_extents = [4, 4]
+spawn_ellipse = { radii = [2, 2], step_degrees = 90, order = [0, 2] }
+
+[[mode]]
+name = "own"
+
+[[mode]]
+name = "pool"
+
+[[mode]]
+name = "both"
+)";
+  const std::array<ContentSource, 2> sources = {
+      ContentSource{"a.toml", std::string(kMinimal)},
+      ContentSource{"b.toml", more},
+  };
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(sources, db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  REQUIRE(db.arenaCount == 3);
+  REQUIRE(db.modeCount == 4);
+  db.modes[1].arena = 2;                                     // own: den
+  db.modes[2].arenaSet = (1u << 2) | (1u << 1);              // pool: pit, den
+  db.modes[3].arenaSet = (1u << 0) | (1u << 1) | (1u << 2);  // both: the lot, den first
+  db.modes[3].arena = 2;
+  for (uint8_t a = 0; a < db.arenaCount; ++a) {
+    for (uint8_t m = 0; m < db.modeCount; ++m)
+      REQUIRE(db.compatible(a, m));
+  }
+  const auto arenaFor = [&](std::string_view arena, std::string_view mode) {
+    sim::MatchConfig config{.players = 0b11};
+    std::string error;
+    const bool resolved = resolveMatchNames(db, arena, mode, config, error);
+    INFO(arena << " / " << mode << ": " << error);
+    CHECK(resolved);
+    return int{config.arena};
+  };
+  CHECK(arenaFor("", "rounds") == 0);  // names neither: arena 0, as before
+  CHECK(arenaFor("", "own") == 2);     // its arena
+  CHECK(arenaFor("", "pool") == 1);    // the pool's first member
+  CHECK(arenaFor("", "both") == 2);    // its arena, a pool member
+  CHECK(arenaFor("box", "own") == 0);  // a named arena is kept
+  CHECK(arenaFor("pit", "both") == 1);
+
+  SECTION("a mode's arena that does not suit gives way to the first arena that does") {
+    db.modes[1].arena = 2;
+    db.arenas[2].spawnGroups = 1;
+    db.modes[1].teams = 2;  // den has one spawn group: no longer suits "own"
+    db.arenas[1].spawnGroups = 2;
+    db.arenas[0].spawnGroups = 1;
+    REQUIRE_FALSE(db.compatible(2, 1));
+    CHECK(arenaFor("", "own") == 1);
+  }
+}
+
+TEST_CASE("the shipped modes pick their arenas without --arena; a misfit names trees",
+          "[content][app][arena-set]") {
+  sim::ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadEmbeddedContent(db, diag));
+  const auto named = [&](std::string_view arena, std::string_view mode, std::string& error) {
+    sim::MatchConfig config{.players = 0x3FF};
+    const bool resolved = resolveMatchNames(db, arena, mode, config, error);
+    return resolved ? std::string(db.arenaAt(config.arena).name.view()) : std::string{};
+  };
+  std::string error;
+  CHECK(named("", "rounds", error) == "dojo");
+  CHECK(named("", "contest", error) == "grove");
+  CHECK(named("", "control_1t", error) == "courtyard_zones");
+  CHECK(named("", "grid_rounds", error) == "courtyard");
+  CHECK(named("orchards", "contest", error) == "orchards");
+  CHECK(named("dojo", "contest", error).empty());
+  CHECK(contains(error, "arena 'dojo' does not suit mode 'contest'"));
+  CHECK(contains(error, "the mode's zones and trees"));
+  CHECK(contains(error, "grove"));
+}
+
 TEST_CASE("--powerups lists resolve to a MatchConfig::powerUps set and back",
           "[content][app][powerup]") {
   sim::ContentDB db{};
@@ -809,17 +901,112 @@ TEST_CASE("power-up validation", "[content][loader][powerup]") {
                  "spawner 0: pos (3.000, 1.000) is in pit hazard 0"));
 }
 
+// --- trees (v0.82) --------------------------------------------------------
+
+namespace {
+
+// kMinimal plus a tilemap arena with one tree and no [[powerup]] at all.
+std::string withTree() {
+  return std::string(kMinimal) + R"(
+[[arena]]
+name = "orchard"
+cell = 1.0
+map = [
+  "........",
+  ".0....1.",
+  "........",
+  "........",
+]
+spawners = [{ pos = [0.5, 0.5], tree = true, first_ticks = 30, interval_ticks = 90, max_alive = 2 }]
+)";
+}
+
+}  // namespace
+
+TEST_CASE("trees load: tree = true, no power-ups needed", "[content][loader][tree]") {
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(withTree(), "test.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  REQUIRE(db.findArena("orchard"));
+  const sim::ArenaDef& a = db.arenas[db.findArena("orchard").value_or(0)];
+  REQUIRE(a.pickupSpawnerCount == 1);
+  const sim::PickupSpawner& sp = a.pickupSpawners[0];
+  CHECK(sp.tree == 1);
+  CHECK(sp.isTree());
+  CHECK(sp.powerUpSet == 0);
+  CHECK(sp.firstTicks == 30);
+  CHECK(sp.intervalTicks == 90);
+  CHECK(sp.maxAlive == 2);
+  CHECK(sim::hasTree(a));
+  CHECK_FALSE(sim::hasTree(db.arenas[0]));
+  // tree = false is a power-up spawner, and the default.
+  ContentDB off{};
+  Diagnostics offDiag;
+  REQUIRE(
+      parseContent(replaced(withPowerUp(), "first_ticks = 60", "tree = false, first_ticks = 60"),
+                   "test.toml", off, offDiag));
+  CHECK(off.arenas[off.findArena("box_pu").value_or(0)].pickupSpawners[0].tree == 0);
+  CHECK(off.arenas[off.findArena("box_pu").value_or(0)].pickupSpawners[0].powerUpSet == 1);
+}
+
+TEST_CASE("tree validation", "[content][loader][tree]") {
+  // A tree takes no power-ups.
+  CHECK(contains(loadErrors(replaced(withPowerUp(), "power_ups = [\"boost\"]",
+                                     "tree = true, power_ups = [\"boost\"]")),
+                 "'power_ups' belongs to a power-up spawner: a tree lays bananas"));
+  // A tree needs cells: the hand-placed box_pu has none.
+  CHECK(
+      contains(loadErrors(replaced(withPowerUp(), "power_ups = [\"boost\"]", "tree = true")),
+               "arena \"box_pu\" spawner 0: a tree needs an arena with cells (a tilemap, `cell`)"));
+  // A boolean.
+  CHECK(contains(loadErrors(replaced(withTree(), "tree = true", "tree = 1")),
+                 "'tree' must be true or false"));
+  // The statics' checks hold for a tree as for any spawner.
+  CHECK(contains(loadErrors(replaced(withTree(), "pos = [0.5, 0.5]", "pos = [9.5, 0.5]")),
+                 "spawner 0: pos (9.500, 0.500) is outside the arena"));
+  // A tree's max_alive does not count toward the power-ups' half of the pool.
+  CHECK(loads(replaced(withTree(), "max_alive = 2", "max_alive = 32")));
+  CHECK(contains(loadErrors(replaced(withTree(), "max_alive = 2", "max_alive = 33")),
+                 "'max_alive' must be an integer in [1, 32]"));
+  {
+    // validateContent() holds content built in code to the same rules.
+    ContentDB db{};
+    Diagnostics diag;
+    REQUIRE(parseContent(withTree(), "t.toml", db, diag));
+    sim::ArenaDef& a = db.arenas[db.findArena("orchard").value_or(0)];
+    Diagnostics ok;
+    CHECK(validateContent(db, ok));
+    a.pickupSpawners[0].tree = 2;
+    Diagnostics two;
+    CHECK_FALSE(validateContent(db, two));
+    CHECK(two.format().contains("tree is a 0/1 switch"));
+    a.pickupSpawners[0].tree = 1;
+    a.pickupSpawners[0].powerUpSet = 1;
+    Diagnostics set;
+    CHECK_FALSE(validateContent(db, set));
+    CHECK(set.format().contains("a tree takes no power_ups"));
+    a.pickupSpawners[0].powerUpSet = 0;
+    a.cellSize = Fixed::zero();
+    Diagnostics cells;
+    CHECK_FALSE(validateContent(db, cells));
+    CHECK(cells.format().contains("a tree needs an arena with cells"));
+  }
+}
+
 TEST_CASE("content/ ships the power-ups and an arena that spawns them",
           "[content][loader][powerup]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
   // v0.34 appended quick_hands and the grid modes' two baselines, v0.80 the
-  // contest's baseline and the _1t twins its arena lays.
-  const std::array<std::string_view, 13> names = {
+  // contest's baseline and the _1t twins its arena lays, v0.82 the harvest
+  // baseline.
+  const std::array<std::string_view, 14> names = {
       "speed_boost",     "big_banana",     "triple_banana", "shield",       "fast_hands",
       "quick_hands",     "grid_base",      "grid_base_1t",  "contest_base", "big_banana_1t",
-      "triplebanana_1t", "quick_hands_1t", "shield_1t"};
+      "triplebanana_1t", "quick_hands_1t", "shield_1t",     "harvest_base"};
   REQUIRE(db.powerUpCount == names.size());
   for (size_t i = 0; i < names.size(); ++i)
     CHECK(db.powerUps[i].name.view() == names[i]);
@@ -1113,6 +1300,160 @@ score_to_win = 0
                  "too many modes (at most 32, kMaxModes)"));
 }
 
+// --- harvest (v0.82) -------------------------------------------------------
+
+namespace {
+
+// kMinimal plus four tilemap arenas (two that suit harvest, one without a
+// tree, one with a single zone) and a harvest mode over a pool of two.
+std::string withHarvest() {
+  std::string text(kMinimal);
+  const auto arena = [&](std::string_view name, std::string_view top, bool tree) {
+    const bool b = top.ends_with("bb");
+    text += "[[arena]]\nname = \"";
+    text += name;
+    text += "\"\ncell = 1.0\nspawn_groups = 2\nmap = [\n  \"";
+    text += top;
+    text += b ? "\",\n  \"aa....bb\"," : "\",\n  \"aa......\",";
+    text += "\n  \"........\",\n  \"........\",\n]\n";
+    if (tree) {
+      text +=
+          "spawners = [{ pos = [0.5, 0.5], tree = true, first_ticks = 0, "
+          "interval_ticks = 60 }]\n";
+    }
+  };
+  arena("grove", "aa0..1bb", true);
+  arena("grove2", "aa0..1bb", true);
+  arena("bare", "aa0..1bb", false);
+  arena("lone", "aa0..1..", true);
+  text += R"(
+[[mode]]
+name = "harvest"
+kind = "harvest"
+teams = 2
+score_to_win = 40
+bank_ticks = 3
+steal_ticks = 9
+respawn_ammo = 0
+arenas = ["grove", "grove2"]
+arena = "grove2"
+)";
+  return text;
+}
+
+}  // namespace
+
+TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][loader][modes]") {
+  ContentDB db{};
+  Diagnostics diag;
+  const bool ok = parseContent(withHarvest(), "modes.toml", db, diag);
+  INFO(diag.format());
+  REQUIRE(ok);
+  const std::optional<uint8_t> index = db.findMode("harvest");
+  REQUIRE(index);
+  const uint8_t mi = index.value_or(0);
+  const sim::ModeDef& m = db.modes[mi];
+  const uint8_t grove = db.findArena("grove").value_or(0);
+  const uint8_t grove2 = db.findArena("grove2").value_or(0);
+  const uint8_t bare = db.findArena("bare").value_or(0);
+  const uint8_t lone = db.findArena("lone").value_or(0);
+  CHECK(m.kind == sim::ModeKind::Harvest);
+  CHECK(m.bankTicks == 3);
+  CHECK(m.stealTicks == 9);
+  CHECK(m.respawnAmmo == 0);
+  CHECK(m.arena == grove2);
+  CHECK(m.arenaSet == ((1u << grove) | (1u << grove2)));
+  CHECK(m.hasArenaSet());
+  CHECK(m.inArenaSet(grove));
+  CHECK_FALSE(m.inArenaSet(bare));
+  CHECK(sim::respawnAmmoOf(db.player, m) == 0);
+  // compatible(): a zone per team and a tree.
+  CHECK(db.compatible(grove, mi));
+  CHECK_FALSE(db.compatible(bare, mi));
+  CHECK_FALSE(db.compatible(lone, mi));
+  CHECK_FALSE(db.compatible(0, mi));  // the box: no zones, no cells
+  // The defaults: no pool, the respawn's hand ammo_start, banking every 2
+  // ticks, no stealing.
+  const sim::ModeDef& rounds = db.modes[0];
+  CHECK(rounds.respawnAmmo == sim::kRespawnAmmoStart);
+  CHECK(sim::respawnAmmoOf(db.player, rounds) == db.player.ammoStart);
+  CHECK(rounds.bankTicks == 2);
+  CHECK(rounds.stealTicks == 0);
+  CHECK(rounds.arenaSet == sim::kNoArenaSet);
+  CHECK_FALSE(rounds.hasArenaSet());
+  CHECK(db.firstCompatibleArena(mi) == std::optional<uint8_t>{grove2});  // its own arena
+
+  // Without `arena`, a host's pick is the pool's first member that suits it,
+  // ahead of an earlier arena outside the pool.
+  {
+    ContentDB pool{};
+    Diagnostics poolDiag;
+    REQUIRE(parseContent(replaced(replaced(withHarvest(), "arena = \"grove2\"\n", ""),
+                                  "arenas = [\"grove\", \"grove2\"]", "arenas = [\"grove2\"]"),
+                         "modes.toml", pool, poolDiag));
+    const uint8_t h = pool.findMode("harvest").value_or(0);
+    CHECK_FALSE(pool.modes[h].hasArena());
+    CHECK(pool.firstCompatibleArena(h) == pool.findArena("grove2"));
+  }
+  // Key bounds.
+  CHECK(loads(replaced(withHarvest(), "respawn_ammo = 0", "respawn_ammo = 254")));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "respawn_ammo = 0", "respawn_ammo = 255")),
+                 "'respawn_ammo' must be an integer in [0, 254]"));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "respawn_ammo = 0", "respawn_ammo = -1")),
+                 "'respawn_ammo' must be an integer in [0, 254]"));
+  CHECK(loads(replaced(withHarvest(), "bank_ticks = 3", "bank_ticks = 65535")));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "bank_ticks = 3", "bank_ticks = 0")),
+                 "'bank_ticks' must be an integer in [1, 65535]"));
+  CHECK(loads(replaced(withHarvest(), "steal_ticks = 9", "steal_ticks = 0")));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "steal_ticks = 9", "steal_ticks = 65536")),
+                 "'steal_ticks' must be an integer in [0, 65535]"));
+  // The pool.
+  const auto pooled = [](std::string_view list) {
+    return replaced(withHarvest(), R"(arenas = ["grove", "grove2"])", list);
+  };
+  CHECK(contains(loadErrors(pooled("arenas = []")), "'arenas' must list 1 to 16 arena names"));
+  CHECK(
+      contains(loadErrors(pooled("arenas = \"grove\"")), "'arenas' must list 1 to 16 arena names"));
+  CHECK(contains(loadErrors(pooled("arenas = [3]")), "'arenas' entries must be arena names"));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"nowhere\"]")),
+                 "'arenas' names unknown arena \"nowhere\""));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"grove2\"]")),
+                 "'arenas' names arena \"grove2\" twice"));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"bare\"]")),
+                 "mode \"harvest\": arenas member \"bare\" does not suit it"));
+  CHECK(contains(loadErrors(pooled("arenas = [\"grove\"]")),
+                 "mode \"harvest\": its arena must be one of its arenas"));
+  // A pool needs no harvest: any mode may name one its members suit.
+  CHECK(loads(std::string(kMinimal) + "[[mode]]\nname = \"free\"\narenas = [\"box\"]\n"));
+  // The kind: a team kind that respawns, scoring points.
+  CHECK(contains(loadErrors(replaced(withHarvest(), "teams = 2\n", "")),
+                 "mode \"harvest\": a team kind needs teams of 2 or more"));
+  CHECK(contains(loadErrors(replaced(withHarvest(), "score_to_win = 40",
+                                     "score_to_win = 40\nrespawn_ticks = 0")),
+                 "respawn_ticks must be at least 1 in harvest"));
+  CHECK(loads(replaced(withHarvest(), "score_to_win = 40", "score_to_win = 40\ncatch_score = 1")));
+  CHECK(contains(loadErrors(std::string(kMinimal) + "[[mode]]\nname = \"x\"\nkind = \"farm\"\n"),
+                 "control or harvest)"));
+  {
+    // validateContent() holds content built in code to the same rules.
+    ContentDB v{};
+    Diagnostics vDiag;
+    REQUIRE(parseContent(withHarvest(), "modes.toml", v, vDiag));
+    sim::ModeDef& h = v.modes[v.findMode("harvest").value_or(0)];
+    Diagnostics fine;
+    CHECK(validateContent(v, fine));
+    h.bankTicks = 0;
+    Diagnostics zero;
+    CHECK_FALSE(validateContent(v, zero));
+    CHECK(zero.format().contains("bank_ticks must be at least 1"));
+    h.bankTicks = 2;
+    h.arenaSet = static_cast<uint16_t>(h.arenaSet | (1u << 15));
+    Diagnostics undefined;
+    CHECK_FALSE(validateContent(v, undefined));
+    CHECK(undefined.format().contains("arenas names an undefined arena"));
+  }
+}
+
 TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][modes]") {
   ContentDB loaded{};
   Diagnostics diag;
@@ -1159,29 +1500,101 @@ TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loa
 }
 
 // M7 (architecture §8 "The ladder"): the contest row is the ladder's ruleset.
-// Since v0.80 it is the control kind (§11 "Contest design") with
-// grid_rounds_1t's squad: the space, turns, kits and the vision's radii are
-// that row's; the baseline is contest_base (the banana at 2 cells a turn),
-// the arena courtyard_zones (three zones), hearing 1 and the banana's flight
-// the mode's own. A season's change to the row is a deliberate edit here;
-// the arena, the twins and the flight are pinned in contest_test.cpp.
-TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0.80)",
+// Since v0.82 it is the harvest kind (§11 "Contest design: bananas as the
+// economy") with grid_rounds_1t's squad: the space, turns, kits and the
+// vision's radii are that row's; the baseline is harvest_base (three in the
+// hand, the banana at 2 cells a turn), the arenas the pool of four with
+// grove the default, hearing 1 and the banana's flight the mode's own. A
+// season's change to the row is a deliberate edit here; the arenas, the
+// baseline and the flight are pinned in contest_test.cpp.
+TEST_CASE("content/ ships contest as harvest on the pool with grid_rounds_1t's squad (M7, v0.82)",
           "[content][loader][modes]") {
   ContentDB db{};
   Diagnostics diag;
   REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
   const std::optional<uint8_t> contest = db.findMode("contest");
   const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
+  const std::optional<uint8_t> control = db.findMode("control_1t");
+  const std::optional<uint8_t> grove = db.findArena("grove");
+  const std::optional<uint8_t> base = db.findPowerUp("harvest_base");
+  REQUIRE(contest);
+  REQUIRE(grid);
+  REQUIRE(control);
+  REQUIRE(grove);
+  REQUIRE(base);
+  // The ladder points at the name, and the row keeps its index; control_1t
+  // is appended.
+  CHECK(contest.value_or(0) < control.value_or(0));
+  CHECK(control.value_or(0) == db.modeCount - 1);
+  const sim::ModeDef& g = db.modes[grid.value_or(0)];
+  const sim::ModeDef& m = db.modes[contest.value_or(0)];
+  CHECK(m.kind == sim::ModeKind::Harvest);
+  CHECK(m.space == g.space);
+  CHECK(m.turnTicks == g.turnTicks);
+  CHECK(m.turnTicks == 1);
+  CHECK(m.dashCells == g.dashCells);
+  CHECK(m.teams == g.teams);
+  CHECK(m.roleCount == g.roleCount);
+  CHECK(m.roles == g.roles);
+  CHECK(m.baseline == base);
+  CHECK(m.vision.kind == sim::VisionKind::Own);
+  CHECK(m.vision.peripheral == g.vision.peripheral);
+  CHECK(m.vision.cone == g.vision.cone);
+  CHECK(m.vision.focus == g.vision.focus);
+  CHECK(m.vision.bananaSight == g.vision.bananaSight);
+  CHECK(m.vision.hearing == 1);
+  CHECK(m.bankTicks == 2);
+  CHECK(m.stealTicks == 6);
+  CHECK(m.scoreToWin == 40);
+  CHECK(m.timeLimitTicks == 3600);
+  CHECK(m.respawnTicks == 240);
+  CHECK(m.respawnInvulnTicks == 8);
+  CHECK(m.respawnAmmo == 0);
+  CHECK(m.deathBananas == sim::DeathBananas::Drop);
+  CHECK(m.bananaRegrowTicks == 0);
+  CHECK(m.catchScore == 0);
+  CHECK(m.suicideScore == 0);
+  CHECK(m.bananaOutboundTicks == 3);
+  CHECK(m.bananaTurnRateBam == 15474);
+  CHECK(m.roundStartTicks == 60);
+  // The pool: grove, orchards, gorge and burrows, each suiting the row, and
+  // nothing else; grove is the default.
+  uint16_t pool = 0;
+  for (const std::string_view name : {"grove", "orchards", "gorge", "burrows"}) {
+    INFO(name);
+    const std::optional<uint8_t> a = db.findArena(name);
+    REQUIRE(a);
+    pool = static_cast<uint16_t>(pool | (1u << a.value_or(0)));
+    CHECK(db.compatible(a.value_or(0), contest.value_or(0)));
+  }
+  CHECK(m.arenaSet == pool);
+  CHECK(m.arena == grove);
+  CHECK(db.firstCompatibleArena(contest.value_or(0)) == grove);
+  for (const std::string_view name : {"courtyard", "courtyard_zones", "dojo"}) {
+    INFO(name);  // no home zone per team or no tree
+    CHECK_FALSE(db.compatible(db.findArena(name).value_or(0), contest.value_or(0)));
+  }
+}
+
+// v0.80's contest row, appended as control_1t when the contest became harvest
+// (v0.82) so the control kind keeps a shipped row: the control kind with
+// grid_rounds_1t's squad on courtyard_zones, every number as it was.
+TEST_CASE("content/ ships control_1t as v0.80's contest row (v0.82)", "[content][loader][modes]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> control = db.findMode("control_1t");
+  const std::optional<uint8_t> grid = db.findMode("grid_rounds_1t");
   const std::optional<uint8_t> courtyard = db.findArena("courtyard");
   const std::optional<uint8_t> zones = db.findArena("courtyard_zones");
   const std::optional<uint8_t> base = db.findPowerUp("contest_base");
-  REQUIRE(contest);
+  REQUIRE(control);
   REQUIRE(grid);
   REQUIRE(courtyard);
   REQUIRE(zones);
   REQUIRE(base);
   const sim::ModeDef& g = db.modes[grid.value_or(0)];
-  const sim::ModeDef& m = db.modes[contest.value_or(0)];
+  const sim::ModeDef& m = db.modes[control.value_or(0)];
   CHECK(m.kind == sim::ModeKind::Control);
   CHECK(m.space == g.space);
   CHECK(m.turnTicks == g.turnTicks);
@@ -1203,6 +1616,7 @@ TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0
   CHECK(m.timeLimitTicks == 3600);
   CHECK(m.respawnTicks == 240);
   CHECK(m.respawnInvulnTicks == 8);
+  CHECK(m.respawnAmmo == sim::kRespawnAmmoStart);
   CHECK(m.deathBananas == sim::DeathBananas::Vanish);
   CHECK(m.bananaRegrowTicks == 120);
   CHECK(m.catchScore == 0);
@@ -1211,10 +1625,11 @@ TEST_CASE("content/ ships contest as control with grid_rounds_1t's squad (M7, v0
   CHECK(m.bananaTurnRateBam == 15474);
   CHECK(m.roundStartTicks == 60);
   CHECK(m.arena == zones);
-  CHECK(db.firstCompatibleArena(contest.value_or(0)) == zones);
-  CHECK(db.compatible(zones.value_or(0), contest.value_or(0)));
-  CHECK_FALSE(db.compatible(courtyard.value_or(0), contest.value_or(0)));  // no zone
-  CHECK_FALSE(db.compatible(0, contest.value_or(0)));                      // the dojo has no cells
+  CHECK(m.arenaSet == sim::kNoArenaSet);
+  CHECK(db.firstCompatibleArena(control.value_or(0)) == zones);
+  CHECK(db.compatible(zones.value_or(0), control.value_or(0)));
+  CHECK_FALSE(db.compatible(courtyard.value_or(0), control.value_or(0)));  // no zone
+  CHECK_FALSE(db.compatible(0, control.value_or(0)));                      // the dojo has no cells
 }
 
 // v0.69's hill, kept for the hill kind: the courtyard with its middle block

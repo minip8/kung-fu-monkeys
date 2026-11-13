@@ -7,7 +7,7 @@ version 1, architecture v0.80).
 | Path | What |
 |---|---|
 | `sdk-c/kfm_bot.h` | The seed of the C SDK: one freestanding C11 header (no libc). |
-| `examples/chaser.c`, `examples/idle.c` | Example bots built from the header, with the `.wasm` built from each checked in beside it. |
+| `examples/chaser.c`, `examples/idle.c`, `examples/gatherer.c` | Example bots built from the header, with the `.wasm` built from each checked in beside it. `gatherer` (architecture v0.82) is the harvest kind's smoke test: it carries bananas from the trees to its home zone, each monkey working the tree its rank in the team gives it, and throws at an enemy in a clear line when it holds two or more. |
 | `examples/BUILT_WITH.txt` | The compiler that built the checked-in `.wasm` files. |
 | `build_example.sh` | Builds the examples (`tools/bots/build_example.sh [name...]`). |
 | `build_fixtures.sh`, `check_fixtures.cmake` | The hand-written ABI test modules in `tests/fixtures/bots` (`.wat` to `.wasm`, wabt). |
@@ -19,8 +19,11 @@ its `engine.lock` names), the C++ layer, the example bots, the build recipe and 
 later the ladder. What is here is the seed copied there, and the in-repo proof that a module
 built from it loads and plays: `tests/unit/ai/example_bot_test.cpp` (in `kfm_ai_wasm_tests`)
 checks the header's layout and constants against `engine/ai/include/kfm/ai/observation.hpp`,
-its integer math and banana flight step against the engine and the sim, and plays the checked-in
-`chaser.wasm` through `AgentHost` against the reference bot. A change to the header or to an
+its integer math and banana flight step against the engine and the sim, plays the checked-in
+`chaser.wasm` through `AgentHost` against the reference bot, and plays `gatherer.wasm` through
+harvest matches on a hand-built arena with walls, pits, trees and two homes (in the grid, in the
+continuous space and under fog, against itself and against the reference bot), each to its
+`score_to_win`. A change to the header or to an
 example is followed by `tools/bots/build_example.sh` and a commit of the rebuilt `.wasm`.
 `tests/fixtures/bots/chaser_v1.wasm` is the chaser as built against the version 1 header (the
 `chaser.wasm` checked in before v0.80, byte for byte); it is never rebuilt, and the same test
@@ -86,4 +89,42 @@ A module must:
 
 Budgets (host defaults, `docs/bot-abi.md` §1.4): 100 000 wasm instructions per `kfm_act`,
 10 000 000 for instantiation and for `kfm_init`, a 4 MiB file and 16 MiB of memory. The chaser
-uses about 7 000 instructions per act on average and under 30 000 at most.
+uses about 7 000 instructions per act on average and under 30 000 at most. The gatherer uses about
+3 000 to 4 000 on average and under 35 000 at most on the contest's maps (28 x 16 cells at the
+largest): it builds its cell map and its distance field to the home over ticks of their own in
+the round's countdown (the map, the steps in two halves, the wall cells, then the field 128
+cells a tick), and grows the field to the tree it works or the banana it fetches by at most 96
+cells a tick, walking straight at the goal until the field reaches it.
+
+The tree a gatherer works is a share-out every monkey of a team computes alike, from the
+statics and the roster, with no call: the trees are weighted by what a trip to one costs, its
+beat plus twice its walking distance from the home, and the team's r-th monkey by slot takes the
+r-th pick of a highest-averages (D'Hondt) share-out, so the rich and near trees get more
+monkeys. Five a side on the contest's pool, a team sends three monkeys to the two rich trees and
+one to each flank tree (on `orchards`, with no rich tree, one to each of the four flank trees
+and one to the home tree), so the two teams meet at the best trees.
+
+The smoke run on the `contest` row (`kfm_arena --mode contest --arena NAME --team G,G,G,G,G
+--team G,G,G,G,G` or `--team ref:hard,...`, `--matches 20 --rotate --seed 1`; `own` fog, 40 banked
+to win, a 3600-turn clock), architecture v0.82: no fault in any of the 160 games, no game at the
+clock.
+
+| Arena | Pairing | fuel_max | Draws | Median ticks | Mean score (side 0 - 1, or gatherer - ref) | Kills (gatherer / other) | Wins side 0 / 1 |
+|---|---|---:|---:|---:|---|---|---|
+| `grove` | mirror | 33 668 | 1 | 712 | 35.5 - 37.7 | 0 / 0 | 5 / 14 |
+| `grove` | vs `ref:hard` | 34 227 | 0 | 1304 | 40.2 - 2.8 | 143 / 470 | 10 / 10 |
+| `orchards` | mirror | 34 411 | 5 | 852 | 37.9 - 37.6 | 0 / 0 | 9 / 6 |
+| `orchards` | vs `ref:hard` | 34 411 | 0 | 1468 | 40.1 - 2.0 | 109 / 483 | 10 / 10 |
+| `gorge` | mirror | 33 745 | 0 | 715 | 37.9 - 34.3 | 0 / 0 | 14 / 6 |
+| `gorge` | vs `ref:hard` | 33 745 | 0 | 1285 | 40.2 - 1.2 | 129 / 487 | 10 / 10 |
+| `burrows` | mirror | 27 500 | 1 | 614 | 36.6 - 38.7 | 0 / 0 | 6 / 13 |
+| `burrows` | vs `ref:hard` | 27 500 | 0 | 1100 | 40.0 - 5.5 | 42 / 295 | 10 / 10 |
+
+The gatherer ignores its seed, but a mirror of gatherers is not one game twenty times: the
+mirror maps' half turn and the tie-free share-out send both sides to the same trees on the same
+turn, and the engine draws every tie between them from the world Rng (a fruit two monkeys touch
+on one tick, a cell two step into at an equal press), so the match's seed decides who gets
+there first. Over 200 rotated mirror games a map the sides split as a fair coin does: `grove`
+92 to 104 (two-sided binomial p = 0.43), `orchards` 95 to 83 (0.41), `gorge` 105 to 87 (0.22),
+`burrows` 84 to 102 (0.21). Against `ref:hard` the gatherers win all 80 games; the side split
+there is `--rotate`'s.

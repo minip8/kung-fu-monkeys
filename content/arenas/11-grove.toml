@@ -1,0 +1,55 @@
+# The harvest pool's first map (architecture v0.82, §11 "Contest design:
+# bananas as the economy"), the design's draft as drawn: the courtyard
+# (arenas/08-courtyard.toml) without its middle block, a home zone per team
+# beside its spawn group's door, and two rich trees between the pillars, so
+# the fight is for the middle. 24 x 14 cells; its own half turn (x, y) ->
+# (-x, -y), zone 0 mapping to zone 1 and spawn point k to k + 5.
+#   - zone 0 (glyph a), team 0's home: columns 4-6, rows 6-7 (the west);
+#     zone 1 (b), team 1's: columns 17-19, rows 6-7 (the east). Harvest
+#     reads team t's home as zone t.
+#   - rich trees on the two centre cells, (-0.5, 0.5) and (0.5, -0.5), 6
+#     turns from either home: a banana every 30 turns while fewer than 3 lie
+#     on the cell;
+#   - flank trees at (-3.5, -4.5), 4 turns from the west home and 9 from the
+#     east, and its twin (3.5, 4.5): every 60 turns, up to 2;
+#   - a poor home tree two cells north of the west home, (-6.5, 2.5), and its
+#     twin south of the east one: every 90 turns, one at a time, where a
+#     monkey respawned empty-handed rearms;
+#   - the courtyard_zones spawners (three cells off the centre on the centre
+#     columns) laying big_banana_1t, quick_hands_1t or shield_1t from turn
+#     90 every 240, one alive each. Not triplebanana_1t: its ammo_max grant
+#     tops the hand up, two bananas from nowhere.
+# A tree's first beat is one interval in, so no fruit lies at the whistle
+# and the rich trees bear first. Uses 6 wall and 2 pit boxes, 10 spawn
+# points and all 8 spawners. Keys: arenas/06-hilltop.toml (the tilemap) and
+# arenas/04-dojo_powerups.toml (spawners and trees).
+[[arena]]
+name = "grove"
+cell = 1.0
+spawn_groups = 2
+map = [
+  "...........~~...........",
+  "...........~~...........",
+  ".0...##..........##...8.",
+  ".....##..........##.....",
+  "........................",
+  ".1.......#....#.......7.",
+  "....aaa..#....#..bbb9...",
+  "...4aaa..#....#..bbb....",
+  ".2.......#....#.......6.",
+  "........................",
+  ".....##..........##.....",
+  ".3...##..........##...5.",
+  "...........~~...........",
+  "...........~~...........",
+]
+spawners = [
+  { pos = [-0.5, 0.5], tree = true, first_ticks = 30, interval_ticks = 30, max_alive = 3 },   # rich
+  { pos = [0.5, -0.5], tree = true, first_ticks = 30, interval_ticks = 30, max_alive = 3 },   # rich
+  { pos = [-3.5, -4.5], tree = true, first_ticks = 60, interval_ticks = 60, max_alive = 2 },  # flank
+  { pos = [3.5, 4.5], tree = true, first_ticks = 60, interval_ticks = 60, max_alive = 2 },    # flank
+  { pos = [-6.5, 2.5], tree = true, first_ticks = 90, interval_ticks = 90, max_alive = 1 },   # home (west)
+  { pos = [6.5, -2.5], tree = true, first_ticks = 90, interval_ticks = 90, max_alive = 1 },   # home (east)
+  { pos = [-0.5, 3.5], power_ups = ["big_banana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+  { pos = [0.5, -3.5], power_ups = ["big_banana_1t", "quick_hands_1t", "shield_1t"], first_ticks = 90, interval_ticks = 240, max_alive = 1 },
+]

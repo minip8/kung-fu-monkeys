@@ -52,6 +52,7 @@ Conventions:
 | `slots` | array of slot (§2.2) | always | One entry per slot, by slot. |
 | `content_hash` | hash | always (v0.60) | `sim::contentHash` of the match's content: the replay header's `contentHash`. |
 | `build_hash` | hash | always (v0.60) | The replay header's `buildHash`: the build id of the `kfm_arena` that ran the match (architecture §5.1). `"00000000"` for an unstamped development build; since v0.70 a release's binaries carry the first 8 hex digits of the tagged commit (never zero), the same id as that release's server and page. |
+| `arena` | string | always (v0.82) | The name of the arena the match played (the content's `[[arena]] name`). Without `--arena`, a mode with an arena pool (`arenas`) plays match k on pool member (k / T) mod P in content order (P its members that suit the mode, T the team count with `--team`, else the slot count), so with `--rotate` every entrant plays every side of a member before the next; `--arena NAME`, or a mode without a pool, plays one arena every match. |
 
 A team mode is one run with `--team` (a mode with two or more teams); without it `winner_team`,
 `teams` and the slots' `team` are absent.
@@ -176,6 +177,7 @@ before the first match, a module or replay failure (3, 4) during a match leaves 
 | v0.36 | The match and summary objects declared append-only (as built in v0.30, teams added in v0.35). |
 | v0.60 | `content_hash` and `build_hash` appended to the match object; this document and the frozen-key test. |
 | v0.70 | No key changes: a release's `kfm_arena` stamps `build_hash` (its build id) instead of `"00000000"`. |
+| v0.82 | `arena` appended to the match object: a mode's arena pool is cycled over the matches. |
 
 ## 6. Example
 
@@ -184,6 +186,6 @@ the last line). The hashes and numbers are those of the build and content this d
 updated with; any release may move them:
 
 ```
-{"match":0,"seed":1,"ticks":600,"checksum":"c2cfdc04","result":"cap","winner":null,"slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":1,"score":1,"kills":1,"deaths":0,"acts":600,"subs":0},{"slot":1,"bot":1,"spec":"ref:hard","module":false,"place":2,"score":0,"kills":0,"deaths":1,"acts":419,"subs":0}],"content_hash":"a99dfcf8","build_hash":"00000000"}
+{"match":0,"seed":1,"ticks":600,"checksum":"c2cfdc04","result":"cap","winner":null,"slots":[{"slot":0,"bot":0,"spec":"ref:hard","module":false,"place":1,"score":1,"kills":1,"deaths":0,"acts":600,"subs":0},{"slot":1,"bot":1,"spec":"ref:hard","module":false,"place":2,"score":0,"kills":0,"deaths":1,"acts":419,"subs":0}],"content_hash":"abbc5f45","build_hash":"00000000","arena":"dojo"}
 {"summary":true,"matches":1,"ended":0,"draws":0,"cap":1,"ticks_mean":600,"slots":[{"slot":0,"spec":"ref:hard","module":false,"wins":0,"mean_place":1.00,"score":1,"kills":1,"deaths":0,"acts":600,"subs":0},{"slot":1,"spec":"ref:hard","module":false,"wins":0,"mean_place":2.00,"score":0,"kills":0,"deaths":1,"acts":419,"subs":0}]}
 ```

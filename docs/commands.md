@@ -113,6 +113,16 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
   1 on a bad replay (the error screen is still rendered); seeks step from a keyframe every 600
   ticks. The ctests `client_smoke_replay` and `client_smoke_replay_bad` match the client's
   output (`PASS_REGULAR_EXPRESSION`).
+- Harvest (v0.82): every tree of the arena is drawn (in any mode) as a trunk and canopy at the
+  back of its cell, a ring on the cell its fruit is laid on and the next banana ripening under
+  the canopy; bananas lying on one spot stack into a column. A monkey's bananas in hand are a
+  bunch (up to five drawn) beside the pips over its head; each team's home is tinted in its
+  colour; a banked banana pops gold like a point, a theft rings closing over the robbed home in
+  the raider's team colour with its own sound. The HUD says "Harvest (first team to N bananas
+  banked)" and "Team 1: 12 banked"; the scoreboard's column is "Bananas". To look at one
+  locally, copy `content/` to a scratch directory, add a harvest row and an arena with two
+  homes and a tree, and run `kfm_client --content DIR --mode NAME --bots 9 --bot-module
+  tools/bots/examples/gatherer.wasm`.
 - `kfm_render_probe` renders a scripted match. `--exit-on`: `dash-ring|perfect-catch|auto-catch|
   hit|throw|elimination|catch-window|charge|pit-fall|fall|scatter` (`--fall-at PERCENT`, default
   40, stops once a monkey's pit fall is that far through). `--arena pillars|corridors|island`
@@ -122,17 +132,20 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 
 - Modes (`content/modes.toml`): `rounds` (default), `deathmatch`, `survival`, `team_rounds`,
   `team_deathmatch`, `hill`, `capture`, `grid_rounds`, `grid_rounds_1t` (the grid at 1-tick
-  turns, for `kfm_arena`), `contest` (the bot ladder's row, the `control` kind on
-  `courtyard_zones` since v0.80: a loader test pins it, so a season's change to it is a
-  deliberate edit of both).
+  turns, for `kfm_arena`), `contest` (the bot ladder's row, the `harvest` kind on the pool
+  `grove`, `orchards`, `gorge`, `burrows` since v0.82: a loader test pins it, so a season's
+  change to it is a deliberate edit of both), `control_1t` (v0.80's contest, the `control` kind
+  on `courtyard_zones`, appended in v0.82).
 - A team mode needs an arena with a spawn group per team, `hill`, `capture` and `control` need
-  their zones, a grid mode needs an arena with cells (a tilemap): `ContentDB::compatible`. Without
-  `--arena` every host picks the first arena that suits; a named arena that does not suit is a
-  configuration error (non-zero exit).
+  their zones, `harvest` a zone per team and a tree, a grid mode needs an arena with cells (a
+  tilemap): `ContentDB::compatible`. Without `--arena` every host picks the mode's `arena`, else
+  the first member of its pool (`arenas`) that suits, else the first arena that suits; a named
+  arena that does not suit is a configuration error (non-zero exit).
 - Arenas: `content/arenas.toml` (`dojo`) and `content/arenas/*.toml`, appended by file name:
   `pillars`, `corridors`, `island`, `dojo_powerups`, `standoff`, `hilltop` (`hill`), `outposts`
   (`capture`), `courtyard` (the grid modes), `courtyard_hill` (`hill` on the grid),
-  `courtyard_zones` (`contest`: three zones, v0.80). A
+  `courtyard_zones` (`control_1t`: three zones, v0.80), and the harvest pool's `grove`,
+  `orchards`, `gorge` and `burrows` (`contest`, v0.82: a home zone per team and trees). A
   tilemap arena gives `cell = 1.0` and `map = ["..."]` (`#` wall, `.` floor, `~` pit, `:` mud,
   `0-9` spawns, `a-h` zones) in place of `half_extents`/`walls`/`hazards`/`spawn_points`/`zones`
   (format: `content/arenas/06-hilltop.toml`, architecture §5.10).
@@ -186,14 +199,28 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
 build/dev/apps/arena/kfm_arena --bot ref:hard --bot bots/mine.wasm --bots 4 --matches 20 --rotate [--seed S] [--ticks N]
 build/dev/apps/arena/kfm_arena --bots 4 --mode grid_rounds_1t --matches 5
 build/dev/apps/arena/kfm_arena --mode grid_rounds_1t --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --team ref:hard --matches 20 --rotate
+build/dev/apps/arena/kfm_arena --mode contest --arena grove --team G,G,G,G,G --team ref:hard,ref:hard,ref:hard,ref:hard,ref:hard --matches 20 --rotate   # G = tools/bots/examples/gatherer.wasm
 tools/bots/build_example.sh      # compile tools/bots/examples/*.c against the C SDK seed with the emsdk clang
 tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wat2wasm (the .wasm are checked in)
 ```
 
+- The examples (`tools/bots/examples`): `idle.wasm` never moves, `chaser.wasm` fights,
+  `gatherer.wasm` (architecture v0.82) carries bananas from the trees to its home zone in a
+  `harvest` mode: each works a tree its rank in the team gives it and throws at an enemy in a
+  clear line when it holds two or more. The reference bot never banks, so the gatherer is the
+  kind's smoke test: on `contest`, five a side, its games end in 490 to 1200 turns on every
+  pool arena, far inside the 3600-turn clock (`tools/bots/README.md` has the table).
 - `--rotate` moves every bot through every slot across the tournament (the sim's spawn order
   favours some slots). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
   fill that team's slots in order, the last repeating, and `--rotate` moves entrants across
   sides.
+- Arena pools (v0.82): a mode with an `arenas` pool, run without `--arena`, plays match k on
+  pool member (k / T) mod P in content order (P the members that suit the mode, T the teams with
+  `--team`, else the slots of a free-for-all), so with `--rotate` every entrant plays every side
+  of a member before the next member (`--matches` a multiple of T x P plays each member equally).
+  `--arena NAME` plays that arena for every match; a mode without a pool plays one arena as
+  before. Each result line names the arena after `winner` / `winner_team` (`... winner 1 arena
+  orchard | slot 0 ...`), and the JSON match object ends with `"arena":"orchard"`.
 - Also `--arena NAME --mode NAME --loadout NAME --powerups LIST --content DIR`, `--fuel N`,
   `--delay T`, `--memory-on-respawn keep|wipe`, `--replay out.kfmr | --replay-dir DIR`,
   `--result FILE`, `--json`, `--quiet`, `--log`. One result line per match and a summary; exit
@@ -204,7 +231,11 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
   freezes every key, its order and type): a new key is appended to the code, the doc and the
   test, never inserted or renamed. The match object carries `content_hash` and `build_hash`
   (the build id: 0 unless configured with `-DKFM_BUILD_ID=<hex>`, as releases are; peers of
-  different build ids are refused and told to reload).
+  different build ids are refused and told to reload) and, since v0.82, `arena`.
+- The other hosts play one arena of a pooled mode: `kfm_client`, `kfm_server`, `kfm_replay`
+  and `kfm_netsim` resolve a mode without `--arena` to arena 0 when it suits the mode, else to
+  `ContentDB::firstCompatibleArena` (the mode's `arena`, else the pool's first member that
+  suits it); the client's lobby moves to that arena when the mode changes.
 
 ## Releases
 

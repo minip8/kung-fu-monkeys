@@ -37,10 +37,21 @@
 // where ticksInPhase (0 on the first Playing tick) equals firstTicks +
 // k × intervalTicks (k >= 0; intervalTicks 0 = only once), in arena order,
 // after the bananas. A spawner with maxAlive of its own pickups lying in the
-// arena skips that beat. The power-up is drawn from its set with the world
-// RNG (one rng.below() per spawn, none otherwise), so an arena without
-// spawners never touches the RNG here. The spawner's timeline is a function
-// of ticksInPhase, not state of its own; a pickup remembers its spawner.
+// arena, or meeting a full pickup pool, skips that beat. The power-up is
+// drawn from its set with the world RNG (one rng.below() per spawn, none
+// otherwise), so an arena without spawners never touches the RNG here. The
+// spawner's timeline is a function of ticksInPhase, not state of its own; a
+// power-up pickup remembers its spawner.
+//
+// v0.82, trees (PickupSpawner::tree): on the same beat a tree lays one banana
+// pickup at its position (layBananaPickup: PickupSpawned, or, with the pool
+// full, one more on the nearest banana pickup), while the bananas lying on
+// its cell (the counts of every banana pickup whose position grid::cellOf
+// maps to the tree's cell, whoever dropped them) number fewer than
+// maxAlive. No RNG draw and no candidate set: a tree bears in every mode and
+// whatever MatchConfig::powerUps says. A full pool stops no spawner: a
+// power-up spawner skips its beat, a tree still stacks its fruit.
+#include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/systems.hpp"
 #include "modes/mode_flow.hpp"
 #include "rules/bananas.hpp"
@@ -133,17 +144,34 @@ void regrowBananas(WorldState& s, const MatchContent& content, EventSink& sink) 
   return static_cast<uint8_t>(std::countr_zero(bits));
 }
 
+// v0.82: the bananas lying on a tree's cell, whoever dropped them.
+[[nodiscard]] uint32_t fruitOn(const WorldState& s, const ArenaDef& arena, Vec2 treePos) {
+  const grid::Cell cell = grid::cellOf(arena, treePos);
+  uint32_t n = 0;
+  s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
+    if (k.kind == PickupKind::Banana && grid::cellOf(arena, k.pos) == cell) {
+      n += std::max<uint8_t>(k.count, 1);
+    }
+  });
+  return n;
+}
+
 void runSpawners(WorldState& s, const MatchContent& content, EventSink& sink) {
   if (s.rules.phase != MatchPhase::Playing) return;
   const ArenaDef& arena = content.arena;
   const uint32_t t = s.rules.ticksInPhase;
   for (uint8_t i = 0; i < arena.pickupSpawnerCount && i < kMaxPickupSpawners; ++i) {
     const PickupSpawner& sp = arena.pickupSpawners[i];
-    if (!spawnerBeat(sp, t) || aliveFrom(s, i) >= sp.maxAlive) continue;
+    if (!spawnerBeat(sp, t)) continue;
+    if (sp.isTree()) {
+      if (fruitOn(s, arena, sp.pos) < sp.maxAlive) layBananaPickup(s, sp.pos, sink);
+      continue;
+    }
+    if (aliveFrom(s, i) >= sp.maxAlive) continue;
     const uint32_t set = candidates(sp, content);
     if (set == 0) continue;
     const EntityId id = s.pickups.spawn();
-    if (!id.isValid()) return;  // pickup pool full: no spawner fires this tick
+    if (!id.isValid()) continue;  // pickup pool full: this beat is skipped
     const uint8_t def = nthSetBit(set, s.rng.below(static_cast<uint32_t>(std::popcount(set))));
     Pickup& pickup = s.pickups.items[id.index];
     pickup.kind = PickupKind::PowerUp;

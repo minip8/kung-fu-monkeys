@@ -73,6 +73,32 @@ TEST_CASE("tuning: contentToCpp prints a control mode's clocks and banana flight
   CHECK(out.find(idx + "bananaTurnRateBam = 2400;\n") != std::string::npos);
 }
 
+TEST_CASE("tuning: contentToCpp prints a harvest mode's beats and the respawn hand",
+          "[client][tuning]") {
+  sim::ContentDB c = sim::defaultContent();
+  REQUIRE(c.modeCount < sim::kMaxModes);
+  const uint8_t i = c.modeCount++;
+  c.modes[i] = c.modes[0];
+  c.modes[i].kind = sim::ModeKind::Harvest;
+  c.modes[i].bankTicks = 20;
+  c.modes[i].stealTicks = 45;
+  const std::string idx = "  c.modes[" + std::to_string(i) + "].";
+  std::string out = contentToCpp(c);
+  CHECK(out.find(idx + "bankTicks = 20;\n") != std::string::npos);
+  CHECK(out.find(idx + "stealTicks = 45;\n") != std::string::npos);
+  CHECK(out.find(idx + "respawnAmmo") == std::string::npos);  // ammo_start: not printed
+  CHECK(out.find(idx + "captureTicks") == std::string::npos);
+
+  c.modes[i].respawnAmmo = 0;
+  out = contentToCpp(c);
+  CHECK(out.find(idx + "respawnAmmo = 0;\n") != std::string::npos);
+  // Another kind's beats are not printed.
+  c.modes[i].kind = sim::ModeKind::Deathmatch;
+  out = contentToCpp(c);
+  CHECK(out.find(idx + "bankTicks") == std::string::npos);
+  CHECK(out.find(idx + "respawnAmmo = 0;\n") != std::string::npos);
+}
+
 TEST_CASE("options: flags parse", "[client][options]") {
   ClientOptions o;
   std::string err;

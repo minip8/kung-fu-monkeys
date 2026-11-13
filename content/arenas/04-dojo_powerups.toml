@@ -10,8 +10,16 @@
 #   first_ticks           Playing tick of its first spawn (0 = the first one)
 #   interval_ticks        then every this many ticks (0 = only once)
 #   max_alive             it skips a beat while this many of its pickups lie there
-# The max_alive of an arena's spawners add up to at most 16 (half the pickup
-# pool; grounded bananas need the rest).
+#   tree = true           v0.82: a tree, which lays one banana pickup at pos on
+#                         its beat instead of drawing a power-up (no power_ups,
+#                         no RNG draw), while fewer than max_alive bananas lie
+#                         on its cell, whoever dropped them. A tree bears in
+#                         every mode whatever the match's power-up set, a full
+#                         pickup pool stacks its fruit on the nearest banana,
+#                         and a round kind never runs dry on its arena. Only
+#                         on an arena with cells (a tilemap, `cell`)
+# The max_alive of an arena's power-up spawners (trees aside) add up to at
+# most 16 (half the pickup pool; grounded bananas need the rest).
 
 [[arena]]
 name = "dojo_powerups"

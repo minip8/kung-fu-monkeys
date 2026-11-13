@@ -1558,3 +1558,169 @@ spawners a map, 16 arenas, 32 pickups). Decided with the kind: the tied cell con
 alternates by the turn's parity (the lower slot on an even turn, the higher on an odd one),
 not "neither moves", which would hold two deterministic bots at one banana for ever; it moves
 the grid entries' checksums.
+
+v0.82 changes: the contest's harvest rules are built (§11 "Contest design: bananas as the
+economy", now "v0.81 designed; v0.82 built"; §5.3's `harvest` row and as-built paragraph, §5.6's
+contended pickups, §5.8's trees, the spawners' full pool and the baseline's ammo, §5.9's
+`BananaStolen` and `ScoreReason::Stolen`, §5.10's harvest content, §5.12's tied cell contest,
+§7's harvest in the client and its effect row, §8's observation, reference bot, SDK, `gatherer`,
+`kfm_arena` pool and `contest` row, §9's corpus expectations, §11's M7 progress, §12's
+slot-bias and objective items, the glossary), steps (1) to (3) of that design's order except
+the release; step (4), in the bots repository, is not started. Built: trees
+(`PickupSpawner::tree`, the arena spawner key `tree = true`, `sim::hasTree`); the `harvest` kind
+(`ModeKind::Harvest` 8, `src/modes/harvest.cpp`, `sim::homeZoneOf`, `kNoZone`); the `ModeDef`
+fields `respawnAmmo`, `bankTicks`, `stealTicks` and `arenaSet` (`fieldCount<ModeDef>()` 28 to
+32, `fieldCount<PickupSpawner>()` 5 to 6); `EventKind::BananaStolen` and `ScoreReason::Stolen`
+(3), appended; the arena pool in `firstCompatibleArena`, `kfm_arena` (match k on member
+(k / T) mod P) and its JSON's appended `arena` key; the arenas `grove`, `orchards`, `gorge` and
+`burrows` (11 to 14, 15 of 16 used), the power-up `harvest_base` (13, 14 of 16), the `contest`
+row as harvest on the pool and `control_1t` (mode 10, v0.80's row unchanged); `ObsModeKind`
+8 and the spawner's `tree` byte (was `pad0`) within version 2, the SDK's harvest names and
+`docs/bot-abi.md` §2.10, §3, §3.3; the `gatherer` example; the client's harvest cases; the
+scripted generator's harvest steering and three harvest corpus entries; `kfm_replay stats`'s
+objective points and thefts. Decisions v0.81 left unsaid or said differently: a perfect dash
+catch with a full hand is declined and the banana hits, as the engine has done since v0.16
+(v0.81 said it drops at the catcher's feet; kept because a fully loaded carrier that cannot
+catch is a trade the kind wants, and no checksum moves; a scenario test pins it); `grantBaseline`
+no longer tops the hand up by a baseline's `ammo_max` grant (a picked-up power-up still does;
+no shipped baseline granted one, so no checksum moved); a power-up spawner that meets a full
+pickup pool skips its beat instead of ending the pass (the same draws), so a later tree still
+stacks its fruit; a tree counts in `bananaLeft` only while it has a beat to come, and its
+`max_alive` does not count toward the power-ups' half of the pickup pool; a tree counts the
+bananas on its cell, stack counts summed, and lays at its `pos`; the beats are `ticksInPhase %
+beat == 0` as `onPlaying` sees it (the first Playing tick is 1), banking before stealing, both
+in slot order, "living" being `zoneOccupants`'; one theft per raider a beat, from the
+lowest-numbered qualifying home; the robbed slot is the team's highest scorer among all its
+slots, present or not (the lowest slot on a tie), and a team at or below zero cannot be robbed;
+`respawn_ammo` reaches late joiners and is capped at `ammoMax`; `bank_ticks`, `steal_ticks`,
+`respawn_ammo` and `arenas` are accepted on every kind; `firstCompatibleArena` prefers the
+mode's `arena`, then the pool's first suitable member, and `resolveMatchNames` with no arena
+named gives it to a mode that names an arena or a pool, while a mode that names neither keeps
+arena 0 when it suits, else the first that does (its error names zones and trees); the tied
+cell contest, which v0.81 decided to alternate by the turn's parity (the turn, as first built,
+`ticksInPhase / turn_ticks` at the latch), is drawn from the world Rng instead, because the
+alternation locked onto the kind's even beats (measured below): the monkeys tied at an equal
+press for a cell or a swap (a tie dropped when both already lose to an earlier press) are put
+in one Fisher-Yates order a latch, in slot order, count − 1 draws (one for a pair), an earlier
+press still winning without a draw and a latch without a tie drawing nothing; a pickup that
+several monkeys could take on one tick goes in an order the world Rng draws (rows 50, 51 and
+52 carry `InteractionRule::contend`; a Fisher-Yates shuffle of the contenders, whatever their
+times of impact, at the place of the first in the contact order; none with a single
+contender; `kfm_replay stats` follows it through a `ContactObserver` instead of its own copy of
+the contact sort, which had drifted), found by measurement (below); `contest` keeps index 9
+and the control row is appended as `control_1t`; every pool map uses all 8 spawners (6 trees, 2
+power-up spawners), each tree's `first_ticks` equal to its interval. The numbers: the four maps
+(`grove` 24 × 14, the draft verbatim; `orchards` 28 × 16, no rich tree, four flank trees at
+(±2.5, ±6.5), a 2 × 4 centre hedge; `gorge` 26 × 16, a pit band on columns 11 to 14 with two
+2 × 4 bridges carrying the rich trees; `burrows` 20 × 12, a ring, a narrowed middle lane, trees
+at the ends of dead-end tunnels; themes jungle, jungle, beach, temple); home trees every 90
+holding one, flank every 60 holding two, rich every 30 holding three; the power-up spawners
+drawing `big_banana_1t`, `quick_hands_1t`, `shield_1t`, first at 90, every 240, one alive; the
+row `bank_ticks` 2, `steal_ticks` 6, `score_to_win` 40, `time_limit_ticks` 3600,
+`respawn_ticks` 240, `respawn_invuln_ticks` 8, `respawn_ammo` 0, regrow 0, drop, `catch_score`
+0, the squad, fog and flight unchanged. The scripted generator's grid steering: a breadth-first
+search over the cells by the grid's rules (walls and pit cells closed, no corner cutting, the
+lowest octant on a tie, a 62 × 62 cap), roles by rank among a team's present slots (the second
+raids, the third defends, the rest gather), about 30 µs a call in Debug, a corpus regeneration
+2.7 to 3.9 s. What was measured: (a) the east bias. `ref:hard` five against five on the harvest
+row, 200 rotated games a map, seed 1, Release: west 243 to east 422 (grove 94/82, orchards
+22/143, gorge 84/101, burrows 43/96; two-sided p = 4e-12); with the sides exchanged in the maps
+team 0 won 404 to 260, so it followed the geometry, not the slots; `vision = all` 312 to 402,
+so not the fog; with one team's bots fed the half-turned observation and their inputs turned
+back, orchards 61/69 and 69/78, burrows 73/64 and 74/71, so not the sim: the reference bot's
+absolute-direction choices (the explore goal floored to the cell east and south of the centre,
+a wall on `orchards`, where the west monkeys stood in the east home 1416 monkey-ticks against
+135 and the east banked 757 to 287; a zero vector read as east; one call-symbol encoding for
+both sides; an east-first hysteresis, sweep, dodge and blink; lowest-pool-slot ties on a
+fetch), all fixed. After: 321 to 329 (p = 0.78; grove 96/80, orchards 75/93, gorge 82/84,
+burrows 68/72), seed 1001 329 to 314, sides exchanged 321 to 316, `vision = all` 367 to 336, one
+against one 131 to 145, `control_1t` 102 to 98; so the east bias measured since the old hill row
+was the reference bot's (and presumably the like in the bots repository's house bots, which
+were not re-run). Fog also put a centre exactly on a cell edge in the east and south cell only;
+an edge centre now lies in both cells (all four on a corner), found by the new
+`side_symmetry_test.cpp`, rare in play and not the bias. (b) A smoke run, not the targets:
+`kfm_arena --mode contest --arena NAME`, five a side, 20 rotated games a map, seed 1, `gatherer`
+against `ref:hard` before the reference-bot fix: grove a median of 971 ticks, 40.1 to 3.1;
+orchards 853, 40.1 to 1.8; gorge 1146, 40.1 to 1.2; burrows 794, 40.1 to 5.2; no fault, no game
+at the clock, the gatherers winning all 80; `fuel_max` 27 500 to 34 411. The gatherer mirror was
+one deterministic game a map (the bot ignores its seed): a 40 to 40 draw on orchards (874
+ticks), gorge (788) and burrows (672), and on grove 40 to 12 for side 0 in every game (490
+ticks), because both teams' first picks are the same rich tree and the lower slot took the
+fruit both teams' monkeys touched when it was laid, which is what led to the drawn pickup order.
+Re-run on the finished branch (Release): the gatherers win all 80 against `ref:hard` (medians
+1304, 1468, 1285 and 1100 ticks), and the pool end to end (no `--arena`, 16 rotated matches,
+seed 1) cycles grove, grove, orchards, orchards, gorge, gorge, burrows, burrows and repeats,
+every game ending by score with no fault, the gatherers winning all 16 (medians 1051, 1591,
+1414 and 1270 ticks). (c) The tied cell contest. The alternation by parity was even over the
+turns, not over the contests: harvest's beats are even (`turn_ticks` 1, `bank_ticks` 2, trees
+every 30, 60, 90), so the ties that matter fall on one parity. The scripted gather-and-bank
+policy with the world Rng re-seeded 60 ways at the first contest gave grove to the west 60 of
+60 (to the east 60 of 60 with the parity inverted), gorge 23 west, 14 east, 23 drawn,
+orchards and burrows 60 draws; the gatherer mirror (five a side, rotated, seed 1) went 16 to 3
+for side 0 on grove in 20 games and 28 to 11 in 40 (p = 0.009), 100 to 92 in 200. With the
+draw: the probe grove 23, 22, 15, gorge 18, 20, 22, orchards and burrows 60 draws; the
+gatherer mirror in 40 games grove 15 to 23 (p = 0.26), orchards 18 to 16 (0.86), gorge 24 to
+14 (0.14), burrows 16 to 19 (0.74), in 200 games 92 to 104 (0.43), 95 to 83 (0.41), 105 to 87
+(0.22), 84 to 102 (0.21). Nothing is left lopsided to chase; the pinned asymmetries of §12
+that remain (the dash exchange, the respawn order, the two Rng draws, the rounding) did not
+show in these runs.
+None of the design's balance targets is measured: they need step (4)'s house bots. Verified:
+`tests/scenario/harvest_scenario.cpp`, `tree_scenario.cpp`, `grid_pathing_scenario.cpp`, the
+baseline case of `powerup_scenario.cpp`, the harvest and moved control cases of
+`side_symmetry_scenario.cpp` (a gather-and-bank harvest stays its own half turn bit for bit on
+all four arenas until the world Rng first draws a tie, whose re-drawn outcomes pair up by the
+half turn, and then plays on to its end: with inputs staggered by rank the first draw is a
+fruit twins contend for, at tick 121 on grove, gorge and burrows and 181 on orchards, and with
+every step at `subTick` 0 a tied cell between allies at tick 61 or 62; the control cases
+stagger their inputs the same way, so the match without fights is mirrored bit for bit to its
+draw, the banana-fight case plays seed 3 within 256 raw units and 64 BAM, where v0.80 said 64
+and 4, and the dashing case seeds 4 and 69; the twins' swap case and a twins' pickup case pin
+the two draws), `grid_scenario.cpp`'s draw cases (two contenders about half each, three about a
+third, an earlier press winning with the Rng untouched, a swap, a swap with a third judged by
+one order),
+`tests/unit/ai/side_symmetry_test.cpp` (a slot's sight and observation under `own` and `team`
+fog the half turn of its twin's on the pool arenas, and the reference bot's inputs mirrored for
+one seed and mirrored observations), `contest_test.cpp` (each map's half turn, homes, trees,
+capacities and reachability, both rows) and the loader's contest pin, the observation, SDK and
+`example_bot_test` cases for the tree byte and the `gatherer`, `arena_test.cpp`'s pool cycle and
+`arena` key, and the client's HUD, scoreboard, lobby, tuning, builder and theme tests. The
+corpus was re-recorded for the content hash; checksums moved intentionally for the tied cell
+contest's alternation (`scripted_10p_contest_1800t`, `scripted_10p_grid_rounds_1t_1800t`), for
+the drawn pickup order (`scripted_10p_contest_1800t` 5 draws from tick 121,
+`scripted_10p_contest_gorge_1800t` 11, `scripted_10p_contest_burrows_1800t` 4,
+`scripted_10p_grid_rounds_1t_1800t` 1 at tick 119; the other 22 drew nothing) and for the drawn
+cell contest (every entry with a tie: burrows 66 latches with a tie and 96 draws from tick 61,
+`scripted_10p_control_1t_1800t` 14 and 38 from 63, `scripted_10p_grid_rounds_1t_1800t` 6 and 6
+from 61, `scripted_4p_grid_rounds_1t_1800t` 2 and 4 from 556, and grove and gorge from 62 and 61
+on their old input seeds, which they then changed to 0x5C12C1 and 0x5C12C2 to keep a theft and
+a pit fall; `scripted_4p_grid_rounds_3600t` has no tie and no continuous entry moved). As
+recorded, `scripted_10p_contest_1800t` plays harvest on `grove` (32 fruit taken, 53 banked, 13
+stolen, team 0 winning 40 to 0 at tick 351); new `scripted_10p_contest_gorge_1800t` (46, 76, 21,
+a pit fall, 40 to 15 at 475), `scripted_10p_contest_burrows_1800t` (56, 85, 23, team 1 40 to 22
+at 573) and `scripted_10p_control_1t_1800t`, the old contest entry, byte-identical in its
+checksums to it until the cell draw moved it; the harvest rows of `kfm_corpus_tests` expect
+fruit taken off the floor, more banked than the ten opening hands and a theft. The finished
+branch, on one Linux machine, the way CI runs it, in two passes. Before the drawn cell contest:
+the lint job's three steps over the whole tree clean; a headless GCC 15 Debug build, 48 of 48
+tests outside `soak` and `network`; the `dev` preset (GCC 15, Debug, the client), 58 of 58; the
+`release` preset (GCC 15 at -O3 with `-Werror`, WebRTC on), 58 of 58 once three warnings were
+fixed (e6c497f and 6e57c7a, `-Wnull-dereference` in the taking handlers and an observation test;
+445a02d, `-Wsign-conversion` under ASan's flags in a test); `server-headless` (Release), 55 of
+55 with the soak gates and the real-socket tests; `wasm` (Emscripten 6.0.13, node), the browser
+client built and 51 of 51 under node; `asan` (address and undefined, no recovery), 55 of 55
+outside `soak`. After it, on the final code: clang-format 23.1.3 over 405 files and clang-tidy
+23.1.4 over 259 translation units against the `dev` compile database, no `error` or `warning`
+line, and `check_sim_no_float.sh` clean; headless 48 of 48; `dev` 58 of 58; `release` 58 of 58,
+no warning; `server-headless` 55 of 55; `asan` 55 of 55 outside `soak`; `wasm` 51 of 51 under
+node. Not run: `client_smoke` (no `xvfb-run` on the machine; CI runs it), though a harvest match
+on the shipped row has been looked at by hand (the homes, the trees and their fruit, the bunch
+in hand, the HUD and the "Bananas" column read as built; a monkey on a tree is half hidden under
+the canopy); the Windows, macOS and Clang legs; the Rust lobby job (no lobby code changed). Not
+done and kept open in §11: the release; step (4) in the bots repository (the pin, the SDK's
+trees and homes, the house bots `gatherer`, `raider` and `keeper`) and with it every balance
+target; two teams reaching `score_to_win` on one tick draw (a `gatherer` mirror draws 2 to 11 %
+of its games a map; a tie-break is a balance-patch question); a monkey on a tree half hidden
+under the canopy; the reference bot does not gather, so it loses every game to `gatherer` and is
+a weak opponent in human rooms of this kind; the capacities that bound the maps; the later
+layers (spending, peels, bushes, escalation, a gate, homes that grant); the remaining pinned sim
+asymmetries of §12 (the rounding, the dash exchange, the respawn order, the two Rng draws).

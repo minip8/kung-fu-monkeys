@@ -58,6 +58,12 @@ void controlOnPlaying(WorldState& s, const MatchContent& content, EventSink& sin
 void controlOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
                          PlayerId killer, EventSink& sink);
 
+// Harvest (modes/harvest.cpp, v0.82): bank bananas at home, steal them back.
+void harvestOnRoundStart(WorldState& s, const MatchContent& content, EventSink& sink);
+void harvestOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
+void harvestOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
+                         PlayerId killer, EventSink& sink);
+
 [[nodiscard]] constexpr ModeBehavior roundsBehavior() {
   return ModeBehavior{&modeNoRoundStart, &roundsOnPlaying, &roundsOnEliminated, &modeNoPickupTaken};
 }
@@ -89,6 +95,11 @@ void controlOnEliminated(WorldState& s, const MatchContent& content, PlayerId vi
 
 [[nodiscard]] constexpr ModeBehavior controlBehavior() {
   return ModeBehavior{&controlOnRoundStart, &controlOnPlaying, &controlOnEliminated,
+                      &modeNoPickupTaken};
+}
+
+[[nodiscard]] constexpr ModeBehavior harvestBehavior() {
+  return ModeBehavior{&harvestOnRoundStart, &harvestOnPlaying, &harvestOnEliminated,
                       &modeNoPickupTaken};
 }
 

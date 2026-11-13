@@ -24,6 +24,28 @@
 //     close; nothing at all (no Rng draw) while the slot is empty;
 //   - a button is only pressed when it was up on the previous tick, so every
 //     press is a real edge (a press is held for one tick, then released).
+//
+// The objective kinds steer instead of wandering, from the world state and
+// the content alone (no Rng draw, keyed on the kind, so no other mode's
+// draws move). Harvest in the grid space routes every move over the cells
+// (gridStepToward: a breadth-first search by the grid's movement rules,
+// walls and pits closed) and plays by role, the role being the slot's place
+// among its team's present slots: the second raids, the third defends, the
+// rest gather. Each tick, in order, the first goal that applies and is
+// reachable:
+//   - at home with a banana in hand: stand until all of it is banked;
+//   - the defender, while an enemy stands in its home and its team has
+//     points: home;
+//   - the raider, with room in its hand: the nearest enemy home holding
+//     points, standing in it (stealing) until the hand is full;
+//   - room in the hand: the nearest banana lying anywhere, by turns;
+//   - a banana in hand (full, or nothing left to fetch): home;
+//   - empty-handed with nothing to fetch: the nearest tree's cell, waiting;
+//   - nothing reachable: the stick idle (moveMag 0).
+// "Nearest" counts turns along a route (ties to the first offered: pickups
+// in pool order, a zone's cells row-major, trees in content order). A grid
+// it cannot route (over 62 x 62 cells) and the continuous space walk
+// straight at the goal instead.
 #pragma once
 
 #include "kfm/core/fixed.hpp"
@@ -65,6 +87,24 @@ struct ScriptedInputConfig {
 // that is not alive.
 [[nodiscard]] PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& content,
                                         PlayerId id, const ScriptedInputConfig& config = {});
+
+// The grid pathing behind the harvest steering, exposed for its tests: the
+// first step of a shortest route for a monkey of contact radius `radius`
+// from the cell holding `from` to the cell holding `goal`. A step is one of
+// the eight neighbours, one turn each, onto a cell the grid space lets a
+// monkey rest on (in the arena, its circle inside the outer box and clear of
+// every wall), a diagonal only with both orthogonal neighbours open (no
+// corner cutting); a cell whose centre lies over a pit is closed like a
+// wall. Integer-only and Rng-free; neighbours are tried in octant order, so
+// of several shortest routes the first step is the lowest octant's.
+// Unreachable (or an arena without cells, or one over 62 x 62): reachable
+// false. On the goal's cell: reachable with 0 turns.
+struct GridStep {
+  bool reachable{false};
+  uint16_t turns{0};  // the route's length in steps
+  uint8_t octant{0};  // the first step (grid_cells.hpp's octants; moveDir = octant * 32)
+};
+[[nodiscard]] GridStep gridStepToward(const ArenaDef& arena, Vec2 from, Fixed radius, Vec2 goal);
 
 // A whole frame for s.tick: present = s.rules.present, inputs for every
 // present slot in slot order (so the Rng is consumed in a fixed order).

@@ -141,6 +141,36 @@ TEST_CASE("control: the zone strip, a chip per zone (v0.80)", "[client][hud][con
   CHECK(client::zoneStrip(rs).count == 0);
 }
 
+TEST_CASE("hud: the mode line, the countdown title and the team scores by kind", "[client][hud]") {
+  RenderHud hud;
+  hud.round = 2;
+  hud.roundsToWin = 3;
+  hud.scoreToWin = 30;
+  CHECK(client::modeLineText(hud) == "Round 2  (first to 3)");
+  CHECK(client::roundStartTitle(hud) == "Round 2");
+  hud.mode = sim::ModeKind::Control;
+  CHECK(client::modeLineText(hud) == "Control  (first team to 30 points)");
+  CHECK(client::roundStartTitle(hud) == "Control the zones");
+  hud.mode = sim::ModeKind::Survival;
+  hud.aliveCount = 4;
+  CHECK(client::modeLineText(hud) == "Round 2  (first to 3)  4 alive");
+
+  // v0.82, harvest: the target is bananas banked, and so is each team's score.
+  hud.mode = sim::ModeKind::Harvest;
+  hud.teamCount = 2;
+  hud.teamScores[0] = 12;
+  hud.teamScores[1] = 0;
+  CHECK(client::modeLineText(hud) == "Harvest  (first team to 30 bananas banked)");
+  CHECK(client::roundStartTitle(hud) == "Harvest: bank 30 bananas");
+  CHECK(client::teamScoreText(hud, 0, std::nullopt) == "Team 1: 12 banked");
+  CHECK(client::teamScoreText(hud, 1, std::nullopt) == "Team 2: 0 banked");
+  hud.mode = sim::ModeKind::Control;
+  CHECK(client::teamScoreText(hud, 0, std::optional<uint8_t>(1)) == "Team 1: 12 (1 zone)");
+  CHECK(client::teamScoreText(hud, 0, std::optional<uint8_t>(2)) == "Team 1: 12 (2 zones)");
+  hud.mode = sim::ModeKind::Hill;
+  CHECK(client::teamScoreText(hud, 0, std::nullopt) == "Team 1: 12");
+}
+
 TEST_CASE("match over: title, colour and the scoreboard", "[client][hud][over]") {
   const HudView v = threeSlots(true);
   const client::MatchOverView draw = client::matchOverView(v, matchEnded(presentation::kNoSlot));

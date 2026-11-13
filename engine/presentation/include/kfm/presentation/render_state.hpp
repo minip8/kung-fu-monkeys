@@ -178,6 +178,10 @@ enum class EffectKind : uint8_t {
   // v0.80 (control):
   ZoneCaptured,  // a ring racing out over a zone a team just took (slot = the team, its
                  // palette colour; size = the zone's larger half extent, units)
+  // v0.82 (harvest):
+  BananaStolen,  // rings closing in over the robbed home (slot = the raider's team, its
+                 // palette colour; size = the zone's larger half extent, units)
+  StealFlash,    // a flash at the raider as the banana comes into its hand (slot = its team)
 };
 
 struct RenderEffect {
@@ -212,9 +216,9 @@ struct RenderArenaPiece {
 };
 
 // An objective zone (v0.33): a translucent floor rectangle in world space,
-// tinted with its team's colour when it is a team's (capture: zone t is team
-// t's; control, v0.80: its owner's, from modeData), neutral otherwise (hill,
-// an unowned control zone). Team t is palette colour t.
+// tinted with its team's colour when it is a team's (capture and, v0.82,
+// harvest: zone t is team t's home; control, v0.80: its owner's, from
+// modeData), neutral otherwise (hill, an unowned control zone). Team t is palette colour t.
 struct RenderZone {
   Vec3 center{};  // on the ground, y = 0
   Vec3 size{};    // world extents (x, 0, z)
@@ -223,6 +227,18 @@ struct RenderZone {
   // and its progress toward ModeDef::captureTicks, in [0, 1).
   int8_t challenger{kNoSlot};
   float capture{0.0f};
+};
+
+// v0.82: a tree (sim::PickupSpawner::tree), arena content drawn in every
+// mode: a trunk and canopy at the back of its cell, a shade on the cell its
+// fruit (ordinary banana pickups) is laid on, and the next fruit ripening in
+// the canopy as the tree's beat nears. Built from content and the state.
+struct RenderTree {
+  Vec3 ground{};         // the spawner's position (its cell's centre), y = 0
+  float cell{1.0f};      // the arena's cell side, world units (sizes the tree)
+  float ripeness{0.0f};  // the next fruit toward its beat, 0..1; 0: none growing
+  uint8_t fruit{0};      // bananas lying on its cell
+  uint8_t maxFruit{0};   // the most it lets lie there (PickupSpawner::maxAlive)
 };
 
 // Rim strips are capped; a pit layout needing more draws without the excess.
@@ -278,6 +294,8 @@ struct RenderState {
   uint16_t arenaPieceCount{0};
   std::array<RenderZone, sim::kMaxArenaZones> zones{};  // v0.33, in content order
   uint8_t zoneCount{0};
+  std::array<RenderTree, sim::kMaxPickupSpawners> trees{};  // v0.82, in spawner order
+  uint8_t treeCount{0};
   // v0.54: the cell size whose edges the floor draws (the arena's cells under
   // a grid-space mode, §5.12); 0 draws no grid.
   float floorGridCell{0.0f};

@@ -42,7 +42,8 @@ static_assert(
     static_cast<uint8_t>(sim::ModeKind::Hill) == static_cast<uint8_t>(ObsModeKind::Hill) &&
     static_cast<uint8_t>(sim::ModeKind::Capture) == static_cast<uint8_t>(ObsModeKind::Capture) &&
     static_cast<uint8_t>(sim::ModeKind::Control) == static_cast<uint8_t>(ObsModeKind::Control) &&
-    static_cast<uint8_t>(sim::ModeKind::kCount) == 8);
+    static_cast<uint8_t>(sim::ModeKind::Harvest) == static_cast<uint8_t>(ObsModeKind::Harvest) &&
+    static_cast<uint8_t>(sim::ModeKind::kCount) == 9);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::Call) ==
@@ -384,6 +385,7 @@ void fillArena(const sim::ArenaDef& a, ObsArena& o) {
     d.firstTicks = s.firstTicks;
     d.intervalTicks = s.intervalTicks;
     d.maxAlive = s.maxAlive;
+    d.tree = s.isTree() ? 1 : 0;  // bot-abi.md §2.10, v0.82
   }
 }
 

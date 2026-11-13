@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <vector>
@@ -273,33 +274,154 @@ TEST_CASE("grid: a dash slides over a one-cell pit, and falls if it ends in one"
   }
 }
 
-TEST_CASE("grid: a contested cell goes to the earlier press, then the lower slot",
+TEST_CASE("grid: a contested cell goes to the earlier press, then the world Rng's draw",
           "[scenario][grid]") {
-  SECTION("the earlier press wins") {
+  // v0.82: a tie at an equal press is drawn from the world Rng (one
+  // permutation of the tied monkeys a latch, count - 1 draws); an earlier
+  // press wins without a draw. Each case replays one latch from the same
+  // world under kTrials Rng states.
+  constexpr int kTrials = 400;
+  // Whether the latch tick drew from the world Rng: the same tick idle
+  // leaves the same Rng state (nothing else on these ticks draws).
+  const auto drew = [](Lab& lab, PlayerInput p0, PlayerInput p1, PlayerInput p2) {
+    const WorldState start = lab.s;
+    lab.tick();
+    const Rng idle = lab.s.rng;
+    lab.s = start;
+    lab.tick(p0, p1, p2);
+    const bool changed = lab.s.rng.s != idle.s;
+    lab.s = start;
+    return changed;
+  };
+  // How often each of slots 0..2 ends the turn on `cell`, over kTrials Rng
+  // states; never two at once.
+  const auto tally = [](Lab& lab, Cell cell, PlayerInput p0, PlayerInput p1, PlayerInput p2) {
+    const WorldState start = lab.s;
+    std::array<int, 3> on{};
+    for (int k = 0; k < kTrials; ++k) {
+      INFO("trial " << k);
+      lab.s = start;
+      lab.s.rng = Rng::seeded(static_cast<uint64_t>(k) + 1);
+      lab.turn(p0, p1, p2);
+      int here = 0;
+      for (uint8_t i = 0; i < 3; ++i) {
+        if (maskHas(lab.config.players, PlayerId{i}) && lab.cellOf(PlayerId{i}) == cell) {
+          ++on[i];
+          ++here;
+        }
+      }
+      CHECK(here == 1);
+    }
+    lab.s = start;
+    return on;
+  };
+  SECTION("the earlier press wins, whichever slot, and nothing is drawn") {
     Lab lab(0b11);
     lab.put(kP0, Cell{2, 2});
     lab.put(kP1, Cell{4, 2});
-    lab.turn(walk(0, 0, 200), walk(4, 0, 10));  // both into (3, 2); slot 1 pressed first
-    CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{3, 2}));
-    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{2, 2}));
+    // Both into (3, 2); slot 1 pressed first, then slot 0.
+    CHECK_FALSE(drew(lab, walk(0, 0, 200), walk(4, 0, 10), {}));
+    CHECK_FALSE(drew(lab, walk(0, 0, 10), walk(4, 0, 200), {}));
+    const std::array<int, 3> late0 = tally(lab, Cell{3, 2}, walk(0, 0, 200), walk(4, 0, 10), {});
+    CHECK(late0[1] == kTrials);
+    const std::array<int, 3> late1 = tally(lab, Cell{3, 2}, walk(0, 0, 10), walk(4, 0, 200), {});
+    CHECK(late1[0] == kTrials);
   }
-  SECTION("an equal press goes to the lower slot") {
+  SECTION("an uncontested step draws nothing") {
+    Lab lab(0b11);
+    lab.put(kP0, Cell{2, 2});
+    lab.put(kP1, Cell{6, 6});
+    CHECK_FALSE(drew(lab, walk(0, 0, 7), walk(4, 0, 7), {}));
+    lab.turn(walk(0, 0, 7), walk(4, 0, 7));
+    CHECK(lab.cellOf(kP0) == Cell{3, 2});
+    CHECK(lab.cellOf(kP1) == Cell{5, 6});
+  }
+  SECTION("an equal press: each of two takes it about half the time, never both") {
+    Lab lab(0b11);
+    lab.put(kP0, Cell{2, 2});
+    lab.put(kP1, Cell{4, 2});
+    CHECK(drew(lab, walk(0, 0, 7), walk(4, 0, 7), {}));
+    const std::array<int, 3> on = tally(lab, Cell{3, 2}, walk(0, 0, 7), walk(4, 0, 7), {});
+    INFO("slot 0 " << on[0] << ", slot 1 " << on[1]);
+    CHECK(on[0] + on[1] == kTrials);
+    CHECK(on[0] >= 150);  // 200 expected, a standard deviation of 10
+    CHECK(on[1] >= 150);
+  }
+  SECTION("an equal press of three: each about a third of the time") {
     Lab lab(0b111);
     lab.put(kP0, Cell{2, 2});
     lab.put(kP1, Cell{4, 2});
     lab.put(kP2, Cell{3, 1});
-    lab.turn(walk(0, 0, 7), walk(4, 0, 7), walk(6, 0, 7));  // three into (3, 2)
-    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{3, 2}));
-    CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{4, 2}));
-    CHECK(lab.pos(kP2) == centreOf(lab.arena(), Cell{3, 1}));
+    const std::array<int, 3> on =
+        tally(lab, Cell{3, 2}, walk(0, 0, 7), walk(4, 0, 7), walk(6, 0, 7));  // three into (3, 2)
+    INFO("slot 0 " << on[0] << ", slot 1 " << on[1] << ", slot 2 " << on[2]);
+    for (const int n : on)
+      CHECK(n >= 95);  // 133 expected, a standard deviation of 9.4
   }
-  SECTION("a swap is blocked: the loser stays, the winner moves in") {
+  SECTION("two tied behind an earlier press: the earlier wins and nothing is drawn") {
+    Lab lab(0b111);
+    lab.put(kP0, Cell{2, 2});
+    lab.put(kP1, Cell{4, 2});
+    lab.put(kP2, Cell{3, 1});
+    CHECK_FALSE(drew(lab, walk(0, 0, 7), walk(4, 0, 7), walk(6, 0, 3)));
+    const std::array<int, 3> on =
+        tally(lab, Cell{3, 2}, walk(0, 0, 7), walk(4, 0, 7), walk(6, 0, 3));
+    CHECK(on[2] == kTrials);
+  }
+  SECTION("a swap: one of the two moves in, the other stays, about half each") {
     Lab lab(0b11);
     lab.put(kP0, Cell{5, 5});
     lab.put(kP1, Cell{6, 5});
-    lab.turn(walk(0), walk(4));
-    CHECK(lab.pos(kP1) == centreOf(lab.arena(), Cell{6, 5}));
-    CHECK(lab.pos(kP0) == centreOf(lab.arena(), Cell{6, 5}));
+    CHECK(drew(lab, walk(0), walk(4), {}));
+    const WorldState start = lab.s;
+    int slot0 = 0;
+    for (int k = 0; k < kTrials; ++k) {
+      INFO("trial " << k);
+      lab.s = start;
+      lab.s.rng = Rng::seeded(static_cast<uint64_t>(k) + 1);
+      lab.turn(walk(0), walk(4));
+      // The winner moves into the loser's cell, the loser stays in it.
+      const bool zeroWon = lab.cellOf(kP0) == Cell{6, 5};
+      CHECK(lab.cellOf(kP0) == (zeroWon ? Cell{6, 5} : Cell{5, 5}));
+      CHECK(lab.cellOf(kP1) == (zeroWon ? Cell{6, 5} : Cell{5, 5}));
+      slot0 += zeroWon ? 1 : 0;
+    }
+    INFO("slot 0 swapped in " << slot0 << " of " << kTrials);
+    CHECK(slot0 >= 150);
+    CHECK(slot0 <= 250);
+  }
+  SECTION("a swap and a third into one of its cells are judged by one drawn order") {
+    // Slots 0 and 1 swap; slot 2 steps into (5, 5), slot 1's target too.
+    // Slot 1 moves iff it is drawn before both (1 in 3); slot 0 iff before
+    // slot 1, slot 2 iff before slot 1 (1 in 2 each), so 0 and 2 may both
+    // move, and never with 1.
+    Lab lab(0b111);
+    lab.put(kP0, Cell{5, 5});
+    lab.put(kP1, Cell{6, 5});
+    lab.put(kP2, Cell{4, 5});
+    const WorldState start = lab.s;
+    std::array<int, 3> moved{};
+    for (int k = 0; k < kTrials; ++k) {
+      INFO("trial " << k);
+      lab.s = start;
+      lab.s.rng = Rng::seeded(static_cast<uint64_t>(k) + 1);
+      lab.turn(walk(0), walk(4), walk(0));
+      const bool m0 = lab.cellOf(kP0) == Cell{6, 5};
+      const bool m1 = lab.cellOf(kP1) == Cell{5, 5};
+      const bool m2 = lab.cellOf(kP2) == Cell{5, 5};
+      CHECK_FALSE((m1 && (m0 || m2)));
+      CHECK((m1 || m0 || m2));  // the first drawn always moves
+      moved[0] += m0 ? 1 : 0;
+      moved[1] += m1 ? 1 : 0;
+      moved[2] += m2 ? 1 : 0;
+    }
+    INFO("moved: slot 0 " << moved[0] << ", slot 1 " << moved[1] << ", slot 2 " << moved[2]);
+    CHECK(moved[1] >= 95);  // 133 expected
+    CHECK(moved[1] <= 175);
+    CHECK(moved[0] >= 150);  // 200 expected
+    CHECK(moved[0] <= 250);
+    CHECK(moved[2] >= 150);
+    CHECK(moved[2] <= 250);
   }
   SECTION("following into a cell being vacated is no contest") {
     Lab lab(0b11);

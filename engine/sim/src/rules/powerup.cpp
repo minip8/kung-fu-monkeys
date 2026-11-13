@@ -7,6 +7,8 @@
 // - The same power-up again refreshes the existing entry's timer in place
 //   (no second entry, slot order unchanged).
 // - A full ModifierList (kMaxModifiers) declines: the pickup stays.
+//   canTakePowerUp, the row's contend test, says the same before it is
+//   taken: two monkeys that could take it on one tick draw the order.
 // - The mode's baseline (v0.32, a permanent entry) stays permanent: picking
 //   up the same power-up only adds its ammo top-up.
 // - AmmoMax grants top the ammo up by their add on every pickup;
@@ -20,13 +22,26 @@
 
 namespace kfm::sim {
 
-bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
-                  const Contact& /*contact*/, EventSink& sink) {
-  Player* p = s.players.get(a);
+bool canTakePowerUp(const WorldState& s, const MatchContent& content, EntityId a, EntityId b) {
+  const Player* p = s.players.get(a);
   const Pickup* pickup = s.pickups.get(b);
   if (p == nullptr || pickup == nullptr || pickup->kind != PickupKind::PowerUp) return false;
   const uint8_t index = pickup->powerUpIndex;
   if (index >= content.db.powerUpCount) return false;
+  const ModifierList& mods = p->modifiers;
+  if (mods.count < kMaxModifiers) return true;
+  for (uint8_t i = 0; i < mods.count && i < kMaxModifiers; ++i) {
+    if (mods.items[i].powerUp == index) return true;  // a refresh needs no room
+  }
+  return false;
+}
+
+bool grantPowerUp(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
+                  const Contact& /*contact*/, EventSink& sink) {
+  Player* p = s.players.get(a);
+  const Pickup* pickup = s.pickups.get(b);
+  if (p == nullptr || pickup == nullptr || !canTakePowerUp(s, content, a, b)) return false;
+  const uint8_t index = pickup->powerUpIndex;
   const PowerUpDef& def = content.db.powerUps[index];
 
   ModifierList& mods = p->modifiers;
