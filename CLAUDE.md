@@ -214,6 +214,11 @@ opened its code. A rule that must hold everywhere belongs in this file, not ther
   transport in minutes (no SDL3/ImGui/sokol/libdatachannel); `ctest --test-dir build/headless
   -LE 'soak|network'`. Use the full `dev` preset before pushing anything that touches
   `apps/client`, and the `server-headless` preset for the soak and real-socket gates.
+- The real-socket tests (label `network`) fail now and then on a DTLS handshake or a connect
+  that times out (about once in eighty runs locally, more on a runner; architecture §12). CI
+  runs every leg's tests through `tools/ci/ctest_gate.sh`, which gives those tests, and no
+  others, three attempts and leaves a warning on the run for one that needed more than one. A
+  failure outside that label is never retried and never a flake to re-run: find the cause.
 - CI's lint job pins clang-format 23.1.3 and clang-tidy 23.1.4 (PyPI wheels: `pip install
   clang-format==23.1.3 clang-tidy==23.1.4`); run those exact versions locally, over the whole
   tree the way `.github/workflows/ci.yml` does, and count both `error` and `warning` lines.

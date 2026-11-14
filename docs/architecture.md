@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.84 (2026-11-14), a living document: it describes the system as built and deployed,
+Status: v0.85 (2026-11-14), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -3978,6 +3978,21 @@ lives in the bots repository (above) and uses this repository through its tagged
   the one thing a leg leaves out is the three `kfm_netsim` soak gates on the sanitizer leg,
   which the `server-headless` Release leg runs (the sanitizer leg still runs the same netcode
   in `kfm_netcode_tests`).
+- The real-socket tests are retried in CI, and only they (v0.85). The tests labelled `network`
+  (`kfm_net_webrtc_tests`, `kfm_lobby_tests`, `kfm_client_net_tests`,
+  `kfm_server_network_tests`, `net_probe_loopback`) open UDP sockets on 127.0.0.1 and go
+  through a real DTLS handshake, and about one CI run in ten lost a leg to one of them: a
+  handshake that failed (`DTLS recv: Handshake failed: fatal I/O error` inside libdatachannel)
+  or a connect that timed out, in a different test case each time, on Linux and macOS, about
+  once in eighty runs on a quiet machine. Every leg that runs them (the native matrix,
+  `server-headless`, the sanitizers) goes through `tools/ci/ctest_gate.sh`: everything else
+  once, four at a time, as before; then the `network` label on its own with
+  `ctest --repeat until-pass:3`. A test that needed another attempt leaves a warning
+  annotation on the run, so the rate stays visible and a rise is noticed; a transport that is
+  broken fails three times and fails the leg. No other test is ever retried: a second attempt
+  at a sim, determinism or loopback-netcode test would hide the nondeterminism those tests
+  exist to catch, and they do not depend on the machine. The cause of the failed handshakes
+  is open (§12): the retry removes the cost, not the fault.
 - Why C++23: the design uses C++20 directly (`std::span` in interfaces, `<bit>` for pools and
   serialization, `std::endian`, concepts to reject non-trivially-copyable types in `Pool` and the
   visitor, defaulted `operator<=>` on strong typedefs and `Fixed`, `consteval`, designated
@@ -5226,6 +5241,14 @@ baseline moved to C++23 (§9).
   DashAnticipation ring and flash at the press, §7).
 - **Snapshot growth** if entity caps rise; fine up to ~100 KB with LZ4. Measured (v0.17): at
   most 4.7 KB uncompressed with every pool full, so LZ4 is deferred until a cap rises (§6.3).
+- **Failed DTLS handshakes on loopback (v0.85).** A `WebRtcTransport` connect over 127.0.0.1
+  fails now and then (about once in eighty runs of `kfm_net_webrtc_tests` on a quiet machine,
+  more on a CI runner): libdatachannel reports a fatal I/O error in the DTLS handshake and the
+  peers never connect. CI retries the real-socket tests (§9), which hides the cost, not the
+  cause. Unknown: whether it is the loopback test setup (two peers in one process, both ICE
+  agents on one host) or something a real client connecting to a server can hit, where it
+  would show as a join that fails and has to be retried. To find out: the libdatachannel log at
+  verbose level for a failing run, and the connect failure rate of the deployed server.
 - **Lobby/matchmaking/NAT** is a service problem behind the connection-token boundary; the
   service is designed in §13.5 (v0.37). No matchmaking: rooms are created and joined by code,
   the creator picks the region.
