@@ -1793,3 +1793,21 @@ and its filters; every page looked at in headless Chromium at desktop and phone 
 and dark. Not done: the house bots and example bots for harvest (the guide says the examples
 predate it and points at `tools/bots/examples/gatherer.c`); a guide to writing a first bot
 beyond the quick start.
+
+v0.85 changes: CI retries the real-socket tests, and only them (§9, §12). About one CI run in
+ten lost a leg to a test labelled `network`: a DTLS handshake that failed inside libdatachannel
+or a connect that timed out, over 127.0.0.1, in a different case of `kfm_net_webrtc_tests` or
+`kfm_lobby_tests` each time, on Linux and macOS; it reproduces about once in eighty runs on a
+quiet machine. The legs that run those tests (the native matrix, `server-headless`, the
+sanitizers) now go through `tools/ci/ctest_gate.sh`: every other test once, four at a time, as
+before, then the `network` label with `ctest --repeat until-pass:3`, a warning annotation on
+the run for a test that needed another attempt and an error when one fails all three.
+Considered and not taken: disabling the tests, or running them on one leg only (the transport
+contract suite over `WebRtcTransport` and the lobby seam would lose their only run on macOS
+and Windows, and one leg would still flake); a retry for the whole suite (a second attempt
+would hide a nondeterministic sim or netcode test, which is what those tests are for). Open,
+recorded in §12: why the handshake fails, and whether a real client can hit it. Verified: the
+script on a scratch project (a test failing once passes with the warning and exit 0; one
+failing always fails with the error; a failure outside the label fails the run and the
+`network` part still runs) and its `network` pass on the local Release build (5 tests, 18 s).
+No sim, content or wire change. Replay checksums: unchanged.

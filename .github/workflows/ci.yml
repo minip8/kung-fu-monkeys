@@ -152,9 +152,12 @@ jobs:
       - name: Build (engine, kfm_replay, kfm_client, tests)
         run: cmake --build --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
       - name: Test (unit + determinism gate, client smoke on Linux)
-        # Four at a time; the real-socket tests run alone (RUN_SERIAL) and the
-        # xvfb ones one at a time (RESOURCE_LOCK), as their CMake says.
-        run: ctest --preset ${{ matrix.build == 'Debug' && 'dev' || 'release' }} --parallel 4
+        # Four at a time, the xvfb ones one at a time (RESOURCE_LOCK), as their
+        # CMake says; then the real-socket tests (label network) alone, a
+        # failing one run again up to three attempts (tools/ci/ctest_gate.sh,
+        # architecture §9 v0.85). Nothing else is retried.
+        shell: bash
+        run: tools/ci/ctest_gate.sh ${{ matrix.build == 'Debug' && 'dev' || 'release' }}
 
   server-headless:
     # The dedicated server's build (architecture §13.5): KFM_HEADLESS=ON, so no
@@ -177,7 +180,7 @@ jobs:
       - name: Check the dedicated server was produced
         run: build/server-headless/apps/server/kfm_server --help
       - name: Test (unit, netcode soaks, network, determinism gate)
-        run: ctest --preset server-headless --parallel 4
+        run: tools/ci/ctest_gate.sh server-headless
 
   wasm:
     name: wasm (Emscripten)
@@ -247,7 +250,8 @@ jobs:
         # on the runner, so this leg leaves out what another leg covers: the
         # netsim soak gates (label soak) are run by server-headless Release,
         # and the same NetServer/NetClient code runs here in kfm_netcode_tests.
-        run: ctest --preset asan --parallel 4 -LE soak
+        # The real-socket tests are retried as on every leg (ctest_gate.sh).
+        run: tools/ci/ctest_gate.sh asan soak
 
   lobby:
     name: lobby (Rust)

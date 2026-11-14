@@ -26,6 +26,7 @@ ctest --preset dev -R kfm_content_tests # TOML loader, decimal conversion, base 
 ctest --preset dev -R 'kfm_ai|arena'    # engine/ai (observation, reference bot, AgentHost), the wasm fixture suite, kfm_arena
 ctest --preset dev -L soak              # the netsim gates (10 clients at 100 ms / 2%, 300 ms / 10%, 500 ms ±30 ms / 5%)
 ctest --preset dev -L network           # only the real-socket tests (kfm_net_webrtc_tests, net_probe_loopback); -LE network skips them
+tools/ci/ctest_gate.sh dev              # a CI leg's test run: everything but the real-socket tests once, then those with up to three attempts each
 ctest --preset dev --parallel 8         # several tests at a time, as CI does (4); the real-socket tests still run alone
 cmake --workflow --preset server-headless   # headless Release build of kfm_server + tests (no SDL)
 cmake --preset dev -DKFM_WASM_BOTS=OFF  # build without WAMR (reference bots only; a module spec exits 3)
