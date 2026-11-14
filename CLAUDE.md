@@ -254,6 +254,11 @@ ASan+UBSan and wasm), without waiting to be asked: `gh pr merge --merge` (a merg
 the history has; never a squash or a rebase). Never merge with a check failing, pending or
 skipped by a workaround, never bypass branch protection, and leave a PR alone when the user
 asked to review it first or it is not one you opened. The same holds in the bots repository.
+The exception is a pull request that changes only Markdown (`*.md`: this file, `docs/`,
+`.claude/rules/`, READMEs): nothing builds from those files and no test reads them, so
+`ci.yml` starts no run for it (`paths-ignore`) and it is merged as soon as it is opened. The
+bots repository's CI has no such filter: merge a Markdown-only pull request there without
+waiting for its run. One file of any other kind makes it an ordinary pull request.
 Merging releases nothing: a release is a `v*` tag (`deploy.yml` here, `release.yml` in the bots
 repository), and a tag is pushed only when the user asks for that release.
 
