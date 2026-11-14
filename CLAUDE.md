@@ -247,8 +247,15 @@ in the same commit.
 landed, the decisions made (with the architecture version they were recorded in), how it was
 verified (toolchains, corpus, bench numbers) and any follow-ups, and ends with the attribution
 line. Never push to `main` directly and never force-push a branch that has an open PR; if history
-must be rewritten before the PR exists, say so in the turn. Merging the PR is the user's call:
-CI must be green on every leg (the native matrix, ASan+UBSan and wasm) first.
+must be rewritten before the PR exists, say so in the turn.
+
+**Merging.** Merge the pull request yourself once CI is green on every leg (the native matrix,
+ASan+UBSan and wasm), without waiting to be asked: `gh pr merge --merge` (a merge commit, as
+the history has; never a squash or a rebase). Never merge with a check failing, pending or
+skipped by a workaround, never bypass branch protection, and leave a PR alone when the user
+asked to review it first or it is not one you opened. The same holds in the bots repository.
+Merging releases nothing: a release is a `v*` tag (`deploy.yml` here, `release.yml` in the bots
+repository), and a tag is pushed only when the user asks for that release.
 
 **Message format.** Conventional Commits with the module as scope:
 
