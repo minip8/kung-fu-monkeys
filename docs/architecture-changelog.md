@@ -1757,3 +1757,39 @@ repository: its service's 190 tests and its CLI's 57 against Postgres 17, MinIO 
 released v0.10.0 `kfm_arena`, among them real games whose seeds draw each of the four arenas
 from either side. Not done: the house bots for harvest and the balance targets; a tie-break
 when both teams reach `score_to_win` on one tick.
+
+v0.84 changes: the ladder's site documents the contest and is held to the engine pin (§11 "M7
+step 3 design", "The HTTP surface"). Asked for by the project's owner: documentation of the
+contest mode on bots.kfm.minip8.com, and the site redone. Found on the way: the only description
+of the contest an entrant could reach was a paragraph of the bots repository's README that
+still described king of the hill on `courtyard_hill` (the contest of v0.7.0 to v0.9.0) and an
+ABI version 1, three releases after the row became harvest; signed out, the site was a sign-in
+box. Built in the bots repository as ladder API v1.7, for its release v0.1.9: `/docs/contest`,
+the contest guide (winning, the economy of trees, carrying, banking and stealing, the kit and
+the banana's flight, the catcher, death and respawn, the power-ups, `own` fog and calls, the
+four arenas drawn with their trees, the observation's fields by the SDK's names, how the ladder
+plays a game, how to play it with `kfm_arena`, and what follows from the rules), every number
+read from this repository's content at v0.10.0 and `docs/bot-abi.md` §3; a landing page at `/`
+for a signed-out visitor (the portal when signed in, unchanged in what it does); `GET /matches`
+as a page for a browser; the board linking each team to its games and listing the season's
+latest; one layout for all of it, still without script and under the same
+Content-Security-Policy. Decided with it: the guide is a second copy of this repository's
+content, which is what went stale in the README, so it names its engine release
+(`CONTEST_GUIDE_ENGINE`) and a test fails while the pin is another, which makes the automatic
+bump pull request of v0.71 red until a person has read the guide against the new content,
+redrawn the arenas and moved the constant; when the running service's release differs from the
+guide's the page says so; the arenas are generated from `content/arenas/*.toml` by a script in
+the bots repository (inline SVG), not drawn; the guide is a page of the service, not Markdown
+rendered at run time (it carries the drawings and the service's configured round interval,
+opponents a round and replay retention, and the service gains no dependency). Considered and
+not taken: the guide in this repository beside `docs/bot-abi.md` (the entrants' door is the
+ladder's site and the bots repository; `docs/bot-abi.md` §3.3 stays the normative statement of
+the kind as a bot sees it); letting `tools/bump_engine.sh` move the guide's constant (it would
+defeat the check). Not changed: the engine (no code, no content hash, no release), every JSON
+route, key and error code of the ladder, the pairing, the ratings. Verified in the bots
+repository: its service's format, clippy and tests against Postgres 17, with new tests for the
+landing page, the guide (its four drawings, the notice, the configured numbers), the games page
+and its filters; every page looked at in headless Chromium at desktop and phone width, light
+and dark. Not done: the house bots and example bots for harvest (the guide says the examples
+predate it and points at `tools/bots/examples/gatherer.c`); a guide to writing a first bot
+beyond the quick start.

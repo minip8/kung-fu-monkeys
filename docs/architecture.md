@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.83 (2026-11-13), a living document: it describes the system as built and deployed,
+Status: v0.84 (2026-11-14), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -4176,7 +4176,18 @@ every hosted bot ladder converges on, sized so that growing is adding workers.
   `GET /matches?team=` and `GET /matches/{m}` (the result, the replay URL, the viewer URL
   `https://kfm.minip8.com/<tag>/?replay=<url>`, the client feature of step 6, landed in v0.68). The portal is the
   same routes rendered as HTML by the same binary (askama templates, no frontend framework):
-  sign in, tokens, teams, submissions with their logs, the ladder, a match's result.
+  sign in, tokens, teams, submissions with their logs, the ladder, a match's result. Since
+  v0.84 (ladder API v1.7) it is also the contest's public face: signed out, `/` is a landing
+  page (what the contest is, the quick start, the top of the board, the latest games),
+  `GET /matches` is a page for a browser as `/ladder` and `/matches/{m}` are, and
+  **`/docs/contest` is the contest guide**, the rules of the `contest` row as an entrant needs
+  them: the economy, the kit, fog and calls, the pool's arenas drawn, where each is in the
+  observation, how the ladder plays it. The guide restates this repository's content, so it is
+  held to the pin: it names the engine release it was written for
+  (`CONTEST_GUIDE_ENGINE`), a test of the service fails while `engine.lock`'s `tag=` is
+  another, and the page says so when the running service plays another release. Its arena
+  drawings are generated from `content/arenas/*.toml` (`tools/contest_maps.py` there), never
+  drawn by hand. `content/` and `docs/bot-abi.md` stay normative; the guide is their reading.
 - **Retention.** Five submissions per team plus the active one; pruning deletes the source
   and log objects, never a module a recorded match used, so every ranked match stays
   reproducible from seed plus modules for the season.
