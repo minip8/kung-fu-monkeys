@@ -1,9 +1,15 @@
 name: CI
 
+# A change of Markdown alone (CLAUDE.md, docs/, .claude/rules/, READMEs) starts no run:
+# nothing builds from those files and no test reads them. A pull request with any other
+# file runs everything. If a status check ever becomes required on main, a Markdown-only
+# pull request would wait on it forever: drop this filter then.
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
