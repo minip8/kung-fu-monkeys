@@ -14,7 +14,7 @@
 //   Space            play / pause (at the end: watch again)
 //   .                one tick (pauses first while playing)
 //   Left / A         back 5 s, Right / D forward 5 s; with Shift 30 s
-//   [ / ]            slower / faster (clamped at 0.25x and 4x)
+//   [ / ]            slower / faster (clamped at 0.05x and 4x)
 //   Home             restart
 //   Escape           main menu
 //   Up / W, Down / S, Tab (Shift+Tab back)   move the focus over the bar
@@ -50,7 +50,7 @@ struct ReplayStatus {
   uint32_t tickCount{0};
   bool paused{false};
   bool atEnd{false};
-  std::size_t speedIndex{2};  // into kReplaySpeeds (1x)
+  std::size_t speedIndex{4};  // into kReplaySpeeds (kDefaultReplaySpeedIndex, 1x)
 };
 
 // What the bar asks of the session.
@@ -157,7 +157,7 @@ struct ReplayBarRows {
 [[nodiscard]] std::string replayClock(uint32_t ticks);
 // The bar's time: "0:12 / 0:30".
 [[nodiscard]] std::string replayTimeLabel(uint32_t tick, uint32_t tickCount);
-// kReplaySpeeds[index] as "0.25x", "0.5x", "1x", "2x", "4x".
+// kReplaySpeeds[index] as "0.05x", "0.1x", "0.25x", "0.5x", "1x", "2x", "4x".
 [[nodiscard]] std::string replaySpeedLabel(std::size_t index);
 // `tick` moved by `delta` ticks, within 0..tickCount.
 [[nodiscard]] uint32_t replaySeekTarget(uint32_t tick, int64_t delta, uint32_t tickCount);

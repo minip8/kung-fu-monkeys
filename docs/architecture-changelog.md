@@ -1811,3 +1811,13 @@ script on a scratch project (a test failing once passes with the warning and exi
 failing always fails with the error; a failure outside the label fails the run and the
 `network` part still runs) and its `network` pass on the local Release build (5 tests, 18 s).
 No sim, content or wire change. Replay checksums: unchanged.
+
+v0.86 changes: the replay viewer plays slower (§7). `kReplaySpeeds` gains 0.05x and 0.1x
+below 0.25x, seven speeds from 0.05x to 4x; `FixedStepClock::kMinTimeScale` drops from 0.25 to
+0.05 to match. 1x stays the default (index 4 now, `kDefaultReplaySpeedIndex`); `[` / `]`, the
+pad's shoulders and the Speed button walk the longer list as before, and the button is as wide
+as its widest label. Below 1x the viewer already interpolates, so 0.05x (three ticks a second)
+glides rather than stepping. Considered and not taken: a free speed slider (the fixed set keeps
+the button and keys simple, and single step covers anything slower). No sim, content or wire
+change. Verified: the client unit tests (new label, snap and clamp cases) and the `dev` ctest
+suite on GCC 15, clang-format and clang-tidy clean. Replay checksums: unchanged.

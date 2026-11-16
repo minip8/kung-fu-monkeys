@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.85 (2026-11-14), a living document: it describes the system as built and deployed,
+Status: v0.86 (2026-11-16), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -2796,8 +2796,8 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   writes 0). Playback exposes the render surface of `MatchSession` and `NetSession` (prev/curr,
   `renderPrev`, `renderAlpha`, `frameEvents`, the presentation state and its clock), so the
   builder, the renderer and the fixed camera are a match's. Controls: play/pause, single step,
-  speeds `kReplaySpeeds` {0.25, 0.5, 1, 2, 4} (the clock's time scale;
-  `FixedStepClock::kMaxTimeScale` is 4), restart and `seek(tick)`: forward steps from keyframes:
+  speeds `kReplaySpeeds` {0.05, 0.1, 0.25, 0.5, 1, 2, 4} (the clock's time scale;
+  `FixedStepClock::kMinTimeScale` is 0.05 and `kMaxTimeScale` 4; v0.86 added 0.05x and 0.1x), restart and `seek(tick)`: forward steps from keyframes:
   one every `kReplayKeyframeTicks` = 600 ticks (10 s), each a `WorldState` copy of 6096 bytes,
   recorded the first time playback or a seek steps onto that tick, kept across `restart()` and
   cleared on `load()` (a 16 MiB replay, ~300 k ticks, holds at most ~500, ~3 MB; a decoded frame
@@ -2809,7 +2809,7 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   ticks/s). `lastSeekSteps()` and `keyframeCount()` expose this to tests. A seek emits no
   events, resets the presentation state and draws a still frame. Interpolation: below 1x the
   viewer always interpolates (at 0.25x on a 60 Hz display it would otherwise hold each tick for
-  four frames); at 1x and above it follows `MatchSession`'s rule (the newest tick when the
+  four frames, at 0.05x for twenty); at 1x and above it follows `MatchSession`'s rule (the newest tick when the
   display rate is at least 60 × speed × 0.95). While still (just loaded or sought), at the end,
   or paused (after a single step too) it draws the newest state alone (alpha 1, `renderPrev()`
   is `curr()`), whatever the policy. Up to `kReplayMaxTicksPerFrame` = 8 ticks run per frame (4x
@@ -5354,7 +5354,7 @@ baseline moved to C++23 (§9).
 - Open (M7 step 6 follow-ups, v0.68, the replay viewer of §7): the first seek across an
   unvisited span still steps all of it (keyframes are recorded as playback reaches them; ~45 ms
   for a whole 10-minute replay in Release, more in Debug or on a slow phone), which a background
-  pass could pre-record if it shows; effects and animation run in wall time, so at 0.25x and 4x
+  pass could pre-record if it shows; effects and animation run in wall time, so below 1x and at 4x
   they are slow or fast against the sim (the sim speed is right); player names in replays (the
   portal knows the entrants: a `?names=` parameter is the likely shape, since the `.kfmr` format
   carries none); a main-menu entry or a file picker; seeking with a pad's stick; the fog overlay

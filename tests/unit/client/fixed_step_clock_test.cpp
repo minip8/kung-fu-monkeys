@@ -94,7 +94,7 @@ TEST_CASE("clock: time scale", "[client][clock]") {
   clamped.setTimeScale(10.0);
   CHECK(clamped.timeScale() == 4.0);
   clamped.setTimeScale(0.0);
-  CHECK(clamped.timeScale() == 0.25);
+  CHECK(clamped.timeScale() == 0.05);
 }
 
 TEST_CASE("clock: tick start times tile the frame interval", "[client][clock]") {

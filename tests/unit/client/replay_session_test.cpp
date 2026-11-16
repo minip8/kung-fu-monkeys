@@ -496,9 +496,15 @@ TEST_CASE("replay: pause, single step and speed", "[client][replay]") {
     s.setSpeed(3.1);
     CHECK(s.speed() == 4.0);
     CHECK(s.clock().timeScale() == 4.0);
-    CHECK(s.speedIndex() == 4);
+    CHECK(s.speedIndex() == 6);
     s.setSpeed(0.3);
     CHECK(s.speed() == 0.25);
+    CHECK(s.speedIndex() == 2);
+    s.setSpeed(0.08);
+    CHECK(s.speed() == 0.1);
+    CHECK(s.clock().timeScale() == 0.1);
+    s.setSpeed(0.0);
+    CHECK(s.speed() == 0.05);
     CHECK(s.speedIndex() == 0);
     s.setSpeed(100.0);
     CHECK(s.speed() == 4.0);

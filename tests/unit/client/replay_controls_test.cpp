@@ -36,7 +36,7 @@ InputEvent pad(PadButton b) {
 
 // 30 s of replay, 10 s in, playing at 1x.
 constexpr ReplayStatus kPlaying{
-    .tick = 600, .tickCount = 1800, .paused = false, .atEnd = false, .speedIndex = 2};
+    .tick = 600, .tickCount = 1800, .paused = false, .atEnd = false, .speedIndex = 4};
 
 }  // namespace
 
@@ -106,9 +106,9 @@ TEST_CASE("replay controls: what a press asks for", "[client][replay]") {
   start.tick = 0;
   CHECK(c.apply(ReplayKey::SeekBack, start) == ReplayCommand{});
   CHECK(c.apply(ReplayKey::SpeedDown, kPlaying) ==
-        ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 1});
-  CHECK(c.apply(ReplayKey::SpeedUp, kPlaying) ==
         ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 3});
+  CHECK(c.apply(ReplayKey::SpeedUp, kPlaying) ==
+        ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 5});
   ReplayStatus slowest = kPlaying;
   slowest.speedIndex = 0;
   CHECK(c.apply(ReplayKey::SpeedDown, slowest) == ReplayCommand{});
@@ -150,11 +150,11 @@ TEST_CASE("replay controls: buttons", "[client][replay]") {
   CHECK(ReplayControls::activate(ReplayControl::MainMenu, paused) ==
         ReplayCommand{.kind = Kind::MainMenu});
   CHECK(ReplayControls::activate(ReplayControl::Timeline, paused) == ReplayCommand{});
-  // The speed button cycles, wrapping from 4x to 0.25x.
+  // The speed button cycles, wrapping from 4x to 0.05x.
   CHECK(ReplayControls::activate(ReplayControl::Speed, kPlaying) ==
-        ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 3});
+        ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 5});
   ReplayStatus fastest = kPlaying;
-  fastest.speedIndex = 4;
+  fastest.speedIndex = client::kReplaySpeeds.size() - 1;
   CHECK(ReplayControls::activate(ReplayControl::Speed, fastest) ==
         ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 0});
 }
@@ -166,7 +166,7 @@ TEST_CASE("replay controls: the focus skips a disabled step and Enter activates 
   CHECK(c.apply(ReplayKey::FocusNext, kPlaying) == ReplayCommand{});
   CHECK(c.focus() == ReplayControl::Speed);  // Step is disabled while playing
   CHECK(c.apply(ReplayKey::Activate, kPlaying) ==
-        ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 3});
+        ReplayCommand{.kind = Kind::SetSpeed, .speedIndex = 5});
   (void)c.apply(ReplayKey::FocusNext, kPlaying);
   CHECK(c.focus() == ReplayControl::Timeline);
   (void)c.apply(ReplayKey::FocusNext, kPlaying);
@@ -210,10 +210,12 @@ TEST_CASE("replay controls: the time and speed labels", "[client][replay]") {
   CHECK(client::replayClock(1800) == "0:30");
   CHECK(client::replayClock(60U * 60U * 75U) == "75:00");
   CHECK(client::replayTimeLabel(720, 1800) == "0:12 / 0:30");
-  CHECK(client::replaySpeedLabel(0) == "0.25x");
-  CHECK(client::replaySpeedLabel(1) == "0.5x");
-  CHECK(client::replaySpeedLabel(2) == "1x");
-  CHECK(client::replaySpeedLabel(4) == "4x");
+  CHECK(client::replaySpeedLabel(0) == "0.05x");
+  CHECK(client::replaySpeedLabel(1) == "0.1x");
+  CHECK(client::replaySpeedLabel(2) == "0.25x");
+  CHECK(client::replaySpeedLabel(3) == "0.5x");
+  CHECK(client::replaySpeedLabel(4) == "1x");
+  CHECK(client::replaySpeedLabel(6) == "4x");
   CHECK(client::replaySeekTarget(10, -300, 1800) == 0);
   CHECK(client::replaySeekTarget(1700, 300, 1800) == 1800);
   CHECK(client::replaySeekTarget(600, 300, 1800) == 900);

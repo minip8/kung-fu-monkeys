@@ -1321,7 +1321,9 @@ struct ReplayBarLayout {
   l.playW = std::max(
       {replayButtonWidth("Watch again"), replayButtonWidth("Pause"), replayButtonWidth("Play")});
   l.stepW = replayButtonWidth("Step");
-  l.speedW = replayButtonWidth("0.25x");
+  l.speedW = 0.0f;  // the widest speed label, so the bar does not shift as it cycles
+  for (std::size_t i = 0; i < kReplaySpeeds.size(); ++i)
+    l.speedW = std::max(l.speedW, replayButtonWidth(replaySpeedLabel(i).c_str()));
   l.menuW = replayButtonWidth("Main menu");
   l.timeW = textWidth(ui::kFontUi, "00:00 / 00:00");
   constexpr float kGap = ReplayBarLayout::kGap;
