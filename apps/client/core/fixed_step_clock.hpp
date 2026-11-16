@@ -46,9 +46,9 @@ class FixedStepClock {
  public:
   // One tick in accumulator units (ns × kTickHz).
   static constexpr uint64_t kTickCost = 1'000'000'000;
-  // 0.25x to 4x: the replay viewer's speeds (replay_session.hpp); the debug
+  // 0.05x to 4x: the replay viewer's speeds (replay_session.hpp); the debug
   // overlay's time-scale slider stops at 2x.
-  static constexpr double kMinTimeScale = 0.25;
+  static constexpr double kMinTimeScale = 0.05;
   static constexpr double kMaxTimeScale = 4.0;
 
   // Starts (or restarts) at nowNs with an empty accumulator. Stats, pause,

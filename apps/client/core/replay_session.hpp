@@ -43,7 +43,7 @@
 // still (loaded or sought, nothing stepped since), at the end and while
 // paused (a single step shows the tick it reached). Otherwise per the
 // interpolation policy; Auto interpolates below 1x (the ticks come slower
-// than the display: holding each would show a 0.25x replay at 15 fps) and
+// than the display: holding each would show a 0.1x replay at 6 fps) and
 // from 1x up follows MatchSession (the newest tick when the display keeps
 // up with the scaled tick rate).
 //
@@ -76,8 +76,9 @@
 namespace kfm::client {
 
 // The playback speeds, slowest first (setSpeed snaps to the nearest).
-inline constexpr std::array<double, 5> kReplaySpeeds{0.25, 0.5, 1.0, 2.0, 4.0};
-inline constexpr double kDefaultReplaySpeed = 1.0;
+inline constexpr std::array<double, 7> kReplaySpeeds{0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 4.0};
+inline constexpr std::size_t kDefaultReplaySpeedIndex = 4;
+inline constexpr double kDefaultReplaySpeed = kReplaySpeeds[kDefaultReplaySpeedIndex];
 
 // Ticks one advance() may step: 4x on a 30 Hz display. (Local play caps at
 // kDefaultMaxTicksPerFrame; a replay at 4x needs more headroom.)

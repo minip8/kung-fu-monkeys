@@ -10,6 +10,8 @@ namespace kfm::client {
 
 namespace {
 
+static_assert(ReplayStatus{}.speedIndex == kDefaultReplaySpeedIndex);
+
 using platform::InputEventKind;
 using platform::Key;
 using platform::PadButton;
@@ -214,8 +216,8 @@ const char* ReplayControls::label(ReplayControl control, const ReplayStatus& sta
     case ReplayControl::Step:
       return "Step";
     case ReplayControl::Speed: {
-      static constexpr std::array<const char*, kReplaySpeeds.size()> kLabels{"0.25x", "0.5x", "1x",
-                                                                             "2x", "4x"};
+      static constexpr std::array<const char*, kReplaySpeeds.size()> kLabels{
+          "0.05x", "0.1x", "0.25x", "0.5x", "1x", "2x", "4x"};
       return kLabels[std::min(status.speedIndex, kLabels.size() - 1)];
     }
     case ReplayControl::Timeline:
