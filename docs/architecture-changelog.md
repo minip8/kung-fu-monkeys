@@ -1843,3 +1843,16 @@ unit tests (the flags, the link, the bar's rows and focus), the `dev` ctest suit
 wasm build in headless Chromium against a stand-in ladder route: `?ladder=…&match=m1&t=1800`
 opens at 0:30, Copy link puts `…&match=m1&t=1935` on the clipboard, and the bar at 700 px
 moves Copy link up. No sim, content or wire change. Replay checksums: unchanged.
+
+v0.88 changes: the ladder's site becomes a workspace (§11 "M7 step 3 design"; ladder API v1.11
+in the bots repository, normative there). A sidebar frames every page and the signed-in `/`,
+one long page of account, tokens, teams and submissions, becomes Home, `/team`, `/submissions`,
+`/tokens` and `/account`; the portal's forms keep their routes and return to the page they
+live on. Home is a dashboard: the team's rating with its season drawn from each game's rating
+change, the match jobs running and queued (the state at render, said as such), the latest
+results, the arenas; the landing page shows the same live panels. Still askama with no
+JavaScript and the same Content-Security-Policy, so nothing on a page updates by itself.
+Considered and not taken: a ladder table and a schedule on Home (the rank is in the team's
+panel and the ladder is one link away; rounds have an interval, not a calendar); a script to
+refresh Now playing (the policy stays `default-src 'none'`). No JSON route, engine, sim,
+content or wire change. Replay checksums: unchanged.

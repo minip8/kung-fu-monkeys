@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.87 (2026-11-16), a living document: it describes the system as built and deployed,
+Status: v0.88 (2026-11-16), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -4209,6 +4209,10 @@ every hosted bot ladder converges on, sized so that growing is adding workers.
   v0.84 (ladder API v1.7) it is also the contest's public face: signed out, `/` is a landing
   page (what the contest is, the quick start, the top of the board, the latest games),
   `GET /matches` is a page for a browser as `/ladder` and `/matches/{m}` are, and
+  since v0.88 (ladder API v1.11) the site is a workspace: a sidebar over every page and one
+  page per section (`/team`, `/submissions`, `/tokens`, `/account`), with `/` the Home
+  dashboard: signed in, the team's rating over the season, the match jobs running and queued
+  as of the render (there is still no script), the latest results and the arenas; and
   **`/docs/contest` is the contest guide**, the rules of the `contest` row as an entrant needs
   them: the economy, the kit, fog and calls, the pool's arenas drawn, where each is in the
   observation, how the ladder plays it. The guide restates this repository's content, so it is
