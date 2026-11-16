@@ -57,6 +57,8 @@
     // for local development (tools/web/serve.py and the Rust lobby on 8080)
     //   kfm_client.html?lobby=ws://127.0.0.1:8080&create
     // and the room's invite is the same page with ?room=CODE (&lobby=...).
+    // Replays: ?replay=<url>, or ?match=<id> for a ladder game (&ladder=URL
+    // for a development ladder), with &t=<tick> to start there.
     const kfmConfig = window.KFM_CONFIG || {};
     const kfmQuery = new URLSearchParams(window.location.search);
     const kfmArguments = [];

@@ -226,6 +226,28 @@ TEST_CASE("replay controls: the time and speed labels", "[client][replay]") {
   CHECK(client::replayTickAt(2.0f, 1800) == 1800);
 }
 
+TEST_CASE("replay controls: Copy link is the page's, before Main menu", "[client][replay]") {
+  ReplayStatus page = kPlaying;
+  page.canCopyLink = true;
+  // Natively (no page URL) the bar has no Copy link: the focus skips it.
+  CHECK_FALSE(ReplayControls::enabled(ReplayControl::CopyLink, kPlaying));
+  CHECK(ReplayControls::activate(ReplayControl::CopyLink, kPlaying) == ReplayCommand{});
+  ReplayControls c;
+  c.setFocus(ReplayControl::Timeline);
+  (void)c.apply(ReplayKey::FocusNext, kPlaying);
+  CHECK(c.focus() == ReplayControl::MainMenu);
+  c.setFocus(ReplayControl::Timeline);
+  (void)c.apply(ReplayKey::FocusNext, page);
+  CHECK(c.focus() == ReplayControl::CopyLink);
+  CHECK(c.apply(ReplayKey::Activate, page) == ReplayCommand{.kind = Kind::CopyLink});
+  CHECK(ReplayControls::label(ReplayControl::CopyLink, page) == std::string("Copy link"));
+  page.copied = true;
+  CHECK(ReplayControls::label(ReplayControl::CopyLink, page) == std::string("Copied"));
+  // A disabled Copy link under the focus hands it to Play / Pause.
+  c.refocus(kPlaying);
+  CHECK(c.focus() == ReplayControl::PlayPause);
+}
+
 TEST_CASE("replay controls: a focused control that turns disabled hands the focus to Play",
           "[client][replay]") {
   ReplayStatus paused = kPlaying;
@@ -252,7 +274,7 @@ TEST_CASE("replay controls: a focused control that turns disabled hands the focu
   }
   SECTION("other controls are never disabled") {
     for (const ReplayControl control : ReplayControls::controls()) {
-      if (control == ReplayControl::Step) continue;
+      if (control == ReplayControl::Step || control == ReplayControl::CopyLink) continue;
       c.setFocus(control);
       c.refocus(kPlaying);
       CHECK(c.focus() == control);
@@ -290,6 +312,32 @@ TEST_CASE("replay controls: the bar takes two rows when one leaves the timeline 
   constexpr float kSwitch = 746.7f + client::kReplayMinTimelineWidth;
   CHECK_FALSE(rows(kSwitch + 0.5f).twoRows);
   CHECK(rows(kSwitch - 0.5f).twoRows);
+
+  SECTION("Copy link joins the end of the row, or moves up beside the time") {
+    // Copy link 125 px; the transport 415.5, Main menu 126.5.
+    const auto withCopy = [](float inner) {
+      return client::replayBarRows(client::ReplayBarPieces{.inner = inner,
+                                                           .transport = 415.5f,
+                                                           .time = 115.7f,
+                                                           .copy = 125.0f,
+                                                           .menu = 126.5f,
+                                                           .gap = 10.0f});
+    };
+    // One row: everything plus three gaps and Copy link's own.
+    const client::ReplayBarRows wide = withCopy(1220.0f);
+    CHECK_FALSE(wide.twoRows);
+    CHECK(wide.timeline == 1220.0f - 415.5f - 115.7f - 135.0f - 126.5f - 30.0f);
+    // Two rows, the lower one holding transport, Copy link and Main menu.
+    const client::ReplayBarRows mid = withCopy(700.0f);
+    CHECK(mid.twoRows);
+    CHECK_FALSE(mid.copyOnTop);
+    CHECK(mid.timeline == 700.0f - 115.7f - 10.0f);
+    // Two rows, Copy link up beside the time (a 700 px display's bar).
+    const client::ReplayBarRows narrow = withCopy(640.0f);
+    CHECK(narrow.twoRows);
+    CHECK(narrow.copyOnTop);
+    CHECK(narrow.timeline == 640.0f - 115.7f - 10.0f - 135.0f);
+  }
   // A display too narrow for anything still gives the timeline a width.
   CHECK(rows(10.0f).twoRows);
   CHECK(rows(10.0f).timeline == 1.0f);

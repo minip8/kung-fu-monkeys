@@ -16,9 +16,9 @@ using platform::InputEventKind;
 using platform::Key;
 using platform::PadButton;
 
-constexpr std::array<ReplayControl, 6> kControls{ReplayControl::Restart,  ReplayControl::PlayPause,
-                                                 ReplayControl::Step,     ReplayControl::Speed,
-                                                 ReplayControl::Timeline, ReplayControl::MainMenu};
+constexpr std::array<ReplayControl, 7> kControls{
+    ReplayControl::Restart,  ReplayControl::PlayPause, ReplayControl::Step,    ReplayControl::Speed,
+    ReplayControl::Timeline, ReplayControl::CopyLink,  ReplayControl::MainMenu};
 
 [[nodiscard]] std::size_t indexOf(ReplayControl c) {
   return static_cast<std::size_t>(c);
@@ -178,6 +178,8 @@ ReplayCommand ReplayControls::activate(ReplayControl control, const ReplayStatus
       return {.kind = Kind::SetSpeed, .speedIndex = (status.speedIndex + 1) % kReplaySpeeds.size()};
     case ReplayControl::Timeline:
       return {};  // the pointer seeks (scrubTo); Left / Right from the keys
+    case ReplayControl::CopyLink:
+      return {.kind = Kind::CopyLink};
     case ReplayControl::MainMenu:
       return {.kind = Kind::MainMenu};
   }
@@ -190,6 +192,7 @@ void ReplayControls::refocus(const ReplayStatus& status) {
 
 bool ReplayControls::enabled(ReplayControl control, const ReplayStatus& status) {
   if (control == ReplayControl::Step) return status.paused && !status.atEnd;
+  if (control == ReplayControl::CopyLink) return status.canCopyLink;
   return true;
 }
 
@@ -222,6 +225,8 @@ const char* ReplayControls::label(ReplayControl control, const ReplayStatus& sta
     }
     case ReplayControl::Timeline:
       return "";
+    case ReplayControl::CopyLink:
+      return status.copied ? "Copied" : "Copy link";
     case ReplayControl::MainMenu:
       return "Main menu";
   }
@@ -229,9 +234,14 @@ const char* ReplayControls::label(ReplayControl control, const ReplayStatus& sta
 }
 
 ReplayBarRows replayBarRows(const ReplayBarPieces& p) {
-  const float oneRow = p.inner - p.transport - p.time - p.menu - (3.0f * p.gap);
+  const float copy = p.copy > 0.0f ? p.copy + p.gap : 0.0f;  // with the gap after it
+  const float oneRow = p.inner - p.transport - p.time - copy - p.menu - (3.0f * p.gap);
   if (oneRow >= kReplayMinTimelineWidth) return {.twoRows = false, .timeline = oneRow};
-  return {.twoRows = true, .timeline = std::max(p.inner - p.time - p.gap, 1.0f)};
+  const float timeline = p.inner - p.time - p.gap;
+  if (p.transport + p.gap + copy + p.menu <= p.inner) {
+    return {.twoRows = true, .timeline = std::max(timeline, 1.0f)};
+  }
+  return {.twoRows = true, .copyOnTop = copy > 0.0f, .timeline = std::max(timeline - copy, 1.0f)};
 }
 
 std::string replayClock(uint32_t ticks) {
