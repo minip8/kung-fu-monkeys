@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.86 (2026-11-16), a living document: it describes the system as built and deployed,
+Status: v0.87 (2026-11-16), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -2824,11 +2824,23 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `pointerTakesFocus`): the title "Replay: <arena>, <mode>, N players"; Restart, Play/Pause,
   Step (only while paused and before the end), the speed button ("1x"; a click cycles and
   wraps), the timeline (a click or drag seeks only when the tick under the pointer changes, and
-  playback holds while the knob is held), "m:ss / m:ss", Main menu. The layout is the headless
+  playback holds while the knob is held), "m:ss / m:ss", Copy link (v0.87, in the browser only:
+  natively the page URL is empty and the bar has none), Main menu. The layout is the headless
   `replayBarRows(ReplayBarPieces)`: one row when the one-row timeline (the bar's content width
-  less the transport buttons, the time label, Main menu and three gaps) is at least
-  `kReplayMinTimelineWidth` = 240 px, else the timeline takes its own row; in the game font that
-  is one row from about 987 px of display (two rows at 800 and 852 px, one at 1024 and 1280).
+  less the transport buttons, the time label, Copy link and its gap, Main menu and three gaps)
+  is at least `kReplayMinTimelineWidth` = 240 px, else the timeline takes its own row, and when
+  the lower row cannot hold the transport, Copy link and Main menu, Copy link moves up beside
+  the time (`copyOnTop`); without Copy link that is one row from about 987 px of display (two
+  rows at 800 and 852 px, one at 1024 and 1280).
+  Links (v0.87): `?match=<id>` (`--match`) plays a ladder game's replay from
+  `<ladder>/matches/<id>/replay` (`--ladder`, default `kDefaultLadderUrl` =
+  `https://bots.kfm.minip8.com`, `?ladder=` for a development ladder), the stable route the ladder
+  serves the `.kfmr` from with `Access-Control-Allow-Origin: *`, so the link neither carries a
+  presigned URL nor expires an hour after it was handed out; `?t=<tick>` (`--t`, with
+  `--replay` or `--match`) seeks there once loaded (the end past it). Copy link copies
+  `replayShareLink(page URL, tick)`: the page's own link with every parameter kept but `t`, then
+  `t=<tick>` (none at tick 0), so a `?replay=` link stays one; the button reads "Copied" for
+  2.5 s and the link is printed on stdout.
   Keys: Space play/pause, `.` one tick (pausing first), Left/A and Right/D seek 5 s (Shift: 30
   s, clamped), `[`/`]` speed, Home restart, Escape main menu, Up/W, Down/S and Tab move the
   focus, Enter activates; pads: South activates, East/Back main menu, Start play/pause, West
@@ -4189,7 +4201,9 @@ every hosted bot ladder converges on, sized so that growing is adding workers.
   directory), `GET /teams/{t}/submissions`, `GET /submissions/{s}` (state, hash, log URL),
   `POST /teams/{t}/active` (set the active submission); `GET /ladder` (ratings, paged);
   `GET /matches?team=` and `GET /matches/{m}` (the result, the replay URL, the viewer URL
-  `https://kfm.minip8.com/<tag>/?replay=<url>`, the client feature of step 6, landed in v0.68). The portal is the
+  `https://kfm.minip8.com/<tag>/?replay=<url>`, the client feature of step 6, landed in v0.68;
+  since v0.87 `GET /matches/{m}/replay` serves the `.kfmr` itself and a game of an engine tag
+  from v0.11.0 on links `https://kfm.minip8.com/<tag>/?match=<m>`). The portal is the
   same routes rendered as HTML by the same binary (askama templates, no frontend framework):
   sign in, tokens, teams, submissions with their logs, the ladder, a match's result. Since
   v0.84 (ladder API v1.7) it is also the contest's public face: signed out, `/` is a landing

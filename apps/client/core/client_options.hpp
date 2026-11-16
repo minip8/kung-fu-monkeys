@@ -8,13 +8,19 @@
 //              [--no-frame-limit] [--mute] [--volume 0..100] [--mouse-aim on|off]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]
-//              [--screen menu|settings|online|local|paused] [--replay SRC]
+//              [--screen menu|settings|online|local|paused]
+//              [--replay SRC | --match ID [--ladder URL]] [--t TICK]
 //
 // M7 step 6: --replay SRC opens the replay viewer on a .kfmr (natively a
 // file path; in the browser a URL, which the page passes through from
 // ?replay=<url>) instead of the main menu (ReplaySession,
 // replay_session.hpp). It excludes --autostart, --connect, --room, --create
 // and --screen.
+//
+// v0.87: --match ID (the browser's ?match=ID, the ladder's short link)
+// watches a ladder game's replay: --replay <ladder>/matches/ID/replay, the
+// ladder at --ladder (default kDefaultLadderUrl). --t TICK (?t=) starts the
+// replay at that tick; the viewer's Copy link writes it (replayShareLink()).
 //
 // v0.43: --screen opens the client on that front-end screen instead of the
 // main menu (screenshots and development; --autostart and the network flags
@@ -60,6 +66,8 @@ inline constexpr std::array<const char*, 3> kRegions{"eu", "us", "asia"};
 // v0.43: the client's web page as the build knows it (the KFM_PAGE_URL
 // CMake cache variable), for a native client's invite links; usually empty.
 [[nodiscard]] const char* defaultPageUrl();
+// v0.87: the bot ladder whose /matches/{id}/replay --match fetches.
+inline constexpr const char* kDefaultLadderUrl = "https://bots.kfm.minip8.com";
 
 inline constexpr const char* kUsage =
     "usage: kfm_client [--autostart] [--bots N] [--seed S] [--players-seed S]\n"
@@ -133,7 +141,12 @@ inline constexpr const char* kUsage =
     "  --replay SRC           watch a replay (.kfmr): a file path natively, a URL in\n"
     "                         the browser (?replay=URL); it must come from this\n"
     "                         release's content. Not with --autostart, --connect,\n"
-    "                         --room, --create or --screen\n";
+    "                         --room, --create or --screen\n"
+    "  --match ID             watch a ladder game's replay (?match=ID): the replay\n"
+    "                         at <ladder>/matches/ID/replay; not with --replay\n"
+    "  --ladder URL           the ladder's http(s):// URL (default\n"
+    "                         https://bots.kfm.minip8.com)\n"
+    "  --t TICK               start the replay at this tick (?t=TICK)\n";
 
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
@@ -174,6 +187,9 @@ struct ClientOptions {
   std::string nick;                 // v0.42: --nick, valid (net::validNickname); empty = none yet
   std::string screen{"menu"};       // v0.43: --screen, the first front-end screen
   std::string replay;               // M7 step 6: --replay, a .kfmr path or URL; empty = none
+  std::string ladder{kDefaultLadderUrl};  // v0.87: --ladder, no trailing '/'
+  std::string match;                      // v0.87: --match; sets replay (ladderReplayUrl)
+  uint32_t startTick{0};                  // v0.87: --t, the replay's first tick shown
 
   // --connect, --room or --create: the client plays online from startup and
   // the lobby's Start (re)connects.
@@ -207,6 +223,17 @@ struct ClientOptions {
 // browser's own, natively defaultPageUrl()) the same link as
 // roomShareText(), else the room's code alone.
 [[nodiscard]] std::string roomInviteLink(const LobbyRoomInfo& room, std::string_view pageUrl);
+
+// v0.87: a ladder game's id as --match takes it: 1-64 characters of
+// 0-9, a-z, A-Z and '-' (the ladder's ids are UUIDs).
+[[nodiscard]] bool isMatchId(std::string_view id);
+// The ladder's replay of a game: "<ladder>/matches/<id>/replay".
+[[nodiscard]] std::string ladderReplayUrl(std::string_view ladder, std::string_view matchId);
+// What the replay viewer's Copy link copies: the page's link (`pageUrl`,
+// the browser's own) with its query kept but for `t`, then t=TICK when
+// `tick` is past 0; the fragment is dropped. Empty without a page URL
+// (natively, where the bar shows no Copy link).
+[[nodiscard]] std::string replayShareLink(std::string_view pageUrl, uint32_t tick);
 
 // A monkey name for a player who gave none (v0.42): one of a fixed list of
 // monkey species picked by `seed`, with a number 1..99 ("Bonobo 42"); always

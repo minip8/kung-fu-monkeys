@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <system_error>
@@ -32,6 +34,12 @@ constexpr std::size_t kMaxRegionLength = 16;
 [[nodiscard]] bool isWsUrl(std::string_view v) {
   return v.starts_with("ws://") || v.starts_with("wss://");
 }
+
+[[nodiscard]] bool isHttpUrl(std::string_view v) {
+  return v.starts_with("http://") || v.starts_with("https://");
+}
+
+constexpr std::size_t kMaxMatchIdLength = 64;
 
 [[nodiscard]] char upper(char c) {
   return c >= 'a' && c <= 'z' ? static_cast<char>(c - 'a' + 'A') : c;
@@ -112,6 +120,43 @@ std::string roomShareText(const LobbyRoomInfo& room, std::string_view pageUrl,
       if (param.starts_with("lobby=")) link += "&" + std::string(param);
       query.remove_prefix(amp == std::string_view::npos ? query.size() : amp + 1);
     }
+  }
+  return link;
+}
+
+bool isMatchId(std::string_view id) {
+  if (id.empty() || id.size() > kMaxMatchIdLength) return false;
+  return std::ranges::all_of(id, [](char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '-';
+  });
+}
+
+std::string ladderReplayUrl(std::string_view ladder, std::string_view matchId) {
+  return std::string(ladder) + "/matches/" + std::string(matchId) + "/replay";
+}
+
+std::string replayShareLink(std::string_view pageUrl, uint32_t tick) {
+  if (pageUrl.empty()) return {};
+  pageUrl = pageUrl.substr(0, pageUrl.find('#'));
+  const std::size_t q = pageUrl.find('?');
+  std::string link(pageUrl.substr(0, q));
+  char sep = '?';
+  if (q != std::string_view::npos) {
+    std::string_view query = pageUrl.substr(q + 1);
+    while (!query.empty()) {
+      const std::size_t amp = query.find('&');
+      const std::string_view param = query.substr(0, amp);
+      if (!param.empty() && param != "t" && !param.starts_with("t=")) {
+        link += sep;
+        link += param;
+        sep = '&';
+      }
+      query.remove_prefix(amp == std::string_view::npos ? query.size() : amp + 1);
+    }
+  }
+  if (tick > 0) {
+    link += sep;
+    link += "t=" + std::to_string(tick);
   }
   return link;
 }
@@ -381,6 +426,37 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         return false;
       }
       out.replay = args[++i];
+    } else if (arg == "--match" || arg == "--ladder") {
+      if (i + 1 >= args.size()) {
+        error = std::string(arg) + " needs a value";
+        return false;
+      }
+      std::string_view v = args[++i];
+      if (arg == "--match") {
+        if (!isMatchId(v)) {
+          error = "--match needs a ladder game's id (letters, digits and '-'), got '" +
+                  std::string(v) + "'";
+          return false;
+        }
+        out.match = v;
+      } else {
+        if (!isHttpUrl(v)) {
+          error = "--ladder needs an http:// or https:// URL, got '" + std::string(v) + "'";
+          return false;
+        }
+        while (v.ends_with('/'))
+          v.remove_suffix(1);
+        out.ladder = v;
+      }
+    } else if (arg == "--t") {
+      uint64_t tick = 0;
+      if (!value(i, tick)) return false;
+      constexpr uint64_t kMaxTick = std::numeric_limits<uint32_t>::max();
+      if (tick > kMaxTick) {
+        error = "--t needs a tick of at most " + std::to_string(kMaxTick);
+        return false;
+      }
+      out.startTick = static_cast<uint32_t>(tick);
     } else if (arg == "--create") {
       out.create = true;
     } else if (arg == "--spectate") {
@@ -397,6 +473,17 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
       error = "unknown argument '" + std::string(arg) + "'";
       return false;
     }
+  }
+  if (!out.match.empty()) {
+    if (!out.replay.empty()) {
+      error = "--match and --replay exclude each other";
+      return false;
+    }
+    out.replay = ladderReplayUrl(out.ladder, out.match);
+  }
+  if (out.startTick > 0 && !out.replayMode()) {
+    error = "--t starts a replay: it needs --replay or --match";
+    return false;
   }
   if (out.replayMode()) {
     const char* other = nullptr;

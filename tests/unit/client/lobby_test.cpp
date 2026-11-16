@@ -867,6 +867,66 @@ TEST_CASE("mouse aim: flag, browser query, settings round trip", "[client][lobby
   CHECK(saved.mouseAim);
 }
 
+TEST_CASE("client flags: --match, --ladder and --t", "[client][lobby][options]") {
+  std::string error;
+  // The browser passes ?match=ID&t=TICK through as --match ID --t TICK.
+  ClientOptions o;
+  REQUIRE(parse({"--match", "0193f2a1-7c3e-7b1a-9d2e-5f6a7b8c9d0e", "--t", "4521"}, o, error));
+  CHECK(o.replayMode());
+  CHECK(o.replay ==
+        "https://bots.kfm.minip8.com/matches/0193f2a1-7c3e-7b1a-9d2e-5f6a7b8c9d0e/replay");
+  CHECK(o.startTick == 4521);
+  ClientOptions dev;
+  REQUIRE(parse({"--ladder", "http://127.0.0.1:8090/", "--match", "m1"}, dev, error));
+  CHECK(dev.replay == "http://127.0.0.1:8090/matches/m1/replay");
+  CHECK(dev.startTick == 0);
+  ClientOptions file;
+  REQUIRE(parse({"--t", "60", "--replay", "a.kfmr"}, file, error));
+  CHECK(file.startTick == 60);
+
+  // A fresh ClientOptions per case: a refused parse leaves what it read.
+  const auto refused = [&](const std::vector<const char*>& argv) {
+    ClientOptions c;
+    return !parse(argv, c, error);
+  };
+  CHECK(refused({"--match", "../x"}));
+  CHECK(error.find("--match") != std::string::npos);
+  CHECK(refused({"--match", ""}));
+  CHECK(refused({"--match", "m1", "--replay", "a.kfmr"}));
+  CHECK(error.find("exclude") != std::string::npos);
+  CHECK(refused({"--ladder", "ftp://x", "--match", "m1"}));
+  CHECK(error.find("--ladder") != std::string::npos);
+  CHECK(refused({"--t", "60"}));
+  CHECK(error.find("--t") != std::string::npos);
+  CHECK(refused({"--match", "m1", "--t", "4294967296"}));
+  CHECK(refused({"--match", "m1", "--t", "-1"}));
+  CHECK(refused({"--match", "m1", "--autostart"}));
+  CHECK(client::isMatchId("0193f2a1-7c3e-7b1a-9d2e-5f6a7b8c9d0e"));
+  CHECK_FALSE(client::isMatchId(std::string(65, 'a')));
+  CHECK_FALSE(client::isMatchId("a/b"));
+  CHECK_FALSE(client::isMatchId("a?b"));
+}
+
+TEST_CASE("client flags: the replay viewer's Copy link", "[client][lobby][options]") {
+  using client::replayShareLink;
+  CHECK(replayShareLink("", 600).empty());  // natively: no page
+  CHECK(replayShareLink("https://kfm.minip8.com/v0.11.0/?match=m1", 600) ==
+        "https://kfm.minip8.com/v0.11.0/?match=m1&t=600");
+  // The link's own t is replaced; at tick 0 it goes.
+  CHECK(replayShareLink("https://kfm.minip8.com/v0.11.0/?match=m1&t=90", 600) ==
+        "https://kfm.minip8.com/v0.11.0/?match=m1&t=600");
+  CHECK(replayShareLink("https://kfm.minip8.com/v0.11.0/?t=90&match=m1", 0) ==
+        "https://kfm.minip8.com/v0.11.0/?match=m1");
+  // Other parameters stay (a long ?replay= link, a development ladder);
+  // a key that merely starts with t stays too; the fragment goes.
+  CHECK(replayShareLink(
+            "http://127.0.0.1:8000/kfm_client.html?ladder=http://x&match=m1&theme=dark#a", 5) ==
+        "http://127.0.0.1:8000/kfm_client.html?ladder=http://x&match=m1&theme=dark&t=5");
+  CHECK(replayShareLink("https://kfm.minip8.com/?replay=https%3A%2F%2Fb%2Fr.kfmr%3Fsig%3D1", 7) ==
+        "https://kfm.minip8.com/?replay=https%3A%2F%2Fb%2Fr.kfmr%3Fsig%3D1&t=7");
+  CHECK(replayShareLink("https://kfm.minip8.com/", 7) == "https://kfm.minip8.com/?t=7");
+}
+
 TEST_CASE("client flags: --replay and what it excludes", "[client][lobby][options]") {
   ClientOptions o;
   std::string error;

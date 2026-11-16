@@ -1821,3 +1821,25 @@ glides rather than stepping. Considered and not taken: a free speed slider (the 
 the button and keys simple, and single step covers anything slower). No sim, content or wire
 change. Verified: the client unit tests (new label, snap and clamp cases) and the `dev` ctest
 suite on GCC 15, clang-format and clang-tidy clean. Replay checksums: unchanged.
+
+v0.87 changes: short replay links and Copy link in the replay viewer (§7 "Replay viewer", §11).
+A ladder game's viewer link was `https://kfm.minip8.com/<tag>/?replay=<presigned URL,
+URL-encoded>`: several hundred characters of signature, and dead an hour after the match page
+handed it out. The client now takes `?match=<id>` (`--match`, an id of letters, digits and
+`-`), which fetches `<ladder>/matches/<id>/replay` (`--ladder`, default
+`https://bots.kfm.minip8.com`): the bots repository's new route (ladder API v1.10), which reads the object from
+the store and serves it with `Access-Control-Allow-Origin: *` (the replay is public, and a
+redirect to the bucket would not do: a cross-origin redirect makes the browser send
+`Origin: null`, which the bucket's rule for `https://kfm.minip8.com` refuses). `?t=<tick>`
+(`--t`) opens the replay at that tick. The bar gains Copy link (the browser only), which copies
+the page's link with `t=` set to the tick on screen (`replayShareLink`), any other parameter
+kept; on a narrow bar it moves up beside the time rather than push Main menu off the row. The
+ladder links `?match=` for games of engine tags from v0.11.0 on and keeps `?replay=` for older
+ones, whose client stops at an unknown flag. Considered and not taken: a link with no engine
+tag (the root page would have to ask the ladder for the game's tag and load another release's
+client; the tag stays in the path); the tick in seconds (a tick is exact and what the
+timeline shows); a client-side redirect follow (see the `Origin: null` above). Verified: client
+unit tests (the flags, the link, the bar's rows and focus), the `dev` ctest suite, and the
+wasm build in headless Chromium against a stand-in ladder route: `?ladder=…&match=m1&t=1800`
+opens at 0:30, Copy link puts `…&match=m1&t=1935` on the clipboard, and the bar at 700 px
+moves Copy link up. No sim, content or wire change. Replay checksums: unchanged.

@@ -1299,6 +1299,7 @@ struct ReplayBarLayout {
   float playW{0.0f};
   float stepW{0.0f};
   float speedW{0.0f};
+  float copyW{0.0f};  // 0: no Copy link (no page URL)
   float menuW{0.0f};
   float timeW{0.0f};
   ReplayBarRows rows{};
@@ -1311,7 +1312,7 @@ struct ReplayBarLayout {
   return textWidth(ReplayBarLayout::kSize, text) + (2.0f * (padX + ui::kButtonBorder));
 }
 
-[[nodiscard]] ReplayBarLayout replayBarLayout(bool titled) {
+[[nodiscard]] ReplayBarLayout replayBarLayout(bool titled, bool copyLink) {
   ReplayBarLayout l;
   const ImVec2 display = ImGui::GetIO().DisplaySize;
   l.faceH = ui::bigButtonHeight(ReplayBarLayout::kSize);
@@ -1324,6 +1325,7 @@ struct ReplayBarLayout {
   l.speedW = 0.0f;  // the widest speed label, so the bar does not shift as it cycles
   for (std::size_t i = 0; i < kReplaySpeeds.size(); ++i)
     l.speedW = std::max(l.speedW, replayButtonWidth(replaySpeedLabel(i).c_str()));
+  l.copyW = copyLink ? std::max(replayButtonWidth("Copy link"), replayButtonWidth("Copied")) : 0.0f;
   l.menuW = replayButtonWidth("Main menu");
   l.timeW = textWidth(ui::kFontUi, "00:00 / 00:00");
   constexpr float kGap = ReplayBarLayout::kGap;
@@ -1331,6 +1333,7 @@ struct ReplayBarLayout {
       ReplayBarPieces{.inner = l.width - (2.0f * ReplayBarLayout::kPad),
                       .transport = l.restartW + l.playW + l.stepW + l.speedW + (3.0f * kGap),
                       .time = l.timeW,
+                      .copy = l.copyW,
                       .menu = l.menuW,
                       .gap = kGap});
   l.titleH = titled ? ui::kFontSmall + 6.0f : 0.0f;
@@ -1341,8 +1344,8 @@ struct ReplayBarLayout {
 
 }  // namespace
 
-float replayBarInset(bool titled) {
-  return replayBarLayout(titled).height + ReplayBarLayout::kMargin + ui::kPanelDrop;
+float replayBarInset(bool titled, bool copyLink) {
+  return replayBarLayout(titled, copyLink).height + ReplayBarLayout::kMargin + ui::kPanelDrop;
 }
 
 ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& view) {
@@ -1350,7 +1353,7 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
   const ReplayStatus& s = view.status;
   controls.refocus(s);  // Step disabled under the focus: Play / Pause has it
   const ImVec2 display = ImGui::GetIO().DisplaySize;
-  const ReplayBarLayout layout = replayBarLayout(!view.title.empty());
+  const ReplayBarLayout layout = replayBarLayout(!view.title.empty(), s.canCopyLink);
   constexpr float kMargin = ReplayBarLayout::kMargin;
   constexpr float kPad = ReplayBarLayout::kPad;
   constexpr float kRowGap = ReplayBarLayout::kRowGap;
@@ -1387,6 +1390,10 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
       ImGui::Dummy(ImVec2(1.0f, titleH - ImGui::GetStyle().ItemSpacing.y));
     }
     const float menuW = layout.menuW;
+    // Copy link (when shown, and not moved up beside the time) and Main
+    // menu, at the row's end.
+    const bool copyBelow = s.canCopyLink && !layout.rows.copyOnTop;
+    const float endW = copyBelow ? layout.copyW + ReplayBarLayout::kGap + menuW : menuW;
     const float timeW = layout.timeW;
     const std::string time = replayTimeLabel(s.tick, s.tickCount);
     const auto button = [&](ReplayControl c, float w, ui::Tone tone) {
@@ -1397,6 +1404,13 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
         out.command = ReplayControls::activate(c, s);
       }
       if (enabled && ui::pointerTakesFocus()) controls.setFocus(c);
+    };
+    const auto menuButtons = [&] {
+      if (copyBelow) {
+        button(ReplayControl::CopyLink, layout.copyW, ui::Tone::Plain);
+        ImGui::SameLine();
+      }
+      button(ReplayControl::MainMenu, menuW, ui::Tone::Plain);
     };
     const auto timeText = [&] {
       const ImVec2 at = ImGui::GetCursorScreenPos();
@@ -1419,11 +1433,15 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
       drawReplayTimeline(controls, s, layout.rows.timeline, faceH, out);
       ImGui::SameLine();
       timeText();
+      if (layout.rows.copyOnTop) {
+        ImGui::SameLine();
+        button(ReplayControl::CopyLink, layout.copyW, ui::Tone::Plain);
+      }
       transport();
       ImGui::SameLine();
       const float rest = ImGui::GetContentRegionAvail().x;
-      if (rest > menuW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + rest - menuW);
-      button(ReplayControl::MainMenu, menuW, ui::Tone::Plain);
+      if (rest > endW) ImGui::SetCursorPosX(ImGui::GetCursorPosX() + rest - endW);
+      menuButtons();
     } else {
       transport();
       ImGui::SameLine();
@@ -1431,7 +1449,7 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
       ImGui::SameLine();
       timeText();
       ImGui::SameLine();
-      button(ReplayControl::MainMenu, menuW, ui::Tone::Plain);
+      menuButtons();
     }
   }
   ImGui::End();

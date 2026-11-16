@@ -8,7 +8,8 @@
 // which restarts), Step (one tick, only while paused and before the end),
 // Speed ("1x"; a click cycles kReplaySpeeds, wrapping), the timeline
 // (0..tickCount; a click or a drag seeks), the time "m:ss / m:ss" (60 ticks
-// a second), Main menu.
+// a second), Copy link (v0.87: only with a page URL, i.e. in the browser;
+// the page's link at the current tick, replayShareLink()), Main menu.
 //
 // Keys (translate()):
 //   Space            play / pause (at the end: watch again)
@@ -42,7 +43,15 @@ namespace kfm::client {
 inline constexpr uint32_t kReplaySeekShortTicks = 5 * sim::kTickHz;  // Left / Right
 inline constexpr uint32_t kReplaySeekLongTicks = 30 * sim::kTickHz;  // with Shift
 
-enum class ReplayControl : uint8_t { Restart = 0, PlayPause, Step, Speed, Timeline, MainMenu };
+enum class ReplayControl : uint8_t {
+  Restart = 0,
+  PlayPause,
+  Step,
+  Speed,
+  Timeline,
+  CopyLink,
+  MainMenu
+};
 
 // What the bar shows of the session (copied from ReplaySession each frame).
 struct ReplayStatus {
@@ -51,6 +60,8 @@ struct ReplayStatus {
   bool paused{false};
   bool atEnd{false};
   std::size_t speedIndex{4};  // into kReplaySpeeds (kDefaultReplaySpeedIndex, 1x)
+  bool canCopyLink{false};    // the page has a URL: the bar shows Copy link
+  bool copied{false};         // a copy happened in the last seconds: "Copied"
 };
 
 // What the bar asks of the session.
@@ -63,6 +74,7 @@ struct ReplayCommand {
     SetSpeed,     // setSpeed(kReplaySpeeds[speedIndex])
     Restart,      // restart()
     MainMenu,     // leave the viewer for the main menu
+    CopyLink,     // copy replayShareLink(page, tick)
   };
   Kind kind{Kind::None};
   uint32_t tick{0};           // SeekTo: within 0..tickCount
@@ -124,7 +136,8 @@ class ReplayControls {
   [[nodiscard]] bool scrubbing() const { return scrub_.has_value(); }
 
   // The button's text: "Restart", "Pause" / "Play" / "Watch again",
-  // "Step", the speed ("1x"), "" for the timeline, "Main menu".
+  // "Step", the speed ("1x"), "" for the timeline, "Copy link" / "Copied",
+  // "Main menu".
   [[nodiscard]] static const char* label(ReplayControl control, const ReplayStatus& status);
 
  private:
@@ -135,20 +148,24 @@ class ReplayControls {
 
 // The bar's rows (hud.cpp measures the pieces in its font and draws them).
 // One row, left to right: the transport (Restart, Play / Pause, Step,
-// Speed), the timeline, the time, Main menu. When the timeline would be
+// Speed), the timeline, the time, Copy link (when shown) and Main menu. When the timeline would be
 // narrower than kReplayMinTimelineWidth there, two rows: the timeline and
-// the time above, the transport and Main menu below.
+// the time above, the transport, Copy link and Main menu below; when that
+// lower row cannot hold Copy link too, it moves up beside the time
+// (copyOnTop).
 inline constexpr float kReplayMinTimelineWidth = 240.0f;
 struct ReplayBarPieces {
   float inner{0.0f};      // the bar's content width (the display less margins and padding)
   float transport{0.0f};  // the four transport buttons with the gaps between them
   float time{0.0f};       // the "m:ss / m:ss" label
+  float copy{0.0f};       // Copy link; 0 when the bar has none
   float menu{0.0f};       // Main menu
   float gap{0.0f};        // between two items on a row
 };
 struct ReplayBarRows {
   bool twoRows{false};
-  float timeline{0.0f};  // the timeline's width on its row (at least 1)
+  bool copyOnTop{false};  // two rows: Copy link after the time, on the timeline's row
+  float timeline{0.0f};   // the timeline's width on its row (at least 1)
 };
 [[nodiscard]] ReplayBarRows replayBarRows(const ReplayBarPieces& pieces);
 

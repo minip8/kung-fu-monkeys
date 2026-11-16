@@ -112,16 +112,16 @@ struct RoomOutcome {
 // M7 step 6: the replay viewer's control bar along the bottom (the
 // ReplayControls model): Restart, Play / Pause (Watch again at the end),
 // Step, the speed, the timeline (a click or a drag seeks) with the time
-// "m:ss / m:ss", Main menu; `title` is a small line above them (the
-// replay's arena and mode). Under 820 px the timeline takes a row of its
-// own above the buttons. A window: clicks on it stay the UI's.
+// "m:ss / m:ss", Copy link (v0.87, with status.canCopyLink), Main menu;
+// `title` is a small line above them (the replay's arena and mode). Under 820 px the timeline takes
+// a row of its own above the buttons. A window: clicks on it stay the UI's.
 struct ReplayBarView {
   ReplayStatus status;
   std::string title;
 };
 // The pixels the bar takes from the bottom of the display (its margin,
-// panel and drop) for a bar with or without its title line.
-[[nodiscard]] float replayBarInset(bool titled);
+// panel and drop) for a bar with or without its title line and Copy link.
+[[nodiscard]] float replayBarInset(bool titled, bool copyLink);
 struct ReplayBarOutcome {
   ReplayCommand command;  // a click, or the timeline's seek
   bool scrubbing{false};  // the timeline is held: the app holds the playback

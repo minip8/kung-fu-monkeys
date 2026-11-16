@@ -9,7 +9,7 @@
 //              [--mute] [--volume 0..100] [--mouse-aim on|off]
 //              [--connect ws://host:port [--token T] [--spectate] [--stun URL] [--players N]]
 //              [--lobby URL] [--room CODE | --create [--region R]]
-//              [--replay SRC]
+//              [--replay SRC | --match ID [--ladder URL]] [--t TICK]
 //
 // Frame: pollEvents (ImGui first, then SDL -> InputEvent into the session)
 // -> MatchSession::advance (0..4 fixed 60 Hz ticks, inputs sampled right
@@ -103,8 +103,9 @@
 // the first Escape to leave fullscreen and the next one opens the menu.
 //
 // The replay viewer (M7 step 6, core/replay_session.hpp,
-// core/replay_controls.hpp): --replay SRC (?replay=URL in the browser)
-// opens it instead of the main menu. Natively the file is read before the
+// core/replay_controls.hpp): --replay SRC (?replay=URL in the browser), or
+// --match ID (?match=ID: the ladder's /matches/ID/replay, v0.87), opens it
+// instead of the main menu, at --t TICK (?t=) when given. Natively the file is read before the
 // first frame; in the browser an asynchronous fetch (CORS, no credentials,
 // at most kReplayMaxBytes) runs while the screen says "Loading replay…",
 // and the frame polls it. A replay that cannot be read, downloaded or
@@ -115,7 +116,8 @@
 // same RenderState builder, renderer and arena camera) under a spectator's
 // HUD (P<n> labels, no "you") and the control bar (hud.hpp
 // drawReplayBar): Restart, Play / Pause (Watch again at the end), Step,
-// the speed, the timeline and Main menu, with Space, ., Left / Right
+// the speed, the timeline, Copy link (v0.87, the browser's: the page's
+// link at the tick on screen) and Main menu, with Space, ., Left / Right
 // (Shift: 30 s), [ / ], Home and Escape. At the end it holds the last
 // frame with the final banner and scoreboard (no match-over buttons). No
 // pause menu, no hot reload, no bots; F1 shows a read-only overlay. Main
@@ -704,6 +706,9 @@ void loadReplay(App& app, std::span<const std::byte> bytes, std::uint64_t now) {
               db.arenaAt(config.arena).name.cStr(), db.modeAt(config.mode).name.cStr(),
               db.loadoutAt(config.loadout).name.cStr(), players);
   std::fflush(stdout);
+  // v0.87: --t (?t=) opens the replay at that tick (the end past it).
+  if (app.options.startTick > 0)
+    replay->seek(std::min(app.options.startTick, replay->tickCount()), now);
   app.replay = std::move(replay);
   app.replayState = ReplayLoad::Ready;
   app.replayControls = client::ReplayControls{};
@@ -748,12 +753,16 @@ void leaveReplay(App& app) {
   std::fflush(stdout);
 }
 
-[[nodiscard]] client::ReplayStatus replayStatus(const client::ReplaySession& r) {
-  return client::ReplayStatus{.tick = r.tick(),
-                              .tickCount = r.tickCount(),
-                              .paused = r.paused(),
-                              .atEnd = r.atEnd(),
-                              .speedIndex = r.speedIndex()};
+[[nodiscard]] client::ReplayStatus replayStatus(const App& app, const client::ReplaySession& r,
+                                                std::uint64_t now) {
+  return client::ReplayStatus{
+      .tick = r.tick(),
+      .tickCount = r.tickCount(),
+      .paused = r.paused(),
+      .atEnd = r.atEnd(),
+      .speedIndex = r.speedIndex(),
+      .canCopyLink = !app.pageUrl.empty(),
+      .copied = app.copiedAtNs != 0 && now - app.copiedAtNs < kCopiedShowNs};
 }
 
 void applyReplayCommand(App& app, const client::ReplayCommand& command, std::uint64_t now) {
@@ -782,6 +791,15 @@ void applyReplayCommand(App& app, const client::ReplayCommand& command, std::uin
     case Kind::Restart:
       r.restart(now);
       break;
+    case Kind::CopyLink: {
+      // v0.87: the page's link at the tick on screen (?t=), the replay's
+      // own query (?match= or ?replay=) kept.
+      const std::string link = client::replayShareLink(app.pageUrl, r.tick());
+      if (!link.empty() && app.services->copyText(link)) app.copiedAtNs = now;
+      std::printf("kfm_client: replay link %s\n", link.c_str());
+      std::fflush(stdout);
+      break;
+    }
     case Kind::None:
     case Kind::MainMenu:
       break;
@@ -809,8 +827,8 @@ void replayEvent(App& app, const platform::InputEvent& input) {
     return;
   }
   if (key == client::ReplayKey::Activate) app.audio.click();
-  applyReplayCommand(app, app.replayControls.apply(key, replayStatus(*app.replay)),
-                     platform::Window::nowNs());
+  const std::uint64_t now = platform::Window::nowNs();
+  applyReplayCommand(app, app.replayControls.apply(key, replayStatus(app, *app.replay, now)), now);
 }
 
 // App shortcuts that are not game bindings (key presses; repeats never
@@ -1352,13 +1370,13 @@ presentation::Camera replayFrame(App& app, std::uint64_t now, double dt, int w, 
   // banner and final scoreboard (overScreen stays false: no match-over
   // buttons).
   client::HudView view = client::hudView(r);
-  view.bottomInset = client::replayBarInset(!app.replayTitle.empty());
+  const client::ReplayStatus status = replayStatus(app, r, now);
+  view.bottomInset = client::replayBarInset(!app.replayTitle.empty(), status.canCopyLink);
   client::drawMatchHud(
       view,
       client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
   const client::ReplayBarOutcome bar = client::drawReplayBar(
-      app.replayControls,
-      client::ReplayBarView{.status = replayStatus(r), .title = app.replayTitle});
+      app.replayControls, client::ReplayBarView{.status = status, .title = app.replayTitle});
   if (bar.command.kind != client::ReplayCommand::Kind::None) {
     if (bar.command.kind != client::ReplayCommand::Kind::SeekTo) app.audio.click();
     applyReplayCommand(app, bar.command, now);
