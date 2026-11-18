@@ -2365,6 +2365,25 @@ C++ server library is mature. The seam makes that swap a contained change.
   own thread later.
 - Browser client: everything on the main thread inside the `requestAnimationFrame` callback, which
   works because the sim is single-threaded by design and WebRTC callbacks arrive on that thread.
+  v0.92, the background pump: a browser stops `requestAnimationFrame` for a hidden page (another
+  tab in front, the window minimised or, where the browser tracks occlusion, covered), and a
+  page's own timers then run at most once a second (Chrome: once a minute after five minutes
+  hidden, unless the page is exempt). `platform::runMainLoop` takes a fourth callback: a
+  dedicated Worker, created from a Blob URL and doing nothing but `setInterval(postMessage, 50
+  ms)`, wakes the main thread, which calls it while `document.visibilityState` is `hidden` or no
+  animation frame has run for 500 ms (`kBackgroundPumpMs`, `kBackgroundAfterMs`). Dedicated
+  workers' timers are not throttled like a hidden page's, and if no Worker can be made a page
+  interval does the same at whatever rate the browser allows (a ping a second still keeps both
+  timeouts fed). This is the one place the browser client uses a second JavaScript context, and
+  it runs no game code: every byte of the client, the network pump included, still runs on the
+  main thread, so the single-threaded design holds. The app's background callback puts the
+  `NetSession` in the background (§6.6 "A hidden client") and advances it: pump, pings, control
+  messages and a reconnect on its own; nothing is sampled, simulated or drawn. The first
+  animation frame back leaves the background. Considered and not taken: running the whole frame
+  minus rendering from the timer (a hidden tab would simulate and roll back at 60 Hz for
+  nothing, at a rate the browser may throttle anyway, and needs a resync on return regardless),
+  and audio or a Web Lock to keep the page "active" (neither stops `requestAnimationFrame`
+  from pausing).
 
 ### 6.6 Join, reconnect, resync
 
@@ -2621,8 +2640,32 @@ C++ server library is mature. The seam makes that swap a contained change.
   room code. Within the grace window the server's reservation hands back the slots, and with
   them the nickname and, mid-match, the host role; after it, or outside Playing (no
   reservation is kept there), the client joins like anyone (a free slot, a bot's slot, or the
-  queue). Both sides time a silent link out after 5 s, so of the 10 s grace about 5 s are left
-  for the button; the screen says the place is kept "for a few seconds".
+  queue). Both sides timed a silent link out after 5 s, so of the 10 s grace about 5 s were left
+  for the button; since v0.92 the session reconnects on its own first (below), and the button
+  is what is left when that gave up.
+- Reconnect on its own (v0.92): a `NetSession` that was running and lost its link for a reason
+  a new connection can fix (the cases `canReconnect()` accepts) does not wait for the button. It
+  makes the first attempt 250 ms after the drop and, after each failed one, the next 1, 2, 4,
+  then every 8 s later (`autoReconnectDelayMs`), for 60 s (`kAutoReconnectWindowMs`), each one
+  exactly the button's: a new transport for `reconnectConfig()` (the same server and token, or
+  a lobby rejoin of the same room), so within the server's grace the slots, the nickname, the
+  score and the host role come back. A lobby rejoin refused `unknown_code` is one more failed
+  attempt (the room's server may not have claimed the room back yet; the v0.76 rejoin retry
+  stays for the button). Meanwhile the phase reads Connecting, the status says what was lost
+  and that it is reconnecting ("Connection lost (no data from the server for 10 s):
+  reconnecting to room ABCDE, attempt 2 ..."), and no button is offered. When the window has
+  passed, or an attempt ends for a reason that will not change (a refusal, a bad token, a
+  closed room), the session is Disconnected with "Connection lost (…); could not reconnect:
+  <why>" and, where it can still help, the Reconnect button. The backoff starts fast because
+  most drops are seen by the server too, and the client's reconnect then lands in a reserved
+  slot; it slows to 8 s so that a long outage costs eight attempts a minute, never a flood of
+  lobby joins (whose per-address budget is 30 a minute, §13.5). Why it ended, in plain words
+  (`NetSession::lossText()`, from `NetClient::disconnectCause()`): "no data from the server for
+  10 s", "the server stopped hearing from this client", "the connection closed", "the server
+  dropped the connection" (the lobby's `closed`/`kicked`, which is how a server-side drop
+  reaches a lobby client: v0.92 words it "Dropped by the room's server (connection lost)"
+  instead of "Removed from the room by its server"), "the connection failed: <transport
+  error>"; every phase change is printed on the console (`kfm_client: ...`).
 
 ### 6.7 Authority and abuse resistance
 

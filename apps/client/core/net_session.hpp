@@ -77,6 +77,31 @@
 // rejoinRetries retries still refused, the session ends as any `unknown_code`
 // does ("Room ABCDE not found (check the code)", canReconnect() false). A
 // first join by code and every other refusal are never retried.
+//
+// Reconnect on its own (v0.92, §6.6): a session that was running and lost its
+// link for a reason a new connection can fix (the same ones canReconnect()
+// accepts) starts reconnecting at once, with no button: the first attempt
+// kAutoReconnectFirstMs after the drop, each failed one followed by the next
+// after 1, 2, 4, then every 8 s (autoReconnectDelayMs()), for
+// autoReconnectWindowMs (60 s: the server keeps the slot that long after its
+// own 15 s timeout, so every attempt in the window can land in it). The app
+// answers autoReconnectDue() exactly like the Reconnect button (a new
+// transport for reconnectConfig(), handed to reconnect()). Meanwhile the
+// phase reads Connecting, canReconnect() is false and statusText() says what
+// was lost and that it is reconnecting ("Connection lost (no data from the
+// server for 10 s): reconnecting to room ABCDE ..."); a lobby rejoin refused
+// `unknown_code` counts as a failed attempt (no separate retry). Once the
+// window has passed, or an attempt fails for a reason that will not change (a
+// refusal, a full room, a closed room), the session is Disconnected with the
+// loss in plain words and, where it still can help, the Reconnect button.
+// NetSessionConfig::autoReconnect = false keeps the v0.44 behaviour (the
+// tests of the button use it).
+//
+// The background (v0.92): setBackground(true) while the host cannot run frames
+// (a hidden browser tab, woken by the platform's background pump a few times a
+// second); advance() then only pumps the network (NetClient::setBackground),
+// nothing is sampled and the frame-rate estimate is left alone. Leaving it
+// resyncs the client with one snapshot and drops every button held before.
 #pragma once
 
 #include "kfm/net/net_client.hpp"
@@ -172,6 +197,14 @@ class ILobbyJoin {
 inline constexpr uint8_t kRejoinRetries = 4;
 inline constexpr uint32_t kRejoinRetrySpacingMs = 2'000;
 
+// v0.92: reconnecting on its own (see the header comment).
+inline constexpr uint32_t kAutoReconnectFirstMs = 250;
+inline constexpr uint32_t kAutoReconnectMaxDelayMs = 8'000;
+inline constexpr uint32_t kAutoReconnectWindowMs = 60'000;
+// The wait before attempt `attempt` (0 = the first, after the drop): 250 ms,
+// then 1, 2, 4, 8, 8, ... s.
+[[nodiscard]] uint32_t autoReconnectDelayMs(uint32_t attempt);
+
 struct NetSessionConfig {
   std::string serverLabel;           // shown in the status ("ws://host:port", the lobby URL)
   std::optional<LobbyTarget> lobby;  // set: a room through the lobby at serverLabel
@@ -184,6 +217,9 @@ struct NetSessionConfig {
   // apart (from the refusal); 0 retries: never.
   uint8_t rejoinRetries{kRejoinRetries};
   uint32_t rejoinRetrySpacingMs{kRejoinRetrySpacingMs};
+  // v0.92: reconnect a lost running session on its own, for this long.
+  bool autoReconnect{true};
+  uint32_t autoReconnectWindowMs{kAutoReconnectWindowMs};
   bool spectate{false};        // request no slots
   std::string nickname;        // v0.42: sent in Hello (Nickname::from)
   uint8_t requestedSlots{0};   // 0: one per bound lobby device (at least 1)
@@ -264,6 +300,26 @@ class NetSession {
   [[nodiscard]] bool rejoinRetryPending() const { return rejoinRetryAtNs_.has_value(); }
   // Retries made since the player's last Reconnect.
   [[nodiscard]] uint8_t rejoinRetries() const { return rejoinRetries_; }
+
+  // --- reconnect on its own (v0.92) -------------------------------------------------
+  // A lost session is reconnecting on its own (an attempt runs or waits).
+  [[nodiscard]] bool autoReconnecting() const { return auto_.has_value(); }
+  // Its next attempt is due: call reconnect() with a new transport for
+  // reconnectConfig().
+  [[nodiscard]] bool autoReconnectDue(uint64_t nowNs) const {
+    return auto_ && auto_->nextAtNs && nowNs >= *auto_->nextAtNs;
+  }
+  // Attempts started in the current (or the last) run of it.
+  [[nodiscard]] uint32_t autoAttempts() const { return autoAttempts_; }
+  // Lost sessions it brought back since the start.
+  [[nodiscard]] uint32_t autoRecoveries() const { return autoRecoveries_; }
+  // Why the running session was lost last, in plain words ("no data from
+  // the server for 10 s"), or empty.
+  [[nodiscard]] const std::string& lossText() const { return lossText_; }
+
+  // --- the background (v0.92) ------------------------------------------------------
+  void setBackground(bool background);
+  [[nodiscard]] bool background() const { return background_; }
 
   // Lobby mode: the transport's view of the lobby (see the header comment).
   // Call before the first advance(); destroyed before the owned transport.
@@ -363,6 +419,16 @@ class NetSession {
   void bindLocalSlots();
   void handleRebinds();
   void scheduleRejoinRetry(uint64_t nowNs);
+  void updateAutoReconnect(uint64_t nowNs);
+  // Whether the session's end can be helped by connecting again; with
+  // `attempt`, an unknown room counts too (a reconnect's lobby rejoin that
+  // came before the room's server claimed the room back).
+  [[nodiscard]] bool lossRetriable(bool attempt) const;
+  [[nodiscard]] std::string describeLoss() const;
+  // statusText() without the reconnect-on-its-own wording.
+  [[nodiscard]] std::string baseStatusText() const;
+  // phase() without it.
+  [[nodiscard]] NetPhase basePhase() const;
   void stepTicks(uint32_t ticks);
   void updateRates(uint64_t nowNs);
   void updateDisplayRate(uint64_t nowNs);
@@ -386,6 +452,18 @@ class NetSession {
   uint8_t rejoinRetries_{0};                 // retries since the last Reconnect
   bool retryArmed_{true};                    // this attempt's refusal may still be retried
   bool inputSuspended_{false};               // v0.46: the pause menu is open
+  struct AutoReconnect {
+    uint64_t startNs{0};
+    std::optional<uint64_t> nextAtNs;  // set: waiting for the next attempt
+  };
+  std::optional<AutoReconnect> auto_;  // v0.92
+  uint32_t autoAttempts_{0};
+  uint32_t autoRecoveries_{0};
+  bool autoGaveUp_{false};  // the last run of it ended without the session back
+  std::string lossText_;
+  std::string attemptError_;  // why the last failed attempt failed
+  bool background_{false};
+  bool skipRateSample_{false};  // the first frame back from the background
 
   std::vector<LobbyDevice> devices_;
   platform::InputSampler sampler_{};

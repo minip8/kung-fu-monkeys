@@ -414,7 +414,9 @@ TEST_CASE("disconnects: a cut link, a quit, and the lobby bindings come back", "
   Rig rig;
   const platform::InputSampler sampler =
       lobby({platform::DeviceBinding::keyboard(0), platform::DeviceBinding::keyboard(1)});
-  Rig::Session& a = rig.addSession(sampler);
+  NetSessionConfig manual;
+  manual.autoReconnect = false;  // v0.92: this is the session's end, not a reconnect
+  Rig::Session& a = rig.addSession(sampler, manual);
   Rig::Session& b = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}));
   REQUIRE(rig.runUntil([&] { return a.s->running() && b.s->running(); }, 2 * kSec));
 
@@ -445,6 +447,7 @@ TEST_CASE("reconnect from the UI: a lost session comes back with its slot and ni
   NetSessionConfig cfg;
   cfg.nickname = "Chimp";
   cfg.token = {std::byte{'t'}, std::byte{'o'}, std::byte{'k'}};
+  cfg.autoReconnect = false;  // v0.92: the button
   Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), cfg, 10 * kMs);
   NetSession& s = *r.s;
   REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
@@ -452,7 +455,7 @@ TEST_CASE("reconnect from the UI: a lost session comes back with its slot and ni
   CHECK(slots == 0b10);
   CHECK_FALSE(s.canReconnect());
 
-  // The link dies: both sides time out (5 s); the server reserves the slot.
+  // The link dies: both sides see it; the server reserves the slot.
   rig.net.cut(r.transport->self());
   REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, 7 * kSec));
   CHECK(s.canReconnect());
@@ -503,11 +506,12 @@ TEST_CASE("a session with no transport fails with the reason; one that never con
   CHECK(failed.statusText() == "Cannot connect to ws://bad: malformed URL");
 
   // A link cut before it connected: no Welcome ever comes, the client times
-  // out (ClientConfig::serverTimeoutNs, 5 s) and nothing ran.
+  // out (ClientConfig::serverTimeoutNs, 10 s) and nothing ran.
   Rig rig;
   Rig::Session& r = rig.addSession(sampler);
   rig.net.cut(r.transport->self());
-  REQUIRE(rig.runUntil([&] { return r.s->phase() == NetPhase::Disconnected; }, 6 * kSec));
+  REQUIRE(rig.runUntil([&] { return r.s->phase() == NetPhase::Disconnected; }, 11 * kSec));
+  CHECK_FALSE(r.s->autoReconnecting());  // never ran: nothing to come back to
   CHECK(r.s->statusText().find("could not reach") != std::string::npos);
 }
 
@@ -734,4 +738,131 @@ TEST_CASE("the pause menu online: the session advances, its monkey idles (v0.46)
   rig.push(s, Key::D, false);
   CHECK(rig.serverX(me) > x2 + 0.2);
   CHECK(s.client().netStats().checksumMismatches == 0);
+}
+
+// --- v0.92: reconnect on its own, the background ----------------------------------------
+
+TEST_CASE("the reconnect schedule: a quarter second, then 1, 2, 4 and every 8 s",
+          "[client][net][reconnect]") {
+  CHECK(client::autoReconnectDelayMs(0) == 250);
+  CHECK(client::autoReconnectDelayMs(1) == 1'000);
+  CHECK(client::autoReconnectDelayMs(2) == 2'000);
+  CHECK(client::autoReconnectDelayMs(3) == 4'000);
+  CHECK(client::autoReconnectDelayMs(4) == 8'000);
+  CHECK(client::autoReconnectDelayMs(40) == 8'000);
+}
+
+TEST_CASE("a lost session reconnects on its own into its slot (v0.92)",
+          "[client][net][reconnect]") {
+  Rig rig;
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  NetSessionConfig cfg;
+  cfg.nickname = "Chimp";
+  cfg.token = {std::byte{'t'}, std::byte{'o'}, std::byte{'k'}};
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), cfg, 10 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  const sim::PlayerMask slots = s.localSlots();
+
+  rig.net.cut(r.transport->self());
+  REQUIRE(rig.runUntil([&] { return s.autoReconnecting(); }, kSec));
+  CHECK(s.phase() == NetPhase::Connecting);
+  CHECK_FALSE(s.canReconnect());
+  CHECK(s.lossText() == "the connection closed");
+  CHECK(s.statusText() == "Connection lost (the connection closed): reconnecting to loopback ...");
+  const uint64_t lostAt = rig.now;
+  REQUIRE(rig.runUntil([&] { return s.autoReconnectDue(rig.now); }, kSec));
+  CHECK(rig.now - lostAt >= 250 * kMs);
+  CHECK(rig.now - lostAt < 250 * kMs + kFrameNs + kMs);
+
+  // What the app does when it is due: a new transport, the same token.
+  r.transport = &rig.net.connectClient(rig.now, link(10 * kMs), link(10 * kMs));
+  s.reconnect(r.transport, rig.now);
+  CHECK(s.reconnects() == 0);
+  CHECK(s.autoAttempts() == 1);
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  CHECK_FALSE(s.autoReconnecting());
+  CHECK(s.autoRecoveries() == 1);
+  CHECK(s.localSlots() == slots);
+  CHECK(rig.server->stats().reconnects == 1);
+  CHECK(rig.server->nickname(PlayerId{1}).view() == "Chimp");
+}
+
+TEST_CASE("reconnecting on its own backs off and gives up after its window (v0.92)",
+          "[client][net][reconnect]") {
+  Rig rig;
+  NetSessionConfig cfg;
+  cfg.token = {std::byte{'t'}};
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), cfg);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  rig.net.cut(r.transport->self());
+  REQUIRE(rig.runUntil([&] { return s.autoReconnecting(); }, kSec));
+  const uint64_t lostAt = rig.now;
+  // Every attempt finds the server unreachable: its link is cut before it
+  // connects, so it fails as a real one does, by the client's 10 s timeout
+  // (WebRtcTransport's connect timeout is 10 s too).
+  std::vector<uint64_t> dues;
+  for (;;) {
+    REQUIRE(rig.runUntil([&] { return !s.autoReconnecting() || s.autoReconnectDue(rig.now); },
+                         20 * kSec));
+    if (!s.autoReconnecting()) break;
+    dues.push_back(rig.now);
+    r.transport = &rig.net.connectClient(rig.now, link(5 * kMs), link(5 * kMs));
+    s.reconnect(r.transport, rig.now);
+    rig.net.cut(r.transport->self());
+  }
+  // 0.25, then 10 + 1, 10 + 2, 10 + 4, 10 + 8 s later; the fifth fails past 60 s.
+  REQUIRE(dues.size() == 5);
+  CHECK(dues[0] - lostAt >= 250 * kMs);
+  CHECK(dues[0] - lostAt < 300 * kMs);
+  const uint64_t timeout = net::ClientConfig{}.serverTimeoutNs;
+  for (size_t k = 1; k < dues.size(); ++k) {
+    INFO("attempt " << k);
+    const uint64_t delay = uint64_t{client::autoReconnectDelayMs(static_cast<uint32_t>(k))} * kMs;
+    CHECK(dues[k] - dues[k - 1] >= timeout + delay);
+    CHECK(dues[k] - dues[k - 1] < timeout + delay + 100 * kMs);
+  }
+  CHECK(rig.now - lostAt >= 60 * kSec);
+  CHECK(rig.now - lostAt < 70 * kSec);
+  CHECK(s.phase() == NetPhase::Disconnected);
+  CHECK(s.canReconnect());  // the button, once it gave up
+  CHECK(
+      s.statusText().starts_with("Connection lost (the connection closed); could not reconnect: "));
+  CHECK(s.autoRecoveries() == 0);
+}
+
+TEST_CASE("a session in the background holds, stays connected and resyncs on return (v0.92)",
+          "[client][net][background]") {
+  Rig rig;
+  REQUIRE(rig.server->setBot(PlayerId{0}, true));
+  NetSessionConfig cfg;
+  cfg.token = {std::byte{'b'}, std::byte{'g'}};
+  Rig::Session& r = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), cfg, 20 * kMs);
+  NetSession& s = *r.s;
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 2 * kSec));
+  rig.runFor(2 * kSec);
+  // A key held as the page is hidden: it must not keep the monkey running.
+  rig.push(s, Key::D, true);
+  rig.runFor(100 * kMs);
+  s.setBackground(true);
+  rig.push(s, Key::D, false);
+  uint32_t ticks = 0;
+  r.afterFrame = [&] { ticks += s.ticksThisFrame(); };
+  rig.runFor(30 * kSec);
+  CHECK(ticks == 0);
+  CHECK(s.running());
+  CHECK(s.client().holding());
+  CHECK(rig.server->stats().timeouts == 0);
+  CHECK(rig.server->ownerOf(PlayerId{1}).isValid());
+  const sim::InputFrame* f = rig.server->frames().get(rig.server->nextTick().plus(-1));
+  REQUIRE(f != nullptr);
+  CHECK(f->inputs[1].moveMag == 0);  // the server stood it still
+
+  s.setBackground(false);
+  REQUIRE(rig.runUntil([&] { return s.running() && !s.client().holding(); }, 2 * kSec));
+  CHECK(s.client().netStats().wakes == 1);
+  rig.runFor(500 * kMs);
+  CHECK(s.client().netStats().checksumMismatches == 0);
+  CHECK(s.displayHz() > 50.0);  // the background's pumps were not display frames
 }

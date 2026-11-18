@@ -1477,8 +1477,12 @@ bool frame(void* user) {
   if (app->reconnectRequested && app->net) reconnectNetwork(*app, now);
   app->reconnectRequested = false;
   // A rejoin refused `unknown_code` is retried for a few seconds: the room's
-  // server may not have claimed it back from a restarted lobby yet.
-  if (app->net && app->net->rejoinRetryDue(now)) reconnectNetwork(*app, now);
+  // server may not have claimed it back from a restarted lobby yet. v0.92: a
+  // lost session reconnects on its own.
+  if (app->net) app->net->setBackground(false);  // an animation frame: visible
+  if (app->net && (app->net->rejoinRetryDue(now) || app->net->autoReconnectDue(now))) {
+    reconnectNetwork(*app, now);
+  }
   app->drawWorld = true;
   presentation::Camera camera;
   if (app->net) {
@@ -1524,6 +1528,29 @@ bool frame(void* user) {
   }
   app->window.swap();
   return !lastFrame;
+}
+
+// v0.92: the browser's background pump (platform::runMainLoop) while the
+// page is hidden: no animation frames, so only the network runs (pings keep
+// the link alive, NetClient holds its timeline) and a lost session goes on
+// reconnecting. Nothing is drawn and no window event is read.
+void backgroundFrame(void* user) {
+  auto* app = static_cast<App*>(user);
+  if (!app->net) return;
+  const std::uint64_t now = platform::Window::nowNs();
+  client::NetSession& n = *app->net;
+  if (!n.background()) {
+    std::printf("kfm_client: in the background (page hidden)\n");
+    std::fflush(stdout);
+  }
+  n.setBackground(true);
+  if (n.rejoinRetryDue(now) || n.autoReconnectDue(now)) reconnectNetwork(*app, now);
+  n.advance(now);
+  if (n.phase() != app->lastNetPhase) {
+    app->lastNetPhase = n.phase();
+    std::printf("kfm_client: %s\n", n.statusText().c_str());
+    std::fflush(stdout);
+  }
 }
 
 void onExit(void* user) {
@@ -1717,6 +1744,6 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
       std::fprintf(stderr, "warning: --autostart with no players; staying in the lobby\n");
     }
   }
-  platform::runMainLoop(&app, frame, onExit);
+  platform::runMainLoop(&app, frame, onExit, backgroundFrame);
   return app.exitCode;
 }

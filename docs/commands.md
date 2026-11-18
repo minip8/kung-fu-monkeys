@@ -174,6 +174,7 @@ build/dev/apps/netsim/kfm_netsim --clients 6 --mode team_deathmatch --rtt 100 --
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
 build/dev/apps/net-probe/kfm_net_probe --connect ws://127.0.0.1:9123 --messages 300   # native end-to-end check
 python3 tools/web/check_webrtc.py --messages 200   # browser WebRtcTransport against the native probe server, headless Chromium
+python3 tools/web/check_hidden_tab.py --away 30 120 600 [--hide tab|minimize|freeze]   # v0.92: the browser client against kfm_server, the page hidden that long
 cargo run --manifest-path services/lobby/Cargo.toml -- --listen 127.0.0.1:8080 --secret dev   # the lobby service
 build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev --region eu --bots 3 [--ice-ports 40000-40099]
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
@@ -197,6 +198,12 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
   `?room=CODE`, and `config.js` next to the page supplies `lobbyUrl` and `sentryDsn` in
   production. `--verbose` prints the transport's log (ICE, DTLS, the lobby socket, every dropped
   peer).
+- Why players leave (v0.92): `kfm_server` logs `leave peer=N slots=S cause=quit|link-closed|timeout|
+  hello-timeout|replaced|shutting-down silent=MSms kept=60s|released`, and its stats line counts
+  `timeouts`, `closed`, `idle/s` (slot-ticks fed the neutral input of a silent player),
+  `early_inputs` and `stalls` (frames that found the host's clock behind; `clock stalled N ms:
+  catching up`). The client prints every phase change, including `Connection lost (why):
+  reconnecting ...` and `in the background (page hidden)`, on stdout (the browser console).
 - A real-link check needs `--exit-after-frames` in the thousands with `--no-frame-limit`:
   unpaced, the client runs hundreds of frames a second.
 - The high-RTT table of architecture §6.2: `kfm_netsim --rtt 200|300|500 --jitter 20|30 --loss

@@ -1976,6 +1976,15 @@ monkey in the match for the grace). The client side: `NetClient::setBackground()
 timeline while the host keeps pumping, and wakes with one snapshot and a run forward to the
 lead; `disconnectCause()` says which side gave up. No message changes (protocol version 8
 stays), no sim change. Replay checksums: unchanged.
+The client side (§6.5, §6.6): a lost running session reconnects on its own (250 ms after the
+drop, then 1, 2, 4 and every 8 s after each failed attempt, for 60 s, each attempt the Reconnect
+button's flow), says what was lost in plain words while it does ("Connection lost (no data
+from the server for 10 s): reconnecting to room ABCDE ..."), and only then offers the button;
+the lobby's `kicked` now reads "Dropped by the room's server (connection lost)". The browser's
+loop gains a background pump: a dedicated Worker used only as a 50 ms timer wakes the main
+thread while the page is hidden (or no animation frame ran for 500 ms), and the app then only
+pumps the session in the background; all game code stays on the main thread.
+`tools/web/check_hidden_tab.py` repeats the hidden-tab check in Chromium.
 
 v0.93 changes: the Banana Beach look (§7 "Look" and the front end), the user's pick from the
 style board ("change the default overall colour theme of the ui and the gameplay to be nicer on
