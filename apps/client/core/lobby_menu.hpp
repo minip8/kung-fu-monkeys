@@ -22,7 +22,13 @@
 // only the rows a RoomSettings carries (setRoomRows()), and v8 its Bots row
 // the server's player cap (setPlayerCap()). v0.43 moved the M6a
 // Online section (Create room, the region, Join) to the Play online screen
-// (online_menu.hpp).
+// (online_menu.hpp). v0.94: the rows show readable names (content_labels.hpp:
+// "Last Monkey Standing", not `rounds`); a row the panel does not show is
+// skipped by Up/Down (rowShown(): the read-only Teams row, whose news the
+// preview gives, and a power-up the arena's spawners cannot draw: most
+// arenas have none, so their panel has no toggles); the Mode and Loadout
+// rows skip bot-contest content (isBotMode(), isBotLoadout()) unless the
+// match already uses it.
 #pragma once
 
 #include "kfm/platform/input_event.hpp"
@@ -133,6 +139,8 @@ class LobbyMenu {
   [[nodiscard]] std::size_t focus() const { return focus_; }
   [[nodiscard]] const LobbyRow& focusedRow() const { return rows_[focus_]; }
   void setFocus(std::size_t row);
+  // v0.94: whether the panel draws row `row` (and Up/Down stop on it).
+  [[nodiscard]] bool rowShown(std::size_t row) const;
 
   [[nodiscard]] const LobbySettings& settings() const { return settings_; }
   [[nodiscard]] LobbySettings& settings() { return settings_; }

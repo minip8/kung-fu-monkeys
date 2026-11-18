@@ -1,15 +1,19 @@
 // The Play online screen as a headless model (architecture §13.5, v0.43; the
-// M6a Online section of the lobby panel moved here in M6b step 3): the
-// region with its availability (lobby protocol v1.1), Create room, the room
-// code field, Join and Back. SDL- and ImGui-free; hud.cpp draws it, main.cpp
-// asks the lobby for its regions (setRegions()) and turns a LobbyCommand
-// into a NetSession.
+// M6a Online section of the lobby panel moved here in M6b step 3): v0.94 the
+// player's name first, then the region with its availability (lobby protocol
+// v1.1), Create room, the room code field, Join and Back. SDL- and
+// ImGui-free; screens.cpp draws it, main.cpp asks the lobby for its regions
+// (setRegions()), saves the name and turns a LobbyCommand into a NetSession.
 //
 // Up/Down move the focus (wrapping), Left/Right cycle the region on the
 // Region row (also from Create room, which names it). activate() on Create
 // room or on Join with a valid code makes a command (takeCommand()); on the
-// code field, or Join without a valid code, it asks the screen to put the
-// keyboard into the field (Activation::EditCode); on Back it says so.
+// name, it asks the screen to put the keyboard into the name field
+// (Activation::EditName); on the code field, or Join without a valid code,
+// into the code field (Activation::EditCode); on Back it says so. v0.94: the
+// screen opens on the name while the player has never chosen one (the
+// random monkey name the client picked is offered and works as it is),
+// otherwise on Create room (open()).
 #pragma once
 
 #include "client_options.hpp"
@@ -43,13 +47,17 @@ struct RegionChoice {
   friend bool operator==(const RegionChoice&, const RegionChoice&) = default;
 };
 
-enum class OnlineRow : uint8_t { Region = 0, CreateRoom, Code, Join, Back };
+enum class OnlineRow : uint8_t { Name = 0, Region, CreateRoom, Code, Join, Back };
 
 class OnlineMenu {
  public:
-  enum class Activation : uint8_t { None = 0, Command, EditCode, Back };
+  enum class Activation : uint8_t { None = 0, Command, EditCode, Back, EditName };
 
   OnlineMenu();
+
+  // v0.94: a visit to the screen starts here: the focus on the name when
+  // `nameChosen` is false (a first visit), else on Create room.
+  void open(bool nameChosen);
 
   // The regions the region row cycles through: kRegions (availability
   // unknown, shown as free) until the lobby answers a regions query, then
@@ -84,6 +92,9 @@ class OnlineMenu {
   [[nodiscard]] std::optional<LobbyCommand> takeCommand();
 
   [[nodiscard]] static const char* rowLabel(OnlineRow row);
+  // v0.94: the line under the name field: why it matters, or (first visit)
+  // that the offered name is fine to keep.
+  [[nodiscard]] static const char* nameHint(bool nameChosen);
   // The region as shown: "eu", "us (no server)", a label outside the list bare.
   [[nodiscard]] std::string regionText() const;
 

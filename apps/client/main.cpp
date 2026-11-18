@@ -127,6 +127,7 @@
 #include "client_audio.hpp"
 #include "client_platform.hpp"
 #include "core/client_options.hpp"
+#include "core/content_labels.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
@@ -189,7 +190,7 @@ using client::SessionPhase;
 
 // Which front-end screen the local frame draws (v0.43); online, the
 // NetSession's phase decides instead.
-enum class Screen : std::uint8_t { Menu = 0, Settings, Online, Play, Replay };
+enum class Screen : std::uint8_t { Menu = 0, Settings, Online, Play, Replay, HowTo };
 
 // M7 step 6: where the replay viewer's bytes are.
 enum class ReplayLoad : std::uint8_t { None = 0, Loading, Ready, Failed };
@@ -234,6 +235,7 @@ struct App {
   bool pauseSoon = false;       // --screen paused: open it a moment into the match
   bool editNick = false;        // put the keyboard into the name field
   bool editCode = false;        // ... into the room code field
+  bool editOnlineName = false;  // v0.94: ... into Play online's name field
   bool menuActivate = false;    // Enter / Start on a menu screen, this frame
   bool roomChanged = false;     // the host's rows changed from the keyboard / a pad
   bool roomStart = false;       // the host's Enter on the waiting screen
@@ -567,13 +569,16 @@ void chooseMainItem(App& app, client::MainMenuItem item) {
       if (!app.services->lobbyUrl().empty()) {
         app.screen = Screen::Online;
         app.regionsQueried = false;
-        app.onlineMenu.setFocus(static_cast<std::size_t>(client::OnlineRow::CreateRoom));
+        app.onlineMenu.open(app.options.nickChosen);  // v0.94: a first visit opens on the name
       } else if (!app.options.connect.empty()) {
         app.connectRequested = true;  // --connect without a lobby: that server
       }
       break;
     case client::MainMenuItem::PlayLocal:
       app.screen = Screen::Play;
+      break;
+    case client::MainMenuItem::HowToPlay:
+      app.screen = Screen::HowTo;
       break;
     case client::MainMenuItem::Settings:
       app.screen = Screen::Settings;
@@ -607,6 +612,11 @@ void menuBack(App& app) {
 // The pause menu's choice (a click or a press).
 void choosePauseItem(App& app, client::PauseItem item) {
   app.audio.click();
+  if (item == client::PauseItem::HowToPlay) {
+    // v0.94: the controls card in the menu's place, and back.
+    app.pauseMenu.setHelp(!app.pauseMenu.helpOpen());
+    return;
+  }
   if (app.net) {
     client::closePauseMenu(app.pauseMenu, *app.net);
     if (item == client::PauseItem::LeaveRoom) app.leaveRequested = true;
@@ -697,9 +707,10 @@ void loadReplay(App& app, std::span<const std::byte> bytes, std::uint64_t now) {
   const sim::ContentDB& db = replay->content();
   const sim::MatchConfig& config = replay->matchConfig();
   const auto players = static_cast<unsigned>(std::popcount(config.players));
-  app.replayTitle = std::string("Replay: ") + db.arenaAt(config.arena).name.cStr() + ", " +
-                    db.modeAt(config.mode).name.cStr() + ", " + std::to_string(players) +
-                    (players == 1 ? " player" : " players");
+  // v0.94: the names in plain words (content_labels.hpp).
+  app.replayTitle = "Replay: " + client::modeLabel(db.modeAt(config.mode).name.view()).title +
+                    " on " + client::arenaTitle(db.arenaAt(config.arena).name.view()) + ", " +
+                    std::to_string(players) + (players == 1 ? " player" : " players");
   std::printf("kfm_client: replay %s: %u ticks (%s), arena %s, mode %s, loadout %s, %u players\n",
               app.options.replay.c_str(), replay->tickCount(),
               client::replayClock(replay->tickCount()).c_str(),
@@ -926,6 +937,13 @@ void onEvent(void* user, const SDL_Event& event) {
     // while the room waits or shows its match over.
     client::NetSession& n = *app->net;
     const client::MenuAction action = app->menuInput.translate(*input, true);
+    // v0.94: a pad's B (or Back) leaves the waiting room or a connection
+    // screen, as Escape does; the lost connection has its own buttons.
+    if (client::isMenuBack(*input) && !n.running() && !n.canReconnect() &&
+        n.phase() != client::NetPhase::Over) {
+      app->leaveRequested = true;
+      return;
+    }
     if (n.phase() == client::NetPhase::Waiting && n.isHost()) {
       // Enter is Start (the button says so), not a pick: never held back.
       if (!revealOnly(*app, action, false) && action != client::MenuAction::None &&
@@ -968,6 +986,7 @@ void onEvent(void* user, const SDL_Event& event) {
         break;
       case Screen::Play:
       case Screen::Replay:
+      case Screen::HowTo:
         break;
     }
     if (client::isMenuActivate(*input)) app->menuActivate = true;
@@ -979,6 +998,14 @@ void onEvent(void* user, const SDL_Event& event) {
   MatchSession& s = *app->session;
   const bool bound = client::eventDeviceBound(s.sampler(), *input);
   if (s.phase() == SessionPhase::Lobby) {
+    // v0.94: a joined pad's B (or Back) is the lobby's Back, as Escape; an
+    // unbound pad's press is still its join.
+    if (bound && input->kind == platform::InputEventKind::PadButtonDown &&
+        client::isMenuBack(*input)) {
+      app->screen = Screen::Menu;
+      app->audio.click();
+      return;
+    }
     // Enter / Start starts the match (the button says so): never held back.
     const client::MenuAction action = app->menuInput.translate(*input, bound);
     if (!revealOnly(*app, action, false) && action != client::MenuAction::None &&
@@ -1020,6 +1047,13 @@ bool writePpm(const std::string& path, int width, int height) {
   return static_cast<bool>(out.flush());
 }
 
+// v0.94: the How to play card for the bindings this client plays with.
+[[nodiscard]] client::HowToPlay howToPlayCard(const App& app) {
+  const platform::InputSampler& sampler = app.session->sampler();
+  return client::howToPlay(sampler.keyboardProfile(0), sampler.keyboardProfile(1),
+                           sampler.gamepadProfile(), app.lobby.settings().mouseAim);
+}
+
 // The small line in the main menu's corner: what this build speaks.
 [[nodiscard]] std::string versionLine(const App& app) {
   char text[96];
@@ -1054,6 +1088,7 @@ void menuFrame(App& app, std::uint64_t now) {
       if (out.changed) app.lobbyChanged = true;
       if (out.nickChanged) {
         app.audio.click();
+        app.options.nickChosen = true;  // v0.94
         std::printf("kfm_client: name %s\n", app.options.nick.c_str());
         std::fflush(stdout);
         saveSettings(app);
@@ -1061,12 +1096,18 @@ void menuFrame(App& app, std::uint64_t now) {
       if (out.back) menuBack(app);
       break;
     }
+    case Screen::HowTo:
+      if (client::drawHowToPlayScreen(howToPlayCard(app)) || press) menuBack(app);
+      break;
     case Screen::Online: {
       pollRegions(app, now);
       if (press) {
         switch (app.onlineMenu.activate()) {
           case client::OnlineMenu::Activation::EditCode:
             app.editCode = true;
+            break;
+          case client::OnlineMenu::Activation::EditName:
+            app.editOnlineName = true;
             break;
           case client::OnlineMenu::Activation::Back:
             menuBack(app);
@@ -1076,14 +1117,31 @@ void menuFrame(App& app, std::uint64_t now) {
             break;
         }
       }
-      const client::OnlineOutcome out =
-          client::drawOnlineScreen(app.onlineMenu, app.editCode, app.services->lobbyUrl());
+      client::OnlineFields fields{.nick = app.options.nick,
+                                  .nickChosen = app.options.nickChosen,
+                                  .editName = app.editOnlineName,
+                                  .editCode = app.editCode,
+                                  .lobby = app.services->lobbyUrl()};
+      const client::OnlineOutcome out = client::drawOnlineScreen(app.onlineMenu, fields);
       if (out.regionChanged) {
         app.lobby.settings().region = app.onlineMenu.region();
         app.lobbyChanged = true;
       }
+      if (out.nickChanged || (out.nickCommitted && !app.options.nickChosen)) {
+        // v0.94: typed (or kept) on Play online: the player's own name now.
+        app.audio.click();
+        app.options.nickChosen = true;
+        std::printf("kfm_client: name %s\n", app.options.nick.c_str());
+        std::fflush(stdout);
+        saveSettings(app);
+      }
       if (std::optional<client::LobbyCommand> cmd = app.onlineMenu.takeCommand()) {
         app.audio.click();
+        if (!app.options.nickChosen) {
+          // Going online with the offered name is choosing it.
+          app.options.nickChosen = true;
+          saveSettings(app);
+        }
         app.pendingRoom =
             client::LobbyTarget{.create = cmd->kind == client::LobbyCommand::Kind::CreateRoom,
                                 .region = cmd->region,
@@ -1148,15 +1206,23 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
       app.audio.click();
       (void)s.startMatch(now);
     }
+    if (lobby.back) {
+      app.audio.click();
+      app.screen = Screen::Menu;  // v0.94: the lobby's Back, as Escape
+    }
   } else {
     client::HudView view = client::hudView(s);
     view.overScreen = s.curr().rules.phase == sim::MatchPhase::MatchEnded;
     view.paused = view.paused && !app.pauseMenu.isOpen();  // the menu says so itself
+    // v0.94: the controls over the first countdown (keyboard + mouse).
+    view.hint =
+        client::firstRoundHint(s.sampler().keyboardProfile(0), app.lobby.settings().mouseAim);
     client::drawMatchHud(
         view,
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
     if (app.pauseMenu.isOpen()) {
-      if (const std::optional<client::PauseItem> item = client::drawPauseMenu(app.pauseMenu)) {
+      if (const std::optional<client::PauseItem> item =
+              client::drawPauseMenu(app.pauseMenu, howToPlayCard(app))) {
         choosePauseItem(app, *item);
       }
     }
@@ -1304,7 +1370,8 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
         client::HudInput{.state = &app.renderState, .camera = &camera, .uiScale = 1.0f / density});
   }
   if (app.pauseMenu.isOpen()) {
-    if (const std::optional<client::PauseItem> item = client::drawPauseMenu(app.pauseMenu)) {
+    if (const std::optional<client::PauseItem> item =
+            client::drawPauseMenu(app.pauseMenu, howToPlayCard(app))) {
       choosePauseItem(app, *item);
     }
   }
@@ -1313,6 +1380,7 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   } else if (!n.running()) {
     const client::NetStatusOutcome out = client::drawNetStatus(n, share, app.overMenu);
     applyShare(app, out.share, share, now);
+    if (out.leave) app.leaveRequested = true;  // v0.94: Cancel, as Escape
     // v0.44: Reconnect / Leave, by click or Enter on the focused one.
     std::optional<client::LostConnectionAction> pick = out.action;
     if (std::exchange(app.overActivate, false) && !pick) {
@@ -1631,6 +1699,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     // v0.43: --screen settings|online|local (screenshots, development).
     if (app.options.screen == "settings") {
       app.screen = Screen::Settings;
+    } else if (app.options.screen == "howto") {
+      app.screen = Screen::HowTo;
     } else if (app.options.screen == "local") {
       app.screen = Screen::Play;
     } else if (app.options.screen == "paused") {
@@ -1639,6 +1709,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
       app.pauseSoon = app.session->startMatch(app.lastFrameNs);
     } else if (!app.services->lobbyUrl().empty()) {
       app.screen = Screen::Online;
+      app.onlineMenu.open(app.options.nickChosen);
     }
   } else if (app.options.autostart) {
     app.screen = Screen::Play;  // straight into local play, as before the menu

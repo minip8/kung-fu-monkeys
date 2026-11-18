@@ -69,6 +69,15 @@ void footer(const char* text) {
   ImGui::PopFont();
 }
 
+// A small teal heading over a group of rows.
+void sectionLabel(const char* text) {
+  ImGui::PushFont(ui::font(ui::Face::Display), ui::kFontUi + 3.0f);
+  ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTeal));
+  ImGui::TextUnformatted(text);
+  ImGui::PopStyleColor();
+  ImGui::PopFont();
+}
+
 }  // namespace
 
 std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corner) {
@@ -216,21 +225,61 @@ SettingsOutcome drawSettingsScreen(SettingsMenu& menu, LobbySettings& settings, 
   return out;
 }
 
-OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::string& lobby) {
+OnlineOutcome drawOnlineScreen(OnlineMenu& menu, OnlineFields& fields) {
   OnlineOutcome out;
   dimBackground();
-  static std::array<char, 8> codeBuf{};  // 5 characters and the NUL, with room to spare
+  static std::array<char, 8> codeBuf{};   // 5 characters and the NUL, with room to spare
+  static std::array<char, 17> nameBuf{};  // 16 bytes and the NUL: the wire's limit
   static bool codeEditing = false;
+  static bool nameEditing = false;
   const auto at = [](OnlineRow r) { return static_cast<std::size_t>(r); };
-  if (ui::beginScreen("##online", 600.0f)) {
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (ui::beginScreen("##online", std::min(620.0f, view.x - 24.0f))) {
     ui::heading("Play online");
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTextDim));
-    ImGui::TextWrapped(
-        "Make a room and send its link or code to your friends, or join theirs. The room's "
-        "host picks the arena and the mode and starts the match.");
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
 
+    // v0.94: the name first, editable right here and saved like Settings.
+    if (!nameEditing) {
+      const std::size_t n = std::min(fields.nick.size(), nameBuf.size() - 1);
+      std::memcpy(nameBuf.data(), fields.nick.data(), n);
+      nameBuf[n] = '\0';
+    }
+    const float bigFrame = ui::bigButtonHeight(ui::kFontButton);
+    sectionLabel("Your name");
+    const ImVec2 nameMin = ImGui::GetCursorScreenPos();
+    ImGui::PushFont(ui::font(ui::Face::Display), ui::kFontButton - 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+                        ImVec2(16.0f, (bigFrame - ui::kFontButton + 4.0f) * 0.5f));
+    ImGui::SetNextItemWidth(-1.0f);
+    if (fields.editName) {
+      ImGui::SetKeyboardFocusHere();
+      fields.editName = false;
+    }
+    ui::pushFieldStyle();
+    const bool nameEnter = ImGui::InputTextWithHint(
+        "##online_name", "Your monkey name", nameBuf.data(), nameBuf.size(),
+        ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+    ui::popFieldStyle();
+    ImGui::PopStyleVar();
+    ImGui::PopFont();
+    const ImVec2 nameMax = ImGui::GetItemRectMax();
+    const bool overName = ui::pointerOverItem();
+    if (ui::pointerTakesFocus(overName) || ImGui::IsItemActivated()) {
+      menu.setFocus(at(OnlineRow::Name));
+    }
+    nameEditing = ImGui::IsItemActive();
+    if (nameEnter || ImGui::IsItemDeactivatedAfterEdit()) {
+      out.nickChanged = SettingsMenu::setNick(fields.nick, nameBuf.data());
+      out.nickCommitted = true;
+      nameEditing = false;
+    }
+    if (ui::showsFocus(menu.focusedRow() == OnlineRow::Name, overName) || nameEditing) {
+      ui::focusRing(nameMin, nameMax, ui::kRowRounding);
+    }
+    ui::bodyText(OnlineMenu::nameHint(fields.nickChosen), ui::kTextDim, ui::kFontSmall);
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
+
+    // Start a room: the region, then Create room.
+    sectionLabel("Start a room");
     const float rowH = ImGui::GetFrameHeight() + 14.0f;
     bool takesFocus = false;
     menuRow("region", menu.focusedRow() == OnlineRow::Region, rowH, takesFocus);
@@ -239,53 +288,47 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     ImGui::SetCursorPosX(x0 + 8.0f);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Region");
-    const int d = valueArrows("region_value", x0 + 230.0f, 200.0f, menu.regionText());
+    const float avail = ImGui::GetContentRegionAvail().x;
+    const float valueW = std::min(200.0f, std::max(110.0f, avail - 180.0f));
+    const float valueX = x0 + std::max(110.0f, avail - valueW - (2.0f * ImGui::GetFrameHeight()));
+    const int d = valueArrows("region_value", valueX, valueW, menu.regionText());
     if (d != 0) {
       menu.setFocus(at(OnlineRow::Region));
       out.regionChanged = menu.change(at(OnlineRow::Region), d);
     }
     ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 8.0f);
-
-    const std::string create = "Create room (" + menu.region() + ")";
+    const std::string create = "Create a room (" + menu.region() + ")";
     if (ui::bigButton(create.c_str(), menu.focusedRow() == OnlineRow::CreateRoom, -1.0f, true,
                       ui::kFontButton, ui::Tone::Lead)) {
       (void)menu.activate(at(OnlineRow::CreateRoom));
     }
     if (ui::pointerTakesFocus()) menu.setFocus(at(OnlineRow::CreateRoom));
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    ui::bodyText("You host: pick the arena and the mode, then send friends the room's link.",
+                 ui::kTextDim, ui::kFontSmall);
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
 
-    // The code field and Join on one line.
+    // Join a friend's room: the code field and Join on one line.
+    sectionLabel("Join a friend's room");
     if (!codeEditing) {
       const std::string& code = menu.code();
       const std::size_t n = std::min(code.size(), codeBuf.size() - 1);
       std::memcpy(codeBuf.data(), code.data(), n);
       codeBuf[n] = '\0';
     }
-    // The label centred on the field's taller line.
-    const float lineY = ImGui::GetCursorPosY();
-    // The field as tall as the Join button's face beside it.
-    const float bigFrame = ui::bigButtonHeight(ui::kFontButton);
-    ImGui::SetCursorPosY(lineY + ((bigFrame - ImGui::GetFrameHeight()) * 0.5f));
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("Room code");
-    ImGui::SameLine();
-    ImGui::SetCursorPosY(lineY);
     const ImVec2 fieldMin = ImGui::GetCursorScreenPos();
-    ImGui::PushFont(nullptr, ui::kFontButton);
+    ImGui::PushFont(ui::font(ui::Face::Display), ui::kFontButton);
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
-                        ImVec2(12.0f, (bigFrame - ui::kFontButton) * 0.5f));
-    ImGui::SetNextItemWidth(150.0f);
-    if (editCode) {
+                        ImVec2(16.0f, (bigFrame - ui::kFontButton) * 0.5f));
+    ImGui::SetNextItemWidth(std::min(190.0f, ImGui::GetContentRegionAvail().x * 0.45f));
+    if (fields.editCode) {
       ImGui::SetKeyboardFocusHere();
-      editCode = false;
+      fields.editCode = false;
     }
     const auto filter = [](ImGuiInputTextCallbackData* data) -> int {
       return data->EventChar >= 0x80 || !isRoomCodeChar(static_cast<char>(data->EventChar)) ? 1 : 0;
     };
     ui::pushFieldStyle();
-    const bool enter = ImGui::InputTextWithHint("##room_code", "ABCDE", codeBuf.data(), 6,
+    const bool enter = ImGui::InputTextWithHint("##room_code", "CODE", codeBuf.data(), 6,
                                                 ImGuiInputTextFlags_CharsUppercase |
                                                     ImGuiInputTextFlags_CallbackCharFilter |
                                                     ImGuiInputTextFlags_EnterReturnsTrue,
@@ -301,7 +344,7 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
     codeEditing = ImGui::IsItemActive();
     if (ImGui::IsItemEdited()) menu.setCode(codeBuf.data());
     if (ui::showsFocus(menu.focusedRow() == OnlineRow::Code, overCode) || codeEditing) {
-      ui::focusRing(fieldMin, fieldMax, ImGui::GetStyle().FrameRounding);
+      ui::focusRing(fieldMin, fieldMax, ui::kRowRounding);
     }
     if (enter) {
       menu.setCode(codeBuf.data());
@@ -314,17 +357,96 @@ OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode, const std::stri
       (void)menu.activate(at(OnlineRow::Join));
     }
     if (ui::pointerTakesFocus()) menu.setFocus(at(OnlineRow::Join));
-    ImGui::Spacing();
-    ImGui::Spacing();
+    ui::bodyText(menu.codeValid() ? "Ready: press Join."
+                                  : "Type the 5-letter code from your friend's invite.",
+                 ui::kTextDim, ui::kFontSmall);
+    ImGui::Dummy(ImVec2(0.0f, 6.0f));
     if (ui::bigButton("Back", menu.focusedRow() == OnlineRow::Back, -1.0f)) out.back = true;
     if (ui::pointerTakesFocus()) menu.setFocus(at(OnlineRow::Back));
-    const std::string where = "Lobby " + lobby +
-                              ". Left/Right: region (\"no server\": every server there is busy "
-                              "right now). Enter on Room code: type it. Esc: back.";
+    const std::string where =
+        "Up/Down: choose. Left/Right: region (\"no server\": every server there is busy right "
+        "now). Enter: type the name or the code, or press the button. Esc / B: back.  Lobby: " +
+        fields.lobby;
     footer(where.c_str());
   }
   ui::endScreen();
   return out;
+}
+
+void drawHowToPlay(const HowToPlay& card, bool backFocused, bool& back) {
+  const float full = ImGui::GetContentRegionAvail().x;
+  const bool wide = full >= 560.0f;
+  ImFont* strong = ui::font(ui::Face::Strong);
+  constexpr float kChip = ui::kFontSmall;
+  // A binding on a pale-foam chip at the cursor, as wide as its text (at
+  // most the cell), as an item.
+  const auto chip = [&](const std::string& text) {
+    const float cell = ImGui::GetContentRegionAvail().x;
+    const float w = std::min(cell, ui::textWidth(kChip, text.c_str(), ui::Face::Strong) + 16.0f);
+    const ImVec2 at = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(at, ImVec2(at.x + w, at.y + kChip + 8.0f), ui::kFoamPale, 10.0f);
+    dl->PushClipRect(at, ImVec2(at.x + w - 4.0f, at.y + kChip + 8.0f), true);
+    dl->AddText(strong, kChip, ImVec2(at.x + 8.0f, at.y + 4.0f), ui::kTealDeep, text.c_str());
+    dl->PopClipRect();
+    ImGui::Dummy(ImVec2(w, kChip + 8.0f));
+  };
+  // One row per control: the action in Lilita One with what it does under
+  // it, then its keys and its pad buttons on chips (stacked when narrow).
+  const int columns = wide ? 3 : 2;
+  if (ImGui::BeginTable("how_to_play", columns, ImGuiTableFlags_SizingStretchProp)) {
+    ImGui::TableSetupColumn("what", ImGuiTableColumnFlags_WidthStretch, wide ? 1.25f : 1.1f);
+    ImGui::TableSetupColumn("keys", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    if (wide) ImGui::TableSetupColumn("pad", ImGuiTableColumnFlags_WidthStretch, 0.7f);
+    ImGui::TableNextRow();
+    ImGui::TableNextColumn();
+    ImGui::TableNextColumn();
+    ImGui::PushFont(strong, ui::kFontSmall);
+    ImGui::TextColored(ui::vec4(ui::kTextDim), "%s", wide ? "Keyboard + mouse" : "Keys, then pad");
+    if (wide) {
+      ImGui::TableNextColumn();
+      ImGui::TextColored(ui::vec4(ui::kTextDim), "Gamepad");
+    }
+    ImGui::PopFont();
+    for (const ControlRow& r : card.rows) {
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      ImGui::PushFont(ui::font(ui::Face::Display), ui::kFontUi + 3.0f);
+      ImGui::TextColored(ui::vec4(ui::kTeal), "%s", r.action.c_str());
+      ImGui::PopFont();
+      ImGui::PushFont(nullptr, ui::kFontSmall);
+      ImGui::TextWrapped("%s", r.what.c_str());
+      ImGui::PopFont();
+      ImGui::TableNextColumn();
+      ImGui::Dummy(ImVec2(0.0f, 2.0f));
+      chip(r.keyboard);
+      if (wide) ImGui::TableNextColumn();
+      if (wide) ImGui::Dummy(ImVec2(0.0f, 2.0f));
+      chip(r.gamepad);
+    }
+    ImGui::EndTable();
+  }
+  ImGui::Spacing();
+  for (const std::string& tip : card.tips) {
+    ui::bodyText(tip.c_str(), ui::kText, ui::kFontSmall);
+  }
+  ui::bodyText(card.secondKeyboard.c_str(), ui::kTextDim, ui::kFontSmall);
+  ImGui::Spacing();
+  if (ui::bigButton("Back", backFocused, -1.0f)) back = true;
+  (void)ui::pointerTakesFocus();
+}
+
+bool drawHowToPlayScreen(const HowToPlay& card) {
+  bool back = false;
+  dimBackground();
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (ui::beginScreen("##how_to_play", std::min(780.0f, view.x - 24.0f))) {
+    ui::heading("How to play");
+    drawHowToPlay(card, true, back);
+    footer("Esc / B / Enter: back");
+  }
+  ui::endScreen();
+  return back;
 }
 
 void drawReplayLoading(const std::string& source) {

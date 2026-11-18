@@ -394,6 +394,7 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         return false;
       }
       out.nick = n.view();
+      out.nickChosen = true;
     } else if (arg == "--lobby" || arg == "--room" || arg == "--region") {
       if (i + 1 >= args.size()) {
         error = std::string(arg) + " needs a value";
@@ -430,9 +431,10 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         return false;
       }
       const std::string_view v = args[++i];
-      if (v != "menu" && v != "settings" && v != "online" && v != "local" && v != "paused") {
-        error = "--screen must be menu, settings, online, local or paused, got '" + std::string(v) +
-                "'";
+      if (v != "menu" && v != "settings" && v != "online" && v != "local" && v != "paused" &&
+          v != "howto") {
+        error = "--screen must be menu, settings, online, local, paused or howto, got '" +
+                std::string(v) + "'";
         return false;
       }
       out.screen = v;

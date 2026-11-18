@@ -90,6 +90,7 @@ std::string settingsText(const ClientOptions& options) {
   s += "theme=" + std::string(presentation::themeChoiceName(options.theme)) + "\n";
   s += std::string("mouse_aim=") + (options.mouseAim ? "on" : "off") + "\n";
   if (!options.nick.empty()) s += "nick=" + options.nick + "\n";
+  if (options.nickChosen) s += "nick_chosen=on\n";
   return s;
 }
 
@@ -191,6 +192,13 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
         warn("nick must have at least one printable character");
       } else {
         options.nick = n.view();
+      }
+    } else if (key == "nick_chosen") {
+      const std::optional<bool> on = parseOnOff(value);
+      if (on) {
+        options.nickChosen = *on;
+      } else {
+        warn("nick_chosen must be on or off");
       }
     } else {
       warn("unknown key '" + std::string(key) + "'");

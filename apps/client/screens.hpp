@@ -5,6 +5,7 @@
 // changes the same models the keyboard and pads drive through main.cpp.
 #pragma once
 
+#include "core/how_to_play.hpp"
 #include "core/lobby_settings.hpp"
 #include "core/menus.hpp"
 #include "core/online_menu.hpp"
@@ -30,15 +31,32 @@ struct SettingsOutcome {
 [[nodiscard]] SettingsOutcome drawSettingsScreen(SettingsMenu& menu, LobbySettings& settings,
                                                  std::string& nick, bool& editNick);
 
-// The region with its availability, Create room, the room code field
-// (`editCode` puts the keyboard into it) with Join, and Back. Commands go
-// to menu.takeCommand(). `lobby`: the lobby's URL, shown small.
+// v0.94: the player's name (a text field, edited in place: `editName` puts
+// the keyboard into it), then the region with its availability and Create
+// room, the room code field (`editCode`) with Join, and Back. Commands go to
+// menu.takeCommand(). `lobby`: the lobby's URL, shown small.
+struct OnlineFields {
+  std::string& nick;
+  bool nickChosen{false};
+  bool& editName;
+  bool& editCode;
+  const std::string& lobby;
+};
 struct OnlineOutcome {
   bool regionChanged{false};
+  bool nickChanged{false};    // a new valid name was committed
+  bool nickCommitted{false};  // the field was committed (changed or not): the name is chosen
   bool back{false};
 };
-[[nodiscard]] OnlineOutcome drawOnlineScreen(OnlineMenu& menu, bool& editCode,
-                                             const std::string& lobby);
+[[nodiscard]] OnlineOutcome drawOnlineScreen(OnlineMenu& menu, OnlineFields& fields);
+
+// v0.94: the How to play card (core/how_to_play.hpp) inside the current
+// window, with its Back button (`backFocused` draws it focused; a click sets
+// `back`): the pause menu shows it in its own place.
+void drawHowToPlay(const HowToPlay& card, bool backFocused, bool& back);
+// The same as a screen of its own (the main menu's How to play). True when
+// Back was clicked.
+[[nodiscard]] bool drawHowToPlayScreen(const HowToPlay& card);
 
 // M7 step 6: the replay viewer before it plays, on the jungle background
 // (no arena is drawn): "Loading replay…" with `source` small under it while

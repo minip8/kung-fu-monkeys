@@ -19,6 +19,7 @@
 //   mute=0
 //   region=eu                       (M6a: the Online section's Create room region)
 //   nick=Bonobo 42                  (v0.42: the name online; absent until there is one)
+//   nick_chosen=on                  (v0.94: the player chose it; absent for the picked one)
 //   theme=beach                     (v0.52: auto, jungle, temple or beach; cosmetic;
 //                                    v0.93: beach by default, and an older text's
 //                                    theme=auto, the old default, reads as beach)

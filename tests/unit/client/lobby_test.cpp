@@ -2,6 +2,7 @@
 // state machine, the generic menu input, the settings persistence and the
 // flag / URL parsing, headless over the shipped (embedded) content.
 #include "core/client_options.hpp"
+#include "core/content_labels.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
@@ -122,10 +123,10 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   CHECK(m.rowValue(rows[2]) == "free-for-all");
   CHECK(rows[3].kind == LobbyRowKind::Loadout);
   CHECK(m.rowLabel(rows[3]) == "Loadout");
-  CHECK(m.rowValue(rows[3]) == "base");
+  CHECK(m.rowValue(rows[3]) == "Standard");  // v0.94: base, in plain words
   for (uint8_t i = 0; i < toggles; ++i) {
     CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, toggled[i]});
-    CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[toggled[i]].name.view());
+    CHECK(m.rowLabel(rows[4 + i]) == client::powerUpTitle(db.powerUps[toggled[i]].name.view()));
   }
   CHECK(rows[rows.size() - 5].kind == LobbyRowKind::Bots);
   CHECK(rows[rows.size() - 4].kind == LobbyRowKind::BotDifficulty);
@@ -223,34 +224,47 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
     CHECK_FALSE(m.apply(MenuAction::None));
   }
   SECTION("arena cycles both ways with wrap-around") {
-    CHECK(m.rowValue(m.focusedRow()) == db.arenas[0].name.view());
+    CHECK(m.rowValue(m.focusedRow()) == "Dojo");  // v0.94: the arena's title
     CHECK(m.apply(MenuAction::Right));
     CHECK(m.settings().arena == 1);
-    CHECK(m.rowValue(m.focusedRow()) == db.arenas[1].name.view());
+    CHECK(m.rowValue(m.focusedRow()) == client::arenaTitle(db.arenas[1].name.view()));
     CHECK(m.apply(MenuAction::Left));
     CHECK(m.apply(MenuAction::Left));
     CHECK(m.settings().arena == db.arenaCount - 1);
     CHECK(m.apply(MenuAction::Right));
     CHECK(m.settings().arena == 0);
   }
-  SECTION("mode cycles") {
+  SECTION("mode cycles over the modes for people (v0.94: not the bot contests)") {
     (void)m.apply(MenuAction::Down);
     CHECK(m.focusedRow().kind == LobbyRowKind::Mode);
-    for (uint8_t i = 1; i <= db.modeCount; ++i) {
+    std::vector<uint8_t> human;
+    for (uint8_t i = 0; i < db.modeCount; ++i) {
+      if (!client::isBotMode(db.modes[i])) human.push_back(i);
+    }
+    REQUIRE(human.size() < db.modeCount);  // the shipped content has bot contests
+    for (std::size_t i = 1; i <= human.size(); ++i) {
       CHECK(m.apply(MenuAction::Right));
-      CHECK(m.settings().mode == i % db.modeCount);
+      CHECK(m.settings().mode == human[i % human.size()]);
+      CHECK_FALSE(client::isBotMode(db.modeAt(m.settings().mode)));
     }
   }
   SECTION("loadout cycles through base and content/loadouts.toml (v0.31)") {
     REQUIRE(db.loadoutCount >= 2);
     m.setFocus(rowOf(m, LobbyRowKind::Loadout));
-    for (uint8_t i = 1; i <= db.loadoutCount; ++i) {
+    // v0.94: past the loadouts only bot contests hand out (grid_1t, catcher_1t).
+    std::vector<uint8_t> human;
+    for (uint8_t i = 0; i < db.loadoutCount; ++i) {
+      if (!client::isBotLoadout(db, i)) human.push_back(i);
+    }
+    REQUIRE(human.size() < db.loadoutCount);
+    for (std::size_t i = 1; i <= human.size(); ++i) {
       CHECK(m.apply(MenuAction::Right));
-      CHECK(m.settings().loadout == i % db.loadoutCount);
-      CHECK(m.rowValue(m.focusedRow()) == db.loadoutAt(m.settings().loadout).name.view());
+      CHECK(m.settings().loadout == human[i % human.size()]);
+      CHECK(m.rowValue(m.focusedRow()) ==
+            client::loadoutTitle(db.loadoutAt(m.settings().loadout).name.view()));
     }
     CHECK(m.apply(MenuAction::Left));
-    CHECK(m.settings().loadout == db.loadoutCount - 1);
+    CHECK(m.settings().loadout == human.back());
   }
   SECTION("a power-up toggles with either direction") {
     const std::size_t row = rowOf(m, LobbyRowKind::PowerUp, 1);

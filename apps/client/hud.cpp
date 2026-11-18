@@ -1,9 +1,11 @@
 #include "hud.hpp"
 
+#include "core/content_labels.hpp"
 #include "kfm/content/app_content.hpp"
 #include "kfm/platform/input_sampler.hpp"
 #include "kfm/presentation/event_fx.hpp"
 #include "kfm/presentation/palette.hpp"
+#include "screens.hpp"
 #include "ui_style.hpp"
 
 #include <imgui.h>
@@ -11,6 +13,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
@@ -34,7 +37,6 @@ using ui::kBanana;
 using ui::kEmptyPip;
 using ui::kWhite;
 using ui::slotColor;
-using ui::slotColorVec;
 using ui::textWidth;
 
 // v0.32: a team is drawn in the palette colour of its index (team 1 red,
@@ -475,6 +477,11 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
       const int n = std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)));
       std::snprintf(text, sizeof text, "%d", n);
       centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), kBanana, text);
+      // v0.94: the controls in one line, the first round only.
+      if (!session.hint.empty() && showsFirstRoundHint(hud)) {
+        ui::pillText(dl, 16.0f, ImVec2(centre.x, centre.y + 104.0f), ui::kText,
+                     session.hint.c_str());
+      }
       break;
     }
     case HudPhase::RoundEnded: {
@@ -732,69 +739,74 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   }
 }
 
-// "Label  value" with the values lined up (a proportional font), in a
-// window or a table cell alike.
-void labelled(const char* label, const char* value) {
-  constexpr float kLabelW = 70.0f;
-  const float x = ImGui::GetCursorScreenPos().x;
-  ImGui::TextDisabled("%s", label);
-  ImGui::SameLine();
-  ImGui::SetCursorScreenPos(ImVec2(x + kLabelW, ImGui::GetCursorScreenPos().y));
-  ImGui::TextUnformatted(value);
-}
-
-// The match a config selects, as text: arena, mode with its key numbers,
-// the loadout with its abilities, the power-up set. Shared by the online
-// lobby and the local preview column.
+// The match a config selects, in plain words (v0.94, content_labels.hpp):
+// the mode's name and how to win, its numbers (modeSummary), the teams, the
+// kit with its abilities, the power-ups the arena's spawners will draw and
+// the trees. Shared by the online room and the local preview column.
 void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   const sim::ArenaDef& arena = db.arenaAt(config.arena);
   const sim::ModeDef& mode = db.modeAt(config.mode);
-  // v0.43: a proportional font, so the values line up by position.
-  const auto line = [](const char* label, const std::string& value) {
-    labelled(label, value.c_str());
-  };
-  line("Arena", arena.name.cStr());
-  line("Mode", mode.name.cStr());
+  const ModeLabel label = modeLabel(mode.name.view());
+  ImGui::PushFont(ui::font(Face::Display), ui::kFontUi + 3.0f);
+  ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTeal));
+  ImGui::TextWrapped("%s on %s", label.title.c_str(), arenaTitle(arena.name.view()).c_str());
+  ImGui::PopStyleColor();
+  ImGui::PopFont();
+  if (!label.blurb.empty()) ImGui::TextWrapped("%s", label.blurb.c_str());
+  std::string numbers = modeSummary(mode);
+  if (!numbers.empty()) numbers[0] = static_cast<char>(std::toupper(numbers[0]));
+  ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTextDim));
+  ImGui::TextWrapped("%s.", numbers.c_str());
   if (mode.teams > 0) {
-    line("Teams", std::to_string(mode.teams) + ", balanced as players join");
+    ImGui::TextWrapped("%u teams, balanced as players join.", static_cast<unsigned>(mode.teams));
   }
-  ImGui::TextWrapped("%s", modeSummary(mode).c_str());
-  line("Kit", std::string(db.loadoutAt(config.loadout).name.cStr()) + " (" +
-                  loadoutSummary(db, config.loadout) + ")");
+  ImGui::TextWrapped("Kit: %s (%s).",
+                     loadoutTitle(db.loadoutAt(config.loadout).name.view()).c_str(),
+                     loadoutSummary(db, config.loadout).c_str());
   const ArenaSpawners spawners = arenaSpawners(arena);
   if (spawners.powerUps == 0) {
-    ImGui::TextDisabled("No power-up spawners in this arena.");
+    ImGui::TextWrapped("No power-ups in this arena.");
   } else {
-    ImGui::TextWrapped("Power-ups: %s", content::powerUpListText(db, config.powerUps).c_str());
+    const uint16_t drawn = static_cast<uint16_t>(arenaPowerUps(db, arena) & config.powerUps);
+    std::string names;
+    for (uint8_t i = 0; i < db.powerUpCount && i < sim::kMaxPowerUps; ++i) {
+      if ((drawn & (1u << i)) == 0) continue;
+      if (!names.empty()) names += ", ";
+      names += powerUpTitle(db.powerUpAt(i).name.view());
+    }
+    ImGui::TextWrapped("Power-ups: %s.", names.empty() ? "all switched off" : names.c_str());
   }
   // v0.82: the trees, whatever the power-up set.
-  if (spawners.trees > 0) ImGui::TextWrapped("%s", treesText(spawners.trees).c_str());
+  if (spawners.trees > 0) ImGui::TextWrapped("%s.", treesText(spawners.trees).c_str());
+  ImGui::PopStyleColor();
 }
 
-// The local settings rows (LobbyMenu): the focused row on the focus bar,
-// a click focuses a row, the arrow buttons change it like Left/Right.
-// v0.43: compact (a smaller font and spacing) and the power-up toggles two
-// to a line, a click on one toggling it, so the lobby fits a 720p window in
-// the game font.
-bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
+// The settings rows (LobbyMenu): the focused row on the focus bar, a click
+// focuses a row, the arrow buttons change it like Left/Right. v0.43:
+// compact, and the power-up toggles two to a line, a click on one toggling
+// it. v0.94: only the rows the menu shows (LobbyMenu::rowShown()), widths
+// that follow the column (a 700 px window too), and `readOnly` for a room's
+// guest: the same rows with flat arrows and no focus, the host's to change.
+bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db, bool readOnly = false) {
   bool changed = false;
   const auto rows = menu.rows();
   constexpr float kRowFont = 17.0f;
   ImGui::PushFont(nullptr, kRowFont);
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 3.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
-  const float valueX = 150.0f;
-  const float valueW = 140.0f;
   const float full = ImGui::GetContentRegionAvail().x;
   const float frameH = ImGui::GetFrameHeight();
+  const float valueX = std::clamp(full * 0.34f, 88.0f, 140.0f);
+  const float valueW = std::max(60.0f, full - valueX - (2.0f * frameH) - 24.0f);
   int powerUpColumn = 0;
   for (std::size_t i = 0; i < rows.size(); ++i) {
+    if (!menu.rowShown(i)) continue;
     const LobbyRow& row = rows[i];
-    const bool focused = i == menu.focus();
+    const bool focused = !readOnly && i == menu.focus();
     ImGui::PushID(static_cast<int>(i));
     if (row.kind == LobbyRowKind::PowerUp) {
       if (powerUpColumn == 0) {
-        ImGui::TextDisabled("Power-ups");
+        ImGui::TextDisabled("Power-ups in this arena");
       } else if (powerUpColumn % 2 == 1) {
         ImGui::SameLine(0.0f, 8.0f);
       }
@@ -802,16 +814,16 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
       // One toggle: the colour, the name, on/off at the right.
       const float w = (full - 8.0f) * 0.5f;
       const ImVec2 min = ImGui::GetCursorScreenPos();
-      if (ImGui::InvisibleButton("##toggle", ImVec2(w, frameH))) {
+      if (ImGui::InvisibleButton("##toggle", ImVec2(w, frameH)) && !readOnly) {
         menu.setFocus(i);
         changed = menu.change(i, +1) || changed;
       }
-      if (ui::pointerTakesFocus()) menu.setFocus(i);
+      if (!readOnly && ui::pointerTakesFocus()) menu.setFocus(i);
       ImDrawList* dl = ImGui::GetWindowDrawList();
       const bool on = (menu.settings().powerUps & (1u << row.powerUp)) != 0;
       const ImVec2 max{min.x + w, min.y + frameH};
       // v0.55: highlighted by the menu's device (ui::showsFocus).
-      if (ui::showsFocus(focused, ui::pointerOverItem())) {
+      if (!readOnly && ui::showsFocus(focused, ui::pointerOverItem())) {
         ui::focusBar(min, max);
       } else {
         dl->AddRectFilled(min, max, ui::kInset, ui::kRowRounding);
@@ -819,11 +831,13 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
       const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
       dl->AddCircleFilled(ImVec2(min.x + 12.0f, min.y + (frameH * 0.5f)), 5.0f, slotColor(color));
       const float textY = min.y + ((frameH - kRowFont) * 0.5f);
+      const char* state = on ? "on" : "off";
+      const float stateW = textWidth(kRowFont, state, Face::Body);
+      dl->PushClipRect(min, ImVec2(max.x - stateW - 14.0f, max.y), true);
       dl->AddText(ImGui::GetFont(), kRowFont, ImVec2(min.x + 24.0f, textY),
                   on ? ui::kText : ui::kTextDim, menu.rowLabel(row).c_str());
-      const char* state = on ? "on" : "off";
-      dl->AddText(ImGui::GetFont(), kRowFont,
-                  ImVec2(max.x - textWidth(kRowFont, state, Face::Body) - 10.0f, textY),
+      dl->PopClipRect();
+      dl->AddText(ImGui::GetFont(), kRowFont, ImVec2(max.x - stateW - 10.0f, textY),
                   on ? ui::kTeal : ui::kTextDim, state);
       ImGui::PopID();
       continue;
@@ -834,33 +848,42 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     ImGui::PushStyleColor(ImGuiCol_Header, ui::vec4(ui::kTransparent));
     // v0.55: no hover tint of its own: the focus bar is the highlight.
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::kTransparent));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::kSand));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(readOnly ? ui::kTransparent : ui::kSand));
     if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
-                          ImVec2(0.0f, frameH))) {
+                          ImVec2(0.0f, frameH)) &&
+        !readOnly) {
       menu.setFocus(i);
     }
     ImGui::PopStyleColor(3);
     const ImVec2 barMin{min.x - 2.0f, min.y - 1.0f};
     const ImVec2 barMax{min.x + full + 2.0f, min.y + frameH + 1.0f};
-    const bool over = ui::pointerOverRect(barMin, barMax);
-    if (ui::pointerTakesFocus(over)) menu.setFocus(i);
-    if (ui::showsFocus(focused, over)) ui::focusBar(barMin, barMax);
+    const bool over = !readOnly && ui::pointerOverRect(barMin, barMax);
+    if (!readOnly && ui::pointerTakesFocus(over)) menu.setFocus(i);
+    if (!readOnly && ui::showsFocus(focused, over)) ui::focusBar(barMin, barMax);
     ImGui::SameLine(x0 + 8.0f);
     ImGui::AlignTextToFramePadding();
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(readOnly ? ui::kTextDim : ui::kText));
     ImGui::TextUnformatted(menu.rowLabel(row).c_str());
+    ImGui::PopStyleColor();
     ImGui::SameLine(x0 + valueX);
-    if (ui::arrowButton("##l", ImGuiDir_Left)) {
+    if (ui::arrowButton("##l", ImGuiDir_Left, !readOnly)) {
       menu.setFocus(i);
       changed = menu.change(i, -1) || changed;
     }
     ImGui::SameLine();
     const std::string value = menu.rowValue(row);
-    const float tw = ImGui::CalcTextSize(value.c_str()).x;
+    const float tw = std::min(valueW, ImGui::CalcTextSize(value.c_str()).x);
     const float vx = ImGui::GetCursorPosX();
     ImGui::SetCursorPosX(vx + std::max(0.0f, (valueW - tw) * 0.5f));
-    ImGui::TextUnformatted(value.c_str());
+    {
+      // The value, clipped to its slot so a long name never runs into the arrow.
+      const ImVec2 vmin = ImGui::GetCursorScreenPos();
+      ImGui::PushClipRect(vmin, ImVec2(vmin.x + tw + 2.0f, vmin.y + frameH), true);
+      ImGui::TextUnformatted(value.c_str());
+      ImGui::PopClipRect();
+    }
     ImGui::SameLine(vx + valueW);
-    if (ui::arrowButton("##r", ImGuiDir_Right)) {
+    if (ui::arrowButton("##r", ImGuiDir_Right, !readOnly)) {
       menu.setFocus(i);
       changed = menu.change(i, +1) || changed;
     }
@@ -926,6 +949,7 @@ void drawMatchHud(const HudView& view, const HudInput& in) {
 NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share,
                                ButtonMenu& buttons) {
   NetStatusOutcome out;
+  ui::menuBackdrop();
   if (ui::beginScreen("##online_status", 760.0f)) {
     const NetPhase phase = session.phase();
     const bool failed =
@@ -974,14 +998,16 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
       ImGui::Spacing();
       out.share = drawShare(share);
     }
-    ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTextDim));
     if (session.config().spectate) {
-      ImGui::TextUnformatted("Spectating: no local slots requested.");
+      ImGui::TextUnformatted("You are watching: no monkey of yours in this match.");
     } else {
-      ImGui::Text("Local players: %u (requested slots: %u)",
-                  static_cast<unsigned>(session.deviceCount()),
-                  static_cast<unsigned>(session.requestedSlots()));
+      // v0.94: in plain words.
+      const unsigned players = session.deviceCount();
+      ImGui::Text("Playing from this device: %u %s", players, players == 1 ? "monkey" : "monkeys");
     }
+    ImGui::PopStyleColor();
     // The server's match (v0.24), read-only: what it runs, and who is in
     // (a server on the M3 flow, without a room).
     if (session.configKnown() && !session.roomState()) {
@@ -1010,9 +1036,14 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
       }
       ImGui::TextDisabled("The server runs the match: no pause, step or time scale online.");
     }
+    // v0.94: a visible way back on every state but the lost connection's
+    // (which has its own Leave).
+    if (!lost) {
+      ImGui::Spacing();
+      if (ui::bigButton(failed ? "Back to the menu" : "Cancel", true, -1.0f)) out.leave = true;
+    }
     ImGui::PushFont(nullptr, ui::kFontSmall);
-    ImGui::TextDisabled("Esc: %s and go back to the menu. F1: debug overlay",
-                        failed ? "close" : "disconnect");
+    ImGui::TextDisabled("Esc / B: %s and go back to the menu.", failed ? "close" : "disconnect");
     ImGui::PopFont();
   }
   ui::endScreen();
@@ -1021,9 +1052,11 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
 
 LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
   LobbyOutcome out;
-  if (ui::beginScreen("##local_lobby", 900.0f)) {
+  ui::menuBackdrop();
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (ui::beginScreen("##local_lobby", std::min(980.0f, view.x - 24.0f))) {
     ui::heading("Local play");
-    // Player cards: who is in each slot.
+    // Who plays: the slot cards, and how to join one.
     std::array<LobbyCard, sim::kMaxPlayers> cards{};
     const bool teamMode = session.content().modeAt(menu.settings().mode).teams > 0;
     const sim::TeamSet teams = session.teams();
@@ -1047,10 +1080,17 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
       }
     }
     drawLobbyCards(cards);
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTextDim));
+    ImGui::TextWrapped(
+        "More players: press Throw or Dash on a free side of the keyboard, or any button on a "
+        "gamepad. Bots fill the slots you leave free.");
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
     const sim::PlayerMask dropped = session.droppedMask();
     for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
       if ((dropped & (1u << i)) != 0) {
-        ImGui::TextColored(slotColorVec(i), "P%u's controller disconnected",
+        ImGui::TextColored(ui::vec4(ui::kAlarm), "P%u's controller disconnected",
                            static_cast<unsigned>(i) + 1U);
       }
     }
@@ -1058,60 +1098,62 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
     ImGui::Spacing();
     const sim::ContentDB& db = session.content();
     const LobbySettings& ls = menu.settings();
-    if (ImGui::BeginTable("lobby_settings", 2, ImGuiTableFlags_SizingStretchProp)) {
-      ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.15f);
+    const sim::MatchConfig preview{.seed = session.seed(),
+                                   .arena = ls.arena,
+                                   .mode = ls.mode,
+                                   .powerUps = ls.powerUps,
+                                   .loadout = ls.loadout};
+    // Two columns from about 560 px of content: the settings, then the
+    // arena's preview with the match in words; one column under that.
+    const bool twoColumns = ImGui::GetContentRegionAvail().x >= 560.0f;
+    if (twoColumns && ImGui::BeginTable("lobby_settings", 2, ImGuiTableFlags_SizingStretchProp)) {
+      ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.1f);
       ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 1.0f);
       ImGui::TableNextColumn();
       out.changed = drawSettingsRows(menu, db);
       ImGui::TableNextColumn();
-      const sim::MatchConfig preview{.seed = session.seed(),
-                                     .arena = ls.arena,
-                                     .mode = ls.mode,
-                                     .powerUps = ls.powerUps,
-                                     .loadout = ls.loadout};
       ImGui::PushFont(nullptr, ui::kFontSmall);
       const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
-      drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps, ImVec2(w, w * 0.55f));
+      drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps, ImVec2(w, w * 0.5f));
       matchConfigText(db, preview);
-      ImGui::TextDisabled("Seed 0x%llX", static_cast<unsigned long long>(session.seed()));
       ImGui::PopFont();
       ImGui::EndTable();
+    } else if (!twoColumns) {
+      out.changed = drawSettingsRows(menu, db);
+      ImGui::Spacing();
+      ImGui::PushFont(nullptr, ui::kFontSmall);
+      matchConfigText(db, preview);
+      ImGui::PopFont();
     }
 
     ImGui::Spacing();
-    ImGui::PushFont(nullptr, ui::kFontSmall);
-    ImGui::TextUnformatted(
-        "Join: press Throw or Dash (or click) on a free keyboard side, or any button on a pad");
-    ImGui::BulletText("Throw: hold to charge (further and faster), release to throw");
-    // Settings > Mouse aim (v0.55): off, the move direction aims.
-    ImGui::BulletText(
-        "Keyboard + mouse: WASD move, %s, left click/J/Space throw, right "
-        "click/K/LShift dash, L/E ability",
-        session.sampler().mouseAimEnabled() ? "mouse aims" : "movement aims (mouse aim is off)");
-    ImGui::BulletText("Keyboard right: arrows move, ./RCtrl throw, //RShift dash, ;/' ability");
-    ImGui::BulletText(
-        "Gamepad: left stick move, right stick aim, West/RB throw, South/LB dash, North/East "
-        "ability");
-    ImGui::TextDisabled(
-        "Up/Down (W/S, d-pad, stick): choose a setting. Left/Right: change it. - / =: bots. "
-        "Esc: menu. F1: debug overlay");
-    ImGui::PopFont();
-
-    ImGui::Spacing();
+    // The one next step, and the way back, always on screen.
     const bool canStart = session.lobbyPresentMask() != 0;
-    if (ui::bigButton("Start match  (Enter / Start)", false, -1.0f, canStart, ui::kFontButton,
-                      ui::Tone::Lead)) {
+    const float backW = ui::bigButtonWidth("Back", ui::kFontButton);
+    if (ui::bigButton("Back", false, backW)) out.back = true;
+    ImGui::SameLine();
+    if (ui::bigButton("Start match", false, ImGui::GetContentRegionAvail().x, canStart,
+                      ui::kFontButton, ui::Tone::Lead)) {
       out.start = true;
     }
-    if (std::popcount(static_cast<uint32_t>(session.lobbyPresentMask())) < 2) {
-      ImGui::TextDisabled("Rounds only end with at least two monkeys: add a player or a bot.");
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTextDim));
+    if (!canStart) {
+      ImGui::TextWrapped("Nobody is in yet: join with a key or a pad, or add a bot.");
+    } else if (std::popcount(static_cast<uint32_t>(session.lobbyPresentMask())) < 2) {
+      ImGui::TextWrapped("A round needs two monkeys to end: add a player or a bot.");
     }
+    ImGui::TextWrapped(
+        "Enter / Start: start. Up/Down: choose a setting, Left/Right: change it. - / =: bots. "
+        "Esc / B: back. The controls: How to play, in the menu.");
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
   }
   ui::endScreen();
   return out;
 }
 
-// --- the online room (v0.42, restyled in v0.43) ------------------------------------------
+// --- the online room (v0.42, restyled in v0.43, v0.94) ------------------------------------
 
 RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const ShareView& share) {
   RoomOutcome out;
@@ -1119,12 +1161,14 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
   if (!room) return out;
   const bool host = session.isHost();
   const sim::ContentDB& db = session.content();
-  if (ui::beginScreen("##room", 900.0f)) {
-    if (share.code.empty()) {
-      ui::heading("Room");
-    } else {
-      out.share = drawShare(share);
-    }
+  ui::menuBackdrop();
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (ui::beginScreen("##room", std::min(980.0f, view.x - 24.0f))) {
+    // Who hosts, then the room's code and the invite, prominent.
+    const std::string hostName =
+        room->host.isValid() ? session.slotName(room->host) : std::string("the host");
+    ui::heading(host ? "Your room" : (hostName + "'s room").c_str());
+    if (!share.code.empty()) out.share = drawShare(share);
     ImGui::Spacing();
 
     // The roster (roomSlots()): the humans by name (the host's crown, you),
@@ -1136,6 +1180,7 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     const net::RoomSettings& r = room->settings;
     const std::array<RoomSlot, sim::kMaxPlayers> slots = roomSlots(*room);
     uint8_t cardCount = 0;
+    uint8_t humans = 0;
     for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
       if (slots[i] == RoomSlot::Closed) continue;
       const PlayerId slot{i};
@@ -1143,6 +1188,7 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
       c.filled = slots[i] != RoomSlot::Open;
       switch (slots[i]) {
         case RoomSlot::Human: {
+          ++humans;
           c.title = session.slotName(slot);
           c.host = room->host == slot;
           const bool you = sim::maskHas(session.localSlots(), slot);
@@ -1172,55 +1218,67 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     drawLobbyCards(cards, 5, cardCount);
     ImGui::Spacing();
 
-    // The match: the host changes it, everyone else sees it.
+    // The match: the host changes it, everyone else sees the same rows,
+    // flat, with the reason.
     const sim::MatchConfig shown{
         .arena = r.arena, .mode = r.mode, .powerUps = r.powerUps, .loadout = r.loadout};
-    if (ImGui::BeginTable("room_match", 2, ImGuiTableFlags_SizingStretchProp)) {
-      ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.15f);
+    const bool twoColumns = ImGui::GetContentRegionAvail().x >= 560.0f;
+    const auto rowsColumn = [&] {
+      if (!host) {
+        ImGui::PushFont(nullptr, ui::kFontSmall);
+        ImGui::TextColored(ui::vec4(ui::kTextDim), "Set by %s: only the host changes the match.",
+                           hostName.c_str());
+        ImGui::PopFont();
+      }
+      out.settingsChanged = drawSettingsRows(menu, db, !host) && host;
+    };
+    if (twoColumns && ImGui::BeginTable("room_match", 2, ImGuiTableFlags_SizingStretchProp)) {
+      ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.1f);
       ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 1.0f);
       ImGui::TableNextColumn();
-      if (host) {
-        out.settingsChanged = drawSettingsRows(menu, db);
-      } else {
-        matchConfigText(db, shown);
-        labelled("Bots", std::to_string(r.bots).c_str());
-      }
+      rowsColumn();
       ImGui::TableNextColumn();
       ImGui::PushFont(nullptr, ui::kFontSmall);
       const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
-      drawArenaPreview(db, db.arenaAt(r.arena), r.powerUps, ImVec2(w, w * 0.55f));
-      if (host) matchConfigText(db, shown);
+      drawArenaPreview(db, db.arenaAt(r.arena), r.powerUps, ImVec2(w, w * 0.5f));
+      matchConfigText(db, shown);
       ImGui::PopFont();
       ImGui::EndTable();
+    } else if (!twoColumns) {
+      rowsColumn();
+      ImGui::PushFont(nullptr, ui::kFontSmall);
+      matchConfigText(db, shown);
+      ImGui::PopFont();
     }
 
     ImGui::Spacing();
-    const float leaveW = 160.0f;
+    const float leaveW = ui::bigButtonWidth("Leave", ui::kFontButton);
+    if (ui::bigButton("Leave", false, leaveW)) out.leave = true;
+    ImGui::SameLine();
     if (host) {
-      if (ui::bigButton("Start match  (Enter)", true,
-                        ImGui::GetContentRegionAvail().x - leaveW - ImGui::GetStyle().ItemSpacing.x,
-                        true, ui::kFontButton, ui::Tone::Lead)) {
+      if (ui::bigButton("Start match", true, ImGui::GetContentRegionAvail().x, true,
+                        ui::kFontButton, ui::Tone::Lead)) {
         out.start = true;
       }
     } else {
-      const std::string hostName =
-          room->host.isValid() ? session.slotName(room->host) : std::string("the host");
-      const std::string line = "Waiting for " + hostName + " to start the match";
+      const std::string line = "Waiting for " + hostName + " to start";
       ImGui::PushFont(ui::font(Face::Display), ui::kFontButton);
       constexpr const char* kDots[] = {"", ".", "..", "..."};
       const auto dots = static_cast<std::size_t>(ImGui::GetTime() * 2.0) % 4;
-      ImGui::AlignTextToFramePadding();
+      ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
+                           ((ui::bigButtonHeight() - ImGui::GetFontSize()) * 0.5f));
       ImGui::TextColored(ui::vec4(ui::kTeal), "%s%s", line.c_str(), kDots[dots]);
       ImGui::PopFont();
-      ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - leaveW);
     }
-    if (host) ImGui::SameLine();
-    if (ui::bigButton("Leave", false, leaveW)) out.leave = true;
     ImGui::PushFont(nullptr, ui::kFontSmall);
-    ImGui::TextDisabled("%s", host ? "Up/Down: choose a setting. Left/Right: change it. Enter: "
-                                     "start. Esc: leave the room. F1: debug overlay"
-                                   : "The host picks the match. Esc: leave the room. F1: debug "
-                                     "overlay");
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTextDim));
+    if (host && humans < 2 && r.bots == 0) {
+      ImGui::TextWrapped("You are alone: send the link, or add bots, then Start.");
+    }
+    ImGui::TextWrapped("%s", host ? "Enter: start. Up/Down: choose a setting, Left/Right: change "
+                                    "it. Esc / B: leave the room."
+                                  : "Esc / B: leave the room.");
+    ImGui::PopStyleColor();
     ImGui::PopFont();
   }
   ui::endScreen();
@@ -1500,12 +1558,23 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
   return out;
 }
 
-std::optional<PauseItem> drawPauseMenu(PauseMenu& menu) {
+std::optional<PauseItem> drawPauseMenu(PauseMenu& menu, const HowToPlay& card) {
   std::optional<PauseItem> clicked;
   const ImVec2 display = ImGui::GetIO().DisplaySize;
   // Over the scene and the HUD (both on the background list), under the panel.
   ImGui::GetBackgroundDrawList()->AddRectFilled(ImVec2(0.0f, 0.0f), display, ui::kScrim);
-  if (ui::beginScreen("##pause_menu", 380.0f)) {
+  if (menu.helpOpen()) {
+    // v0.94: the controls card in the menu's place; Back returns to it.
+    if (ui::beginScreen("##pause_help", std::min(780.0f, display.x - 24.0f))) {
+      ui::heading("How to play");
+      bool back = false;
+      drawHowToPlay(card, true, back);
+      if (back) clicked = PauseItem::HowToPlay;
+    }
+    ui::endScreen();
+    return clicked;
+  }
+  if (ui::beginScreen("##pause_menu", 400.0f)) {
     ui::heading("Paused");
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextDisabled("%s", menu.online() ? "The match goes on: your monkey stands still."

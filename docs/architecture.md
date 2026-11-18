@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.93 (2026-11-18), a living document: it describes the system as built and deployed,
+Status: v0.94 (2026-11-18), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -2933,6 +2933,49 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   paused; Resume, Leave room online, the match running on with the local slots idle); Escape, a
   pad's East, Back or Start resumes; P and O stay the developer's pause and single step. `--autostart` and the network flags skip the menu as before;
   `--screen` opens a given screen.
+  v0.94, the usability pass (the user: "revamp the ui to make it more intuitive and easier to
+  use" and "players should be able to choose their name before they join a lobby"), after an
+  audit of every screen at 1280×720 and 700 px wide (the findings are the changelog's):
+  - Name before joining: Play online leads with "Your name", a text field prefilled with the
+    saved name and saved through the settings like Settings > Name (`OnlineRow::Name`,
+    `Activation::EditName`). The client still picks a monkey name on a first run (v0.42), so
+    Create and Join always work; the settings gain `nick_chosen=on` once the player typed a
+    name, kept the offered one by committing the field or going online with it, or passed
+    `--nick`, and until then the screen opens on the name with "We picked a monkey name for
+    you: keep it, or press Enter to type yours" (`OnlineMenu::open`). The screen groups the
+    rest as "Start a room" (region, Create a room) and "Join a friend's room" (code, Join),
+    each with one line on what happens.
+  - Plain words: `core/content_labels.{hpp,cpp}` names the content for people ("Last Monkey
+    Standing", "King of the Hill", "Dojo with Power-ups", the base kit "Standard") with a line on
+    how to win per mode; a name it does not know is prettified ("kill_rounds" would read "Kill
+    Rounds", `_1t` reads "(1-tick)"; lane B's `kill_rounds` is in the table as "Knockout
+    Rounds"). The lobby rows, the match preview, the replay bar's title and the next-match line
+    use them; the command line, the wire and the settings text keep the content names.
+  - What a human lobby offers: the Mode row skips bot-contest modes (`isBotMode`: the grid
+    with one-tick turns: `contest`, `control_1t`, `grid_rounds_1t`) and the Loadout row the
+    loadouts only those hand out (`grid_1t`, `catcher_1t`), unless the match already uses one
+    (`--mode contest` still works). The panel shows a power-up toggle only for what the arena's
+    spawners can draw (`arenaPowerUps`; the dojo has none, so its panel has no toggles) and no
+    longer shows the read-only Teams row (`LobbyMenu::rowShown`, which Up/Down follow); the
+    preview says "2 teams, balanced as players join".
+  - How to play (`core/how_to_play.{hpp,cpp}`), from the main menu (a new item after Play
+    local) and the pause menu (a new item after Resume, the card in the menu's place until
+    Back): move, aim, throw (hold to charge), recall (lane A's: hold Throw with an empty hand),
+    dash (a dash timed as a banana arrives catches it) and the ability, each with the
+    keyboard + mouse and gamepad bindings read from `defaultKeyboardProfile1/2` and
+    `defaultGamepadProfile` (Xbox names for the positional buttons), the second keyboard
+    player's keys and three lines on the game. `--screen howto` opens it. The first round's
+    countdown of a local match carries one line of the keyboard + mouse controls
+    (`firstRoundHint`, `showsFirstRoundHint`).
+  - One next step, a way back: the local lobby fits a 720p window again (it scrolled, with
+    Start below the fold: ten power-up toggles, half of them the bot contests') and a 700 px
+    one (two columns from 560 px of content, one below), with Back and Start match side by
+    side at the bottom and why Start is greyed; the room shows "Your room" / "Mango's room",
+    the guest the same rows flat with "Set by Mango: only the host changes the match", Leave
+    beside Start match or "Waiting for Mango to start"; the connection screen says "Playing
+    from this device: 1 monkey" and has Cancel (Back to the menu once it failed). A joined
+    pad's B leaves the local lobby, and any pad's B a waiting room or connection screen, as
+    Escape does.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.

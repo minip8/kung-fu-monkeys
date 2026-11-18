@@ -1,6 +1,6 @@
 #include "hud_view.hpp"
 
-#include "kfm/content/app_content.hpp"
+#include "content_labels.hpp"
 #include "net_session.hpp"
 #include "replay_session.hpp"
 
@@ -58,10 +58,10 @@ HudView hudView(const NetSession& session) {
   if (session.configKnown() && !room) {
     const sim::MatchConfig& next = session.client().matchConfig();
     const sim::ContentDB& db = session.content();
-    v.nextMatch = std::string("Next match: ") + db.arenaAt(next.arena).name.cStr() + ", " +
-                  db.modeAt(next.mode).name.cStr() + ", loadout " +
-                  db.loadoutAt(next.loadout).name.cStr() +
-                  ", power-ups: " + content::powerUpListText(db, next.powerUps);
+    // v0.94: in plain words (content_labels.hpp).
+    v.nextMatch = "Next match: " + modeLabel(db.modeAt(next.mode).name.view()).title + " on " +
+                  arenaTitle(db.arenaAt(next.arena).name.view()) + ", " +
+                  loadoutTitle(db.loadoutAt(next.loadout).name.view()) + " kit";
   }
   return v;
 }
@@ -101,6 +101,10 @@ WinnerTitle winnerTitle(const HudView& view, const presentation::RenderHud& hud,
   }
   return WinnerTitle{.text = slotLabel(view.names[winner], view.owners[winner], winner),
                      .colorIndex = winner};
+}
+
+bool showsFirstRoundHint(const presentation::RenderHud& hud) {
+  return hud.phase == presentation::HudPhase::RoundStarting && hud.round <= 1;
 }
 
 bool clockUrgent(const presentation::RenderHud& hud) {

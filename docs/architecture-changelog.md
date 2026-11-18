@@ -1980,3 +1980,32 @@ board's white text on coral (2.3:1); a variable-font loader. Verified by eye on 
 renders (`SDL_VIDEODRIVER=offscreen`) of every screen and bot matches on `island` and `dojo`;
 client and presentation unit tests. No sim, content or wire change. Replay checksums:
 unchanged.
+
+v0.94 changes: the usability pass (§7, the front end), from the user's "revamp the ui to make
+it more intuitive and easier to use" and "players should be able to choose their name before
+they join a lobby". The audit, every screen at 1280×720 and 700 px wide: the name was buried in
+Settings; the local lobby scrolled at 720p with Start match below the fold (ten power-up toggles
+on an arena with no spawner, half of them the bot contests' `_1t` twins) and had no Back; modes,
+arenas, kits and power-ups showed as content names (`team_deathmatch`, `base`, `speed_boost`);
+the Mode and Loadout rows offered the bot ladder's one-tick contests; the Teams row had arrows
+that did nothing; the controls were four dense bullet lines at the bottom of the local lobby
+only; the connection screen spoke of "requested slots" and had no visible way back; a pad's B
+did not leave the lobby, the room or the connection screen. Changes: Play online leads with the
+name (prefilled, editable there, saved; a first visit opens on it and says the picked monkey
+name is fine to keep; `nick_chosen=on` in the settings); `core/content_labels` gives readable
+titles and a how-to-win line, with a prettifying fallback so new content (lane B's arenas and
+`kill_rounds`) never shows raw; the lobby rows skip bot-contest modes and loadouts and show only
+the power-ups the arena can draw; a How to play card from the main menu and the pause menu reads
+its bindings from the input profiles and includes lane A's recall; the first round's countdown
+carries one line of controls; the local lobby and the room are laid out to fit 720p and 700 px
+with Back / Leave beside Start match; the room names its host ("Mango's room") and shows a guest
+the host's rows flat with the reason; the connection screen has Cancel and plain words; `--screen
+howto` and `--window WxH` for screenshots. Considered and not taken: forcing a name before
+Create / Join (the client already picks a friendly one, and a required field is one more step);
+removing Volume, Sound and Arena theme from the local lobby (they are Settings' too, but a couch
+party changes them there; with the power-up rows gone the lobby fits). Not covered: the room's
+code and Copy invite need a lobby service and were not run (the code paths are v0.43's); the
+reconnect states lane C adds draw through the same status screen. Verified: client unit tests
+(the new `content_labels_test.cpp`; the menus, room and lobby tests updated), off-screen renders
+of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
+unchanged.

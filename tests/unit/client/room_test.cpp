@@ -251,7 +251,37 @@ TEST_CASE("online menu: the region cycles, Create room and Join make commands",
   m.apply(client::MenuAction::Up);
   CHECK(m.focusedRow() == OnlineRow::Back);
   m.apply(client::MenuAction::Down);
+  CHECK(m.focusedRow() == OnlineRow::Name);
+  m.apply(client::MenuAction::Down);
   CHECK(m.focusedRow() == OnlineRow::Region);
+}
+
+TEST_CASE("online menu: the name comes first (v0.94)", "[client][room][online]") {
+  OnlineMenu m;
+  using Activation = OnlineMenu::Activation;
+  const auto row = [](OnlineRow r) { return static_cast<std::size_t>(r); };
+  REQUIRE(OnlineMenu::rows().front() == OnlineRow::Name);
+  CHECK(std::string(OnlineMenu::rowLabel(OnlineRow::Name)) == "Your name");
+  // A first visit (the name is the one the client picked) opens on it...
+  m.open(false);
+  CHECK(m.focusedRow() == OnlineRow::Name);
+  // ... and Enter on it asks for the name field; Left/Right do nothing.
+  CHECK(m.activate() == Activation::EditName);
+  CHECK_FALSE(m.takeCommand().has_value());
+  CHECK_FALSE(m.apply(client::MenuAction::Right));
+  // Up from the name wraps to Back, Down goes on to the region.
+  m.apply(client::MenuAction::Down);
+  CHECK(m.focusedRow() == OnlineRow::Region);
+  // A player with a name of their own opens on Create room.
+  m.open(true);
+  CHECK(m.focusedRow() == OnlineRow::CreateRoom);
+  CHECK(m.activate(row(OnlineRow::Name)) == Activation::EditName);
+  // Create works with the offered name as it is: no name is required.
+  CHECK(m.activate(row(OnlineRow::CreateRoom)) == Activation::Command);
+  CHECK(m.takeCommand().has_value());
+  // The line under the field says what the name is for.
+  CHECK(std::string(OnlineMenu::nameHint(false)).find("picked") != std::string::npos);
+  CHECK(std::string(OnlineMenu::nameHint(true)).find("Friends") != std::string::npos);
 }
 
 TEST_CASE("online menu: every region with its availability (lobby v1.1)",

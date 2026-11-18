@@ -7,8 +7,9 @@
 namespace kfm::client {
 
 namespace {
-constexpr std::array<OnlineRow, 5> kOnlineRows{OnlineRow::Region, OnlineRow::CreateRoom,
-                                               OnlineRow::Code, OnlineRow::Join, OnlineRow::Back};
+constexpr std::array<OnlineRow, 6> kOnlineRows{OnlineRow::Name,       OnlineRow::Region,
+                                               OnlineRow::CreateRoom, OnlineRow::Code,
+                                               OnlineRow::Join,       OnlineRow::Back};
 constexpr std::size_t kRoomCodeLength = 5;
 }  // namespace
 
@@ -23,6 +24,10 @@ void OnlineMenu::setRegions(std::span<const RegionChoice> regions) {
   if (std::ranges::find(regions_, region_, &RegionChoice::name) != regions_.end()) return;
   const auto free = std::ranges::find(regions_, true, &RegionChoice::free);
   region_ = (free != regions_.end() ? *free : regions_.front()).name;
+}
+
+void OnlineMenu::open(bool nameChosen) {
+  focus_ = static_cast<std::size_t>(nameChosen ? OnlineRow::CreateRoom : OnlineRow::Name);
 }
 
 std::span<const OnlineRow> OnlineMenu::rows() {
@@ -90,6 +95,8 @@ OnlineMenu::Activation OnlineMenu::activate(std::size_t row) {
   if (row >= kOnlineRows.size()) return Activation::None;
   focus_ = row;
   switch (kOnlineRows[row]) {
+    case OnlineRow::Name:
+      return Activation::EditName;
     case OnlineRow::Region:
       return Activation::None;
     case OnlineRow::CreateRoom:
@@ -116,6 +123,8 @@ std::optional<LobbyCommand> OnlineMenu::takeCommand() {
 
 const char* OnlineMenu::rowLabel(OnlineRow row) {
   switch (row) {
+    case OnlineRow::Name:
+      return "Your name";
     case OnlineRow::Region:
       return "Region";
     case OnlineRow::CreateRoom:
@@ -128,6 +137,11 @@ const char* OnlineMenu::rowLabel(OnlineRow row) {
       return "Back";
   }
   return "";
+}
+
+const char* OnlineMenu::nameHint(bool nameChosen) {
+  return nameChosen ? "Friends see this name in the room and over your monkey."
+                    : "We picked a monkey name for you: keep it, or press Enter to type yours.";
 }
 
 std::string OnlineMenu::regionText() const {

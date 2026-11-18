@@ -92,7 +92,7 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 
 - The client opens on the main menu unless `--autostart` / `--connect` / `--room` / `--create`
   (browser: `?autostart`, `?connect=`, `?room=`, `?create`). `--screen
-  menu|settings|online|local|paused` opens another screen (for screenshots; `paused` is a local
+  menu|settings|online|local|paused|howto` opens another screen (for screenshots; `paused` is a local
   match under the pause menu).
 - Match selection: `--arena NAME --mode NAME --loadout NAME --powerups all|none|a,b`. Settings
   are saved between runs (SDL pref dir / browser localStorage); flags win; `--no-settings`

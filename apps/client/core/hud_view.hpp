@@ -69,6 +69,9 @@ struct HudView {
   // M7 step 6: the pixels at the bottom a control bar takes (the replay's,
   // replayBarInset()); the between-rounds scoreboard stays above them.
   float bottomInset{0.0f};
+  // v0.94: a line of controls over the first round's countdown of a local
+  // match (firstRoundHint(), shown while showsFirstRoundHint()); empty: none.
+  std::string hint;
 };
 [[nodiscard]] HudView hudView(const MatchSession& session);
 [[nodiscard]] HudView hudView(const NetSession& session);
@@ -95,6 +98,10 @@ struct WinnerTitle {
 // The mode clock turns red (and stays so) in its last ten seconds of play.
 inline constexpr float kClockUrgentSeconds = 10.0f;
 [[nodiscard]] bool clockUrgent(const presentation::RenderHud& hud);
+
+// v0.94: the first round's countdown, when a short controls line helps a
+// new player (a later round, or the game under way, keeps the screen clear).
+[[nodiscard]] bool showsFirstRoundHint(const presentation::RenderHud& hud);
 
 // The mode line under the score cards, by kind: the round and its target
 // ("Round 2  (first to 3)"), or the kind and what wins ("Hill  (first team

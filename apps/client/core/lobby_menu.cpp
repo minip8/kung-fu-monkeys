@@ -1,5 +1,6 @@
 #include "lobby_menu.hpp"
 
+#include "content_labels.hpp"
 #include "kfm/sim/constants.hpp"
 
 #include <algorithm>
@@ -216,13 +217,35 @@ void LobbyMenu::setFocus(std::size_t row) {
   if (row < rowCount_) focus_ = row;
 }
 
+bool LobbyMenu::rowShown(std::size_t row) const {
+  if (row >= rowCount_) return false;
+  const LobbyRow& r = rows_[row];
+  if (r.kind == LobbyRowKind::Teams) return false;
+  if (r.kind == LobbyRowKind::PowerUp) {
+    const sim::ContentDB& db = content();
+    return (arenaPowerUps(db, db.arenaAt(settings_.arena)) & (1u << r.powerUp)) != 0;
+  }
+  return true;
+}
+
 bool LobbyMenu::apply(MenuAction action) {
+  // Up/Down step over the rows the panel does not show.
+  const auto step = [&](bool down) {
+    for (std::size_t n = 0; n < rowCount_; ++n) {
+      if (down) {
+        focus_ = focus_ + 1 >= rowCount_ ? 0 : focus_ + 1;
+      } else {
+        focus_ = focus_ == 0 ? rowCount_ - 1 : focus_ - 1;
+      }
+      if (rowShown(focus_)) return;
+    }
+  };
   switch (action) {
     case MenuAction::Up:
-      focus_ = focus_ == 0 ? rowCount_ - 1 : focus_ - 1;
+      step(false);
       return false;
     case MenuAction::Down:
-      focus_ = focus_ + 1 >= rowCount_ ? 0 : focus_ + 1;
+      step(true);
       return false;
     case MenuAction::Left:
       return change(focus_, -1);
@@ -254,7 +277,11 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       }
       break;
     case LobbyRowKind::Mode:
-      settings_.mode = cycle(settings_.mode, db.modeCount);
+      // v0.94: past the bot-contest modes (a --mode flag may still pick one).
+      for (uint8_t n = 0; n < db.modeCount; ++n) {
+        settings_.mode = cycle(settings_.mode, db.modeCount);
+        if (!isBotMode(db.modeAt(settings_.mode))) break;
+      }
       // v0.34: a mode that names its arena (ModeDef::arena) brings it;
       // v0.82: a mode with a pool brings its first member unless the
       // arena already is one.
@@ -267,7 +294,10 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     case LobbyRowKind::Teams:
       break;  // derived from the mode
     case LobbyRowKind::Loadout:
-      settings_.loadout = cycle(settings_.loadout, db.loadoutCount);
+      for (uint8_t n = 0; n < db.loadoutCount; ++n) {
+        settings_.loadout = cycle(settings_.loadout, db.loadoutCount);
+        if (!isBotLoadout(db, settings_.loadout)) break;
+      }
       break;
     case LobbyRowKind::PowerUp:
       settings_.powerUps = static_cast<uint16_t>(settings_.powerUps ^ (1u << r.powerUp));
@@ -312,7 +342,7 @@ std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
     case LobbyRowKind::Loadout:
       return "Loadout";
     case LobbyRowKind::PowerUp:
-      return std::string(content().powerUpAt(row.powerUp).name.view());
+      return powerUpTitle(content().powerUpAt(row.powerUp).name.view());
     case LobbyRowKind::Bots:
       return "Bots";
     case LobbyRowKind::BotDifficulty:
@@ -331,15 +361,15 @@ std::string LobbyMenu::rowValue(const LobbyRow& row) const {
   const sim::ContentDB& db = content();
   switch (row.kind) {
     case LobbyRowKind::Arena:
-      return std::string(db.arenaAt(settings_.arena).name.view());
+      return arenaTitle(db.arenaAt(settings_.arena).name.view());
     case LobbyRowKind::Mode:
-      return std::string(db.modeAt(settings_.mode).name.view());
+      return modeLabel(db.modeAt(settings_.mode).name.view()).title;
     case LobbyRowKind::Teams: {
       const uint8_t teams = db.modeAt(settings_.mode).teams;
       return teams == 0 ? std::string("free-for-all") : std::to_string(teams) + " (by mode)";
     }
     case LobbyRowKind::Loadout:
-      return std::string(db.loadoutAt(settings_.loadout).name.view());
+      return loadoutTitle(db.loadoutAt(settings_.loadout).name.view());
     case LobbyRowKind::PowerUp:
       return (settings_.powerUps & (1u << row.powerUp)) != 0 ? "on" : "off";
     case LobbyRowKind::Bots:
