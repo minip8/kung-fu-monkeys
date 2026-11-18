@@ -486,7 +486,7 @@ constexpr Beat kRichBeat{30, 30, 3};
 TEST_CASE("the harvest pool: grove, orchards, gorge and burrows appended in that order (v0.82)",
           "[content][contest][harvest]") {
   const ContentDB& db = shipped();
-  CHECK(db.arenaCount == 15);  // of kMaxArenas' 16
+  CHECK(db.arenaCount == 19);  // of kMaxArenas' 32 (v0.91: four large arenas appended)
   for (size_t k = 0; k < kPool.size(); ++k) {
     INFO(kPool[k].name);
     CHECK(db.findArena(kPool[k].name) == std::optional<uint8_t>{static_cast<uint8_t>(11 + k)});

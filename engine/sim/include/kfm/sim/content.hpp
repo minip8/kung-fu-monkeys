@@ -49,9 +49,10 @@ static_assert(kAbilitySlots == 3);
   return 0;
 }
 inline constexpr uint8_t kMaxAbilityDefs = 32;  // v0.70 (16 before: content/ filled it)
-inline constexpr uint8_t kMaxArenas = 16;       // v0.33 (8 before: the objective arenas filled it)
-inline constexpr uint8_t kMaxModes = 32;        // v0.31 (8 before)
-static_assert(kMaxArenas <= 16, "ModeDef::arenaSet is a uint16_t bit set over the arenas");
+// v0.91: 32 arenas (16 from v0.33, 8 before: the larger arenas filled it).
+inline constexpr uint8_t kMaxArenas = 32;
+inline constexpr uint8_t kMaxModes = 32;  // v0.31 (8 before)
+static_assert(kMaxArenas <= 32, "ModeDef::arenaSet is a uint32_t bit set over the arenas");
 
 enum class AbilityKind : uint8_t {
   None = 0,

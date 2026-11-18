@@ -320,20 +320,18 @@ TEST_CASE("spawn groups: every team starts and respawns in its own group",
   }
 }
 
-TEST_CASE("spawn groups: a free-for-all alternates the groups by slot",
+// v0.91: the groups sort a team mode's sides; a free-for-all mode spreads
+// over every point (two players: the ellipse's long axis, 24 units, which
+// slots 0 and 1 could never take in groups that alternate by slot).
+TEST_CASE("spawn groups: a free-for-all spreads over every point, whatever the groups",
           "[scenario][teams][spawn]") {
-  const MatchConfig config{.seed = 9, .players = 0b1111, .arena = kVersus};
+  const MatchConfig config{.seed = 9, .players = 0b0011, .arena = kVersus};
   const MatchContent m = matchContent(content(), config);
+  REQUIRE(m.mode.teams == 0);
   EventLog log;
   WorldState s = playing(config, log);
-  for (uint8_t i = 0; i < 4; ++i) {
-    const Vec2 pos = playerAt(s, PlayerId{i}).transform.pos;
-    const SpawnRange r = spawnGroupRange(m.arena, i);
-    bool inGroup = false;
-    for (uint8_t k = r.begin; k < r.end; ++k)
-      inGroup = inGroup || m.arena.spawnPoints[k] == pos;
-    CHECK(inGroup);
-  }
+  const Vec2 d = playerAt(s, PlayerId{0}).transform.pos - playerAt(s, PlayerId{1}).transform.pos;
+  CHECK(lengthSqRaw(d) == lengthSqRaw(Vec2{Fixed::fromInt(24), Fixed::zero()}));
 }
 
 TEST_CASE("roles: a team mode hands out loadouts by position within the team",

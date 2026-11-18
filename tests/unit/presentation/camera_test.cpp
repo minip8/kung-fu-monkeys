@@ -185,6 +185,51 @@ TEST_CASE("pixelsPerUnitAtTarget scales with the viewport", "[presentation][came
   CHECK(b.x - a.x == Approx(ppu).epsilon(1e-4));
 }
 
+// v0.91: the large arenas (meadow 44 x 25, compound 48 x 27, archipelago 52 x
+// 29, marsh 60 x 34) are framed whole at 1280 x 720 like the dojo, and a
+// monkey (radius 0.5, so a unit across) stays readable: at the far wall,
+// where the perspective shrinks it most, 28.6 pixels across on the dojo and
+// 15.4 on marsh, the largest (measured; the floors below are those, rounded
+// down). Not a camera change: every arena is framed whole as before.
+TEST_CASE("the large arenas fit at 1280 x 720 with monkeys still readable",
+          "[presentation][camera]") {
+  struct Size {
+    float hx;
+    float hy;
+    float minFarPixels;  // a unit across at the far wall, at least
+  };
+  constexpr std::array<Size, 5> kSizes = {{
+      {16.0f, 9.0f, 28.0f},  // the dojo, for comparison
+      {22.0f, 12.5f, 20.0f},
+      {24.0f, 13.5f, 19.0f},
+      {26.0f, 14.5f, 17.0f},
+      {30.0f, 17.0f, 15.0f},
+  }};
+  for (const Size& size : kSizes) {
+    INFO(size.hx * 2.0f << " x " << size.hy * 2.0f);
+    const Camera cam = makeArenaCamera(size.hx, size.hy, 1280.0f, 720.0f);
+    const float margin = cam.params.margin * 0.5f;
+    for (const float sx : {-size.hx, size.hx}) {
+      for (const float sy : {-size.hy, size.hy}) {
+        for (const float h : {0.0f, cam.params.framingHeight}) {
+          const ScreenPoint sp = worldToScreen(cam, simToWorld(Vec2f{sx, sy}, h));
+          REQUIRE(sp.inFront);
+          CHECK(sp.x >= 1280.0f * margin * 0.99f);
+          CHECK(sp.x <= 1280.0f * (1.0f - (margin * 0.99f)));
+          CHECK(sp.y >= 720.0f * margin * 0.99f);
+          CHECK(sp.y <= 720.0f * (1.0f - (margin * 0.99f)));
+        }
+      }
+    }
+    // A unit across at the far (north) wall, the smallest a monkey gets.
+    const float farY = size.hy - 1.0f;
+    const ScreenPoint a = worldToScreen(cam, simToWorld(Vec2f{-0.5f, farY}, 0.0f));
+    const ScreenPoint b = worldToScreen(cam, simToWorld(Vec2f{0.5f, farY}, 0.0f));
+    CHECK(b.x - a.x >= size.minFarPixels);
+    CHECK(pixelsPerUnitAtTarget(cam) > size.minFarPixels);  // larger at the centre
+  }
+}
+
 TEST_CASE("a shake below the pixel threshold is not drawn", "[presentation][camera]") {
   const Camera cam = makeArenaCamera(arena(), 1280.0f, 720.0f);
   const float ppu = pixelsPerUnitAtTarget(cam);

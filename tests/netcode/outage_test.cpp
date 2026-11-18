@@ -653,7 +653,14 @@ TEST_CASE("outages at 500 ms RTT ± 30 ms: the player and the spectator recover"
           "[netcode][outage][outage-rtt]") {
   const LinkSpec l{250 * kMs, 30 * kMs};
   runOutage({"500 ms ±30, s->c 0.4 s", 400 * kMs, false, false, l});
-  runOutage({.name = "500 ms ±30, s->c 1 s", .durationNs = kSec, .link = l, .overflows = 1});
+  // Whether this edge case overflows depends on what the match predicts
+  // wrong during the gap (most of seeds 0x0A70..0x0A7F do after v0.91's
+  // spread spawns, not 0x0A7A): pinned to a seed that does.
+  runOutage({.name = "500 ms ±30, s->c 1 s",
+             .durationNs = kSec,
+             .link = l,
+             .seed = 0x0A74,
+             .overflows = 1});
   runOutage({.name = "500 ms ±30, s->c 3 s", .durationNs = 3 * kSec, .link = l, .overflows = 1});
 }
 

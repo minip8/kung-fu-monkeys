@@ -19,8 +19,19 @@ namespace kfm::sim {
 void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content);
 
 // The spawn points slot `id` may use (v0.32): its team's spawn group
-// (team mod ArenaDef::spawnGroups), or every point with one group.
+// (team mod ArenaDef::spawnGroups), or every point with one group. v0.91: a
+// free-for-all mode (ModeDef::teams 0) uses every point whatever the groups,
+// which only sort the team modes' sides (spawnsByGroup).
 [[nodiscard]] SpawnRange spawnRangeOf(const MatchContent& content, PlayerId id);
+[[nodiscard]] bool spawnsByGroup(const MatchContent& content);
+
+// v0.91: the `count` spawn points of the arena that lie farthest apart, as
+// a mask over its points: of every subset of that size, the one whose
+// closest pair is farthest apart (squared distance in raw fixed point),
+// then the one with the fewest pairs at that distance, then the lowest
+// mask. A function of the arena alone (no Rng). Every point when count is
+// at least the point count; 0 for count 0.
+[[nodiscard]] uint16_t spreadSpawnSet(const ArenaDef& arena, uint32_t count);
 
 // Respawns the dead slot `id` (LifecycleSystem): at the spawn point of its
 // group (spawnRangeOf) farthest from every alive monkey, the world RNG

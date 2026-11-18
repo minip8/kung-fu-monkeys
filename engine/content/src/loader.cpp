@@ -1560,7 +1560,7 @@ class Builder {
             diag_.error(a.file, a.line,
                         a.where + ": 'arenas' names arena " + inQuotes(a.name) + " twice");
           }
-          m.arenaSet = static_cast<uint16_t>(m.arenaSet | (1u << *i));
+          m.arenaSet |= 1u << *i;
         } else {
           diag_.error(a.file, a.line,
                       a.where + ": 'arenas' names unknown arena " + inQuotes(a.name));
@@ -2129,7 +2129,7 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
     // v0.82: the pool of arenas: defined, each suiting the mode, and the
     // mode's own arena one of them.
     const uint32_t definedArenas =
-        c.arenaCount >= 16 ? 0xFFFFu : (uint32_t{1} << c.arenaCount) - 1u;
+        c.arenaCount >= 32 ? 0xFFFFFFFFu : (uint32_t{1} << c.arenaCount) - 1u;
     if ((m.arenaSet & ~definedArenas) != 0) fail(where + ": arenas names an undefined arena");
     for (uint8_t a = 0; a < c.arenaCount && a < sim::kMaxArenas; ++a) {
       if (m.inArenaSet(a) && !c.compatible(a, i)) {

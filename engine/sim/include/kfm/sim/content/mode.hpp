@@ -159,7 +159,7 @@ inline constexpr uint8_t kMaxControlTeams = 4;
 // [player] ammo_start (every mode before v0.82).
 inline constexpr uint8_t kRespawnAmmoStart = 0xFF;
 // v0.82: ModeDef::arenaSet when the mode names no pool of arenas.
-inline constexpr uint16_t kNoArenaSet = 0;
+inline constexpr uint32_t kNoArenaSet = 0;
 
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
@@ -267,14 +267,15 @@ struct ModeDef {
   // (ContentDB::compatible), and `arena`, when given, is one of them. Never
   // read by the sim: a host that cycles maps reads it (kfm_arena), the
   // others pick one arena (ContentDB::firstCompatibleArena prefers the
-  // pool's first member that suits the mode).
-  uint16_t arenaSet{kNoArenaSet};
+  // pool's first member that suits the mode). A uint32_t since v0.91
+  // (kMaxArenas 32).
+  uint32_t arenaSet{kNoArenaSet};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }
   [[nodiscard]] constexpr bool hasArenaSet() const { return arenaSet != kNoArenaSet; }
   [[nodiscard]] constexpr bool inArenaSet(uint8_t index) const {
-    return index < 16 && (arenaSet & (1u << index)) != 0;
+    return index < 32 && (arenaSet & (1u << index)) != 0;
   }
 };
 

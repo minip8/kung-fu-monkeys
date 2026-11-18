@@ -1,0 +1,48 @@
+# v0.91: 52 x 29 units of islands over a pit (architecture §5.10). Channels of
+# pit, three units wide, cut the arena into eight islands (two rows of four);
+# hubs where the channels cross (x = -14.5, 0, 14.5 on the middle line) and a
+# bridge across each outer channel near the north and south walls join them.
+# Bananas fly over the channels; a monkey that steps off an island or ends a
+# dash over one falls. Ten spawn points at least 10.3 units apart, cover on
+# each island between neighbouring spawns. A team arena: spawn_groups = 2
+# puts the west's five points (two outer islands, two inner, the west hub)
+# against the east's, the same turned half a turn; the centre hub is zone 0
+# (hill).
+[[arena]]
+name = "archipelago"
+half_extents = [26, 14.5]
+spawn_groups = 2
+zones = [{ min = [-2, -2], max = [2, 2] }]
+spawn_points = [
+  [-21, 8], [-21, -8], [-8, 8], [-8, -8], [-14.5, 0], [21, -8], [21, 8], [8, -8], [8, 8], [14.5, 0],
+]
+walls = [
+  { min = [-12, 3], max = [-10, 9] },
+  { min = [10, 3], max = [12, 9] },
+  { min = [-12, -9], max = [-10, -3] },
+  { min = [10, -9], max = [12, -3] },
+  { min = [-19, 3], max = [-17.5, 5] },
+  { min = [17.5, 3], max = [19, 5] },
+  { min = [-19, -5], max = [-17.5, -3] },
+  { min = [17.5, -5], max = [19, -3] },
+  { min = [-6, 10.5], max = [-4, 12.5] },
+  { min = [4, 10.5], max = [6, 12.5] },
+  { min = [-6, -12.5], max = [-4, -10.5] },
+  { min = [4, -12.5], max = [6, -10.5] },
+]
+hazards = [
+  { kind = "pit", min = [-26, -1.5], max = [-16.5, 1.5] },
+  { kind = "pit", min = [-12.5, -1.5], max = [-2.5, 1.5] },
+  { kind = "pit", min = [16.5, -1.5], max = [26, 1.5] },
+  { kind = "pit", min = [2.5, -1.5], max = [12.5, 1.5] },
+  { kind = "pit", min = [-16, 12], max = [-13, 14.5] },
+  { kind = "pit", min = [-16, 2], max = [-13, 10] },
+  { kind = "pit", min = [-16, -10], max = [-13, -2] },
+  { kind = "pit", min = [-16, -14.5], max = [-13, -12] },
+  { kind = "pit", min = [13, 12], max = [16, 14.5] },
+  { kind = "pit", min = [13, 2], max = [16, 10] },
+  { kind = "pit", min = [13, -10], max = [16, -2] },
+  { kind = "pit", min = [13, -14.5], max = [16, -12] },
+  { kind = "pit", min = [-1.5, 2.5], max = [1.5, 14.5] },
+  { kind = "pit", min = [-1.5, -14.5], max = [1.5, -2.5] },
+]

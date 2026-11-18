@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.90 (2026-11-18), a living document: it describes the system as built and deployed,
+Status: v0.91 (2026-11-18), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -333,6 +333,24 @@ choosing among equal points (one draw per respawn), and gets `Tag::Invulnerable`
 protected for the interactions of the next `respawnInvulnTicks` ticks. The damage (30) and
 dash-attack (25) rows already forbid `Invulnerable` on the victim; a protected monkey can still
 attack and catch. A round start clears every timer.
+
+Spawn spread (v0.91). A free-for-all round start (`spawnSpread`, `systems/rules.cpp`) puts the
+n present slots on the n spawn points that lie farthest apart (`spreadSpawnSet`,
+`modes/mode_flow`: of every n-point subset of the arena's points, the one whose closest pair is
+farthest apart in raw fixed-point squared distance, then the one with the fewest pairs at that
+distance, then the lowest mask; at most 1024 subsets of ten points, a function of the arena
+alone), and deals them afresh every round: the world Rng shuffles the chosen points
+(Fisher-Yates, n − 1 draws) and the present slots in slot order take them in that order. With
+more present slots than points the M1 rule stays (one offset, wrapping). It applies to every
+mode with `teams = 0`, whatever the arena's spawn groups (`spawnsByGroup`: groups sort a team
+mode's sides only; a free-for-all respawn also chooses over every point); team modes keep
+`spawnByGroups` bit for bit. The M1 deal (one Rng offset into the list, slots in order) gave
+the dojo's ellipse a closest pair of 4.2 units for 5 to 8 players on some offsets and kept the
+same neighbours every round; now the closest pair at a round start is the best the points
+allow: on the dojo 24.0, 11.4, 11.0 units for 2 to 4 players, 7.4 for 5 and 6, 6.4 for 7
+and 8, 4.2 for 9 and 10 (every point used, so the points' own spacing), and every slot moves
+round to round, which also retires §12's free-for-all spawn-order slot bias (100 fixed-slot
+matches of 4 `ref:hard` on the dojo: wins 23/22/28/27 by slot).
 
 Mode seams (v0.29). The table above covers one axis of a mode, the win condition. A mode varies
 along five, and each has its own seam, so a new mode never needs a switch inside a system:
@@ -1298,8 +1316,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   (`kMaxAbilityDefs` 32 since v0.70 (16 from v0.21, which the 15 shipped defs plus `none`
   filled; the cap sizes only `ContentDB::abilities`, so raising it moved the content hash and
   nothing else: def indices are a byte everywhere, in `AbilityState`, loadouts, grants and the
-  bot observation, and the corpus checksums stayed byte-identical), `kMaxArenas` 16 since
-  v0.33 (8 before), `kMaxModes` 32 since v0.31 (8 before),
+  bot observation, and the corpus checksums stayed byte-identical), `kMaxArenas` 32 since
+  v0.91 (16 from v0.33, 8 before), `kMaxModes` 32 since v0.31 (8 before),
   `kMaxPowerUps` 16, `kMaxLoadouts` 16 since v0.31; at least one arena and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
   on `defaultContent()` by a test): every loadout (the player's and each `[[loadout]]`) fills
@@ -1648,7 +1666,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `respawnAmmo` (u8, `respawn_ammo` 0..254, default `kRespawnAmmoStart` 0xFF = `[player]
   ammo_start`), `bankTicks` (`bank_ticks` 1..65535, default 2), `stealTicks` (`steal_ticks`,
   0..65535, 0 never, the default) and `arenaSet` (u16, `arenas = ["<name>", ...]`, a bit set
-  over `kMaxArenas`, which a `static_assert` holds at 16; every member must suit the mode, and
+  over `kMaxArenas`, which a `static_assert` held at 16; a u32 over 32 since v0.91; every member must suit the mode, and
   `arena`, when both are given, must be a member), all four accepted on every kind, visited
   after `bananaTurnRateBam` (`fieldCount<ModeDef>() == 32`); `PickupSpawner` gains `tree` (u8,
   `fieldCount` 6). The arenas, appended at 11 to 14 (15 of 16 used), are the pool: `grove`
@@ -1661,6 +1679,37 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   Mode 9, `contest`, is `kind = "harvest"` on the pool (§8 "The `contest` mode"). Pinned by
   `contest_test.cpp` (each map's half turn, homes, trees, capacities and reachability, the
   baseline, both rows) and the contest pin in `loader_test.cpp`.
+- Large arenas (v0.91; user request: "more maps, particularly larger ones so that monkeys dont
+  just spawn next to each other"). Every free-for-all arena before was 32 × 18 (36 × 20
+  `corridors`) with ten points on a 12 × 6 ellipse, 4.2 units apart at its ends, against a
+  throw's reach of about 10. Appended at 15 to 18 (19 of `kMaxArenas`, raised to 32 with
+  `arenaSet` a u32 for them), TOML only, each with ten spawn points at least 10 units apart and
+  a wall across the line between every pair closer than 12.5, so no throw made on the first tick
+  reaches a neighbour: `meadow` (44 × 25: open ground, three staggered rows of spawns, rows of
+  2 × 2 posts on every line between neighbours and a rock in the middle; symmetric in both
+  axes; closest spawns 10.0), `archipelago` (52 × 29: channels of pit three units wide cut it
+  into two rows of four islands, joined by hubs where the channels cross and a bridge across
+  each outer channel by the north and south walls; cover on each island; `spawn_groups = 2`, the
+  east the west turned half a turn, the centre hub zone 0 for `hill`; 14 pit boxes; closest
+  10.3), `compound` (48 × 27: each wing four rooms behind walls with doorways, a hall through
+  the middle round a block, one spawn per room and two in the hall; `spawn_groups = 2`, half-turn
+  symmetric, no zone; closest 10.0) and `marsh` (60 × 34, the largest: three staggered rows of
+  spawns 13.6 apart, posts on every diagonal, mud in the corners, by the north and south spawns
+  and in the middle, four power-up spawners on the open ground; symmetric in both axes). Pinned by
+  `tests/unit/content/big_arenas_test.cpp` (sizes, spacing, cover on every neighbour line,
+  symmetry, groups and the modes each suits). Bot matches (`kfm_arena`, `ref:hard`, 4 matches
+  each, seed 11; round lengths estimated as (ticks − rounds × 240) / rounds with rounds ≈
+  deaths / (players − 1)):
+
+  | arena | rounds, a round (4p / 10p) | kill_rounds, a round (4p / 10p) | deathmatch, the match (4p / 10p) |
+  |---|---|---|---|
+  | `dojo` | 4.1 s / 6.2 s | 4.7 s / 5.6 s | 12 s / 10 s |
+  | `meadow` | 10.9 s / 9.7 s | 11.0 s / 9.5 s | 32 s / 19 s |
+  | `archipelago` | 12.4 s / 12.0 s | 12.6 s / 12.0 s | 36 s / 22 s |
+  | `compound` | 8.6 s / 15.1 s | 9.8 s / 15.9 s | 27 s / 20 s |
+  | `marsh` | 7.6 s / 9.0 s | 8.2 s / 9.0 s | 22 s / 17 s |
+  
+  Every one of the 120 matches ended by its rules, none at the cap; no bot was stuck.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -2497,7 +2546,10 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   effects are sorted.
 - **Arena statics (v0.22).** `makeArenaCamera(arena, ...)` frames each arena from its own
   `halfExtents` (fixed pitch and field of view, distance solved per arena and viewport), so a
-  36 × 20 `corridors` sits further away than the 32 × 18 `dojo`; interior walls are drawn below
+  36 × 20 `corridors` sits further away than the 32 × 18 `dojo` (v0.91: the large arenas up to
+  60 × 34 `marsh` frame whole the same way; at 1280 × 720 a monkey, a unit across, is
+  17.2 pixels across at the centre and 15.4 at the far wall on `marsh` against the dojo's 31.7
+  and 28.6, about 54 %, pinned by `camera_test.cpp`); interior walls are drawn below
   `framingHeight` and never leave the frame. `buildArenaPieces()` turns the arena's walls and
   hazards into `RenderState::arenaPieces` (world-space boxes, walls first, then hazards, then
   pit rims); the renderer draws each as the unit cube scaled to it: walls as
@@ -5400,7 +5452,11 @@ baseline moved to C++23 (§9).
   between teams, but its free-for-all goes 68/84/19/17: groups alternate free-for-all slots
   between the sides, a same-side bias in place of the arc bias. Spawn groups therefore fix
   team play only; the per-round shuffle stays the candidate for free-for-all and remains open
-  (it regenerates the corpus). The mirrored-inputs test (v0.80, §11 "Contest design",
+  (it regenerates the corpus). Built in v0.91 (§5.3 "Spawn spread"): a free-for-all round
+  start deals the farthest-apart points to the present slots in a world-Rng order every round,
+  so neither the arc bias nor the same-side bias of groups remains: 100 fixed-slot `rounds`
+  matches of 4 `ref:hard` on `dojo` (seed 500) win 23/22/28/27 by slot (chi-square p ≈ 0.79),
+  where 200 went 28/77/64/31 before. The mirrored-inputs test (v0.80, §11 "Contest design",
   `side_symmetry_scenario.cpp`) found the same kind of tie-break between the two sides of a
   team match, each pinned by a `[known-asymmetry]` case and left open for the same reason: a
   grid cell contest or swap at an equal `subTick` went to the lower slot (the west's; fix

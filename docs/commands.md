@@ -150,7 +150,10 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
   `pillars`, `corridors`, `island`, `dojo_powerups`, `standoff`, `hilltop` (`hill`), `outposts`
   (`capture`), `courtyard` (the grid modes), `courtyard_hill` (`hill` on the grid),
   `courtyard_zones` (`control_1t`: three zones, v0.80), and the harvest pool's `grove`,
-  `orchards`, `gorge` and `burrows` (`contest`, v0.82: a home zone per team and trees). A
+  `orchards`, `gorge` and `burrows` (`contest`, v0.82: a home zone per team and trees), and
+  the large arenas of v0.91: `meadow` (44 × 25), `archipelago` (52 × 29, islands over a pit,
+  two spawn groups, a hill zone), `compound` (48 × 27, rooms and doorways, two spawn groups)
+  and `marsh` (60 × 34, mud and power-ups). A
   tilemap arena gives `cell = 1.0` and `map = ["..."]` (`#` wall, `.` floor, `~` pit, `:` mud,
   `0-9` spawns, `a-h` zones) in place of `half_extents`/`walls`/`hazards`/`spawn_points`/`zones`
   (format: `content/arenas/06-hilltop.toml`, architecture §5.10).
@@ -216,7 +219,8 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
   kind's smoke test: on `contest`, five a side, its games end in 490 to 1200 turns on every
   pool arena, far inside the 3600-turn clock (`tools/bots/README.md` has the table).
 - `--rotate` moves every bot through every slot across the tournament (the sim's spawn order
-  favours some slots). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
+  favoured some slots in a free-for-all until v0.91, which deals the spawns from the world Rng
+  every round; a team mode's sides and the equal-time tie-breaks of §12 remain). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
   fill that team's slots in order, the last repeating, and `--rotate` moves entrants across
   sides.
 - Arena pools (v0.82): a mode with an `arenas` pool, run without `--arena`, plays match k on

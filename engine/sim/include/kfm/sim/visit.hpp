@@ -387,7 +387,7 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.respawnAmmo);  // v0.82
   v.u16(d.bankTicks);
   v.u16(d.stealTicks);
-  v.u16(d.arenaSet);
+  v.u32(d.arenaSet);  // u16 before v0.91
 }
 static_assert(fieldCount<VisionDef>() == 6, "visit the new field, then update the count");
 static_assert(fieldCount<ModeDef>() == 32, "visit the new field, then update the count");

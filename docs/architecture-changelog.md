@@ -1883,3 +1883,33 @@ request scores kills only); judging the target mid-round (a round always plays o
 corpus entry `scripted_4p_kill_rounds_3600t` (dojo; every point a kill, more than one round,
 fights). Replay checksums: the content hash changes (a new mode), so every entry is re-recorded;
 state checksums unchanged by this change alone.
+
+v0.91 changes: four large arenas and spread spawns (§5.3 "Spawn spread", §5.10 "Large
+arenas", §7, §12; user request: "more maps, particularly larger ones so that monkeys dont just
+spawn next to each other"). Arenas 15 to 18, TOML only: `meadow` (44 × 25, posts and a rock),
+`archipelago` (52 × 29, eight islands over pit channels joined by hubs and bridges, two spawn
+groups, the centre hub zone 0), `compound` (48 × 27, rooms with doorways and a hall, two spawn
+groups) and `marsh` (60 × 34, posts, mud, four power-up spawners), each with ten spawn points at
+least 10 units apart (13.6 on `marsh`) and a wall across every line between neighbours closer
+than 12.5, symmetric (both axes, or a half turn for the team arenas). `kMaxArenas` rises from 16
+to 32 for them, so `ModeDef::arenaSet` becomes a u32 (visited as u32; the content hash moves).
+A free-for-all round start (`ModeDef::teams` 0, whatever the arena's groups) now deals the n
+farthest-apart spawn points (`spreadSpawnSet`, a function of the arena) to the present slots in
+a world-Rng order every round (`spawnSpread`, Fisher-Yates, n − 1 draws; was one offset into the
+list and slots in order), and a free-for-all respawn chooses over every point; team modes keep
+`spawnByGroups` unchanged. The dojo's closest pair at a round start for 5 to 8 players goes
+from 4.2 units on some offsets to 7.4 (5, 6) and 6.4 (7, 8); 9 and 10 fill every point. Players
+no longer keep their neighbours round to round, which also settles §12's free-for-all
+spawn-order slot bias (100 fixed-slot dojo matches of 4 `ref:hard`: 23/22/28/27 wins by slot).
+The camera needs no change: it frames every arena whole, and at 1280 × 720 a monkey on `marsh`
+is 17 pixels across at the centre against the dojo's 32 (`camera_test.cpp` pins the floors);
+looked at off-screen (`SDL_VIDEODRIVER=offscreen`, llvmpipe) on all four. Bot matches on every
+new arena end every round and match (§5.10 has the table). Tests: `big_arenas_test.cpp`,
+`spawn_spread_scenario.cpp` (closest pair for 2 to 10 players on the dojo and on `marsh`, the
+deal changing round to round), the spawn unit tests rewritten to the deal; the 500 ms outage
+case of `outage_test.cpp` moves to seed 0x0A74 because whether its 1 s gap overflows the
+rollback ring depends on what the match mispredicts (14 of the 16 seeds 0x0A70 to 0x0A7F
+overflow after the change; 0x0A7A no longer did). Replay checksums: changed, corpus regenerated
+because every free-for-all entry spawns differently from its first tick (`empty_*`,
+`scripted_4p_1200t`, `scripted_10p_3600t`, the arena, power-up, ability, deathmatch and survival
+entries); the team, grid, contest and control entries keep their state checksums byte for byte.

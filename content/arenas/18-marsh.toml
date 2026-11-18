@@ -1,0 +1,44 @@
+# v0.91, the largest arena: 60 x 34 units of marsh (architecture §5.10), about
+# 3.5 times the dojo's area. Ten spawn points on three staggered rows at
+# least 13.6 units apart (beyond a throw's reach), cover on every diagonal
+# between rows, mud (half speed) in the corners, beside the north and south
+# spawns and in the middle, and four power-up spawners on the open ground
+# between them, so a round brings the monkeys together for the pickups.
+# Symmetric in both axes.
+[[arena]]
+name = "marsh"
+half_extents = [30, 17]
+spawn_points = [
+  [-16, 11], [0, 11], [16, 11], [-24, 0], [-8, 0], [8, 0], [24, 0], [-16, -11], [0, -11], [16, -11],
+]
+walls = [
+  { min = [-21, 4.5], max = [-19, 6.5] },
+  { min = [19, 4.5], max = [21, 6.5] },
+  { min = [-21, -6.5], max = [-19, -4.5] },
+  { min = [19, -6.5], max = [21, -4.5] },
+  { min = [-13, 4.5], max = [-11, 6.5] },
+  { min = [11, 4.5], max = [13, 6.5] },
+  { min = [-13, -6.5], max = [-11, -4.5] },
+  { min = [11, -6.5], max = [13, -4.5] },
+  { min = [-5, 4.5], max = [-3, 6.5] },
+  { min = [3, 4.5], max = [5, 6.5] },
+  { min = [-5, -6.5], max = [-3, -4.5] },
+  { min = [3, -6.5], max = [5, -4.5] },
+]
+hazards = [
+  { kind = "slow", min = [-12, 10], max = [-4, 15], speed_mul = 0.5 },
+  { kind = "slow", min = [4, 10], max = [12, 15], speed_mul = 0.5 },
+  { kind = "slow", min = [-12, -15], max = [-4, -10], speed_mul = 0.5 },
+  { kind = "slow", min = [4, -15], max = [12, -10], speed_mul = 0.5 },
+  { kind = "slow", min = [-3, -3], max = [3, 3], speed_mul = 0.5 },
+  { kind = "slow", min = [-28, 8], max = [-22, 14], speed_mul = 0.5 },
+  { kind = "slow", min = [22, 8], max = [28, 14], speed_mul = 0.5 },
+  { kind = "slow", min = [-28, -14], max = [-22, -8], speed_mul = 0.5 },
+  { kind = "slow", min = [22, -14], max = [28, -8], speed_mul = 0.5 },
+]
+spawners = [
+  { pos = [-16, 0], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 120, interval_ticks = 480, max_alive = 1 },
+  { pos = [16, 0], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 120, interval_ticks = 480, max_alive = 1 },
+  { pos = [0, 5.5], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 300, interval_ticks = 480, max_alive = 1 },
+  { pos = [0, -5.5], power_ups = ["speed_boost", "big_banana", "triple_banana", "shield", "fast_hands"], first_ticks = 300, interval_ticks = 480, max_alive = 1 },
+]

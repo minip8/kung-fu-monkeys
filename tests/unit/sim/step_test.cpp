@@ -58,13 +58,18 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
   // Spawned at the arena spawn point of their slot, with content stats.
   const ContentDB& content = defaultContent();
   const Player& p9 = *s.playerBySlot(PlayerId{9});
-  // Spawn points go by rank among present slots plus a per-round offset drawn
-  // from the world RNG: seed 7 draws offset 2, slot 9 has rank 2 -> point 4.
-  {
-    Rng rng = Rng::seeded(7);
-    REQUIRE(rng.below(content.arenas[0].spawnPointCount) == 2);
-  }
-  CHECK(p9.transform.pos == content.arenas[0].spawnPoints[4]);
+  // v0.91: the three present slots are dealt three spread spawn points in a
+  // world-RNG order (rules_test.cpp pins the deal): each its own point.
+  const ArenaDef& arena = content.arenas[0];
+  const auto onSpawnPoint = [&](Vec2 pos) {
+    for (uint8_t k = 0; k < arena.spawnPointCount; ++k) {
+      if (arena.spawnPoints[k] == pos) return true;
+    }
+    return false;
+  };
+  CHECK(onSpawnPoint(p9.transform.pos));
+  CHECK(p9.transform.pos != s.playerBySlot(PlayerId{0})->transform.pos);
+  CHECK(p9.transform.pos != s.playerBySlot(PlayerId{2})->transform.pos);
   CHECK(p9.hp == content.player.maxHp);
   CHECK(p9.ammo == content.player.ammoStart);
   CHECK(p9.stats.moveSpeed == content.player.moveSpeed);

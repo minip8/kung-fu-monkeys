@@ -722,7 +722,7 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
     manyArenas += "[[arena]]\nname = \"a" + std::to_string(i) +
                   "\"\nhalf_extents = [10, 5]\nspawn_points = [[0, 0]]\n";
   }
-  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 16, kMaxArenas)"));
+  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 32, kMaxArenas)"));
 }
 
 // --- power-ups (§5.8, v0.20) ------------------------------------------------
@@ -1411,9 +1411,9 @@ TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][
   const auto pooled = [](std::string_view list) {
     return replaced(withHarvest(), R"(arenas = ["grove", "grove2"])", list);
   };
-  CHECK(contains(loadErrors(pooled("arenas = []")), "'arenas' must list 1 to 16 arena names"));
+  CHECK(contains(loadErrors(pooled("arenas = []")), "'arenas' must list 1 to 32 arena names"));
   CHECK(
-      contains(loadErrors(pooled("arenas = \"grove\"")), "'arenas' must list 1 to 16 arena names"));
+      contains(loadErrors(pooled("arenas = \"grove\"")), "'arenas' must list 1 to 32 arena names"));
   CHECK(contains(loadErrors(pooled("arenas = [3]")), "'arenas' entries must be arena names"));
   CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"nowhere\"]")),
                  "'arenas' names unknown arena \"nowhere\""));
@@ -1447,7 +1447,7 @@ TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][
     CHECK_FALSE(validateContent(v, zero));
     CHECK(zero.format().contains("bank_ticks must be at least 1"));
     h.bankTicks = 2;
-    h.arenaSet = static_cast<uint16_t>(h.arenaSet | (1u << 15));
+    h.arenaSet |= 1u << 31;  // v0.91: a u32 over kMaxArenas 32
     Diagnostics undefined;
     CHECK_FALSE(validateContent(v, undefined));
     CHECK(undefined.format().contains("arenas names an undefined arena"));
