@@ -232,6 +232,23 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         return false;
       }
       out.screenshotPath = args[++i];
+    } else if (arg == "--window") {
+      if (i + 1 >= args.size()) {
+        error = "--window needs a size such as 1280x720";
+        return false;
+      }
+      const std::string_view v = args[++i];
+      const std::size_t x = v.find('x');
+      uint64_t w = 0;
+      uint64_t h = 0;
+      if (x == std::string_view::npos || !parseU64(v.substr(0, x), w) ||
+          !parseU64(v.substr(x + 1), h) || w < kMinWindowSide || h < kMinWindowSide ||
+          w > kMaxWindowSide || h > kMaxWindowSide) {
+        error = "--window must be WIDTHxHEIGHT, each 320..8192, got '" + std::string(v) + "'";
+        return false;
+      }
+      out.windowWidth = static_cast<uint32_t>(w);
+      out.windowHeight = static_cast<uint32_t>(h);
     } else if (arg == "--autostart") {
       out.autostart = true;
     } else if (arg == "--overlay") {

@@ -108,6 +108,7 @@ inline constexpr const char* kUsage =
     "                         temple or beach (saved; cosmetic, this screen only)\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
+    "  --window WxH           the window's size (native only; default 1280x720)\n"
     "  --no-frame-limit       natively, when vsync is unavailable, run frames as fast\n"
     "                         as possible instead of at the display's refresh rate\n"
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
@@ -148,9 +149,17 @@ inline constexpr const char* kUsage =
     "                         https://bots.kfm.minip8.com)\n"
     "  --t TICK               start the replay at this tick (?t=TICK)\n";
 
+// --window's bounds (each side, logical pixels).
+inline constexpr uint64_t kMinWindowSide = 320;
+inline constexpr uint64_t kMaxWindowSide = 8192;
+
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
   std::string screenshotPath;   // empty: none
+  // v0.94: --window WxH, the native window's logical size (screenshots of
+  // narrow layouts); the browser's canvas follows the page.
+  uint32_t windowWidth{1280};
+  uint32_t windowHeight{720};
   bool autostart{false};
   bool overlay{false};
   bool capsules{false};  // capsule placeholders instead of the skinned character model

@@ -225,6 +225,27 @@ TEST_CASE("--screen opens a front-end screen (v0.43)", "[client][menu][options]"
   CHECK_FALSE(parse({"--screen"}, bad, error));
 }
 
+TEST_CASE("--window sets the native window's size (v0.94)", "[client][options]") {
+  const auto parse = [](std::vector<const char*> argv, client::ClientOptions& o, std::string& e) {
+    argv.insert(argv.begin(), "kfm_client");
+    return client::parseClientOptions(std::span<const char* const>(argv.data(), argv.size()), o, e);
+  };
+  client::ClientOptions o;
+  std::string error;
+  CHECK(o.windowWidth == 1280);
+  CHECK(o.windowHeight == 720);
+  REQUIRE(parse({"--window", "700x900"}, o, error));
+  CHECK(o.windowWidth == 700);
+  CHECK(o.windowHeight == 900);
+  for (const char* bad : {"700", "700x", "x900", "100x900", "700x99999", "axb"}) {
+    client::ClientOptions b;
+    CHECK_FALSE(parse({"--window", bad}, b, error));
+    CHECK(error.find("--window") != std::string::npos);
+  }
+  client::ClientOptions b;
+  CHECK_FALSE(parse({"--window"}, b, error));
+}
+
 TEST_CASE("pause menu: the local and online buttons, focus on Resume (v0.46)", "[client][menu]") {
   client::PauseMenu m;
   CHECK_FALSE(m.isOpen());

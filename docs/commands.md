@@ -81,6 +81,7 @@ build/dev/apps/client/kfm_client --arena dojo_powerups --bots 3                 
 build/dev/apps/client/kfm_client --mode grid_rounds --bots 3                    # the grid at 15-tick turns
 build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm    # headless render check
+SDL_VIDEODRIVER=offscreen build/dev/apps/client/kfm_client --window 700x900 --screen online --exit-after-frames 30 --screenshot narrow.ppm   # no window on the desktop
 build/dev/apps/client/kfm_client --replay tools/replay-corpus/scripted_10p_contest_1800t.kfmr   # the replay viewer
 build/dev/apps/client/kfm_client --capsules      # placeholder capsules instead of the skinned test rig
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm

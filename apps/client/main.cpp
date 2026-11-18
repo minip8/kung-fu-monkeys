@@ -1565,8 +1565,8 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   // watcher starts when the viewer leaves for the menu).
   if (!app.options.replayMode()) startHotReload(app);
   if (!app.window.init({.title = "Kung Fu Monkeys",
-                        .width = 1280,
-                        .height = 720,
+                        .width = static_cast<int>(app.options.windowWidth),
+                        .height = static_cast<int>(app.options.windowHeight),
                         .vsync = true,
                         .paceWithoutVsync = app.options.frameLimit})) {
     return EXIT_FAILURE;
