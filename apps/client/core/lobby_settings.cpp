@@ -77,6 +77,7 @@ void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& con
 
 std::string settingsText(const ClientOptions& options) {
   std::string s;
+  s += "settings_version=" + std::to_string(kSettingsVersion) + "\n";
   s += "arena=" + options.arena + "\n";
   s += "mode=" + options.mode + "\n";
   s += "loadout=" + options.loadout + "\n";
@@ -95,6 +96,8 @@ std::string settingsText(const ClientOptions& options) {
 void applySettingsText(std::string_view text, const sim::ContentDB& content, ClientOptions& options,
                        std::vector<std::string>& warnings) {
   int lineNo = 0;
+  uint8_t version = 1;  // text without settings_version is from before v0.93
+  bool themeAuto = false;
   while (!text.empty()) {
     const size_t nl = text.find('\n');
     const std::string_view line = trim(text.substr(0, nl));
@@ -156,10 +159,16 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
       } else {
         warn("mute must be 0 or 1");
       }
+    } else if (key == "settings_version") {
+      if (!parseSmall(value, 255, version) || version == 0) {
+        warn("settings_version must be a number from 1");
+        version = 1;
+      }
     } else if (key == "theme") {
       const std::optional<presentation::ThemeChoice> theme = presentation::parseThemeChoice(value);
       if (theme) {
         options.theme = *theme;
+        themeAuto = *theme == presentation::ThemeChoice::Auto;
       } else {
         warn("theme must be auto, jungle, temple or beach");
       }
@@ -187,6 +196,11 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
       warn("unknown key '" + std::string(key) + "'");
     }
   }
+  // v0.93: Beach became the default theme. Every text saved before then
+  // says theme=auto, the old default, whether or not the player chose it:
+  // move those to Beach once. The next save writes settings_version=2, so a
+  // deliberate later choice of auto is kept.
+  if (version < 2 && themeAuto) options.theme = presentation::ThemeChoice::Beach;
 }
 
 }  // namespace kfm::client

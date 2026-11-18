@@ -1439,13 +1439,12 @@ bool frame(void* user) {
     return true;
   }
 
-  // Around the arena: the theme's background (v0.52); the jungle's is the
-  // page's and the menus' dark green (ui::kJungle), which is also all a
-  // replay shows before it plays.
+  // Around the arena: the theme's background (v0.52); without the world
+  // (a replay before it plays) the page's cream (ui::kGround, v0.93).
   presentation::Color bg = app->renderer.look().background;
   if (!app->drawWorld) {
-    const ImVec4 jungle = client::ui::vec4(client::ui::kJungle);
-    bg = presentation::Color{.r = jungle.x, .g = jungle.y, .b = jungle.z};
+    const ImVec4 ground = client::ui::vec4(client::ui::kGround);
+    bg = presentation::Color{.r = ground.x, .g = ground.y, .b = ground.z};
   }
   platform::beginDefaultPass({.r = bg.r, .g = bg.g, .b = bg.b, .a = 1.0F}, w, h);
   if (app->rendererReady && app->drawWorld) app->renderer.draw(app->renderState, camera, w, h);

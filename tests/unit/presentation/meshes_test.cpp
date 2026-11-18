@@ -212,3 +212,16 @@ TEST_CASE("the player palette has ten distinct colours", "[presentation][palette
   }
   CHECK(playerColor(12).r == kPlayerColors[2].r);
 }
+
+TEST_CASE("no player wears banana yellow (v0.93)", "[presentation][palette]") {
+  // A monkey must never read as a banana: every slot colour keeps its
+  // distance from the banana's colour.
+  for (std::size_t i = 0; i < kPlayerColors.size(); ++i) {
+    const Color a = kPlayerColors[i];
+    const Color b = kBananaColor;
+    const float d = std::sqrt(((a.r - b.r) * (a.r - b.r)) + ((a.g - b.g) * (a.g - b.g)) +
+                              ((a.b - b.b) * (a.b - b.b)));
+    INFO("slot " << i);
+    CHECK(d > 0.3f);
+  }
+}

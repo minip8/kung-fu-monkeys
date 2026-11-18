@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cfloat>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -28,9 +29,9 @@ using presentation::HudPhase;
 using presentation::kNoSlot;
 
 using ui::centredText;
+using ui::Face;
 using ui::kBanana;
 using ui::kEmptyPip;
-using ui::kShadow;
 using ui::kWhite;
 using ui::slotColor;
 using ui::slotColorVec;
@@ -40,6 +41,31 @@ using ui::textWidth;
 // team 2 blue, ...), named "Team 1".. on screen.
 [[nodiscard]] ImU32 teamColor(uint32_t team, int alpha = 255) {
   return slotColor(team, alpha);
+}
+
+// v0.93: a white pill over the game with a colour dot before cocoa text
+// (team scores, name tags): a slot colour is not a text colour on sand.
+// Returns the pill's width.
+float dotPill(ImDrawList* dl, float size, ImVec2 anchor, ImU32 dot, const char* text,
+              int alpha = 255) {
+  ImFont* f = ui::font(Face::Strong);
+  const ImVec2 extent = f->CalcTextSizeA(size, FLT_MAX, 0.0f, text);
+  const float dotR = std::round(size * 0.32f);
+  const float padX = std::round(size * 0.45f);
+  const float padY = std::round(size * 0.14f);
+  const float w = padX + (2.0f * dotR) + std::round(size * 0.3f) + extent.x + padX;
+  const ImVec2 lo{std::round(anchor.x - (w * 0.5f)),
+                  std::round(anchor.y - (extent.y * 0.5f) - padY)};
+  const ImVec2 hi{lo.x + w, std::round(anchor.y + (extent.y * 0.5f) + padY)};
+  const float r = (hi.y - lo.y) * 0.5f;
+  if (alpha >= 255) ui::softShadow(dl, lo, hi, r, 2.0f, 6.0f, 40);
+  dl->AddRectFilled(lo, hi, ui::withAlpha(ui::kHudPill, (230 * alpha) / 255), r);
+  const ImVec2 c{lo.x + padX + dotR, (lo.y + hi.y) * 0.5f};
+  dl->AddCircleFilled(c, dotR, ui::withAlpha(dot, alpha));
+  dl->AddCircle(c, dotR, ui::withAlpha(ui::kCocoa, (60 * alpha) / 255), 0, 1.0f);
+  dl->AddText(f, size, ImVec2(c.x + dotR + std::round(size * 0.3f), lo.y + padY),
+              ui::withAlpha(ui::kText, alpha), text);
+  return w;
 }
 
 // "P1".."P10" for local players, "BOT3" (slot number) for bots: several bots
@@ -62,21 +88,21 @@ void clockText(float seconds, char (&out)[16]) {
 // the last ten seconds.
 void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float viewW, float y) {
   const presentation::RenderHud& hud = state.hud;
-  centredText(dl, 16.0f, ImVec2(viewW * 0.5f, y), kWhite, modeLineText(hud).c_str());
+  ui::pillText(dl, 16.0f, ImVec2(viewW * 0.5f, y), ui::kText, modeLineText(hud).c_str());
   // v0.80: control's zones at a glance (empty in every other kind).
   const ZoneStrip zones = zoneStrip(state);
   if (hud.teamCount > 0) {
     // v0.32: the team scores, each in its team's colour, side by side;
     // control adds the zones each team owns, harvest says "banked".
-    y += 22.0f;
+    y += 28.0f;
     const bool wide = zones.count > 0 || hud.mode == sim::ModeKind::Harvest;
-    const float teamW = wide ? 176.0f : 128.0f;
+    const float teamW = wide ? 186.0f : 138.0f;
     const uint8_t teams = std::min<uint8_t>(hud.teamCount, sim::kMaxPlayers);
     float x = (viewW * 0.5f) - (static_cast<float>(teams - 1) * teamW * 0.5f);
     for (uint8_t t = 0; t < teams; ++t) {
       const std::string text = teamScoreText(
           hud, t, zones.count > 0 ? std::optional<uint8_t>(zones.owned[t]) : std::nullopt);
-      centredText(dl, 18.0f, ImVec2(x, y), teamColor(t), text.c_str());
+      (void)dotPill(dl, 17.0f, ImVec2(x, y), teamColor(t), text.c_str());
       x += teamW;
     }
   }
@@ -85,9 +111,9 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
     clockText(hud.clockSeconds, clock);
     const bool urgent = clockUrgent(hud);
     const float pop = presentation::bannerScale(state, EffectKind::TimerBanner);
-    centredText(dl, 26.0f * pop, ImVec2(viewW * 0.5f, y + 24.0f), urgent ? ui::kAlarm : kWhite,
-                clock);
-    y += 24.0f;
+    ui::pillText(dl, 24.0f * pop, ImVec2(viewW * 0.5f, y + 30.0f), urgent ? ui::kAlarm : ui::kText,
+                 clock, Face::Display);
+    y += 30.0f;
   }
   if (zones.count == 0) return;
   // A chip per zone: its owner's colour (neutral when unowned), its letter,
@@ -98,13 +124,14 @@ void drawModeLine(ImDrawList* dl, const presentation::RenderState& state, float 
   const float rowW =
       (static_cast<float>(zones.count) * kChip) + (static_cast<float>(zones.count - 1) * kGap);
   float x = (viewW - rowW) * 0.5f;
-  const float top = y + 24.0f;
+  const float top = y + 26.0f;
   for (uint8_t k = 0; k < zones.count; ++k) {
     const ZoneChip& chip = zones.chips[k];
     const ImVec2 a{x, top};
     const ImVec2 b{x + kChip, top + kChip};
-    dl->AddRectFilled(a, b, chip.owner ? teamColor(*chip.owner) : kEmptyPip, 4.0f);
-    dl->AddRect(a, b, ui::kOutline, 4.0f, 0, 2.0f);
+    ui::softShadow(dl, a, b, 7.0f, 2.0f, 6.0f, 40);
+    dl->AddRectFilled(a, b, chip.owner ? teamColor(*chip.owner) : ui::kHudPill, 7.0f);
+    dl->AddRect(a, b, kWhite, 7.0f, 0, 2.0f);
     const char letter[2] = {chip.letter, '\0'};
     centredText(dl, 16.0f, ImVec2(x + (kChip * 0.5f), top + (kChip * 0.5f)), kWhite, letter);
     if (chip.challenger) {
@@ -127,28 +154,27 @@ void drawTimerPie(ImDrawList* dl, ImVec2 c, float r, uint8_t colorIndex, float f
     dl->PathArcTo(c, r, start, start + (2.0f * presentation::kPi * fraction), 20);
     dl->PathFillConvex(slotColor(colorIndex));
   }
-  dl->AddCircle(c, r, kShadow, 0, 1.0f);
+  dl->AddCircle(c, r, kWhite, 0, 1.0f);
 }
 
-// The card every slot is drawn on, in the lobby and in the HUD: the
-// panel's chunky card in small (ink border, ink drop) with the slot's
-// palette colour as a stripe along the top and, in a team mode (`team` >=
-// 0), the team's colour along the bottom. A dimmed card (alpha < 255) lies
-// flat, without its drop.
+// The card every slot is drawn on, in the lobby and in the HUD (v0.93): a
+// small soft card in `fill` (white over the game, cream on a screen's card)
+// with the slot's palette colour as a band along the top and, in a team
+// mode (`team` >= 0), the team's colour along the bottom. A dimmed card
+// (alpha < 255) lies flat, without its shadow.
 constexpr float kCardStripe = 6.0f;
-constexpr float kCardRounding = 9.0f;
-constexpr float kCardBorder = 2.5f;
-constexpr float kCardDrop = 3.0f;
+constexpr float kCardRounding = ui::kChipRounding;
 void drawCardFrame(ImDrawList* dl, ImVec2 min, ImVec2 max, uint8_t slot, int alpha, int team = -1,
-                   float k = 1.0f) {
-  const float b = kCardBorder * k;
-  const float r = (kCardRounding - kCardBorder) * k;
-  ui::card(dl, min, max, ui::kBark, kCardRounding * k, b, alpha < 255 ? 0.0f : kCardDrop * k,
-           alpha);
-  dl->AddRectFilled(ImVec2(min.x + b, min.y + b), ImVec2(max.x - b, min.y + (kCardStripe * k)),
-                    slotColor(slot, alpha), r, ImDrawFlags_RoundCornersTop);
+                   float k = 1.0f, ImU32 fill = ui::kWhite) {
+  const float r = kCardRounding * k;
+  ui::card(dl, min, max, fill, r, alpha < 255 ? 0.0f : 0.35f, alpha);
+  dl->AddRectFilled(min, ImVec2(max.x, min.y + (kCardStripe * k)), slotColor(slot, alpha), r,
+                    ImDrawFlags_RoundCornersTop);
+  // A hairline round the card: the white slot's band and a white card on
+  // the cream wash keep an edge.
+  dl->AddRect(min, max, ui::withAlpha(ui::kLine, alpha), r, 0, 1.0f);
   if (team >= 0) {
-    dl->AddRectFilled(ImVec2(min.x + b, max.y - b - (3.5f * k)), ImVec2(max.x - b, max.y - b),
+    dl->AddRectFilled(ImVec2(min.x, max.y - (4.0f * k)), max,
                       teamColor(static_cast<uint32_t>(team), alpha), r,
                       ImDrawFlags_RoundCornersBottom);
   }
@@ -190,13 +216,13 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
   constexpr float kGap = 8.0f;
   constexpr float kTimerStep = 30.0f;
   constexpr float kPieR = 6.0f;
-  float labelW = textWidth(kLabel, "BOT10");
+  float labelW = textWidth(kLabel, "BOT10", Face::Strong);
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     if ((hud.presentMask & (1u << i)) != 0 && !view.names[i].empty()) {
-      labelW = std::max(labelW, textWidth(kLabel, view.names[i].c_str()));
+      labelW = std::max(labelW, textWidth(kLabel, view.names[i].c_str(), Face::Strong));
     }
   }
-  const float scoreW = frags ? textWidth(kLabel, "-00 (0)")
+  const float scoreW = frags ? textWidth(kLabel, "-00 (0)", Face::Strong)
                              : static_cast<float>(hud.roundsToWin) * ((kPipR * 2.0f) + 4.0f);
   const float baseW = std::max((kPad * 2.0f) + labelW + 8.0f + scoreW,
                                (kPad * 2.0f) + (static_cast<float>(timers) * kTimerStep));
@@ -208,22 +234,21 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
   const float h = baseH * k;
   float x = (viewW - (total * k)) * 0.5f;
   const float y = 10.0f;
-  ImFont* font = ImGui::GetFont();
+  ImFont* font = ui::font(Face::Strong);
   for (uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
     if ((hud.presentMask & (1u << i)) == 0) continue;
     const bool waiting = hud.respawnSeconds[i] > 0.0f;
     // Dimmed while out of play: waiting to respawn, or eliminated this round.
     const bool out =
         waiting || (hud.phase == HudPhase::Playing && playerOfSlot(state, i) == nullptr);
-    const int alpha = out ? 120 : 255;
+    const int alpha = out ? 140 : 255;
     // v0.32: the slot's team as a bar in the team colour along the bottom.
     drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + h), i, alpha,
                   hud.teamCount > 0 ? static_cast<int>(hud.teams[i]) : -1, k);
     const float lineY = y + ((kCardStripe + 4.0f) * k);
     char label[kLabelBytes];
     slotLabel(view, i, label);
-    dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k) + 1.0f, lineY + 1.0f), kShadow, label);
-    dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k), lineY), ui::withAlpha(ui::kCream, alpha),
+    dl->AddText(font, kLabel * k, ImVec2(x + (kPad * k), lineY), ui::withAlpha(ui::kText, alpha),
                 label);
     const float right = x + w - (kPad * k);
     if (frags) {
@@ -234,8 +259,9 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
       } else {
         std::snprintf(score, sizeof score, "%d", static_cast<int>(hud.scores[i]));
       }
-      const float sw = textWidth(kLabel * k, score);
-      dl->AddText(font, kLabel * k, ImVec2(right - sw, lineY), kWhite, score);
+      const float sw = textWidth(kLabel * k, score, Face::Strong);
+      dl->AddText(font, kLabel * k, ImVec2(right - sw, lineY), ui::withAlpha(ui::kText, alpha),
+                  score);
     } else {
       // Right-aligned pips, the won ones first.
       const float r = kPipR * k;
@@ -260,14 +286,14 @@ void drawScoreCards(ImDrawList* dl, const HudView& view, const presentation::Ren
         drawTimerPie(dl, ImVec2(tx, ty), kPieR * k, pu.colorIndex, pu.fraction);
         char secs[8];
         std::snprintf(secs, sizeof secs, "%d", static_cast<int>(std::ceil(pu.secondsLeft)));
-        dl->AddText(font, 12.0f * k, ImVec2(tx + ((kPieR + 3.0f) * k), ty - (6.0f * k)), kWhite,
+        dl->AddText(font, 12.0f * k, ImVec2(tx + ((kPieR + 3.0f) * k), ty - (7.0f * k)), ui::kText,
                     secs);
         tx += kTimerStep * k;
       }
     }
     x += w + (kGap * k);
   }
-  drawModeLine(dl, state, viewW, y + h + 14.0f);
+  drawModeLine(dl, state, viewW, y + h + 18.0f);
 }
 
 // Over each monkey a compact row of the same timer pies (no seconds: the
@@ -303,7 +329,7 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
 
     char label[kLabelBytes];
     slotLabel(session, p.slot, label);
-    centredText(dl, 15.0f, ImVec2(at.x, at.y - 16.0f), slotColor(p.slot), label);
+    (void)dotPill(dl, 13.0f, ImVec2(at.x, at.y - 17.0f), slotColor(p.slot), label);
 
     constexpr float kPipR = 4.0f;
     const float width = static_cast<float>(p.ammoMax) * (kPipR * 2.0f + 3.0f) - 3.0f;
@@ -311,11 +337,12 @@ void drawPlayerTags(ImDrawList* dl, const HudView& session, const HudInput& in) 
     for (uint8_t a = 0; a < p.ammoMax; ++a) {
       const ImVec2 c{x, at.y};
       if (a < p.ammo) {
+        dl->AddCircleFilled(c, kPipR + 1.0f, ui::kBananaInk);
         dl->AddCircleFilled(c, kPipR, kBanana);
       } else {
+        dl->AddCircleFilled(c, kPipR + 1.0f, ui::withAlpha(kWhite, 200));
         dl->AddCircleFilled(c, kPipR, kEmptyPip);
       }
-      dl->AddCircle(c, kPipR, kShadow, 0, 1.0f);
       x += (kPipR * 2.0f) + 3.0f;
     }
     drawPowerUpDots(dl, p, ImVec2(at.x, at.y + 12.0f));
@@ -344,21 +371,25 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
   const float height = scoreTableHeight(b, k);
   if (panel) {
     ui::card(dl, origin, ImVec2(origin.x + width, origin.y + height), ui::kPanelBg,
-             ui::kPanelRounding, ui::kPanelBorder, ui::kPanelDrop);
+             ui::kPanelRounding * k);
   }
-  ImFont* font = ImGui::GetFont();
+  ImFont* font = ui::font(Face::Body);
+  ImFont* display = ui::font(Face::Display);
   const float left = origin.x + kPad;
   const float right = origin.x + width - kPad;
   const float deathsX = right;
   const float scoreX = b.showDeaths ? right - 90.0f : right;
   const auto rightText = [&](float size, float xRight, float y, ImU32 color, const char* text) {
-    dl->AddText(font, size, ImVec2(xRight - textWidth(size, text), y), color, text);
+    dl->AddText(font, size, ImVec2(xRight - textWidth(size, text, Face::Body), y), color, text);
+  };
+  const auto rightNumber = [&](float size, float xRight, float y, ImU32 color, const char* text) {
+    dl->AddText(display, size, ImVec2(xRight - textWidth(size, text), y), color, text);
   };
   float y = origin.y + kPad;
-  dl->AddText(font, kSmall, ImVec2(left, y), ui::kCreamDim, "#");
-  dl->AddText(font, kSmall, ImVec2(left + (52.0f * k), y), ui::kCreamDim, "Player");
-  rightText(kSmall, scoreX, y, ui::kCreamDim, b.scoreLabel);
-  if (b.showDeaths) rightText(kSmall, deathsX, y, ui::kCreamDim, "Deaths");
+  dl->AddText(font, kSmall, ImVec2(left, y), ui::kTextDim, "#");
+  dl->AddText(font, kSmall, ImVec2(left + (52.0f * k), y), ui::kTextDim, "Player");
+  rightText(kSmall, scoreX, y, ui::kTextDim, b.scoreLabel);
+  if (b.showDeaths) rightText(kSmall, deathsX, y, ui::kTextDim, "Deaths");
   y += 24.0f * k;
   bool firstRow = true;
   int8_t lastTeam = 0;
@@ -369,38 +400,40 @@ float drawScoreTable(ImDrawList* dl, ImVec2 origin, float width, const Scoreboar
       const auto team = static_cast<uint32_t>(r.team < 0 ? 0 : static_cast<uint8_t>(r.team));
       std::snprintf(text, sizeof text, "Team %u", team + 1U);
       const float ty = y + ((kRowH - kText) * 0.5f);
-      dl->AddRectFilled(ImVec2(left - 4.0f, y + 2.0f), ImVec2(right + 4.0f, y + kRowH - 2.0f),
-                        slotColor(team, 60), 8.0f);
-      ui::shadowText(dl, kText, ImVec2(left, ty), ui::kCream, text);
+      dl->AddRectFilled(ImVec2(left - 6.0f, y + 2.0f), ImVec2(right + 6.0f, y + kRowH - 2.0f),
+                        slotColor(team, 55), 10.0f * k);
+      dl->AddText(display, kText, ImVec2(left, ty), ui::kText, text);
       std::snprintf(text, sizeof text, "%d",
                     static_cast<int>(b.teamScores[team < sim::kMaxPlayers ? team : 0]));
-      rightText(kText, scoreX, ty, ui::kCream, text);
+      rightNumber(kText, scoreX, ty, ui::kText, text);
       y += kRowH;
     }
     const float ty = y + ((kRowH - kText) * 0.5f);
     if (r.local) {
-      dl->AddRect(ImVec2(left - 4.0f, y + 2.0f), ImVec2(right + 4.0f, y + kRowH - 2.0f),
-                  ui::withAlpha(kBanana, 170), 8.0f, 0, 1.5f);
+      // This client's own rows on a sand band.
+      dl->AddRectFilled(ImVec2(left - 6.0f, y + 2.0f), ImVec2(right + 6.0f, y + kRowH - 2.0f),
+                        ui::kSandLight, 10.0f * k);
     }
     std::snprintf(text, sizeof text, "%u.", static_cast<unsigned>(r.place));
-    dl->AddText(font, kText, ImVec2(left, ty), ui::kCreamDim, text);
-    // The slot's colour as a dot: the label stays cream for contrast.
-    dl->AddCircleFilled(ImVec2(left + (40.0f * k), y + (kRowH * 0.5f)), 8.0f * k, ui::kOutline);
-    dl->AddCircleFilled(ImVec2(left + (40.0f * k), y + (kRowH * 0.5f)), 6.0f * k,
+    dl->AddText(font, kText, ImVec2(left, ty), ui::kTextDim, text);
+    // The slot's colour as a dot: the label stays cocoa for contrast.
+    dl->AddCircleFilled(ImVec2(left + (40.0f * k), y + (kRowH * 0.5f)), 7.0f * k,
                         slotColor(r.slot));
+    dl->AddCircle(ImVec2(left + (40.0f * k), y + (kRowH * 0.5f)), 7.0f * k,
+                  ui::withAlpha(ui::kCocoa, 60), 0, 1.0f);
     float nx = left + (52.0f * k);
     if (r.winner) {
       drawCrown(dl, ImVec2(nx, ty + kText - 3.0f), 16.0f);
       nx += 22.0f;
     }
-    ui::shadowText(dl, kText, ImVec2(nx, ty), ui::kCream, r.label.c_str());
-    nx += textWidth(kText, r.label.c_str()) + 8.0f;
-    if (r.local) dl->AddText(font, kSmall, ImVec2(nx, ty + 3.0f), ui::kCreamDim, "you");
+    dl->AddText(font, kText, ImVec2(nx, ty), ui::kText, r.label.c_str());
+    nx += textWidth(kText, r.label.c_str(), Face::Body) + 8.0f;
+    if (r.local) dl->AddText(font, kSmall, ImVec2(nx, ty + 3.0f), ui::kTextDim, "you");
     std::snprintf(text, sizeof text, "%d", static_cast<int>(r.score));
-    rightText(kText, scoreX, ty, kWhite, text);
+    rightNumber(kText, scoreX, ty, ui::kText, text);
     if (b.showDeaths) {
       std::snprintf(text, sizeof text, "%u", static_cast<unsigned>(r.deaths));
-      rightText(kText, deathsX, ty, ui::kCreamDim, text);
+      rightText(kText, deathsX, ty, ui::kTextDim, text);
     }
     firstRow = false;
     y += kRowH;
@@ -441,7 +474,7 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
                   roundStartTitle(hud).c_str());
       const int n = std::max(1, static_cast<int>(std::ceil(hud.countdownSeconds)));
       std::snprintf(text, sizeof text, "%d", n);
-      centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), ui::kGold, text);
+      centredText(dl, 96.0f, ImVec2(centre.x, centre.y + 20.0f), kBanana, text);
       break;
     }
     case HudPhase::RoundEnded: {
@@ -469,10 +502,10 @@ void drawBanners(ImDrawList* dl, const HudView& session, const presentation::Ren
       const char* hint = "Enter / Start: back to the lobby";
       if (session.network) hint = "Esc: menu (Leave room)";
       if (session.replay) hint = "End of the replay";
-      centredText(dl, 20.0f, ImVec2(centre.x, centre.y + 60.0f), kWhite, hint);
+      ui::pillText(dl, 18.0f, ImVec2(centre.x, centre.y + 60.0f), ui::kText, hint);
       if (!session.nextMatch.empty()) {
-        centredText(dl, 18.0f, ImVec2(centre.x, centre.y + 88.0f), ui::kSky,
-                    session.nextMatch.c_str());
+        ui::pillText(dl, 17.0f, ImVec2(centre.x, centre.y + 92.0f), ui::kTeal,
+                     session.nextMatch.c_str());
       }
       break;
     }
@@ -491,24 +524,25 @@ void drawNotices(ImDrawList* dl, const HudView& view, ImVec2 view2) {
                   "P%u's controller disconnected: repeating its last input. Press a button on any "
                   "free device to take over.",
                   static_cast<unsigned>(i) + 1U);
-    centredText(dl, 18.0f, ImVec2(view2.x * 0.5f, y), slotColor(i), text);
-    y -= 24.0f;
+    (void)dotPill(dl, 16.0f, ImVec2(view2.x * 0.5f, y), slotColor(i), text);
+    y -= 30.0f;
   }
   if (view.paused) {
-    centredText(dl, 28.0f, ImVec2(view2.x * 0.5f, view2.y * 0.2f), kWhite,
-                "PAUSED  (P: resume, O: step)");
+    ui::pillText(dl, 26.0f, ImVec2(view2.x * 0.5f, view2.y * 0.2f), ui::kText,
+                 "PAUSED  (P: resume, O: step)", Face::Display);
   }
-  ImFont* font = ImGui::GetFont();
-  const auto line = [&](float size, float top, ImU32 color, const std::string& text) {
+  // Left-aligned lines on white pills along the bottom.
+  const auto line = [&](float size, float top, ImU32 color, const std::string& text, Face face) {
     if (text.empty()) return;
-    const ImVec2 pos{12.0f, top};
-    dl->AddText(font, size, ImVec2(pos.x + 1.0f, pos.y + 1.0f), kShadow, text.c_str());
-    dl->AddText(font, size, pos, color, text.c_str());
+    const float w = textWidth(size, text.c_str(), face);
+    ui::pillText(dl, size, ImVec2(12.0f + (size * 0.6f) + (w * 0.5f), top + (size * 0.5f)), color,
+                 text.c_str(), face);
   };
-  line(15.0f, view2.y - 22.0f, ui::kSky, view.statusLine);
+  line(15.0f, view2.y - 26.0f, ui::kTealDeep, view.statusLine, Face::Strong);
   // M6a: the room, large, and how to invite someone into it.
-  line(15.0f, view2.y - 42.0f, ui::kSky, view.shareLine);
-  line(24.0f, view2.y - (view.shareLine.empty() ? 50.0f : 70.0f), ui::kGold, view.roomLine);
+  line(15.0f, view2.y - 52.0f, ui::kTealDeep, view.shareLine, Face::Strong);
+  line(22.0f, view2.y - (view.shareLine.empty() ? 60.0f : 86.0f), ui::kText, view.roomLine,
+       Face::Display);
 }
 
 // Short device names for the lobby cards.
@@ -563,7 +597,8 @@ void drawCrown(ImDrawList* dl, ImVec2 p, float w) {
                                   ImVec2(p.x + w, p.y - h),
                                   ImVec2(p.x + w, p.y)};
   dl->AddConcavePolyFilled(pts.data(), static_cast<int>(pts.size()), kBanana);
-  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), kShadow, ImDrawFlags_Closed, 1.0f);
+  dl->AddPolyline(pts.data(), static_cast<int>(pts.size()), ui::kBananaInk, ImDrawFlags_Closed,
+                  1.5f);
 }
 
 // `perRow`: 0 picks ten in a row, or two rows of five when the window is
@@ -584,34 +619,33 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int pe
   const int rows = (static_cast<int>(shown) + perRow - 1) / perRow;
   ImGui::Dummy(ImVec2(avail, (static_cast<float>(rows) * (kH + kGap)) - kGap));
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  ImFont* font = ImGui::GetFont();
+  ImFont* font = ui::font(Face::Strong);
+  ImFont* body = ui::font(Face::Body);
   for (uint8_t i = 0; i < shown; ++i) {
     const LobbyCard& c = cards[i];
     const int column = i % perRow;
     const int row = i / perRow;
     const float x = origin.x + (static_cast<float>(column) * (w + kGap));
     const float y = origin.y + (static_cast<float>(row) * (kH + kGap));
-    const int alpha = c.filled ? c.alpha : 70;
-    drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + kH), i, alpha, c.team);
-    const ImU32 titleColor =
-        c.filled ? ui::withAlpha(ui::kCream, alpha) : ui::withAlpha(ui::kCreamDim, 160);
+    const int alpha = c.filled ? c.alpha : 110;
+    drawCardFrame(dl, ImVec2(x, y), ImVec2(x + w, y + kH), i, alpha, c.team, 1.0f, ui::kInset);
+    const ImU32 titleColor = c.filled ? ui::kText : ui::kTextDim;
     dl->PushClipRect(ImVec2(x, y), ImVec2(x + w - 2.0f, y + kH), true);
     const float crownW = c.host ? 18.0f : 0.0f;
     if (c.host) drawCrown(dl, ImVec2(x + 7.0f, y + kCardStripe + 17.0f), crownW - 4.0f);
     dl->AddText(font, 18.0f, ImVec2(x + 8.0f + crownW, y + kCardStripe + 1.0f), titleColor,
                 c.title.c_str());
-    dl->AddText(font, 14.0f, ImVec2(x + 8.0f, y + kCardStripe + 21.0f),
-                c.filled ? ui::withAlpha(ui::kCream, alpha) : ui::withAlpha(ui::kCreamDim, 140),
-                c.sub);
+    dl->AddText(body, 14.0f, ImVec2(x + 8.0f, y + kCardStripe + 21.0f), ui::kTextDim, c.sub);
     dl->PopClipRect();
     if (c.team >= 0) {
       // v0.32: "T1".. at the right of the title and a bar in the team colour.
       const auto team = static_cast<uint32_t>(c.team);
       char tag[16];
       std::snprintf(tag, sizeof tag, "T%u", team + 1U);
-      const float tw = textWidth(15.0f, tag);
-      dl->AddText(font, 15.0f, ImVec2(x + w - tw - 7.0f, y + kCardStripe + 4.0f),
-                  teamColor(team, alpha), tag);
+      const float tw = textWidth(15.0f, tag, Face::Strong);
+      const ImVec2 tagLo{x + w - tw - 14.0f, y + kCardStripe + 3.0f};
+      dl->AddRectFilled(tagLo, ImVec2(x + w - 4.0f, tagLo.y + 18.0f), teamColor(team, alpha), 9.0f);
+      dl->AddText(font, 15.0f, ImVec2(tagLo.x + 5.0f, tagLo.y), ui::kWhite, tag);
     }
   }
 }
@@ -621,15 +655,19 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int pe
 // power-up spawners, filled when the match's power-up set leaves them
 // something to spawn and hollow when it switches them off.
 // v0.52: the player's arena theme, which the preview draws in (setHudTheme()).
-presentation::ThemeChoice gTheme = presentation::ThemeChoice::Auto;
+presentation::ThemeChoice gTheme = presentation::ThemeChoice::Beach;
 
 void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint16_t powerUps,
                       ImVec2 box) {
   const ImVec2 origin = ImGui::GetCursorScreenPos();
   ImGui::Dummy(ImVec2(box.x, box.y + 4.0f));
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  // On a small inset card, like everything else on a panel.
-  ui::card(dl, origin, ImVec2(origin.x + box.x, origin.y + box.y), ui::kInk, 10.0f, 2.5f, 3.0f);
+  // The arena's look in the player's theme (theme.hpp), as the renderer draws it.
+  const presentation::ArenaLook& look =
+      presentation::arenaLook(presentation::resolveTheme(gTheme, arena.name.view()));
+  // On a small card in the theme's surroundings (the sea round a beach).
+  ui::card(dl, origin, ImVec2(origin.x + box.x, origin.y + box.y), toU32(look.background), 16.0f,
+           0.3f);
   const float hx = std::max(arena.halfExtents.x.toFloat(), 0.01f);
   const float hy = std::max(arena.halfExtents.y.toFloat(), 0.01f);
   const float scale = std::min((box.x - 14.0f) / (2.0f * hx), (box.y - 14.0f) / (2.0f * hy));
@@ -638,10 +676,7 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   const auto box2 = [&](Vec2 min, Vec2 max) {
     return std::pair{at(min.x.toFloat(), max.y.toFloat()), at(max.x.toFloat(), min.y.toFloat())};
   };
-  // The arena's look in the player's theme (theme.hpp), as the renderer draws it.
-  const presentation::ArenaLook& look =
-      presentation::arenaLook(presentation::resolveTheme(gTheme, arena.name.view()));
-  dl->AddRectFilled(at(-hx, hy), at(hx, -hy), toU32(look.floor));
+  dl->AddRectFilled(at(-hx, hy), at(hx, -hy), toU32(look.floor), 6.0f);
   for (uint8_t i = 0; i < arena.hazardCount; ++i) {
     const sim::Hazard& hz = arena.hazards[i];
     const auto [a, b] = box2(hz.min, hz.max);
@@ -654,10 +689,10 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   }
   for (uint8_t i = 0; i < arena.wallCount; ++i) {
     const auto [a, b] = box2(arena.walls[i].min, arena.walls[i].max);
-    dl->AddRectFilled(a, b, toU32(look.wall));
-    dl->AddRect(a, b, toU32(look.ink), 0.0f, 0, 1.5f);
+    dl->AddRectFilled(a, b, toU32(look.wall), 2.0f);
+    dl->AddRect(a, b, toU32(look.wallInk ? look.ink : look.wallSide), 2.0f, 0, 1.5f);
   }
-  dl->AddRect(at(-hx, hy), at(hx, -hy), toU32(look.rim), 0.0f, 0, 3.0f);
+  dl->AddRect(at(-hx, hy), at(hx, -hy), toU32(look.rim), 6.0f, 0, 2.5f);
   // v0.33: objective zones, translucent with a solid rim, lettered a, b, ...
   for (uint8_t i = 0; i < arena.zoneCount && i < sim::kMaxArenaZones; ++i) {
     const auto [a, b] = box2(arena.zones[i].min, arena.zones[i].max);
@@ -668,6 +703,7 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
   }
   for (uint8_t i = 0; i < arena.spawnPointCount; ++i) {
     const Vec2 p = arena.spawnPoints[i];
+    dl->AddCircleFilled(at(p.x.toFloat(), p.y.toFloat()), 4.5f, kWhite);
     dl->AddCircleFilled(at(p.x.toFloat(), p.y.toFloat()), 3.5f, slotColor(i));
   }
   const uint32_t all = (uint32_t{1} << std::min<uint8_t>(db.powerUpCount, sim::kMaxPowerUps)) - 1u;
@@ -678,7 +714,7 @@ void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint
     if (sp.isTree()) {
       // v0.82: a tree bears bananas whatever the power-up set.
       dl->AddCircleFilled(q, kR + 1.0f, ui::kPreviewTree);
-      dl->AddCircle(q, kR + 1.0f, ui::kOutline, 0, 1.5f);
+      dl->AddCircle(q, kR + 1.0f, kWhite, 0, 1.5f);
       dl->AddCircleFilled(q, 2.0f, kBanana);
       continue;
     }
@@ -778,17 +814,17 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
       if (ui::showsFocus(focused, ui::pointerOverItem())) {
         ui::focusBar(min, max);
       } else {
-        ui::card(dl, min, max, ui::kBarkInset, 10.0f, 2.0f, 0.0f);
+        dl->AddRectFilled(min, max, ui::kInset, ui::kRowRounding);
       }
       const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
       dl->AddCircleFilled(ImVec2(min.x + 12.0f, min.y + (frameH * 0.5f)), 5.0f, slotColor(color));
       const float textY = min.y + ((frameH - kRowFont) * 0.5f);
       dl->AddText(ImGui::GetFont(), kRowFont, ImVec2(min.x + 24.0f, textY),
-                  on ? ui::kCream : ui::kCreamDim, menu.rowLabel(row).c_str());
+                  on ? ui::kText : ui::kTextDim, menu.rowLabel(row).c_str());
       const char* state = on ? "on" : "off";
       dl->AddText(ImGui::GetFont(), kRowFont,
-                  ImVec2(max.x - textWidth(kRowFont, state) - 10.0f, textY),
-                  on ? ui::kMangoLight : ui::kCreamDim, state);
+                  ImVec2(max.x - textWidth(kRowFont, state, Face::Body) - 10.0f, textY),
+                  on ? ui::kTeal : ui::kTextDim, state);
       ImGui::PopID();
       continue;
     }
@@ -798,7 +834,7 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db) {
     ImGui::PushStyleColor(ImGuiCol_Header, ui::vec4(ui::kTransparent));
     // v0.55: no hover tint of its own: the focus bar is the highlight.
     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::kTransparent));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::withAlpha(ui::kMango, 140)));
+    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(ui::kSand));
     if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
                           ImVec2(0.0f, frameH))) {
       menu.setFocus(i);
@@ -843,8 +879,9 @@ ShareOutcome drawShare(const ShareView& share) {
   ImGui::TextDisabled("Room code (%s)", share.region.c_str());
   ImGui::PopFont();
   const ImVec2 at = ImGui::GetCursorScreenPos();
-  ImGui::PushFont(nullptr, ui::kFontTitle);
-  ui::shadowText(ImGui::GetWindowDrawList(), ui::kFontTitle, at, ui::kGold, share.code.c_str());
+  ImGui::PushFont(ui::font(Face::Display), ui::kFontTitle);
+  ImGui::GetWindowDrawList()->AddText(ui::font(Face::Display), ui::kFontTitle, at, ui::kTeal,
+                                      share.code.c_str());
   ImGui::Dummy(ImVec2(textWidth(ui::kFontTitle, share.code.c_str()), ImGui::GetFontSize()));
   ImGui::PopFont();
   ImGui::SameLine();
@@ -862,7 +899,7 @@ ShareOutcome drawShare(const ShareView& share) {
     if (ui::bigButton("Share", false, 0.0f, true, ui::kFontUi + 2.0f)) out.share = true;
   }
   if (share.copied) {
-    ImGui::TextColored(ui::vec4(ui::kMangoLight), "Copied: %s", share.link.c_str());
+    ImGui::TextColored(ui::vec4(ui::kSuccess), "Copied: %s", share.link.c_str());
   } else if (codeOnly) {
     ImGui::TextDisabled("Friends enter it in Play online > Room code");
   } else {
@@ -898,7 +935,7 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
     if (session.reconnects() > 0) title = "Reconnecting";
     if (failed) title = "Could not join";
     if (lost) title = "Connection lost";
-    ui::heading(title, failed ? ui::kAlarm : ui::kGold);
+    ui::heading(title, failed ? ui::kAlarm : ui::kTitle);
     const std::string status = session.statusText();
     if (failed) {
       ImGui::TextColored(ui::vec4(ui::kAlarm), "%s", status.c_str());
@@ -1169,11 +1206,11 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
       const std::string hostName =
           room->host.isValid() ? session.slotName(room->host) : std::string("the host");
       const std::string line = "Waiting for " + hostName + " to start the match";
-      ImGui::PushFont(nullptr, ui::kFontButton);
+      ImGui::PushFont(ui::font(Face::Display), ui::kFontButton);
       constexpr const char* kDots[] = {"", ".", "..", "..."};
       const auto dots = static_cast<std::size_t>(ImGui::GetTime() * 2.0) % 4;
       ImGui::AlignTextToFramePadding();
-      ImGui::TextColored(ui::vec4(ui::kGold), "%s%s", line.c_str(), kDots[dots]);
+      ImGui::TextColored(ui::vec4(ui::kTeal), "%s%s", line.c_str(), kDots[dots]);
       ImGui::PopFont();
       ImGui::SameLine(ImGui::GetWindowContentRegionMax().x - leaveW);
     }
@@ -1197,16 +1234,24 @@ std::optional<MatchOverAction> drawMatchOver(const MatchOverView& view, ButtonMe
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::TextDisabled("Match over");
     ImGui::PopFont();
-    ui::heading(view.title.c_str(), view.colorIndex ? slotColor(*view.colorIndex) : kWhite,
-                ui::kFontHeading + 6.0f);
+    {
+      // The winner's title in the winner's colour, as a sticker so every
+      // slot colour (white too) reads on the white card.
+      const float size = ui::kFontHeading + 6.0f;
+      const ImVec2 at = ImGui::GetCursorScreenPos();
+      ui::shadowText(ImGui::GetWindowDrawList(), size, ImVec2(at.x + 2.0f, at.y),
+                     view.colorIndex ? slotColor(*view.colorIndex) : ui::kTitle,
+                     view.title.c_str());
+      ImGui::Dummy(ImVec2(textWidth(size, view.title.c_str()) + 4.0f, size + 6.0f));
+    }
     ImGui::Spacing();
     const ImVec2 at = ImGui::GetCursorScreenPos();
     const float width = ImGui::GetContentRegionAvail().x;
     const float h = drawScoreTable(ImGui::GetWindowDrawList(), at, width, view.board, false);
     ImGui::Dummy(ImVec2(width, h));
     if (!view.waiting.empty()) {
-      ImGui::PushFont(nullptr, ui::kFontButton);
-      ImGui::TextColored(ui::vec4(ui::kGold), "%s", view.waiting.c_str());
+      ImGui::PushFont(ui::font(Face::Display), ui::kFontButton);
+      ImGui::TextColored(ui::vec4(ui::kTeal), "%s", view.waiting.c_str());
       ImGui::PopFont();
     }
     const std::size_t n = view.actions.size();
@@ -1270,17 +1315,16 @@ void drawReplayTimeline(ReplayControls& controls, const ReplayStatus& s, float w
   }
   const ImVec2 lo{x0, cy - (kTrackH * 0.5f)};
   const ImVec2 hi{x0 + trackW, cy + (kTrackH * 0.5f)};
-  ui::card(dl, lo, hi, ui::kBarkInset, kTrackH * 0.5f, 2.0f, 0.0f);
+  dl->AddRectFilled(lo, hi, ui::kInset, kTrackH * 0.5f);
   const float knobX = x0 + (trackW * frac);
   if (knobX > lo.x + 2.0f) {
-    dl->AddRectFilled(ImVec2(lo.x + 2.0f, lo.y + 2.0f), ImVec2(knobX, hi.y - 2.0f), ui::kMango,
-                      (kTrackH * 0.5f) - 2.0f);
+    dl->AddRectFilled(lo, ImVec2(knobX, hi.y), ui::kOcean, kTrackH * 0.5f);
   }
-  dl->AddCircleFilled(ImVec2(knobX, cy + 2.0f), kKnobR + 2.5f, ui::kOutline);
-  dl->AddCircleFilled(ImVec2(knobX, cy), kKnobR + 2.5f, ui::kOutline);
-  ImU32 knob = over ? ui::kSandLight : ui::kCream;
-  if (ImGui::IsItemActive()) knob = ui::kGold;
-  dl->AddCircleFilled(ImVec2(knobX, cy), kKnobR, knob);
+  dl->AddCircleFilled(ImVec2(knobX, cy + 3.0f), kKnobR + 1.0f, ui::kFoamLip);
+  ImU32 knob = over ? ui::kFoamPale : ui::kWhite;
+  if (ImGui::IsItemActive()) knob = ui::kBanana;
+  dl->AddCircleFilled(ImVec2(knobX, cy), kKnobR + 1.0f, ui::kTealDeep);
+  dl->AddCircleFilled(ImVec2(knobX, cy), kKnobR - 1.0f, knob);
 }
 
 // The bar's geometry on the current display: the pieces measured in the
@@ -1308,8 +1352,7 @@ struct ReplayBarLayout {
 };
 
 [[nodiscard]] float replayButtonWidth(const char* text) {
-  const float padX = std::round(ReplayBarLayout::kSize * 0.6f);
-  return textWidth(ReplayBarLayout::kSize, text) + (2.0f * (padX + ui::kButtonBorder));
+  return ui::bigButtonWidth(text, ReplayBarLayout::kSize);
 }
 
 [[nodiscard]] ReplayBarLayout replayBarLayout(bool titled, bool copyLink) {
@@ -1380,13 +1423,13 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
     const ImVec2 pos = ImGui::GetWindowPos();
     const ImVec2 sz = ImGui::GetWindowSize();
     ui::card(ImGui::GetBackgroundDrawList(), pos, ImVec2(pos.x + sz.x, pos.y + sz.y), ui::kPanelBg,
-             ui::kPanelRounding, ui::kPanelBorder, ui::kPanelDrop);
+             ui::kPanelRounding);
   }
   if (open) {
     ImDrawList* dl = ImGui::GetWindowDrawList();
     if (!view.title.empty()) {
       const ImVec2 at = ImGui::GetCursorScreenPos();
-      dl->AddText(ImGui::GetFont(), ui::kFontSmall, at, ui::kCreamDim, view.title.c_str());
+      dl->AddText(ImGui::GetFont(), ui::kFontSmall, at, ui::kTextDim, view.title.c_str());
       ImGui::Dummy(ImVec2(1.0f, titleH - ImGui::GetStyle().ItemSpacing.y));
     }
     const float menuW = layout.menuW;
@@ -1416,9 +1459,9 @@ ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& vi
       const ImVec2 at = ImGui::GetCursorScreenPos();
       ImGui::Dummy(ImVec2(timeW, rowH));
       const float tw = textWidth(ui::kFontUi, time.c_str());
-      ui::shadowText(dl, ui::kFontUi,
-                     ImVec2(at.x + timeW - tw, at.y + ((faceH - ui::kFontUi) * 0.5f)), ui::kCream,
-                     time.c_str());
+      dl->AddText(ui::font(Face::Display), ui::kFontUi,
+                  ImVec2(at.x + timeW - tw, at.y + ((faceH - ui::kFontUi) * 0.5f)), ui::kText,
+                  time.c_str());
     };
     const auto transport = [&] {
       button(ReplayControl::Restart, layout.restartW, ui::Tone::Plain);

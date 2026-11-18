@@ -6,15 +6,19 @@
   <title>Kung Fu Monkeys</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <style>
-    /* v0.43: the client's palette (apps/client/ui_style.hpp): dark jungle green,
-       banana yellow, cream. */
-    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #142418; }
+    /* v0.93: the client's palette (apps/client/ui_style.hpp), Banana Beach:
+       the sea's gradient behind the canvas, a white card with a soft shadow
+       for the loader, deep-teal title, cocoa text. */
+    html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+                 background: #1f8fc4 linear-gradient(180deg, #4cc9e0 0%, #1f8fc4 100%); }
     /* The canvas is the only layer over the page: no compositing layers above it (§6.8). */
     #canvas { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; border: 0; outline: none; }
-    #status { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #fad628;
-              font: 700 28px system-ui, sans-serif; letter-spacing: 0.02em; text-shadow: 2px 2px 0 #000;
+    #status { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+              background: #ffffff; color: #0f6f8f; border-radius: 32px; padding: 22px 36px;
+              box-shadow: 0 12px 30px rgba(58, 42, 26, 0.15);
+              font: 800 28px ui-rounded, "Nunito", system-ui, sans-serif; letter-spacing: 0.01em;
               pointer-events: none; text-align: center; }
-    #status small { display: block; margin-top: 8px; color: #fff4d6; font-weight: 400; font-size: 15px; }
+    #status small { display: block; margin-top: 8px; color: #3a2a1a; font-weight: 700; font-size: 15px; }
   </style>
 </head>
 <body>

@@ -1,13 +1,21 @@
 // Player colours (architecture §7): one per slot, a material parameter rather
-// than a texture variant. Linear-ish RGB in [0, 1]; RenderPlayer::colorIndex
-// is the slot. Chosen for mutual distinctness at a glance on the grass floor:
+// than a texture variant. sRGB in [0, 1] (written unconverted, like the
+// looks); RenderPlayer::colorIndex is the slot. Chosen for mutual
+// distinctness at a glance on the floor:
 //
 //   0 red      1 blue     2 purple   3 green    4 orange
-//   5 yellow   6 cyan     7 pink     8 white    9 charcoal
+//   5 maroon   6 cyan     7 pink     8 white    9 charcoal
 //
 // Slots 0..3 (the usual local and small online matches) use the four most
 // separable hues. v0.49: yellow moved from slot 2 to slot 5 (purple the other
 // way) so that no monkey in a match of up to five wears banana yellow.
+// v0.93 (Banana Beach): the style board's softer red, blue, purple, green
+// and orange (#f2554a, #3a78f0, #a452dc, #3cc05a, #f78a26), and slot 5 is a
+// maroon (#8a2a4a) instead of yellow, so no monkey wears banana yellow at
+// all and none sinks into the sand; the closest pair is blue and purple at a
+// CIEDE2000 distance of 22 (the old set's was 18), the nearest colour to the
+// banana is the orange at 27 (the old yellow's was 1.6). Power-ups use the
+// indices too (powerups.toml), none of them 5.
 #pragma once
 
 #include "kfm/sim/constants.hpp"
@@ -24,16 +32,16 @@ struct Color {
 };
 
 inline constexpr std::array<Color, sim::kMaxPlayers> kPlayerColors = {{
-    {0.90f, 0.18f, 0.18f},  // 0 red
-    {0.18f, 0.42f, 0.95f},  // 1 blue
-    {0.58f, 0.28f, 0.86f},  // 2 purple
-    {0.16f, 0.72f, 0.28f},  // 3 green
-    {1.00f, 0.52f, 0.08f},  // 4 orange
-    {0.98f, 0.84f, 0.12f},  // 5 yellow
-    {0.10f, 0.84f, 0.88f},  // 6 cyan
-    {0.98f, 0.46f, 0.74f},  // 7 pink
-    {0.94f, 0.94f, 0.94f},  // 8 white
-    {0.22f, 0.22f, 0.25f},  // 9 charcoal
+    {0.949f, 0.333f, 0.290f},  // 0 red      #f2554a
+    {0.227f, 0.471f, 0.941f},  // 1 blue     #3a78f0
+    {0.643f, 0.322f, 0.863f},  // 2 purple   #a452dc
+    {0.235f, 0.753f, 0.353f},  // 3 green    #3cc05a
+    {0.969f, 0.541f, 0.149f},  // 4 orange   #f78a26
+    {0.541f, 0.165f, 0.290f},  // 5 maroon   #8a2a4a
+    {0.180f, 0.769f, 0.839f},  // 6 cyan     #2ec4d6
+    {0.957f, 0.447f, 0.690f},  // 7 pink     #f472b0
+    {0.965f, 0.965f, 0.965f},  // 8 white    #f6f6f6
+    {0.220f, 0.220f, 0.267f},  // 9 charcoal #383844
 }};
 
 // Colour for a slot; out-of-range slots wrap.
@@ -251,7 +259,7 @@ inline constexpr ArenaLook kBeachLook{
     .pit = {0.20f, 0.67f, 0.84f},          // the sea (preview; drawn as the gradient)
     .pitAlt = {1.0f, 1.0f, 1.0f},          // wave squiggles
     .halo = {0.561f, 0.878f, 0.925f},      // #8fe0ec shallows
-    .mud = {0.58f, 0.81f, 0.81f},          // #7fd2e2 over sand
+    .mud = {0.498f, 0.824f, 0.886f},       // #7fd2e2 tide pool
     .mudAlt = {0.722f, 0.604f, 0.416f},    // #b89a6a rim
     .mudDetail = {1.0f, 1.0f, 1.0f},       // ripple
     .wallShadow = {0.0f, 0.0f, 0.0f},

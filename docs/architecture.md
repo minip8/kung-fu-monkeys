@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.91 (2026-11-18), a living document: it describes the system as built and deployed,
+Status: v0.93 (2026-11-18), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -2714,6 +2714,20 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   hitbox, a painted face) and glides in idle while moving (`kMonkeyRunCycle`); buttons are
   coloured by role with a ring for focus.
   `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
+  v0.93, Banana Beach (the style board's direction C, chosen by the user): the client's
+  default theme is Beach everywhere (`ThemeChoice` default `Beach`; Auto, Jungle and Temple
+  stay in Settings, `--theme` and `?theme=`); the settings text gains `settings_version=2`,
+  and a text without it (every install before v0.93, which always wrote `theme=auto`, the old
+  default) reads `theme=auto` as Beach once, so a later deliberate Auto is kept. The Beach look
+  takes the board's tide pool (`#7fd2e2`); its sand, sea, foam, shallows and crates already
+  matched it. The player palette takes the board's softer colours (red `#f2554a`, blue
+  `#3a78f0`, purple `#a452dc`, green `#3cc05a`, orange `#f78a26`, cyan `#2ec4d6`, pink
+  `#f472b0`, white `#f6f6f6`, charcoal `#383844`) and slot 5 becomes maroon `#8a2a4a`
+  instead of yellow, so no monkey wears banana yellow (closest pair blue/purple at CIEDE2000 22,
+  the banana's nearest colour orange at 27; `meshes_test` keeps every slot away from
+  `kBananaColor`). The banana and monkeys keep their ink outline (the board's own risk: without
+  it a small banana is lost on a busy screen). The UI skin is Banana Beach too (below and
+  `apps/client/ui_style.hpp`).
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
   quad on the ground) at its true sim position, and the shadow is where the hitbox is. This
@@ -2885,7 +2899,23 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
   1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette
   (`ui::kBanana`, `kCream`, `kJungle`, `kLeaf`, `kBark`, ...) shared by the theme and the HUD;
-  slot and team colours stay `presentation::playerColor`. Screens: the main menu (title, Play
+  slot and team colours stay `presentation::playerColor`. v0.93 (Banana Beach, replacing
+  Mango Sunset): Lilita One for titles, headings, buttons, banners and big numbers, Nunito
+  Bold (ImGui's default font, 19 px: body text, lists, settings rows) and Nunito ExtraBold
+  (small labels over the game), the two Nunito weights the static 3.601 TTFs from
+  `google/fonts` (`assets/fonts/OFL-Nunito.txt`; the current upstream ships only a variable
+  font, which stb_truetype would draw at its default weight), picked with `ui::font(Face)`.
+  The palette is the board's tokens (`ui::kGround` cream `#fff3d6`, `kCocoa` `#3a2a1a` text,
+  `kTeal` `#0f6f8f` headings, `kOcean`, `kFoam`, `kBanana`, `kCoral`, `kSand`, ...): screens are
+  white cards with 32 px corners and a soft cocoa shadow (layered rectangles: ImGui has no
+  blur) over a cream wash on the arena, the main menu an ocean card; buttons are pills with a
+  solid darker lip (banana lead, coral second, pale foam plain; cocoa text on coral, since the
+  board's white on coral is 2.3:1); focus is a cocoa ring with a white gap; the HUD's text sits
+  on white pills over the bright sand and sea (mode line, clock, team scores, name tags with a
+  slot-colour dot), large banners keep a thin cocoa outline. Every text pair is listed with its
+  contrast in `ui_style.hpp` (4.5:1 for body text; white on the ocean, 3.6:1, only for the
+  title). The page shell (`shell.html`) takes the sea gradient and a white loader card.
+  Screens: the main menu (title, Play
   online, Play local, Settings, Quit natively, the focused item's hint, the protocol and content
   hash in the corner), Settings (name, volume, sound, bot difficulty, Back), Play online (region
   with availability, Create room, room code and Join, Back), the local lobby (cards, compact

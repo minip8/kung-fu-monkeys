@@ -549,7 +549,8 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   saved.theme = presentation::ThemeChoice::Temple;
   const std::string text = client::settingsText(saved);
   CHECK(text ==
-        "arena=island\nmode=survival\nloadout=parry\npowerups=none\nbots=4\nbot_difficulty=hard\n"
+        "settings_version=2\narena=island\nmode=survival\nloadout=parry\npowerups=none\nbots="
+        "4\nbot_difficulty=hard\n"
         "volume=30\nmute=1\nregion=us\ntheme=temple\nmouse_aim=on\n");
 
   ClientOptions loaded;
@@ -789,8 +790,10 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   const sim::ContentDB& db = shipped();
   ClientOptions o;
   std::string error;
-  CHECK(o.theme == presentation::ThemeChoice::Auto);
-  // The browser page turns ?theme=beach into this.
+  CHECK(o.theme == presentation::ThemeChoice::Beach);  // v0.93: Banana Beach by default
+  // The browser page turns ?theme=jungle into this.
+  REQUIRE(parse({"--theme", "jungle"}, o, error));
+  CHECK(o.theme == presentation::ThemeChoice::Jungle);
   REQUIRE(parse({"--theme", "beach"}, o, error));
   CHECK(o.theme == presentation::ThemeChoice::Beach);
   ClientOptions bad;
@@ -813,6 +816,9 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   const auto rows = m.rows();
   const std::size_t row = rows.size() - 1;
   REQUIRE(rows[row].kind == LobbyRowKind::Theme);
+  CHECK(m.rowValue(rows[row]) == "beach");  // v0.93: the default
+  CHECK(m.change(row, +1));                 // wraps to the first choice
+  CHECK(m.settings().theme == presentation::ThemeChoice::Auto);
   CHECK(m.rowValue(rows[row]) == "auto (temple)");  // the dojo, arena 0, is a temple
   CHECK(m.change(row, +1));
   CHECK(m.settings().theme == presentation::ThemeChoice::Jungle);
@@ -827,6 +833,51 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   room.setContent(db);
   for (const LobbyRow& r : room.rows())
     CHECK(r.kind != LobbyRowKind::Theme);
+}
+
+TEST_CASE("saved settings from before v0.93 move from auto to the beach once",
+          "[client][lobby][options]") {
+  const sim::ContentDB& db = shipped();
+  std::vector<std::string> warnings;
+  SECTION("an old text's theme=auto, the old default, reads as beach") {
+    ClientOptions o;
+    client::applySettingsText("arena=dojo\ntheme=auto\nmouse_aim=on\n", db, o, warnings);
+    CHECK(warnings.empty());
+    CHECK(o.theme == presentation::ThemeChoice::Beach);
+    // Saved again it says so, and a later read keeps it.
+    const std::string text = client::settingsText(o);
+    CHECK(text.find("settings_version=2\n") == 0);
+    CHECK(text.find("theme=beach\n") != std::string::npos);
+  }
+  SECTION("an old text's deliberate jungle or temple stays") {
+    ClientOptions o;
+    client::applySettingsText("theme=jungle\n", db, o, warnings);
+    CHECK(o.theme == presentation::ThemeChoice::Jungle);
+    client::applySettingsText("theme=temple\n", db, o, warnings);
+    CHECK(o.theme == presentation::ThemeChoice::Temple);
+  }
+  SECTION("auto chosen after the move is kept, whatever the line order") {
+    ClientOptions o;
+    client::applySettingsText("theme=auto\nsettings_version=2\n", db, o, warnings);
+    CHECK(warnings.empty());
+    CHECK(o.theme == presentation::ThemeChoice::Auto);
+    ClientOptions round;
+    client::applySettingsText(client::settingsText(o), db, round, warnings);
+    CHECK(round.theme == presentation::ThemeChoice::Auto);
+  }
+  SECTION("a bad version warns and counts as the old format") {
+    ClientOptions o;
+    client::applySettingsText("settings_version=x\ntheme=auto\n", db, o, warnings);
+    CHECK(warnings.size() == 1);
+    CHECK(o.theme == presentation::ThemeChoice::Beach);
+  }
+  SECTION("a flag still wins for the run") {
+    ClientOptions o;
+    client::applySettingsText("theme=auto\n", db, o, warnings);
+    std::string error;
+    REQUIRE(parse({"--theme", "auto"}, o, error));
+    CHECK(o.theme == presentation::ThemeChoice::Auto);
+  }
 }
 
 TEST_CASE("mouse aim: flag, browser query, settings round trip", "[client][lobby][options]") {

@@ -1957,3 +1957,26 @@ overflow after the change; 0x0A7A no longer did). Replay checksums: changed, cor
 because every free-for-all entry spawns differently from its first tick (`empty_*`,
 `scripted_4p_1200t`, `scripted_10p_3600t`, the arena, power-up, ability, deathmatch and survival
 entries); the team, grid, contest and control entries keep their state checksums byte for byte.
+
+v0.93 changes: the Banana Beach look (§7 "Look" and the front end), the user's pick from the
+style board ("change the default overall colour theme of the ui and the gameplay to be nicer on
+the eyes ... go with the banana beach theme"). The UI skin replaces Mango Sunset: the board's
+tokens in `apps/client/ui_style.hpp` (cream ground, cocoa text, deep-teal headings, white cards
+with 32 px corners and a soft cocoa shadow, an ocean card for the main menu, pill buttons with
+a solid lip in banana, coral and pale foam, a cocoa focus ring with a white gap), the HUD's
+text on white pills over the bright playfield, thin cocoa outlines kept on the large banners,
+and the page shell's sea gradient and white loader. Fonts: Lilita One stays for titles and
+buttons; Nunito Bold (body, ImGui's default) and ExtraBold (small HUD labels) join it, the
+static 3.601 TTFs from `google/fonts` (the current upstream is a variable font only, which
+stb_truetype would draw at its default weight), each with its OFL licence and embedded by
+`cmake/EmbedFile.cmake`. The game: Beach is the default theme for everyone; the settings text
+gains `settings_version=2` and an older text's `theme=auto` (the old default, written by every
+install whether chosen or not) reads as Beach once, so a deliberate later Auto is kept; the
+Beach look takes the board's tide-pool blue; the player palette takes the board's softer hues
+and slot 5 turns from yellow to maroon so no monkey reads as a banana (a new presentation test
+keeps every slot away from the banana's colour). Considered and not taken: dropping the ink
+outline on bananas and monkeys as the board does (its own stated risk; readability first); the
+board's white text on coral (2.3:1); a variable-font loader. Verified by eye on off-screen
+renders (`SDL_VIDEODRIVER=offscreen`) of every screen and bot matches on `island` and `dojo`;
+client and presentation unit tests. No sim, content or wire change. Replay checksums:
+unchanged.

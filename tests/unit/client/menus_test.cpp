@@ -105,10 +105,12 @@ TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme, mouse aim"
 
   m.apply(MenuAction::Down, ls);  // v0.52
   REQUIRE(m.focusedRow() == SettingsRow::Theme);
+  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "beach");  // v0.93's default
+  CHECK(m.apply(MenuAction::Right, ls));                                   // wraps
+  CHECK(ls.theme == kfm::presentation::ThemeChoice::Auto);
   CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "auto");
-  CHECK(m.apply(MenuAction::Left, ls));  // wraps
+  CHECK(m.apply(MenuAction::Left, ls));
   CHECK(ls.theme == kfm::presentation::ThemeChoice::Beach);
-  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "beach");
 
   m.apply(MenuAction::Down, ls);  // mouse aim: on by default, either arrow toggles
   REQUIRE(m.focusedRow() == SettingsRow::MouseAim);

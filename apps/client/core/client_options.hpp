@@ -104,8 +104,8 @@ inline constexpr const char* kUsage =
     "                         flags win over saved ones)\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
     "  --capsules             draw players as capsules, not the skinned model\n"
-    "  --theme T              arena theme: auto (each arena's own; default), jungle,\n"
-    "                         temple or beach (saved; cosmetic, this screen only)\n"
+    "  --theme T              arena theme: beach (default), jungle, temple or auto\n"
+    "                         (each arena's own); saved; cosmetic, this screen only\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
     "  --window WxH           the window's size (native only; default 1280x720)\n"
@@ -163,7 +163,8 @@ struct ClientOptions {
   bool autostart{false};
   bool overlay{false};
   bool capsules{false};  // capsule placeholders instead of the skinned character model
-  presentation::ThemeChoice theme{presentation::ThemeChoice::Auto};  // v0.52, --theme
+  // v0.52, --theme; v0.93: Banana Beach everywhere by default.
+  presentation::ThemeChoice theme{presentation::ThemeChoice::Beach};
   uint8_t bots{0};
   uint64_t seed{1};
   uint64_t playersSeed{kDefaultBotSeed};  // the bots' seed (SessionConfig::botSeed)
