@@ -956,7 +956,8 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
         phase == NetPhase::Rejected || phase == NetPhase::Disconnected || phase == NetPhase::Failed;
     const bool lost = session.canReconnect();
     const char* title = session.room() ? "Joining the room" : "Connecting";
-    if (session.reconnects() > 0) title = "Reconnecting";
+    // v0.92: also while the session reconnects on its own.
+    if (session.reconnects() > 0 || session.autoReconnecting()) title = "Reconnecting";
     if (failed) title = "Could not join";
     if (lost) title = "Connection lost";
     ui::heading(title, failed ? ui::kAlarm : ui::kTitle);
@@ -970,10 +971,10 @@ NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share
       ImGui::Text("%c  %s", kSpin[spin], status.c_str());
     }
     // v0.44: back in with the same token: the server keeps the slots of a
-    // match in progress for a few seconds.
+    // match in progress for a minute (v0.92).
     if (lost) {
       ImGui::Spacing();
-      ImGui::TextUnformatted("Your place in the match is kept for a few seconds.");
+      ImGui::TextUnformatted("Your place in the match is kept for a minute after a drop.");
       const std::span<const LostConnectionAction> actions = lostConnectionActions(lost);
       const std::size_t n = actions.size();
       buttons.setCount(n);

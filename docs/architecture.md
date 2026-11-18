@@ -2371,7 +2371,7 @@ C++ server library is mature. The seam makes that swap a contained change.
   hidden, unless the page is exempt). `platform::runMainLoop` takes a fourth callback: a
   dedicated Worker, created from a Blob URL and doing nothing but `setInterval(postMessage, 50
   ms)`, wakes the main thread, which calls it while `document.visibilityState` is `hidden` or no
-  animation frame has run for 500 ms (`kBackgroundPumpMs`, `kBackgroundAfterMs`). Dedicated
+  animation frame has run for 2 s (`kBackgroundPumpMs`, `kBackgroundAfterMs`). Dedicated
   workers' timers are not throttled like a hidden page's, and if no Worker can be made a page
   interval does the same at whatever rate the browser allows (a ping a second still keeps both
   timeouts fed). This is the one place the browser client uses a second JavaScript context, and
@@ -2472,9 +2472,9 @@ C++ server library is mature. The seam makes that swap a contained change.
      application on platforms with occlusion tracking). Nothing was sent, the server dropped the
      silent peer after 5 s, and the player came back to "Connection lost" (and, through the
      lobby, to "Removed from the room by its server", the lobby's `closed`/`kicked` for any
-     server-side drop). Inferred for the browser from the code, reproduced as a client that is
-     not run for 6 or 9 s; shown in a real Chromium by `tools/web/check_hidden_tab.py` (§6.6 "A
-     hidden client", below).
+     server-side drop). Inferred for the browser from the code (a hidden page runs no
+     animation frame, which every browser documents), reproduced as a client that is not run
+     for 6 or 9 s; the fix is shown in Chromium by `tools/web/check_hidden_tab.py` (below).
   2. *Any stall of the client longer than 5 s* (the same mechanism with the tab in front: a
      laptop lid, a frozen or suspended page, a mobile browser in the background). A stall under
      the timeout already healed itself (the clock jump of §6.2 and the gap resync of v0.70).
@@ -2535,10 +2535,27 @@ C++ server library is mature. The seam makes that swap a contained change.
   (lead controller reset, clock restarted), so ten minutes away cost one snapshot, never ten
   minutes of simulation in a frame (`ClientNetStats::wakes`). A snapshot that arrived while away
   is discarded for the wake. Measured over the loopback at 40 ± 5 ms with 1 % loss, away 30 s,
-  2 min and 10 min, pumped every 50 ms or once a second: no timeout, the same peer and slot,
-  the slot neutral within 0.3 s, and back in agreement (checksums compared and equal, frames
-  confirmed to within 20 ticks of the server) within 2 s of the return, after under two
-  seconds' worth of ticks.
+  2 min and 10 min, pumped every 50 ms or once a second (a hidden page's throttled timers):
+  no timeout, the same peer and slot, the slot neutral 250 ms after the last input, and back in
+  agreement (a checksum compared and equal, frames confirmed to within 20 ticks of the server,
+  predicting ahead again) 130–180 ms after the return (`tests/netcode/stall_test.cpp`).
+  In a browser (`tools/web/check_hidden_tab.py`, the wasm client in headless Chromium 156 over
+  real WebRTC against a local `kfm_server`): headless Chromium never reports a page hidden (it
+  keeps every page "visible" at 60 animation frames a second whatever is in front, minimised or
+  behind another tab, with or without focus emulation), so the script hides the page the way a
+  browser does, from inside it: `requestAnimationFrame` callbacks held (none ran while away) and
+  `visibilityState` "hidden". Away 30 s, 2 min and 10 min: the server never dropped the peer,
+  the client went to the background, asked for one snapshot on return and was in sync for the
+  10 s watched after (no further resync, no leave). What this does not show is a real
+  browser's throttling of a hidden page's own timers, which the pump avoids by running its
+  timer in a Worker (the loopback test above covers a pump that runs only once a second). With
+  the page's main thread stopped for 25 s instead (`--hide freeze`, the debugger's pause: a
+  frozen tab, a suspended phone, an OS sleep), the server timed the peer out after 15 s and
+  kept its slot, and on resume the client printed "Connection lost (the server stopped hearing
+  from this client)" (the server's `Disconnect{Timeout}` arrived ahead of the close) and was
+  back in the same slot 1 s later on its own. The machine ran the page on software GL at 2–3 frames a second, so
+  even visible most of its inputs reached the server late; the browser runs used `?connect=`,
+  and the lobby's rejoin is covered by the client's tests over a fake lobby only.
 - Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` (keeps the arena
   and mode; v0.18 adds `restartMatch(MatchConfig, startTick, botSeed)` to change them) sends
   `MatchConfig{config, startTick}` at once to every peer (and to anyone who joins before

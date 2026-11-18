@@ -1982,7 +1982,7 @@ button's flow), says what was lost in plain words while it does ("Connection los
 from the server for 10 s): reconnecting to room ABCDE ..."), and only then offers the button;
 the lobby's `kicked` now reads "Dropped by the room's server (connection lost)". The browser's
 loop gains a background pump: a dedicated Worker used only as a 50 ms timer wakes the main
-thread while the page is hidden (or no animation frame ran for 500 ms), and the app then only
+thread while the page is hidden (or no animation frame ran for 2 s), and the app then only
 pumps the session in the background; all game code stays on the main thread.
 `tools/web/check_hidden_tab.py` repeats the hidden-tab check in Chromium.
 

@@ -486,7 +486,9 @@ void reconnectNetwork(App& app, std::uint64_t nowNs) {
   if (t.lobby) n.attachLobby(std::move(t.lobby));
   app.lastNetPhase = n.phase();
   app.reconnectRequested = false;
-  std::printf("kfm_client: reconnecting (%u): %s\n", n.reconnects(), n.statusText().c_str());
+  // v0.92: an attempt of the reconnect on its own, or the button's.
+  std::printf("kfm_client: reconnecting (%s %u): %s\n", n.autoReconnecting() ? "attempt" : "press",
+              n.autoReconnecting() ? n.autoAttempts() : n.reconnects(), n.statusText().c_str());
   std::fflush(stdout);
 }
 

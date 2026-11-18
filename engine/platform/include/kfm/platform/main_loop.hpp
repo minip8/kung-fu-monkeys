@@ -30,7 +30,7 @@ using BackgroundFn = void (*)(void* user);
 // v0.92: the background pump's period, and how long without an animation
 // frame counts as being in the background on a page that says it is visible.
 inline constexpr int kBackgroundPumpMs = 50;
-inline constexpr int kBackgroundAfterMs = 500;
+inline constexpr int kBackgroundAfterMs = 2000;
 
 void runMainLoop(void* user, FrameFn frame, ExitFn onExit = nullptr,
                  BackgroundFn background = nullptr);

@@ -9,27 +9,37 @@ afterwards.
 
     cmake --preset server-headless && cmake --build --preset server-headless --target kfm_server
     source ~/emsdk/emsdk_env.sh && cmake --preset wasm && cmake --build --preset wasm --target kfm_client
-    ~/.venvs/kfm-web/bin/python tools/web/check_hidden_tab.py --away 30 120 600 [--hide tab|minimize|freeze]
+    ~/.venvs/kfm-web/bin/python tools/web/check_hidden_tab.py --away 30 120 600 [--hide emulate|tab|freeze]
 
 How the page is hidden (--hide):
-  tab       (default) a second tab is opened in front of it (Page.bringToFront):
-            the client's page reports visibilityState "hidden" and its
-            requestAnimationFrame stops, as for a player who switched tabs.
-  minimize  the browser window is minimised (Browser.setWindowBounds); the same
-            for a player who minimised the window or (with occlusion tracking)
-            covered it with another application.
-  freeze    the page is frozen (Page.setWebLifecycleState): no task runs at all,
-            Workers included: a frozen or discarded tab, a suspended mobile
-            browser, an OS sleep. Nothing can keep the link alive; past the
-            server's 15 s timeout the client must reconnect on its own and land
-            in its kept slot.
+  emulate   (default) what a browser does to a hidden page, done by the page itself:
+            requestAnimationFrame callbacks are held (none runs while away) and
+            document.visibilityState reads "hidden" (with a visibilitychange
+            event). Headless Chromium never hides a page (every page stays
+            "visible" with 60 animation frames a second whatever is in front,
+            measured with Playwright 1.64 and Chromium 156, new and old headless,
+            minimised or behind another tab, with or without focus emulation),
+            so this is the faithful part a test can reach. What it does not
+            show is the browser's timer throttling of a hidden page, which the
+            background pump avoids by running its timer in a Worker; the netcode
+            tests cover a pump that runs only once a second.
+  tab       a second tab in front of it (Page.bringToFront): what a player does.
+            It hides nothing in headless Chromium, nor in a headed one under
+            WSLg as Playwright starts it (still "visible", 60 frames a second);
+            the hidden check then fails, which says so rather than pretend.
+  freeze    the page's main thread is stopped (Debugger.pause; headless Chromium
+            ignores Page.setWebLifecycleState "frozen" for a page it considers
+            visible): no script of the page runs, as for a frozen or discarded
+            tab, a suspended mobile browser or an OS sleep. Nothing can keep the
+            link alive; past the server's 15 s timeout the client must reconnect
+            on its own and land in its kept slot.
 The script prints the page's visibilityState and how many animation frames ran
-while it was away, so the hiding is shown to be real, not assumed.
+while it was away, so the hiding is shown, not assumed.
 
 Checks per --away duration (PASS/FAIL):
-  hidden      the page was hidden (tab/minimize: visibilityState "hidden" and at most
-              a handful of animation frames while away; freeze: the page was frozen)
-  link        tab/minimize: the server never dropped the peer (no "leave peer=N" line)
+  hidden      the page was hidden (emulate/tab: visibilityState "hidden" and no
+              animation frame while away; freeze: the page was frozen)
+  link        emulate/tab: the server never dropped the peer (no "leave peer=N" line)
               and the client printed "in the background"; freeze: the server logged the
               timeout and the client its loss, then "reconnect peer=" and "Online" again
   resync      on return the client asked for one snapshot (the server's "resync
@@ -77,10 +87,29 @@ CHROMIUM_ARGS = [
     "--ignore-gpu-blocklist",
     "--enable-webgl",
 ]
-# Counts animation frames independently of the client's own loop.
-RAF_COUNTER = """
-window.__kfmRaf = 0;
-(function count() { window.__kfmRaf++; window.requestAnimationFrame(count); })();
+# Counts animation frames independently of the client's own loop, and lets the
+# script hide the page the way a browser does (--hide emulate).
+PAGE_SCRIPT = """
+(() => {
+  const realRaf = window.requestAnimationFrame.bind(window);
+  const held = [];
+  let hidden = false;
+  window.requestAnimationFrame = (cb) => {
+    if (hidden) { held.push(cb); return 0; }
+    return realRaf(cb);
+  };
+  Object.defineProperty(Document.prototype, 'visibilityState',
+                        { configurable: true, get() { return hidden ? 'hidden' : 'visible'; } });
+  Object.defineProperty(Document.prototype, 'hidden',
+                        { configurable: true, get() { return hidden; } });
+  window.__kfmSetHidden = (h) => {
+    hidden = h;
+    document.dispatchEvent(new Event('visibilitychange'));
+    if (!h) for (const cb of held.splice(0)) realRaf(cb);
+  };
+  window.__kfmRaf = 0;
+  (function count() { window.__kfmRaf++; window.requestAnimationFrame(count); })();
+})();
 """
 
 
@@ -150,6 +179,18 @@ class Server:
                 self.proc.wait()
 
 
+# Playwright's sync API delivers page events (console lines) only while one
+# of its calls runs, so every wait goes through the page.
+PUMP = {"page": None}
+
+
+def pause(seconds: float) -> None:
+    if PUMP["page"] is not None:
+        PUMP["page"].wait_for_timeout(seconds * 1000.0)
+    else:
+        time.sleep(seconds)
+
+
 def wait_for(lines: Lines, mark: int, pattern: str, timeout: float) -> str | None:
     deadline = time.monotonic() + timeout
     rx = re.compile(pattern)
@@ -159,7 +200,7 @@ def wait_for(lines: Lines, mark: int, pattern: str, timeout: float) -> str | Non
                 return line
         if time.monotonic() >= deadline:
             return None
-        time.sleep(0.1)
+        pause(0.1)
 
 
 def default_server() -> pathlib.Path:
@@ -185,7 +226,7 @@ def run(args) -> int:
     http_server = http.server.ThreadingHTTPServer(("127.0.0.1", args.http_port), handler)
     threading.Thread(target=http_server.serve_forever, daemon=True).start()
     url = (f"http://127.0.0.1:{http_server.server_address[1]}/{PAGE}"
-           f"?connect=ws://127.0.0.1:{args.port}&nick=Hidden&no-settings")
+           f"?connect=ws://127.0.0.1:{args.port}&token=hidden-check&nick=Hidden&no-settings")
     print(f"opening {url}  (hide: {args.hide}, away: {args.away} s)", flush=True)
 
     console = Lines()
@@ -198,7 +239,8 @@ def run(args) -> int:
             browser = pw.chromium.launch(**launch)
             context = browser.new_context(viewport={"width": 960, "height": 540})
             page = context.new_page()
-            page.add_init_script(RAF_COUNTER)
+            PUMP["page"] = page
+            page.add_init_script(PAGE_SCRIPT)
             page.on("console", lambda m: console.add(f"[{m.type}] {m.text}"))
             page.on("pageerror", lambda exc: page_errors.append(str(exc)))
             cdp = context.new_cdp_session(page)
@@ -210,7 +252,7 @@ def run(args) -> int:
             if online is None or joined is None:
                 raise RuntimeError("not online")
             peer = re.search(r"join peer=(\d+)", joined).group(1)
-            time.sleep(args.warmup)
+            pause(args.warmup)
 
             for away in args.away:
                 print(f"--- away {away} s", flush=True)
@@ -221,32 +263,31 @@ def run(args) -> int:
                     other = context.new_page()
                     other.goto("about:blank")
                     other.bring_to_front()
-                elif args.hide == "minimize":
-                    window = cdp.send("Browser.getWindowForTarget")
-                    cdp.send("Browser.setWindowBounds", {"windowId": window["windowId"],
-                                                         "bounds": {"windowState": "minimized"}})
-                else:
-                    cdp.send("Page.setWebLifecycleState", {"state": "frozen"})
-                time.sleep(1.0)
-                if args.hide != "freeze":
-                    state = page.evaluate("() => document.visibilityState")
-                else:
-                    state = "frozen"
-                time.sleep(max(0.0, away - 1.0))
+                elif args.hide == "emulate":
+                    page.evaluate("() => window.__kfmSetHidden(true)")
                 if args.hide == "freeze":
-                    cdp.send("Page.setWebLifecycleState", {"state": "active"})
-                    raf_away = None
+                    # Page.setWebLifecycleState("frozen") does nothing to a page
+                    # headless Chromium considers visible; pausing the main
+                    # thread in the debugger stops it the same way.
+                    cdp.send("Debugger.enable")
+                    cdp.send("Debugger.pause")
+                    time.sleep(away)
+                    cdp.send("Debugger.resume")
+                    cdp.send("Debugger.disable")
+                    state, raf_away = "frozen", None
                 else:
+                    pause(1.0)
+                    state = page.evaluate("() => document.visibilityState")
+                    raf_before = page.evaluate("() => window.__kfmRaf")
+                    pause(max(0.0, away - 1.0))
                     raf_away = page.evaluate("() => window.__kfmRaf") - raf_before
                 if other is not None:
                     other.close()
                     page.bring_to_front()
-                elif args.hide == "minimize":
-                    window = cdp.send("Browser.getWindowForTarget")
-                    cdp.send("Browser.setWindowBounds", {"windowId": window["windowId"],
-                                                         "bounds": {"windowState": "normal"}})
+                elif args.hide == "emulate":
+                    page.evaluate("() => window.__kfmSetHidden(false)")
                 back = server.out.mark()
-                hidden_ok = state in ("hidden", "frozen") and (raf_away is None or raf_away <= 5)
+                hidden_ok = state in ("hidden", "frozen") and (raf_away is None or raf_away == 0)
                 report.check("hidden", hidden_ok,
                              f"visibilityState={state}, animation frames while away: "
                              f"{'-' if raf_away is None else raf_away}")
@@ -270,12 +311,17 @@ def run(args) -> int:
                                  f"leave: {left[0] if left else 'none'}; "
                                  f"client: {background or 'never in the background'}")
                 resync = wait_for(server.out, back, rf"resync peer={peer}\b|reconnect peer=", 10.0)
-                online = wait_for(console, cmark, r"kfm_client: Online on", 10.0)
-                report.check("resync", resync is not None and online is not None,
-                             f"{resync or 'no resync on return'}")
+                # Still (or again, after a reconnect) running: no phase line since
+                # "Online", or a new "Online" after the reconnect.
+                phases = [line for line in console.since(cmark) if "kfm_client:" in line
+                          and "in the background" not in line]
+                running = not phases or "Online on" in phases[-1]
+                report.check("resync", resync is not None and running,
+                             f"{resync or 'no resync on return'}; "
+                             f"{phases[-1] if phases else 'the client stayed Online'}")
                 settle = server.out.mark()
                 csettle = console.mark()
-                time.sleep(args.settle)
+                pause(args.settle)
                 extra = [line for line in server.out.since(settle)
                          if f"resync peer={peer}" in line or f"leave peer={peer} " in line]
                 lost = [line for line in console.since(csettle) if "Connection lost" in line]
@@ -322,7 +368,7 @@ def main() -> int:
     parser.add_argument("--bots", type=int, default=1, help="server bots playing against the page")
     parser.add_argument("--away", type=float, nargs="+", default=[30.0],
                         help="seconds the page stays hidden, one run each, in order")
-    parser.add_argument("--hide", choices=["tab", "minimize", "freeze"], default="tab")
+    parser.add_argument("--hide", choices=["emulate", "tab", "freeze"], default="emulate")
     parser.add_argument("--warmup", type=float, default=5.0, help="seconds online before hiding")
     parser.add_argument("--settle", type=float, default=10.0,
                         help="seconds watched after each return")
