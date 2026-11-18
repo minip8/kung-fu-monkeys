@@ -63,6 +63,7 @@ struct BananaTrack {
   EntityTrack motion{};
   float returnStartDistance{-1.0f};  // owner distance when first seen Returning; < 0 = unset
   float trailTimer{0.0f};            // seconds until the next trail puff
+  float tetherTimer{0.0f};           // v0.89: seconds until the next recall tether
 };
 
 // Everything presentation remembers between frames. Trivially copyable,

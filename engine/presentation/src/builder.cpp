@@ -389,6 +389,23 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
   }
 }
 
+// v0.89: the dots between a Recalled banana (as drawn) and its owner's hand,
+// in the owner's tint, laid every kRecallTetherInterval.
+void recallTether(PresentationState& ps, const WorldState& curr, const Boomerang& b,
+                  const RenderBanana& rb, BananaTrack& track, float dt) {
+  const Player* owner = curr.playerBySlot(b.owner);
+  if (owner == nullptr || !trailDue(track.tetherTimer, dt, kRecallTetherInterval)) return;
+  const Vec3 hand = simToWorld(toFloat(owner->transform.pos), kBananaHandHeight);
+  for (uint8_t k = 1; k <= kRecallTetherDots; ++k) {
+    const float u = static_cast<float>(k) / static_cast<float>(kRecallTetherDots + 1);
+    const Vec3 at{rb.position.x + ((hand.x - rb.position.x) * u),
+                  rb.position.y + ((hand.y - rb.position.y) * u),
+                  rb.position.z + ((hand.z - rb.position.z) * u)};
+    addEffect(ps, RenderEffect{EffectKind::BananaTrail, rb.ownerSlot, at, Vec2f{},
+                               kRecallTetherSeconds, kRecallTetherSeconds, 0.0f});
+  }
+}
+
 // bananaArcHeight() over the outbound ticks the match flies (v0.80: a mode
 // may override the BoomerangDef's, MatchContent::bananaOutboundTicks).
 [[nodiscard]] float bananaArc(const Boomerang& b, float distanceToOwner, float returnStartDistance,
@@ -431,6 +448,7 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     if (refreshTrack(track.motion, gen)) {
       track.returnStartDistance = -1.0f;
       track.trailTimer = 0.0f;
+      track.tetherTimer = 0.0f;
     }
     decayOffset(track.motion, dt);
 
@@ -494,6 +512,12 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
       addEffect(ps, RenderEffect{EffectKind::BananaTrail, rb.ownerSlot, rb.position,
                                  Vec2f{std::cos(heading), std::sin(heading)}, kBananaTrailSeconds,
                                  kBananaTrailSeconds, 0.0f});
+    }
+    // v0.89: a pulled banana is tied to its owner by a dotted tether.
+    if (cb.phase == BoomerangPhase::Recalled) {
+      recallTether(ps, curr, cb, rb, track, dt);
+    } else {
+      track.tetherTimer = 0.0f;
     }
   }
 }

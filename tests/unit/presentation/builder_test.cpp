@@ -1591,3 +1591,57 @@ TEST_CASE("harvest: a banked banana pops gold, a theft rings in the raider's col
   CHECK(countEffects(none, EffectKind::BananaStolen) == 0);
   CHECK(countEffects(none, EffectKind::StealFlash) == 1);
 }
+
+TEST_CASE("a pulled banana floats, is drawn returning and is tethered to its owner (v0.89)",
+          "[presentation][builder][recall]") {
+  WorldState s = makePlayingWorld(31, 0b11);
+  placePlayer(s, kP0, Vec2{Fixed::fromInt(-8), Fixed::zero()});
+  placePlayer(s, kP1, Vec2{Fixed::fromInt(8), Fixed::fromInt(6)});
+  playerAt(s, kP0).ammo = 0;
+  const EntityId lying = spawnPickup(s, Vec2{Fixed::zero(), Fixed::zero()});
+  s.pickups.get(lying)->spawner = bananaLastOwnerByte(kP0);
+  PresentationState ps{};
+  PlayerInput hold{};
+  hold.buttons = kThrowBit;
+  WorldState prev = s;
+  EventLog log = stepWith(s, hold);
+  REQUIRE(countEvents(log, EventKind::BananaRecallStarted) == 1);
+  RenderState rs = build(ps, prev, s, 1.0f, log);
+  // The pull's start sounds the blink's zap, quieter.
+  bool zap = false;
+  for (uint16_t i = 0; i < rs.soundCount; ++i) {
+    if (rs.sounds[i].id == SoundId::Blink) zap = rs.sounds[i].gain < 1.0f;
+  }
+  CHECK(zap);
+  for (int k = 0; k < 12; ++k) {
+    prev = s;
+    log = stepWith(s, hold);
+    rs = build(ps, prev, s, 1.0f, log);
+  }
+  REQUIRE(rs.bananaCount == 1);
+  const RenderBanana& b = rs.bananas[0];
+  CHECK(b.phase == BananaPhase::Returning);
+  CHECK(b.height == Approx(kBananaHandHeight + kBananaRecallLift));
+  CHECK(b.ownerSlot == 0);
+  // The tether: owner-tinted puffs strung between the banana and the hand.
+  int tether = 0;
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    const RenderEffect& e = rs.effects[i];
+    if (e.kind != EffectKind::BananaTrail || e.direction != Vec2f{}) continue;
+    ++tether;
+    CHECK(e.slot == 0);
+    CHECK(e.position.x < b.position.x);  // between the banana and the owner to its west
+    CHECK(e.position.x > -8.0f);
+  }
+  CHECK(tether >= kRecallTetherDots);
+  // Let go: the banana drops, and the tether fades with no new dots.
+  for (int k = 0; k < 20; ++k) {
+    prev = s;
+    log = stepWith(s, PlayerInput{});
+    rs = build(ps, prev, s, 1.0f, log);
+  }
+  for (uint16_t i = 0; i < rs.effectCount; ++i) {
+    CHECK_FALSE(
+        (rs.effects[i].kind == EffectKind::BananaTrail && rs.effects[i].direction == Vec2f{}));
+  }
+}
