@@ -339,6 +339,13 @@ void tuningSection(MatchSession& s, std::string& printed) {
     sliderU16("charge ticks", ticks, 1, 180);
     thr.speed = (thr.param1 - thr.param0) / int32_t{ticks};
   }
+  if (thr.recallSpeed > Fixed::zero()) {
+    // v0.89, the recall (0 speed would switch it off: the slider stays above).
+    sliderPerSecond("recall speed", thr.recallSpeed, 1.0f, 40.0f);
+    sliderU16("recall accel ticks", thr.recallAccelTicks, 1, 180);
+    sliderPerSecond("recall harm speed", thr.recallHarmSpeed, 0.0f, 40.0f);
+    sliderFixed("recall range (0 = any)", thr.recallRange, 0.0f, 40.0f);
+  }
 
   ImGui::SeparatorText("Banana");
   sliderPerSecond("banana speed", c.boomerang.speed, 4.0f, 40.0f);
@@ -346,6 +353,16 @@ void tuningSection(MatchSession& s, std::string& printed) {
   sliderU16("max return ticks", c.boomerang.maxReturnTicks, 30, 600);
   sliderU16("turn rate (BAM/tick)", c.boomerang.turnRateBam, 0, 4096);
   sliderFixed("restitution", c.boomerang.restitution, 0.0f, 1.5f);
+  // v0.89, the arc flight (the modes whose banana_flight is arc).
+  sliderPerSecond("arc launch speed", c.boomerang.arcLaunchSpeed, 4.0f, 60.0f);
+  sliderPerSecond("arc apex speed", c.boomerang.arcApexSpeed, 0.0f, 30.0f);
+  c.boomerang.arcApexSpeed = std::min(c.boomerang.arcApexSpeed, c.boomerang.arcLaunchSpeed);
+  sliderU16("arc outbound ticks", c.boomerang.arcOutboundTicks, 1, 120);
+  sliderPerSecond("arc return speed", c.boomerang.arcReturnSpeed, 4.0f, 60.0f);
+  sliderU16("arc return accel ticks", c.boomerang.arcReturnAccelTicks, 1, 120);
+  sliderU16("arc return ticks", c.boomerang.arcReturnTicks, 1, 240);
+  sliderU16("arc turn rate (BAM/tick)", c.boomerang.arcTurnRateBam, 0, 4096);
+  sliderU16("arc bounce ticks", c.boomerang.arcBounceTicks, 0, 60);
 
   ImGui::SeparatorText("Player");
   sliderPerSecond("move speed", c.player.moveSpeed, 2.0f, 20.0f);
@@ -383,6 +400,11 @@ void tuningSection(MatchSession& s, std::string& printed) {
       mode.respawnAmmo = ammoStart ? sim::kRespawnAmmoStart : 0;
     }
     if (!ammoStart) sliderU8("respawn ammo", mode.respawnAmmo, 0, 9);
+  }
+  // v0.89: the flight model.
+  bool arcFlight = mode.bananaFlight == sim::BananaFlight::Arc;
+  if (ImGui::Checkbox("arc flight (off: classic)", &arcFlight)) {
+    mode.bananaFlight = arcFlight ? sim::BananaFlight::Arc : sim::BananaFlight::Classic;
   }
   // v0.80: the mode's banana flight (0 = the banana's own, above).
   sliderU16("mode outbound ticks (0 = banana's)", mode.bananaOutboundTicks, 0, 120);

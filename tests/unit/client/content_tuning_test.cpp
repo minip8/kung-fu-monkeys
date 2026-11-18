@@ -41,6 +41,11 @@ TEST_CASE("tuning: contentToCpp prints the tuned fields in content.cpp style", "
   CHECK(def.find("  c.boomerang.speed = perSecond(16);\n") != std::string::npos);
   CHECK(def.find("  c.boomerang.turnRateBam = 1200;\n") != std::string::npos);
   CHECK(def.find("  c.boomerang.restitution = Fixed::one();\n") != std::string::npos);
+  // v0.89: the arc flight and the recall.
+  CHECK(def.find("  c.boomerang.arcLaunchSpeed = perSecond(29);\n") != std::string::npos);
+  CHECK(def.find("  c.boomerang.arcReturnTicks = 60;\n") != std::string::npos);
+  CHECK(def.find("  thr.recallSpeed = perSecond(12);\n") != std::string::npos);
+  CHECK(def.find("  thr.recallAccelTicks = 45;\n") != std::string::npos);
   CHECK(def.find("  c.player.moveSpeed = perSecond(7);\n") != std::string::npos);
   CHECK(def.find("  rounds.roundsToWin = 3;\n") != std::string::npos);
 
