@@ -1025,7 +1025,7 @@ TEST_CASE("an arc mode reports the arc's flight; a pulled banana reads as Return
   const EntityId pulled =
       spawnBanana(s, kP0, Vec2{fx(4), fx(2)}, Vec2{fx(-1, 10), Fixed{}}, BoomerangPhase::Recalled);
   const EntityId lying = spawnPickup(s, Vec2{fx(-4), fx(2)});
-  s.pickups.get(lying)->spawner = bananaLastOwnerByte(kP1);
+  pickupAt(s, lying).spawner = bananaLastOwnerByte(kP1);
   Observation obs{};
   buildObservation(s, MatchContent(c), kP0, 0, obs);
   const Fixed mean =

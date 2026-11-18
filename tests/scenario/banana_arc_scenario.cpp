@@ -114,7 +114,7 @@ struct RecallLab {
     playerAt(s, kP0).ammo = 0;
     if ((players & 0b10) != 0) placePlayer(s, kP1, at(12, 7));
     pickup = spawnPickup(s, lying);
-    s.pickups.get(pickup)->spawner = bananaLastOwnerByte(lastOwner);
+    pickupAt(s, pickup).spawner = bananaLastOwnerByte(lastOwner);
   }
   EventLog step(PlayerInput p0, PlayerInput p1 = {}) { return tick(s, MatchContent(db), p0, p1); }
   [[nodiscard]] const Boomerang* pulled() const {
@@ -274,8 +274,9 @@ TEST_CASE("recall: an empty hand held on Throw pulls the own banana home, into t
   EventLog log = lab.step(holding(kThrow));
   REQUIRE(countEvents(log, EventKind::BananaRecallStarted) == 1);
   CHECK(!lab.s.pickups.isAlive(lab.pickup));
-  REQUIRE(lab.pulled() != nullptr);
-  CHECK(lab.pulled()->owner == kP0);
+  const Boomerang* lifted = lab.pulled();
+  REQUIRE(lifted != nullptr);
+  CHECK(lifted->owner == kP0);
   // From rest, speeding up evenly to recall_speed, never past it, closing in.
   Fixed lastSpeed{};
   Fixed lastDistance = Fixed::fromInt(100);
@@ -368,10 +369,10 @@ TEST_CASE("recall: only the last owner pulls; anyone may pick it up", "[scenario
   CHECK(countEvents(log, EventKind::BananaRecallStarted) == 0);
   CHECK(lab.s.pickups.isAlive(lab.pickup));
   // A banana nobody may recall stays put too.
-  lab.s.pickups.get(lab.pickup)->spawner = 0;
+  pickupAt(lab.s, lab.pickup).spawner = 0;
   CHECK(countEvents(lab.step(holding(kThrow)), EventKind::BananaRecallStarted) == 0);
   // But p0 takes it by walking over it.
-  lab.s.pickups.get(lab.pickup)->spawner = bananaLastOwnerByte(kP1);
+  pickupAt(lab.s, lab.pickup).spawner = bananaLastOwnerByte(kP1);
   placePlayer(lab.s, kP0, at(0, 0));
   log = lab.step(PlayerInput{});
   CHECK(countEvents(log, EventKind::PickupTaken) == 1);
@@ -392,8 +393,9 @@ TEST_CASE("recall: the slow start drifts through a monkey, the fast pull hits",
       const EventLog one = lab.step(holding(kThrow));
       log.insert(log.end(), one.begin(), one.end());
     }
-    REQUIRE(lab.pulled() != nullptr);
-    CHECK(length(lab.pulled()->transform.vel) < thr.recallHarmSpeed);
+    const Boomerang* slow = lab.pulled();
+    REQUIRE(slow != nullptr);
+    CHECK(length(slow->transform.vel) < thr.recallHarmSpeed);
     CHECK(countEvents(log, EventKind::PlayerHit) == 0);
     CHECK(playerAt(lab.s, kP1).hp > 0);
   }

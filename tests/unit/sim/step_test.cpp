@@ -54,10 +54,17 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
   REQUIRE(s.playerBySlot(PlayerId{9}) != nullptr);
   CHECK(s.playerBySlot(PlayerId{1}) == nullptr);
   CHECK(s.playerBySlot(PlayerId::invalid()) == nullptr);
-  CHECK(s.playerBySlot(PlayerId{2})->id == PlayerId{2});
+  // A reference per slot, never a dereference GCC cannot prove non-null at
+  // -O3 (-Wnull-dereference): the REQUIREs above are what assert presence.
+  const Player absent{};
+  const auto at = [&](uint8_t slot) -> const Player& {
+    const Player* p = s.playerBySlot(PlayerId{slot});
+    return p != nullptr ? *p : absent;
+  };
+  CHECK(at(2).id == PlayerId{2});
   // Spawned at the arena spawn point of their slot, with content stats.
   const ContentDB& content = defaultContent();
-  const Player& p9 = *s.playerBySlot(PlayerId{9});
+  const Player& p9 = at(9);
   // v0.91: the three present slots are dealt three spread spawn points in a
   // world-RNG order (rules_test.cpp pins the deal): each its own point.
   const ArenaDef& arena = content.arenas[0];
@@ -68,8 +75,8 @@ TEST_CASE("first step spawns present players into their slots", "[sim][step]") {
     return false;
   };
   CHECK(onSpawnPoint(p9.transform.pos));
-  CHECK(p9.transform.pos != s.playerBySlot(PlayerId{0})->transform.pos);
-  CHECK(p9.transform.pos != s.playerBySlot(PlayerId{2})->transform.pos);
+  CHECK(p9.transform.pos != at(0).transform.pos);
+  CHECK(p9.transform.pos != at(2).transform.pos);
   CHECK(p9.hp == content.player.maxHp);
   CHECK(p9.ammo == content.player.ammoStart);
   CHECK(p9.stats.moveSpeed == content.player.moveSpeed);

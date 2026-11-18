@@ -1599,7 +1599,7 @@ TEST_CASE("a pulled banana floats, is drawn returning and is tethered to its own
   placePlayer(s, kP1, Vec2{Fixed::fromInt(8), Fixed::fromInt(6)});
   playerAt(s, kP0).ammo = 0;
   const EntityId lying = spawnPickup(s, Vec2{Fixed::zero(), Fixed::zero()});
-  s.pickups.get(lying)->spawner = bananaLastOwnerByte(kP0);
+  pickupAt(s, lying).spawner = bananaLastOwnerByte(kP0);
   PresentationState ps{};
   PlayerInput hold{};
   hold.buttons = kThrowBit;

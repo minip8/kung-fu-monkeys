@@ -126,6 +126,17 @@ inline const Player& playerAt(const WorldState& s, PlayerId id) {
   return playerAt(const_cast<WorldState&>(s), id);  // NOLINT(cppcoreguidelines-pro-type-const-cast)
 }
 
+// A live pickup by handle, failing the test when it is gone (see playerAt
+// for why this aborts rather than returning a null pointer).
+inline Pickup& pickupAt(WorldState& s, EntityId id) {
+  Pickup* p = s.pickups.get(id);
+  if (p == nullptr) {
+    FAIL_CHECK("no pickup at index " << int{id.index});
+    std::abort();
+  }
+  return *p;
+}
+
 // Teleports a player (pos and prevPos, zero velocity).
 inline Player& placePlayer(WorldState& s, PlayerId id, Vec2 pos) {
   Player& p = playerAt(s, id);
