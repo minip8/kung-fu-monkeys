@@ -68,15 +68,32 @@ enum class ModeKind : uint8_t {
   // else the leader at timeLimitTicks (a tied lead is a draw); eliminations
   // score nothing.
   Harvest,
+  // v0.90, kill rounds: the rounds kind's flow (everyone spawns, no respawn
+  // within a round, the round ends when at most one monkey is left or it runs
+  // dry), scored like deathmatch: every elimination by an enemy attacker is
+  // +1 to the attacker when it happens; surviving scores nothing. The match
+  // ends at the end of a round in which the strict leader has reached
+  // scoreToWin; a tied lead plays another round.
+  KillRounds,
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 
-// Whether a kind plays one long round on a clock with respawns, its
-// MatchRules::scores counting points (eliminations, hill points, captures)
-// rather than round wins (v0.33; the hosts' HUD and tools read it).
+// Whether a kind's MatchRules::scores count points (eliminations, hill
+// points, captures) rather than round wins (v0.33; the hosts' HUD and tools
+// read it). Every such kind but kill rounds (v0.90) plays one long round on
+// a clock with respawns.
 [[nodiscard]] constexpr bool scoresPoints(ModeKind k) {
   return k == ModeKind::Deathmatch || k == ModeKind::TeamDeathmatch || k == ModeKind::Hill ||
-         k == ModeKind::Capture || k == ModeKind::Control || k == ModeKind::Harvest;
+         k == ModeKind::Capture || k == ModeKind::Control || k == ModeKind::Harvest ||
+         k == ModeKind::KillRounds;
+}
+
+// Whether a kind plays rounds with a pause between them (RoundEnded for
+// roundEndTicks, then the next round) rather than one round that ends the
+// match (v0.90: the hosts show the round's scoreboard in that pause).
+[[nodiscard]] constexpr bool playsRounds(ModeKind k) {
+  return k == ModeKind::Rounds || k == ModeKind::Survival || k == ModeKind::TeamRounds ||
+         k == ModeKind::KillRounds;
 }
 
 // How monkeys move in a mode (architecture §5.12, v0.29): the SpaceBehavior
@@ -134,6 +151,19 @@ enum class DeathBananas : uint8_t {
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a choice
 };
 
+// v0.89, how a thrown banana flies in a mode (ProjectileSystem, §5.7).
+// Classic: the constant-speed flight of M1 (BoomerangDef speed,
+// outboundTicks, turnRateBam, maxReturnTicks), kept bit for bit for the grid
+// modes and the bot contest. Arc: it leaves fast and slows to its apex,
+// turns for home and speeds up again, steers only a little and drops when it
+// misses (BoomerangDef's arc fields). The struct default is Classic (a mode
+// built by hand plays as before); the loader's default is Arc.
+enum class BananaFlight : uint8_t {
+  Classic = 0,
+  Arc,
+  kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a flight
+};
+
 // v0.80, control: the most teams the kind plays (its modeData keeps a clock
 // per team in two words, modes/control.cpp).
 inline constexpr uint8_t kMaxControlTeams = 4;
@@ -142,7 +172,7 @@ inline constexpr uint8_t kMaxControlTeams = 4;
 // [player] ammo_start (every mode before v0.82).
 inline constexpr uint8_t kRespawnAmmoStart = 0xFF;
 // v0.82: ModeDef::arenaSet when the mode names no pool of arenas.
-inline constexpr uint16_t kNoArenaSet = 0;
+inline constexpr uint32_t kNoArenaSet = 0;
 
 // ModeDef::baseline when the mode grants no baseline power-up (v0.32).
 inline constexpr uint8_t kNoBaseline = 0xFF;
@@ -250,14 +280,18 @@ struct ModeDef {
   // (ContentDB::compatible), and `arena`, when given, is one of them. Never
   // read by the sim: a host that cycles maps reads it (kfm_arena), the
   // others pick one arena (ContentDB::firstCompatibleArena prefers the
-  // pool's first member that suits the mode).
-  uint16_t arenaSet{kNoArenaSet};
+  // pool's first member that suits the mode). A uint32_t since v0.91
+  // (kMaxArenas 32).
+  uint32_t arenaSet{kNoArenaSet};
+  // v0.89: the banana's flight model (TOML banana_flight, "arc" when the
+  // key is absent; the grid modes name "classic").
+  BananaFlight bananaFlight{BananaFlight::Classic};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }
   [[nodiscard]] constexpr bool hasArenaSet() const { return arenaSet != kNoArenaSet; }
   [[nodiscard]] constexpr bool inArenaSet(uint8_t index) const {
-    return index < 16 && (arenaSet & (1u << index)) != 0;
+    return index < 32 && (arenaSet & (1u << index)) != 0;
   }
 };
 

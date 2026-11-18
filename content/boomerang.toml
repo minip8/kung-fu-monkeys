@@ -4,13 +4,45 @@
 # divided by 60 and truncated toward zero), durations in ticks, turn rate in
 # binary angle units (65536 per turn) per tick.
 
+#
+# Two flights, picked by the mode (modes.toml banana_flight, v0.89). Every
+# speed is times the banana's multiplier: the throw's charge (x0.6 tap to
+# x1.5 full, abilities.toml) and power-ups, so the charge scales the reach,
+# not the time in the air.
+#
+# The classic flight (banana_flight = "classic": the grid modes and the bot
+# contest, unchanged since M1): constant speed, out for outbound_ticks, then
+# homing on the owner.
+#
+# The arc (banana_flight = "arc", every other mode): a boomerang with weight.
+# It leaves at arc_launch_speed and slows evenly to arc_apex_speed over
+# arc_outbound_ticks (the mean, 16 units/s, makes the classic reach: 9.6
+# units, a tap 5.8, a full charge 14.4). At the apex it turns to face its
+# thrower, then speeds up evenly to arc_return_speed over
+# arc_return_accel_ticks, steering at most arc_turn_rate_bam a tick: a
+# thrower who stands or steps into its path catches it, one who runs off
+# does not. It drops to the ground (a pickup) the moment it has flown past
+# its thrower, when it hits a wall on the way back, or after arc_return_ticks
+# returning. A wall on the way out bounces it and costs arc_bounce_ticks of
+# its flight, so each bounce slows it and brings the turn nearer. In the
+# open, a throw is in the air about 1.25 s, whatever its charge; never more
+# than arc_outbound_ticks + arc_return_ticks (1.6 s).
+
 [boomerang]
 radius = 0.35               # contact radius
-speed = 16                  # units/s, constant magnitude in flight
-outbound_ticks = 36         # 0.6 s out (9.6 units), then it turns for home
-max_return_ticks = 240      # returning longer than 4 s grounds it (no endless orbit)
-turn_rate_bam = 1200        # ~6.6 degrees per tick of homing while returning
-restitution = 1             # wall bounce keeps all its speed
+speed = 16                  # classic: units/s, constant magnitude in flight
+outbound_ticks = 36         # classic: 0.6 s out (9.6 units), then it turns for home
+max_return_ticks = 240      # classic: returning longer than 4 s grounds it (no endless orbit)
+turn_rate_bam = 1200        # classic: ~6.6 degrees per tick of homing while returning
+restitution = 1             # classic and arc: a wall bounce keeps the speed of that tick
 spawn_offset = 1            # spawns 1 unit ahead of the thrower: clear of 0.5 + 0.35
 damage = 1                  # one hit eliminates a 1-hp monkey; the banana flies on through it
 pit_sink_ticks = 18         # a banana that comes down over a pit: 0.3 s dropping in, then gone
+arc_launch_speed = 29       # arc: units/s leaving the hand
+arc_apex_speed = 3          # arc: units/s at the turn (slowing evenly from the launch)
+arc_outbound_ticks = 36     # arc: 0.6 s out to the apex
+arc_return_speed = 20       # arc: top speed home, units/s
+arc_return_accel_ticks = 24 # arc: 0.4 s from the apex speed to the top speed
+arc_return_ticks = 60       # arc: returning 1 s without reaching the thrower drops it
+arc_turn_rate_bam = 96      # arc: ~0.5 degrees per tick of steering on the way home
+arc_bounce_ticks = 9        # arc: a bounce on the way out costs 0.15 s of flight

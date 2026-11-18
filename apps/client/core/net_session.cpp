@@ -90,11 +90,18 @@ const char* disconnectReasonText(net::DisconnectReason reason) {
     case net::DisconnectReason::Timeout:
       return "connection lost or timed out";
     case net::DisconnectReason::ProtocolError:
-      return "protocol error";
+      return "dropped by the server for a protocol error (reload the page)";
     case net::DisconnectReason::ServerShuttingDown:
-      return "server shut down";
+      return "the server shut down (a restart or an update)";
   }
   return "unknown reason";
+}
+
+uint32_t autoReconnectDelayMs(uint32_t attempt) {
+  if (attempt == 0) return kAutoReconnectFirstMs;
+  // 1, 2, 4, 8 s, then 8 s.
+  const uint32_t shift = std::min<uint32_t>(attempt - 1, 3);
+  return std::min<uint32_t>(1'000u << shift, kAutoReconnectMaxDelayMs);
 }
 
 std::string lobbyErrorText(std::string_view error, const LobbyTarget& target) {
@@ -120,7 +127,9 @@ std::string lobbyErrorText(std::string_view error, const LobbyTarget& target) {
   if (error.starts_with(kClosed)) {
     const std::string_view reason = error.substr(kClosed.size());
     if (reason == "server_gone") return room + "'s server went away";
-    if (reason == "kicked") return "Removed from the room by its server";
+    // v0.92: `kicked` is how any drop by the game server reaches a lobby
+    // client (its peer_gone), a timeout far more often than a kick.
+    if (reason == "kicked") return "Dropped by the room's server (connection lost)";
     if (reason == "room_closed") return room + " closed";
     if (reason == "replaced") return "Joined " + room + " again from elsewhere";  // v1.2
     return "The lobby closed the room: " + std::string(reason);
@@ -192,7 +201,11 @@ void NetSession::advance(uint64_t nowNs) {
   nowNs_ = nowNs;
   frameEventCount_ = 0;
   ticksThisFrame_ = 0;
-  updateDisplayRate(nowNs);
+  if (background_ || std::exchange(skipRateSample_, false)) {
+    lastFrameNs_ = nowNs;  // the background's pumps are not display frames
+  } else {
+    updateDisplayRate(nowNs);
+  }
   if (!failure_.empty()) {
     sampler_.endTick();
     return;
@@ -212,6 +225,7 @@ void NetSession::advance(uint64_t nowNs) {
   c.pump(nowNs);
   c.reconcile();
   scheduleRejoinRetry(nowNs);
+  updateAutoReconnect(nowNs);
   if (c.state() == net::ClientState::Syncing || c.running()) configKnown_ = true;
   const bool rolledBack = c.frameReport().rolledBack;
   if (rolledBack && everRan_) {
@@ -258,7 +272,8 @@ void NetSession::scheduleRejoinRetry(uint64_t nowNs) {
   // Only a rejoin (a join of a known room under its token), only `unknown_code`
   // (the room's server may not have claimed it back yet, protocol §3), and only
   // while retries are left; every other refusal ends the session at once.
-  if (!retryArmed_ || !lobby_ || !config_.lobby || config_.lobby->create ||
+  // v0.92: reconnecting on its own retries on its own schedule.
+  if (auto_ || !retryArmed_ || !lobby_ || !config_.lobby || config_.lobby->create ||
       config_.rejoinToken.empty() || rejoinRetries_ >= config_.rejoinRetries ||
       client_->state() != net::ClientState::Disconnected ||
       lobby_->error() != "lobby refused: unknown_code") {
@@ -266,6 +281,89 @@ void NetSession::scheduleRejoinRetry(uint64_t nowNs) {
   }
   retryArmed_ = false;  // once per attempt
   rejoinRetryAtNs_ = nowNs + (uint64_t{config_.rejoinRetrySpacingMs} * 1'000'000ULL);
+}
+
+void NetSession::updateAutoReconnect(uint64_t nowNs) {
+  if (!config_.autoReconnect) return;
+  if (auto_) {
+    if (client_->running()) {
+      auto_.reset();  // back
+      ++autoRecoveries_;
+      return;
+    }
+    if (auto_->nextAtNs) return;  // waiting for the next attempt
+    const net::ClientState st = client_->state();
+    if (failure_.empty() && st != net::ClientState::Disconnected &&
+        st != net::ClientState::Rejected) {
+      return;  // the attempt is under way
+    }
+    attemptError_ = baseStatusText();
+    const uint64_t window = uint64_t{config_.autoReconnectWindowMs} * 1'000'000ULL;
+    if (lossRetriable(true) && nowNs - auto_->startNs < window) {
+      auto_->nextAtNs = nowNs + (uint64_t{autoReconnectDelayMs(autoAttempts_)} * 1'000'000ULL);
+      return;
+    }
+    auto_.reset();  // the window has passed, or this end will not change
+    autoGaveUp_ = true;
+    return;
+  }
+  // A running session (this attempt ran) that lost its link for a reason a
+  // new connection can fix.
+  if (!everRan_ || rejoinRetryAtNs_ || !lossRetriable(false)) return;
+  lossText_ = describeLoss();
+  autoAttempts_ = 0;
+  autoGaveUp_ = false;
+  attemptError_.clear();
+  auto_ = AutoReconnect{.startNs = nowNs,
+                        .nextAtNs = nowNs + (uint64_t{kAutoReconnectFirstMs} * 1'000'000ULL)};
+}
+
+bool NetSession::lossRetriable(bool attempt) const {
+  if (!failure_.empty() || client_->state() != net::ClientState::Disconnected) return false;
+  const std::optional<net::DisconnectReason> r = client_->disconnectReason();
+  if (r && *r != net::DisconnectReason::Timeout) return false;  // quit, kicked, shut down
+  if (!lobby_) return true;
+  // The lobby dropped the socket or the server dropped the peer (`kicked`
+  // is how a server-side timeout reaches the client); a closed room, a gone
+  // server or a replaced socket has nothing to come back to.
+  const std::string e = lobby_->error();
+  if (attempt && e == "lobby refused: unknown_code") return true;
+  return e.empty() || e == "lobby closed: kicked" || e == "lobby connection closed" ||
+         !e.starts_with("lobby ");
+}
+
+std::string NetSession::describeLoss() const {
+  const std::optional<net::DisconnectReason> r = client_->disconnectReason();
+  switch (client_->disconnectCause()) {
+    case net::DisconnectCause::ServerSilent: {
+      const uint64_t s = net::ClientConfig{}.serverTimeoutNs / 1'000'000'000ULL;
+      return "no data from the server for " + std::to_string(s) + " s";
+    }
+    case net::DisconnectCause::ServerDisconnect:
+      if (r == net::DisconnectReason::Timeout) return "the server stopped hearing from this client";
+      return r ? disconnectReasonText(*r) : "the server closed the connection";
+    case net::DisconnectCause::Quit:
+      return "left the match";
+    case net::DisconnectCause::TransportClosed:
+    case net::DisconnectCause::None:
+      break;
+  }
+  const std::string e = lobby_ ? lobby_->error() : std::string();
+  if (e == "lobby closed: kicked") return "the server dropped the connection";
+  if (!e.empty() && !e.starts_with("lobby ")) return "the connection failed: " + e;
+  return "the connection closed";
+}
+
+void NetSession::setBackground(bool background) {
+  if (background == background_) return;
+  background_ = background;
+  client_->setBackground(background);
+  if (background) return;
+  // Back: nothing held from before counts, and the first frame's interval is
+  // not a display rate.
+  sampler_.endTick();
+  sampler_.consumeAllButtons();
+  skipRateSample_ = true;
 }
 
 void NetSession::setInputSuspended(bool suspended) {
@@ -348,20 +446,13 @@ void NetSession::build(float dtSeconds, presentation::RenderState& out) {
 void NetSession::disconnect() {
   rejoinRetryAtNs_.reset();  // leaving: nothing more to retry
   retryArmed_ = false;
+  auto_.reset();
   if (failure_.empty()) client_->disconnect();
 }
 
 bool NetSession::canReconnect() const {
   if (!failure_.empty() || !ranBefore_ || phase() != NetPhase::Disconnected) return false;
-  const std::optional<net::DisconnectReason> r = client_->disconnectReason();
-  if (r && *r != net::DisconnectReason::Timeout) return false;  // quit, kicked, shut down
-  if (!lobby_) return true;
-  // The lobby dropped the socket or the server dropped the peer (`kicked`
-  // is how a server-side timeout reaches the client); a closed room, a gone
-  // server or a replaced socket has nothing to come back to.
-  const std::string e = lobby_->error();
-  return e.empty() || e == "lobby closed: kicked" || e == "lobby connection closed" ||
-         !e.starts_with("lobby ");
+  return lossRetriable(false);
 }
 
 NetSessionConfig NetSession::reconnectConfig() const {
@@ -380,12 +471,16 @@ NetSessionConfig NetSession::reconnectConfig() const {
 void NetSession::reconnect(net::ITransport* transport, uint64_t nowNs,
                            std::unique_ptr<net::ITransport> owned, std::string failure) {
   config_ = reconnectConfig();
-  if (rejoinRetryAtNs_) {
+  if (auto_ && auto_->nextAtNs) {
+    ++autoAttempts_;  // v0.92: an attempt of the reconnect on its own
+    auto_->nextAtNs.reset();
+  } else if (rejoinRetryAtNs_) {
     ++rejoinRetries_;  // the retry of a rejoin refused `unknown_code`
     rejoinRetryAtNs_.reset();
   } else {
     ++reconnects_;  // the player's Reconnect: a fresh retry budget
     rejoinRetries_ = 0;
+    autoGaveUp_ = false;
   }
   retryArmed_ = true;
   // The lobby view looks at the old transport: gone first. The room stays
@@ -432,6 +527,11 @@ void NetSession::updateRates(uint64_t nowNs) {
 // --- status -------------------------------------------------------------------
 
 NetPhase NetSession::phase() const {
+  if (auto_) return NetPhase::Connecting;  // v0.92: reconnecting on its own
+  return basePhase();
+}
+
+NetPhase NetSession::basePhase() const {
   if (!failure_.empty()) return NetPhase::Failed;
   if (rejoinRetryAtNs_) return NetPhase::Connecting;  // still rejoining, between attempts
   switch (client_->state()) {
@@ -466,11 +566,33 @@ std::string NetSession::lobbyErrorText() const {
 }
 
 std::string NetSession::statusText() const {
+  if (auto_ || autoGaveUp_) {
+    std::string where = config_.serverLabel.empty() ? "the server" : config_.serverLabel;
+    if (room_) {
+      where = "room " + room_->code;
+    } else if (config_.lobby && !config_.lobby->create) {
+      where = "room " + config_.lobby->code;
+    }
+    const std::string lost = "Connection lost (" + lossText_ + ")";
+    if (auto_) {
+      std::string attempt;
+      if (autoAttempts_ > 1) attempt = ", attempt " + std::to_string(autoAttempts_);
+      return lost + ": reconnecting to " + where + attempt + " ...";
+    }
+    const NetPhase ph = phase();
+    if (ph == NetPhase::Disconnected || ph == NetPhase::Rejected || ph == NetPhase::Failed) {
+      return lost + "; could not reconnect: " + attemptError_;
+    }
+  }
+  return baseStatusText();
+}
+
+std::string NetSession::baseStatusText() const {
   char buf[256];
   std::string label = config_.serverLabel.empty() ? "the server" : config_.serverLabel;
   if (room_) label = "room " + room_->code + " (" + room_->region + ")";
   const char* server = label.c_str();
-  const NetPhase ph = phase();
+  const NetPhase ph = basePhase();
   if (config_.lobby && (ph == NetPhase::Disconnected || ph == NetPhase::Rejected)) {
     std::string why = lobbyErrorText();
     if (!why.empty()) return why;

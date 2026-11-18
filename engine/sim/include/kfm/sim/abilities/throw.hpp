@@ -41,9 +41,36 @@ void throwOnEnd(WorldState& s, Player& p, AbilityState& st, const AbilityDef& de
 
 bool throwHoldsPhase(const AbilityState& st, const AbilityDef& def, bool buttonHeld);
 
+// v0.89, the recall. A Throw def with a recall speed recalls: holding its
+// slot's button with the slot Idle and an empty hand lifts the monkey's
+// nearest banana lying on the floor (a banana pickup whose last owner it is,
+// bananaLastOwner(), within the def's recallRange when that is set) as a
+// Recalled banana (BananaRecallStarted); ProjectileSystem pulls it home while
+// the button stays held (heldRecallDef) and drops it when it is let go. One
+// at a time: the hand is empty only until the pull arrives, and a monkey
+// with a banana of its own Recalled lifts no other. The pull consumes no
+// press: a banana pulled into the hand while the button is still held
+// starts no throw (a throw needs a fresh press edge).
+[[nodiscard]] constexpr bool throwRecalls(const AbilityDef& def) {
+  return def.kind == AbilityKind::Throw && def.recallSpeed > Fixed{};
+}
+
+// The def of p's first slot that recalls (throwRecalls), or nullptr; its
+// slot index in *slot when given.
+[[nodiscard]] const AbilityDef* recallDefOf(const Player& p, const MatchContent& content,
+                                            uint8_t* slot = nullptr);
+
+// The recalling def when p is pulling now: alive and standing (not
+// Eliminated, not Falling), the recalling slot Idle with its button held.
+// nullptr otherwise.
+[[nodiscard]] const AbilityDef* heldRecallDef(const Player& p, const MatchContent& content);
+
+void throwOnIdleHold(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
+                     const MatchContent& content, EventSink& sink);
+
 [[nodiscard]] constexpr AbilityBehavior throwBehavior() {
-  return AbilityBehavior{&throwCanActivate, &throwOnActivate, &throwOnTick,    &throwOnPhaseChange,
-                         &throwOnEnd,       &noKindTags,      &throwHoldsPhase};
+  return AbilityBehavior{&throwCanActivate, &throwOnActivate, &throwOnTick,     &throwOnPhaseChange,
+                         &throwOnEnd,       &noKindTags,      &throwHoldsPhase, &throwOnIdleHold};
 }
 
 }  // namespace kfm::sim

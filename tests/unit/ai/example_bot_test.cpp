@@ -69,6 +69,8 @@ static_assert(KFM_CONTROL_PROGRESS_WORD + ((KFM_MAX_ZONES + 1) / 2) <= KFM_ZONE_
 // v0.82: the harvest kind, its beats word (modes/harvest.cpp) and the
 // spawner's tree byte, within version 2.
 static_assert(KFM_MODE_HARVEST == static_cast<int>(ObsModeKind::Harvest));
+// v0.90: the kill rounds kind, an appended value within version 2.
+static_assert(KFM_MODE_KILL_ROUNDS == static_cast<int>(ObsModeKind::KillRounds));
 static_assert(KFM_HARVEST_BEATS_WORD == 0 && KFM_HARVEST_BEATS_WORD < KFM_ZONE_WORD);
 static_assert(KFM_HARVEST_BANK_TICKS(0x00060002u) == 2 &&
               KFM_HARVEST_STEAL_TICKS(0x00060002u) == 6);
@@ -608,7 +610,11 @@ TEST_CASE("the C SDK's flight step is the sim's ProjectileSystem", "[ai][sdk]") 
   // banana, moved this tick) is stepped by kfm_flight_step from the
   // observation before, with its owner's position after the step, and must
   // land exactly where the sim put it, with the same heading and phase.
+  // v0.89: the classic flight, the one the SDK reproduces (the grid modes and
+  // the contest fly it); an arc mode's flight is not in the observation's
+  // rules block, so the SDK's step only approximates it (bot-abi.md §2.5).
   ContentDB db = defaultContent();
+  db.modes[0].bananaFlight = BananaFlight::Classic;
   ArenaDef& arena = db.arenas[0];
   const auto box = [](int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
     return Wall{Vec2{Fixed::fromInt(x0), Fixed::fromInt(y0)},

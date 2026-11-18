@@ -67,7 +67,10 @@ screen"), which always apply.
   `tests/unit/content/mirror_test.cpp`: edit both.
 - A new mode hook or test-only mode: `MatchContent::modeBehavior` swaps the kind's
   `ModeBehavior` row in a scenario (`tests/scenario/mode_hooks_scenario.cpp`); hosts never set it.
-- Spawn groups fixed the side bias between teams only: the free-for-all spawn-order slot bias
-  of §12 is still open (tournaments rotate).
+- Spawns: team modes take their group's points (`spawnByGroups`, unchanged since v0.32); a
+  free-for-all (`ModeDef::teams` 0, whatever the arena's groups) deals the farthest-apart
+  points (`spreadSpawnSet`, a function of the arena alone) to the present slots in a world-Rng
+  order every round (`spawnSpread`, v0.91). A new arena's spawn points are judged by that set:
+  keep neighbours a throw's reach apart with cover between (`big_arenas_test.cpp`).
 - The `contest` row of `content/modes.toml` is the bot ladder's: a loader test pins it, so a
   season's change to it is a deliberate edit of both.

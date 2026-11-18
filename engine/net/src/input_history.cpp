@@ -148,14 +148,23 @@ InputFrameAssembler::PutResult InputFrameAssembler::put(PlayerId slot, Tick t,
   if (t < next_) return PutResult::Late;
   if (t.minus(next_) >= kMaxLeadTicks) return PutResult::TooEarly;
   static_cast<void>(history_.put(slot, t, in));
+  std::optional<Tick>& r = received_[slot.value];
+  if (!r || t > *r) r = t;
   return PutResult::Accepted;
 }
 
-sim::InputFrame InputFrameAssembler::assembleNext(sim::PlayerMask* substituted) {
+void InputFrameAssembler::clearSlot(PlayerId slot) {
+  history_.clearSlot(slot);
+  if (validSlot(slot)) received_[slot.value].reset();
+}
+
+sim::InputFrame InputFrameAssembler::assembleNext(sim::PlayerMask* substituted,
+                                                  sim::PlayerMask* idled) {
   sim::InputFrame f;
   f.tick = next_;
   f.present = static_cast<sim::PlayerMask>(present_ & kAllPlayersMask);
   sim::PlayerMask missing = 0;
+  sim::PlayerMask neutral = 0;
   for (uint16_t s = 0; s < sim::kMaxPlayers; ++s) {
     const PlayerId id{static_cast<PlayerId::rep>(s)};
     if (!sim::maskHas(f.present, id)) continue;
@@ -163,17 +172,28 @@ sim::InputFrame InputFrameAssembler::assembleNext(sim::PlayerMask* substituted) 
     f.inputs[s] = history_.getOrRepeat(id, next_, &exact);
     if (!exact) {
       missing = static_cast<sim::PlayerMask>(missing | (1u << s));
+      const std::optional<Tick>& r = received_[s];
+      if (idleAfter_ > 0 && (!r || next_.minus(*r) > static_cast<int32_t>(idleAfter_))) {
+        // Silent for longer than a loss burst: stand still, facing as before.
+        const sim::PlayerInput last = f.inputs[s];
+        f.inputs[s] = sim::PlayerInput{};
+        f.inputs[s].moveDir = last.moveDir;
+        f.inputs[s].aimDir = last.aimDir;
+        neutral = static_cast<sim::PlayerMask>(neutral | (1u << s));
+      }
       // The substitute is now the authoritative input of this tick.
       static_cast<void>(history_.put(id, next_, f.inputs[s]));
     }
   }
   if (substituted != nullptr) *substituted = missing;
+  if (idled != nullptr) *idled = neutral;
   ++next_;
   return f;
 }
 
 void InputFrameAssembler::reset(Tick firstTick) {
   history_.clear();
+  received_ = {};
   next_ = firstTick;
 }
 

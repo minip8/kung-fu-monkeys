@@ -17,6 +17,19 @@
 namespace kfm::sim {
 namespace {
 
+// v0.89: a banana of `id`'s lies on the floor for it to recall, or one is
+// being pulled already.
+[[nodiscard]] bool hasRecallable(const WorldState& s, PlayerId id) {
+  bool found = false;
+  s.pickups.forEachAlive([&](EntityId /*kid*/, const Pickup& k) {
+    if (bananaLastOwner(k) == id) found = true;
+  });
+  s.boomerangs.forEachAlive([&](EntityId /*bid*/, const Boomerang& b) {
+    if (b.owner == id && b.phase == BoomerangPhase::Recalled) found = true;
+  });
+  return found;
+}
+
 // Nearest 1/256 turn of an angle (the PlayerInput direction encoding).
 [[nodiscard]] uint8_t toInput8(Angle a) {
   return static_cast<uint8_t>(((uint32_t{a.bam} + 128u) >> 8) & 0xFFu);
@@ -570,6 +583,13 @@ PlayerInput scriptedInput(Rng& rng, const WorldState& s, const MatchContent& con
     if (!throwUp && thr.phase == AbilityPhase::Startup &&
         throwCharges(content.db.abilityAt(thr.defIndex)) &&
         rng.below(256) < config.chargeHoldPer256) {
+      in.buttons |= throwBit;
+    }
+
+    // v0.89: an empty hand pulls its own banana back, by the clock.
+    if (p.ammo == 0 && config.recallCycleTicks > 0 &&
+        s.tick.value % config.recallCycleTicks < config.recallHoldTicks &&
+        recallDefOf(p, content) != nullptr && hasRecallable(s, p.id)) {
       in.buttons |= throwBit;
     }
 

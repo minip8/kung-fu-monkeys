@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.88 (2026-11-16), a living document: it describes the system as built and deployed,
+Status: v0.94 (2026-11-18), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -314,6 +314,7 @@ ticks, and `TimerWarning` fires with 10, 3, 2 and 1 s left. New mode = behaviour
 | `rounds` | at most one monkey left (two or more present): the survivor wins the round (none: draw); first to `roundsToWin` round wins takes the match | nothing | the M1 rules; never sets a mode counter |
 | `deathmatch` | one round; the first to `scoreToWin` eliminations, or the leader once `timeLimitTicks` of play pass (a tied lead: draw) ends the match (`RoundEnded` + `MatchEnded`) | +1 score for the attacker (`ScoreChanged`), +1 death, respawn due in `respawnTicks` | a present slot without a monkey or a pending respawn (a late joiner) is scheduled like a respawn; a slot that left keeps its monkey until eliminated, then forfeits its score |
 | `survival` | as rounds, plus a per-round `timeLimitTicks`: on timeout the survivor with the most hp wins the round, then the one with the fewest deaths this match, else a draw | +1 death | no respawn within a round |
+| `kill_rounds` (v0.90) | as rounds (at most one monkey left with two or more present, never while one falls; a dry round ends at once without pits, after `dry_round_ticks` with them), but the round's survivor scores nothing: the round ends with `RoundEnded` naming the survivor (none: invalid); then, once the strict score leader has `scoreToWin` or more, `MatchEnded` names it (`lastRoundWinner` becomes the match winner). Judged only at a round's end; a tied lead plays another round | +1 score for an enemy attacker when it happens (`ScoreChanged`, `Objective`), +1 death; no respawn within a round | `scoresPoints` and `playsRounds` (the hosts' round pause shows the scoreboard, labelled Kills); `catch_score`, `suicide_score` as the point kinds (shipped 0); `endRoundOnScore` in `mode_flow` |
 | `team_rounds` (v0.32) | monkeys of at most one team left (two or more teams present): that team wins the round (none: draw), credited to its lowest surviving slot; the first team whose slots' round wins sum to `roundsToWin` takes the match | nothing | one team present never ends a round |
 | (v0.57, the round kinds above) | a dry round: no banana in a hand, out (one sinking into a pit is gone) or lying around and no ammo power-up to come ends as the clock-out would (rounds, team rounds: a draw; survival: its timeout winner), at once without pits, after `dry_round_ticks` (180) dry ticks with them | | `roundRanDry` in `mode_flow`, `MatchRules::dryTicks`; the parry-then-fall softlock |
 | `team_deathmatch` (v0.32) | one round; the first team whose slots' eliminations sum to `scoreToWin`, or the leading team once `timeLimitTicks` pass (a tied lead: draw); `MatchEnded` names the team's present top scorer | +1 score for an enemy attacker only (an ally's or one's own scores nothing), +1 death, respawn as deathmatch | a slot that leaves keeps its score: it is the team's |
@@ -332,6 +333,24 @@ choosing among equal points (one draw per respawn), and gets `Tag::Invulnerable`
 protected for the interactions of the next `respawnInvulnTicks` ticks. The damage (30) and
 dash-attack (25) rows already forbid `Invulnerable` on the victim; a protected monkey can still
 attack and catch. A round start clears every timer.
+
+Spawn spread (v0.91). A free-for-all round start (`spawnSpread`, `systems/rules.cpp`) puts the
+n present slots on the n spawn points that lie farthest apart (`spreadSpawnSet`,
+`modes/mode_flow`: of every n-point subset of the arena's points, the one whose closest pair is
+farthest apart in raw fixed-point squared distance, then the one with the fewest pairs at that
+distance, then the lowest mask; at most 1024 subsets of ten points, a function of the arena
+alone), and deals them afresh every round: the world Rng shuffles the chosen points
+(Fisher-Yates, n − 1 draws) and the present slots in slot order take them in that order. With
+more present slots than points the M1 rule stays (one offset, wrapping). It applies to every
+mode with `teams = 0`, whatever the arena's spawn groups (`spawnsByGroup`: groups sort a team
+mode's sides only; a free-for-all respawn also chooses over every point); team modes keep
+`spawnByGroups` bit for bit. The M1 deal (one Rng offset into the list, slots in order) gave
+the dojo's ellipse a closest pair of 4.2 units for 5 to 8 players on some offsets and kept the
+same neighbours every round; now the closest pair at a round start is the best the points
+allow: on the dojo 24.0, 11.4, 11.0 units for 2 to 4 players, 7.4 for 5 and 6, 6.4 for 7
+and 8, 4.2 for 9 and 10 (every point used, so the points' own spacing), and every slot moves
+round to round, which also retires §12's free-for-all spawn-order slot bias (100 fixed-slot
+matches of 4 `ref:hard` on the dojo: wins 23/22/28/27 by slot).
 
 Mode seams (v0.29). The table above covers one axis of a mode, the win condition. A mode varies
 along five, and each has its own seam, so a new mode never needs a switch inside a system:
@@ -665,6 +684,30 @@ current tick's, so rotation never costs anything (§5.12).
   observation (a new Observation version); a hold that slows or roots the thrower (not asked
   for; content could add it with `root_phases`). Shipped: ×0.6 to ×1.5 over 40 ticks (5.8 to
   14.4 units out), Fast Hands over 20; the grid throws do not charge.
+- The recall (v0.89, `throw.cpp`, "telekinesis"): a Throw def with a positive `recallSpeed`
+  recalls (`throwRecalls`; TOML `recall_speed`, `recall_accel_ticks`, `recall_harm_speed`,
+  `recall_range`, a throw's only). It needs no press and no `AbilityState` field: an eighth
+  hook, `AbilityBehavior::onIdleHold(s, p, st, def, content, sink)` (default `noIdleHold`; the
+  registry asserts it set like the others), runs on every Playing tick a slot ends Idle with
+  its button held, after the activation check, so also on the press `canActivate` refused for
+  want of ammo. Throw's lifts the monkey's nearest own banana off the floor when its hand is
+  empty and none of its bananas is being pulled already: a banana pickup whose last owner it is
+  (`Pickup::spawner` = slot + 1, §5.7), within `recallRange` when that is set (0: anywhere),
+  the squared distance deciding and the lowest pickup index on a tie. One banana of a stack
+  comes up (`count − 1`, the pickup despawned at 0), as a fresh `Recalled` banana of the monkey
+  at rest where it lay, with its projectile modifiers (§5.8), and `BananaRecallStarted`; a full
+  boomerang pool leaves it on the floor. One at a time, decided: the nearest is the one the
+  player is reaching for, and the hand must be empty to start, so a pull that lands ends the
+  wanting. The pull itself is `ProjectileSystem`'s (§5.7), which drops the banana when
+  `heldRecallDef` (the recalling slot Idle, its button held, the monkey neither eliminated nor
+  falling) says the owner let go. A banana pulled into the hand while the button is still down
+  starts no throw: a throw needs a press edge (`InputSystem`), and a held button is no edge;
+  the next press throws as ever (and a hand with a banana holding Throw charges a throw, never
+  pulls). Prediction stays safe: the pull reads only the held bits of the input and the state,
+  so "repeat last input" predicts a held pull as held, and a wrong guess rolls back like any
+  other. Shipped: `throw` and `throw_fast` recall, up to 12 u/s over 45 ticks (4.5 units to
+  full pull), harmless below 8 u/s (the first 0.5 s, 2 units), from anywhere; the grid throws
+  and Quick Hands (`grid_throw*`, `quick_throw`) do not.
 - Kinds beyond the base kit (v0.21), each one behaviour file under `src/abilities/`, a def in
   `content/abilities.toml`, one registry line and a scenario test; they read only `AbilityDef`
   numbers and add no `AbilityState` field:
@@ -730,6 +773,7 @@ names an Outbound/Returning phase mask, so no row touches a banana sinking into 
 
 ```
 prio  A                          B                              handler
+  5   Player[]                   Boomerang[Recalled, !own]      SlowRecallPasses (v0.89; declines when fast)
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
  15   Player[Parrying, !HitStun] Boomerang[InFlight, !own]      ParryBoomerang (declines outside the window)
  16   Player[Slamming, !HitStun] Boomerang[InFlight, !own] (reach) SlamGroundsBanana
@@ -744,6 +788,17 @@ prio  A                          B                              handler
  52   Player[!Carrying]          Pickup[Flag]                   TakeFlag (v0.33; declines for the flag's own team)
  60   Player[!Dashing]           Hazard[Pit] (whole body)       FallIntoPit (v0.57: starts the fall)
 ```
+
+The recall (v0.89, row 5, `rules/recall.cpp`). A banana its owner pulls back (§5.5, §5.7) has
+its own phase, `Recalled`, which `kPhaseInFlight` and `kPhaseReturning` include: it is a banana
+in flight to every row (it hits, is perfect-caught, parried, slammed and blocked like a
+returning banana) and comes home to its owner like one (rows 11 and 40, at any speed). Row 5,
+`Player[] × Boomerang[Recalled, !own]` in every relation, comes first: while the banana is
+slower than its owner's `recallHarmSpeed` (times its `speedMul`), `slowRecallPasses` takes the
+contact and nothing happens, so the slow lift drifts through anyone; at or above it the
+handler declines and the scan goes on (a banana whose owner no longer recalls declines too).
+Decided: harmless below a speed rather than for a time, because the speed is what a player
+sees, and a pull a wall holds back stays slow.
 
 Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
 `0 <= (tick + tHit) − (pressTime + startupTicks) < activeTicks`; outside the window the handler
@@ -828,6 +883,7 @@ only ever competes with its own relation's rows, in the same order:
 
 ```
 prio  A                                   B                                       relation
+  5   Player[]                            Boomerang[Recalled, !own]               any (v0.89)
  10   Player[PerfectDash]                 Boomerang[InFlight, !own]               any (a pass)
  11   Player[PerfectDash]                 Boomerang[Returning, own]               any
  15   Player[Parrying, !HitStun]          Boomerang[InFlight, !own]               Enemy
@@ -1031,6 +1087,71 @@ is a defence only for a player who has thrown.
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
   `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
   cannot kill the winner or return to its owner during the pause; `RoundEnded` then clears it.
+- The arc (v0.89). The flight above flew for seconds: a banana that missed its moving owner
+  kept homing at 6.6°/tick for up to 4 s, circling and bouncing off walls at full speed. A mode
+  now picks one of two flights, `ModeDef::bananaFlight` (TOML `banana_flight`): `classic`, the
+  flight above bit for bit, kept by the four grid modes (`grid_rounds`, `grid_rounds_1t`,
+  `contest`, `control_1t`: the bot contest's, whose corpus checksums did not move), and `arc`,
+  the loader's default and every other shipped mode's (`ModeDef{}` stays classic, so a mode
+  built by hand plays as before). The arc is the genre's boomerang in our own numbers (no other
+  game's code or values): every speed is a function of the phase and its `ticksInPhase` times
+  the banana's `speedMul`, so it adds no `Boomerang` field and the charge scales the reach,
+  never the time in the air.
+  - Out: `arcLaunchSpeed` on the first tick, slowing evenly to `arcApexSpeed` at the outbound
+    ticks (`arcOutboundTicks`; a mode's `banana_outbound_ticks` overrides it as in classic).
+    At the apex it turns at once to face its owner (it is slow there: the hang of a boomerang
+    at the top of its loop), then speeds up evenly from the apex speed to `arcReturnSpeed` over
+    `arcReturnAccelTicks`, steering toward the owner's current position by at most
+    `arcTurnRateBam` a tick (a mode's `banana_turn_rate` overrides it).
+  - It drops (Grounded, then a pickup in `LifecycleSystem` as ever) when its owner is gone,
+    after `arcReturnTicks` returning, and the moment it has passed its owner: its velocity
+    points away from the owner (an exact int64 dot product below zero), judged before it moves,
+    so a banana that reaches its owner this tick is still caught. It never circles back.
+  - Walls: on the way out a wall bounces it as in classic (`restitution` for the bounce tick)
+    and ages the flight by `arcBounceTicks` (added to `ticksInPhase`): each bounce slows it and
+    brings the turn nearer, so bounce shots (`corridors`) stay, at a cost. On the way back a
+    wall drops it where it hit (still one `BoomerangBounced`). Decided: a reflection on the way
+    home points away from the owner, which the passed-owner rule would drop on the next tick
+    anyway, and a wall between a banana and its thrower is a miss the thrower pays for (or
+    pulls back, below), not a ricochet that finds them.
+  - Shipped (`content/boomerang.toml`): 29 u/s slowing to 3 over 36 ticks (a mean of 16 u/s,
+    the classic speed, so the reach out is the classic one: 9.6 units, a tap 5.8, a full charge
+    14.4, plus the 1-unit spawn offset), home at up to 20 u/s reached in 24 ticks, 96 BAM
+    (about 0.5°) of steering a tick, 60 ticks of return at most, 9 ticks of flight a bounce.
+    Thrown east into the open from 12 units west of the dojo's centre and caught by a thrower
+    standing still, a tap reaches 6.6 units and is in the air 74 ticks, a full charge 15.0 and
+    73 (classic: 8.1 and 18.7 at the farthest, the loop past the turn included, 100 ticks
+    each); no banana is in the air past 96 ticks. A thrower who walks off sideways at full speed
+    is missed; one who steps aside for a fifth of a second is still caught
+    (`banana_arc_scenario.cpp`, which also prints the table: its hidden `[measure]` case).
+  - Readers outside the sim get the arc's numbers through the same helpers:
+    `bananaOutboundTicksOf`, `bananaTurnRateBamOf`, `bananaMaxReturnTicksOf` (the arc's
+    `arcReturnTicks`) and `bananaFlightSpeedOf` (classic: `speed`; arc: the mean speed out,
+    `(arcLaunchSpeed + arcApexSpeed) / 2`, so speed × outbound ticks is the reach either way).
+    The observation's rules block reports them (`docs/bot-abi.md` §2.5); the presentation's
+    height arc reads the outbound ticks.
+- The recall's flight (v0.89, `Recalled`, §5.5). While its owner holds the recalling throw's
+  button (`heldRecallDef`), a `Recalled` banana flies straight at the owner's current position,
+  from rest up to the def's `recallSpeed` (times its `speedMul`) evenly over
+  `recallAccelTicks`, through `statics::moveCircle` with the players' `Slide` response: a wall
+  stops it at the face and it slides along by the tangential part of its pull, so a banana
+  behind a wall stays stuck in its lee (decided: the pull is an attempt, not a teleport; the
+  owner walks round to free it). Let go, or with the owner gone, falling or no longer holding
+  a recalling def, it drops where it is (`BananaRecallEnded`, Grounded, a pickup again that the
+  owner may lift again). It flies over pits, and one let go over a pit sinks. Reaching the
+  owner, row 40 puts it in the hand (`BoomerangCaught`, `Auto`; at full ammo it drops at the
+  catch point as ever). It counts as owned for the regrow clock, as in flight for
+  `dropBananasOf` / `releaseBananasOf` (a dead owner's pull drops or vanishes like its throws,
+  `inFlight()`), and as a banana left for the dry-round rule (it is not Sinking).
+- The last owner (v0.89). A pickup's `spawner` byte (a power-up's spawner, a flag's team) is,
+  for a banana, the slot + 1 of the monkey that may recall it, 0 for nobody
+  (`bananaLastOwner`, `bananaLastOwnerByte`): `LifecycleSystem` writes it when a grounded
+  banana becomes a pickup and its owner is still in the pool with a recalling throw def, so in
+  a mode without recall (every grid mode) it stays 0 and the world state is what it was; a
+  stack keeps it only when the added banana carries the same one. No new field, so no checksum
+  moves where no banana is marked. Anyone may still pick the banana up; a held banana dropped
+  at a death, a catch past `ammoMax` and a tree's fruit are nobody's. A snapshot reader admits
+  a banana's byte up to `kMaxPlayers` (a power-up's stays below `kMaxPickupSpawners`).
 
 ### 5.8 Power-ups and modifiers
 
@@ -1192,6 +1313,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
 - v0.80 (control): `ZoneCaptured{a = the team that now owns the zone, b = the zone}`, pushed by
   `control` on the capture tick (no player, no entity). Ownership and the capture under way are
   read from `modeData`, not from events.
+- v0.89 (the recall): `BananaRecallStarted{player = the owner, entity = the banana}` when an
+  empty hand lifts a banana off the floor, `BananaRecallEnded{player = the owner, entity = the
+  banana}` when a pull is let go (or the owner can no longer pull) and the banana drops; a pull
+  that reaches the hand ends in `BoomerangCaught` instead. Presentation plays the blink's zap,
+  quieter, on the start and draws the tether from state (§7).
 - v0.82 (harvest): `BananaStolen{player = the raider, entity = its player, a = the slot whose
   point it took, b = the zone (the robbed team's home)}`, pushed after that slot's
   `ScoreChanged` with the appended `ScoreReason::Stolen` (3) and −1; a bank is a
@@ -1297,8 +1423,8 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   (`kMaxAbilityDefs` 32 since v0.70 (16 from v0.21, which the 15 shipped defs plus `none`
   filled; the cap sizes only `ContentDB::abilities`, so raising it moved the content hash and
   nothing else: def indices are a byte everywhere, in `AbilityState`, loadouts, grants and the
-  bot observation, and the corpus checksums stayed byte-identical), `kMaxArenas` 16 since
-  v0.33 (8 before), `kMaxModes` 32 since v0.31 (8 before),
+  bot observation, and the corpus checksums stayed byte-identical), `kMaxArenas` 32 since
+  v0.91 (16 from v0.33, 8 before), `kMaxModes` 32 since v0.31 (8 before),
   `kMaxPowerUps` 16, `kMaxLoadouts` 16 since v0.31; at least one arena and one mode), and
   the properties systems rely on instead of re-checking per tick (`validateContent`, also run
   on `defaultContent()` by a test): every loadout (the player's and each `[[loadout]]`) fills
@@ -1647,7 +1773,7 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   `respawnAmmo` (u8, `respawn_ammo` 0..254, default `kRespawnAmmoStart` 0xFF = `[player]
   ammo_start`), `bankTicks` (`bank_ticks` 1..65535, default 2), `stealTicks` (`steal_ticks`,
   0..65535, 0 never, the default) and `arenaSet` (u16, `arenas = ["<name>", ...]`, a bit set
-  over `kMaxArenas`, which a `static_assert` holds at 16; every member must suit the mode, and
+  over `kMaxArenas`, which a `static_assert` held at 16; a u32 over 32 since v0.91; every member must suit the mode, and
   `arena`, when both are given, must be a member), all four accepted on every kind, visited
   after `bananaTurnRateBam` (`fieldCount<ModeDef>() == 32`); `PickupSpawner` gains `tree` (u8,
   `fieldCount` 6). The arenas, appended at 11 to 14 (15 of 16 used), are the pool: `grove`
@@ -1660,6 +1786,37 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
   Mode 9, `contest`, is `kind = "harvest"` on the pool (§8 "The `contest` mode"). Pinned by
   `contest_test.cpp` (each map's half turn, homes, trees, capacities and reachability, the
   baseline, both rows) and the contest pin in `loader_test.cpp`.
+- Large arenas (v0.91; user request: "more maps, particularly larger ones so that monkeys dont
+  just spawn next to each other"). Every free-for-all arena before was 32 × 18 (36 × 20
+  `corridors`) with ten points on a 12 × 6 ellipse, 4.2 units apart at its ends, against a
+  throw's reach of about 10. Appended at 15 to 18 (19 of `kMaxArenas`, raised to 32 with
+  `arenaSet` a u32 for them), TOML only, each with ten spawn points at least 10 units apart and
+  a wall across the line between every pair closer than 12.5, so no throw made on the first tick
+  reaches a neighbour: `meadow` (44 × 25: open ground, three staggered rows of spawns, rows of
+  2 × 2 posts on every line between neighbours and a rock in the middle; symmetric in both
+  axes; closest spawns 10.0), `archipelago` (52 × 29: channels of pit three units wide cut it
+  into two rows of four islands, joined by hubs where the channels cross and a bridge across
+  each outer channel by the north and south walls; cover on each island; `spawn_groups = 2`, the
+  east the west turned half a turn, the centre hub zone 0 for `hill`; 14 pit boxes; closest
+  10.3), `compound` (48 × 27: each wing four rooms behind walls with doorways, a hall through
+  the middle round a block, one spawn per room and two in the hall; `spawn_groups = 2`, half-turn
+  symmetric, no zone; closest 10.0) and `marsh` (60 × 34, the largest: three staggered rows of
+  spawns 13.6 apart, posts on every diagonal, mud in the corners, by the north and south spawns
+  and in the middle, four power-up spawners on the open ground; symmetric in both axes). Pinned by
+  `tests/unit/content/big_arenas_test.cpp` (sizes, spacing, cover on every neighbour line,
+  symmetry, groups and the modes each suits). Bot matches (`kfm_arena`, `ref:hard`, 4 matches
+  each, seed 11; round lengths estimated as (ticks − rounds × 240) / rounds with rounds ≈
+  deaths / (players − 1)):
+
+  | arena | rounds, a round (4p / 10p) | kill_rounds, a round (4p / 10p) | deathmatch, the match (4p / 10p) |
+  |---|---|---|---|
+  | `dojo` | 4.1 s / 6.2 s | 4.7 s / 5.6 s | 12 s / 10 s |
+  | `meadow` | 10.9 s / 9.7 s | 11.0 s / 9.5 s | 32 s / 19 s |
+  | `archipelago` | 12.4 s / 12.0 s | 12.6 s / 12.0 s | 36 s / 22 s |
+  | `compound` | 8.6 s / 15.1 s | 9.8 s / 15.9 s | 27 s / 20 s |
+  | `marsh` | 7.6 s / 9.0 s | 8.2 s / 9.0 s | 22 s / 17 s |
+  
+  Every one of the 120 matches ended by its rules, none at the cap; no bot was stuck.
 
 ### 5.11 Timing precision: 60 Hz plus sub-tick input timestamps
 
@@ -2176,8 +2333,11 @@ C++ server library is mature. The seam makes that swap a contained change.
 
 - Server (M3 as built, v0.17): `kfm_server` (`apps/server`) hosts one match per process:
   `ServerHost` drives `NetServer` over a `WebRtcTransport` server from a drift-free 60 Hz clock
-  (tick k is due at base + k·10⁹/60 ns; a frame runs at most 8 ticks and a larger backlog is
-  dropped, counted and rebased), pumping every millisecond; it fills `--bots N` slots, announces
+  (tick k is due at base + k·10⁹/60 ns; a frame runs at most 8 ticks; v0.92: a larger backlog is
+  run over the next frames, a millisecond apart, so a stall of the process costs the clients
+  nothing but a burst of frames, and only a backlog past `maxBacklogNs` (10 s, the clients'
+  timeout) is dropped, counted and rebased; before v0.92 every backlog over 8 ticks was
+  dropped, which left the clients that far ahead of the server, §6.6), pumping every millisecond; it fills `--bots N` slots, announces
   the next match 3 s after `MatchEnded` with a splitmix64-derived seed and the same roster,
   prints one log line per join/leave/kick/resync/round/match and a periodic delta stats line,
   and on SIGINT/SIGTERM or an exit limit shuts down (300 ms linger for the reliable lane).
@@ -2205,6 +2365,25 @@ C++ server library is mature. The seam makes that swap a contained change.
   own thread later.
 - Browser client: everything on the main thread inside the `requestAnimationFrame` callback, which
   works because the sim is single-threaded by design and WebRTC callbacks arrive on that thread.
+  v0.92, the background pump: a browser stops `requestAnimationFrame` for a hidden page (another
+  tab in front, the window minimised or, where the browser tracks occlusion, covered), and a
+  page's own timers then run at most once a second (Chrome: once a minute after five minutes
+  hidden, unless the page is exempt). `platform::runMainLoop` takes a fourth callback: a
+  dedicated Worker, created from a Blob URL and doing nothing but `setInterval(postMessage, 50
+  ms)`, wakes the main thread, which calls it while `document.visibilityState` is `hidden` or no
+  animation frame has run for 2 s (`kBackgroundPumpMs`, `kBackgroundAfterMs`). Dedicated
+  workers' timers are not throttled like a hidden page's, and if no Worker can be made a page
+  interval does the same at whatever rate the browser allows (a ping a second still keeps both
+  timeouts fed). This is the one place the browser client uses a second JavaScript context, and
+  it runs no game code: every byte of the client, the network pump included, still runs on the
+  main thread, so the single-threaded design holds. The app's background callback puts the
+  `NetSession` in the background (§6.6 "A hidden client") and advances it: pump, pings, control
+  messages and a reconnect on its own; nothing is sampled, simulated or drawn. The first
+  animation frame back leaves the background. Considered and not taken: running the whole frame
+  minus rendering from the timer (a hidden tab would simulate and roll back at 60 Hz for
+  nothing, at a rate the browser may throttle anyway, and needs a resync on return regardless),
+  and audio or a Web Lock to keep the page "active" (neither stops `requestAnimationFrame`
+  from pausing).
 
 ### 6.6 Join, reconnect, resync
 
@@ -2276,12 +2455,107 @@ C++ server library is mature. The seam makes that swap a contained change.
   acknowledgement reads as a round trip growing one tick per tick, and before v0.70 a 3 s outage
   pushed that peer's estimate to 146 ticks (`humanLeadTicks()` clamps to 60, so a mixed match's bot
   delay went to its clamp); it now samples only messages whose acknowledgement moved on.
-- Reconnect: a peer that drops (transport close or 5 s without a packet) while holding slots and a
-  non-empty token leaves them reserved for `reconnectGraceTicks` (10 s): still present, fed an idle
-  input (not "repeat last", so a held stick does not run the monkey into a wall). A `Hello` with
-  the same token reclaims them and gets a fresh snapshot; a `Hello` whose token belongs to a
-  still-connected peer takes its slots over (the client noticed the drop first). After the window,
-  or on `Disconnect{Quit}`, the slots leave the roster (`PlayerLeft`).
+- Reconnect: a peer that drops (transport close or 15 s without a packet, v0.92; 5 s before)
+  while holding slots and a non-empty token leaves them reserved for `reconnectGraceTicks`
+  (60 s, v0.92; 10 s before): still present, fed an idle input (not "repeat last", so a held
+  stick does not run the monkey into a wall). A `Hello` with the same token reclaims them and
+  gets a fresh snapshot; a `Hello` whose token belongs to a still-connected peer takes its slots
+  over (the client noticed the drop first). After the window, or on `Disconnect{Quit}`, the
+  slots leave the roster (`PlayerLeft`). v0.92: a quit and the close that follows it arrive in
+  the same `pump()` (the client closes right after sending it), and `NetServer` read connection
+  events before messages, so the quit was taken for a lost link and the leaver's monkey stood in
+  the match for the whole grace; closes are now read after the messages of the same poll.
+- Ways a healthy player lost the match connection before v0.92 (each reproduced over the
+  loopback unless marked; `tests/netcode/stall_test.cpp`, `tests/unit/server/server_host_test.cpp`):
+  1. *A hidden tab.* The browser loop is `requestAnimationFrame` (§6.5), which stops for a
+     hidden or occluded page (another tab in front, the window minimised or covered by another
+     application on platforms with occlusion tracking). Nothing was sent, the server dropped the
+     silent peer after 5 s, and the player came back to "Connection lost" (and, through the
+     lobby, to "Removed from the room by its server", the lobby's `closed`/`kicked` for any
+     server-side drop). Inferred for the browser from the code (a hidden page runs no
+     animation frame, which every browser documents), reproduced as a client that is not run
+     for 6 or 9 s; the fix is shown in Chromium by `tools/web/check_hidden_tab.py` (below).
+  2. *Any stall of the client longer than 5 s* (the same mechanism with the tab in front: a
+     laptop lid, a frozen or suspended page, a mobile browser in the background). A stall under
+     the timeout already healed itself (the clock jump of §6.2 and the gap resync of v0.70).
+  3. *A stalled server host.* `ServerHost` ran at most 8 ticks a frame and dropped the rest of
+     a backlog, so every client found itself that many ticks early: 0.5 s of stall left the
+     players 24 ticks (400 ms) of input latency that the 2 % rate took 20 s to work off, and
+     past the assembler's 64-tick window every `Input` was a protocol error and the players
+     were kicked (`ProtocolError`) within half a second of a 1.1 s stall. The production host
+     is an `e2-small`, a shared-core VM with a CPU budget (§13.5), running four servers and the
+     lobby: whether it stalls that long is for its logs to say (inferred, not observed).
+  4. *A lost link* (Wi-Fi to mobile data, a router restart): ICE has no restart, so the session
+     ended and needed the Reconnect button within 10 − 5 = 5 s of grace.
+  Ruled out by reading the code: a lost lobby socket (since v0.70 the open data channels alone
+  decide a session, §13.5), a brief ICE `disconnected` state (the transport drops a peer only on
+  `failed` or `closed`, which browsers reach after about 30 s of no consent), the receive queue
+  of a page that is not pumped (bounded and drained), the client's 8-tick clock cap (it drops
+  ticks, never the session), and the input rate limit (90 messages a second with a one-second
+  burst, which a catching-up client's 8 ticks a frame stays under).
+- A silent player (v0.92): a slot whose inputs stop arriving is fed "repeat last" for
+  `ServerConfig::idleAfterTicks` (15 ticks, 250 ms), then a neutral input (no stick, no buttons,
+  the repeated input's `moveDir` and `aimDir`, so it keeps facing the same way) until an input
+  for it arrives again (`InputFrameAssembler::setIdleAfterTicks`; 0 restores "repeat last" for
+  ever). 250 ms is longer than any loss burst the 16-input redundancy or the lead band (§6.2)
+  is meant to bridge and shorter than a human's reaction; a held stick of a stalled, hidden or
+  disconnected client stops the monkey 250 ms later instead of running it into a pit or a wall.
+  Chosen over an explicit "away" message from the client because it needs no protocol change
+  and covers every silence, including the ones the client cannot announce (a frozen page, a
+  dead uplink, a crash). Counted in `ServerStats::idledInputs` (and per peer).
+- Timeouts and grace (v0.92): the client gives up after `ClientConfig::serverTimeoutNs` = 10 s
+  without a packet, the server after `ServerConfig::peerTimeoutNs` = 15 s, and the server keeps
+  a dropped player's slots for `reconnectGraceTicks` = 60 s. With the background pump (below)
+  the only silences left are a main thread that does not run at all (a frozen or suspended
+  page, an OS sleep, a stall in a native window's modal loop) and a dead link. Browsers stall
+  the main thread for well under a second (a first shader compile, a GC, a page made visible
+  again), so 10 s is far beyond any stall that heals and still short enough that a dead link
+  is noticed and reconnected while the slot waits. The client's timeout is the shorter one so
+  that it gives up and reconnects first, into a still-connected peer whose slots its `Hello`
+  takes over, never into a server that dropped it a moment before. A false timeout now costs a
+  reconnect (one snapshot); a missed real drop costs time, which is why it is not longer. 60 s
+  of grace covers a mobile browser sent to the background or a network switch, which the
+  client's reconnect with backoff (§6.6 "Reconnect on its own", below) retries for 60 s; a
+  reserved monkey stands still meanwhile, a fair price in a party game. A timed-out peer is
+  sent `Disconnect{Timeout}` before the close, in case its downlink still works.
+- Why a session ended (v0.92): every `PeerLeft` carries a `LeaveCause` (quit, link closed,
+  timeout, hello timeout, replaced by a reconnect, shutting down), how long the peer had been
+  silent, and whether its slots were kept; `kfm_server` logs `leave peer=3 slots=1
+  cause=timeout silent=15004ms kept=60s`, and its stats line adds `timeouts`, `closed`,
+  `idle/s` (neutral slot-ticks), `early_inputs` and `stalls`. The client keeps
+  `NetClient::disconnectCause()`: `ServerSilent` (its own timeout), `TransportClosed`,
+  `ServerDisconnect` (with the server's `DisconnectReason`) or `Quit`, plus `silentNs()`.
+- A hidden client (v0.92): `NetClient::setBackground(true)` holds the timeline like a waiting
+  room (no ticks, no inputs, the clock restarted on every call) while `pump()` goes on, so pings
+  keep both timeouts fed and RoomState, MatchConfig, PlayerJoined/Left and Disconnect are
+  handled as always; the server stands the monkey still by the silent-player rule.
+  `setBackground(false)` wakes a running client that is not held by its room: it asks for a
+  snapshot (`ResyncRequest`, asked again every `resyncRetryNs` until one arrives), then loads it
+  and runs forward to estimated server tick + target lead exactly as the room's resume does
+  (lead controller reset, clock restarted), so ten minutes away cost one snapshot, never ten
+  minutes of simulation in a frame (`ClientNetStats::wakes`). A snapshot that arrived while away
+  is discarded for the wake. Measured over the loopback at 40 ± 5 ms with 1 % loss, away 30 s,
+  2 min and 10 min, pumped every 50 ms or once a second (a hidden page's throttled timers):
+  no timeout, the same peer and slot, the slot neutral 250 ms after the last input, and back in
+  agreement (a checksum compared and equal, frames confirmed to within 20 ticks of the server,
+  predicting ahead again) 130–180 ms after the return (`tests/netcode/stall_test.cpp`).
+  In a browser (`tools/web/check_hidden_tab.py`, the wasm client in headless Chromium 156 over
+  real WebRTC against a local `kfm_server`): headless Chromium never reports a page hidden (it
+  keeps every page "visible" at 60 animation frames a second whatever is in front, minimised or
+  behind another tab, with or without focus emulation), so the script hides the page the way a
+  browser does, from inside it: `requestAnimationFrame` callbacks held (none ran while away) and
+  `visibilityState` "hidden". Away 30 s, 2 min and 10 min: the server never dropped the peer,
+  the client went to the background, asked for one snapshot on return and was in sync for the
+  10 s watched after (no further resync, no leave). What this does not show is a real
+  browser's throttling of a hidden page's own timers, which the pump avoids by running its
+  timer in a Worker (the loopback test above covers a pump that runs only once a second). With
+  the page's main thread stopped for 25 s instead (`--hide freeze`, the debugger's pause: a
+  frozen tab, a suspended phone, an OS sleep), the server timed the peer out after 15 s and
+  kept its slot, and on resume the client printed "Connection lost (the server stopped hearing
+  from this client)" (the server's `Disconnect{Timeout}` arrived ahead of the close) and was
+  back in the same slot 1 s later on its own. The machine ran the page on software GL at 2–3 frames a second, so
+  even visible most of its inputs reached the server late; the browser runs used `?connect=`,
+  and the lobby's rejoin is covered by the client's tests over a fake lobby only.
 - Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` (keeps the arena
   and mode; v0.18 adds `restartMatch(MatchConfig, startTick, botSeed)` to change them) sends
   `MatchConfig{config, startTick}` at once to every peer (and to anyone who joins before
@@ -2339,7 +2613,7 @@ C++ server library is mature. The seam makes that swap a contained change.
   The client side of a server that does not tick: `NetClient` holds while its `RoomState` says
   Waiting or Over (`holding()`: `ticksDue()` returns 0 and restarts the clock, `tick()` sends
   nothing), so no input runs ahead of a frozen assembler and nothing accumulates; pings go on
-  (both 5 s timeouts stay fed, the RTT estimate stays fresh). When the room turns Playing, the
+  (both timeouts stay fed, the RTT estimate stays fresh). When the room turns Playing, the
   client keeps holding until the restart's `Snapshot` has arrived and a `Pong` reports a server
   tick past it, then hard-loads it and runs forward to estimated server tick + target lead with
   the lead controller and clock reset, exactly as the initial sync: the lead never carries the
@@ -2383,8 +2657,32 @@ C++ server library is mature. The seam makes that swap a contained change.
   room code. Within the grace window the server's reservation hands back the slots, and with
   them the nickname and, mid-match, the host role; after it, or outside Playing (no
   reservation is kept there), the client joins like anyone (a free slot, a bot's slot, or the
-  queue). Both sides time a silent link out after 5 s, so of the 10 s grace about 5 s are left
-  for the button; the screen says the place is kept "for a few seconds".
+  queue). Both sides timed a silent link out after 5 s, so of the 10 s grace about 5 s were left
+  for the button; since v0.92 the session reconnects on its own first (below), and the button
+  is what is left when that gave up.
+- Reconnect on its own (v0.92): a `NetSession` that was running and lost its link for a reason
+  a new connection can fix (the cases `canReconnect()` accepts) does not wait for the button. It
+  makes the first attempt 250 ms after the drop and, after each failed one, the next 1, 2, 4,
+  then every 8 s later (`autoReconnectDelayMs`), for 60 s (`kAutoReconnectWindowMs`), each one
+  exactly the button's: a new transport for `reconnectConfig()` (the same server and token, or
+  a lobby rejoin of the same room), so within the server's grace the slots, the nickname, the
+  score and the host role come back. A lobby rejoin refused `unknown_code` is one more failed
+  attempt (the room's server may not have claimed the room back yet; the v0.76 rejoin retry
+  stays for the button). Meanwhile the phase reads Connecting, the status says what was lost
+  and that it is reconnecting ("Connection lost (no data from the server for 10 s):
+  reconnecting to room ABCDE, attempt 2 ..."), and no button is offered. When the window has
+  passed, or an attempt ends for a reason that will not change (a refusal, a bad token, a
+  closed room), the session is Disconnected with "Connection lost (…); could not reconnect:
+  <why>" and, where it can still help, the Reconnect button. The backoff starts fast because
+  most drops are seen by the server too, and the client's reconnect then lands in a reserved
+  slot; it slows to 8 s so that a long outage costs eight attempts a minute, never a flood of
+  lobby joins (whose per-address budget is 30 a minute, §13.5). Why it ended, in plain words
+  (`NetSession::lossText()`, from `NetClient::disconnectCause()`): "no data from the server for
+  10 s", "the server stopped hearing from this client", "the connection closed", "the server
+  dropped the connection" (the lobby's `closed`/`kicked`, which is how a server-side drop
+  reaches a lobby client: v0.92 words it "Dropped by the room's server (connection lost)"
+  instead of "Removed from the room by its server"), "the connection failed: <transport
+  error>"; every phase change is printed on the console (`kfm_client: ...`).
 
 ### 6.7 Authority and abuse resistance
 
@@ -2397,10 +2695,13 @@ C++ server library is mature. The seam makes that swap a contained change.
 - `NetServer` numbers (v0.17): inputs are stored only for slots the sending peer owns (foreign
   slots are ignored and counted), only with defined button bits (Throw..Taunt), and only for ticks
   in the assembler window (up to 64 ticks ahead; copies of assembled ticks are redundancy, not
-  errors). `Input` messages pass a per-peer token bucket of `kTickHz + 30` messages per second with
+  errors; v0.92: inputs too far ahead are dropped and counted in `inputsTooEarly` but are no
+  longer protocol errors, since an honest client runs that far ahead of a server whose host
+  stalled). `Input` messages pass a per-peer token bucket of `kTickHz + 30` messages per second with
   a one-second burst; the rest are dropped and counted. Undecodable messages, messages before the
   handshake, foreign slots, bad buttons and too-early ticks are protocol errors; more than 32 in
-  10 s get `Disconnect{ProtocolError}` and the slots are released at once.
+  10 s get `Disconnect{ProtocolError}` and the slots are released at once (too-early ticks no
+  longer count, v0.92).
 - The room (v0.42): `RoomSettings` and `Start` pass a per-peer bucket of 20 per second
   (`roomMsgsPerSecond`; excess ones dropped and counted); before the handshake they are protocol
   errors like any other message. Only the host's requests take effect, decided by the host's
@@ -2496,7 +2797,10 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   effects are sorted.
 - **Arena statics (v0.22).** `makeArenaCamera(arena, ...)` frames each arena from its own
   `halfExtents` (fixed pitch and field of view, distance solved per arena and viewport), so a
-  36 × 20 `corridors` sits further away than the 32 × 18 `dojo`; interior walls are drawn below
+  36 × 20 `corridors` sits further away than the 32 × 18 `dojo` (v0.91: the large arenas up to
+  60 × 34 `marsh` frame whole the same way; at 1280 × 720 a monkey, a unit across, is
+  17.2 pixels across at the centre and 15.4 at the far wall on `marsh` against the dojo's 31.7
+  and 28.6, about 54 %, pinned by `camera_test.cpp`); interior walls are drawn below
   `framingHeight` and never leave the frame. `buildArenaPieces()` turns the arena's walls and
   hazards into `RenderState::arenaPieces` (world-space boxes, walls first, then hazards, then
   pit rims); the renderer draws each as the unit cube scaled to it: walls as
@@ -2554,6 +2858,20 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   hitbox, a painted face) and glides in idle while moving (`kMonkeyRunCycle`); buttons are
   coloured by role with a ring for focus.
   `kfm_render_probe --arena NAME` (and the client's `--arena`) shows any arena.
+  v0.93, Banana Beach (the style board's direction C, chosen by the user): the client's
+  default theme is Beach everywhere (`ThemeChoice` default `Beach`; Auto, Jungle and Temple
+  stay in Settings, `--theme` and `?theme=`); the settings text gains `settings_version=2`,
+  and a text without it (every install before v0.93, which always wrote `theme=auto`, the old
+  default) reads `theme=auto` as Beach once, so a later deliberate Auto is kept. The Beach look
+  takes the board's tide pool (`#7fd2e2`); its sand, sea, foam, shallows and crates already
+  matched it. The player palette takes the board's softer colours (red `#f2554a`, blue
+  `#3a78f0`, purple `#a452dc`, green `#3cc05a`, orange `#f78a26`, cyan `#2ec4d6`, pink
+  `#f472b0`, white `#f6f6f6`, charcoal `#383844`) and slot 5 becomes maroon `#8a2a4a`
+  instead of yellow, so no monkey wears banana yellow (closest pair blue/purple at CIEDE2000 22,
+  the banana's nearest colour orange at 27; `meshes_test` keeps every slot away from
+  `kBananaColor`). The banana and monkeys keep their ink outline (the board's own risk: without
+  it a small banana is lost on a busy screen). The UI skin is Banana Beach too (below and
+  `apps/client/ui_style.hpp`).
 - **Height is cosmetic.** Banana arcs, dash hops and knockback lift the model along world `y`,
   but the sim position never leaves the plane. Every airborne thing casts a blob shadow (a decal
   quad on the ground) at its true sim position, and the shadow is where the hitbox is. This
@@ -2725,7 +3043,23 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   `ui::applyUiStyle()` as ImGui's default font at 20 px; one `ImFont` draws every size (ImGui
   1.92+ bakes glyphs per size), and the F1 overlay pushes ImGui's own font at 13 px. Palette
   (`ui::kBanana`, `kCream`, `kJungle`, `kLeaf`, `kBark`, ...) shared by the theme and the HUD;
-  slot and team colours stay `presentation::playerColor`. Screens: the main menu (title, Play
+  slot and team colours stay `presentation::playerColor`. v0.93 (Banana Beach, replacing
+  Mango Sunset): Lilita One for titles, headings, buttons, banners and big numbers, Nunito
+  Bold (ImGui's default font, 19 px: body text, lists, settings rows) and Nunito ExtraBold
+  (small labels over the game), the two Nunito weights the static 3.601 TTFs from
+  `google/fonts` (`assets/fonts/OFL-Nunito.txt`; the current upstream ships only a variable
+  font, which stb_truetype would draw at its default weight), picked with `ui::font(Face)`.
+  The palette is the board's tokens (`ui::kGround` cream `#fff3d6`, `kCocoa` `#3a2a1a` text,
+  `kTeal` `#0f6f8f` headings, `kOcean`, `kFoam`, `kBanana`, `kCoral`, `kSand`, ...): screens are
+  white cards with 32 px corners and a soft cocoa shadow (layered rectangles: ImGui has no
+  blur) over a cream wash on the arena, the main menu an ocean card; buttons are pills with a
+  solid darker lip (banana lead, coral second, pale foam plain; cocoa text on coral, since the
+  board's white on coral is 2.3:1); focus is a cocoa ring with a white gap; the HUD's text sits
+  on white pills over the bright sand and sea (mode line, clock, team scores, name tags with a
+  slot-colour dot), large banners keep a thin cocoa outline. Every text pair is listed with its
+  contrast in `ui_style.hpp` (4.5:1 for body text; white on the ocean, 3.6:1, only for the
+  title). The page shell (`shell.html`) takes the sea gradient and a white loader card.
+  Screens: the main menu (title, Play
   online, Play local, Settings, Quit natively, the focused item's hint, the protocol and content
   hash in the corner), Settings (name, volume, sound, bot difficulty, Back), Play online (region
   with availability, Create room, room code and Join, Back), the local lobby (cards, compact
@@ -2743,6 +3077,49 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   paused; Resume, Leave room online, the match running on with the local slots idle); Escape, a
   pad's East, Back or Start resumes; P and O stay the developer's pause and single step. `--autostart` and the network flags skip the menu as before;
   `--screen` opens a given screen.
+  v0.94, the usability pass (the user: "revamp the ui to make it more intuitive and easier to
+  use" and "players should be able to choose their name before they join a lobby"), after an
+  audit of every screen at 1280×720 and 700 px wide (the findings are the changelog's):
+  - Name before joining: Play online leads with "Your name", a text field prefilled with the
+    saved name and saved through the settings like Settings > Name (`OnlineRow::Name`,
+    `Activation::EditName`). The client still picks a monkey name on a first run (v0.42), so
+    Create and Join always work; the settings gain `nick_chosen=on` once the player typed a
+    name, kept the offered one by committing the field or going online with it, or passed
+    `--nick`, and until then the screen opens on the name with "We picked a monkey name for
+    you: keep it, or press Enter to type yours" (`OnlineMenu::open`). The screen groups the
+    rest as "Start a room" (region, Create a room) and "Join a friend's room" (code, Join),
+    each with one line on what happens.
+  - Plain words: `core/content_labels.{hpp,cpp}` names the content for people ("Last Monkey
+    Standing", "King of the Hill", "Dojo with Power-ups", the base kit "Standard") with a line on
+    how to win per mode; a name it does not know is prettified ("kill_rounds" would read "Kill
+    Rounds", `_1t` reads "(1-tick)"; v0.90's `kill_rounds` is in the table as "Knockout
+    Rounds"). The lobby rows, the match preview, the replay bar's title and the next-match line
+    use them; the command line, the wire and the settings text keep the content names.
+  - What a human lobby offers: the Mode row skips bot-contest modes (`isBotMode`: the grid
+    with one-tick turns: `contest`, `control_1t`, `grid_rounds_1t`) and the Loadout row the
+    loadouts only those hand out (`grid_1t`, `catcher_1t`), unless the match already uses one
+    (`--mode contest` still works). The panel shows a power-up toggle only for what the arena's
+    spawners can draw (`arenaPowerUps`; the dojo has none, so its panel has no toggles) and no
+    longer shows the read-only Teams row (`LobbyMenu::rowShown`, which Up/Down follow); the
+    preview says "2 teams, balanced as players join".
+  - How to play (`core/how_to_play.{hpp,cpp}`), from the main menu (a new item after Play
+    local) and the pause menu (a new item after Resume, the card in the menu's place until
+    Back): move, aim, throw (hold to charge), recall (v0.89: hold Throw with an empty hand),
+    dash (a dash timed as a banana arrives catches it) and the ability, each with the
+    keyboard + mouse and gamepad bindings read from `defaultKeyboardProfile1/2` and
+    `defaultGamepadProfile` (Xbox names for the positional buttons), the second keyboard
+    player's keys and three lines on the game. `--screen howto` opens it. The first round's
+    countdown of a local match carries one line of the keyboard + mouse controls
+    (`firstRoundHint`, `showsFirstRoundHint`).
+  - One next step, a way back: the local lobby fits a 720p window again (it scrolled, with
+    Start below the fold: ten power-up toggles, half of them the bot contests') and a 700 px
+    one (two columns from 560 px of content, one below), with Back and Start match side by
+    side at the bottom and why Start is greyed; the room shows "Your room" / "Mango's room",
+    the guest the same rows flat with "Set by Mango: only the host changes the match", Leave
+    beside Start match or "Waiting for Mango to start"; the connection screen says "Playing
+    from this device: 1 monkey" and has Cancel (Back to the menu once it failed). A joined
+    pad's B leaves the local lobby, and any pad's B a waiting room or connection screen, as
+    Escape does.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.
@@ -2985,7 +3362,11 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 
 Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
 (0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
-30 ms; the count-in sound plays on entering `RoundStarting` and at every whole second the
+30 ms (v0.89: a banana its owner pulls back, `Recalled`, floats `kBananaRecallLift` above the
+hand height, is drawn as a returning banana and is tied to its owner's hand by a dotted tether
+of `kRecallTetherDots` BananaTrail puffs in the owner's tint, laid every 60 ms and each living
+90 ms; `BananaRecallStarted` plays the blink's zap at half gain); the count-in sound plays on
+entering `RoundStarting` and at every whole second the
 countdown crosses, RoundGo on `RoundStarting` → `Playing`. Entity positions for events come from
 `curr`, else `prev` (despawned this tick), else the entity's presentation track. Player colours
 come from `palette.hpp`. Bursts cost one draw call per spark; a busy 10-player frame measured
@@ -5399,7 +5780,11 @@ baseline moved to C++23 (§9).
   between teams, but its free-for-all goes 68/84/19/17: groups alternate free-for-all slots
   between the sides, a same-side bias in place of the arc bias. Spawn groups therefore fix
   team play only; the per-round shuffle stays the candidate for free-for-all and remains open
-  (it regenerates the corpus). The mirrored-inputs test (v0.80, §11 "Contest design",
+  (it regenerates the corpus). Built in v0.91 (§5.3 "Spawn spread"): a free-for-all round
+  start deals the farthest-apart points to the present slots in a world-Rng order every round,
+  so neither the arc bias nor the same-side bias of groups remains: 100 fixed-slot `rounds`
+  matches of 4 `ref:hard` on `dojo` (seed 500) win 23/22/28/27 by slot (chi-square p ≈ 0.79),
+  where 200 went 28/77/64/31 before. The mirrored-inputs test (v0.80, §11 "Contest design",
   `side_symmetry_scenario.cpp`) found the same kind of tie-break between the two sides of a
   team match, each pinned by a `[known-asymmetry]` case and left open for the same reason: a
   grid cell contest or swap at an equal `subTick` went to the lower slot (the west's; fix

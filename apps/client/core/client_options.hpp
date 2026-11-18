@@ -79,7 +79,7 @@ inline constexpr const char* kUsage =
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
-    "                  [--screen menu|settings|online|local|paused] [--replay SRC]\n"
+    "                  [--screen menu|settings|online|local|paused|howto] [--replay SRC]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
@@ -104,10 +104,11 @@ inline constexpr const char* kUsage =
     "                         flags win over saved ones)\n"
     "  --overlay              open the debug overlay (F1) on startup\n"
     "  --capsules             draw players as capsules, not the skinned model\n"
-    "  --theme T              arena theme: auto (each arena's own; default), jungle,\n"
-    "                         temple or beach (saved; cosmetic, this screen only)\n"
+    "  --theme T              arena theme: beach (default), jungle, temple or auto\n"
+    "                         (each arena's own); saved; cosmetic, this screen only\n"
     "  --exit-after-frames N  render N frames and exit 0 (smoke test)\n"
     "  --screenshot path      write the last frame as binary PPM (native only)\n"
+    "  --window WxH           the window's size (native only; default 1280x720)\n"
     "  --no-frame-limit       natively, when vsync is unavailable, run frames as fast\n"
     "                         as possible instead of at the display's refresh rate\n"
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
@@ -136,7 +137,8 @@ inline constexpr const char* kUsage =
     "                         random monkey name picked once)\n"
     "  --screen S             open on this screen instead of the main menu: menu,\n"
     "                         settings, online (Play online), local (the lobby) or\n"
-    "                         paused (a local match under the pause menu)\n"
+    "                         paused (a local match under the pause menu) or howto\n"
+    "                         (the How to play card)\n"
     "replays:\n"
     "  --replay SRC           watch a replay (.kfmr): a file path natively, a URL in\n"
     "                         the browser (?replay=URL); it must come from this\n"
@@ -148,13 +150,22 @@ inline constexpr const char* kUsage =
     "                         https://bots.kfm.minip8.com)\n"
     "  --t TICK               start the replay at this tick (?t=TICK)\n";
 
+// --window's bounds (each side, logical pixels).
+inline constexpr uint64_t kMinWindowSide = 320;
+inline constexpr uint64_t kMaxWindowSide = 8192;
+
 struct ClientOptions {
   uint64_t exitAfterFrames{0};  // 0: run until quit
   std::string screenshotPath;   // empty: none
+  // v0.94: --window WxH, the native window's logical size (screenshots of
+  // narrow layouts); the browser's canvas follows the page.
+  uint32_t windowWidth{1280};
+  uint32_t windowHeight{720};
   bool autostart{false};
   bool overlay{false};
   bool capsules{false};  // capsule placeholders instead of the skinned character model
-  presentation::ThemeChoice theme{presentation::ThemeChoice::Auto};  // v0.52, --theme
+  // v0.52, --theme; v0.93: Banana Beach everywhere by default.
+  presentation::ThemeChoice theme{presentation::ThemeChoice::Beach};
   uint8_t bots{0};
   uint64_t seed{1};
   uint64_t playersSeed{kDefaultBotSeed};  // the bots' seed (SessionConfig::botSeed)
@@ -185,8 +196,11 @@ struct ClientOptions {
   bool create{false};
   std::string region{kRegions[0]};  // --region: --create's and the panel's region
   std::string nick;                 // v0.42: --nick, valid (net::validNickname); empty = none yet
-  std::string screen{"menu"};       // v0.43: --screen, the first front-end screen
-  std::string replay;               // M7 step 6: --replay, a .kfmr path or URL; empty = none
+  // v0.94: the player chose the name (typed it, or --nick), as opposed to
+  // the random monkey name the client picked; saved as nick_chosen=on.
+  bool nickChosen{false};
+  std::string screen{"menu"};             // v0.43: --screen, the first front-end screen
+  std::string replay;                     // M7 step 6: --replay, a .kfmr path or URL; empty = none
   std::string ladder{kDefaultLadderUrl};  // v0.87: --ladder, no trailing '/'
   std::string match;                      // v0.87: --match; sets replay (ladderReplayUrl)
   uint32_t startTick{0};                  // v0.87: --t, the replay's first tick shown

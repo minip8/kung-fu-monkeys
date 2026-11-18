@@ -5,11 +5,15 @@
 // spending ammo or emitting an event. v0.48: a charging def (throwCharges)
 // holds its Startup while the button is down, takes the aim again on the
 // release and scales the banana's speed by throwChargeMul of the ticks held
-// past the startup.
+// past the startup. v0.89: the recall (throwOnIdleHold, throw.hpp), and an
+// arc mode's banana leaves at BoomerangDef::arcLaunchSpeed.
 #include "kfm/sim/abilities/throw.hpp"
 
 #include "systems/angle_of.hpp"
 #include "systems/statics.hpp"
+
+#include <cstdint>
+#include <limits>
 
 namespace kfm::sim {
 namespace {
@@ -47,7 +51,10 @@ void spawnBanana(WorldState& s, Player& p, const AbilityState& st, Fixed chargeM
   // of spawning inside or behind it. The outer box is left to
   // ProjectileSystem as in M1. Speed and radius carry the thrower's
   // projectile modifiers (v0.20, §5.8).
-  b.transform.vel = st.dir * (def.speed * b.speedMul);
+  // v0.89: an arc mode's banana leaves at its launch speed (ProjectileSystem
+  // slows it from the first tick on).
+  const Fixed speed = content.arcFlight() ? def.arcLaunchSpeed : def.speed;
+  b.transform.vel = st.dir * (speed * b.speedMul);
   const statics::MoveResult spawned =
       statics::moveCircle(content.arena, p.transform.pos, st.dir * def.spawnOffset, b.transform.vel,
                           statics::MoveParams{.radius = def.radius * b.radiusMul,
@@ -104,5 +111,71 @@ bool throwHoldsPhase(const AbilityState& st, const AbilityDef& def, bool buttonH
 
 void throwOnEnd(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/, const AbilityDef& /*def*/,
                 const MatchContent& /*content*/, EventSink& /*sink*/) {}
+
+const AbilityDef* recallDefOf(const Player& p, const MatchContent& content, uint8_t* slot) {
+  for (uint8_t i = 0; i < kAbilitySlots; ++i) {
+    const AbilityDef& def = content.db.abilityAt(p.abilities[i].defIndex);
+    if (!throwRecalls(def)) continue;
+    if (slot != nullptr) *slot = i;
+    return &def;
+  }
+  return nullptr;
+}
+
+const AbilityDef* heldRecallDef(const Player& p, const MatchContent& content) {
+  if (p.tags.has(Tag::Eliminated) || p.tags.has(Tag::Falling)) return nullptr;
+  uint8_t slot = 0;
+  const AbilityDef* def = recallDefOf(p, content, &slot);
+  if (def == nullptr || p.abilities[slot].phase != AbilityPhase::Idle) return nullptr;
+  return (p.intent.held & slotButton(slot)) != 0 ? def : nullptr;
+}
+
+// v0.89: an empty hand held on a recalling throw lifts the nearest own
+// banana off the floor (the squared distance, the lowest pickup index on a
+// tie), unless one of its own is already being pulled. One banana of a
+// stack comes up; the rest stay. The banana is a fresh Recalled entity at
+// rest where the pickup lay, with the puller's projectile modifiers (§5.8);
+// ProjectileSystem moves it from this tick on.
+// NOLINTNEXTLINE(misc-const-correctness): parameter types fixed by AbilityBehavior
+void throwOnIdleHold(WorldState& s, Player& p, AbilityState& /*st*/, const AbilityDef& def,
+                     const MatchContent& content, EventSink& sink) {
+  if (!throwRecalls(def) || p.ammo > 0 || heldRecallDef(p, content) != &def) return;
+  bool pulling = false;
+  s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
+    if (b.owner == p.id && b.phase == BoomerangPhase::Recalled) pulling = true;
+  });
+  if (pulling) return;
+  const uint64_t range = lengthSqRaw(Vec2{def.recallRange, Fixed{}});
+  EntityId nearest = EntityId::invalid();
+  uint64_t best = std::numeric_limits<uint64_t>::max();
+  s.pickups.forEachAlive([&](EntityId kid, const Pickup& k) {
+    if (bananaLastOwner(k) != p.id || k.count == 0) return;
+    const uint64_t d = lengthSqRaw(k.pos - p.transform.pos);
+    if (def.recallRange > Fixed{} && d > range) return;
+    if (d < best) {
+      best = d;
+      nearest = kid;
+    }
+  });
+  Pickup* k = s.pickups.get(nearest);
+  if (k == nullptr) return;
+  const EntityId id = s.boomerangs.spawn();
+  if (!id.isValid()) return;  // the boomerang pool full: it stays on the floor
+  const Vec2 at = k->pos;
+  if (k->count > 1) {
+    --k->count;
+  } else {
+    s.pickups.despawn(nearest);
+  }
+  Boomerang& b = s.boomerangs.items[id.index];
+  b.owner = p.id;
+  b.phase = BoomerangPhase::Recalled;
+  b.damage = content.db.boomerang.damage;
+  applyProjectileModifiers(b, p, content.db);
+  b.transform.pos = at;
+  b.transform.prevPos = at;
+  b.transform.facing = angleOf(p.transform.pos - at);
+  sink.push(SimEvent{EventKind::BananaRecallStarted, s.tick, p.id, id, 0, 0});
+}
 
 }  // namespace kfm::sim

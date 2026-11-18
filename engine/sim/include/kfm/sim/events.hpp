@@ -67,6 +67,11 @@ enum class EventKind : uint8_t {
   BananaStolen,  // player = the raider, entity = the raider's player, a = the slot whose
                  // point it took (its ScoreChanged, ScoreReason::Stolen, comes first),
                  // b = the zone (the robbed team's home)
+  // v0.89 (the recall, §5.7):
+  BananaRecallStarted,  // player = owner, entity = boomerang (lifted off the floor, Recalled)
+  BananaRecallEnded,    // player = owner, entity = boomerang: let go (or the owner can no
+                        // longer pull), it drops where it is; a pull that reaches the hand
+                        // ends in BoomerangCaught instead
 };
 
 // BoomerangCaught payload `a`.

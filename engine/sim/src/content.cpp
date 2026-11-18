@@ -65,6 +65,11 @@ constexpr ContentDB makeDefaultContent() {
   thr.param0 = Fixed::fromRatio(6, 10);
   thr.param1 = Fixed::fromRatio(15, 10);
   thr.speed = (thr.param1 - thr.param0) / 40;
+  // v0.89, the recall (abilities.toml recall_*): up to 12 units/s over
+  // 45 ticks, harmless to others below 8 units/s, from any distance.
+  thr.recallSpeed = perSecond(12);
+  thr.recallAccelTicks = 45;
+  thr.recallHarmSpeed = perSecond(8);
 
   c.abilityCount = 3;  // none, dash, throw
 
@@ -78,6 +83,18 @@ constexpr ContentDB makeDefaultContent() {
   c.boomerang.spawnOffset = Fixed::one();
   c.boomerang.damage = 1;
   c.boomerang.pitSinkTicks = 18;
+  // v0.89, the arc flight (boomerang.toml arc_*): 29 units/s slowing to 3
+  // over 36 ticks out (a mean of 16: the classic reach), back up to 20 over
+  // 24 ticks, 96 BAM a tick of steering, 60 ticks returning at most, 9
+  // ticks of flight per bounce out.
+  c.boomerang.arcLaunchSpeed = perSecond(29);
+  c.boomerang.arcApexSpeed = perSecond(3);
+  c.boomerang.arcOutboundTicks = 36;
+  c.boomerang.arcReturnSpeed = perSecond(20);
+  c.boomerang.arcReturnAccelTicks = 24;
+  c.boomerang.arcReturnTicks = 60;
+  c.boomerang.arcTurnRateBam = 96;
+  c.boomerang.arcBounceTicks = 9;
 
   c.pickup.radius = Fixed::half();
 
@@ -102,6 +119,7 @@ constexpr ContentDB makeDefaultContent() {
   rounds.roundsToWin = 3;
   rounds.roundEndTicks = 180;
   rounds.roundStartTicks = 60;
+  rounds.bananaFlight = BananaFlight::Arc;  // v0.89: the loader's default
   c.modeCount = 1;
 
   c.dashAttack.damage = 1;

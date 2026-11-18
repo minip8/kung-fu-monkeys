@@ -1856,3 +1856,184 @@ Considered and not taken: a ladder table and a schedule on Home (the rank is in 
 panel and the ladder is one link away; rounds have an interval, not a calendar); a script to
 refresh Now playing (the policy stays `default-src 'none'`). No JSON route, engine, sim,
 content or wire change. Replay checksums: unchanged.
+
+v0.89 changes: the banana flies an arc and can be pulled back (§5.5, §5.6, §5.7, §5.9, §7).
+The flight of M1 flew for seconds: a banana that missed its moving thrower kept homing at
+6.6°/tick for up to 4 s, circling and bouncing off walls at full speed. A mode now picks its
+flight, `ModeDef::bananaFlight` (TOML `banana_flight`, the loader's default `arc`; `ModeDef{}`
+stays `classic`). Classic is the old flight bit for bit and is kept by the four grid modes, the
+bot contest's (`grid_rounds`, `grid_rounds_1t`, `contest`, `control_1t`, now naming it). The arc
+is a boomerang with weight, in our own numbers: out from `arc_launch_speed` slowing evenly to
+`arc_apex_speed` over `arc_outbound_ticks`, a turn on the spot at the apex to face the thrower,
+home speeding up to `arc_return_speed` over `arc_return_accel_ticks` with `arc_turn_rate_bam` of
+steering; it drops when it has passed its thrower (velocity away from it), hits a wall on the
+way home, or has returned `arc_return_ticks`; a bounce on the way out ages it by
+`arc_bounce_ticks`. Every speed is a function of the phase's ticks times `speedMul`, so there is
+no new `Boomerang` field and the charge scales the reach, not the time. Shipped: 29 → 3 u/s over
+36 ticks (a mean of 16: the classic reach), home at up to 20 u/s after 24 ticks, 96 BAM a tick,
+60 ticks of return, 9 ticks a bounce; a tap reaches 6.6 units and is in the air 74 ticks, a full
+charge 15.0 and 73 (classic: 100 ticks each), never more than 96. The recall: a throw def with
+`recall_speed` (`throw`, `throw_fast`; never the grid throws or Quick Hands) lets an empty hand
+held on Throw lift the nearest own banana off the floor and pull it home, from rest to 12 u/s
+over 45 ticks, sliding along walls (it can stick: an attempt, not a teleport); let go, it drops
+where it is; in the hand, no throw starts until the next press. It is a new banana phase,
+`Recalled`, in flight for every rule (a new row 5, `slowRecallPasses`, lets it drift through
+others below `recall_harm_speed`, 8 u/s) and caught by its owner like a return. The trigger is a
+new `AbilityBehavior` hook, `onIdleHold` (a slot Idle with its button held), so the pull costs no
+press and no `AbilityState` field; who may recall a pickup is its `spawner` byte (slot + 1),
+written only for a thrower whose throw recalls, so no grid world state moves. Events
+`BananaRecallStarted` and `BananaRecallEnded`; presentation floats a pulled banana and ties it to
+its owner with a dotted trail tether, and plays a soft zap. Bots: Observation v2 unchanged; a
+pulled banana reads as Returning, a banana pickup's `spawner` names who may recall it, and the
+rules block reports the arc's numbers in an arc mode (`bananaSpeed` the mean speed out, so speed ×
+outbound ticks is still the reach). The reference bot measures a fetch at its path's nearest
+point (a banana a step away had left two unarmed bots parked beside one each for a round); the
+scripted generator holds Throw with an empty hand by the clock, Rng-free and only for a kit that
+recalls; a new corpus entry, `scripted_4p_recall_1800t`, pins pulls that land and pulls let go,
+and `scripted_4p_capture_3600t` takes input seed 0x5C1284 (the old one no longer captured). The
+F1 tuning overlay gains the arc, the recall and the mode's flight. Considered and not taken:
+copying another game's numbers or code; a per-banana flight field (every speed derives from the
+phase's ticks); dropping with a skid phase after a miss (the drop is instant; presentation may
+soften it); pulling every own banana at once (the nearest, one at a time); a recall range
+(content has `recall_range`, shipped 0: anywhere). Replay checksums: changed, corpus regenerated
+because every continuous mode now flies the arc and the scripted generator recalls; the grid,
+contest and control entries (`scripted_*grid_rounds*`, `scripted_10p_contest*`,
+`scripted_10p_control_1t_1800t`) and the empty ones are bit-identical, only their content hash
+moved.
+
+v0.90 changes: a free-for-all mode scored by kills, `kill_rounds` (§5.3; user request: "like
+free for all, but the score of each monkey is incremented by how many kills they got in a
+round"). `ModeKind::KillRounds` is appended (value 9, `kCount` 10; loader keyword
+`kill_rounds`, `src/modes/kill_rounds.cpp`, one registry row) and mode 11 `kill_rounds` is
+appended to `content/modes.toml` (`score_to_win = 10`, the rounds row's countdown and 180-tick
+pause, the drop economy, no catch or suicide points). A round flows exactly as in `rounds`:
+everyone spawns, nobody respawns, it ends when at most one monkey is left (never during a
+fall) or by the dry-round rule. Every elimination by an enemy attacker is +1 to it on the tick
+it happens (`ScoreChanged`, `Objective`) and +1 death to the victim; surviving scores nothing
+and a death with no killer scores nobody. The match is judged only at a round's end
+(`endRoundOnScore`, `mode_flow`): `RoundEnded` names the survivor, then the strict leader at
+`score_to_win` or more takes the match (`MatchEnded`, and `lastRoundWinner` becomes it for the
+HUD's match winner); a tied lead plays another round. `scoresPoints()` now includes the kind
+(the loader takes `catch_score`/`suicide_score` and requires `score_to_win` >= 1) and a new
+`playsRounds()` names the kinds with a round pause, which the client's scoreboard model now
+shows in RoundEnded for (`showsScoreboard`; it was `!scoresPoints`). Client models: the
+scoreboard labels the score Kills and keeps the deaths, the mode line reads "Round N (first to
+T kills) A alive", the lobby summary "first to T kills, judged at a round's end, last monkey
+standing"; the HUD's clock stays off. Bots: `ObsModeKind::KillRounds` = 9 and
+`KFM_MODE_KILL_ROUNDS` in the SDK header, an appended value within Observation version 2
+(`docs/bot-abi.md`); its `timeLimitTicks` reads 0 like rounds'. `kfm_arena --json` is
+unchanged (the score is the slot's points). Considered and not taken: a survival bonus (the
+request scores kills only); judging the target mid-round (a round always plays out). New
+corpus entry `scripted_4p_kill_rounds_3600t` (dojo; every point a kill, more than one round,
+fights). Replay checksums: the content hash changes (a new mode), so every entry is re-recorded;
+state checksums unchanged by this change alone.
+
+v0.91 changes: four large arenas and spread spawns (§5.3 "Spawn spread", §5.10 "Large
+arenas", §7, §12; user request: "more maps, particularly larger ones so that monkeys dont just
+spawn next to each other"). Arenas 15 to 18, TOML only: `meadow` (44 × 25, posts and a rock),
+`archipelago` (52 × 29, eight islands over pit channels joined by hubs and bridges, two spawn
+groups, the centre hub zone 0), `compound` (48 × 27, rooms with doorways and a hall, two spawn
+groups) and `marsh` (60 × 34, posts, mud, four power-up spawners), each with ten spawn points at
+least 10 units apart (13.6 on `marsh`) and a wall across every line between neighbours closer
+than 12.5, symmetric (both axes, or a half turn for the team arenas). `kMaxArenas` rises from 16
+to 32 for them, so `ModeDef::arenaSet` becomes a u32 (visited as u32; the content hash moves).
+A free-for-all round start (`ModeDef::teams` 0, whatever the arena's groups) now deals the n
+farthest-apart spawn points (`spreadSpawnSet`, a function of the arena) to the present slots in
+a world-Rng order every round (`spawnSpread`, Fisher-Yates, n − 1 draws; was one offset into the
+list and slots in order), and a free-for-all respawn chooses over every point; team modes keep
+`spawnByGroups` unchanged. The dojo's closest pair at a round start for 5 to 8 players goes
+from 4.2 units on some offsets to 7.4 (5, 6) and 6.4 (7, 8); 9 and 10 fill every point. Players
+no longer keep their neighbours round to round, which also settles §12's free-for-all
+spawn-order slot bias (100 fixed-slot dojo matches of 4 `ref:hard`: 23/22/28/27 wins by slot).
+The camera needs no change: it frames every arena whole, and at 1280 × 720 a monkey on `marsh`
+is 17 pixels across at the centre against the dojo's 32 (`camera_test.cpp` pins the floors);
+looked at off-screen (`SDL_VIDEODRIVER=offscreen`, llvmpipe) on all four. Bot matches on every
+new arena end every round and match (§5.10 has the table). Tests: `big_arenas_test.cpp`,
+`spawn_spread_scenario.cpp` (closest pair for 2 to 10 players on the dojo and on `marsh`, the
+deal changing round to round), the spawn unit tests rewritten to the deal; the 500 ms outage
+case of `outage_test.cpp` moves to seed 0x0A74 because whether its 1 s gap overflows the
+rollback ring depends on what the match mispredicts (14 of the 16 seeds 0x0A70 to 0x0A7F
+overflow after the change; 0x0A7A no longer did). Replay checksums: changed, corpus regenerated
+because every free-for-all entry spawns differently from its first tick (`empty_*`,
+`scripted_4p_1200t`, `scripted_10p_3600t`, the arena, power-up, ability, deathmatch and survival
+entries); the team, grid, contest and control entries keep their state checksums byte for byte.
+
+v0.92 changes: players stop getting disconnected (§6.5, §6.6, §6.7). The report was "keep
+getting disconnected from the game, especially when tabbing out"; §6.6 now lists the ways a
+healthy player lost the match connection, each reproduced or inferred. The server side: a slot
+whose inputs stop arriving is repeated for 15 ticks, then fed a neutral input that keeps its
+facing (`idleAfterTicks`; chosen over an "away" message: no protocol change, and it covers the
+silences a client cannot announce); the timeouts become 10 s on the client and 15 s on the
+server (were 5 s both), so the client gives up and reconnects first, and a dropped player's
+slot, monkey and score are kept 60 s (was 10 s); a timed-out peer is told so; every leave is
+logged with its cause, the peer's silence and what became of its slots, and the stats line
+counts timeouts, closed links, neutral slot-ticks, early inputs and stalls. `ServerHost` runs a
+stalled backlog over the next frames instead of dropping it (only one past 10 s is dropped), and
+a too-early input is dropped without counting as a protocol error: before, a host stall of 0.5 s
+left every player 400 ms of input latency and one of 1.1 s got them all kicked. A quit read
+together with its close is a quit again (it was taken for a lost link, which kept the leaver's
+monkey in the match for the grace). The client side: `NetClient::setBackground()` holds the
+timeline while the host keeps pumping, and wakes with one snapshot and a run forward to the
+lead; `disconnectCause()` says which side gave up. No message changes (protocol version 8
+stays), no sim change. Replay checksums: unchanged.
+The client side (§6.5, §6.6): a lost running session reconnects on its own (250 ms after the
+drop, then 1, 2, 4 and every 8 s after each failed attempt, for 60 s, each attempt the Reconnect
+button's flow), says what was lost in plain words while it does ("Connection lost (no data
+from the server for 10 s): reconnecting to room ABCDE ..."), and only then offers the button;
+the lobby's `kicked` now reads "Dropped by the room's server (connection lost)". The browser's
+loop gains a background pump: a dedicated Worker used only as a 50 ms timer wakes the main
+thread while the page is hidden (or no animation frame ran for 2 s), and the app then only
+pumps the session in the background; all game code stays on the main thread.
+`tools/web/check_hidden_tab.py` repeats the hidden-tab check in Chromium.
+
+v0.93 changes: the Banana Beach look (§7 "Look" and the front end), the user's pick from the
+style board ("change the default overall colour theme of the ui and the gameplay to be nicer on
+the eyes ... go with the banana beach theme"). The UI skin replaces Mango Sunset: the board's
+tokens in `apps/client/ui_style.hpp` (cream ground, cocoa text, deep-teal headings, white cards
+with 32 px corners and a soft cocoa shadow, an ocean card for the main menu, pill buttons with
+a solid lip in banana, coral and pale foam, a cocoa focus ring with a white gap), the HUD's
+text on white pills over the bright playfield, thin cocoa outlines kept on the large banners,
+and the page shell's sea gradient and white loader. Fonts: Lilita One stays for titles and
+buttons; Nunito Bold (body, ImGui's default) and ExtraBold (small HUD labels) join it, the
+static 3.601 TTFs from `google/fonts` (the current upstream is a variable font only, which
+stb_truetype would draw at its default weight), each with its OFL licence and embedded by
+`cmake/EmbedFile.cmake`. The game: Beach is the default theme for everyone; the settings text
+gains `settings_version=2` and an older text's `theme=auto` (the old default, written by every
+install whether chosen or not) reads as Beach once, so a deliberate later Auto is kept; the
+Beach look takes the board's tide-pool blue; the player palette takes the board's softer hues
+and slot 5 turns from yellow to maroon so no monkey reads as a banana (a new presentation test
+keeps every slot away from the banana's colour). Considered and not taken: dropping the ink
+outline on bananas and monkeys as the board does (its own stated risk; readability first); the
+board's white text on coral (2.3:1); a variable-font loader. Verified by eye on off-screen
+renders (`SDL_VIDEODRIVER=offscreen`) of every screen and bot matches on `island` and `dojo`;
+client and presentation unit tests. No sim, content or wire change. Replay checksums:
+unchanged.
+
+v0.94 changes: the usability pass (§7, the front end), from the user's "revamp the ui to make
+it more intuitive and easier to use" and "players should be able to choose their name before
+they join a lobby". The audit, every screen at 1280×720 and 700 px wide: the name was buried in
+Settings; the local lobby scrolled at 720p with Start match below the fold (ten power-up toggles
+on an arena with no spawner, half of them the bot contests' `_1t` twins) and had no Back; modes,
+arenas, kits and power-ups showed as content names (`team_deathmatch`, `base`, `speed_boost`);
+the Mode and Loadout rows offered the bot ladder's one-tick contests; the Teams row had arrows
+that did nothing; the controls were four dense bullet lines at the bottom of the local lobby
+only; the connection screen spoke of "requested slots" and had no visible way back; a pad's B
+did not leave the lobby, the room or the connection screen. Changes: Play online leads with the
+name (prefilled, editable there, saved; a first visit opens on it and says the picked monkey
+name is fine to keep; `nick_chosen=on` in the settings); `core/content_labels` gives readable
+titles and a how-to-win line, with a prettifying fallback so new content (v0.91's arenas, say)
+never shows raw; the lobby rows skip bot-contest modes and loadouts and show only
+the power-ups the arena can draw; a How to play card from the main menu and the pause menu reads
+its bindings from the input profiles and includes v0.89's recall; the first round's countdown
+carries one line of controls; the local lobby and the room are laid out to fit 720p and 700 px
+with Back / Leave beside Start match; the room names its host ("Mango's room") and shows a guest
+the host's rows flat with the reason; the connection screen has Cancel and plain words; `--screen
+howto` and `--window WxH` for screenshots. Considered and not taken: forcing a name before
+Create / Join (the client already picks a friendly one, and a required field is one more step);
+removing Volume, Sound and Arena theme from the local lobby (they are Settings' too, but a couch
+party changes them there; with the power-up rows gone the lobby fits). Not covered: the room's
+code and Copy invite need a lobby service and were not run (the code paths are v0.43's); the
+reconnect states v0.92 adds draw through the same status screen. Verified: client unit tests
+(the new `content_labels_test.cpp`; the menus, room and lobby tests updated), off-screen renders
+of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
+unchanged.

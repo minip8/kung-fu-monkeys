@@ -1,14 +1,17 @@
 // RulesSystem, FFA mode (architecture §5.3 steps 1 and 10; M1 contract
 // rulesPreTick / rulesPostTick).
 #include "kfm/sim/systems.hpp"
+#include "modes/mode_flow.hpp"
 #include "sim_test_util.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
 #include <set>
+#include <utility>
 
 using namespace kfm;
 using namespace kfm::sim;
@@ -30,25 +33,28 @@ void removePlayers(WorldState& s, std::initializer_list<uint8_t> slots) {
   }
 }
 
-// The spawn-point offset that explains every present player's position, or
-// -1 when the positions are not a rotation of the spawn list in slot order.
-int spawnOffsetOf(const WorldState& s, const ContentDB& content) {
+// v0.91: whether every present player stands on its own point of the spread
+// set for the present count (spreadSpawnSet), the free-for-all round start.
+bool dealtSpread(const WorldState& s, const ContentDB& content) {
   const ArenaDef& arena = content.arenas[0];
-  for (size_t offset = 0; offset < arena.spawnPointCount; ++offset) {
-    bool all = true;
-    size_t rank = 0;
-    for (uint8_t i = 0; i < kMaxPlayers; ++i) {
-      if (!maskHas(s.rules.present, PlayerId{i})) continue;
-      const Player* p = s.playerBySlot(PlayerId{i});
-      if (p == nullptr ||
-          p->transform.pos != arena.spawnPoints[(rank + offset) % arena.spawnPointCount]) {
-        all = false;
-      }
-      ++rank;
+  const auto present = static_cast<uint32_t>(std::popcount(static_cast<uint32_t>(s.rules.present)));
+  const uint16_t set = spreadSpawnSet(arena, present);
+  uint16_t used = 0;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    if (!maskHas(s.rules.present, PlayerId{i})) continue;
+    const Player* p = s.playerBySlot(PlayerId{i});
+    if (p == nullptr) return false;
+    bool found = false;
+    for (uint8_t k = 0; k < arena.spawnPointCount; ++k) {
+      if ((set & (1u << k)) == 0 || (used & (1u << k)) != 0) continue;
+      if (p->transform.pos != arena.spawnPoints[k]) continue;
+      used = static_cast<uint16_t>(used | (1u << k));
+      found = true;
+      break;
     }
-    if (all) return static_cast<int>(offset);
+    if (!found) return false;
   }
-  return -1;
+  return used == set;
 }
 
 }  // namespace
@@ -102,7 +108,7 @@ TEST_CASE("spawned players get content stats and a full reset", "[sim][rules]") 
     CHECK(p.abilities[kAbilitySlotDash].defIndex == content.player.abilities[kAbilitySlotDash]);
     CHECK(p.abilities[kAbilitySlotThrow].defIndex == content.player.abilities[kAbilitySlotThrow]);
   }
-  CHECK(spawnOffsetOf(s, content) >= 0);
+  CHECK(dealtSpread(s, content));
 }
 
 TEST_CASE("a zero-length countdown goes straight to Playing", "[sim][rules]") {
@@ -214,7 +220,7 @@ TEST_CASE("RoundEnded lasts roundEndTicks, then everyone respawns", "[sim][rules
   CHECK(s.players.size() == 3);
   CHECK(s.boomerangs.empty());
   CHECK(s.pickups.empty());
-  CHECK(spawnOffsetOf(s, content) >= 0);
+  CHECK(dealtSpread(s, content));
 
   const Player& r0 = playerAt(s, PlayerId{0});
   CHECK(r0.hp == content.player.maxHp);
@@ -255,9 +261,9 @@ TEST_CASE("match ends when a player reaches roundsToWin", "[sim][rules]") {
   CHECK(s.rules.phase == MatchPhase::MatchEnded);
 }
 
-TEST_CASE("spawn offset is drawn from the world RNG, deterministically", "[sim][rules]") {
+TEST_CASE("the spawn deal is drawn from the world RNG, deterministically", "[sim][rules]") {
   const ContentDB& content = defaultContent();
-  std::set<int> offsets;
+  std::set<std::pair<int32_t, int32_t>> firstSpots;
   for (uint64_t seed = 0; seed < 32; ++seed) {
     WorldState a = initialWorld(MatchConfig{seed, 0b1111});
     WorldState b = initialWorld(MatchConfig{seed, 0b1111});
@@ -266,23 +272,21 @@ TEST_CASE("spawn offset is drawn from the world RNG, deterministically", "[sim][
     static_cast<void>(stepIdle(b));
     REQUIRE(checksum(a) == checksum(b));
     CHECK(a.rng != before);
-    const int offset = spawnOffsetOf(a, content);
-    REQUIRE(offset >= 0);
-    offsets.insert(offset);
+    CHECK(dealtSpread(a, content));
+    const Vec2 p0 = playerAt(a, PlayerId{0}).transform.pos;
+    firstSpots.insert({p0.x.raw, p0.y.raw});
   }
-  CHECK(offsets.size() > 1);
+  CHECK(firstSpots.size() == 4);  // slot 0 is dealt each of the four points
 }
 
-TEST_CASE("spawn uses ranks among present slots, not raw slots", "[sim][rules]") {
+TEST_CASE("spawn spreads the present slots, not the raw slots (v0.91)", "[sim][rules]") {
   const ContentDB& content = defaultContent();
   WorldState s = initialWorld(MatchConfig{9, 0b1000100000});
   static_cast<void>(stepIdle(s));
-  const int offset = spawnOffsetOf(s, content);
-  REQUIRE(offset >= 0);
-  const auto first = static_cast<size_t>(offset);
-  CHECK(playerAt(s, PlayerId{5}).transform.pos == content.arenas[0].spawnPoints[first]);
-  CHECK(playerAt(s, PlayerId{9}).transform.pos ==
-        content.arenas[0].spawnPoints[(first + 1) % content.arenas[0].spawnPointCount]);
+  CHECK(dealtSpread(s, content));
+  // Two players take the dojo ellipse's long axis: 24 units apart.
+  const Vec2 d = playerAt(s, PlayerId{5}).transform.pos - playerAt(s, PlayerId{9}).transform.pos;
+  CHECK(lengthSqRaw(d) == lengthSqRaw(Vec2{Fixed::fromInt(24), Fixed::zero()}));
 }
 
 TEST_CASE("the frame's present mask is the roster: joiners spawn at the next round",

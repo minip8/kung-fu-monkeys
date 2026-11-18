@@ -987,6 +987,7 @@ TEST_CASE("the rules block reports the mode's banana flight, else the def's (v0.
   // a mode that sets banana_outbound_ticks / banana_turn_rate shows its own,
   // a mode that leaves them 0 shows the BoomerangDef's.
   ContentDB c = defaultContent();
+  c.modes[0].bananaFlight = BananaFlight::Classic;  // v0.89: the classic def's numbers
   REQUIRE(c.boomerang.outboundTicks != 7);
   REQUIRE(c.boomerang.turnRateBam != 12345);
   ModeDef& flown = c.modes[1];
@@ -1012,6 +1013,34 @@ TEST_CASE("the rules block reports the mode's banana flight, else the def's (v0.
   buildObservation(s, MatchContent(c, 0, 1), kP0, 0, obs);
   CHECK(obs.rules.bananaOutboundTicks == 7);
   CHECK(obs.rules.bananaTurnRateBam == c.boomerang.turnRateBam);
+}
+
+TEST_CASE("an arc mode reports the arc's flight; a pulled banana reads as Returning (v0.89)",
+          "[ai][observation][flight]") {
+  // Mode 0 of defaultContent() flies the arc: the rules block reports its
+  // numbers, the speed the mean speed out (so speed x outbound is the reach).
+  const ContentDB& c = defaultContent();
+  REQUIRE(c.modes[0].bananaFlight == BananaFlight::Arc);
+  WorldState s = makePlayingWorld(5, 0b11);
+  const EntityId pulled =
+      spawnBanana(s, kP0, Vec2{fx(4), fx(2)}, Vec2{fx(-1, 10), Fixed{}}, BoomerangPhase::Recalled);
+  const EntityId lying = spawnPickup(s, Vec2{fx(-4), fx(2)});
+  pickupAt(s, lying).spawner = bananaLastOwnerByte(kP1);
+  Observation obs{};
+  buildObservation(s, MatchContent(c), kP0, 0, obs);
+  const Fixed mean =
+      Fixed::fromRaw((c.boomerang.arcLaunchSpeed.raw + c.boomerang.arcApexSpeed.raw) / 2);
+  CHECK(obs.rules.bananaSpeed == mean.raw);
+  CHECK(obs.rules.bananaOutboundTicks == c.boomerang.arcOutboundTicks);
+  CHECK(obs.rules.bananaMaxReturnTicks == c.boomerang.arcReturnTicks);
+  CHECK(obs.rules.bananaTurnRateBam == c.boomerang.arcTurnRateBam);
+  const ObsBanana& b = obs.bananas[pulled.index];
+  CHECK(b.valid == 1);
+  CHECK(b.phase == static_cast<uint8_t>(ObsBananaPhase::Returning));
+  CHECK(b.speed == mean.raw);
+  CHECK(b.velX == fx(-1, 10).raw);
+  // A banana pickup names the slot that may recall it, + 1.
+  CHECK(obs.pickups[lying.index].spawner == kP1.value + 1);
 }
 
 TEST_CASE("a bot in the shipped contest is told 3 turns out and 85 degrees a turn home (v0.80)",

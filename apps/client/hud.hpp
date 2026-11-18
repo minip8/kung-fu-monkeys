@@ -7,6 +7,7 @@
 // before play are screens.hpp.
 #pragma once
 
+#include "core/how_to_play.hpp"
 #include "core/hud_view.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/match_session.hpp"
@@ -72,6 +73,7 @@ struct ShareOutcome {
 struct NetStatusOutcome {
   ShareOutcome share;
   std::optional<LostConnectionAction> action;  // the button clicked
+  bool leave{false};                           // v0.94: Cancel / Back to the menu (as Escape)
 };
 [[nodiscard]] NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share,
                                              ButtonMenu& buttons);
@@ -84,6 +86,7 @@ struct NetStatusOutcome {
 struct LobbyOutcome {
   bool start{false};    // the start button was pressed
   bool changed{false};  // a setting changed through the panel's mouse controls
+  bool back{false};     // v0.94: Back (to the main menu)
 };
 [[nodiscard]] LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu);
 
@@ -131,7 +134,8 @@ struct ReplayBarOutcome {
 // v0.46: the pause menu over a running match, the match dimmed behind it:
 // its buttons in a column (`menu` holds the focus) and a line saying what
 // the pause means (locally the match waits; online it goes on). Returns the
-// item clicked.
-[[nodiscard]] std::optional<PauseItem> drawPauseMenu(PauseMenu& menu);
+// item clicked. v0.94: with its help open, the How to play `card` in the
+// buttons' place; its Back returns PauseItem::HowToPlay (closing the card).
+[[nodiscard]] std::optional<PauseItem> drawPauseMenu(PauseMenu& menu, const HowToPlay& card);
 
 }  // namespace kfm::client

@@ -8,6 +8,7 @@
 // that reorders or removes an entry. The settings text is the persisted
 // form: one "key=value" per line,
 //
+//   settings_version=2              (v0.93; text without it is older)
 //   arena=pillars
 //   mode=deathmatch
 //   loadout=slam                    (v0.31; base = the player's kit)
@@ -18,7 +19,10 @@
 //   mute=0
 //   region=eu                       (M6a: the Online section's Create room region)
 //   nick=Bonobo 42                  (v0.42: the name online; absent until there is one)
-//   theme=auto                      (v0.52: auto, jungle, temple or beach; cosmetic)
+//   nick_chosen=on                  (v0.94: the player chose it; absent for the picked one)
+//   theme=beach                     (v0.52: auto, jungle, temple or beach; cosmetic;
+//                                    v0.93: beach by default, and an older text's
+//                                    theme=auto, the old default, reads as beach)
 //   mouse_aim=on                    (on or off: the cursor aims for keyboard + mouse)
 //
 // stored natively in SDL's per-user preference directory and in the
@@ -48,7 +52,7 @@ struct LobbySettings {
   uint8_t volume{80};  // percent
   bool mute{false};
   std::string region{"eu"};  // M6a: the Online section's region label (the lobby lists them)
-  presentation::ThemeChoice theme{presentation::ThemeChoice::Auto};  // v0.52
+  presentation::ThemeChoice theme{presentation::ThemeChoice::Beach};  // v0.52; v0.93 Beach
   bool mouseAim{true};  // the cursor aims (InputSampler::setMouseAimEnabled)
   constexpr bool operator==(const LobbySettings&) const = default;
 };
@@ -64,6 +68,9 @@ struct LobbySettings {
 // power-up set), the form settingsText() persists.
 void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& content,
                         ClientOptions& options);
+
+// The settings text's format version (settings_version=): 2 since v0.93.
+inline constexpr uint8_t kSettingsVersion = 2;
 
 // The persisted settings of `options`, one "key=value" line each.
 [[nodiscard]] std::string settingsText(const ClientOptions& options);

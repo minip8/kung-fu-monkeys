@@ -13,8 +13,11 @@
 #include "kfm/sim/systems.hpp"
 #include "modes/mode_flow.hpp"
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
+#include <utility>
 
 namespace kfm::sim {
 namespace {
@@ -22,7 +25,8 @@ namespace {
 // v0.32: an arena with several spawn groups spawns each team in its own
 // group (spawnRangeOf): one world RNG offset per group, drawn in group order,
 // then the group's present slots in slot order take its points from that
-// offset on, wrapping. One group keeps the single shared offset below.
+// offset on, wrapping. One group, or a free-for-all mode (v0.91), spreads the
+// players instead (spawnSpread).
 void spawnByGroups(WorldState& s, const MatchContent& content, EventSink& sink) {
   const ArenaDef& arena = content.arena;
   std::array<uint32_t, kMaxPlayers> offset{};
@@ -46,6 +50,47 @@ void spawnByGroups(WorldState& s, const MatchContent& content, EventSink& sink) 
   }
 }
 
+// v0.91: one spawn list (a free-for-all, or an arena with one group). The n
+// present slots start on the n points that lie farthest apart
+// (spreadSpawnSet), each round dealt over them afresh: the world Rng shuffles
+// the points (Fisher-Yates, n - 1 draws) and the present slots in slot order
+// take them in that order. With more present slots than points, the M1 rule:
+// one Rng offset, slots in order from it, wrapping.
+void spawnSpread(WorldState& s, const MatchContent& content, EventSink& sink) {
+  const ArenaDef& arena = content.arena;
+  const uint32_t points = std::min<uint32_t>(arena.spawnPointCount, kMaxPlayers);
+  const auto present = static_cast<uint32_t>(std::popcount(static_cast<uint32_t>(s.rules.present)));
+  std::array<uint8_t, kMaxPlayers> order{};
+  uint32_t dealt = 0;
+  uint32_t offset = 0;
+  if (present <= points) {
+    const uint16_t set = spreadSpawnSet(arena, present);
+    for (uint32_t k = 0; k < points; ++k) {
+      if ((set & (1u << k)) != 0) order[dealt++] = static_cast<uint8_t>(k);
+    }
+    for (uint32_t k = dealt; k > 1; --k) {
+      std::swap(order[k - 1], order[s.rng.below(k)]);
+    }
+  } else if (points > 0) {
+    offset = s.rng.below(points);
+  }
+  uint32_t rank = 0;
+  for (uint8_t i = 0; i < kMaxPlayers; ++i) {
+    const PlayerId id{i};
+    if (!maskHas(s.rules.present, id)) continue;
+    const EntityId e = s.players.isAliveIndex(i) ? s.players.idAt(i) : s.players.spawnAt(i);
+    Vec2 pos = Vec2::zero();
+    if (rank < dealt) {
+      pos = arena.spawnPoints[order[rank]];
+    } else if (points > 0) {
+      pos = arena.spawnPoints[(rank + offset) % points];
+    }
+    ++rank;
+    resetPlayer(s.players.items[e.index], id, pos, content);
+    sink.push(SimEvent{EventKind::PlayerSpawned, s.tick, id, e, 0, 0});
+  }
+}
+
 void startRound(WorldState& s, const MatchContent& content, EventSink& sink) {
   s.boomerangs.clear();
   s.pickups.clear();
@@ -60,22 +105,10 @@ void startRound(WorldState& s, const MatchContent& content, EventSink& sink) {
   s.rules.respawnTicks = {};
   s.rules.invulnTicks = {};
 
-  const ArenaDef& arena = content.arena;
-  if (arena.spawnGroups > 1) {
+  if (spawnsByGroup(content)) {
     spawnByGroups(s, content, sink);
   } else {
-    const uint32_t points = arena.spawnPointCount;
-    const uint32_t offset = points > 0 ? s.rng.below(points) : 0;
-    uint32_t rank = 0;
-    for (uint8_t i = 0; i < kMaxPlayers; ++i) {
-      const PlayerId id{i};
-      if (!maskHas(s.rules.present, id)) continue;
-      const EntityId e = s.players.isAliveIndex(i) ? s.players.idAt(i) : s.players.spawnAt(i);
-      const Vec2 pos = points > 0 ? arena.spawnPoints[(rank + offset) % points] : Vec2::zero();
-      ++rank;
-      resetPlayer(s.players.items[e.index], id, pos, content);
-      sink.push(SimEvent{EventKind::PlayerSpawned, s.tick, id, e, 0, 0});
-    }
+    spawnSpread(s, content, sink);
   }
   sink.push(
       SimEvent{EventKind::RoundStarted, s.tick, PlayerId::invalid(), EntityId{}, s.rules.round, 0});

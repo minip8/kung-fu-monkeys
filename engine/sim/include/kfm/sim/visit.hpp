@@ -102,7 +102,7 @@ inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<StatKind> = 4;
 template <>
-inline constexpr uint8_t kEnumCount<BoomerangPhase> = 4;
+inline constexpr uint8_t kEnumCount<BoomerangPhase> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<PickupKind> = 3;
 template <>
@@ -116,6 +116,8 @@ inline constexpr uint8_t kEnumCount<VisionKind> = static_cast<uint8_t>(VisionKin
 template <>
 inline constexpr uint8_t kEnumCount<DeathBananas> = static_cast<uint8_t>(DeathBananas::kCount);
 template <>
+inline constexpr uint8_t kEnumCount<BananaFlight> = static_cast<uint8_t>(BananaFlight::kCount);
+template <>
 inline constexpr uint8_t kEnumCount<GrantKind> = 5;
 template <>
 inline constexpr uint8_t kEnumCount<PowerUpShape> = 4;
@@ -123,7 +125,7 @@ template <>
 inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
 static_assert(static_cast<uint8_t>(StatKind::Radius) + 1 == kEnumCount<StatKind>);
-static_assert(static_cast<uint8_t>(BoomerangPhase::Sinking) + 1 == kEnumCount<BoomerangPhase>);
+static_assert(static_cast<uint8_t>(BoomerangPhase::Recalled) + 1 == kEnumCount<BoomerangPhase>);
 static_assert(static_cast<uint8_t>(PickupKind::Flag) + 1 == kEnumCount<PickupKind>);
 static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);
 static_assert(static_cast<uint8_t>(PowerUpShape::Coin) + 1 == kEnumCount<PowerUpShape>);
@@ -233,9 +235,13 @@ void visit(V& v, AbilityDef& d) {
   visit(v, d.tagsStartup);
   visit(v, d.tagsActive);
   visit(v, d.tagsRecovery);
-  v.u8(d.rootPhases);  // v0.34
+  v.u8(d.rootPhases);       // v0.34
+  visit(v, d.recallSpeed);  // v0.89: the throw's recall
+  v.u16(d.recallAccelTicks);
+  visit(v, d.recallHarmSpeed);
+  visit(v, d.recallRange);
 }
-static_assert(fieldCount<AbilityDef>() == 14, "visit the new field, then update the count");
+static_assert(fieldCount<AbilityDef>() == 18, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, BoomerangDef& d) {
   visit(v, d.radius);
@@ -246,9 +252,17 @@ void visit(V& v, BoomerangDef& d) {
   visit(v, d.restitution);
   visit(v, d.spawnOffset);
   v.u8(d.damage);
-  v.u16(d.pitSinkTicks);  // v0.57
+  v.u16(d.pitSinkTicks);       // v0.57
+  visit(v, d.arcLaunchSpeed);  // v0.89: the arc flight
+  visit(v, d.arcApexSpeed);
+  v.u16(d.arcOutboundTicks);
+  visit(v, d.arcReturnSpeed);
+  v.u16(d.arcReturnAccelTicks);
+  v.u16(d.arcReturnTicks);
+  v.u16(d.arcTurnRateBam);
+  v.u16(d.arcBounceTicks);
 }
-static_assert(fieldCount<BoomerangDef>() == 9, "visit the new field, then update the count");
+static_assert(fieldCount<BoomerangDef>() == 17, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PickupDef& d) {
   visit(v, d.radius);
@@ -387,10 +401,11 @@ void visit(V& v, ModeDef& d) {
   v.u8(d.respawnAmmo);  // v0.82
   v.u16(d.bankTicks);
   v.u16(d.stealTicks);
-  v.u16(d.arenaSet);
+  v.u32(d.arenaSet);         // u16 before v0.91
+  visit(v, d.bananaFlight);  // v0.89
 }
 static_assert(fieldCount<VisionDef>() == 6, "visit the new field, then update the count");
-static_assert(fieldCount<ModeDef>() == 32, "visit the new field, then update the count");
+static_assert(fieldCount<ModeDef>() == 33, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, LoadoutDef& d) {
   visit(v, d.name);
@@ -596,7 +611,10 @@ void visit(V& v, Pickup& p) {
   v.u8(p.spawner);
   v.u8(p.count);  // v0.57
   if constexpr (V::kIsReader) {
-    if (p.powerUpIndex >= kMaxPowerUps || p.spawner >= kMaxPickupSpawners) {
+    // v0.89: a banana's spawner byte is its last owner's slot + 1.
+    const uint8_t spawnerLimit =
+        p.kind == PickupKind::Banana ? uint8_t{kMaxPlayers + 1} : kMaxPickupSpawners;
+    if (p.powerUpIndex >= kMaxPowerUps || p.spawner >= spawnerLimit) {
       v.markInvalid();
       p.powerUpIndex = 0;
       p.spawner = 0;

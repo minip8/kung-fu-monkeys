@@ -135,6 +135,8 @@ std::optional<SoundCue> soundForEvent(const SimEvent& e) {
       return cue(SoundId::Score);
     case EventKind::BananaRegrown:
       return cue(SoundId::Regrow);
+    case EventKind::BananaRecallStarted:  // v0.89: the pull begins, a soft zap
+      return SoundCue{SoundId::Blink, kRecallStartGain, 0.0f};
     case EventKind::TimerWarning:
       return cue(SoundId::TimerWarning);
     default:

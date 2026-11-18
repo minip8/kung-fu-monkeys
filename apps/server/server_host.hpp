@@ -6,8 +6,12 @@
 //
 // Per frame: NetServer::pump(now); then every 60 Hz tick due on the host's
 // drift-free clock (tick k is due at start + k·1e9/60 ns, at most
-// maxCatchUpTicks per frame; a stall longer than that drops the backlog and
-// counts it); then the server's events and the ticks' SimEvents become one
+// maxCatchUpTicks per frame; v0.92: a backlog is caught up over the next
+// frames, which kfm_server runs about a millisecond apart, and only one past
+// maxBacklogNs is dropped and counted; before v0.92 anything over
+// maxCatchUpTicks was dropped, which left every client that many ticks early
+// and, past the assembler's window, kicked them); then the server's events
+// and the ticks' SimEvents become one
 // log line each (joins, leaves, kicks, rejects, resyncs, round and match
 // results), and every statsEveryNs one line of ServerStats deltas.
 //
@@ -127,8 +131,11 @@ struct HostConfig {
   uint32_t exitAfterMatches{0};
   // One stats line every this many ns (0 = never).
   uint64_t statsEveryNs{0};
-  // Ticks run per frame at most; a larger backlog is dropped and counted.
+  // Ticks run per frame at most; a larger backlog waits for the next frames.
   uint32_t maxCatchUpTicks{8};
+  // v0.92: a backlog older than this is dropped and counted instead (the
+  // clients' 10 s timeout: past it they have given up and reconnect anyway).
+  uint64_t maxBacklogNs{10'000'000'000ull};
   // Also log match and round starts and every peer in the stats line.
   bool verbose{false};
   // Receives one line per call, without a trailing newline. Empty: stdout.
@@ -140,7 +147,9 @@ struct HostConfig {
 
 struct HostStats {
   uint64_t ticks{0};
-  uint64_t droppedTicks{0};  // backlog beyond maxCatchUpTicks
+  uint64_t droppedTicks{0};  // backlog beyond maxBacklogNs
+  uint64_t stalls{0};        // v0.92: frames that found more than maxCatchUpTicks due
+  uint64_t maxBehindNs{0};   // v0.92: the largest backlog found, in ns
   uint32_t matchesCompleted{0};
   uint32_t roundsCompleted{0};
 };
@@ -252,6 +261,7 @@ class ServerHost {
   uint64_t nowNs_{0};
   uint64_t clockBaseNs_{0};  // tick clockTicks_ is due at clockBaseNs_ + ...
   uint64_t clockTicks_{0};
+  bool catchingUp_{false};  // v0.92: a stall's backlog is being run
   uint64_t nextStatsNs_{0};
   uint64_t lastStatsNs_{0};
   net::ServerStats lastStats_{};

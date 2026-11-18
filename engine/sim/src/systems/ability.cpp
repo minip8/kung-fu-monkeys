@@ -10,6 +10,8 @@
 //      phaseTicks 0, onActivate, then settle.
 //   4. phase != Idle      -> onTick (after the phase advanced, so a Startup of 0
 //      makes the activation tick the first Active tick).
+//   5. phase == Idle, the slot's button held, match phase Playing -> onIdleHold
+//      (v0.89: the throw's recall; a no-op for every other kind).
 // settle: while the current phase has run for its full duration and the
 // behaviour's holdsPhase (v0.48: given whether the slot's button is held)
 // does not keep it going, move to the next phase (Startup -> Active ->
@@ -133,7 +135,11 @@ void tickSlot(WorldState& s, Player& p, uint8_t slot, const MatchContent& conten
     settle(s, p, st, def, behavior, held, content, sink);
   }
 
-  if (st.phase != AbilityPhase::Idle) behavior.onTick(s, p, st, def, content, sink);
+  if (st.phase != AbilityPhase::Idle) {
+    behavior.onTick(s, p, st, def, content, sink);
+  } else if (held && s.rules.phase == MatchPhase::Playing) {
+    behavior.onIdleHold(s, p, st, def, content, sink);  // v0.89: the throw's recall
+  }
 }
 
 // Power-up tags (Player::grantedTags, §5.8) belong to ModifierSystem: an

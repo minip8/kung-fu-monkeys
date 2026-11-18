@@ -233,6 +233,16 @@ inline constexpr float kDashTrailSeconds = 0.18f;
 inline constexpr float kDashTrailInterval = 0.025f;
 inline constexpr float kBananaTrailSeconds = 0.12f;
 inline constexpr float kBananaTrailInterval = 0.03f;
+// v0.89, the recall: a banana pulled back by its owner floats this far above
+// the hand height and is tied to the owner by a dotted tether of banana
+// trail puffs in the owner's tint, kRecallTetherDots between the two, laid
+// every kRecallTetherInterval and each living kRecallTetherSeconds.
+inline constexpr float kBananaRecallLift = 0.2f;
+inline constexpr uint8_t kRecallTetherDots = 6;
+inline constexpr float kRecallTetherInterval = 0.06f;
+inline constexpr float kRecallTetherSeconds = 0.09f;
+// The recall starting: the blink's zap, quieter.
+inline constexpr float kRecallStartGain = 0.5f;
 inline constexpr float kPerfectCatchBurstSeconds = 0.45f;  // gold sparks, beside the flash
 inline constexpr float kHitSparkSeconds = 0.25f;
 inline constexpr float kEliminationPoofSeconds = 0.7f;  // grey smoke puffs drifting up

@@ -55,6 +55,10 @@ struct ClientRig {
   LinkConditions up{};
   LinkConditions down{};
   bool active{true};  // stepped by the scheduler
+  // v0.92: a frame every this many ns at most (0: every 1 ms step); a hidden
+  // browser tab's background pump, for instance.
+  uint64_t frameEveryNs{0};
+  uint64_t nextFrameNs{0};
 };
 
 class NetSim {

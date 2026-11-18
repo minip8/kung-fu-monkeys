@@ -88,12 +88,26 @@ std::string contentToCpp(const sim::ContentDB& c) {
   appendLine(out, "thr.param0", fixedToCpp(thr.param0, false));  // v0.48: charge_min
   appendLine(out, "thr.param1", fixedToCpp(thr.param1, false));  // charge_max
   appendLine(out, "thr.speed", fixedToCpp(thr.speed, false));    // per tick held
+  // v0.89: the recall.
+  appendLine(out, "thr.recallSpeed", fixedToCpp(thr.recallSpeed, true));
+  appendLine(out, "thr.recallAccelTicks", thr.recallAccelTicks);
+  appendLine(out, "thr.recallHarmSpeed", fixedToCpp(thr.recallHarmSpeed, true));
+  appendLine(out, "thr.recallRange", fixedToCpp(thr.recallRange, false));
 
   appendLine(out, "c.boomerang.speed", fixedToCpp(c.boomerang.speed, true));
   appendLine(out, "c.boomerang.outboundTicks", c.boomerang.outboundTicks);
   appendLine(out, "c.boomerang.maxReturnTicks", c.boomerang.maxReturnTicks);
   appendLine(out, "c.boomerang.turnRateBam", c.boomerang.turnRateBam);
   appendLine(out, "c.boomerang.restitution", fixedToCpp(c.boomerang.restitution, false));
+  // v0.89: the arc flight.
+  appendLine(out, "c.boomerang.arcLaunchSpeed", fixedToCpp(c.boomerang.arcLaunchSpeed, true));
+  appendLine(out, "c.boomerang.arcApexSpeed", fixedToCpp(c.boomerang.arcApexSpeed, true));
+  appendLine(out, "c.boomerang.arcOutboundTicks", c.boomerang.arcOutboundTicks);
+  appendLine(out, "c.boomerang.arcReturnSpeed", fixedToCpp(c.boomerang.arcReturnSpeed, true));
+  appendLine(out, "c.boomerang.arcReturnAccelTicks", c.boomerang.arcReturnAccelTicks);
+  appendLine(out, "c.boomerang.arcReturnTicks", c.boomerang.arcReturnTicks);
+  appendLine(out, "c.boomerang.arcTurnRateBam", c.boomerang.arcTurnRateBam);
+  appendLine(out, "c.boomerang.arcBounceTicks", c.boomerang.arcBounceTicks);
 
   appendLine(out, "c.player.moveSpeed", fixedToCpp(c.player.moveSpeed, true));
   appendLine(out, "c.player.ammoMax", c.player.ammoMax);

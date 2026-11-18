@@ -31,6 +31,7 @@ bool isMenuBack(const platform::InputEvent& event) {
 MainMenu::MainMenu(bool quitItem) {
   items_[count_++] = MainMenuItem::PlayOnline;
   items_[count_++] = MainMenuItem::PlayLocal;
+  items_[count_++] = MainMenuItem::HowToPlay;
   items_[count_++] = MainMenuItem::Settings;
   if (quitItem) items_[count_++] = MainMenuItem::Quit;
 }
@@ -67,6 +68,8 @@ const char* MainMenu::label(MainMenuItem item) {
       return "Play online";
     case MainMenuItem::PlayLocal:
       return "Play local";
+    case MainMenuItem::HowToPlay:
+      return "How to play";
     case MainMenuItem::Settings:
       return "Settings";
     case MainMenuItem::Quit:
@@ -82,6 +85,8 @@ const char* MainMenu::hint(MainMenuItem item) const {
                      : "No lobby configured: start with --lobby URL (or ?lobby=)";
     case MainMenuItem::PlayLocal:
       return "Up to ten monkeys on one screen: keyboards, pads and bots";
+    case MainMenuItem::HowToPlay:
+      return "The controls, and how to catch a banana";
     case MainMenuItem::Settings:
       return "Your name, sound and the bots' difficulty";
     case MainMenuItem::Quit:
@@ -235,13 +240,15 @@ void ButtonMenu::apply(MenuAction action) {
 // --- PauseMenu --------------------------------------------------------------------------
 
 namespace {
-constexpr std::array<PauseItem, 3> kLocalPause{PauseItem::Resume, PauseItem::BackToLobby,
-                                               PauseItem::MainMenu};
-constexpr std::array<PauseItem, 2> kOnlinePause{PauseItem::Resume, PauseItem::LeaveRoom};
+constexpr std::array<PauseItem, 4> kLocalPause{PauseItem::Resume, PauseItem::HowToPlay,
+                                               PauseItem::BackToLobby, PauseItem::MainMenu};
+constexpr std::array<PauseItem, 3> kOnlinePause{PauseItem::Resume, PauseItem::HowToPlay,
+                                                PauseItem::LeaveRoom};
 }  // namespace
 
 void PauseMenu::open(bool online) {
   open_ = true;
+  help_ = false;
   online_ = online;
   buttons_.setCount(items().size());
   buttons_.setFocus(0);
@@ -254,6 +261,14 @@ std::span<const PauseItem> PauseMenu::items() const {
 
 std::optional<PauseItem> PauseMenu::press(const platform::InputEvent& event) const {
   if (!open_) return std::nullopt;
+  if (help_) {
+    const bool back = (event.kind == InputEventKind::KeyDown && event.key == Key::Escape) ||
+                      (event.kind == InputEventKind::PadButtonDown &&
+                       (event.button == PadButton::East || event.button == PadButton::Back ||
+                        event.button == PadButton::Start));
+    if (back || isMenuActivate(event)) return PauseItem::HowToPlay;
+    return std::nullopt;
+  }
   if (event.kind == InputEventKind::KeyDown && event.key == Key::Escape) return PauseItem::Resume;
   if (event.kind == InputEventKind::PadButtonDown &&
       (event.button == PadButton::East || event.button == PadButton::Back ||
@@ -274,6 +289,8 @@ const char* PauseMenu::label(PauseItem item) {
       return "Main menu";
     case PauseItem::LeaveRoom:
       return "Leave room";
+    case PauseItem::HowToPlay:
+      return "How to play";
   }
   return "";
 }

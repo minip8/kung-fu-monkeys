@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cstdint>
 #include <limits>
 #include <utility>
@@ -75,10 +76,52 @@ void resetPlayer(Player& p, PlayerId id, Vec2 pos, const MatchContent& content) 
   grantBaseline(p, content);  // v0.32: a no-op without ModeDef::baseline
 }
 
+bool spawnsByGroup(const MatchContent& content) {
+  return content.arena.spawnGroups > 1 && content.mode.teams != 0;
+}
+
 SpawnRange spawnRangeOf(const MatchContent& content, PlayerId id) {
   const ArenaDef& arena = content.arena;
-  if (arena.spawnGroups <= 1) return SpawnRange{0, arena.spawnPointCount};
+  if (!spawnsByGroup(content)) return SpawnRange{0, arena.spawnPointCount};
   return spawnGroupRange(arena, content.teamOf(id));
+}
+
+uint16_t spreadSpawnSet(const ArenaDef& arena, uint32_t count) {
+  const uint32_t points = std::min<uint32_t>(arena.spawnPointCount, kMaxPlayers);
+  if (count >= points) return static_cast<uint16_t>((1u << points) - 1u);
+  if (count == 0) return 0;
+  std::array<std::array<uint64_t, kMaxPlayers>, kMaxPlayers> dist{};
+  for (uint32_t a = 0; a < points; ++a) {
+    for (uint32_t b = a + 1; b < points; ++b) {
+      dist[a][b] = lengthSqRaw(arena.spawnPoints[a] - arena.spawnPoints[b]);
+    }
+  }
+  uint16_t best = 0;
+  uint64_t bestMin = 0;
+  uint32_t bestAtMin = 0;
+  for (uint32_t mask = 1; mask < (1u << points); ++mask) {
+    if (std::cmp_not_equal(std::popcount(mask), count)) continue;
+    uint64_t closest = std::numeric_limits<uint64_t>::max();
+    uint32_t atMin = 0;
+    for (uint32_t a = 0; a < points; ++a) {
+      if ((mask & (1u << a)) == 0) continue;
+      for (uint32_t b = a + 1; b < points; ++b) {
+        if ((mask & (1u << b)) == 0) continue;
+        if (dist[a][b] < closest) {
+          closest = dist[a][b];
+          atMin = 1;
+        } else if (dist[a][b] == closest) {
+          ++atMin;
+        }
+      }
+    }
+    if (best == 0 || closest > bestMin || (closest == bestMin && atMin < bestAtMin)) {
+      best = static_cast<uint16_t>(mask);
+      bestMin = closest;
+      bestAtMin = atMin;
+    }
+  }
+  return best;
 }
 
 bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, EventSink& sink) {
@@ -201,6 +244,22 @@ void endRound(WorldState& s, const MatchContent& content, PlayerId winner, Event
                              content.mode.roundsToWin)) {
     r.phase = MatchPhase::MatchEnded;
     sink.push(SimEvent{EventKind::MatchEnded, s.tick, winner, EntityId{}, 0, 0});
+  }
+}
+
+void endRoundOnScore(WorldState& s, const MatchContent& content, PlayerId survivor,
+                     EventSink& sink) {
+  MatchRules& r = s.rules;
+  r.lastRoundWinner = survivor;
+  r.ticksInPhase = 0;
+  r.phase = MatchPhase::RoundEnded;
+  sink.push(SimEvent{EventKind::RoundEnded, s.tick, survivor, EntityId{}, r.round, 0});
+  int8_t best = 0;
+  const PlayerId leader = scoreLeader(r, best);
+  if (leader.isValid() && std::cmp_greater_equal(best, content.mode.scoreToWin)) {
+    r.lastRoundWinner = leader;
+    r.phase = MatchPhase::MatchEnded;
+    sink.push(SimEvent{EventKind::MatchEnded, s.tick, leader, EntityId{}, 0, 0});
   }
 }
 

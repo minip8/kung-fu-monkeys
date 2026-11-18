@@ -28,6 +28,8 @@ add_library(kfm_client_core STATIC
   core/mouse_aim.cpp
   core/replay_session.cpp
   core/replay_controls.cpp
+  core/content_labels.cpp
+  core/how_to_play.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -63,19 +65,29 @@ set_target_properties(kfm_client_sdl PROPERTIES FOLDER apps)
 
 # v0.43: the UI font (assets/fonts/, OFL), compiled into the client like
 # content/: the browser has no filesystem, and nothing is read at run time.
-set(kfm_client_font "${PROJECT_SOURCE_DIR}/assets/fonts/LilitaOne-Regular.ttf")
-set(kfm_client_font_cpp "${CMAKE_CURRENT_BINARY_DIR}/ui_font.cpp")
-add_custom_command(
-  OUTPUT "${kfm_client_font_cpp}"
-  COMMAND ${CMAKE_COMMAND}
-    "-DKFM_IN=${kfm_client_font}"
-    "-DKFM_OUT=${kfm_client_font_cpp}"
-    "-DKFM_NAMESPACE=kfm::client::assets"
-    "-DKFM_SYMBOL=kUiFont"
-    -P "${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake"
-  DEPENDS "${kfm_client_font}" "${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake"
-  COMMENT "Embedding the UI font"
-  VERBATIM)
+# v0.93: Lilita One (titles, buttons, banners) and Nunito Bold and
+# ExtraBold (body text, small HUD labels), each embedded as its own symbol.
+set(kfm_client_font_cpp "")
+foreach(kfm_font IN ITEMS "LilitaOne-Regular:kUiFont" "Nunito-Bold:kUiFontBody"
+                          "Nunito-ExtraBold:kUiFontStrong")
+  string(REPLACE ":" ";" kfm_font_parts "${kfm_font}")
+  list(GET kfm_font_parts 0 kfm_font_file)
+  list(GET kfm_font_parts 1 kfm_font_symbol)
+  set(kfm_font_in "${PROJECT_SOURCE_DIR}/assets/fonts/${kfm_font_file}.ttf")
+  set(kfm_font_out "${CMAKE_CURRENT_BINARY_DIR}/ui_font_${kfm_font_symbol}.cpp")
+  add_custom_command(
+    OUTPUT "${kfm_font_out}"
+    COMMAND ${CMAKE_COMMAND}
+      "-DKFM_IN=${kfm_font_in}"
+      "-DKFM_OUT=${kfm_font_out}"
+      "-DKFM_NAMESPACE=kfm::client::assets"
+      "-DKFM_SYMBOL=${kfm_font_symbol}"
+      -P "${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake"
+    DEPENDS "${kfm_font_in}" "${PROJECT_SOURCE_DIR}/cmake/EmbedFile.cmake"
+    COMMENT "Embedding the UI font ${kfm_font_file}"
+    VERBATIM)
+  list(APPEND kfm_client_font_cpp "${kfm_font_out}")
+endforeach()
 
 # The platform seam's hooks (client_platform.hpp): one file per platform, so
 # neither holds an #ifdef.
@@ -85,7 +97,7 @@ else()
   set(kfm_client_platform_cpp client_platform_native.cpp)
 endif()
 add_executable(kfm_client main.cpp hud.cpp screens.cpp ui_style.cpp debug_overlay.cpp
-  client_audio.cpp client_platform.cpp ${kfm_client_platform_cpp} "${kfm_client_font_cpp}")
+  client_audio.cpp client_platform.cpp ${kfm_client_platform_cpp} ${kfm_client_font_cpp})
 target_link_libraries(kfm_client PRIVATE
   kfm::build_id kfm::client_core kfm::client_sdl kfm::content kfm::renderer kfm::platform
   kfm::platform_services kfm::warnings)

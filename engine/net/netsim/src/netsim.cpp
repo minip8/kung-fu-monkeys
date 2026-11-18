@@ -71,7 +71,9 @@ void NetSim::step() {
     if (afterServerTick) afterServerTick();
   }
   for (ClientRig& r : rigs_) {
-    if (r.active) stepClient(r);
+    if (!r.active || now_ < r.nextFrameNs) continue;
+    stepClient(r);
+    r.nextFrameNs = now_ + r.frameEveryNs;
   }
   server_->clearEvents();
 }

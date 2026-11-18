@@ -31,7 +31,7 @@ size_t indexOf(const EventLog& log, EventKind kind) {
 }  // namespace
 
 TEST_CASE("a thrown banana eliminates, flies on and ends the round", "[scenario][hit]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = classicContent();
   WorldState s = makePlayingWorld(21, 0b11);
   placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::zero()});
   placePlayer(s, PlayerId{1}, Vec2{Fixed::fromInt(4), Fixed::zero()});
@@ -81,7 +81,7 @@ TEST_CASE("a thrown banana eliminates, flies on and ends the round", "[scenario]
 }
 
 TEST_CASE("a missed banana returns and is auto-caught by its thrower", "[scenario][hit]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = classicContent();
   WorldState s = makePlayingWorld(22, 0b11);
   // Player 0 stands well clear of the throw line and of the return loop.
   placePlayer(s, PlayerId{0}, Vec2{Fixed::fromInt(-4), Fixed::fromInt(-7)});
@@ -112,7 +112,7 @@ TEST_CASE("a missed banana returns and is auto-caught by its thrower", "[scenari
 // down), movement is frozen on T+1..T+N-1 (movement on T ran before the hit),
 // and the tag is gone at the end of T+N-1.
 TEST_CASE("HitStun lasts hitStunTicks counting the hit tick", "[scenario][hit]") {
-  ContentDB content = defaultContent();
+  ContentDB content = classicContent();
   content.player.maxHp = 3;  // survive the hits
   const int n = content.player.hitStunTicks;
   REQUIRE(n >= 2);

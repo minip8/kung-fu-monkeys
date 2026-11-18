@@ -81,6 +81,7 @@ build/dev/apps/client/kfm_client --arena dojo_powerups --bots 3                 
 build/dev/apps/client/kfm_client --mode grid_rounds --bots 3                    # the grid at 15-tick turns
 build/dev/apps/client/kfm_client --bots 3 --bot-difficulty easy|medium|hard [--bot-module bot.wasm]
 build/dev/apps/client/kfm_client --exit-after-frames 60 --screenshot out.ppm    # headless render check
+SDL_VIDEODRIVER=offscreen build/dev/apps/client/kfm_client --window 700x900 --screen online --exit-after-frames 30 --screenshot narrow.ppm   # no window on the desktop
 build/dev/apps/client/kfm_client --replay tools/replay-corpus/scripted_10p_contest_1800t.kfmr   # the replay viewer
 build/dev/apps/client/kfm_client --capsules      # placeholder capsules instead of the skinned test rig
 build/dev/apps/render-probe/kfm_render_probe --players 6 --exit-on hit --exit-after-frames 6000 --screenshot hit.ppm
@@ -91,7 +92,7 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 
 - The client opens on the main menu unless `--autostart` / `--connect` / `--room` / `--create`
   (browser: `?autostart`, `?connect=`, `?room=`, `?create`). `--screen
-  menu|settings|online|local|paused` opens another screen (for screenshots; `paused` is a local
+  menu|settings|online|local|paused|howto` opens another screen (for screenshots; `paused` is a local
   match under the pause menu).
 - Match selection: `--arena NAME --mode NAME --loadout NAME --powerups all|none|a,b`. Settings
   are saved between runs (SDL pref dir / browser localStorage); flags win; `--no-settings`
@@ -139,7 +140,8 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
   turns, for `kfm_arena`), `contest` (the bot ladder's row, the `harvest` kind on the pool
   `grove`, `orchards`, `gorge`, `burrows` since v0.82: a loader test pins it, so a season's
   change to it is a deliberate edit of both), `control_1t` (v0.80's contest, the `control` kind
-  on `courtyard_zones`, appended in v0.82).
+  on `courtyard_zones`, appended in v0.82), `kill_rounds` (v0.90: rounds scored by
+  eliminations, first to 10 kills judged at a round's end).
 - A team mode needs an arena with a spawn group per team, `hill`, `capture` and `control` need
   their zones, `harvest` a zone per team and a tree, a grid mode needs an arena with cells (a
   tilemap): `ContentDB::compatible`. Without `--arena` every host picks the mode's `arena`, else
@@ -149,7 +151,10 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
   `pillars`, `corridors`, `island`, `dojo_powerups`, `standoff`, `hilltop` (`hill`), `outposts`
   (`capture`), `courtyard` (the grid modes), `courtyard_hill` (`hill` on the grid),
   `courtyard_zones` (`control_1t`: three zones, v0.80), and the harvest pool's `grove`,
-  `orchards`, `gorge` and `burrows` (`contest`, v0.82: a home zone per team and trees). A
+  `orchards`, `gorge` and `burrows` (`contest`, v0.82: a home zone per team and trees), and
+  the large arenas of v0.91: `meadow` (44 × 25), `archipelago` (52 × 29, islands over a pit,
+  two spawn groups, a hill zone), `compound` (48 × 27, rooms and doorways, two spawn groups)
+  and `marsh` (60 × 34, mud and power-ups). A
   tilemap arena gives `cell = 1.0` and `map = ["..."]` (`#` wall, `.` floor, `~` pit, `:` mud,
   `0-9` spawns, `a-h` zones) in place of `half_extents`/`walls`/`hazards`/`spawn_points`/`zones`
   (format: `content/arenas/06-hilltop.toml`, architecture §5.10).
@@ -169,6 +174,7 @@ build/dev/apps/netsim/kfm_netsim --clients 6 --mode team_deathmatch --rtt 100 --
 build/dev/apps/net-probe/kfm_net_probe --serve 9123          # WebRtcTransport echo server (native)
 build/dev/apps/net-probe/kfm_net_probe --connect ws://127.0.0.1:9123 --messages 300   # native end-to-end check
 python3 tools/web/check_webrtc.py --messages 200   # browser WebRtcTransport against the native probe server, headless Chromium
+python3 tools/web/check_hidden_tab.py --away 30 120 600 [--hide tab|minimize|freeze]   # v0.92: the browser client against kfm_server, the page hidden that long
 cargo run --manifest-path services/lobby/Cargo.toml -- --listen 127.0.0.1:8080 --secret dev   # the lobby service
 build/dev/apps/server/kfm_server --lobby ws://127.0.0.1:8080 --lobby-secret dev --region eu --bots 3 [--ice-ports 40000-40099]
 build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --create [--region eu]   # create a room; prints "in room CODE"
@@ -192,6 +198,12 @@ build/dev/apps/client/kfm_client --lobby ws://127.0.0.1:8080 --room CODE        
   `?room=CODE`, and `config.js` next to the page supplies `lobbyUrl` and `sentryDsn` in
   production. `--verbose` prints the transport's log (ICE, DTLS, the lobby socket, every dropped
   peer).
+- Why players leave (v0.92): `kfm_server` logs `leave peer=N slots=S cause=quit|link-closed|timeout|
+  hello-timeout|replaced|shutting-down silent=MSms kept=60s|released`, and its stats line counts
+  `timeouts`, `closed`, `idle/s` (slot-ticks fed the neutral input of a silent player),
+  `early_inputs` and `stalls` (frames that found the host's clock behind; `clock stalled N ms:
+  catching up`). The client prints every phase change, including `Connection lost (why):
+  reconnecting ...` and `in the background (page hidden)`, on stdout (the browser console).
 - A real-link check needs `--exit-after-frames` in the thousands with `--no-frame-limit`:
   unpaced, the client runs hundreds of frames a second.
 - The high-RTT table of architecture §6.2: `kfm_netsim --rtt 200|300|500 --jitter 20|30 --loss
@@ -215,7 +227,8 @@ tools/bots/build_fixtures.sh     # re-assemble tests/fixtures/bots/*.wat with wa
   kind's smoke test: on `contest`, five a side, its games end in 490 to 1200 turns on every
   pool arena, far inside the 3600-turn clock (`tools/bots/README.md` has the table).
 - `--rotate` moves every bot through every slot across the tournament (the sim's spawn order
-  favours some slots). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
+  favoured some slots in a free-for-all until v0.91, which deals the spawns from the world Rng
+  every round; a team mode's sides and the equal-time tie-breaks of §12 remain). One `--team LIST` per team of a team mode (no `--bot/--bots`): the specs
   fill that team's slots in order, the last repeating, and `--rotate` moves entrants across
   sides.
 - Arena pools (v0.82): a mode with an `arenas` pool, run without `--arena`, plays match k on

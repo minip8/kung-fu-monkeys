@@ -72,6 +72,14 @@ TEST_CASE("the scoreboard shows after a round in round kinds and at every match 
   hud.mode = sim::ModeKind::Survival;
   hud.phase = HudPhase::RoundEnded;
   CHECK(showsScoreboard(hud));
+  // v0.90: kill rounds scores points but pauses between rounds: the board
+  // shows in every pause, never over the countdown.
+  hud.mode = sim::ModeKind::KillRounds;
+  CHECK(showsScoreboard(hud));
+  hud.phase = HudPhase::RoundStarting;
+  CHECK_FALSE(showsScoreboard(hud));
+  hud.phase = HudPhase::MatchEnded;
+  CHECK(showsScoreboard(hud));
 }
 
 TEST_CASE("free-for-all rows: score, then deaths, then slot; shared places",
@@ -163,6 +171,9 @@ TEST_CASE("round kinds count rounds and no deaths; nobody wins mid-match", "[cli
   CHECK(std::string(buildScoreboard(hud, labels(), 0, 0).scoreLabel) == "Bananas");
   CHECK(buildScoreboard(hud, labels(), 0, 0).showDeaths);
   hud.mode = sim::ModeKind::Survival;
+  CHECK(buildScoreboard(hud, labels(), 0, 0).showDeaths);
+  hud.mode = sim::ModeKind::KillRounds;  // v0.90: kills, and the deaths kept
+  CHECK(std::string(buildScoreboard(hud, labels(), 0, 0).scoreLabel) == "Kills");
   CHECK(buildScoreboard(hud, labels(), 0, 0).showDeaths);
 }
 

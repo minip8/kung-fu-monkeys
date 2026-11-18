@@ -66,6 +66,18 @@
 // with the same token reclaims them and gets a fresh snapshot. A Hello whose
 // token belongs to a still-connected peer takes the slots over from it.
 //
+// A silent player (v0.92, §6.6): a slot whose inputs stop arriving is fed
+// repeat-last for idleAfterTicks (a loss burst, a late tail), then a neutral
+// input (no stick, no buttons, the same facing) until they come back, so a
+// stalled or hidden client's monkey stands still instead of running on into
+// a wall or a pit. A peer silent for peerTimeoutNs (15 s) is dropped; the
+// client gives up first (10 s) and reconnects into the reservation. Every
+// leave carries its cause (LeaveCause) and how long the peer had been silent,
+// for the host's log; a timed-out peer is told so (Disconnect{Timeout}) in
+// case its downlink still works. An input more than kMaxLeadTicks early is
+// dropped and counted (inputsTooEarly) but is not a protocol error: an honest
+// client runs that far ahead of a server that stalled.
+//
 // Match restart (§6.6): restartMatch() announces MatchConfig{config,
 // startTick} to every active peer at once (and to anyone who joins before
 // startTick); at startTick the world becomes initialWorld(config) at that
@@ -139,10 +151,15 @@ struct ServerConfig {
   uint32_t buildId{0};
   // A checksum of the world rides in AuthInputs every this many ticks (0 = never).
   uint16_t checksumEveryTicks{10};
-  // How long a dropped peer's slots stay reserved (default 10 s).
-  uint32_t reconnectGraceTicks{10 * sim::kTickHz};
-  // No packet from a peer for this long disconnects it.
-  uint64_t peerTimeoutNs{5'000'000'000ull};
+  // How long a dropped peer's slots stay reserved (v0.92: 60 s, was 10 s;
+  // §6.6 "Timeouts and grace").
+  uint32_t reconnectGraceTicks{60 * sim::kTickHz};
+  // No packet from a peer for this long disconnects it (v0.92: 15 s, was
+  // 5 s; longer than the client's 10 s, so the client gives up first).
+  uint64_t peerTimeoutNs{15'000'000'000ull};
+  // A slot whose inputs stopped arriving repeats its last input for this many
+  // ticks, then gets a neutral one (v0.92; 0 = repeat for ever, as before).
+  uint32_t idleAfterTicks{15};
   // Input messages per second per peer: the tick rate plus slack (§6.7).
   uint32_t inputMsgsPerSecond{sim::kTickHz + 30};
   // Protocol errors (undecodable, foreign slot, bad range, too early, out of
@@ -189,6 +206,18 @@ enum class ServerEventKind : uint8_t {
   PeerQueued,             // v0.44: a joiner waits for slots; reason = how many
 };
 
+// v0.92: why a peer left (PeerLeft), for the host's log and metrics. The
+// wire's DisconnectReason says what one side tells the other; this says what
+// the server saw.
+enum class LeaveCause : uint8_t {
+  Quit = 0,      // the client sent Disconnect (reason = what it said)
+  Closed,        // the transport reported the connection closed or failed
+  Timeout,       // no packet for peerTimeoutNs
+  HelloTimeout,  // no accepted Hello within helloTimeoutNs
+  Replaced,      // a Hello with its token took its slots over (a reconnect)
+  ShuttingDown,  // closeAll()
+};
+
 struct ServerEvent {
   ServerEventKind kind{ServerEventKind::PeerJoined};
   PeerId peer{PeerId::invalid()};
@@ -196,6 +225,11 @@ struct ServerEvent {
   Tick tick{};
   uint8_t reason{0};
   RoomSettings settings{};  // RoomSettingsRequested
+  // PeerLeft (v0.92): the cause, how long the peer had sent nothing, and
+  // whether its slots were reserved for a reconnect (else they were released).
+  LeaveCause cause{LeaveCause::Quit};
+  uint64_t silentNs{0};
+  bool reserved{false};
 };
 
 struct ServerStats {
@@ -211,6 +245,10 @@ struct ServerStats {
   uint64_t roomRateLimited{0};  // RoomSettings / Start messages over their limit
   uint64_t joinRateLimited{0};  // JoinMatch messages over their limit (v0.70)
   uint64_t helloTimeouts{0};    // peers dropped for no Hello in time (v0.70)
+  uint64_t timeouts{0};         // peers dropped for silence (v0.92)
+  uint64_t closedLinks{0};      // peers whose transport closed or failed (v0.92)
+  uint64_t idledInputs{0};      // slot-ticks given the neutral substitute (v0.92)
+  uint64_t inputsTooEarly{0};   // slot-ticks past the assembler's window (v0.92)
   uint64_t protocolErrors{0};
   uint64_t kicks{0};
   uint64_t joins{0};
@@ -235,6 +273,7 @@ struct ServerPeerInfo {
   uint32_t leadSamples{0};            // Input messages that fed leadEmaQ8
   uint64_t inputMsgs{0};
   uint64_t substitutions{0};  // its slot-ticks the assembler had to repeat
+  uint64_t idled{0};          // ... of which neutral (v0.92: silent past idleAfterTicks)
   uint64_t rejectedInputs{0};
   uint64_t rateLimited{0};
   uint64_t protocolErrors{0};
@@ -278,6 +317,7 @@ class NetServer {
   [[nodiscard]] uint32_t matchIndex() const { return matchIndex_; }
   [[nodiscard]] const sim::MatchConfig& matchConfig() const { return config_.match; }
   [[nodiscard]] const sim::ContentDB& content() const { return *content_; }
+  [[nodiscard]] const ServerConfig& config() const { return config_; }
   // The bot seed of the current match: ServerConfig::botSeed, then the one
   // passed to the restartMatch() that took effect.
   [[nodiscard]] uint64_t botSeed() const { return botSeed_; }
@@ -372,7 +412,11 @@ class NetServer {
   [[nodiscard]] Peer* findPeer(PeerId id);
   [[nodiscard]] const Peer* findPeer(PeerId id) const;
   Peer* addPeer(PeerId id, uint64_t nowNs);
-  void removePeer(Peer& p, bool reserve);
+  // Removes the peer; with `reserve` and a token its slots are reserved.
+  // Returns whether they were.
+  bool removePeer(Peer& p, bool reserve);
+  // PeerLeft with its cause, then removePeer().
+  void leave(Peer& p, LeaveCause cause, bool reserve, uint8_t reason = 0);
   void onPacket(Peer& p, const Packet& packet);
   void onHello(Peer& p, const Packet& packet);
   void onInput(Peer& p, const Packet& packet);

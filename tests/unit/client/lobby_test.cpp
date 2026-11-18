@@ -2,6 +2,7 @@
 // state machine, the generic menu input, the settings persistence and the
 // flag / URL parsing, headless over the shipped (embedded) content.
 #include "core/client_options.hpp"
+#include "core/content_labels.hpp"
 #include "core/lobby_menu.hpp"
 #include "core/lobby_settings.hpp"
 #include "core/match_session.hpp"
@@ -122,10 +123,10 @@ TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
   CHECK(m.rowValue(rows[2]) == "free-for-all");
   CHECK(rows[3].kind == LobbyRowKind::Loadout);
   CHECK(m.rowLabel(rows[3]) == "Loadout");
-  CHECK(m.rowValue(rows[3]) == "base");
+  CHECK(m.rowValue(rows[3]) == "Standard");  // v0.94: base, in plain words
   for (uint8_t i = 0; i < toggles; ++i) {
     CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, toggled[i]});
-    CHECK(m.rowLabel(rows[4 + i]) == db.powerUps[toggled[i]].name.view());
+    CHECK(m.rowLabel(rows[4 + i]) == client::powerUpTitle(db.powerUps[toggled[i]].name.view()));
   }
   CHECK(rows[rows.size() - 5].kind == LobbyRowKind::Bots);
   CHECK(rows[rows.size() - 4].kind == LobbyRowKind::BotDifficulty);
@@ -223,34 +224,47 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
     CHECK_FALSE(m.apply(MenuAction::None));
   }
   SECTION("arena cycles both ways with wrap-around") {
-    CHECK(m.rowValue(m.focusedRow()) == db.arenas[0].name.view());
+    CHECK(m.rowValue(m.focusedRow()) == "Dojo");  // v0.94: the arena's title
     CHECK(m.apply(MenuAction::Right));
     CHECK(m.settings().arena == 1);
-    CHECK(m.rowValue(m.focusedRow()) == db.arenas[1].name.view());
+    CHECK(m.rowValue(m.focusedRow()) == client::arenaTitle(db.arenas[1].name.view()));
     CHECK(m.apply(MenuAction::Left));
     CHECK(m.apply(MenuAction::Left));
     CHECK(m.settings().arena == db.arenaCount - 1);
     CHECK(m.apply(MenuAction::Right));
     CHECK(m.settings().arena == 0);
   }
-  SECTION("mode cycles") {
+  SECTION("mode cycles over the modes for people (v0.94: not the bot contests)") {
     (void)m.apply(MenuAction::Down);
     CHECK(m.focusedRow().kind == LobbyRowKind::Mode);
-    for (uint8_t i = 1; i <= db.modeCount; ++i) {
+    std::vector<uint8_t> human;
+    for (uint8_t i = 0; i < db.modeCount; ++i) {
+      if (!client::isBotMode(db.modes[i])) human.push_back(i);
+    }
+    REQUIRE(human.size() < db.modeCount);  // the shipped content has bot contests
+    for (std::size_t i = 1; i <= human.size(); ++i) {
       CHECK(m.apply(MenuAction::Right));
-      CHECK(m.settings().mode == i % db.modeCount);
+      CHECK(m.settings().mode == human[i % human.size()]);
+      CHECK_FALSE(client::isBotMode(db.modeAt(m.settings().mode)));
     }
   }
   SECTION("loadout cycles through base and content/loadouts.toml (v0.31)") {
     REQUIRE(db.loadoutCount >= 2);
     m.setFocus(rowOf(m, LobbyRowKind::Loadout));
-    for (uint8_t i = 1; i <= db.loadoutCount; ++i) {
+    // v0.94: past the loadouts only bot contests hand out (grid_1t, catcher_1t).
+    std::vector<uint8_t> human;
+    for (uint8_t i = 0; i < db.loadoutCount; ++i) {
+      if (!client::isBotLoadout(db, i)) human.push_back(i);
+    }
+    REQUIRE(human.size() < db.loadoutCount);
+    for (std::size_t i = 1; i <= human.size(); ++i) {
       CHECK(m.apply(MenuAction::Right));
-      CHECK(m.settings().loadout == i % db.loadoutCount);
-      CHECK(m.rowValue(m.focusedRow()) == db.loadoutAt(m.settings().loadout).name.view());
+      CHECK(m.settings().loadout == human[i % human.size()]);
+      CHECK(m.rowValue(m.focusedRow()) ==
+            client::loadoutTitle(db.loadoutAt(m.settings().loadout).name.view()));
     }
     CHECK(m.apply(MenuAction::Left));
-    CHECK(m.settings().loadout == db.loadoutCount - 1);
+    CHECK(m.settings().loadout == human.back());
   }
   SECTION("a power-up toggles with either direction") {
     const std::size_t row = rowOf(m, LobbyRowKind::PowerUp, 1);
@@ -549,7 +563,8 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   saved.theme = presentation::ThemeChoice::Temple;
   const std::string text = client::settingsText(saved);
   CHECK(text ==
-        "arena=island\nmode=survival\nloadout=parry\npowerups=none\nbots=4\nbot_difficulty=hard\n"
+        "settings_version=2\narena=island\nmode=survival\nloadout=parry\npowerups=none\nbots="
+        "4\nbot_difficulty=hard\n"
         "volume=30\nmute=1\nregion=us\ntheme=temple\nmouse_aim=on\n");
 
   ClientOptions loaded;
@@ -713,6 +728,11 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   control.timeLimitTicks = 0;
   CHECK(client::modeSummary(control) ==
         "first team to 5 points, a zone taken in 1.5 s pays a point per 5.0 s, no clock");
+  sim::ModeDef kills;  // v0.90
+  kills.kind = sim::ModeKind::KillRounds;
+  kills.scoreToWin = 10;
+  CHECK(client::modeSummary(kills) ==
+        "first to 10 kills, judged at a round's end, last monkey standing");
   sim::ModeDef harvest;  // v0.82
   harvest.kind = sim::ModeKind::Harvest;
   harvest.teams = 2;
@@ -784,8 +804,10 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   const sim::ContentDB& db = shipped();
   ClientOptions o;
   std::string error;
-  CHECK(o.theme == presentation::ThemeChoice::Auto);
-  // The browser page turns ?theme=beach into this.
+  CHECK(o.theme == presentation::ThemeChoice::Beach);  // v0.93: Banana Beach by default
+  // The browser page turns ?theme=jungle into this.
+  REQUIRE(parse({"--theme", "jungle"}, o, error));
+  CHECK(o.theme == presentation::ThemeChoice::Jungle);
   REQUIRE(parse({"--theme", "beach"}, o, error));
   CHECK(o.theme == presentation::ThemeChoice::Beach);
   ClientOptions bad;
@@ -808,6 +830,9 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   const auto rows = m.rows();
   const std::size_t row = rows.size() - 1;
   REQUIRE(rows[row].kind == LobbyRowKind::Theme);
+  CHECK(m.rowValue(rows[row]) == "beach");  // v0.93: the default
+  CHECK(m.change(row, +1));                 // wraps to the first choice
+  CHECK(m.settings().theme == presentation::ThemeChoice::Auto);
   CHECK(m.rowValue(rows[row]) == "auto (temple)");  // the dojo, arena 0, is a temple
   CHECK(m.change(row, +1));
   CHECK(m.settings().theme == presentation::ThemeChoice::Jungle);
@@ -822,6 +847,51 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   room.setContent(db);
   for (const LobbyRow& r : room.rows())
     CHECK(r.kind != LobbyRowKind::Theme);
+}
+
+TEST_CASE("saved settings from before v0.93 move from auto to the beach once",
+          "[client][lobby][options]") {
+  const sim::ContentDB& db = shipped();
+  std::vector<std::string> warnings;
+  SECTION("an old text's theme=auto, the old default, reads as beach") {
+    ClientOptions o;
+    client::applySettingsText("arena=dojo\ntheme=auto\nmouse_aim=on\n", db, o, warnings);
+    CHECK(warnings.empty());
+    CHECK(o.theme == presentation::ThemeChoice::Beach);
+    // Saved again it says so, and a later read keeps it.
+    const std::string text = client::settingsText(o);
+    CHECK(text.find("settings_version=2\n") == 0);
+    CHECK(text.find("theme=beach\n") != std::string::npos);
+  }
+  SECTION("an old text's deliberate jungle or temple stays") {
+    ClientOptions o;
+    client::applySettingsText("theme=jungle\n", db, o, warnings);
+    CHECK(o.theme == presentation::ThemeChoice::Jungle);
+    client::applySettingsText("theme=temple\n", db, o, warnings);
+    CHECK(o.theme == presentation::ThemeChoice::Temple);
+  }
+  SECTION("auto chosen after the move is kept, whatever the line order") {
+    ClientOptions o;
+    client::applySettingsText("theme=auto\nsettings_version=2\n", db, o, warnings);
+    CHECK(warnings.empty());
+    CHECK(o.theme == presentation::ThemeChoice::Auto);
+    ClientOptions round;
+    client::applySettingsText(client::settingsText(o), db, round, warnings);
+    CHECK(round.theme == presentation::ThemeChoice::Auto);
+  }
+  SECTION("a bad version warns and counts as the old format") {
+    ClientOptions o;
+    client::applySettingsText("settings_version=x\ntheme=auto\n", db, o, warnings);
+    CHECK(warnings.size() == 1);
+    CHECK(o.theme == presentation::ThemeChoice::Beach);
+  }
+  SECTION("a flag still wins for the run") {
+    ClientOptions o;
+    client::applySettingsText("theme=auto\n", db, o, warnings);
+    std::string error;
+    REQUIRE(parse({"--theme", "auto"}, o, error));
+    CHECK(o.theme == presentation::ThemeChoice::Auto);
+  }
 }
 
 TEST_CASE("mouse aim: flag, browser query, settings round trip", "[client][lobby][options]") {

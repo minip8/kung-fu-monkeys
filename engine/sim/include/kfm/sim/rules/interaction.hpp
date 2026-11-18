@@ -21,9 +21,14 @@ namespace kfm::sim {
   return static_cast<uint8_t>(1u << static_cast<uint8_t>(p));
 }
 inline constexpr uint8_t kPhaseAny = 0;  // no phase constraint
-inline constexpr uint8_t kPhaseInFlight =
-    boomerangPhaseBit(BoomerangPhase::Outbound) | boomerangPhaseBit(BoomerangPhase::Returning);
-inline constexpr uint8_t kPhaseReturning = boomerangPhaseBit(BoomerangPhase::Returning);
+// v0.89: a banana its owner pulls back (Recalled) is in flight like a thrown
+// one, and comes home like a returning one.
+inline constexpr uint8_t kPhaseInFlight = boomerangPhaseBit(BoomerangPhase::Outbound) |
+                                          boomerangPhaseBit(BoomerangPhase::Returning) |
+                                          boomerangPhaseBit(BoomerangPhase::Recalled);
+inline constexpr uint8_t kPhaseReturning =
+    boomerangPhaseBit(BoomerangPhase::Returning) | boomerangPhaseBit(BoomerangPhase::Recalled);
+inline constexpr uint8_t kPhaseRecalled = boomerangPhaseBit(BoomerangPhase::Recalled);
 
 [[nodiscard]] constexpr bool phaseMaskMatches(uint8_t mask, BoomerangPhase p) {
   return mask == kPhaseAny || (mask & boomerangPhaseBit(p)) != 0;

@@ -7,7 +7,11 @@ every reserved field filled since architecture v0.35, the arena's zones 0 and 1 
 `reservedModeData` words 8–15 since v0.69. A module built against version 1 reads this document
 without §2.12. Architecture v0.82 (the harvest kind, designed in v0.81) stays within version 2:
 mode kind 8, the spawner's `tree` byte (was `pad0`) and harvest's `modeData` word 0 (§2.10, §3,
-§3.3), so a version 1 module plays the kind whole. The design and its rationale are in
+§3.3), so a version 1 module plays the kind whole. Architecture v0.89 (the arc flight and the
+recall) also stays within version 2 and changes no byte of a classic-flight mode's observation:
+a pulled banana reads as Returning, a banana pickup's `spawner` names who may recall it, and
+the rules block's flight fields report the arc's numbers in an arc mode (§2.5, §2.8, §2.9). The
+design and its rationale are in
 `docs/architecture.md` §8 and §11 ("Contest design"); this document is what an SDK author implements against. The C++ source of truth is `engine/ai/include/kfm/ai/observation.hpp`; a unit
 test (`tests/unit/ai/observation_test.cpp`) checks offsets from the tables below against it, and the
 header `static_assert`s every block's size and key offsets. Where this document and the header
@@ -177,10 +181,10 @@ Enumerations (byte values):
 |---|---|
 | relation | 0 None (empty slot), 1 Self, 2 Ally (a teammate in a team mode, since architecture v0.32; a free-for-all has none), 3 Enemy |
 | match phase | 0 Lobby, 1 RoundStarting (spawned, frozen), 2 Playing, 3 RoundEnded, 4 MatchEnded |
-| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else"), 8 Harvest (architecture v0.82: carry bananas from the trees to the team's home zone and bank them, §3.3; version 1 and 2 modules alike see the 8) |
+| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else"), 8 Harvest (architecture v0.82: carry bananas from the trees to the team's home zone and bank them, §3.3; version 1 and 2 modules alike see the 8), 9 KillRounds (architecture v0.90: free-for-all rounds as Rounds, but `scores` count eliminations, +1 to the attacker when it happens, and the match ends at a round's end once the strict leader has `scoreToWin`; no `modeData`) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
-| banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup) |
+| banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup). Architecture v0.89: a banana its owner pulls back off the floor (the recall, §2.5; the sim's `Recalled`, 4) is reported as 1 Returning: it flies toward its owner and is caught on contact, so no value is added |
 | pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
 | hazard kind | 0 Pit (a monkey whose whole disc ends a tick inside the union of the pit boxes while not Dashing falls: tag Falling for `fall_ticks`, then eliminated by nobody; architecture v0.57), 1 Slow (move speed × `speedMul` inside) |
 
@@ -228,7 +232,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 19 | u8 | `phase` | match phase |
 | 20 | u8 | `round` | current round, 1-based once the match started |
 | 21 | u8 | `roundsToWin` | rounds, survival: round wins that take the match |
-| 22 | u8 | `scoreToWin` | deathmatch: eliminations that win; harvest (architecture v0.82): the team score, in bananas banked, that wins (§3.3) |
+| 22 | u8 | `scoreToWin` | deathmatch, kill rounds (architecture v0.90): eliminations that win; harvest (architecture v0.82): the team score, in bananas banked, that wins (§3.3) |
 | 23 | u8 | `aliveCount` | monkeys in the arena |
 | 24 | u16 | `presentMask` | bit i: slot i is in the roster |
 | 26 | u16 | `aliveMask` | bit i: slot i has a monkey in the arena |
@@ -241,7 +245,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 38 | u16 | `respawnInvulnTicks` | deathmatch: spawn protection after a respawn |
 | 40 | u16 | `reservedTurnTicks` | §3: ticks per turn in a grid mode, 0 in a continuous one |
 | 42 | u16 | `reservedTicksToLatch` | §3: in a grid mode, ticks from this observation's tick to the next latch (0: this tick's input is latched) |
-| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures; harvest: bananas banked, less those stolen back, §3.3). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
+| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures; harvest: bananas banked, less those stolen back, §3.3; kill rounds, architecture v0.90: eliminations). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
 | 54 | u8[10] | `deaths` | per slot: eliminations suffered this match |
 | 64 | u16[10] | `respawnTicks` | per slot: ticks until a dead slot respawns, 0 = none due |
 | 84 | i16[10] | `reservedTeamScores` | §3: per team index (signed since architecture v0.57) |
@@ -271,7 +275,8 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 42 | u8 | `playerAmmoStart` | bananas at a spawn |
 | 43 | u8 | `pad0` | |
 
-Flight rule (what a flight helper reproduces; architecture §5.7): each Playing tick a banana's
+Flight rule (what a flight helper reproduces in a classic-flight mode; architecture §5.7):
+each Playing tick a banana's
 `ticksInPhase` grows by one; an Outbound banana whose `ticksInPhase` reaches `bananaOutboundTicks`
 turns Returning with `ticksInPhase` 0; a Returning banana whose owner is gone, or whose
 `ticksInPhase` exceeds `bananaMaxReturnTicks`, is Grounded (it stops and becomes a pickup);
@@ -287,6 +292,33 @@ one. Before v0.80 no mode overrode them, so the fields hold what they always hel
 existing mode; a flight helper that reads them, rather than hard-coding the def's numbers,
 stays exact in a mode that overrides. This is a value, not a layout or meaning change: version
 1 modules see the same numbers.
+
+The arc flight (architecture v0.89, §5.7). A mode flies one of two flights (`banana_flight` in
+`modes.toml`): `classic`, the rule above, kept by the grid modes and the contest (`grid_rounds`,
+`grid_rounds_1t`, `contest`, `control_1t`), whose observations did not change by a byte; and
+`arc`, every continuous mode's. An arc banana leaves fast and slows evenly to its apex at
+`bananaOutboundTicks`, turns at once to face its owner there, speeds up again on the way home
+while steering at most `bananaTurnRateBam` a tick (far less than classic: it does not chase a
+thrower who runs off), and drops (Grounded, then a pickup) once it has flown past its owner
+(its velocity points away from the owner), when it hits a wall on its way home, after
+`bananaMaxReturnTicks` returning, or when its owner is gone; a wall on the way out bounces it
+and shortens its flight. In an arc mode the rules block reports the arc's numbers:
+`bananaOutboundTicks`, `bananaTurnRateBam` and `bananaMaxReturnTicks` are the arc's, and
+`bananaSpeed` is the mean speed out (launch and apex speeds averaged), so that, as before,
+`bananaSpeed × charge × bananaOutboundTicks + bananaSpawnOffset` is the reach of a throw. The
+launch, apex and return speeds themselves are not in the observation (no layout change): a
+banana's real velocity is `bananas[i].velX/velY`, every tick. The C SDK's `kfm_flight_step`
+reproduces the classic flight exactly (a test pins it against the sim) and is only an
+approximation in an arc mode; `header`, layout and every other field are unchanged.
+
+The recall (architecture v0.89, §5.5). In a mode whose throw recalls (every continuous kit's
+`throw`; never the grid kits), a monkey with an empty hand that holds Throw lifts its own
+nearest banana lying on the floor (a banana pickup whose `spawner` is its slot + 1, §2.9) and
+pulls it home while the button stays held: the banana flies straight at the monkey, speeding
+up from rest, and slides along walls (it can stick behind one). Letting go drops it where it
+is (a pickup again). It is reported as a Returning banana of its owner; below the throw's
+recall harm speed it passes through other monkeys, faster it hits like any returning banana.
+A pulled banana that reaches the hand starts no throw; the next press does.
 
 ### 2.6 `self` (offset 228, 244 bytes)
 
@@ -429,7 +461,7 @@ scales with the speed. A press alone (one tick held) is a tap at `defParam0`.
 | 20 | i32 | `posY` | Q16.16 |
 | 24 | i32 | `velX` | Q16.16 per tick |
 | 28 | i32 | `velY` | Q16.16 per tick |
-| 32 | i32 | `speed` | Q16.16 per tick: flight speed (base × the thrower's power-up multiplier × the throw's charge, §2.6) |
+| 32 | i32 | `speed` | Q16.16 per tick: flight speed (base × the thrower's power-up multiplier × the throw's charge, §2.6); architecture v0.89: in an arc mode the base is the rules block's `bananaSpeed`, the mean speed out (the real speed changes every tick: `velX`, `velY`) |
 | 36 | i32 | `radius` | Q16.16: contact radius (base × the thrower's power-up multiplier) |
 | 40 | i32 | `approachDistance` | Q16.16: centre distance at the closest approach; 0 while self is not alive |
 
@@ -450,7 +482,7 @@ banana is caught on contact.
 | 0 | u8 | `valid` | 1: a pickup in this pool slot |
 | 1 | u8 | `kind` | pickup kind |
 | 2 | u8 | `powerUp` | PowerUp: index of the power-up def in the content |
-| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners`; Flag (architecture v0.33): the flag's team; Banana: 0 (a tree's fruit too, architecture v0.82: nothing tells it from a dropped banana but where it lies) |
+| 3 | u8 | `spawner` | PowerUp: index of its spawner in `arena.spawners`; Flag (architecture v0.33): the flag's team; Banana: 0 (a tree's fruit too, architecture v0.82: nothing tells it from a dropped banana but where it lies), or since architecture v0.89 the slot + 1 of the monkey that may recall it (a thrown banana that came down while its thrower's throw recalls, §2.5; always 0 in a mode without recall, every grid mode) |
 | 4 | i32 | `posX` | Q16.16 |
 | 8 | i32 | `posY` | Q16.16 |
 | 12 | i32 | `radius` | Q16.16: contact radius |
@@ -695,7 +727,8 @@ holding two or more it throws at an enemy in a clear line.
   anything does not.
 - Appending new enumeration values (a new ability or mode kind, a new tag bit) is allowed within a
   version: a bot must treat an unknown value as "something else", never as an error. Mode kinds
-  7 (control, architecture v0.80) and 8 (harvest, v0.82) were appended this way, and harvest's
+  7 (control, architecture v0.80), 8 (harvest, v0.82) and 9 (kill rounds, v0.90) were appended
+  this way, and harvest's
   `tree` byte named a pad byte that was always 0, so neither needed a version.
 - Content (arenas, modes, ability and power-up numbers) is data, not schema: it reaches a bot
   through the observation (`rules`, `abilities[s].def*`, `arena`) and `contentHash`, never through

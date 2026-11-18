@@ -70,6 +70,12 @@ abilities = ["dash", "throw"]
 radius = 0.35
 speed = 16
 spawn_offset = 1
+arc_launch_speed = 29
+arc_apex_speed = 3
+arc_outbound_ticks = 36
+arc_return_speed = 20
+arc_return_accel_ticks = 24
+arc_return_ticks = 60
 
 [pickup]
 radius = 0.5
@@ -722,7 +728,7 @@ TEST_CASE("values: types, ranges and capacities", "[content][loader]") {
     manyArenas += "[[arena]]\nname = \"a" + std::to_string(i) +
                   "\"\nhalf_extents = [10, 5]\nspawn_points = [[0, 0]]\n";
   }
-  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 16, kMaxArenas)"));
+  CHECK(contains(loadErrors(manyArenas), "too many arenas (at most 32, kMaxArenas)"));
 }
 
 // --- power-ups (§5.8, v0.20) ------------------------------------------------
@@ -1271,15 +1277,50 @@ score_to_win = 0
     CHECK(flight.modes[0].bananaTurnRateBam == 0);
     CHECK(flight.modes[1].bananaOutboundTicks == 45);
     CHECK(flight.modes[1].bananaTurnRateBam == 8000);
+    // v0.89: a mode flies the arc unless it names classic, so 0 is the arc's.
     CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[0]) ==
-          flight.boomerang.outboundTicks);
+          flight.boomerang.arcOutboundTicks);
     CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[1]) == 45);
     CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[0]) ==
-          flight.boomerang.turnRateBam);
+          flight.boomerang.arcTurnRateBam);
     CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[1]) == 8000);
   }
   CHECK(loads(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65535\n"
                      "banana_turn_rate = 32768\n"));
+  // v0.89: banana_flight, arc by default, classic the M1 flight.
+  {
+    ContentDB flight{};
+    Diagnostics flightDiag;
+    REQUIRE(parseContent(base + "[[mode]]\nname = \"old\"\nbanana_flight = \"classic\"\n"
+                                "[[mode]]\nname = \"new\"\nbanana_flight = \"arc\"\n",
+                         "modes.toml", flight, flightDiag));
+    CHECK(flight.modes[0].bananaFlight == sim::BananaFlight::Arc);
+    CHECK(flight.modes[1].bananaFlight == sim::BananaFlight::Classic);
+    CHECK(flight.modes[2].bananaFlight == sim::BananaFlight::Arc);
+    CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[1]) ==
+          flight.boomerang.outboundTicks);
+    CHECK(sim::bananaMaxReturnTicksOf(flight.boomerang, flight.modes[1]) ==
+          flight.boomerang.maxReturnTicks);
+    CHECK(sim::bananaMaxReturnTicksOf(flight.boomerang, flight.modes[2]) == 60);
+    CHECK(sim::bananaFlightSpeedOf(flight.boomerang, flight.modes[1]) == flight.boomerang.speed);
+    CHECK(sim::bananaFlightSpeedOf(flight.boomerang, flight.modes[2]) ==
+          Fixed::fromRaw((flight.boomerang.arcLaunchSpeed.raw + flight.boomerang.arcApexSpeed.raw) /
+                         2));
+    CHECK(sim::ModeDef{}.bananaFlight == sim::BananaFlight::Classic);  // a hand-built mode
+  }
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_flight = \"loop\"\n"),
+                 "unknown banana_flight \"loop\""));
+  // An arc mode needs a whole arc; a content set of classic modes does not.
+  CHECK(contains(loadErrors(replaced(base, "arc_return_accel_ticks = 24", "")),
+                 "arc_return_accel_ticks"));
+  CHECK(contains(loadErrors(replaced(base, "arc_apex_speed = 3", "arc_apex_speed = 30")),
+                 "arc_apex_speed <= arc_launch_speed"));
+  {
+    std::string classic = replaced(base, "arc_launch_speed = 29", "");
+    classic =
+        replaced(classic, "name = \"rounds\"", "name = \"rounds\"\nbanana_flight = \"classic\"");
+    CHECK(loads(classic));
+  }
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65536\n"),
                  "'banana_outbound_ticks'"));
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_turn_rate = 32769\n"),
@@ -1411,9 +1452,9 @@ TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][
   const auto pooled = [](std::string_view list) {
     return replaced(withHarvest(), R"(arenas = ["grove", "grove2"])", list);
   };
-  CHECK(contains(loadErrors(pooled("arenas = []")), "'arenas' must list 1 to 16 arena names"));
+  CHECK(contains(loadErrors(pooled("arenas = []")), "'arenas' must list 1 to 32 arena names"));
   CHECK(
-      contains(loadErrors(pooled("arenas = \"grove\"")), "'arenas' must list 1 to 16 arena names"));
+      contains(loadErrors(pooled("arenas = \"grove\"")), "'arenas' must list 1 to 32 arena names"));
   CHECK(contains(loadErrors(pooled("arenas = [3]")), "'arenas' entries must be arena names"));
   CHECK(contains(loadErrors(pooled("arenas = [\"grove2\", \"nowhere\"]")),
                  "'arenas' names unknown arena \"nowhere\""));
@@ -1433,7 +1474,7 @@ TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][
                  "respawn_ticks must be at least 1 in harvest"));
   CHECK(loads(replaced(withHarvest(), "score_to_win = 40", "score_to_win = 40\ncatch_score = 1")));
   CHECK(contains(loadErrors(std::string(kMinimal) + "[[mode]]\nname = \"x\"\nkind = \"farm\"\n"),
-                 "control or harvest)"));
+                 "control, harvest or kill_rounds)"));
   {
     // validateContent() holds content built in code to the same rules.
     ContentDB v{};
@@ -1447,7 +1488,7 @@ TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][
     CHECK_FALSE(validateContent(v, zero));
     CHECK(zero.format().contains("bank_ticks must be at least 1"));
     h.bankTicks = 2;
-    h.arenaSet = static_cast<uint16_t>(h.arenaSet | (1u << 15));
+    h.arenaSet |= 1u << 31;  // v0.91: a u32 over kMaxArenas 32
     Diagnostics undefined;
     CHECK_FALSE(validateContent(v, undefined));
     CHECK(undefined.format().contains("arenas names an undefined arena"));
@@ -1468,6 +1509,44 @@ TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][m
   CHECK(loaded.modes[deathmatch].timeLimitTicks > 0);
   CHECK(loaded.modes[survival].kind == sim::ModeKind::Survival);
   CHECK(loaded.modes[survival].timeLimitTicks > 0);
+}
+
+// v0.90: kill rounds, appended as the last mode: rounds' flow, eliminations
+// as points to ten, the round kinds' pause and the drop economy.
+TEST_CASE("content/ ships kill_rounds, appended (v0.90)", "[content][loader][modes]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> index = db.findMode("kill_rounds");
+  REQUIRE(index);
+  CHECK(index.value_or(0) == db.modeCount - 1);
+  CHECK(index.value_or(0) == 11);
+  const sim::ModeDef& m = db.modes[index.value_or(0)];
+  const sim::ModeDef& rounds = db.modes[0];
+  CHECK(m.kind == sim::ModeKind::KillRounds);
+  CHECK(sim::scoresPoints(m.kind));
+  CHECK(sim::playsRounds(m.kind));
+  CHECK(m.scoreToWin == 10);
+  CHECK(m.teams == 0);
+  CHECK(m.timeLimitTicks == 0);
+  CHECK(m.catchScore == 0);
+  CHECK(m.suicideScore == 0);
+  CHECK(m.deathBananas == sim::DeathBananas::Drop);
+  CHECK(m.roundStartTicks == rounds.roundStartTicks);
+  CHECK(m.roundEndTicks == rounds.roundEndTicks);
+  CHECK(m.dryRoundTicks == rounds.dryRoundTicks);
+  // A free-for-all kind: it plays on every continuous arena, dojo first.
+  CHECK(db.compatible(0, index.value_or(0)));
+}
+
+TEST_CASE("modes: kill_rounds needs a target and takes the point keys (v0.90)",
+          "[content][loader][modes]") {
+  const std::string base =
+      std::string(kMinimal) + "[[mode]]\nname = \"k\"\nkind = \"kill_rounds\"\nscore_to_win = 3\n";
+  CHECK(loads(base));
+  CHECK(loads(base + "catch_score = 1\nsuicide_score = -1\n"));
+  CHECK(contains(loadErrors(replaced(base, "score_to_win = 3", "score_to_win = 0")),
+                 "score_to_win must be at least 1 in kill_rounds"));
 }
 
 TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loader][modes]") {
@@ -1523,9 +1602,9 @@ TEST_CASE("content/ ships contest as harvest on the pool with grid_rounds_1t's s
   REQUIRE(grove);
   REQUIRE(base);
   // The ladder points at the name, and the row keeps its index; control_1t
-  // is appended.
+  // is appended after it (and kill_rounds, v0.90, after control_1t).
   CHECK(contest.value_or(0) < control.value_or(0));
-  CHECK(control.value_or(0) == db.modeCount - 1);
+  CHECK(control.value_or(0) == 10);
   const sim::ModeDef& g = db.modes[grid.value_or(0)];
   const sim::ModeDef& m = db.modes[contest.value_or(0)];
   CHECK(m.kind == sim::ModeKind::Harvest);
@@ -1766,6 +1845,26 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
                  "not speed, param0 or param1"));
   CHECK(contains(loadErrors(withAbility("kind = \"throw\"\nspeed = 3\n")),
                  "a charged throw needs 0 < charge_min < charge_max"));
+  // v0.89: a throw's recall.
+  {
+    ContentDB db{};
+    Diagnostics d;
+    const bool ok = parseContent(withAbility("kind = \"throw\"\nrecall_speed = 12\n"
+                                             "recall_accel_ticks = 45\nrecall_harm_speed = 6\n"
+                                             "recall_range = 10.5\n"),
+                                 "test.toml", db, d);
+    INFO(d.format());
+    REQUIRE(ok);
+    const sim::AbilityDef& thr = db.abilities[db.abilityCount - 1];
+    CHECK(thr.recallSpeed == Fixed::fromRatio(12, 60));
+    CHECK(thr.recallAccelTicks == 45);
+    CHECK(thr.recallHarmSpeed == Fixed::fromRatio(6, 60));
+    CHECK(thr.recallRange == Fixed::fromRatio(21, 2));
+  }
+  CHECK(contains(loadErrors(withAbility("kind = \"dash\"\nrecall_speed = 12\n")),
+                 "'recall_speed' belongs to a throw"));
+  CHECK(contains(loadErrors(withAbility("kind = \"throw\"\nrecall_speed = 12\n")),
+                 "recall_accel_ticks >= 1"));
   // A third slot through the loadout.
   CHECK(loads(replaced(withAbility("kind = \"blink\"\nactive_ticks = 10\nspeed = 30\n"),
                        "[\"dash\", \"throw\"]", "[\"dash\", \"throw\", \"extra\"]")));

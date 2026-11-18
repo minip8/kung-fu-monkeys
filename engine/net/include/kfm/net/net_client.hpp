@@ -76,6 +76,26 @@
 // frames and would otherwise freeze at the gap). Not while it holds: the
 // resumed match's snapshot is on its way anyway.
 //
+// The background (v0.92, §6.6 "A hidden client"): a host that cannot run its
+// frames for a while (a hidden browser tab: requestAnimationFrame stops) but
+// can still be woken a few times a second calls setBackground(true) and keeps
+// calling pump(). The client then holds like a waiting room does: no ticks,
+// no inputs (the server's silent-player rule stands its monkeys still after
+// idleAfterTicks), while pings keep both timeouts fed and control messages
+// (RoomState, MatchConfig, PlayerJoined/Left, Disconnect) are handled as
+// usual. setBackground(false) wakes it: a Running client asks the server for
+// a snapshot (ResyncRequest, retried every resyncRetryNs until one arrives),
+// then loads it and runs forward to estimated server tick + target lead
+// exactly as the room's resume does (lead controller reset, clock
+// restarted), so a minute or an hour away costs one snapshot and never
+// seconds of simulation in one frame. A room that holds (Waiting, Over)
+// needs no wake: its own resume does the same when the match starts.
+//
+// Why the session ended (v0.92): disconnectCause() says which side gave up
+// (this client's silence timeout, the transport closing, a Disconnect from
+// the server with disconnectReason(), or a local quit), and silentNs() how
+// long nothing has arrived, for the host's status line.
+//
 // Events (§5.9) pass through an EventJournal: re-emitted events of a
 // re-simulation are deduplicated, abandoned undelivered ones dropped, events
 // of verified ticks are final.
@@ -125,7 +145,10 @@ struct ClientConfig {
   uint8_t spectatorDelayTicks{3};
   uint64_t pingIntervalNs{250'000'000ull};
   uint64_t syncPingIntervalNs{50'000'000ull};  // until the session runs
-  uint64_t serverTimeoutNs{5'000'000'000ull};
+  // No packet from the server for this long ends the session (v0.92: 10 s,
+  // was 5 s; shorter than the server's 15 s, so the client gives up and
+  // reconnects first, §6.6 "Timeouts and grace").
+  uint64_t serverTimeoutNs{10'000'000'000ull};
   uint64_t resyncRetryNs{1'000'000'000ull};
   // An authoritative frame no later message will carry (see "A gap" above)
   // is waited for this long before a resync repairs it.
@@ -150,6 +173,15 @@ enum class ClientState : uint8_t {
 
 // What happened since beginFrame(); a host applies presentation::onRollback
 // when rolledBack is set (§6.9).
+// v0.92: which side ended the session (see the header comment).
+enum class DisconnectCause : uint8_t {
+  None = 0,          // not disconnected
+  Quit,              // disconnect() was called here
+  ServerSilent,      // nothing from the server for serverTimeoutNs
+  TransportClosed,   // the transport reported the connection closed or failed
+  ServerDisconnect,  // the server sent Disconnect (disconnectReason())
+};
+
 struct FrameReport {
   bool rolledBack{false};  // the timeline changed (rollback or snapshot load)
   uint32_t rollbacks{0};
@@ -204,6 +236,7 @@ struct ClientNetStats {
   uint64_t gapResyncs{0};  // resyncs asked for to fill a gap in the stream (v0.70)
   uint64_t snapshotsLoaded{0};
   uint64_t matchRestarts{0};  // snapshots of an announced new match loaded
+  uint64_t wakes{0};          // returns from the background that resynced (v0.92)
   // Traffic.
   uint64_t bytesSent{0};
   uint64_t bytesReceived{0};
@@ -262,6 +295,17 @@ class NetClient {
   [[nodiscard]] std::optional<DisconnectReason> disconnectReason() const {
     return disconnectReason_;
   }
+  [[nodiscard]] DisconnectCause disconnectCause() const { return disconnectCause_; }
+  // Time since the last packet from the server (0 before the first pump).
+  [[nodiscard]] uint64_t silentNs(uint64_t nowNs) const {
+    return nowNs > lastRecvNs_ ? nowNs - lastRecvNs_ : 0;
+  }
+
+  // v0.92: the host cannot run frames for now (see the header comment).
+  void setBackground(bool background);
+  [[nodiscard]] bool background() const { return background_; }
+  // Back from the background, waiting for the snapshot to resume from.
+  [[nodiscard]] bool waking() const { return wakePending_; }
   [[nodiscard]] bool spectator() const { return localSlots_ == 0; }
   // v0.44: synced, asked for slots and holds none yet (the server queued it
   // until a bot gives one up).
@@ -287,7 +331,7 @@ class NetClient {
   // its RoomSettings before it shows the server's settings again).
   [[nodiscard]] uint32_t roomUpdates() const { return roomUpdates_; }
   // Whether the client is holding its timeline (see the header comment).
-  [[nodiscard]] bool holding() const { return roomHeld() || resumePending_; }
+  [[nodiscard]] bool holding() const { return roomHeld() || resumePending_ || background_; }
   // The host's requests; the server ignores anyone else's (Running only).
   void sendRoomSettings(const RoomSettings& settings);
   void sendStart();
@@ -379,6 +423,9 @@ class NetClient {
   ClientState state_{ClientState::Idle};
   RejectReason rejectReason_{RejectReason::ProtocolMismatch};
   std::optional<DisconnectReason> disconnectReason_;
+  DisconnectCause disconnectCause_{DisconnectCause::None};
+  bool background_{false};   // v0.92: the host cannot run frames
+  bool wakePending_{false};  // back from it: the resume snapshot was asked for
 
   // Session.
   sim::MatchConfig matchConfig_{};

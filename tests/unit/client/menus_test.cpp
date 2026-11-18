@@ -26,17 +26,23 @@ using client::PauseItem;
 using client::SettingsMenu;
 using client::SettingsRow;
 
-TEST_CASE("main menu: Play online, Play local, Settings, Quit natively", "[client][menu]") {
+TEST_CASE("main menu: Play online, Play local, How to play, Settings, Quit natively",
+          "[client][menu]") {
   MainMenu m;
-  REQUIRE(m.items().size() == 4);
+  REQUIRE(m.items().size() == 5);
   CHECK(m.items()[0] == MainMenuItem::PlayOnline);
-  CHECK(m.items()[3] == MainMenuItem::Quit);
+  CHECK(m.items()[2] == MainMenuItem::HowToPlay);  // v0.94
+  CHECK(m.items()[4] == MainMenuItem::Quit);
   CHECK(m.focusedItem() == MainMenuItem::PlayOnline);
   CHECK(m.activate() == MainMenuItem::PlayOnline);
   m.apply(MenuAction::Down);
   CHECK(m.activate() == MainMenuItem::PlayLocal);
   m.apply(MenuAction::Right);  // Left/Right do nothing
   CHECK(m.focusedItem() == MainMenuItem::PlayLocal);
+  m.apply(MenuAction::Down);
+  CHECK(m.activate() == MainMenuItem::HowToPlay);
+  CHECK(std::string(MainMenu::label(MainMenuItem::HowToPlay)) == "How to play");
+  CHECK_FALSE(std::string(m.hint(MainMenuItem::HowToPlay)).empty());
   m.apply(MenuAction::Down);
   m.apply(MenuAction::Down);
   CHECK(m.focusedItem() == MainMenuItem::Quit);
@@ -48,8 +54,8 @@ TEST_CASE("main menu: Play online, Play local, Settings, Quit natively", "[clien
 
   // The browser has no Quit.
   const MainMenu web(false);
-  REQUIRE(web.items().size() == 3);
-  CHECK(web.items()[2] == MainMenuItem::Settings);
+  REQUIRE(web.items().size() == 4);
+  CHECK(web.items()[3] == MainMenuItem::Settings);
 }
 
 TEST_CASE("main menu: without a way online, Play online is greyed and skipped", "[client][menu]") {
@@ -105,10 +111,12 @@ TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme, mouse aim"
 
   m.apply(MenuAction::Down, ls);  // v0.52
   REQUIRE(m.focusedRow() == SettingsRow::Theme);
+  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "beach");  // v0.93's default
+  CHECK(m.apply(MenuAction::Right, ls));                                   // wraps
+  CHECK(ls.theme == kfm::presentation::ThemeChoice::Auto);
   CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "auto");
-  CHECK(m.apply(MenuAction::Left, ls));  // wraps
+  CHECK(m.apply(MenuAction::Left, ls));
   CHECK(ls.theme == kfm::presentation::ThemeChoice::Beach);
-  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "beach");
 
   m.apply(MenuAction::Down, ls);  // mouse aim: on by default, either arrow toggles
   REQUIRE(m.focusedRow() == SettingsRow::MouseAim);
@@ -225,17 +233,40 @@ TEST_CASE("--screen opens a front-end screen (v0.43)", "[client][menu][options]"
   CHECK_FALSE(parse({"--screen"}, bad, error));
 }
 
+TEST_CASE("--window sets the native window's size (v0.94)", "[client][options]") {
+  const auto parse = [](std::vector<const char*> argv, client::ClientOptions& o, std::string& e) {
+    argv.insert(argv.begin(), "kfm_client");
+    return client::parseClientOptions(std::span<const char* const>(argv.data(), argv.size()), o, e);
+  };
+  client::ClientOptions o;
+  std::string error;
+  CHECK(o.windowWidth == 1280);
+  CHECK(o.windowHeight == 720);
+  REQUIRE(parse({"--window", "700x900"}, o, error));
+  CHECK(o.windowWidth == 700);
+  CHECK(o.windowHeight == 900);
+  for (const char* bad : {"700", "700x", "x900", "100x900", "700x99999", "axb"}) {
+    client::ClientOptions b;
+    CHECK_FALSE(parse({"--window", bad}, b, error));
+    CHECK(error.find("--window") != std::string::npos);
+  }
+  client::ClientOptions b;
+  CHECK_FALSE(parse({"--window"}, b, error));
+}
+
 TEST_CASE("pause menu: the local and online buttons, focus on Resume (v0.46)", "[client][menu]") {
   client::PauseMenu m;
   CHECK_FALSE(m.isOpen());
   m.open(false);
   REQUIRE(m.isOpen());
   CHECK_FALSE(m.online());
-  REQUIRE(m.items().size() == 3);
+  REQUIRE(m.items().size() == 4);
   CHECK(m.items()[0] == PauseItem::Resume);
-  CHECK(m.items()[1] == PauseItem::BackToLobby);
-  CHECK(m.items()[2] == PauseItem::MainMenu);
+  CHECK(m.items()[1] == PauseItem::HowToPlay);  // v0.94
+  CHECK(m.items()[2] == PauseItem::BackToLobby);
+  CHECK(m.items()[3] == PauseItem::MainMenu);
   CHECK(m.focusedItem() == PauseItem::Resume);
+  m.apply(MenuAction::Down);
   m.apply(MenuAction::Down);
   m.apply(MenuAction::Down);
   CHECK(m.focusedItem() == PauseItem::MainMenu);
@@ -245,18 +276,19 @@ TEST_CASE("pause menu: the local and online buttons, focus on Resume (v0.46)", "
   CHECK(m.focusedItem() == PauseItem::MainMenu);
   CHECK(std::string(client::PauseMenu::label(PauseItem::BackToLobby)) == "Back to lobby");
 
-  // Reopened online: two buttons, the focus back on Resume (clamped from 2).
+  // Reopened online: three buttons, the focus back on Resume (clamped from 3).
   m.close();
   CHECK_FALSE(m.isOpen());
   m.open(true);
   CHECK(m.online());
-  REQUIRE(m.items().size() == 2);
+  REQUIRE(m.items().size() == 3);
   CHECK(m.items()[0] == PauseItem::Resume);
-  CHECK(m.items()[1] == PauseItem::LeaveRoom);
+  CHECK(m.items()[1] == PauseItem::HowToPlay);
+  CHECK(m.items()[2] == PauseItem::LeaveRoom);
   CHECK(m.focusedItem() == PauseItem::Resume);
-  m.setFocus(1);
+  m.setFocus(2);
   CHECK(m.focusedItem() == PauseItem::LeaveRoom);
-  m.setFocus(2);  // out of range: ignored
+  m.setFocus(3);  // out of range: ignored
   CHECK(m.focusedItem() == PauseItem::LeaveRoom);
   CHECK(std::string(client::PauseMenu::label(PauseItem::LeaveRoom)) == "Leave room");
 }
@@ -313,6 +345,27 @@ TEST_CASE("pause menu: what opens it, what resumes, what picks (v0.46)", "[clien
     CHECK(m.press(keyDown(Key::Enter)) == PauseItem::Resume);
   }
   CHECK(m.focusedItem() == PauseItem::Resume);
+
+  // v0.94: How to play shows the controls in the menu's place; every back
+  // or pick press then closes the card (HowToPlay), never resumes.
+  m.open(false);
+  m.setFocus(1);
+  REQUIRE(m.press(keyDown(Key::Enter)) == PauseItem::HowToPlay);
+  m.setHelp(true);
+  CHECK(m.helpOpen());
+  CHECK(m.press(keyDown(Key::Escape)) == PauseItem::HowToPlay);
+  CHECK(m.press(pad(PadButton::East)) == PauseItem::HowToPlay);
+  CHECK(m.press(pad(PadButton::Start)) == PauseItem::HowToPlay);
+  CHECK(m.press(keyDown(Key::Enter)) == PauseItem::HowToPlay);
+  CHECK_FALSE(m.press(keyDown(Key::J)));
+  m.setHelp(false);
+  CHECK_FALSE(m.helpOpen());
+  CHECK(m.press(keyDown(Key::Escape)) == PauseItem::Resume);
+  m.setHelp(true);
+  m.close();  // closing drops the card too
+  CHECK_FALSE(m.helpOpen());
+  m.setHelp(true);  // a closed menu has no card
+  CHECK_FALSE(m.helpOpen());
 }
 
 // v0.55: the highlight follows the last menu device. main.cpp feeds every

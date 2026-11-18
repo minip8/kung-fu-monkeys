@@ -324,6 +324,7 @@ TEST_CASE("the contest banana flies 3 turns out and comes home within a few cell
   const sim::MatchContent m(db, arena, mode, sim::kAllPowerUps, 0, cfg.teams);
   CHECK(m.bananaOutboundTicks() == 3);
   CHECK(m.bananaTurnRateBam() == 15474);  // 85 degrees
+  CHECK_FALSE(m.arcFlight());             // v0.89: the contest keeps the classic flight
   sim::WorldState s = sim::initialWorld(cfg);
   sim::EventSink sink;
   const auto tick = [&](sim::PlayerInput p0) {
@@ -486,7 +487,7 @@ constexpr Beat kRichBeat{30, 30, 3};
 TEST_CASE("the harvest pool: grove, orchards, gorge and burrows appended in that order (v0.82)",
           "[content][contest][harvest]") {
   const ContentDB& db = shipped();
-  CHECK(db.arenaCount == 15);  // of kMaxArenas' 16
+  CHECK(db.arenaCount == 19);  // of kMaxArenas' 32 (v0.91: four large arenas appended)
   for (size_t k = 0; k < kPool.size(); ++k) {
     INFO(kPool[k].name);
     CHECK(db.findArena(kPool[k].name) == std::optional<uint8_t>{static_cast<uint8_t>(11 + k)});
@@ -675,6 +676,7 @@ TEST_CASE("the contest plays harvest on the pool, grove when a host picks one (v
     const sim::MatchContent mc(db, cfg.arena, mode, sim::kAllPowerUps, 0, cfg.teams);
     CHECK(mc.bananaOutboundTicks() == 3);
     CHECK(mc.bananaTurnRateBam() == 15474);
+    CHECK_FALSE(mc.arcFlight());  // v0.89
     sim::WorldState s = sim::initialWorld(cfg);
     sim::EventSink sink;
     sim::InputFrame f;

@@ -29,6 +29,12 @@ abilities = ["dash", "throw"]
 radius = 0.35
 speed = 16
 spawn_offset = 1
+arc_launch_speed = 29
+arc_apex_speed = 3
+arc_outbound_ticks = 36
+arc_return_speed = 20
+arc_return_accel_ticks = 24
+arc_return_ticks = 60
 
 [pickup]
 radius = 0.5

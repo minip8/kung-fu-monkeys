@@ -25,6 +25,7 @@ add_library(kfm_sim STATIC
   src/modes/capture.cpp
   src/modes/control.cpp
   src/modes/harvest.cpp
+  src/modes/kill_rounds.cpp
   src/spaces/registry.cpp
   src/spaces/continuous.cpp
   src/spaces/grid.cpp
@@ -41,6 +42,7 @@ add_library(kfm_sim STATIC
   src/rules/bananas.cpp
   src/rules/slam.cpp
   src/rules/parry.cpp
+  src/rules/recall.cpp
   src/systems/rules.cpp
   src/systems/input.cpp
   src/systems/ability.cpp

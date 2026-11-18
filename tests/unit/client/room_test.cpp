@@ -251,7 +251,37 @@ TEST_CASE("online menu: the region cycles, Create room and Join make commands",
   m.apply(client::MenuAction::Up);
   CHECK(m.focusedRow() == OnlineRow::Back);
   m.apply(client::MenuAction::Down);
+  CHECK(m.focusedRow() == OnlineRow::Name);
+  m.apply(client::MenuAction::Down);
   CHECK(m.focusedRow() == OnlineRow::Region);
+}
+
+TEST_CASE("online menu: the name comes first (v0.94)", "[client][room][online]") {
+  OnlineMenu m;
+  using Activation = OnlineMenu::Activation;
+  const auto row = [](OnlineRow r) { return static_cast<std::size_t>(r); };
+  REQUIRE(OnlineMenu::rows().front() == OnlineRow::Name);
+  CHECK(std::string(OnlineMenu::rowLabel(OnlineRow::Name)) == "Your name");
+  // A first visit (the name is the one the client picked) opens on it...
+  m.open(false);
+  CHECK(m.focusedRow() == OnlineRow::Name);
+  // ... and Enter on it asks for the name field; Left/Right do nothing.
+  CHECK(m.activate() == Activation::EditName);
+  CHECK_FALSE(m.takeCommand().has_value());
+  CHECK_FALSE(m.apply(client::MenuAction::Right));
+  // Up from the name wraps to Back, Down goes on to the region.
+  m.apply(client::MenuAction::Down);
+  CHECK(m.focusedRow() == OnlineRow::Region);
+  // A player with a name of their own opens on Create room.
+  m.open(true);
+  CHECK(m.focusedRow() == OnlineRow::CreateRoom);
+  CHECK(m.activate(row(OnlineRow::Name)) == Activation::EditName);
+  // Create works with the offered name as it is: no name is required.
+  CHECK(m.activate(row(OnlineRow::CreateRoom)) == Activation::Command);
+  CHECK(m.takeCommand().has_value());
+  // The line under the field says what the name is for.
+  CHECK(std::string(OnlineMenu::nameHint(false)).find("picked") != std::string::npos);
+  CHECK(std::string(OnlineMenu::nameHint(true)).find("Friends") != std::string::npos);
 }
 
 TEST_CASE("online menu: every region with its availability (lobby v1.1)",
@@ -369,7 +399,8 @@ TEST_CASE("lobby refusals and closes in plain words", "[client][room][status]") 
   CHECK(lobbyErrorText("lobby refused: server_gone", join) == "Room ABCDE's server went away");
   CHECK(lobbyErrorText("lobby refused: something_new", join) == "The lobby refused: something_new");
   CHECK(lobbyErrorText("lobby closed: server_gone", join) == "Room ABCDE's server went away");
-  CHECK(lobbyErrorText("lobby closed: kicked", join) == "Removed from the room by its server");
+  CHECK(lobbyErrorText("lobby closed: kicked", join) ==
+        "Dropped by the room's server (connection lost)");
   CHECK(lobbyErrorText("lobby closed: room_closed", join) == "Room ABCDE closed");
   // v1.2 (v0.44): a rejoin's refusal, and the socket a rejoin replaced.
   CHECK(lobbyErrorText("lobby refused: bad_token", join) ==
@@ -480,7 +511,9 @@ struct LobbyRig {
   uint64_t serverTicks{0};
   std::vector<std::vector<std::byte>> tokensSeen;
 
-  explicit LobbyRig(const LobbyTarget& target) {
+  // v0.92: the tests of the Reconnect button and the rejoin retry keep the
+  // session from reconnecting on its own.
+  explicit LobbyRig(const LobbyTarget& target, bool autoReconnect = false) {
     net::ServerConfig sc;
     sc.acceptToken = [this](std::span<const std::byte> t) {
       tokensSeen.emplace_back(t.begin(), t.end());
@@ -493,6 +526,7 @@ struct LobbyRig {
     NetSessionConfig config;
     config.serverLabel = "ws://lobby";
     config.lobby = target;
+    config.autoReconnect = autoReconnect;
     platform::InputSampler sampler;
     REQUIRE(sampler.bind(PlayerId{0}, platform::DeviceBinding::keyboard(0)));
     session = std::make_unique<NetSession>(config, sampler, transport.get(), now);
@@ -799,4 +833,62 @@ TEST_CASE("a rejoin refused for another reason is not retried", "[client][room][
     CHECK_FALSE(s.rejoinRetryPending());
     CHECK(s.phase() == NetPhase::Disconnected);
   }
+}
+
+// --- reconnect on its own (v0.92) ------------------------------------------------------
+
+TEST_CASE("a lost room session rejoins on its own, through an early unknown_code (v0.92)",
+          "[client][room][net][reconnect]") {
+  LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""}, true);
+  NetSession& s = *rig.session;
+  rig.transport->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  const sim::PlayerMask slots = s.localSlots();
+
+  rig.net.cut(net::PeerId{1});
+  REQUIRE(rig.runUntil([&] { return s.autoReconnecting(); }, kSec));
+  CHECK(s.phase() == NetPhase::Connecting);
+  CHECK_FALSE(s.canReconnect());
+  CHECK(s.statusText() ==
+        "Connection lost (the connection closed): reconnecting to room ABCDE ...");
+  // The first attempt a quarter of a second after the drop: the room's server
+  // has not claimed the room back yet.
+  REQUIRE(rig.runUntil([&] { return s.autoReconnectDue(rig.now); }, kSec));
+  FakeLobbyTransport* t = &reconnectOverNewTransport(rig);
+  CHECK(s.autoAttempts() == 1);
+  CHECK(s.reconnects() == 0);  // not the button
+  t->refuse("unknown_code");
+  // Refused: the next one a second later, still reconnecting, no retry of
+  // the button's kind.
+  REQUIRE(rig.runUntil([&] { return s.autoReconnectDue(rig.now); }, 2 * kSec));
+  CHECK_FALSE(s.rejoinRetryPending());
+  CHECK(s.phase() == NetPhase::Connecting);
+  t = &reconnectOverNewTransport(rig);
+  CHECK(s.autoAttempts() == 2);
+  CHECK(s.statusText().find("attempt 2") != std::string::npos);
+  t->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  CHECK_FALSE(s.autoReconnecting());
+  CHECK(s.autoRecoveries() == 1);
+  CHECK(s.localSlots() == slots);
+  CHECK(rig.server->stats().reconnects == 1);
+  CHECK(s.room() == client::LobbyRoomInfo{.code = "ABCDE", .region = "eu"});
+}
+
+TEST_CASE("a lost room session whose room is gone stops reconnecting at once (v0.92)",
+          "[client][room][net][reconnect]") {
+  LobbyRig rig(LobbyTarget{.create = true, .region = "eu", .code = ""}, true);
+  NetSession& s = *rig.session;
+  rig.transport->join({.code = "ABCDE", .region = "eu"}, bytes("room-token"));
+  REQUIRE(rig.runUntil([&] { return s.running(); }, 3 * kSec));
+  rig.net.cut(net::PeerId{1});
+  REQUIRE(rig.runUntil([&] { return s.autoReconnectDue(rig.now); }, kSec));
+  FakeLobbyTransport& t = reconnectOverNewTransport(rig);
+  t.refuse("bad_token");
+  REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Disconnected; }, kSec));
+  CHECK_FALSE(s.autoReconnecting());
+  CHECK(s.statusText() ==
+        "Connection lost (the connection closed); could not reconnect: Room "
+        "ABCDE does not know this player any more");
+  CHECK_FALSE(s.canReconnect());
 }

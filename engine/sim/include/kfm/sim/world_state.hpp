@@ -114,7 +114,19 @@ struct Player {
 // (BoomerangDef::pitSinkTicks, then LifecycleSystem despawns it): never a
 // pickup, and it matches no rule row (each Boomerang row names
 // Outbound/Returning).
-enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded, Sinking };
+// v0.89: Recalled, a banana its last owner pulls back off the floor (the
+// throw def's recall, abilities/throw.hpp): it flies toward the owner while
+// the button is held and drops where it is when it is let go. In flight for
+// the rules table (every InFlight row, the own-catch and auto-catch rows),
+// harmless to others while slower than the def's recallHarmSpeed (row 5).
+enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded, Sinking, Recalled };
+
+// Whether a banana is in the air: thrown (Outbound, Returning) or pulled
+// back (Recalled, v0.89), so still away from its owner's hand.
+[[nodiscard]] constexpr bool inFlight(BoomerangPhase p) {
+  return p == BoomerangPhase::Outbound || p == BoomerangPhase::Returning ||
+         p == BoomerangPhase::Recalled;
+}
 
 struct Boomerang {
   PlayerId owner{PlayerId::invalid()};
@@ -139,12 +151,28 @@ struct Pickup {
   Vec2 pos{};
   uint8_t powerUpIndex{0};  // PowerUp: index into ContentDB::powerUps
   // PowerUp: index into the arena's pickupSpawners. Flag (v0.33): the team
-  // whose flag it is, which is also the index of its home zone.
+  // whose flag it is, which is also the index of its home zone. Banana
+  // (v0.89): its last owner's slot + 1, the monkey that may recall it (a
+  // thrown banana that came down while its owner's throw def recalls), or
+  // 0: anyone's, recalled by nobody (bananaLastOwner()).
   uint8_t spawner{0};
   // v0.57, Banana: how many bananas lie here (1, more only when a full pool
   // stacked drops on it, rules/bananas.hpp); taking it takes as many as fit.
   uint8_t count{1};
 };
+
+// v0.89: the monkey that may recall a banana pickup (Pickup::spawner - 1),
+// or PlayerId::invalid() for nobody (and for any other kind).
+[[nodiscard]] constexpr PlayerId bananaLastOwner(const Pickup& k) {
+  if (k.kind != PickupKind::Banana || k.spawner == 0 || k.spawner > kMaxPlayers) {
+    return PlayerId::invalid();
+  }
+  return PlayerId{static_cast<PlayerId::rep>(k.spawner - 1)};
+}
+// The Pickup::spawner byte that names `owner` as a banana's last owner.
+[[nodiscard]] constexpr uint8_t bananaLastOwnerByte(PlayerId owner) {
+  return owner.isValid() && owner.value < kMaxPlayers ? static_cast<uint8_t>(owner.value + 1) : 0;
+}
 
 // --- match --------------------------------------------------------------------
 

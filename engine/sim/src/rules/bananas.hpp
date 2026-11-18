@@ -23,7 +23,10 @@ namespace kfm::sim {
 // and flags never hold more than 24 of the 32 slots (the loader caps the
 // spawners at half the pool, a flag per zone at most 8), so a full pool
 // always holds a banana pickup to stack on.
-EntityId layBananaPickup(WorldState& s, Vec2 pos, EventSink& sink);
+// v0.89: `lastOwner` (bananaLastOwnerByte, 0 = nobody) marks who may recall
+// it (Pickup::spawner); a stack keeps a mark only when the added banana
+// carries the same one, else it is nobody's.
+EntityId layBananaPickup(WorldState& s, Vec2 pos, EventSink& sink, uint8_t lastOwner = 0);
 
 // Drops one banana at `pos` (clamped into the arena box by the pickup
 // radius). Wholly over the pits (discOverPits at the banana's radius) it
@@ -39,7 +42,8 @@ void dropBanana(WorldState& s, const MatchContent& content, Vec2 pos, PlayerId o
 void dropHeldBananas(WorldState& s, const MatchContent& content, Player& p, uint8_t n,
                      EventSink& sink);
 
-// Every banana of `owner` still away from it (Outbound or Returning) drops
+// Every banana of `owner` still away from it (in flight: Outbound,
+// Returning or, v0.89, Recalled) drops
 // where it is (Grounded, velocity zero); LifecycleSystem lays it as a pickup
 // this tick, or sinks it if it came down over a pit. Called when a monkey
 // starts to fall (it is doomed) and as an eliminated one despawns.

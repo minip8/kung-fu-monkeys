@@ -30,8 +30,11 @@ kfm_add_test_exe(kfm_scenario_tests
   control_scenario.cpp
   tree_scenario.cpp
   harvest_scenario.cpp
+  kill_rounds_scenario.cpp
+  spawn_spread_scenario.cpp
   grid_pathing_scenario.cpp
   banana_flight_scenario.cpp
+  banana_arc_scenario.cpp
   grid_scenario.cpp
   pickup_contest_scenario.cpp
   side_symmetry_scenario.cpp

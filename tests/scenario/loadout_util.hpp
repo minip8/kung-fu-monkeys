@@ -65,7 +65,7 @@ namespace kfm::sim::test {
 
 // Appends `def` to a copy of `base`; returns its index through `index`.
 [[nodiscard]] inline ContentDB withAbility(const AbilityDef& def, uint8_t& index,
-                                           const ContentDB& base = defaultContent()) {
+                                           const ContentDB& base = classicContent()) {
   ContentDB c = base;
   REQUIRE(c.abilityCount < kMaxAbilityDefs);
   index = c.abilityCount;

@@ -6,7 +6,8 @@
 //
 // The choice is Auto (each arena's suggested theme, suggestedTheme()) or one
 // theme everywhere; the client saves it (`theme=` in the settings text) and
-// takes --theme / ?theme=.
+// takes --theme / ?theme=. v0.93: the client defaults to Beach everywhere
+// (Banana Beach); the renderer's own default stays Auto.
 #pragma once
 
 #include "kfm/presentation/palette.hpp"

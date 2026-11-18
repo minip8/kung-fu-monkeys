@@ -22,6 +22,10 @@
 // monkeys' own test) falls into the hole instead: Sinking, BoomerangFell,
 // gone after BoomerangDef::pitSinkTicks; so no pickup ever lies where only a
 // fall could reach it.
+// v0.89: the pickup a grounded banana becomes names its owner as the one
+// that may recall it (Pickup::spawner, bananaLastOwnerByte) when that owner
+// is still in the pool and its throw recalls; otherwise it is nobody's (0),
+// as every banana pickup was before v0.89.
 //
 // Respawns are driven by MatchRules' timers, which only modes that respawn
 // (deathmatch) set, so the code is the same for every mode: during Playing a
@@ -51,6 +55,7 @@
 // maxAlive. No RNG draw and no candidate set: a tree bears in every mode and
 // whatever MatchConfig::powerUps says. A full pool stops no spawner: a
 // power-up spawner skips its beat, a tree still stacks its fruit.
+#include "kfm/sim/abilities/throw.hpp"
 #include "kfm/sim/spaces/grid_cells.hpp"
 #include "kfm/sim/systems.hpp"
 #include "modes/mode_flow.hpp"
@@ -96,8 +101,7 @@ void regrowBananas(WorldState& s, const MatchContent& content, EventSink& sink) 
   if (need == 0 || s.rules.phase != MatchPhase::Playing) return;
   PlayerMask away = 0;
   s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
-    if ((b.phase == BoomerangPhase::Outbound || b.phase == BoomerangPhase::Returning) &&
-        b.owner.isValid() && b.owner.value < kMaxPlayers) {
+    if (inFlight(b.phase) && b.owner.isValid() && b.owner.value < kMaxPlayers) {
       away = static_cast<PlayerMask>(away | (1u << b.owner.value));
     }
   });
@@ -228,10 +232,17 @@ void lifecycleSystem(WorldState& s, const MatchContent& content, EventSink& sink
       sink.push(SimEvent{EventKind::BoomerangFell, s.tick, b.owner, id, 0, 0});
       return;
     }
+    // v0.89: its owner may recall it when the owner is still here and its
+    // throw recalls (abilities/throw.hpp); else it is nobody's.
+    uint8_t lastOwner = 0;
+    if (const Player* owner = s.playerBySlot(b.owner);
+        owner != nullptr && recallDefOf(*owner, content) != nullptr) {
+      lastOwner = bananaLastOwnerByte(b.owner);
+    }
     s.boomerangs.despawn(id);
     sink.push(SimEvent{EventKind::BoomerangGrounded, s.tick, PlayerId::invalid(), id, 0, 0});
     // v0.57: a full pickup pool stacks it on the nearest banana pickup.
-    layBananaPickup(s, pos, sink);
+    layBananaPickup(s, pos, sink, lastOwner);
   });
 
   runSpawners(s, content, sink);

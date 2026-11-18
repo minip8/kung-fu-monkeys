@@ -49,9 +49,10 @@ static_assert(kAbilitySlots == 3);
   return 0;
 }
 inline constexpr uint8_t kMaxAbilityDefs = 32;  // v0.70 (16 before: content/ filled it)
-inline constexpr uint8_t kMaxArenas = 16;       // v0.33 (8 before: the objective arenas filled it)
-inline constexpr uint8_t kMaxModes = 32;        // v0.31 (8 before)
-static_assert(kMaxArenas <= 16, "ModeDef::arenaSet is a uint16_t bit set over the arenas");
+// v0.91: 32 arenas (16 from v0.33, 8 before: the larger arenas filled it).
+inline constexpr uint8_t kMaxArenas = 32;
+inline constexpr uint8_t kMaxModes = 32;  // v0.31 (8 before)
+static_assert(kMaxArenas <= 32, "ModeDef::arenaSet is a uint32_t bit set over the arenas");
 
 enum class AbilityKind : uint8_t {
   None = 0,
@@ -97,6 +98,18 @@ struct AbilityDef {
   // movement intent is ignored (continuous) or it takes no new cell
   // commitment at a latch (grid). 0 = never rooted.
   uint8_t rootPhases{0};
+  // v0.89, Throw: the recall (abilities/throw.hpp throwRecalls). Holding the
+  // slot's button with an empty hand lifts the monkey's nearest own banana
+  // off the floor (a pickup whose last owner it is) and pulls it home:
+  // from rest up to recallSpeed (units/tick, times the monkey's projectile
+  // speedMul) over recallAccelTicks, straight at the monkey, sliding along
+  // walls. Below recallHarmSpeed it passes through other monkeys (row 5);
+  // recallRange is the farthest banana it reaches (units, 0 = any).
+  // recallSpeed 0 = the def does not recall.
+  Fixed recallSpeed{};
+  uint16_t recallAccelTicks{0};
+  Fixed recallHarmSpeed{};
+  Fixed recallRange{};
 };
 
 struct BoomerangDef {
@@ -111,6 +124,25 @@ struct BoomerangDef {
   // v0.57: a banana that comes down over a pit sinks into it for this long
   // (BoomerangPhase::Sinking), then is gone.
   uint16_t pitSinkTicks{18};
+  // v0.89, the arc flight (ModeDef::bananaFlight = Arc; the fields above
+  // from speed to turnRateBam are the classic flight's). Speeds in
+  // units/tick, each times the banana's speedMul (power-ups, the charge).
+  // Out: arcLaunchSpeed on the first tick, slowing evenly to arcApexSpeed
+  // over arcOutboundTicks; at the apex it turns to face its owner, then
+  // speeds up evenly from arcApexSpeed to arcReturnSpeed over
+  // arcReturnAccelTicks, steering toward the owner by at most arcTurnRateBam
+  // a tick. It drops (Grounded) when it has passed its owner (flying away
+  // from it), when it hits a wall on the way back, or after arcReturnTicks
+  // returning. A wall on the way out bounces it and ages the flight by
+  // arcBounceTicks (it reaches its apex that much sooner, slower).
+  Fixed arcLaunchSpeed{};
+  Fixed arcApexSpeed{};
+  uint16_t arcOutboundTicks{0};
+  Fixed arcReturnSpeed{};
+  uint16_t arcReturnAccelTicks{0};
+  uint16_t arcReturnTicks{0};
+  uint16_t arcTurnRateBam{0};
+  uint16_t arcBounceTicks{0};
 };
 
 // Pickups lying in the arena (M1: grounded bananas; M4 adds power-ups).
@@ -287,12 +319,30 @@ inline constexpr TeamSet kFreeForAllTeams = freeForAllTeams();
 // readers outside the sim: the observation's rules block, the banana's arc):
 // the mode's override (ModeDef::bananaOutboundTicks / ::bananaTurnRateBam),
 // or the BoomerangDef's where the mode leaves it 0.
+// v0.89: in an arc mode (ModeDef::bananaFlight) the def's numbers are the
+// arc's (arcOutboundTicks, arcTurnRateBam, arcReturnTicks).
 [[nodiscard]] constexpr uint16_t bananaOutboundTicksOf(const BoomerangDef& def,
                                                        const ModeDef& mode) {
-  return mode.bananaOutboundTicks != 0 ? mode.bananaOutboundTicks : def.outboundTicks;
+  if (mode.bananaOutboundTicks != 0) return mode.bananaOutboundTicks;
+  return mode.bananaFlight == BananaFlight::Arc ? def.arcOutboundTicks : def.outboundTicks;
 }
 [[nodiscard]] constexpr uint16_t bananaTurnRateBamOf(const BoomerangDef& def, const ModeDef& mode) {
-  return mode.bananaTurnRateBam != 0 ? mode.bananaTurnRateBam : def.turnRateBam;
+  if (mode.bananaTurnRateBam != 0) return mode.bananaTurnRateBam;
+  return mode.bananaFlight == BananaFlight::Arc ? def.arcTurnRateBam : def.turnRateBam;
+}
+// v0.89: the most ticks a banana returns before it drops.
+[[nodiscard]] constexpr uint16_t bananaMaxReturnTicksOf(const BoomerangDef& def,
+                                                        const ModeDef& mode) {
+  return mode.bananaFlight == BananaFlight::Arc ? def.arcReturnTicks : def.maxReturnTicks;
+}
+// v0.89: one speed that stands for the flight (units/tick, speedMul 1): the
+// classic flight's constant speed, the arc's mean speed out
+// ((arcLaunchSpeed + arcApexSpeed) / 2), so that speed x outbound ticks is
+// the reach either way. The observation reports it (bot-abi.md §2.5).
+[[nodiscard]] constexpr Fixed bananaFlightSpeedOf(const BoomerangDef& def, const ModeDef& mode) {
+  if (mode.bananaFlight != BananaFlight::Arc) return def.speed;
+  return Fixed::fromRaw(
+      static_cast<int32_t>((int64_t{def.arcLaunchSpeed.raw} + int64_t{def.arcApexSpeed.raw}) / 2));
 }
 
 // v0.82: the bananas a respawn puts in the hand before the cap at the
@@ -377,6 +427,8 @@ struct MatchContent {
   [[nodiscard]] constexpr uint16_t bananaTurnRateBam() const {
     return bananaTurnRateBamOf(db.boomerang, mode);
   }
+  // v0.89: the flight model (ModeDef::bananaFlight).
+  [[nodiscard]] constexpr bool arcFlight() const { return mode.bananaFlight == BananaFlight::Arc; }
 
   // The team of a slot (an invalid slot has none: kMaxPlayers).
   [[nodiscard]] constexpr uint8_t teamOf(PlayerId id) const {

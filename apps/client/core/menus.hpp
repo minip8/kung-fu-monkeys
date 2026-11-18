@@ -10,9 +10,10 @@
 // or Start, and isMenuBack() any pad's East or Back (the keyboard's Escape
 // is the app shortcut). The mouse clicks the same items.
 //
-//   MainMenu      Play online, Play local, Settings, Quit (native only);
-//                 Play online is greyed and skipped without a way online
-//                 (no lobby URL and no --connect server).
+//   MainMenu      Play online, Play local, How to play (v0.94), Settings,
+//                 Quit (native only); Play online is greyed and skipped
+//                 without a way online (no lobby URL and no --connect
+//                 server).
 //   SettingsMenu  Name (the nickname, a text field), Volume, Sound, Bot
 //                 difficulty, Arena theme, Mouse aim (on/off: the cursor
 //                 aims for keyboard + mouse), Back: what a player (not a
@@ -23,6 +24,8 @@
 //                 match: Resume, Back to lobby, Main menu locally (the match
 //                 is paused while it is open), Resume, Leave room online (the
 //                 server's match runs on; the local slots send idle input).
+//                 v0.94: How to play, which shows the controls card in the
+//                 menu's place until Back (Esc, a pad's B, Enter).
 #pragma once
 
 #include "kfm/platform/input_event.hpp"
@@ -49,7 +52,7 @@ class NetSession;
 
 // --- the main menu --------------------------------------------------------------------
 
-enum class MainMenuItem : uint8_t { PlayOnline = 0, PlayLocal, Settings, Quit };
+enum class MainMenuItem : uint8_t { PlayOnline = 0, PlayLocal, HowToPlay, Settings, Quit };
 
 class MainMenu {
  public:
@@ -77,7 +80,7 @@ class MainMenu {
   [[nodiscard]] const char* hint(MainMenuItem item) const;
 
  private:
-  std::array<MainMenuItem, 4> items_{};
+  std::array<MainMenuItem, 5> items_{};
   std::size_t count_{0};
   std::size_t focus_{0};
   bool online_{true};
@@ -131,15 +134,21 @@ class ButtonMenu {
 
 // --- the pause menu (v0.46) ------------------------------------------------------------
 
-enum class PauseItem : uint8_t { Resume = 0, BackToLobby, MainMenu, LeaveRoom };
+enum class PauseItem : uint8_t { Resume = 0, BackToLobby, MainMenu, LeaveRoom, HowToPlay };
 
 class PauseMenu {
  public:
   // Opens with the local buttons (Resume, Back to lobby, Main menu) or the
   // online ones (Resume, Leave room), the focus on Resume.
   void open(bool online);
-  void close() { open_ = false; }
+  void close() {
+    open_ = false;
+    help_ = false;
+  }
   [[nodiscard]] bool isOpen() const { return open_; }
+  // v0.94: the controls card in the menu's place (How to play).
+  [[nodiscard]] bool helpOpen() const { return open_ && help_; }
+  void setHelp(bool open) { help_ = open && open_; }
   [[nodiscard]] bool online() const { return online_; }
 
   [[nodiscard]] std::span<const PauseItem> items() const;
@@ -151,7 +160,9 @@ class PauseMenu {
   void apply(MenuAction action) { buttons_.apply(action); }
   // What a press asks for while the menu is open: Escape or any pad's East,
   // Back or Start resume; Enter, keypad Enter, Space or a pad's South pick
-  // the focused item; anything else nothing.
+  // the focused item; anything else nothing. v0.94: with the controls card
+  // open, Escape, Enter, Space and a pad's East, Back, Start or South give
+  // HowToPlay, which closes the card (back to the buttons).
   [[nodiscard]] std::optional<PauseItem> press(const platform::InputEvent& event) const;
 
   [[nodiscard]] static const char* label(PauseItem item);
@@ -159,6 +170,7 @@ class PauseMenu {
  private:
   bool open_{false};
   bool online_{false};
+  bool help_{false};
   ButtonMenu buttons_;
 };
 

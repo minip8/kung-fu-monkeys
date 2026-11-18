@@ -1,6 +1,6 @@
 #include "hud_view.hpp"
 
-#include "kfm/content/app_content.hpp"
+#include "content_labels.hpp"
 #include "net_session.hpp"
 #include "replay_session.hpp"
 
@@ -58,10 +58,10 @@ HudView hudView(const NetSession& session) {
   if (session.configKnown() && !room) {
     const sim::MatchConfig& next = session.client().matchConfig();
     const sim::ContentDB& db = session.content();
-    v.nextMatch = std::string("Next match: ") + db.arenaAt(next.arena).name.cStr() + ", " +
-                  db.modeAt(next.mode).name.cStr() + ", loadout " +
-                  db.loadoutAt(next.loadout).name.cStr() +
-                  ", power-ups: " + content::powerUpListText(db, next.powerUps);
+    // v0.94: in plain words (content_labels.hpp).
+    v.nextMatch = "Next match: " + modeLabel(db.modeAt(next.mode).name.view()).title + " on " +
+                  arenaTitle(db.arenaAt(next.arena).name.view()) + ", " +
+                  loadoutTitle(db.loadoutAt(next.loadout).name.view()) + " kit";
   }
   return v;
 }
@@ -103,6 +103,10 @@ WinnerTitle winnerTitle(const HudView& view, const presentation::RenderHud& hud,
                      .colorIndex = winner};
 }
 
+bool showsFirstRoundHint(const presentation::RenderHud& hud) {
+  return hud.phase == presentation::HudPhase::RoundStarting && hud.round <= 1;
+}
+
 bool clockUrgent(const presentation::RenderHud& hud) {
   return hud.phase == presentation::HudPhase::Playing && hud.clockSeconds <= kClockUrgentSeconds;
 }
@@ -132,6 +136,11 @@ std::string modeLineText(const presentation::RenderHud& hud) {
     case sim::ModeKind::TeamRounds:
       std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
                     static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
+      return line;
+    case sim::ModeKind::KillRounds:  // v0.90
+      std::snprintf(line, sizeof line, "Round %u  (first to %u kills)  %u alive",
+                    static_cast<unsigned>(hud.round), target,
+                    static_cast<unsigned>(hud.aliveCount));
       return line;
     case sim::ModeKind::Survival:
       std::snprintf(line, sizeof line, "Round %u  (first to %u)  %u alive",
@@ -164,6 +173,7 @@ std::string roundStartTitle(const presentation::RenderHud& hud) {
     case sim::ModeKind::Rounds:
     case sim::ModeKind::Survival:
     case sim::ModeKind::TeamRounds:
+    case sim::ModeKind::KillRounds:
     case sim::ModeKind::kCount:
       break;
   }

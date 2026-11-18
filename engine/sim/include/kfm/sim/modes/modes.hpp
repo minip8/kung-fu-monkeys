@@ -64,6 +64,11 @@ void harvestOnPlaying(WorldState& s, const MatchContent& content, EventSink& sin
 void harvestOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
                          PlayerId killer, EventSink& sink);
 
+// Kill rounds (modes/kill_rounds.cpp, v0.90): rounds scored by eliminations.
+void killRoundsOnPlaying(WorldState& s, const MatchContent& content, EventSink& sink);
+void killRoundsOnEliminated(WorldState& s, const MatchContent& content, PlayerId victim,
+                            PlayerId killer, EventSink& sink);
+
 [[nodiscard]] constexpr ModeBehavior roundsBehavior() {
   return ModeBehavior{&modeNoRoundStart, &roundsOnPlaying, &roundsOnEliminated, &modeNoPickupTaken};
 }
@@ -100,6 +105,11 @@ void harvestOnEliminated(WorldState& s, const MatchContent& content, PlayerId vi
 
 [[nodiscard]] constexpr ModeBehavior harvestBehavior() {
   return ModeBehavior{&harvestOnRoundStart, &harvestOnPlaying, &harvestOnEliminated,
+                      &modeNoPickupTaken};
+}
+
+[[nodiscard]] constexpr ModeBehavior killRoundsBehavior() {
+  return ModeBehavior{&modeNoRoundStart, &killRoundsOnPlaying, &killRoundsOnEliminated,
                       &modeNoPickupTaken};
 }
 

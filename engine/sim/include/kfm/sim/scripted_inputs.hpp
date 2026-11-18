@@ -81,6 +81,13 @@ struct ScriptedInputConfig {
   // v0.48: per-tick chance of holding a charging throw one tick longer (a
   // geometric hold, ~16 ticks on average), so matches mix taps and charges.
   uint8_t chargeHoldPer256{240};
+  // v0.89, the recall: an empty hand with a banana of its own lying around
+  // (or being pulled) holds Throw for recallHoldTicks of every
+  // recallCycleTicks Playing ticks (by the tick count, no Rng draw), so
+  // pulls reach the hand, and some are let go and drop on the way. Only a
+  // kit whose throw recalls (abilities/throw.hpp): the grid kits never do.
+  uint16_t recallCycleTicks{90};
+  uint16_t recallHoldTicks{40};
 };
 
 // The input for one player this tick. Returns an idle input for a player

@@ -11,6 +11,12 @@
 
 namespace kfm::sim {
 
+// Prio 5, rules/recall.cpp (v0.89): a banana pulled back (Recalled) slower
+// than its owner's recallHarmSpeed passes through a monkey that is not its
+// owner (applies, does nothing); faster, it declines and the rows below
+// treat it as any banana in flight.
+bool slowRecallPasses(WorldState& s, const MatchContent& content, EntityId a, EntityId b,
+                      const Contact& contact, EventSink& sink);
 // Prio 10/11, rules/catch.cpp: perfect-dash catch judged against press sub-tick (§5.11);
 // declines at ammoMax (v0.16).
 bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, EntityId b,

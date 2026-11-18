@@ -4,8 +4,8 @@
 # are part of the content hash: append new power-ups, never reorder.
 #
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), duration_ticks (>= 1, 60
-# per second), color (palette index 0-9: 0 red, 1 blue, 2 yellow, 3 green,
-# 4 orange, 5 purple, 6 cyan, 7 pink, 8 white, 9 charcoal), shape (orb |
+# per second), color (palette index 0-9: 0 red, 1 blue, 2 purple, 3 green,
+# 4 orange, 5 maroon, 6 cyan, 7 pink, 8 white, 9 charcoal), shape (orb |
 # cube | diamond | coin), grants = a list of 1 to 4 tables, each one of
 #   { kind = "stat", stat = "move_speed" | "max_hp" | "ammo_max" | "radius", mul, add }
 #       stat = base x product of mul + sum of add over the live power-ups;
@@ -31,7 +31,7 @@ grants = [{ kind = "stat", stat = "move_speed", mul = 1.5 }]
 [[powerup]]
 name = "big_banana"
 duration_ticks = 600        # 10 s
-color = 2                   # yellow
+color = 2                   # purple
 shape = "orb"
 grants = [{ kind = "projectile", radius_mul = 2, speed_mul = 0.85 }]
 

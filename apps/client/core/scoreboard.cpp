@@ -26,6 +26,8 @@ using presentation::HudPhase;
       return "Flags";
     case sim::ModeKind::Harvest:  // v0.82: bananas banked (less the stolen ones)
       return "Bananas";
+    case sim::ModeKind::KillRounds:  // v0.90: eliminations over the rounds
+      return "Kills";
     case sim::ModeKind::Rounds:
     case sim::ModeKind::Survival:
     case sim::ModeKind::TeamRounds:
@@ -53,8 +55,8 @@ bool showsScoreboard(const presentation::RenderHud& hud) {
     case HudPhase::MatchEnded:
       return true;
     case HudPhase::RoundEnded:
-      return !sim::scoresPoints(hud.mode);
-    case HudPhase::RoundStarting:  // the countdown shows only its banner and count
+      return sim::playsRounds(hud.mode);  // v0.90: kill rounds' pause too
+    case HudPhase::RoundStarting:         // the countdown shows only its banner and count
     case HudPhase::Lobby:
     case HudPhase::Playing:
       break;

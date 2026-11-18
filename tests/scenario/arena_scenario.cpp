@@ -35,7 +35,7 @@ Vec2 at(int32_t x, int32_t y) {
 // whose west face is x = 0, a pit strip at x in [-14, -12] and a slow patch
 // around (7, 0).
 ContentDB labContent() {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();  // v0.89: the M1 flight
   ArenaDef& a = c.arenas[1];
   a = c.arenas[0];
   a.name = ContentName::of("lab");

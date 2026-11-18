@@ -25,6 +25,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -240,6 +241,17 @@ bool slams(const Tally& t, const ContentDB& /*db*/) {
 bool parries(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::PlayerParryStarted) > 0;
 }
+// v0.89: the scripted generator holds Throw with an empty hand by the clock,
+// so pulls start, some are let go on the way and some reach the hand.
+bool recalls(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::BananaRecallStarted) > 0;
+}
+bool recallsLetGo(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::BananaRecallEnded) > 0;
+}
+bool recallsHome(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::BananaRecallStarted) > t.of(EventKind::BananaRecallEnded);
+}
 bool hillHeld(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::HillHolderChanged) > 0;
 }
@@ -263,6 +275,18 @@ bool fruitTaken(const Tally& t, const ContentDB& /*db*/) {
 }
 bool bankedBeyondHands(const Tally& t, const ContentDB& /*db*/) {
   return t.objectivePoints > 10;
+}
+// v0.90, kill rounds: every point is a kill (the shipped row has no catch
+// or suicide points, and a survivor scores nothing), over more than one round.
+bool killsAreTheScore(const Tally& t, const ContentDB& /*db*/) {
+  int sum = 0;
+  for (const int8_t score : t.scores)
+    sum += score;
+  return t.objectivePoints > 0 && std::cmp_equal(sum, t.objectivePoints) &&
+         t.of(EventKind::ScoreChanged) == t.objectivePoints;
+}
+bool severalRounds(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::RoundStarted) > 1;
 }
 bool steals(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::BananaStolen) > 0;
@@ -290,6 +314,10 @@ const std::vector<Entry>& expectations() {
       {"scripted_4p_blink_1800t", {{"a blink", blinks}}},
       {"scripted_4p_slam_1800t", {{"a slam lands", slams}}},
       {"scripted_4p_parry_1800t", {{"a parry", parries}}},
+      {"scripted_4p_recall_1800t",
+       {{"a banana pulled back", recalls},
+        {"a pull let go", recallsLetGo},
+        {"more pulls started than let go (some reach the hand)", recallsHome}}},
       {"scripted_4p_team_rounds_1800t", {{"a team round won", roundWon}}},
       {"scripted_4p_team_deathmatch_3600t",
        {{"an elimination scores", objectivePoint}, {"a respawn", respawns}}},
@@ -322,6 +350,10 @@ const std::vector<Entry>& expectations() {
        {{"fruit taken off the floor", fruitTaken},
         {"more banked than the opening hands", bankedBeyondHands},
         {"a theft", steals}}},
+      {"scripted_4p_kill_rounds_3600t",
+       {{"every point a kill", killsAreTheScore},
+        {"more than one round", severalRounds},
+        {"throws, dashes, hits, eliminations", fights}}},
       {"scripted_10p_control_1t_1800t",
        {{"a zone captured", zoneCaptured}, {"a zone point", objectivePoint}, {"a call", calls}}},
   };
