@@ -68,15 +68,32 @@ enum class ModeKind : uint8_t {
   // else the leader at timeLimitTicks (a tied lead is a draw); eliminations
   // score nothing.
   Harvest,
+  // v0.90, kill rounds: the rounds kind's flow (everyone spawns, no respawn
+  // within a round, the round ends when at most one monkey is left or it runs
+  // dry), scored like deathmatch: every elimination by an enemy attacker is
+  // +1 to the attacker when it happens; surviving scores nothing. The match
+  // ends at the end of a round in which the strict leader has reached
+  // scoreToWin; a tied lead plays another round.
+  KillRounds,
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a kind
 };
 
-// Whether a kind plays one long round on a clock with respawns, its
-// MatchRules::scores counting points (eliminations, hill points, captures)
-// rather than round wins (v0.33; the hosts' HUD and tools read it).
+// Whether a kind's MatchRules::scores count points (eliminations, hill
+// points, captures) rather than round wins (v0.33; the hosts' HUD and tools
+// read it). Every such kind but kill rounds (v0.90) plays one long round on
+// a clock with respawns.
 [[nodiscard]] constexpr bool scoresPoints(ModeKind k) {
   return k == ModeKind::Deathmatch || k == ModeKind::TeamDeathmatch || k == ModeKind::Hill ||
-         k == ModeKind::Capture || k == ModeKind::Control || k == ModeKind::Harvest;
+         k == ModeKind::Capture || k == ModeKind::Control || k == ModeKind::Harvest ||
+         k == ModeKind::KillRounds;
+}
+
+// Whether a kind plays rounds with a pause between them (RoundEnded for
+// roundEndTicks, then the next round) rather than one round that ends the
+// match (v0.90: the hosts show the round's scoreboard in that pause).
+[[nodiscard]] constexpr bool playsRounds(ModeKind k) {
+  return k == ModeKind::Rounds || k == ModeKind::Survival || k == ModeKind::TeamRounds ||
+         k == ModeKind::KillRounds;
 }
 
 // How monkeys move in a mode (architecture §5.12, v0.29): the SpaceBehavior

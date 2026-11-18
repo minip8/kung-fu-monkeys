@@ -574,7 +574,7 @@ void buildHud(const WorldState& curr, const sim::MatchContent& content, RenderHu
   hud.mode = mode.kind;
   hud.scoreToWin = mode.scoreToWin;
   hud.hasClock = mode.kind != sim::ModeKind::Rounds && mode.kind != sim::ModeKind::TeamRounds &&
-                 mode.timeLimitTicks > 0;
+                 mode.kind != sim::ModeKind::KillRounds && mode.timeLimitTicks > 0;
   hud.clockSeconds = 0.0f;
   if (hud.hasClock) {
     if (r.phase == sim::MatchPhase::Playing) {

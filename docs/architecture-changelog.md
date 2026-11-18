@@ -1856,3 +1856,30 @@ Considered and not taken: a ladder table and a schedule on Home (the rank is in 
 panel and the ladder is one link away; rounds have an interval, not a calendar); a script to
 refresh Now playing (the policy stays `default-src 'none'`). No JSON route, engine, sim,
 content or wire change. Replay checksums: unchanged.
+
+v0.90 changes: a free-for-all mode scored by kills, `kill_rounds` (§5.3; user request: "like
+free for all, but the score of each monkey is incremented by how many kills they got in a
+round"). `ModeKind::KillRounds` is appended (value 9, `kCount` 10; loader keyword
+`kill_rounds`, `src/modes/kill_rounds.cpp`, one registry row) and mode 11 `kill_rounds` is
+appended to `content/modes.toml` (`score_to_win = 10`, the rounds row's countdown and 180-tick
+pause, the drop economy, no catch or suicide points). A round flows exactly as in `rounds`:
+everyone spawns, nobody respawns, it ends when at most one monkey is left (never during a
+fall) or by the dry-round rule. Every elimination by an enemy attacker is +1 to it on the tick
+it happens (`ScoreChanged`, `Objective`) and +1 death to the victim; surviving scores nothing
+and a death with no killer scores nobody. The match is judged only at a round's end
+(`endRoundOnScore`, `mode_flow`): `RoundEnded` names the survivor, then the strict leader at
+`score_to_win` or more takes the match (`MatchEnded`, and `lastRoundWinner` becomes it for the
+HUD's match winner); a tied lead plays another round. `scoresPoints()` now includes the kind
+(the loader takes `catch_score`/`suicide_score` and requires `score_to_win` >= 1) and a new
+`playsRounds()` names the kinds with a round pause, which the client's scoreboard model now
+shows in RoundEnded for (`showsScoreboard`; it was `!scoresPoints`). Client models: the
+scoreboard labels the score Kills and keeps the deaths, the mode line reads "Round N (first to
+T kills) A alive", the lobby summary "first to T kills, judged at a round's end, last monkey
+standing"; the HUD's clock stays off. Bots: `ObsModeKind::KillRounds` = 9 and
+`KFM_MODE_KILL_ROUNDS` in the SDK header, an appended value within Observation version 2
+(`docs/bot-abi.md`); its `timeLimitTicks` reads 0 like rounds'. `kfm_arena --json` is
+unchanged (the score is the slot's points). Considered and not taken: a survival bonus (the
+request scores kills only); judging the target mid-round (a round always plays out). New
+corpus entry `scripted_4p_kill_rounds_3600t` (dojo; every point a kill, more than one round,
+fights). Replay checksums: the content hash changes (a new mode), so every entry is re-recorded;
+state checksums unchanged by this change alone.

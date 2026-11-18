@@ -204,6 +204,22 @@ void endRound(WorldState& s, const MatchContent& content, PlayerId winner, Event
   }
 }
 
+void endRoundOnScore(WorldState& s, const MatchContent& content, PlayerId survivor,
+                     EventSink& sink) {
+  MatchRules& r = s.rules;
+  r.lastRoundWinner = survivor;
+  r.ticksInPhase = 0;
+  r.phase = MatchPhase::RoundEnded;
+  sink.push(SimEvent{EventKind::RoundEnded, s.tick, survivor, EntityId{}, r.round, 0});
+  int8_t best = 0;
+  const PlayerId leader = scoreLeader(r, best);
+  if (leader.isValid() && std::cmp_greater_equal(best, content.mode.scoreToWin)) {
+    r.lastRoundWinner = leader;
+    r.phase = MatchPhase::MatchEnded;
+    sink.push(SimEvent{EventKind::MatchEnded, s.tick, leader, EntityId{}, 0, 0});
+  }
+}
+
 void endMatch(WorldState& s, PlayerId winner, EventSink& sink) {
   MatchRules& r = s.rules;
   r.lastRoundWinner = winner;

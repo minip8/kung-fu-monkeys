@@ -43,7 +43,9 @@ static_assert(
     static_cast<uint8_t>(sim::ModeKind::Capture) == static_cast<uint8_t>(ObsModeKind::Capture) &&
     static_cast<uint8_t>(sim::ModeKind::Control) == static_cast<uint8_t>(ObsModeKind::Control) &&
     static_cast<uint8_t>(sim::ModeKind::Harvest) == static_cast<uint8_t>(ObsModeKind::Harvest) &&
-    static_cast<uint8_t>(sim::ModeKind::kCount) == 9);
+    static_cast<uint8_t>(sim::ModeKind::KillRounds) ==
+        static_cast<uint8_t>(ObsModeKind::KillRounds) &&
+    static_cast<uint8_t>(sim::ModeKind::kCount) == 10);
 static_assert(static_cast<uint8_t>(sim::AbilityKind::Parry) ==
                   static_cast<uint8_t>(ObsAbilityKind::Parry) &&
               static_cast<uint8_t>(sim::AbilityKind::Call) ==
@@ -117,7 +119,9 @@ void fillMatch(const sim::WorldState& world, const sim::MatchContent& content, u
   const sim::ModeDef& mode = content.mode;
   m.tick = world.tick.value;
   m.ticksInPhase = r.ticksInPhase;
-  m.timeLimitTicks = mode.kind == sim::ModeKind::Rounds ? 0 : mode.timeLimitTicks;
+  m.timeLimitTicks = mode.kind == sim::ModeKind::Rounds || mode.kind == sim::ModeKind::KillRounds
+                         ? 0
+                         : mode.timeLimitTicks;
   m.contentHash = hash;
   m.modeIndex = indexOf(mode, content.db.modes, content.db.modeCount);
   m.modeKind = byteOf(mode.kind);

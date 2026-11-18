@@ -133,6 +133,11 @@ std::string modeLineText(const presentation::RenderHud& hud) {
       std::snprintf(line, sizeof line, "Team round %u  (first team to %u)",
                     static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin));
       return line;
+    case sim::ModeKind::KillRounds:  // v0.90
+      std::snprintf(line, sizeof line, "Round %u  (first to %u kills)  %u alive",
+                    static_cast<unsigned>(hud.round), target,
+                    static_cast<unsigned>(hud.aliveCount));
+      return line;
     case sim::ModeKind::Survival:
       std::snprintf(line, sizeof line, "Round %u  (first to %u)  %u alive",
                     static_cast<unsigned>(hud.round), static_cast<unsigned>(hud.roundsToWin),
@@ -164,6 +169,7 @@ std::string roundStartTitle(const presentation::RenderHud& hud) {
     case sim::ModeKind::Rounds:
     case sim::ModeKind::Survival:
     case sim::ModeKind::TeamRounds:
+    case sim::ModeKind::KillRounds:
     case sim::ModeKind::kCount:
       break;
   }

@@ -6,9 +6,11 @@
 # Keys: name (lowercase, up to 15 of a-z 0-9 _ -), kind, and the numbers the
 # kind reads (a kind ignores the others). Durations in ticks (60 per second).
 #   kind                 rounds (default), deathmatch, survival, team_rounds,
-#                        team_deathmatch, hill, capture, control or harvest
+#                        team_deathmatch, hill, capture, control, harvest or
+#                        kill_rounds (v0.90)
 #   round_start_ticks    all kinds: countdown with everyone spawned and frozen
-#   round_end_ticks      rounds, survival, team_rounds: pause after a round
+#   round_end_ticks      the round kinds (rounds, survival, team_rounds,
+#                        kill_rounds): pause after a round
 #                        before the next one (the round's scoreboard); the
 #                        clock kinds end the match without a pause and
 #                        never read it (kept equal for the Observation)
@@ -17,11 +19,13 @@
 #                        round; 0 = no clock
 #   score_to_win         the point kinds: points that win (at least 1, at most
 #                        127; deathmatch: eliminations plus catch_score and
-#                        suicide_score points)
+#                        suicide_score points; kill_rounds, v0.90: the same
+#                        points, judged only at a round's end, a tied lead
+#                        playing another round)
 #   respawn_ticks        the respawning kinds: from an elimination to the
 #                        respawn (>= 1), the same for every cause of death
 #   respawn_invuln_ticks deathmatch: spawn protection after a respawn
-#   dry_round_ticks      rounds, survival, team_rounds (v0.57): a round with no
+#   dry_round_ticks      the round kinds (v0.57): a round with no
 #                        banana left anywhere ends as its clock-out would, at
 #                        once on an arena without pits, after this many dry
 #                        ticks on one with pits (default 180, 3 s)
@@ -33,7 +37,7 @@
 #                        A pit fall always takes the held ones down; the ones
 #                        in flight follow this key from the fall's start
 #   catch_score          v0.57, deathmatch, team_deathmatch, hill, capture,
-#                        control, harvest:
+#                        control, harvest, kill_rounds:
 #                        points for a perfect dash catch of an enemy's banana
 #                        (the own one or an ally's scores nothing; default 0)
 #   suicide_score        v0.57, the same kinds: points for an elimination with
@@ -359,3 +363,17 @@ banana_turn_rate = 15474    # BAM a turn on the way home: 85 degrees
 round_start_ticks = 60
 round_end_ticks = 180
 vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 1, banana_sight = 1 }
+
+# v0.90: free-for-all rounds scored by eliminations (architecture §5.3). A
+# round plays exactly like `rounds` (everyone spawns, nobody respawns, the
+# round ends when at most one monkey is left or no banana is left), but
+# surviving it scores nothing: every elimination is a point to the monkey
+# that made it, on the tick it happens; a pit fall with no attacker scores
+# for nobody. The match is judged only at a round's end: the leader with
+# ten or more kills takes it, and a tied lead plays another round.
+[[mode]]
+name = "kill_rounds"
+kind = "kill_rounds"
+score_to_win = 10           # first to ten eliminations, at a round's end
+round_end_ticks = 180       # 3 s of scoreboard between rounds
+round_start_ticks = 60

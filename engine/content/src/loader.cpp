@@ -89,7 +89,7 @@ struct ModeKindName {
   std::string_view name;
   sim::ModeKind kind;
 };
-constexpr std::array<ModeKindName, 9> kModeKinds = {{
+constexpr std::array<ModeKindName, 10> kModeKinds = {{
     {"rounds", sim::ModeKind::Rounds},
     {"deathmatch", sim::ModeKind::Deathmatch},
     {"survival", sim::ModeKind::Survival},
@@ -99,6 +99,7 @@ constexpr std::array<ModeKindName, 9> kModeKinds = {{
     {"capture", sim::ModeKind::Capture},                 // v0.33
     {"control", sim::ModeKind::Control},                 // v0.80
     {"harvest", sim::ModeKind::Harvest},                 // v0.82
+    {"kill_rounds", sim::ModeKind::KillRounds},          // v0.90
 }};
 static_assert(kModeKinds.size() == static_cast<size_t>(sim::ModeKind::kCount),
               "every ModeKind needs a TOML name in kModeKinds");
@@ -1353,7 +1354,7 @@ class Builder {
       if (entry == nullptr) {
         s.error("unknown kind " + inQuotes(*kind) +
                 " (rounds, deathmatch, survival, team_rounds, team_deathmatch, hill, capture, "
-                "control or harvest)");
+                "control, harvest or kill_rounds)");
       } else {
         m.kind = entry->kind;
       }
@@ -1385,7 +1386,8 @@ class Builder {
         if (const toml::node* n = s.take(key)) {
           s.error(*n, "'" + std::string(key) +
                           "' belongs to a point-scoring kind (deathmatch, team_deathmatch, hill, "
-                          "capture, control, harvest): a round kind's score counts round wins");
+                          "capture, control, harvest, kill_rounds): a round kind's score counts "
+                          "round wins");
         }
       }
     }
@@ -2083,6 +2085,10 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
       };
       if (m.scoreToWin < 1) atLeastOne("score_to_win");
       if (m.respawnTicks < 1) atLeastOne("respawn_ticks");
+    }
+    // v0.90: kill rounds scores points too, with no respawn to check.
+    if (m.kind == sim::ModeKind::KillRounds && m.scoreToWin < 1) {
+      fail(where + ": score_to_win must be at least 1 in kill_rounds");
     }
     if ((m.kind == sim::ModeKind::Hill || m.kind == sim::ModeKind::Control) && m.hillTicks < 1) {
       fail(where + ": hill_ticks must be at least 1");

@@ -103,6 +103,7 @@ enum class ObsModeKind : uint8_t {
   Capture = 6,         // architecture v0.33
   Control = 7,         // architecture v0.80
   Harvest = 8,         // architecture v0.82 (designed v0.81)
+  KillRounds = 9,      // architecture v0.90: rounds scored by eliminations
 };
 enum class ObsAbilityKind : uint8_t {
   None = 0,

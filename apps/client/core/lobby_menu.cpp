@@ -478,6 +478,11 @@ std::string modeSummary(const sim::ModeDef& mode) {
       std::snprintf(buf, sizeof buf, "first team to %u rounds, last team standing",
                     static_cast<unsigned>(mode.roundsToWin));
       return buf;
+    case sim::ModeKind::KillRounds:  // v0.90
+      std::snprintf(buf, sizeof buf,
+                    "first to %u kills, judged at a round's end, last monkey standing",
+                    static_cast<unsigned>(mode.scoreToWin));
+      return buf;
     case sim::ModeKind::Survival:
       if (mode.timeLimitTicks != 0) {
         std::snprintf(buf, sizeof buf, "first to %u rounds of %s, last monkey standing",

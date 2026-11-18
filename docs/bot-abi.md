@@ -177,7 +177,7 @@ Enumerations (byte values):
 |---|---|
 | relation | 0 None (empty slot), 1 Self, 2 Ally (a teammate in a team mode, since architecture v0.32; a free-for-all has none), 3 Enemy |
 | match phase | 0 Lobby, 1 RoundStarting (spawned, frozen), 2 Playing, 3 RoundEnded, 4 MatchEnded |
-| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else"), 8 Harvest (architecture v0.82: carry bananas from the trees to the team's home zone and bank them, §3.3; version 1 and 2 modules alike see the 8) |
+| mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else"), 8 Harvest (architecture v0.82: carry bananas from the trees to the team's home zone and bank them, §3.3; version 1 and 2 modules alike see the 8), 9 KillRounds (architecture v0.90: free-for-all rounds as Rounds, but `scores` count eliminations, +1 to the attacker when it happens, and the match ends at a round's end once the strict leader has `scoreToWin`; no `modeData`) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
 | banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup) |
@@ -228,7 +228,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 19 | u8 | `phase` | match phase |
 | 20 | u8 | `round` | current round, 1-based once the match started |
 | 21 | u8 | `roundsToWin` | rounds, survival: round wins that take the match |
-| 22 | u8 | `scoreToWin` | deathmatch: eliminations that win; harvest (architecture v0.82): the team score, in bananas banked, that wins (§3.3) |
+| 22 | u8 | `scoreToWin` | deathmatch, kill rounds (architecture v0.90): eliminations that win; harvest (architecture v0.82): the team score, in bananas banked, that wins (§3.3) |
 | 23 | u8 | `aliveCount` | monkeys in the arena |
 | 24 | u16 | `presentMask` | bit i: slot i is in the roster |
 | 26 | u16 | `aliveMask` | bit i: slot i has a monkey in the arena |
@@ -241,7 +241,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 38 | u16 | `respawnInvulnTicks` | deathmatch: spawn protection after a respawn |
 | 40 | u16 | `reservedTurnTicks` | §3: ticks per turn in a grid mode, 0 in a continuous one |
 | 42 | u16 | `reservedTicksToLatch` | §3: in a grid mode, ticks from this observation's tick to the next latch (0: this tick's input is latched) |
-| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures; harvest: bananas banked, less those stolen back, §3.3). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
+| 44 | i8[10] | `scores` | per slot: round wins (the round kinds) or points (deathmatch: eliminations, plus `catch_score` per perfect catch of an enemy's banana and `suicide_score` per elimination with no killer; hill points, captures; harvest: bananas banked, less those stolen back, §3.3; kill rounds, architecture v0.90: eliminations). Signed since architecture v0.57 (two's complement; a suicide may take it below 0); the same byte as before for 0..127 |
 | 54 | u8[10] | `deaths` | per slot: eliminations suffered this match |
 | 64 | u16[10] | `respawnTicks` | per slot: ticks until a dead slot respawns, 0 = none due |
 | 84 | i16[10] | `reservedTeamScores` | §3: per team index (signed since architecture v0.57) |
@@ -695,7 +695,8 @@ holding two or more it throws at an enemy in a clear line.
   anything does not.
 - Appending new enumeration values (a new ability or mode kind, a new tag bit) is allowed within a
   version: a bot must treat an unknown value as "something else", never as an error. Mode kinds
-  7 (control, architecture v0.80) and 8 (harvest, v0.82) were appended this way, and harvest's
+  7 (control, architecture v0.80), 8 (harvest, v0.82) and 9 (kill rounds, v0.90) were appended
+  this way, and harvest's
   `tree` byte named a pad byte that was always 0, so neither needed a version.
 - Content (arenas, modes, ability and power-up numbers) is data, not schema: it reaches a bot
   through the observation (`rules`, `abilities[s].def*`, `arena`) and `contentHash`, never through

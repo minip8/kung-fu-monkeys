@@ -61,6 +61,15 @@ bool respawnPlayer(WorldState& s, const MatchContent& content, PlayerId id, Even
 // every team is one slot) reaches content.mode.roundsToWin.
 void endRound(WorldState& s, const MatchContent& content, PlayerId winner, EventSink& sink);
 
+// Ends the current round of a point-scoring round kind (kill rounds, v0.90)
+// with `survivor` (invalid: none): RoundEnded naming it, no score for it,
+// then MatchEnded once the strict score leader (scoreLeader) has reached
+// content.mode.scoreToWin. A tied lead plays another round. At the match's
+// end lastRoundWinner is the match winner (MatchEnded's player), as in
+// every other kind.
+void endRoundOnScore(WorldState& s, const MatchContent& content, PlayerId survivor,
+                     EventSink& sink);
+
 // Ends the match at once with `winner` (invalid: a draw): RoundEnded, then
 // MatchEnded. Scores are left as they are.
 void endMatch(WorldState& s, PlayerId winner, EventSink& sink);

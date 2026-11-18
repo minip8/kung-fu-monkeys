@@ -139,7 +139,8 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
   turns, for `kfm_arena`), `contest` (the bot ladder's row, the `harvest` kind on the pool
   `grove`, `orchards`, `gorge`, `burrows` since v0.82: a loader test pins it, so a season's
   change to it is a deliberate edit of both), `control_1t` (v0.80's contest, the `control` kind
-  on `courtyard_zones`, appended in v0.82).
+  on `courtyard_zones`, appended in v0.82), `kill_rounds` (v0.90: rounds scored by
+  eliminations, first to 10 kills judged at a round's end).
 - A team mode needs an arena with a spawn group per team, `hill`, `capture` and `control` need
   their zones, `harvest` a zone per team and a tree, a grid mode needs an arena with cells (a
   tilemap): `ContentDB::compatible`. Without `--arena` every host picks the mode's `arena`, else

@@ -1433,7 +1433,7 @@ TEST_CASE("modes: harvest, its keys and its pool of arenas (v0.82)", "[content][
                  "respawn_ticks must be at least 1 in harvest"));
   CHECK(loads(replaced(withHarvest(), "score_to_win = 40", "score_to_win = 40\ncatch_score = 1")));
   CHECK(contains(loadErrors(std::string(kMinimal) + "[[mode]]\nname = \"x\"\nkind = \"farm\"\n"),
-                 "control or harvest)"));
+                 "control, harvest or kill_rounds)"));
   {
     // validateContent() holds content built in code to the same rules.
     ContentDB v{};
@@ -1468,6 +1468,44 @@ TEST_CASE("content/ ships rounds, deathmatch and survival", "[content][loader][m
   CHECK(loaded.modes[deathmatch].timeLimitTicks > 0);
   CHECK(loaded.modes[survival].kind == sim::ModeKind::Survival);
   CHECK(loaded.modes[survival].timeLimitTicks > 0);
+}
+
+// v0.90: kill rounds, appended as the last mode: rounds' flow, eliminations
+// as points to ten, the round kinds' pause and the drop economy.
+TEST_CASE("content/ ships kill_rounds, appended (v0.90)", "[content][loader][modes]") {
+  ContentDB db{};
+  Diagnostics diag;
+  REQUIRE(loadContentDir(KFM_CONTENT_DIR, db, diag));
+  const std::optional<uint8_t> index = db.findMode("kill_rounds");
+  REQUIRE(index);
+  CHECK(index.value_or(0) == db.modeCount - 1);
+  CHECK(index.value_or(0) == 11);
+  const sim::ModeDef& m = db.modes[index.value_or(0)];
+  const sim::ModeDef& rounds = db.modes[0];
+  CHECK(m.kind == sim::ModeKind::KillRounds);
+  CHECK(sim::scoresPoints(m.kind));
+  CHECK(sim::playsRounds(m.kind));
+  CHECK(m.scoreToWin == 10);
+  CHECK(m.teams == 0);
+  CHECK(m.timeLimitTicks == 0);
+  CHECK(m.catchScore == 0);
+  CHECK(m.suicideScore == 0);
+  CHECK(m.deathBananas == sim::DeathBananas::Drop);
+  CHECK(m.roundStartTicks == rounds.roundStartTicks);
+  CHECK(m.roundEndTicks == rounds.roundEndTicks);
+  CHECK(m.dryRoundTicks == rounds.dryRoundTicks);
+  // A free-for-all kind: it plays on every continuous arena, dojo first.
+  CHECK(db.compatible(0, index.value_or(0)));
+}
+
+TEST_CASE("modes: kill_rounds needs a target and takes the point keys (v0.90)",
+          "[content][loader][modes]") {
+  const std::string base =
+      std::string(kMinimal) + "[[mode]]\nname = \"k\"\nkind = \"kill_rounds\"\nscore_to_win = 3\n";
+  CHECK(loads(base));
+  CHECK(loads(base + "catch_score = 1\nsuicide_score = -1\n"));
+  CHECK(contains(loadErrors(replaced(base, "score_to_win = 3", "score_to_win = 0")),
+                 "score_to_win must be at least 1 in kill_rounds"));
 }
 
 TEST_CASE("content/ settles the banana economy per mode (v0.57)", "[content][loader][modes]") {
@@ -1523,9 +1561,9 @@ TEST_CASE("content/ ships contest as harvest on the pool with grid_rounds_1t's s
   REQUIRE(grove);
   REQUIRE(base);
   // The ladder points at the name, and the row keeps its index; control_1t
-  // is appended.
+  // is appended after it (and kill_rounds, v0.90, after control_1t).
   CHECK(contest.value_or(0) < control.value_or(0));
-  CHECK(control.value_or(0) == db.modeCount - 1);
+  CHECK(control.value_or(0) == 10);
   const sim::ModeDef& g = db.modes[grid.value_or(0)];
   const sim::ModeDef& m = db.modes[contest.value_or(0)];
   CHECK(m.kind == sim::ModeKind::Harvest);

@@ -713,6 +713,11 @@ TEST_CASE("mode summaries show the key numbers", "[client][lobby]") {
   control.timeLimitTicks = 0;
   CHECK(client::modeSummary(control) ==
         "first team to 5 points, a zone taken in 1.5 s pays a point per 5.0 s, no clock");
+  sim::ModeDef kills;  // v0.90
+  kills.kind = sim::ModeKind::KillRounds;
+  kills.scoreToWin = 10;
+  CHECK(client::modeSummary(kills) ==
+        "first to 10 kills, judged at a round's end, last monkey standing");
   sim::ModeDef harvest;  // v0.82
   harvest.kind = sim::ModeKind::Harvest;
   harvest.teams = 2;

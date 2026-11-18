@@ -69,6 +69,8 @@ static_assert(KFM_CONTROL_PROGRESS_WORD + ((KFM_MAX_ZONES + 1) / 2) <= KFM_ZONE_
 // v0.82: the harvest kind, its beats word (modes/harvest.cpp) and the
 // spawner's tree byte, within version 2.
 static_assert(KFM_MODE_HARVEST == static_cast<int>(ObsModeKind::Harvest));
+// v0.90: the kill rounds kind, an appended value within version 2.
+static_assert(KFM_MODE_KILL_ROUNDS == static_cast<int>(ObsModeKind::KillRounds));
 static_assert(KFM_HARVEST_BEATS_WORD == 0 && KFM_HARVEST_BEATS_WORD < KFM_ZONE_WORD);
 static_assert(KFM_HARVEST_BANK_TICKS(0x00060002u) == 2 &&
               KFM_HARVEST_STEAL_TICKS(0x00060002u) == 6);

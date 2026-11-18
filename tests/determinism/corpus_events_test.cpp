@@ -25,6 +25,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -264,6 +265,18 @@ bool fruitTaken(const Tally& t, const ContentDB& /*db*/) {
 bool bankedBeyondHands(const Tally& t, const ContentDB& /*db*/) {
   return t.objectivePoints > 10;
 }
+// v0.90, kill rounds: every point is a kill (the shipped row has no catch
+// or suicide points, and a survivor scores nothing), over more than one round.
+bool killsAreTheScore(const Tally& t, const ContentDB& /*db*/) {
+  int sum = 0;
+  for (const int8_t score : t.scores)
+    sum += score;
+  return t.objectivePoints > 0 && std::cmp_equal(sum, t.objectivePoints) &&
+         t.of(EventKind::ScoreChanged) == t.objectivePoints;
+}
+bool severalRounds(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::RoundStarted) > 1;
+}
 bool steals(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::BananaStolen) > 0;
 }
@@ -322,6 +335,10 @@ const std::vector<Entry>& expectations() {
        {{"fruit taken off the floor", fruitTaken},
         {"more banked than the opening hands", bankedBeyondHands},
         {"a theft", steals}}},
+      {"scripted_4p_kill_rounds_3600t",
+       {{"every point a kill", killsAreTheScore},
+        {"more than one round", severalRounds},
+        {"throws, dashes, hits, eliminations", fights}}},
       {"scripted_10p_control_1t_1800t",
        {{"a zone captured", zoneCaptured}, {"a zone point", objectivePoint}, {"a call", calls}}},
   };
