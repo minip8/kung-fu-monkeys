@@ -16,6 +16,12 @@ namespace kfm::sim {
   return false;
 }
 
+// An onIdleHold for a kind that does nothing while its button is held idle.
+// NOLINTNEXTLINE(misc-const-correctness): parameter types fixed by AbilityBehavior
+constexpr void noIdleHold(WorldState& /*s*/, Player& /*p*/, AbilityState& /*st*/,
+                          const AbilityDef& /*def*/, const MatchContent& /*content*/,
+                          EventSink& /*sink*/) {}
+
 // Hooks called by AbilitySystem for one ability slot. `p` is the owning
 // player (an element of s.players) and `st` one of p.abilities. Every
 // pointer is non-null in the registry; behaviours that do not need a hook
@@ -46,6 +52,12 @@ struct AbilityBehavior {
   // the slot's button in the player's intent (Throw: a charging wind-up runs
   // while the button is held). Pure, like kindTags.
   bool (*holdsPhase)(const AbilityState& st, const AbilityDef& def, bool buttonHeld) = &neverHolds;
+  // v0.89: called on every Playing tick the slot ends Idle with its button
+  // held (after the activation check, so also on a press canActivate
+  // refused). Throw: the recall of a banana lying on the floor
+  // (abilities/throw.hpp). Every other kind: noIdleHold.
+  void (*onIdleHold)(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
+                     const MatchContent& content, EventSink& sink) = &noIdleHold;
 };
 
 // kindTags for a kind that grants nothing beyond its def's phase tags.

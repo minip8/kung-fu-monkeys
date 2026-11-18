@@ -47,8 +47,8 @@ constexpr PlayerInput walk(uint8_t octant, uint8_t buttons = 0, uint8_t subTick 
 // perfect window is the argument (0: never perfect; 12: the whole active
 // phase, the catcher's).
 ContentDB gridContent(uint16_t perfectWindow = 0) {
-  ContentDB c = defaultContent();
-  removeThrowCharge(c);  // v0.48: like content/'s grid_throw, a press throws
+  ContentDB c = classicContent();  // v0.89: the M1 flight
+  removeThrowCharge(c);            // v0.48: like content/'s grid_throw, a press throws
   c.player.radius = Fixed::fromRatio(35, 100);
   ArenaDef& a = c.arenas[kCells];
   a = ArenaDef{};

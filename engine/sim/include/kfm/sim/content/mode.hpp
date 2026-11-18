@@ -151,6 +151,19 @@ enum class DeathBananas : uint8_t {
   kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a choice
 };
 
+// v0.89, how a thrown banana flies in a mode (ProjectileSystem, §5.7).
+// Classic: the constant-speed flight of M1 (BoomerangDef speed,
+// outboundTicks, turnRateBam, maxReturnTicks), kept bit for bit for the grid
+// modes and the bot contest. Arc: it leaves fast and slows to its apex,
+// turns for home and speeds up again, steers only a little and drops when it
+// misses (BoomerangDef's arc fields). The struct default is Classic (a mode
+// built by hand plays as before); the loader's default is Arc.
+enum class BananaFlight : uint8_t {
+  Classic = 0,
+  Arc,
+  kCount,  // NOLINT(readability-identifier-naming): table-size sentinel, not a flight
+};
+
 // v0.80, control: the most teams the kind plays (its modeData keeps a clock
 // per team in two words, modes/control.cpp).
 inline constexpr uint8_t kMaxControlTeams = 4;
@@ -270,6 +283,9 @@ struct ModeDef {
   // pool's first member that suits the mode). A uint32_t since v0.91
   // (kMaxArenas 32).
   uint32_t arenaSet{kNoArenaSet};
+  // v0.89: the banana's flight model (TOML banana_flight, "arc" when the
+  // key is absent; the grid modes name "classic").
+  BananaFlight bananaFlight{BananaFlight::Classic};
 
   [[nodiscard]] constexpr bool hasBaseline() const { return baseline != kNoBaseline; }
   [[nodiscard]] constexpr bool hasArena() const { return arena != kNoArena; }

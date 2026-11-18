@@ -241,6 +241,17 @@ bool slams(const Tally& t, const ContentDB& /*db*/) {
 bool parries(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::PlayerParryStarted) > 0;
 }
+// v0.89: the scripted generator holds Throw with an empty hand by the clock,
+// so pulls start, some are let go on the way and some reach the hand.
+bool recalls(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::BananaRecallStarted) > 0;
+}
+bool recallsLetGo(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::BananaRecallEnded) > 0;
+}
+bool recallsHome(const Tally& t, const ContentDB& /*db*/) {
+  return t.of(EventKind::BananaRecallStarted) > t.of(EventKind::BananaRecallEnded);
+}
 bool hillHeld(const Tally& t, const ContentDB& /*db*/) {
   return t.of(EventKind::HillHolderChanged) > 0;
 }
@@ -303,6 +314,10 @@ const std::vector<Entry>& expectations() {
       {"scripted_4p_blink_1800t", {{"a blink", blinks}}},
       {"scripted_4p_slam_1800t", {{"a slam lands", slams}}},
       {"scripted_4p_parry_1800t", {{"a parry", parries}}},
+      {"scripted_4p_recall_1800t",
+       {{"a banana pulled back", recalls},
+        {"a pull let go", recallsLetGo},
+        {"more pulls started than let go (some reach the hand)", recallsHome}}},
       {"scripted_4p_team_rounds_1800t", {{"a team round won", roundWon}}},
       {"scripted_4p_team_deathmatch_3600t",
        {{"an elimination scores", objectivePoint}, {"a respawn", respawns}}},

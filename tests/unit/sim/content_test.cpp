@@ -111,7 +111,11 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.abilities[1].tagsStartup.set(Tag::Shielded); },
       [](ContentDB& c) { c.abilities[1].tagsActive.set(Tag::Shielded); },
       [](ContentDB& c) { c.abilities[1].tagsRecovery.set(Tag::Shielded); },
-      [](ContentDB& c) { c.abilities[1].rootPhases ^= 1; });
+      [](ContentDB& c) { c.abilities[1].rootPhases ^= 1; },
+      [](ContentDB& c) { c.abilities[1].recallSpeed += Fixed::epsilon(); },  // v0.89
+      [](ContentDB& c) { c.abilities[1].recallAccelTicks += 1; },
+      [](ContentDB& c) { c.abilities[1].recallHarmSpeed += Fixed::epsilon(); },
+      [](ContentDB& c) { c.abilities[1].recallRange += Fixed::epsilon(); });
   everyFieldReachesTheHash<BoomerangDef>(
       [](ContentDB& c) { c.boomerang.radius += Fixed::epsilon(); },
       [](ContentDB& c) { c.boomerang.speed += Fixed::epsilon(); },
@@ -121,7 +125,15 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.boomerang.restitution += Fixed::epsilon(); },
       [](ContentDB& c) { c.boomerang.spawnOffset += Fixed::epsilon(); },
       [](ContentDB& c) { c.boomerang.damage += 1; },
-      [](ContentDB& c) { c.boomerang.pitSinkTicks += 1; });
+      [](ContentDB& c) { c.boomerang.pitSinkTicks += 1; },
+      [](ContentDB& c) { c.boomerang.arcLaunchSpeed += Fixed::epsilon(); },  // v0.89
+      [](ContentDB& c) { c.boomerang.arcApexSpeed += Fixed::epsilon(); },
+      [](ContentDB& c) { c.boomerang.arcOutboundTicks += 1; },
+      [](ContentDB& c) { c.boomerang.arcReturnSpeed += Fixed::epsilon(); },
+      [](ContentDB& c) { c.boomerang.arcReturnAccelTicks += 1; },
+      [](ContentDB& c) { c.boomerang.arcReturnTicks += 1; },
+      [](ContentDB& c) { c.boomerang.arcTurnRateBam += 1; },
+      [](ContentDB& c) { c.boomerang.arcBounceTicks += 1; });
   everyFieldReachesTheHash<PickupDef>([](ContentDB& c) { c.pickup.radius += Fixed::epsilon(); });
   everyFieldReachesTheHash<PlayerDef>([](ContentDB& c) { c.player.radius += Fixed::epsilon(); },
                                       [](ContentDB& c) { c.player.moveSpeed += Fixed::epsilon(); },
@@ -197,7 +209,12 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.modes[0].respawnAmmo = 0; },
       [](ContentDB& c) { c.modes[0].bankTicks += 1; },
       [](ContentDB& c) { c.modes[0].stealTicks += 1; },
-      [](ContentDB& c) { c.modes[0].arenaSet ^= 1; });
+      [](ContentDB& c) { c.modes[0].arenaSet ^= 1; },
+      [](ContentDB& c) {  // v0.89
+        c.modes[0].bananaFlight = c.modes[0].bananaFlight == BananaFlight::Arc
+                                      ? BananaFlight::Classic
+                                      : BananaFlight::Arc;
+      });
   everyFieldReachesTheHash<VisionDef>(
       [](ContentDB& c) { c.modes[1].vision.kind = VisionKind::Team; },
       [](ContentDB& c) { c.modes[1].vision.peripheral += 1; },

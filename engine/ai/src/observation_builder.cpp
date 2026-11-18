@@ -181,12 +181,13 @@ void fillRules(const sim::ContentDB& db, const sim::ModeDef& mode, ObsRules& r) 
   r.playerRadius = db.player.radius.raw;
   r.playerMoveSpeed = db.player.moveSpeed.raw;
   r.bananaRadius = db.boomerang.radius.raw;
-  r.bananaSpeed = db.boomerang.speed.raw;
+  // v0.89: the flight's speed (the arc's mean speed out, bananaFlightSpeedOf).
+  r.bananaSpeed = sim::bananaFlightSpeedOf(db.boomerang, mode).raw;
   r.bananaSpawnOffset = db.boomerang.spawnOffset.raw;
   r.bananaRestitution = db.boomerang.restitution.raw;
   r.pickupRadius = db.pickup.radius.raw;
-  r.bananaOutboundTicks = sim::bananaOutboundTicksOf(db.boomerang, mode);  // v0.80: the mode's
-  r.bananaMaxReturnTicks = db.boomerang.maxReturnTicks;
+  r.bananaOutboundTicks = sim::bananaOutboundTicksOf(db.boomerang, mode);    // v0.80: the mode's
+  r.bananaMaxReturnTicks = sim::bananaMaxReturnTicksOf(db.boomerang, mode);  // v0.89
   r.bananaTurnRateBam = sim::bananaTurnRateBamOf(db.boomerang, mode);
   r.hitStunTicks = db.player.hitStunTicks;
   r.bananaDamage = db.boomerang.damage;
@@ -318,11 +319,15 @@ void fillBananas(const sim::WorldState& world, const sim::MatchContent& content,
                  ObsBanana (&bananas)[kObsMaxBananas]) {
   const sim::Player* me = world.playerBySlot(self);
   const sim::BoomerangDef& def = content.db.boomerang;
+  const Fixed flightSpeed = sim::bananaFlightSpeedOf(def, content.mode);  // v0.89
   world.boomerangs.forEachAlive([&](EntityId id, const sim::Boomerang& b) {
     ObsBanana& o = bananas[id.index];
     const sim::Transform& t = b.transform;
     o.valid = 1;
-    o.phase = byteOf(b.phase);
+    // v0.89: a banana pulled back (Recalled) reads as Returning, which is
+    // what it is to a bot: in flight toward its owner, caught on contact.
+    o.phase = b.phase == sim::BoomerangPhase::Recalled ? byteOf(ObsBananaPhase::Returning)
+                                                       : byteOf(b.phase);
     o.owner = b.owner.value;
     o.ownerRelation = relationTo(content, self, b.owner);
     o.damage = b.damage;
@@ -333,7 +338,7 @@ void fillBananas(const sim::WorldState& world, const sim::MatchContent& content,
     o.posY = t.pos.y.raw;
     o.velX = t.vel.x.raw;
     o.velY = t.vel.y.raw;
-    o.speed = (def.speed * b.speedMul).raw;
+    o.speed = (flightSpeed * b.speedMul).raw;
     o.radius = (def.radius * b.radiusMul).raw;
     if (me == nullptr) {
       o.approachTicks = kObsNoApproach;

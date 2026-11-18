@@ -20,6 +20,7 @@ inline constexpr uint8_t kFastHands = 4;
 
 [[nodiscard]] inline ContentDB powerUpContent() {
   ContentDB c = defaultContent();
+  useClassicFlight(c);  // v0.89: the M1 flight (the defs keep their recall: mirror_test)
   AbilityDef fast = c.abilities[c.player.abilities[kAbilitySlotThrow]];
   fast.name = ContentName::of("throw_fast");
   fast.cooldownTicks = 8;

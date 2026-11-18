@@ -46,9 +46,9 @@ constexpr std::array<AbilityBehavior, static_cast<size_t>(AbilityKind::kCount)> 
 constexpr bool rowComplete(const AbilityBehavior& b) {
   return b.canActivate != nullptr && b.onActivate != nullptr && b.onTick != nullptr &&
          b.onPhaseChange != nullptr && b.onEnd != nullptr && b.kindTags != nullptr &&
-         b.holdsPhase != nullptr;
+         b.holdsPhase != nullptr && b.onIdleHold != nullptr;
 }
-static_assert(fieldCount<AbilityBehavior>() == 7, "check the new hook in rowComplete");
+static_assert(fieldCount<AbilityBehavior>() == 8, "check the new hook in rowComplete");
 KFM_STATIC_ASSERT_HOOKS(std::ranges::all_of(kBehaviors, rowComplete),
                         "every AbilityKind needs a row with every hook set");
 

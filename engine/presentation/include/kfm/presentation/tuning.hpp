@@ -233,6 +233,9 @@ inline constexpr float kDashTrailSeconds = 0.18f;
 inline constexpr float kDashTrailInterval = 0.025f;
 inline constexpr float kBananaTrailSeconds = 0.12f;
 inline constexpr float kBananaTrailInterval = 0.03f;
+// v0.89, the recall: a banana pulled back by its owner floats this far above
+// the hand height.
+inline constexpr float kBananaRecallLift = 0.2f;
 inline constexpr float kPerfectCatchBurstSeconds = 0.45f;  // gold sparks, beside the flash
 inline constexpr float kHitSparkSeconds = 0.25f;
 inline constexpr float kEliminationPoofSeconds = 0.7f;  // grey smoke puffs drifting up

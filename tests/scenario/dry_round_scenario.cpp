@@ -37,7 +37,7 @@ void emptyHands(WorldState& s) {
 
 TEST_CASE("dry round: no banana anywhere on a pitless arena ends the round as a draw at once",
           "[scenario][dry]") {
-  const ContentDB& c = defaultContent();
+  const ContentDB& c = classicContent();
   WorldState s = makePlayingWorld(41, 0b11, c);
   EventLog log;
   SECTION("a banana lying around keeps it going") {
@@ -66,7 +66,7 @@ TEST_CASE("dry round: no banana anywhere on a pitless arena ends the round as a 
 
 TEST_CASE("dry round: a spawner that can still lay an ammo power-up keeps it going",
           "[scenario][dry]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   const uint8_t more =
       addPowerUp(c, "more", 600, {statGrant(StatKind::AmmoMax, Fixed::one(), Fixed::fromInt(2))});
   ArenaDef& a = c.arenas[0];
@@ -81,7 +81,7 @@ TEST_CASE("dry round: a spawner that can still lay an ammo power-up keeps it goi
 }
 
 TEST_CASE("dry round: survival ends it as its clock would", "[scenario][dry]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   ModeDef& m = c.modes[1];
   m = c.modes[0];
   m.name = ContentName::of("survival");
@@ -154,7 +154,7 @@ TEST_CASE("dry round: a faller's banana that comes down over a pit is gone; the 
   // P0 falls with its banana over the pit: the banana drops into the hole, P1
   // and P2 have none, and on an arena with pits the round ends as a draw
   // dry_round_ticks after the last banana went.
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   ArenaDef& a = c.arenas[0];
   a.hazards[0] = Hazard{at(-3, -2), at(-1, 2), HazardKind::Pit, Fixed::one()};
   a.hazardCount = 1;

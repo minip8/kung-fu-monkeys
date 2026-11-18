@@ -180,6 +180,7 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
     case BoomerangPhase::Outbound:
       return BananaPhase::Outbound;
     case BoomerangPhase::Returning:
+    case BoomerangPhase::Recalled:  // v0.89: on its way home, drawn like a return
       return BananaPhase::Returning;
     case BoomerangPhase::Sinking:
       return BananaPhase::Sinking;
@@ -404,6 +405,8 @@ void buildPlayers(PresentationState& ps, const WorldState& prev, const WorldStat
       const float u = clamp01(distanceToOwner / returnStartDistance);
       return kBananaArcPeak * std::sin(0.5f * kPi * u);
     }
+    case BoomerangPhase::Recalled:  // v0.89: lifted off the floor, floating home
+      return kBananaRecallLift;
     case BoomerangPhase::Grounded:
     case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
       break;

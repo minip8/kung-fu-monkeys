@@ -228,7 +228,8 @@ void StatsCollector::observeContact(const WorldState& s, const MatchContent& con
   const double delta = static_cast<double>(s.tick.value) + c.tHit.toDouble() - pressTime(dash);
 
   // Rows 10 and 11 of the rules table (rules/table.cpp).
-  const bool catchable = !own || b->phase == BoomerangPhase::Returning;
+  const bool catchable =
+      !own || b->phase == BoomerangPhase::Returning || b->phase == BoomerangPhase::Recalled;
   if (catchable && p->tags.has(Tag::PerfectDash)) {
     const uint16_t window = content.db.abilityAt(dash.defIndex).perfectWindowTicks;
     const bool inWindow = delta >= 0.0 && delta < static_cast<double>(window);

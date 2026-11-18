@@ -684,6 +684,30 @@ current tick's, so rotation never costs anything (§5.12).
   observation (a new Observation version); a hold that slows or roots the thrower (not asked
   for; content could add it with `root_phases`). Shipped: ×0.6 to ×1.5 over 40 ticks (5.8 to
   14.4 units out), Fast Hands over 20; the grid throws do not charge.
+- The recall (v0.89, `throw.cpp`, "telekinesis"): a Throw def with a positive `recallSpeed`
+  recalls (`throwRecalls`; TOML `recall_speed`, `recall_accel_ticks`, `recall_harm_speed`,
+  `recall_range`, a throw's only). It needs no press and no `AbilityState` field: an eighth
+  hook, `AbilityBehavior::onIdleHold(s, p, st, def, content, sink)` (default `noIdleHold`; the
+  registry asserts it set like the others), runs on every Playing tick a slot ends Idle with
+  its button held, after the activation check, so also on the press `canActivate` refused for
+  want of ammo. Throw's lifts the monkey's nearest own banana off the floor when its hand is
+  empty and none of its bananas is being pulled already: a banana pickup whose last owner it is
+  (`Pickup::spawner` = slot + 1, §5.7), within `recallRange` when that is set (0: anywhere),
+  the squared distance deciding and the lowest pickup index on a tie. One banana of a stack
+  comes up (`count − 1`, the pickup despawned at 0), as a fresh `Recalled` banana of the monkey
+  at rest where it lay, with its projectile modifiers (§5.8), and `BananaRecallStarted`; a full
+  boomerang pool leaves it on the floor. One at a time, decided: the nearest is the one the
+  player is reaching for, and the hand must be empty to start, so a pull that lands ends the
+  wanting. The pull itself is `ProjectileSystem`'s (§5.7), which drops the banana when
+  `heldRecallDef` (the recalling slot Idle, its button held, the monkey neither eliminated nor
+  falling) says the owner let go. A banana pulled into the hand while the button is still down
+  starts no throw: a throw needs a press edge (`InputSystem`), and a held button is no edge;
+  the next press throws as ever (and a hand with a banana holding Throw charges a throw, never
+  pulls). Prediction stays safe: the pull reads only the held bits of the input and the state,
+  so "repeat last input" predicts a held pull as held, and a wrong guess rolls back like any
+  other. Shipped: `throw` and `throw_fast` recall, up to 12 u/s over 45 ticks (4.5 units to
+  full pull), harmless below 8 u/s (the first 0.5 s, 2 units), from anywhere; the grid throws
+  and Quick Hands (`grid_throw*`, `quick_throw`) do not.
 - Kinds beyond the base kit (v0.21), each one behaviour file under `src/abilities/`, a def in
   `content/abilities.toml`, one registry line and a scenario test; they read only `AbilityDef`
   numbers and add no `AbilityState` field:
@@ -749,6 +773,7 @@ names an Outbound/Returning phase mask, so no row touches a banana sinking into 
 
 ```
 prio  A                          B                              handler
+  5   Player[]                   Boomerang[Recalled, !own]      SlowRecallPasses (v0.89; declines when fast)
  10   Player[PerfectDash]        Boomerang[InFlight]            CatchBoomerang (declines at ammoMax)
  15   Player[Parrying, !HitStun] Boomerang[InFlight, !own]      ParryBoomerang (declines outside the window)
  16   Player[Slamming, !HitStun] Boomerang[InFlight, !own] (reach) SlamGroundsBanana
@@ -763,6 +788,17 @@ prio  A                          B                              handler
  52   Player[!Carrying]          Pickup[Flag]                   TakeFlag (v0.33; declines for the flag's own team)
  60   Player[!Dashing]           Hazard[Pit] (whole body)       FallIntoPit (v0.57: starts the fall)
 ```
+
+The recall (v0.89, row 5, `rules/recall.cpp`). A banana its owner pulls back (§5.5, §5.7) has
+its own phase, `Recalled`, which `kPhaseInFlight` and `kPhaseReturning` include: it is a banana
+in flight to every row (it hits, is perfect-caught, parried, slammed and blocked like a
+returning banana) and comes home to its owner like one (rows 11 and 40, at any speed). Row 5,
+`Player[] × Boomerang[Recalled, !own]` in every relation, comes first: while the banana is
+slower than its owner's `recallHarmSpeed` (times its `speedMul`), `slowRecallPasses` takes the
+contact and nothing happens, so the slow lift drifts through anyone; at or above it the
+handler declines and the scan goes on (a banana whose owner no longer recalls declines too).
+Decided: harmless below a speed rather than for a time, because the speed is what a player
+sees, and a pull a wall holds back stays slow.
 
 Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
 `0 <= (tick + tHit) − (pressTime + startupTicks) < activeTicks`; outside the window the handler
@@ -847,6 +883,7 @@ only ever competes with its own relation's rows, in the same order:
 
 ```
 prio  A                                   B                                       relation
+  5   Player[]                            Boomerang[Recalled, !own]               any (v0.89)
  10   Player[PerfectDash]                 Boomerang[InFlight, !own]               any (a pass)
  11   Player[PerfectDash]                 Boomerang[Returning, own]               any
  15   Player[Parrying, !HitStun]          Boomerang[InFlight, !own]               Enemy
@@ -1050,6 +1087,71 @@ is a defence only for a player who has thrown.
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
   `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
   cannot kill the winner or return to its owner during the pause; `RoundEnded` then clears it.
+- The arc (v0.89). The flight above flew for seconds: a banana that missed its moving owner
+  kept homing at 6.6°/tick for up to 4 s, circling and bouncing off walls at full speed. A mode
+  now picks one of two flights, `ModeDef::bananaFlight` (TOML `banana_flight`): `classic`, the
+  flight above bit for bit, kept by the four grid modes (`grid_rounds`, `grid_rounds_1t`,
+  `contest`, `control_1t`: the bot contest's, whose corpus checksums did not move), and `arc`,
+  the loader's default and every other shipped mode's (`ModeDef{}` stays classic, so a mode
+  built by hand plays as before). The arc is the genre's boomerang in our own numbers (no other
+  game's code or values): every speed is a function of the phase and its `ticksInPhase` times
+  the banana's `speedMul`, so it adds no `Boomerang` field and the charge scales the reach,
+  never the time in the air.
+  - Out: `arcLaunchSpeed` on the first tick, slowing evenly to `arcApexSpeed` at the outbound
+    ticks (`arcOutboundTicks`; a mode's `banana_outbound_ticks` overrides it as in classic).
+    At the apex it turns at once to face its owner (it is slow there: the hang of a boomerang
+    at the top of its loop), then speeds up evenly from the apex speed to `arcReturnSpeed` over
+    `arcReturnAccelTicks`, steering toward the owner's current position by at most
+    `arcTurnRateBam` a tick (a mode's `banana_turn_rate` overrides it).
+  - It drops (Grounded, then a pickup in `LifecycleSystem` as ever) when its owner is gone,
+    after `arcReturnTicks` returning, and the moment it has passed its owner: its velocity
+    points away from the owner (an exact int64 dot product below zero), judged before it moves,
+    so a banana that reaches its owner this tick is still caught. It never circles back.
+  - Walls: on the way out a wall bounces it as in classic (`restitution` for the bounce tick)
+    and ages the flight by `arcBounceTicks` (added to `ticksInPhase`): each bounce slows it and
+    brings the turn nearer, so bounce shots (`corridors`) stay, at a cost. On the way back a
+    wall drops it where it hit (still one `BoomerangBounced`). Decided: a reflection on the way
+    home points away from the owner, which the passed-owner rule would drop on the next tick
+    anyway, and a wall between a banana and its thrower is a miss the thrower pays for (or
+    pulls back, below), not a ricochet that finds them.
+  - Shipped (`content/boomerang.toml`): 29 u/s slowing to 3 over 36 ticks (a mean of 16 u/s,
+    the classic speed, so the reach out is the classic one: 9.6 units, a tap 5.8, a full charge
+    14.4, plus the 1-unit spawn offset), home at up to 20 u/s reached in 24 ticks, 96 BAM
+    (about 0.5°) of steering a tick, 60 ticks of return at most, 9 ticks of flight a bounce.
+    Thrown east into the open from 12 units west of the dojo's centre and caught by a thrower
+    standing still, a tap reaches 6.6 units and is in the air 74 ticks, a full charge 15.0 and
+    73 (classic: 8.1 and 18.7 at the farthest, the loop past the turn included, 100 ticks
+    each); no banana is in the air past 96 ticks. A thrower who walks off sideways at full speed
+    is missed; one who steps aside for a fifth of a second is still caught
+    (`banana_arc_scenario.cpp`, which also prints the table: its hidden `[measure]` case).
+  - Readers outside the sim get the arc's numbers through the same helpers:
+    `bananaOutboundTicksOf`, `bananaTurnRateBamOf`, `bananaMaxReturnTicksOf` (the arc's
+    `arcReturnTicks`) and `bananaFlightSpeedOf` (classic: `speed`; arc: the mean speed out,
+    `(arcLaunchSpeed + arcApexSpeed) / 2`, so speed × outbound ticks is the reach either way).
+    The observation's rules block reports them (`docs/bot-abi.md` §2.5); the presentation's
+    height arc reads the outbound ticks.
+- The recall's flight (v0.89, `Recalled`, §5.5). While its owner holds the recalling throw's
+  button (`heldRecallDef`), a `Recalled` banana flies straight at the owner's current position,
+  from rest up to the def's `recallSpeed` (times its `speedMul`) evenly over
+  `recallAccelTicks`, through `statics::moveCircle` with the players' `Slide` response: a wall
+  stops it at the face and it slides along by the tangential part of its pull, so a banana
+  behind a wall stays stuck in its lee (decided: the pull is an attempt, not a teleport; the
+  owner walks round to free it). Let go, or with the owner gone, falling or no longer holding
+  a recalling def, it drops where it is (`BananaRecallEnded`, Grounded, a pickup again that the
+  owner may lift again). It flies over pits, and one let go over a pit sinks. Reaching the
+  owner, row 40 puts it in the hand (`BoomerangCaught`, `Auto`; at full ammo it drops at the
+  catch point as ever). It counts as owned for the regrow clock, as in flight for
+  `dropBananasOf` / `releaseBananasOf` (a dead owner's pull drops or vanishes like its throws,
+  `inFlight()`), and as a banana left for the dry-round rule (it is not Sinking).
+- The last owner (v0.89). A pickup's `spawner` byte (a power-up's spawner, a flag's team) is,
+  for a banana, the slot + 1 of the monkey that may recall it, 0 for nobody
+  (`bananaLastOwner`, `bananaLastOwnerByte`): `LifecycleSystem` writes it when a grounded
+  banana becomes a pickup and its owner is still in the pool with a recalling throw def, so in
+  a mode without recall (every grid mode) it stays 0 and the world state is what it was; a
+  stack keeps it only when the added banana carries the same one. No new field, so no checksum
+  moves where no banana is marked. Anyone may still pick the banana up; a held banana dropped
+  at a death, a catch past `ammoMax` and a tree's fruit are nobody's. A snapshot reader admits
+  a banana's byte up to `kMaxPlayers` (a power-up's stays below `kMaxPickupSpawners`).
 
 ### 5.8 Power-ups and modifiers
 
@@ -1211,6 +1313,11 @@ As built (v0.20; `kfm/sim/content/powerup.hpp`, `systems/modifier.cpp`, `rules/p
 - v0.80 (control): `ZoneCaptured{a = the team that now owns the zone, b = the zone}`, pushed by
   `control` on the capture tick (no player, no entity). Ownership and the capture under way are
   read from `modeData`, not from events.
+- v0.89 (the recall): `BananaRecallStarted{player = the owner, entity = the banana}` when an
+  empty hand lifts a banana off the floor, `BananaRecallEnded{player = the owner, entity = the
+  banana}` when a pull is let go (or the owner can no longer pull) and the banana drops; a pull
+  that reaches the hand ends in `BoomerangCaught` instead. Presentation plays the blink's zap,
+  quieter, on the start and draws the tether from state (§7).
 - v0.82 (harvest): `BananaStolen{player = the raider, entity = its player, a = the slot whose
   point it took, b = the zone (the robbed team's home)}`, pushed after that slot's
   `ScoreChanged` with the appended `ScoreReason::Stolen` (3) and −1; a bank is a
@@ -3038,7 +3145,11 @@ additive); no shader changed. Event-driven (`applyEventFx`, one call per new `Si
 
 Sampled from state, not events: a player whose Dash is active leaves a DashTrail afterimage
 (0.18 s) every 25 ms, a flying banana a BananaTrail puff (0.12 s, tinted toward the owner) every
-30 ms; the count-in sound plays on entering `RoundStarting` and at every whole second the
+30 ms (v0.89: a banana its owner pulls back, `Recalled`, floats `kBananaRecallLift` above the
+hand height, is drawn as a returning banana and is tied to its owner's hand by a dotted tether
+of `kRecallTetherDots` BananaTrail puffs in the owner's tint, laid every 60 ms and each living
+90 ms; `BananaRecallStarted` plays the blink's zap at half gain); the count-in sound plays on
+entering `RoundStarting` and at every whole second the
 countdown crosses, RoundGo on `RoundStarting` → `Playing`. Entity positions for events come from
 `curr`, else `prev` (despawned this tick), else the entity's presentation track. Player colours
 come from `palette.hpp`. Bursts cost one draw call per spark; a busy 10-player frame measured

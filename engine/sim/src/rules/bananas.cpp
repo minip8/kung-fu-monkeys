@@ -9,7 +9,7 @@
 
 namespace kfm::sim {
 
-EntityId layBananaPickup(WorldState& s, Vec2 pos, EventSink& sink) {
+EntityId layBananaPickup(WorldState& s, Vec2 pos, EventSink& sink, uint8_t lastOwner) {
   const EntityId id = s.pickups.spawn();
   if (id.isValid()) {
     Pickup& pickup = s.pickups.items[id.index];
@@ -17,6 +17,7 @@ EntityId layBananaPickup(WorldState& s, Vec2 pos, EventSink& sink) {
     pickup.pos = pos;
     pickup.powerUpIndex = 0;
     pickup.count = 1;
+    pickup.spawner = lastOwner;  // v0.89
     sink.push(SimEvent{EventKind::PickupSpawned, s.tick, PlayerId::invalid(), id, 0, 0});
     return id;
   }
@@ -31,7 +32,10 @@ EntityId layBananaPickup(WorldState& s, Vec2 pos, EventSink& sink) {
       nearest = kid;
     }
   });
-  if (Pickup* k = s.pickups.get(nearest)) ++k->count;
+  if (Pickup* k = s.pickups.get(nearest)) {
+    ++k->count;
+    if (k->spawner != lastOwner) k->spawner = 0;  // v0.89: a mixed stack is nobody's
+  }
   return nearest;
 }
 
@@ -77,9 +81,7 @@ void dropHeldBananas(WorldState& s, const MatchContent& content, Player& p, uint
 void dropBananasOf(WorldState& s, PlayerId owner) {
   s.boomerangs.forEachAlive([&](EntityId /*id*/, Boomerang& banana) {
     if (banana.owner != owner) return;
-    if (banana.phase != BoomerangPhase::Outbound && banana.phase != BoomerangPhase::Returning) {
-      return;
-    }
+    if (!inFlight(banana.phase)) return;
     banana.phase = BoomerangPhase::Grounded;
     banana.ticksInPhase = 0;
     banana.transform.vel = Vec2::zero();
@@ -93,9 +95,7 @@ void releaseBananasOf(WorldState& s, const MatchContent& content, PlayerId owner
   }
   s.boomerangs.forEachAlive([&](EntityId id, const Boomerang& banana) {
     if (banana.owner != owner) return;
-    if (banana.phase != BoomerangPhase::Outbound && banana.phase != BoomerangPhase::Returning) {
-      return;
-    }
+    if (!inFlight(banana.phase)) return;
     s.boomerangs.despawn(id);
     sink.push(SimEvent{EventKind::BananaVanished, s.tick, owner, id, 0, 0});
   });

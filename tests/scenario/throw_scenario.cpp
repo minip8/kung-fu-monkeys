@@ -24,7 +24,7 @@ bool near(Fixed a, Fixed b, int32_t rawTol = 8) {
   return std::abs(a.raw - b.raw) <= rawTol;
 }
 
-EventLog stepWith(WorldState& s, PlayerInput in, const ContentDB& content = defaultContent()) {
+EventLog stepWith(WorldState& s, PlayerInput in, const ContentDB& content = classicContent()) {
   InputFrame f = frameFor(s);
   f.inputs[0] = in;
   EventLog log;
@@ -35,7 +35,7 @@ EventLog stepWith(WorldState& s, PlayerInput in, const ContentDB& content = defa
 }  // namespace
 
 TEST_CASE("a throw launches one banana two ticks after the press", "[scenario][throw]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = classicContent();
   const AbilityDef& thr = content.abilityForSlot(kAbilitySlotThrow);
   WorldState s = makePlayingWorld(1, 0b1);
   const Vec2 origin{Fixed::fromInt(-2), Fixed::one()};
@@ -74,7 +74,7 @@ TEST_CASE("a throw launches one banana two ticks after the press", "[scenario][t
 }
 
 TEST_CASE("throwing with no ammo does nothing; a second banana needs ammo", "[scenario][throw]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = classicContent();
   const AbilityDef& thr = content.abilityForSlot(kAbilitySlotThrow);
   WorldState s = makePlayingWorld(2, 0b1);
   placePlayer(s, kP0, Vec2::zero());
@@ -91,7 +91,7 @@ TEST_CASE("throwing with no ammo does nothing; a second banana needs ammo", "[sc
 }
 
 TEST_CASE("throw while dashing spawns the banana from the moving player", "[scenario][throw]") {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = classicContent();
   WorldState s = makePlayingWorld(3, 0b1);
   placePlayer(s, kP0, Vec2{Fixed::fromInt(-8), Fixed::zero()});
   EventLog log = stepWith(s, PlayerInput{0, 0, 0, kDash | kThrow, 0});
@@ -120,7 +120,7 @@ namespace {
 
 // A scripted two-player run mixing movement, aim, dashes and throws.
 std::vector<uint32_t> scriptedChecksums(uint64_t seed) {
-  const ContentDB& content = defaultContent();
+  const ContentDB& content = classicContent();
   WorldState s = makePlayingWorld(seed, 0b11);
   std::vector<uint32_t> sums;
   EventSink sink;
@@ -155,7 +155,7 @@ TEST_CASE("identical scripted runs give identical per-tick checksums", "[scenari
 // and active phases (not rooted) walk as usual.
 TEST_CASE("a rooted recovery ignores movement intent in the continuous space",
           "[scenario][throw][root]") {
-  ContentDB content = defaultContent();
+  ContentDB content = classicContent();
   AbilityDef& thr = content.abilities[content.player.abilities[kAbilitySlotThrow]];
   thr.rootPhases = phaseBit(AbilityPhase::Recovery);
   REQUIRE(thr.recoveryTicks > 0);

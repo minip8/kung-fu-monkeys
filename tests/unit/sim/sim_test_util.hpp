@@ -35,11 +35,40 @@ inline void removeThrowCharge(ContentDB& c) {
   }
 }
 
-// defaultContent() with removeThrowCharge applied.
+// v0.89: every mode flying the classic banana (constant speed, homing:
+// ModeDef::bananaFlight).
+inline void useClassicFlight(ContentDB& c) {
+  for (uint8_t i = 0; i < c.modeCount && i < kMaxModes; ++i) {
+    c.modes[i].bananaFlight = BananaFlight::Classic;
+  }
+}
+
+// v0.89: useClassicFlight and every throw def without its recall, for tests
+// written against the M1 flight rather than about the arc or the recall.
+inline void useClassicBananas(ContentDB& c) {
+  useClassicFlight(c);
+  for (uint8_t i = 0; i < c.abilityCount && i < kMaxAbilityDefs; ++i) {
+    c.abilities[i].recallSpeed = Fixed{};
+  }
+}
+
+// defaultContent() with useClassicBananas applied.
+[[nodiscard]] inline const ContentDB& classicContent() {
+  static const ContentDB c = [] {
+    ContentDB d = defaultContent();
+    useClassicBananas(d);
+    return d;
+  }();
+  return c;
+}
+
+// defaultContent() with removeThrowCharge and (v0.89) useClassicBananas
+// applied: the M1 throw, a tap flying at constant speed.
 [[nodiscard]] inline const ContentDB& unchargedContent() {
   static const ContentDB c = [] {
     ContentDB d = defaultContent();
     removeThrowCharge(d);
+    useClassicBananas(d);
     return d;
   }();
   return c;

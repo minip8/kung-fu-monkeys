@@ -48,7 +48,7 @@ Vec2 atRatio(int32_t num, int32_t den, int32_t y) {
 // east end, and one narrower than a monkey (4, 0.8 units). A dash (4.4
 // units) clears the narrow one from beside it and not the wide one.
 ContentDB pitContent() {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();  // v0.89: the M1 flight
   ArenaDef& a = c.arenas[1];
   a = c.arenas[0];
   a.name = ContentName::of("pits");

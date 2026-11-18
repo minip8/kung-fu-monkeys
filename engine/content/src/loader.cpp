@@ -685,6 +685,15 @@ class Builder {
     s.fixed("spawn_offset", b.spawnOffset, Fixed::zero(), Fixed::fromInt(16));
     s.integer("damage", b.damage, 0, 255);
     s.integer("pit_sink_ticks", b.pitSinkTicks, 1, 65535);  // v0.57
+    // v0.89, the arc flight (a mode's banana_flight = "arc").
+    s.speed("arc_launch_speed", b.arcLaunchSpeed);
+    s.speed("arc_apex_speed", b.arcApexSpeed);
+    s.integer("arc_outbound_ticks", b.arcOutboundTicks, 0, 65535);
+    s.speed("arc_return_speed", b.arcReturnSpeed);
+    s.integer("arc_return_accel_ticks", b.arcReturnAccelTicks, 0, 65535);
+    s.integer("arc_return_ticks", b.arcReturnTicks, 0, 65535);
+    s.integer("arc_turn_rate_bam", b.arcTurnRateBam, 0, 32768);
+    s.integer("arc_bounce_ticks", b.arcBounceTicks, 0, 65535);
   }
 
   void parsePickup(Section& s) {
@@ -785,6 +794,20 @@ class Builder {
           if (d.speed <= Fixed{}) s.error(*at, "charge_ticks too long for the charge range");
         }
       }
+    }
+    // v0.89: a throw's recall (abilities/throw.hpp throwRecalls).
+    for (const std::string_view key :
+         {"recall_speed", "recall_accel_ticks", "recall_harm_speed", "recall_range"}) {
+      if (d.kind == AbilityKind::Throw || !s.has(key)) continue;
+      if (const toml::node* n = s.take(key)) {
+        s.error(*n, "'" + std::string(key) + "' belongs to a throw (kind = \"throw\")");
+      }
+    }
+    if (d.kind == AbilityKind::Throw) {
+      s.speed("recall_speed", d.recallSpeed);
+      s.integer("recall_accel_ticks", d.recallAccelTicks, 0, 65535);
+      s.speed("recall_harm_speed", d.recallHarmSpeed);
+      s.fixed("recall_range", d.recallRange, Fixed::zero(), Fixed::fromInt(1024));
     }
     s.tags("tags_startup", d.tagsStartup);
     s.tags("tags_active", d.tagsActive);
@@ -1396,6 +1419,17 @@ class Builder {
     // bounds (0 = the def's outbound_ticks / turn_rate_bam).
     s.integer("banana_outbound_ticks", m.bananaOutboundTicks, 0, 65535);
     s.integer("banana_turn_rate", m.bananaTurnRateBam, 0, 32768);
+    // v0.89: the flight model, arc unless the mode names classic.
+    m.bananaFlight = sim::BananaFlight::Arc;
+    if (const std::optional<std::string> flight = s.string("banana_flight")) {
+      if (*flight == "arc") {
+        m.bananaFlight = sim::BananaFlight::Arc;
+      } else if (*flight == "classic") {
+        m.bananaFlight = sim::BananaFlight::Classic;
+      } else {
+        s.error("unknown banana_flight " + inQuotes(*flight) + " (arc or classic)");
+      }
+    }
     // v0.32: teams, the baseline power-up and the roles. Names resolve once
     // every file is read (powerups.toml sorts after modes.toml).
     s.integer("teams", m.teams, 0, sim::kMaxPlayers);
@@ -1969,6 +2003,14 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
         (d.param0 <= Fixed::zero() || d.param1 <= d.param0)) {
       fail(where + ": a charged throw needs 0 < charge_min < charge_max");
     }
+    // v0.89: a recall speeds up over at least one tick, and only a throw recalls.
+    if (d.recallSpeed > Fixed::zero() && (d.kind != AbilityKind::Throw || d.recallAccelTicks < 1)) {
+      fail(where + ": a recall belongs to a throw and needs recall_accel_ticks >= 1");
+    }
+    if (d.recallSpeed < Fixed::zero() || d.recallHarmSpeed < Fixed::zero() ||
+        d.recallRange < Fixed::zero()) {
+      fail(where + ": recall_speed, recall_harm_speed and recall_range cannot be negative");
+    }
     for (uint8_t j = 0; j < i; ++j) {
       if (c.abilities[j].name == d.name) fail(where + ": name used twice");
     }
@@ -2014,6 +2056,22 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
   if (c.boomerang.spawnOffset <= c.player.radius + c.boomerang.radius) {
     fail("[boomerang] spawn_offset must exceed player radius + boomerang radius (" +
          fixedText(c.player.radius + c.boomerang.radius) + ")");
+  }
+  // v0.89: a mode that flies the arc needs a whole arc: a launch at least as
+  // fast as the apex, a return speed, and at least a tick out, of speeding
+  // up and of returning.
+  bool anyArc = false;
+  for (uint8_t i = 0; i < c.modeCount && i < sim::kMaxModes; ++i) {
+    if (c.modes[i].bananaFlight == sim::BananaFlight::Arc) anyArc = true;
+  }
+  if (const sim::BoomerangDef& b = c.boomerang;
+      anyArc && (b.arcLaunchSpeed <= Fixed::zero() || b.arcApexSpeed < Fixed::zero() ||
+                 b.arcApexSpeed > b.arcLaunchSpeed || b.arcReturnSpeed <= Fixed::zero() ||
+                 b.arcOutboundTicks < 1 || b.arcReturnAccelTicks < 1 || b.arcReturnTicks < 1)) {
+    fail(
+        "[boomerang] a mode flies the arc (banana_flight): it needs arc_launch_speed > 0, "
+        "0 <= arc_apex_speed <= arc_launch_speed, arc_return_speed > 0 and arc_outbound_ticks, "
+        "arc_return_accel_ticks, arc_return_ticks >= 1");
   }
   // The default dash attack needs a banana in hand (§5.6); 0 would make
   // every dash an attack.

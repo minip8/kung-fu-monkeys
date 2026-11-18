@@ -610,7 +610,11 @@ TEST_CASE("the C SDK's flight step is the sim's ProjectileSystem", "[ai][sdk]") 
   // banana, moved this tick) is stepped by kfm_flight_step from the
   // observation before, with its owner's position after the step, and must
   // land exactly where the sim put it, with the same heading and phase.
+  // v0.89: the classic flight, the one the SDK reproduces (the grid modes and
+  // the contest fly it); an arc mode's flight is not in the observation's
+  // rules block, so the SDK's step only approximates it (bot-abi.md §2.5).
   ContentDB db = defaultContent();
+  db.modes[0].bananaFlight = BananaFlight::Classic;
   ArenaDef& arena = db.arenas[0];
   const auto box = [](int32_t x0, int32_t y0, int32_t x1, int32_t y1) {
     return Wall{Vec2{Fixed::fromInt(x0), Fixed::fromInt(y0)},

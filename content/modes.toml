@@ -54,7 +54,14 @@
 #                        default: [boomerang] outbound_ticks)
 #   banana_turn_rate     v0.80, any kind: the most a returning banana turns
 #                        per tick, in BAM (65536 a full turn), 0 to 32768 (0,
-#                        the default: [boomerang] turn_rate_bam)
+#                        the default: [boomerang] turn_rate_bam, or
+#                        arc_turn_rate_bam in an arc mode)
+#   banana_flight        v0.89: how a thrown banana flies (boomerang.toml).
+#                        "arc" (default): fast out, slowing to its apex, then
+#                        back with a little steering, and it drops when it
+#                        misses its owner. "classic": the constant-speed
+#                        homing flight of every mode before v0.89, kept by
+#                        the grid modes and the bot contest bit for bit
 #   teams                0 = free-for-all (default), else 2 to 10 teams the
 #                        hosts split the slots into, round-robin (the team
 #                        kinds need it; such a mode plays only on an arena
@@ -237,6 +244,7 @@ round_end_ticks = 180
 name = "grid_rounds"
 kind = "team_rounds"
 space = "grid"
+banana_flight = "classic"  # v0.89: the contest's flight, unchanged
 turn_ticks = 15
 dash_cells = 2
 teams = 2
@@ -258,6 +266,7 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banan
 name = "grid_rounds_1t"
 kind = "team_rounds"
 space = "grid"
+banana_flight = "classic"  # v0.89: the contest's flight, unchanged
 turn_ticks = 1
 dash_cells = 2
 teams = 2
@@ -298,6 +307,7 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 3, banan
 name = "contest"
 kind = "harvest"
 space = "grid"
+banana_flight = "classic"  # v0.89: the contest's flight, unchanged
 turn_ticks = 1
 dash_cells = 2
 teams = 2
@@ -344,6 +354,7 @@ vision = { kind = "own", peripheral = 1, cone = 4, focus = 1, hearing = 1, banan
 name = "control_1t"
 kind = "control"
 space = "grid"
+banana_flight = "classic"  # v0.89: the contest's flight, unchanged
 turn_ticks = 1
 dash_cells = 2
 teams = 2

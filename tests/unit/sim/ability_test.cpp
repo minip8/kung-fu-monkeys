@@ -355,7 +355,8 @@ TEST_CASE("a held throw leaves on the release, faster the longer it was held",
     CHECK(at == t0.plus(leaves));
     const Boomerang& b = s.boomerangs.items[0];
     const Fixed mul = throwChargeMul(thr, static_cast<uint32_t>(leaves - 2));
-    CHECK(near(b.transform.vel.x, content.boomerang.speed * mul));
+    // v0.89: mode 0 flies the arc, so it leaves at the arc's launch speed.
+    CHECK(near(b.transform.vel.x, content.boomerang.arcLaunchSpeed * mul));
     CHECK(b.speedMul == mul);
   }
 }

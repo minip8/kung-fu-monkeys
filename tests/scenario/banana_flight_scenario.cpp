@@ -1,7 +1,8 @@
 // A mode's banana flight (architecture §11 "Contest design", v0.80): a mode
 // may override the BoomerangDef's outbound ticks and return turn rate
 // (ModeDef::bananaOutboundTicks / ::bananaTurnRateBam, 0 = the def's), read
-// by ProjectileSystem; nothing of it is in the world state.
+// by ProjectileSystem; nothing of it is in the world state. Flown here over
+// the classic flight (v0.89: classicContent()).
 #include "kfm/sim/scripted_inputs.hpp"
 #include "kfm/sim/step.hpp"
 #include "scenario_util.hpp"
@@ -23,7 +24,7 @@ constexpr uint16_t kOutbound = 10;
 constexpr uint16_t kTurnRate = 4000;
 
 ContentDB flightContent(uint16_t outbound, uint16_t turnRate) {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   c.modes[kFlight] = c.modes[0];
   c.modes[kFlight].name = ContentName::of("flight");
   c.modes[kFlight].bananaOutboundTicks = outbound;

@@ -199,7 +199,10 @@ TEST_CASE("every difficulty preset throws, dashes and catches", "[ai][bot]") {
 
 TEST_CASE("four reference bots decide the first round quickly", "[ai][bot]") {
   // dojo / rounds (the default content): the first round ends within ~30 s
-  // and the match shows every gameplay event.
+  // and the match shows every gameplay event. v0.89: an arc banana flies out
+  // at most 15 units and drops on a wall on its way back, so on the open dojo
+  // a bounce is rare: the three matches show one between them.
+  int bounces = 0;
   for (const uint64_t seed : {1u, 2u, 3u}) {
     const MatchResult r = playMatch(seed, 0b1111, 0b1111, ReferenceBotConfig::hard(), 36000);
     report("all bots", r);
@@ -209,12 +212,13 @@ TEST_CASE("four reference bots decide the first round quickly", "[ai][bot]") {
     CHECK(r.ended);
     for (const EventKind kind :
          {EventKind::BoomerangThrown, EventKind::PlayerHit, EventKind::PlayerEliminated,
-          EventKind::BoomerangCaught, EventKind::RoundEnded, EventKind::PlayerDashed,
-          EventKind::BoomerangBounced}) {
+          EventKind::BoomerangCaught, EventKind::RoundEnded, EventKind::PlayerDashed}) {
       INFO("event kind " << static_cast<int>(kind));
       CHECK(eventCount(r, kind) > 0);
     }
+    bounces += eventCount(r, EventKind::BoomerangBounced);
   }
+  CHECK(bounces > 0);
 }
 
 TEST_CASE("two hard reference bots in a mirror mostly decide their rounds", "[ai][bot]") {

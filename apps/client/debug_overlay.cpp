@@ -70,6 +70,8 @@ constexpr float kDebugFontSize = 13.0f;
       return "Grounded";
     case sim::BoomerangPhase::Sinking:  // v0.57
       return "Sinking";
+    case sim::BoomerangPhase::Recalled:  // v0.89
+      return "Recalled";
   }
   return "?";
 }

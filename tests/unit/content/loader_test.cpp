@@ -70,6 +70,12 @@ abilities = ["dash", "throw"]
 radius = 0.35
 speed = 16
 spawn_offset = 1
+arc_launch_speed = 29
+arc_apex_speed = 3
+arc_outbound_ticks = 36
+arc_return_speed = 20
+arc_return_accel_ticks = 24
+arc_return_ticks = 60
 
 [pickup]
 radius = 0.5
@@ -1271,15 +1277,50 @@ score_to_win = 0
     CHECK(flight.modes[0].bananaTurnRateBam == 0);
     CHECK(flight.modes[1].bananaOutboundTicks == 45);
     CHECK(flight.modes[1].bananaTurnRateBam == 8000);
+    // v0.89: a mode flies the arc unless it names classic, so 0 is the arc's.
     CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[0]) ==
-          flight.boomerang.outboundTicks);
+          flight.boomerang.arcOutboundTicks);
     CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[1]) == 45);
     CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[0]) ==
-          flight.boomerang.turnRateBam);
+          flight.boomerang.arcTurnRateBam);
     CHECK(sim::bananaTurnRateBamOf(flight.boomerang, flight.modes[1]) == 8000);
   }
   CHECK(loads(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65535\n"
                      "banana_turn_rate = 32768\n"));
+  // v0.89: banana_flight, arc by default, classic the M1 flight.
+  {
+    ContentDB flight{};
+    Diagnostics flightDiag;
+    REQUIRE(parseContent(base + "[[mode]]\nname = \"old\"\nbanana_flight = \"classic\"\n"
+                                "[[mode]]\nname = \"new\"\nbanana_flight = \"arc\"\n",
+                         "modes.toml", flight, flightDiag));
+    CHECK(flight.modes[0].bananaFlight == sim::BananaFlight::Arc);
+    CHECK(flight.modes[1].bananaFlight == sim::BananaFlight::Classic);
+    CHECK(flight.modes[2].bananaFlight == sim::BananaFlight::Arc);
+    CHECK(sim::bananaOutboundTicksOf(flight.boomerang, flight.modes[1]) ==
+          flight.boomerang.outboundTicks);
+    CHECK(sim::bananaMaxReturnTicksOf(flight.boomerang, flight.modes[1]) ==
+          flight.boomerang.maxReturnTicks);
+    CHECK(sim::bananaMaxReturnTicksOf(flight.boomerang, flight.modes[2]) == 60);
+    CHECK(sim::bananaFlightSpeedOf(flight.boomerang, flight.modes[1]) == flight.boomerang.speed);
+    CHECK(sim::bananaFlightSpeedOf(flight.boomerang, flight.modes[2]) ==
+          Fixed::fromRaw((flight.boomerang.arcLaunchSpeed.raw + flight.boomerang.arcApexSpeed.raw) /
+                         2));
+    CHECK(sim::ModeDef{}.bananaFlight == sim::BananaFlight::Classic);  // a hand-built mode
+  }
+  CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_flight = \"loop\"\n"),
+                 "unknown banana_flight \"loop\""));
+  // An arc mode needs a whole arc; a content set of classic modes does not.
+  CHECK(contains(loadErrors(replaced(base, "arc_return_accel_ticks = 24", "")),
+                 "arc_return_accel_ticks"));
+  CHECK(contains(loadErrors(replaced(base, "arc_apex_speed = 3", "arc_apex_speed = 30")),
+                 "arc_apex_speed <= arc_launch_speed"));
+  {
+    std::string classic = replaced(base, "arc_launch_speed = 29", "");
+    classic =
+        replaced(classic, "name = \"rounds\"", "name = \"rounds\"\nbanana_flight = \"classic\"");
+    CHECK(loads(classic));
+  }
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_outbound_ticks = 65536\n"),
                  "'banana_outbound_ticks'"));
   CHECK(contains(loadErrors(base + "[[mode]]\nname = \"x\"\nbanana_turn_rate = 32769\n"),
@@ -1804,6 +1845,26 @@ TEST_CASE("ability kinds: names and per-kind validation (v0.21)", "[content][loa
                  "not speed, param0 or param1"));
   CHECK(contains(loadErrors(withAbility("kind = \"throw\"\nspeed = 3\n")),
                  "a charged throw needs 0 < charge_min < charge_max"));
+  // v0.89: a throw's recall.
+  {
+    ContentDB db{};
+    Diagnostics d;
+    const bool ok = parseContent(withAbility("kind = \"throw\"\nrecall_speed = 12\n"
+                                             "recall_accel_ticks = 45\nrecall_harm_speed = 6\n"
+                                             "recall_range = 10.5\n"),
+                                 "test.toml", db, d);
+    INFO(d.format());
+    REQUIRE(ok);
+    const sim::AbilityDef& thr = db.abilities[db.abilityCount - 1];
+    CHECK(thr.recallSpeed == Fixed::fromRatio(12, 60));
+    CHECK(thr.recallAccelTicks == 45);
+    CHECK(thr.recallHarmSpeed == Fixed::fromRatio(6, 60));
+    CHECK(thr.recallRange == Fixed::fromRatio(21, 2));
+  }
+  CHECK(contains(loadErrors(withAbility("kind = \"dash\"\nrecall_speed = 12\n")),
+                 "'recall_speed' belongs to a throw"));
+  CHECK(contains(loadErrors(withAbility("kind = \"throw\"\nrecall_speed = 12\n")),
+                 "recall_accel_ticks >= 1"));
   // A third slot through the loadout.
   CHECK(loads(replaced(withAbility("kind = \"blink\"\nactive_ticks = 10\nspeed = 30\n"),
                        "[\"dash\", \"throw\"]", "[\"dash\", \"throw\", \"extra\"]")));

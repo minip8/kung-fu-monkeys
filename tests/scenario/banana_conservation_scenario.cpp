@@ -57,7 +57,7 @@ std::vector<Vec2> bananaPickups(const WorldState& s) {
 }  // namespace
 
 TEST_CASE("a hit monkey's held bananas scatter around it as pickups", "[scenario][banana]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   const uint8_t more = addAmmoPowerUp(c);
   const MatchContent m = matchContent(c, MatchConfig{.seed = 61, .players = 0b111});
   WorldState s = makePlayingWorld(61, 0b111, c);
@@ -94,7 +94,7 @@ TEST_CASE("a hit monkey's held bananas scatter around it as pickups", "[scenario
 }
 
 TEST_CASE("held bananas never scatter into a wall or out of the arena", "[scenario][banana]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   const uint8_t more = addAmmoPowerUp(c);
   ArenaDef& a = c.arenas[0];
   a.walls[0] = Wall{at(3, -2), at(5, 2)};
@@ -126,7 +126,7 @@ TEST_CASE("held bananas never scatter into a wall or out of the arena", "[scenar
 }
 
 TEST_CASE("a catch over ammoMax drops the extra banana at the catch point", "[scenario][banana]") {
-  const ContentDB& c = defaultContent();
+  const ContentDB& c = classicContent();
   WorldState s = makePlayingWorld(63, 0b11, c);
   placePlayer(s, kP0, at(0, 0));
   placePlayer(s, kP1, at(-10, 6));
@@ -150,7 +150,7 @@ TEST_CASE("a catch over ammoMax drops the extra banana at the catch point", "[sc
 
 TEST_CASE("a power-up running out takes the bananas above the new ammoMax with it",
           "[scenario][banana]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   const uint8_t more = addAmmoPowerUp(c);
   const MatchContent m = matchContent(c, MatchConfig{.seed = 64, .players = 0b11});
   WorldState s = makePlayingWorld(64, 0b11, c);
@@ -169,7 +169,7 @@ TEST_CASE("a power-up running out takes the bananas above the new ammoMax with i
 }
 
 TEST_CASE("an ammo power-up's top-up never makes phantom bananas", "[scenario][banana]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   const uint8_t more = addAmmoPowerUp(c);
   const MatchContent m = matchContent(c, MatchConfig{.seed = 65, .players = 0b11});
   WorldState s = makePlayingWorld(65, 0b11, c);
@@ -188,7 +188,7 @@ TEST_CASE("an ammo power-up's top-up never makes phantom bananas", "[scenario][b
 
 TEST_CASE("a full pickup pool stacks a new banana on the nearest banana pickup",
           "[scenario][banana]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   const uint8_t more = addAmmoPowerUp(c);
   const MatchContent m = matchContent(c, MatchConfig{.seed = 66, .players = 0b111});
   WorldState s = makePlayingWorld(66, 0b111, c);

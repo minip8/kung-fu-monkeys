@@ -902,6 +902,12 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
       }
     }
   }
+  const auto nearestOnPath = [](const Path& p, Vec2 at, uint8_t until) {
+    Fixed best = distanceBetween(p.pos[until], at);
+    for (uint8_t k = 1; k < until; ++k)
+      best = min(best, distanceBetween(p.pos[k], at));
+    return best;
+  };
   const auto goal = [&](const Path& p) {
     const Vec2 end = p.pos[goalTick];
     Fixed u{};
@@ -918,7 +924,13 @@ sim::PlayerInput ReferenceBot::decide(const Observation& obs) {
     } else if (explore && (armed || !haveFetch)) {
       u -= walk ? walkDistance(end) : distanceBetween(end, exploreAt);
     }
-    if (haveFetch) u -= (walk ? walkDistance(end) : distanceBetween(end, fetch)) * fetchWeight;
+    // v0.89: the fetch counts where the path comes nearest it up to the goal
+    // tick, not where the path ends: a banana a step away (an arc that missed
+    // its thrower drops just past it) is walked over, never overshot, and the
+    // overshoot no longer makes standing still beside it the best plan (two
+    // unarmed bots had parked a unit from a banana each for a whole round).
+    if (haveFetch)
+      u -= (walk ? walkDistance(end) : nearestOnPath(p, fetch, goalTick)) * fetchWeight;
     if (havePowerUp) u -= distanceBetween(end, powerUp) / 2;
     // The wall band is penalised at 3 per unit, more than the fetch pull, so
     // it must never forbid the fetch point itself: a banana lying inside the

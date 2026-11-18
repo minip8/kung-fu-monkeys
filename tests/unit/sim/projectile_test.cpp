@@ -1,6 +1,7 @@
 // ProjectileSystem (contract step 5, architecture §5.7): phase timeline,
 // return steering, wall bounces, grounding, counters, and the internal
-// integer atan2 it steers with.
+// integer atan2 it steers with. The classic flight (v0.89: classicContent();
+// the arc and the recall are tests/scenario/banana_arc_scenario.cpp).
 #include "kfm/core/rng.hpp"
 #include "kfm/sim/step.hpp"
 #include "kfm/sim/systems.hpp"
@@ -22,7 +23,7 @@ namespace {
 constexpr PlayerId kP0{0};
 constexpr PlayerId kP1{1};
 
-EventSink tickProjectiles(WorldState& s, const ContentDB& content = defaultContent()) {
+EventSink tickProjectiles(WorldState& s, const ContentDB& content = classicContent()) {
   EventSink sink;
   projectileSystem(s, content, sink);
   REQUIRE(sink.dropped == 0);
@@ -91,7 +92,7 @@ TEST_CASE("angleOf agrees with std::atan2 within a few BAM", "[sim][projectile]"
 // --- phases -------------------------------------------------------------------
 
 TEST_CASE("outbound flies straight, then returns after outboundTicks", "[sim][projectile]") {
-  const ContentDB& c = defaultContent();
+  const ContentDB& c = classicContent();
   WorldState s = makePlayingWorld(1, 0b11);
   placePlayer(s, kP0, v(-10, 0));
   placePlayer(s, kP1, v(10, 5));
@@ -125,14 +126,14 @@ TEST_CASE("outbound flies straight, then returns after outboundTicks", "[sim][pr
 
 TEST_CASE("outbound facing follows the velocity heading", "[sim][projectile]") {
   WorldState s = makePlayingWorld(1, 0b1);
-  const Vec2 vel = Vec2::fromAngle(Angle::fromDegrees(135), defaultContent().boomerang.speed);
+  const Vec2 vel = Vec2::fromAngle(Angle::fromDegrees(135), classicContent().boomerang.speed);
   const EntityId id = spawnBanana(s, kP0, v(0, 0), vel);
   tickProjectiles(s);
   CHECK(std::abs(bamError(banana(s, id).transform.facing, Angle::fromDegrees(135))) <= 3);
 }
 
 TEST_CASE("zero outboundTicks returns on the first tick", "[sim][projectile]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   c.boomerang.outboundTicks = 0;
   WorldState s = makePlayingWorld(1, 0b1);
   placePlayer(s, kP0, v(0, 0));
@@ -143,7 +144,7 @@ TEST_CASE("zero outboundTicks returns on the first tick", "[sim][projectile]") {
 
 TEST_CASE("returning steers toward the owner at most turnRate per tick and reaches them",
           "[sim][projectile]") {
-  const ContentDB& c = defaultContent();
+  const ContentDB& c = classicContent();
   const BoomerangDef& def = c.boomerang;
   for (const int deg : {0, 37, 90, 180, 251, 300}) {
     WorldState s = makePlayingWorld(1, 0b11);
@@ -202,7 +203,7 @@ TEST_CASE("returning with the owner gone grounds the banana in place", "[sim][pr
 }
 
 TEST_CASE("returning longer than maxReturnTicks grounds the banana", "[sim][projectile]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   c.boomerang.maxReturnTicks = 5;
   c.boomerang.turnRateBam = 0;  // never turns, so it never reaches the owner
   WorldState s = makePlayingWorld(1, 0b1);
@@ -259,7 +260,7 @@ TEST_CASE("spin advances while in flight", "[sim][projectile]") {
 // --- walls --------------------------------------------------------------------
 
 TEST_CASE("bananas bounce off each wall with restitution and an event", "[sim][projectile]") {
-  ContentDB c = defaultContent();
+  ContentDB c = classicContent();
   c.boomerang.restitution = Fixed::half();
   const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
   const Fixed limY = c.arenas[0].halfExtents.y - c.boomerang.radius;
@@ -312,7 +313,7 @@ TEST_CASE("bananas bounce off each wall with restitution and an event", "[sim][p
 }
 
 TEST_CASE("a corner bounce reflects both axes and emits one event", "[sim][projectile]") {
-  const ContentDB& c = defaultContent();
+  const ContentDB& c = classicContent();
   const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
   const Fixed limY = c.arenas[0].halfExtents.y - c.boomerang.radius;
   WorldState s = makePlayingWorld(1, 0b1);
@@ -326,7 +327,7 @@ TEST_CASE("a corner bounce reflects both axes and emits one event", "[sim][proje
 }
 
 TEST_CASE("a huge overshoot is clamped inside the arena", "[sim][projectile]") {
-  const ContentDB& c = defaultContent();
+  const ContentDB& c = classicContent();
   const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
   const Fixed limY = c.arenas[0].halfExtents.y - c.boomerang.radius;
   WorldState s = makePlayingWorld(1, 0b1);
@@ -340,7 +341,7 @@ TEST_CASE("a huge overshoot is clamped inside the arena", "[sim][projectile]") {
 }
 
 TEST_CASE("a banana resting exactly on the wall line does not bounce", "[sim][projectile]") {
-  const ContentDB& c = defaultContent();
+  const ContentDB& c = classicContent();
   const Fixed limX = c.arenas[0].halfExtents.x - c.boomerang.radius;
   WorldState s = makePlayingWorld(1, 0b1);
   const EntityId id = spawnBanana(s, kP0, Vec2{limX - Fixed::fromRatio(1, 10), Fixed::zero()},
@@ -359,7 +360,7 @@ TEST_CASE("projectile flight is deterministic", "[sim][projectile]") {
     placePlayer(s, kP1, v(6, -3));
     Rng rng = Rng::seeded(99);
     for (int i = 0; i < 20; ++i) {
-      const Vec2 vel = Vec2::fromAngle(rng.angle(), defaultContent().boomerang.speed);
+      const Vec2 vel = Vec2::fromAngle(rng.angle(), classicContent().boomerang.speed);
       spawnBanana(s, PlayerId{static_cast<uint8_t>(i % 3)}, v(0, 0), vel);
     }
     for (int t = 0; t < 400; ++t)

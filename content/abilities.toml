@@ -12,6 +12,8 @@
 # range (v0.35, a call's only: param0 under its own name, in units),
 # charge_min, charge_max, charge_ticks (v0.48, a throw's only, all three or
 # none: hold to charge, below),
+# recall_speed, recall_accel_ticks, recall_harm_speed, recall_range (v0.89,
+# a throw's only: the recall, below),
 # tags_startup, tags_active, tags_recovery (lists of tag names: dashing,
 # perfect_dash, hit_stun, shielded, invulnerable, eliminated, slamming, parrying),
 # root_phases (v0.34: a list of startup, active, recovery: while one of them
@@ -33,8 +35,21 @@ tags_active = ["dashing"]
 # the banana leaves on the release, along the aim of that tick. Its speed is
 # the boomerang's times charge_min for a tap, rising evenly to charge_max over
 # charge_ticks held past the startup (then it stays there); the outbound time
-# is fixed, so the reach scales with it: at 16 units/s and 36 outbound ticks,
-# a tap flies 5.8 units out and a full charge 14.4.
+# is fixed, so the reach scales with it: at 16 units/s and 36 outbound ticks
+# (the arc's mean speed out, boomerang.toml), a tap flies 5.8 units out and a
+# full charge 14.4, and every throw is in the air about as long.
+#
+# v0.89, the recall ("telekinesis"): with an empty hand, holding the throw
+# button lifts the monkey's own banana lying on the floor (the nearest one it
+# threw that came down; anyone may still pick it up first) and pulls it home:
+# from rest up to recall_speed (units/s) over recall_accel_ticks, straight at
+# the monkey wherever it goes. Walls stop it (it slides along them and can
+# stick in a corner); letting go drops it where it is; reaching the monkey
+# puts it in the hand (no throw follows until the button is pressed again).
+# Below recall_harm_speed (units/s) it drifts harmlessly through other
+# monkeys; at or above it, it hits like a returning banana and can be caught
+# with a perfect dash or parried. recall_range: the farthest banana it reaches
+# (units, 0 = anywhere on the map). Leave recall_speed out (0) for no recall.
 [[ability]]
 name = "throw"
 kind = "throw"
@@ -42,9 +57,13 @@ cooldown_ticks = 20         # a third of a second between throws (from the press
 startup_ticks = 2           # wind-up before the banana can leave the hand
 active_ticks = 1            # the banana spawns on the Startup -> Active transition
 recovery_ticks = 6          # follow-through
-charge_min = 0.6            # a tap: 9.6 units/s
-charge_max = 1.5            # full charge: 24 units/s
+charge_min = 0.6            # a tap: x0.6 the banana's speeds (boomerang.toml)
+charge_max = 1.5            # full charge: x1.5
 charge_ticks = 40           # 2/3 s held past the startup to full charge
+recall_speed = 12           # units/s at full pull: well under a throw's
+recall_accel_ticks = 45     # 0.75 s from rest to full pull (4.5 units covered)
+recall_harm_speed = 8       # harmless below 8 units/s: the first 0.5 s (2 units)
+recall_range = 0            # from anywhere
 
 # Fast Hands (powerups.toml) runs the throw slot on this def while it lasts.
 [[ability]]
@@ -57,6 +76,10 @@ recovery_ticks = 3
 charge_min = 0.6
 charge_max = 1.5
 charge_ticks = 20           # fast hands charge twice as fast
+recall_speed = 12           # the base throw's recall
+recall_accel_ticks = 45
+recall_harm_speed = 8
+recall_range = 0
 
 # Blink (v0.21): a teleport dash. After a short telegraph the monkey jumps
 # speed x active_ticks along its stick (or facing), stopped by walls; nothing

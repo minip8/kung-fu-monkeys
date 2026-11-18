@@ -1857,6 +1857,50 @@ panel and the ladder is one link away; rounds have an interval, not a calendar);
 refresh Now playing (the policy stays `default-src 'none'`). No JSON route, engine, sim,
 content or wire change. Replay checksums: unchanged.
 
+v0.89 changes: the banana flies an arc and can be pulled back (§5.5, §5.6, §5.7, §5.9, §7).
+The flight of M1 flew for seconds: a banana that missed its moving thrower kept homing at
+6.6°/tick for up to 4 s, circling and bouncing off walls at full speed. A mode now picks its
+flight, `ModeDef::bananaFlight` (TOML `banana_flight`, the loader's default `arc`; `ModeDef{}`
+stays `classic`). Classic is the old flight bit for bit and is kept by the four grid modes, the
+bot contest's (`grid_rounds`, `grid_rounds_1t`, `contest`, `control_1t`, now naming it). The arc
+is a boomerang with weight, in our own numbers: out from `arc_launch_speed` slowing evenly to
+`arc_apex_speed` over `arc_outbound_ticks`, a turn on the spot at the apex to face the thrower,
+home speeding up to `arc_return_speed` over `arc_return_accel_ticks` with `arc_turn_rate_bam` of
+steering; it drops when it has passed its thrower (velocity away from it), hits a wall on the
+way home, or has returned `arc_return_ticks`; a bounce on the way out ages it by
+`arc_bounce_ticks`. Every speed is a function of the phase's ticks times `speedMul`, so there is
+no new `Boomerang` field and the charge scales the reach, not the time. Shipped: 29 → 3 u/s over
+36 ticks (a mean of 16: the classic reach), home at up to 20 u/s after 24 ticks, 96 BAM a tick,
+60 ticks of return, 9 ticks a bounce; a tap reaches 6.6 units and is in the air 74 ticks, a full
+charge 15.0 and 73 (classic: 100 ticks each), never more than 96. The recall: a throw def with
+`recall_speed` (`throw`, `throw_fast`; never the grid throws or Quick Hands) lets an empty hand
+held on Throw lift the nearest own banana off the floor and pull it home, from rest to 12 u/s
+over 45 ticks, sliding along walls (it can stick: an attempt, not a teleport); let go, it drops
+where it is; in the hand, no throw starts until the next press. It is a new banana phase,
+`Recalled`, in flight for every rule (a new row 5, `slowRecallPasses`, lets it drift through
+others below `recall_harm_speed`, 8 u/s) and caught by its owner like a return. The trigger is a
+new `AbilityBehavior` hook, `onIdleHold` (a slot Idle with its button held), so the pull costs no
+press and no `AbilityState` field; who may recall a pickup is its `spawner` byte (slot + 1),
+written only for a thrower whose throw recalls, so no grid world state moves. Events
+`BananaRecallStarted` and `BananaRecallEnded`; presentation floats a pulled banana and ties it to
+its owner with a dotted trail tether, and plays a soft zap. Bots: Observation v2 unchanged; a
+pulled banana reads as Returning, a banana pickup's `spawner` names who may recall it, and the
+rules block reports the arc's numbers in an arc mode (`bananaSpeed` the mean speed out, so speed ×
+outbound ticks is still the reach). The reference bot measures a fetch at its path's nearest
+point (a banana a step away had left two unarmed bots parked beside one each for a round); the
+scripted generator holds Throw with an empty hand by the clock, Rng-free and only for a kit that
+recalls; a new corpus entry, `scripted_4p_recall_1800t`, pins pulls that land and pulls let go,
+and `scripted_4p_capture_3600t` takes input seed 0x5C1284 (the old one no longer captured). The
+F1 tuning overlay gains the arc, the recall and the mode's flight. Considered and not taken:
+copying another game's numbers or code; a per-banana flight field (every speed derives from the
+phase's ticks); dropping with a skid phase after a miss (the drop is instant; presentation may
+soften it); pulling every own banana at once (the nearest, one at a time); a recall range
+(content has `recall_range`, shipped 0: anywhere). Replay checksums: changed, corpus regenerated
+because every continuous mode now flies the arc and the scripted generator recalls; the grid,
+contest and control entries (`scripted_*grid_rounds*`, `scripted_10p_contest*`,
+`scripted_10p_control_1t_1800t`) and the empty ones are bit-identical, only their content hash
+moved.
+
 v0.90 changes: a free-for-all mode scored by kills, `kill_rounds` (§5.3; user request: "like
 free for all, but the score of each monkey is incremented by how many kills they got in a
 round"). `ModeKind::KillRounds` is appended (value 9, `kCount` 10; loader keyword
