@@ -2948,7 +2948,7 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
   - Plain words: `core/content_labels.{hpp,cpp}` names the content for people ("Last Monkey
     Standing", "King of the Hill", "Dojo with Power-ups", the base kit "Standard") with a line on
     how to win per mode; a name it does not know is prettified ("kill_rounds" would read "Kill
-    Rounds", `_1t` reads "(1-tick)"; lane B's `kill_rounds` is in the table as "Knockout
+    Rounds", `_1t` reads "(1-tick)"; v0.90's `kill_rounds` is in the table as "Knockout
     Rounds"). The lobby rows, the match preview, the replay bar's title and the next-match line
     use them; the command line, the wire and the settings text keep the content names.
   - What a human lobby offers: the Mode row skips bot-contest modes (`isBotMode`: the grid
@@ -2960,7 +2960,7 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
     preview says "2 teams, balanced as players join".
   - How to play (`core/how_to_play.{hpp,cpp}`), from the main menu (a new item after Play
     local) and the pause menu (a new item after Resume, the card in the menu's place until
-    Back): move, aim, throw (hold to charge), recall (lane A's: hold Throw with an empty hand),
+    Back): move, aim, throw (hold to charge), recall (v0.89: hold Throw with an empty hand),
     dash (a dash timed as a banana arrives catches it) and the ability, each with the
     keyboard + mouse and gamepad bindings read from `defaultKeyboardProfile1/2` and
     `defaultGamepadProfile` (Xbox names for the positional buttons), the second keyboard

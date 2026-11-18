@@ -302,7 +302,7 @@ TEST_CASE("reference bots finish a match with a winner", "[arena]") {
   BotFactory factory;
   // A seed whose match both slots lose a round of (paused below): which
   // seeds do moves with the reference bot's play.
-  const MatchResult r = play(setupOf({"ref:hard", "ref:medium"}, 5, 36'000), factory);
+  const MatchResult r = play(setupOf({"ref:hard", "ref:medium"}, 2, 36'000), factory);
   REQUIRE(r.outcome == MatchOutcome::Ended);
   REQUIRE(r.winner.isValid());
   REQUIRE(r.slots.size() == 2);

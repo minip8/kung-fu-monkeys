@@ -17,7 +17,7 @@ struct ModeEntry {
   std::string_view blurb;
 };
 
-// The shipped modes (content/modes.toml) and lane-B's kill_rounds.
+// The shipped modes (content/modes.toml).
 constexpr std::array<ModeEntry, 13> kModes{{
     {"rounds", "Last Monkey Standing", "Knock the others out: the last monkey up wins the round."},
     {"deathmatch", "Brawl",

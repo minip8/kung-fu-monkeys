@@ -1993,10 +1993,10 @@ only; the connection screen spoke of "requested slots" and had no visible way ba
 did not leave the lobby, the room or the connection screen. Changes: Play online leads with the
 name (prefilled, editable there, saved; a first visit opens on it and says the picked monkey
 name is fine to keep; `nick_chosen=on` in the settings); `core/content_labels` gives readable
-titles and a how-to-win line, with a prettifying fallback so new content (lane B's arenas and
-`kill_rounds`) never shows raw; the lobby rows skip bot-contest modes and loadouts and show only
+titles and a how-to-win line, with a prettifying fallback so new content (v0.91's arenas, say)
+never shows raw; the lobby rows skip bot-contest modes and loadouts and show only
 the power-ups the arena can draw; a How to play card from the main menu and the pause menu reads
-its bindings from the input profiles and includes lane A's recall; the first round's countdown
+its bindings from the input profiles and includes v0.89's recall; the first round's countdown
 carries one line of controls; the local lobby and the room are laid out to fit 720p and 700 px
 with Back / Leave beside Start match; the room names its host ("Mango's room") and shows a guest
 the host's rows flat with the reason; the connection screen has Cancel and plain words; `--screen
@@ -2005,7 +2005,7 @@ Create / Join (the client already picks a friendly one, and a required field is 
 removing Volume, Sound and Arena theme from the local lobby (they are Settings' too, but a couch
 party changes them there; with the power-up rows gone the lobby fits). Not covered: the room's
 code and Copy invite need a lobby service and were not run (the code paths are v0.43's); the
-reconnect states lane C adds draw through the same status screen. Verified: client unit tests
+reconnect states v0.92 adds draw through the same status screen. Verified: client unit tests
 (the new `content_labels_test.cpp`; the menus, room and lobby tests updated), off-screen renders
 of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
 unchanged.

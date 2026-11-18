@@ -56,7 +56,7 @@ TEST_CASE("content names read as words, new content included", "[client][labels]
   CHECK(client::modeLabel("hill").title == "King of the Hill");
   CHECK(client::modeLabel("rounds").title == "Last Monkey Standing");
   CHECK_FALSE(client::modeLabel("capture").blurb.empty());
-  // lane B's kill_rounds is named before it lands; anything else falls back.
+  // v0.90's kill_rounds has its own title; a name the table lacks falls back.
   CHECK(client::modeLabel("kill_rounds").title == "Knockout Rounds");
   const client::ModeLabel unknown = client::modeLabel("lava_tag_2v2");
   CHECK(unknown.title == "Lava Tag 2v2");
