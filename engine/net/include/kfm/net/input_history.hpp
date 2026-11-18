@@ -127,12 +127,22 @@ class InputFrameAssembler {
   PutResult put(PlayerId slot, Tick t, const sim::PlayerInput& in);
 
   // Forgets a slot's inputs (a player left; the next one starts idle).
-  void clearSlot(PlayerId slot) { history_.clearSlot(slot); }
+  void clearSlot(PlayerId slot);
+
+  // v0.92 (§6.6 "A silent player"): a missing input is repeated while the
+  // slot's newest stored input is at most `ticks` older than the tick being
+  // assembled; past that the substitute is neutral: no stick, no buttons,
+  // the repeated input's facing (moveDir, aimDir). 0 = always repeat (the
+  // behaviour before v0.92).
+  void setIdleAfterTicks(uint32_t ticks) { idleAfter_ = ticks; }
+  [[nodiscard]] uint32_t idleAfterTicks() const { return idleAfter_; }
 
   // Assembles nextTick() and advances it. `substituted` (optional) gets the
-  // present slots whose input had not arrived and was repeated. The frame is
+  // present slots whose input had not arrived and was substituted, `idled`
+  // (optional) the subset given the neutral substitute (above). The frame is
   // recorded as the authoritative stream: later lookups repeat from it.
-  [[nodiscard]] sim::InputFrame assembleNext(sim::PlayerMask* substituted = nullptr);
+  [[nodiscard]] sim::InputFrame assembleNext(sim::PlayerMask* substituted = nullptr,
+                                             sim::PlayerMask* idled = nullptr);
 
   [[nodiscard]] Tick nextTick() const { return next_; }
   [[nodiscard]] const InputHistory& history() const { return history_; }
@@ -144,6 +154,10 @@ class InputFrameAssembler {
   InputHistory history_{};
   sim::PlayerMask present_{0};
   Tick next_{};
+  uint32_t idleAfter_{0};
+  // The newest tick each slot was given an input for by put() (substitutes
+  // do not count).
+  std::array<std::optional<Tick>, sim::kMaxPlayers> received_{};
 };
 
 static_assert(std::is_trivially_copyable_v<SlotInputHistory>);

@@ -2333,8 +2333,11 @@ C++ server library is mature. The seam makes that swap a contained change.
 
 - Server (M3 as built, v0.17): `kfm_server` (`apps/server`) hosts one match per process:
   `ServerHost` drives `NetServer` over a `WebRtcTransport` server from a drift-free 60 Hz clock
-  (tick k is due at base + k·10⁹/60 ns; a frame runs at most 8 ticks and a larger backlog is
-  dropped, counted and rebased), pumping every millisecond; it fills `--bots N` slots, announces
+  (tick k is due at base + k·10⁹/60 ns; a frame runs at most 8 ticks; v0.92: a larger backlog is
+  run over the next frames, a millisecond apart, so a stall of the process costs the clients
+  nothing but a burst of frames, and only a backlog past `maxBacklogNs` (10 s, the clients'
+  timeout) is dropped, counted and rebased; before v0.92 every backlog over 8 ticks was
+  dropped, which left the clients that far ahead of the server, §6.6), pumping every millisecond; it fills `--bots N` slots, announces
   the next match 3 s after `MatchEnded` with a splitmix64-derived seed and the same roster,
   prints one log line per join/leave/kick/resync/round/match and a periodic delta stats line,
   and on SIGINT/SIGTERM or an exit limit shuts down (300 ms linger for the reliable lane).
@@ -2433,12 +2436,90 @@ C++ server library is mature. The seam makes that swap a contained change.
   acknowledgement reads as a round trip growing one tick per tick, and before v0.70 a 3 s outage
   pushed that peer's estimate to 146 ticks (`humanLeadTicks()` clamps to 60, so a mixed match's bot
   delay went to its clamp); it now samples only messages whose acknowledgement moved on.
-- Reconnect: a peer that drops (transport close or 5 s without a packet) while holding slots and a
-  non-empty token leaves them reserved for `reconnectGraceTicks` (10 s): still present, fed an idle
-  input (not "repeat last", so a held stick does not run the monkey into a wall). A `Hello` with
-  the same token reclaims them and gets a fresh snapshot; a `Hello` whose token belongs to a
-  still-connected peer takes its slots over (the client noticed the drop first). After the window,
-  or on `Disconnect{Quit}`, the slots leave the roster (`PlayerLeft`).
+- Reconnect: a peer that drops (transport close or 15 s without a packet, v0.92; 5 s before)
+  while holding slots and a non-empty token leaves them reserved for `reconnectGraceTicks`
+  (60 s, v0.92; 10 s before): still present, fed an idle input (not "repeat last", so a held
+  stick does not run the monkey into a wall). A `Hello` with the same token reclaims them and
+  gets a fresh snapshot; a `Hello` whose token belongs to a still-connected peer takes its slots
+  over (the client noticed the drop first). After the window, or on `Disconnect{Quit}`, the
+  slots leave the roster (`PlayerLeft`). v0.92: a quit and the close that follows it arrive in
+  the same `pump()` (the client closes right after sending it), and `NetServer` read connection
+  events before messages, so the quit was taken for a lost link and the leaver's monkey stood in
+  the match for the whole grace; closes are now read after the messages of the same poll.
+- Ways a healthy player lost the match connection before v0.92 (each reproduced over the
+  loopback unless marked; `tests/netcode/stall_test.cpp`, `tests/unit/server/server_host_test.cpp`):
+  1. *A hidden tab.* The browser loop is `requestAnimationFrame` (§6.5), which stops for a
+     hidden or occluded page (another tab in front, the window minimised or covered by another
+     application on platforms with occlusion tracking). Nothing was sent, the server dropped the
+     silent peer after 5 s, and the player came back to "Connection lost" (and, through the
+     lobby, to "Removed from the room by its server", the lobby's `closed`/`kicked` for any
+     server-side drop). Inferred for the browser from the code, reproduced as a client that is
+     not run for 6 or 9 s; shown in a real Chromium by `tools/web/check_hidden_tab.py` (§6.6 "A
+     hidden client", below).
+  2. *Any stall of the client longer than 5 s* (the same mechanism with the tab in front: a
+     laptop lid, a frozen or suspended page, a mobile browser in the background). A stall under
+     the timeout already healed itself (the clock jump of §6.2 and the gap resync of v0.70).
+  3. *A stalled server host.* `ServerHost` ran at most 8 ticks a frame and dropped the rest of
+     a backlog, so every client found itself that many ticks early: 0.5 s of stall left the
+     players 24 ticks (400 ms) of input latency that the 2 % rate took 20 s to work off, and
+     past the assembler's 64-tick window every `Input` was a protocol error and the players
+     were kicked (`ProtocolError`) within half a second of a 1.1 s stall. The production host
+     is an `e2-small`, a shared-core VM with a CPU budget (§13.5), running four servers and the
+     lobby: whether it stalls that long is for its logs to say (inferred, not observed).
+  4. *A lost link* (Wi-Fi to mobile data, a router restart): ICE has no restart, so the session
+     ended and needed the Reconnect button within 10 − 5 = 5 s of grace.
+  Ruled out by reading the code: a lost lobby socket (since v0.70 the open data channels alone
+  decide a session, §13.5), a brief ICE `disconnected` state (the transport drops a peer only on
+  `failed` or `closed`, which browsers reach after about 30 s of no consent), the receive queue
+  of a page that is not pumped (bounded and drained), the client's 8-tick clock cap (it drops
+  ticks, never the session), and the input rate limit (90 messages a second with a one-second
+  burst, which a catching-up client's 8 ticks a frame stays under).
+- A silent player (v0.92): a slot whose inputs stop arriving is fed "repeat last" for
+  `ServerConfig::idleAfterTicks` (15 ticks, 250 ms), then a neutral input (no stick, no buttons,
+  the repeated input's `moveDir` and `aimDir`, so it keeps facing the same way) until an input
+  for it arrives again (`InputFrameAssembler::setIdleAfterTicks`; 0 restores "repeat last" for
+  ever). 250 ms is longer than any loss burst the 16-input redundancy or the lead band (§6.2)
+  is meant to bridge and shorter than a human's reaction; a held stick of a stalled, hidden or
+  disconnected client stops the monkey 250 ms later instead of running it into a pit or a wall.
+  Chosen over an explicit "away" message from the client because it needs no protocol change
+  and covers every silence, including the ones the client cannot announce (a frozen page, a
+  dead uplink, a crash). Counted in `ServerStats::idledInputs` (and per peer).
+- Timeouts and grace (v0.92): the client gives up after `ClientConfig::serverTimeoutNs` = 10 s
+  without a packet, the server after `ServerConfig::peerTimeoutNs` = 15 s, and the server keeps
+  a dropped player's slots for `reconnectGraceTicks` = 60 s. With the background pump (below)
+  the only silences left are a main thread that does not run at all (a frozen or suspended
+  page, an OS sleep, a stall in a native window's modal loop) and a dead link. Browsers stall
+  the main thread for well under a second (a first shader compile, a GC, a page made visible
+  again), so 10 s is far beyond any stall that heals and still short enough that a dead link
+  is noticed and reconnected while the slot waits. The client's timeout is the shorter one so
+  that it gives up and reconnects first, into a still-connected peer whose slots its `Hello`
+  takes over, never into a server that dropped it a moment before. A false timeout now costs a
+  reconnect (one snapshot); a missed real drop costs time, which is why it is not longer. 60 s
+  of grace covers a mobile browser sent to the background or a network switch, which the
+  client's reconnect with backoff (§6.6 "Reconnect on its own", below) retries for 60 s; a
+  reserved monkey stands still meanwhile, a fair price in a party game. A timed-out peer is
+  sent `Disconnect{Timeout}` before the close, in case its downlink still works.
+- Why a session ended (v0.92): every `PeerLeft` carries a `LeaveCause` (quit, link closed,
+  timeout, hello timeout, replaced by a reconnect, shutting down), how long the peer had been
+  silent, and whether its slots were kept; `kfm_server` logs `leave peer=3 slots=1
+  cause=timeout silent=15004ms kept=60s`, and its stats line adds `timeouts`, `closed`,
+  `idle/s` (neutral slot-ticks), `early_inputs` and `stalls`. The client keeps
+  `NetClient::disconnectCause()`: `ServerSilent` (its own timeout), `TransportClosed`,
+  `ServerDisconnect` (with the server's `DisconnectReason`) or `Quit`, plus `silentNs()`.
+- A hidden client (v0.92): `NetClient::setBackground(true)` holds the timeline like a waiting
+  room (no ticks, no inputs, the clock restarted on every call) while `pump()` goes on, so pings
+  keep both timeouts fed and RoomState, MatchConfig, PlayerJoined/Left and Disconnect are
+  handled as always; the server stands the monkey still by the silent-player rule.
+  `setBackground(false)` wakes a running client that is not held by its room: it asks for a
+  snapshot (`ResyncRequest`, asked again every `resyncRetryNs` until one arrives), then loads it
+  and runs forward to estimated server tick + target lead exactly as the room's resume does
+  (lead controller reset, clock restarted), so ten minutes away cost one snapshot, never ten
+  minutes of simulation in a frame (`ClientNetStats::wakes`). A snapshot that arrived while away
+  is discarded for the wake. Measured over the loopback at 40 ± 5 ms with 1 % loss, away 30 s,
+  2 min and 10 min, pumped every 50 ms or once a second: no timeout, the same peer and slot,
+  the slot neutral within 0.3 s, and back in agreement (checksums compared and equal, frames
+  confirmed to within 20 ticks of the server) within 2 s of the return, after under two
+  seconds' worth of ticks.
 - Match restart (v0.17): `NetServer::restartMatch(seed, startTick, botSeed)` (keeps the arena
   and mode; v0.18 adds `restartMatch(MatchConfig, startTick, botSeed)` to change them) sends
   `MatchConfig{config, startTick}` at once to every peer (and to anyone who joins before
@@ -2496,7 +2577,7 @@ C++ server library is mature. The seam makes that swap a contained change.
   The client side of a server that does not tick: `NetClient` holds while its `RoomState` says
   Waiting or Over (`holding()`: `ticksDue()` returns 0 and restarts the clock, `tick()` sends
   nothing), so no input runs ahead of a frozen assembler and nothing accumulates; pings go on
-  (both 5 s timeouts stay fed, the RTT estimate stays fresh). When the room turns Playing, the
+  (both timeouts stay fed, the RTT estimate stays fresh). When the room turns Playing, the
   client keeps holding until the restart's `Snapshot` has arrived and a `Pong` reports a server
   tick past it, then hard-loads it and runs forward to estimated server tick + target lead with
   the lead controller and clock reset, exactly as the initial sync: the lead never carries the
@@ -2554,10 +2635,13 @@ C++ server library is mature. The seam makes that swap a contained change.
 - `NetServer` numbers (v0.17): inputs are stored only for slots the sending peer owns (foreign
   slots are ignored and counted), only with defined button bits (Throw..Taunt), and only for ticks
   in the assembler window (up to 64 ticks ahead; copies of assembled ticks are redundancy, not
-  errors). `Input` messages pass a per-peer token bucket of `kTickHz + 30` messages per second with
+  errors; v0.92: inputs too far ahead are dropped and counted in `inputsTooEarly` but are no
+  longer protocol errors, since an honest client runs that far ahead of a server whose host
+  stalled). `Input` messages pass a per-peer token bucket of `kTickHz + 30` messages per second with
   a one-second burst; the rest are dropped and counted. Undecodable messages, messages before the
   handshake, foreign slots, bad buttons and too-early ticks are protocol errors; more than 32 in
-  10 s get `Disconnect{ProtocolError}` and the slots are released at once.
+  10 s get `Disconnect{ProtocolError}` and the slots are released at once (too-early ticks no
+  longer count, v0.92).
 - The room (v0.42): `RoomSettings` and `Start` pass a per-peer bucket of 20 per second
   (`roomMsgsPerSecond`; excess ones dropped and counted); before the handshake they are protocol
   errors like any other message. Only the host's requests take effect, decided by the host's

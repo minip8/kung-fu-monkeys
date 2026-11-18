@@ -179,6 +179,56 @@ TEST_CASE("InputFrameAssembler substitutes and finalises", "[net][history]") {
   CHECK(a.assembleNext().inputs[0] == sim::PlayerInput{});
 }
 
+// v0.92 (§6.6 "A silent player"): repeat-last covers a loss burst; past
+// idleAfterTicks of silence the substitute is neutral, keeping the facing.
+TEST_CASE("InputFrameAssembler stands a silent slot still after idleAfterTicks",
+          "[net][history][idle]") {
+  InputFrameAssembler a(Tick{10});
+  a.setPresent(0b11);
+  a.setIdleAfterTicks(3);
+  sim::PlayerInput run{};
+  run.moveDir = 64;
+  run.moveMag = 255;
+  run.aimDir = 100;
+  run.buttons = sim::buttonBit(sim::Button::Throw);
+  run.subTick = 9;
+  REQUIRE(a.put(kP0, Tick{10}, run) == InputFrameAssembler::PutResult::Accepted);
+  REQUIRE(a.put(kP1, Tick{10}, input(3)) == InputFrameAssembler::PutResult::Accepted);
+  sim::PlayerMask missing = 0;
+  sim::PlayerMask idled = 0;
+  CHECK(a.assembleNext(&missing, &idled).inputs[0] == run);  // 10: exact
+  CHECK(idled == 0);
+  // 11, 12, 13: silent for 1..3 ticks, repeated.
+  for (int i = 0; i < 3; ++i) {
+    CHECK(a.assembleNext(&missing, &idled).inputs[0] == run);
+    CHECK(missing == 0b11);
+    CHECK(idled == 0);
+  }
+  // 14: silent for 4 ticks: neutral, facing as before.
+  sim::PlayerInput still{};
+  still.moveDir = run.moveDir;
+  still.aimDir = run.aimDir;
+  const sim::InputFrame f14 = a.assembleNext(&missing, &idled);
+  CHECK(f14.inputs[0] == still);
+  CHECK(idled == 0b11);
+  CHECK(a.history().getOrRepeat(kP0, Tick{14}) == still);  // the authoritative input
+  // Back: the next input counts at once, and a new gap repeats it again.
+  REQUIRE(a.put(kP0, Tick{15}, run) == InputFrameAssembler::PutResult::Accepted);
+  CHECK(a.assembleNext(&missing, &idled).inputs[0] == run);
+  CHECK(idled == 0b10);
+  CHECK(a.assembleNext(&missing, &idled).inputs[0] == run);
+  CHECK(idled == 0b10);
+  // A slot that never sent anything (a joiner) is neutral from the start.
+  a.clearSlot(kP1);
+  static_cast<void>(a.assembleNext(&missing, &idled));
+  CHECK(idled == 0b10);
+  // 0 restores the pre-v0.92 rule: repeat for ever.
+  a.setIdleAfterTicks(0);
+  for (int i = 0; i < 10; ++i)
+    CHECK(a.assembleNext(&missing, &idled).inputs[0] == run);
+  CHECK(idled == 0);
+}
+
 // Inputs flow client history → InputMsg → lossy loopback → assembler →
 // FrameHistory → AuthInputs → client, with 16-tick redundancy hiding 20 %
 // loss (§6.3: a loss costs nothing unless many consecutive packets vanish).

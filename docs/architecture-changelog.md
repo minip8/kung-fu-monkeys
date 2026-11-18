@@ -1958,6 +1958,25 @@ because every free-for-all entry spawns differently from its first tick (`empty_
 `scripted_4p_1200t`, `scripted_10p_3600t`, the arena, power-up, ability, deathmatch and survival
 entries); the team, grid, contest and control entries keep their state checksums byte for byte.
 
+v0.92 changes: players stop getting disconnected (§6.5, §6.6, §6.7). The report was "keep
+getting disconnected from the game, especially when tabbing out"; §6.6 now lists the ways a
+healthy player lost the match connection, each reproduced or inferred. The server side: a slot
+whose inputs stop arriving is repeated for 15 ticks, then fed a neutral input that keeps its
+facing (`idleAfterTicks`; chosen over an "away" message: no protocol change, and it covers the
+silences a client cannot announce); the timeouts become 10 s on the client and 15 s on the
+server (were 5 s both), so the client gives up and reconnects first, and a dropped player's
+slot, monkey and score are kept 60 s (was 10 s); a timed-out peer is told so; every leave is
+logged with its cause, the peer's silence and what became of its slots, and the stats line
+counts timeouts, closed links, neutral slot-ticks, early inputs and stalls. `ServerHost` runs a
+stalled backlog over the next frames instead of dropping it (only one past 10 s is dropped), and
+a too-early input is dropped without counting as a protocol error: before, a host stall of 0.5 s
+left every player 400 ms of input latency and one of 1.1 s got them all kicked. A quit read
+together with its close is a quit again (it was taken for a lost link, which kept the leaver's
+monkey in the match for the grace). The client side: `NetClient::setBackground()` holds the
+timeline while the host keeps pumping, and wakes with one snapshot and a run forward to the
+lead; `disconnectCause()` says which side gave up. No message changes (protocol version 8
+stays), no sim change. Replay checksums: unchanged.
+
 v0.93 changes: the Banana Beach look (§7 "Look" and the front end), the user's pick from the
 style board ("change the default overall colour theme of the ui and the gameplay to be nicer on
 the eyes ... go with the banana beach theme"). The UI skin replaces Mango Sunset: the board's

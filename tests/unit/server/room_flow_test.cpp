@@ -268,6 +268,7 @@ TEST_CASE("The room flow: the last human leaving returns the room to Waiting; op
   server::HostConfig cfg;
   cfg.room = true;
   cfg.bots = server::referenceBots(2);
+  cfg.server.reconnectGraceTicks = 10 * sim::kTickHz;
   RoomRig rig(cfg);
   NetClient& a = rig.addClient("solo", "Solo");
   REQUIRE(rig.runUntil([&] { return a.running() && a.roomState(); }, 5 * kSec));
@@ -282,9 +283,9 @@ TEST_CASE("The room flow: the last human leaving returns the room to Waiting; op
   const uint64_t ticks = rig.host->stats().ticks;
   CHECK(ticks > 50);
 
-  // Gone mid-match: the slot is reserved for the reconnect grace (10 s),
-  // the bots play on, then the room is empty.
-  a.disconnect();
+  // The link lost mid-match: the slot is reserved for the reconnect grace
+  // (10 s here), the bots play on, then the room is empty.
+  rig.net.cut(rig.host->server().ownerOf(PlayerId{0}));
   rig.runFor(2 * kSec);
   CHECK(rig.room().phase() == RoomPhase::Playing);
   CHECK(rig.host->server().humanSlots() == 0b1);

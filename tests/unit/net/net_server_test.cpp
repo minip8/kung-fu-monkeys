@@ -243,9 +243,12 @@ TEST_CASE("inputs are accepted only for owned slots and valid ranges", "[net][se
   rig.pump();
   CHECK(rig.server->stats().rejectedInputs == 2);
 
+  // v0.92: too early is dropped and counted, but not an error (a client runs
+  // that far ahead of a server whose host stalled).
   a.unreliable(inputFor(0b01, next.plus(InputFrameAssembler::kMaxLeadTicks + 1), 1));
   rig.pump();
-  CHECK(rig.server->stats().rejectedInputs == 3);
+  CHECK(rig.server->stats().rejectedInputs == 2);
+  CHECK(rig.server->stats().inputsTooEarly == 1);
 
   a.unreliable(inputFor(0b01, next, 1, dash));
   rig.pump();
@@ -261,7 +264,7 @@ TEST_CASE("inputs are accepted only for owned slots and valid ranges", "[net][se
   a.unreliable(inputFor(0b01, next, 2, dash));
   rig.pump();
   CHECK(rig.server->stats().inputsLate == 1);
-  CHECK(rig.server->peerInfo(a.t_->self()).value_or(ServerPeerInfo{}).protocolErrors == 2);
+  CHECK(rig.server->peerInfo(a.t_->self()).value_or(ServerPeerInfo{}).protocolErrors == 1);
 }
 
 TEST_CASE("Input messages over the rate limit are dropped", "[net][server]") {

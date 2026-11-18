@@ -41,6 +41,8 @@ NetClient::NetClient(const sim::ContentDB& content, const ClientConfig& config)
 void NetClient::resetSession() {
   state_ = ClientState::Idle;
   disconnectReason_.reset();
+  disconnectCause_ = DisconnectCause::None;
+  wakePending_ = false;  // background_ is the host's and outlives a session
   matchConfig_ = {};
   simConfig_ = {};
   localSlots_ = 0;
@@ -130,6 +132,21 @@ void NetClient::disconnect() {
   }
   state_ = ClientState::Disconnected;
   disconnectReason_ = DisconnectReason::Quit;
+  disconnectCause_ = DisconnectCause::Quit;
+}
+
+void NetClient::setBackground(bool background) {
+  if (background == background_) return;
+  background_ = background;
+  if (background) return;
+  // Back: a running timeline is stale by however long the host was away. A
+  // room that holds resumes on its own when its match starts.
+  if (state_ != ClientState::Running || roomHeld()) return;
+  wakePending_ = true;
+  resumePending_ = true;
+  resumeSnapshot_ = false;  // one that arrived while away may be old
+  ++stats_.wakes;
+  requestResync(world_.tick, 0);
 }
 
 void NetClient::beginFrame() {
@@ -163,6 +180,7 @@ void NetClient::pump(uint64_t nowNs) {
     } else if (state_ != ClientState::Rejected && state_ != ClientState::Disconnected) {
       state_ = ClientState::Disconnected;
       if (!disconnectReason_) disconnectReason_ = DisconnectReason::Timeout;
+      disconnectCause_ = DisconnectCause::TransportClosed;
     }
   }
 
@@ -182,13 +200,19 @@ void NetClient::pump(uint64_t nowNs) {
     transport_->disconnect(kServerPeer);
     state_ = ClientState::Disconnected;
     disconnectReason_ = DisconnectReason::Timeout;
+    disconnectCause_ = DisconnectCause::ServerSilent;
     return;
   }
   if (helloSent_ && nowNs >= nextPingNs_) sendPing(nowNs);
   if (state_ == ClientState::Syncing) tryStart(nowNs);
-  if (state_ == ClientState::Running && resumePending_) tryResume(nowNs);
+  if (state_ == ClientState::Running && resumePending_ && !background_) tryResume(nowNs);
   if (awaitingResync_ && nowNs - resyncSentNs_ > config_.resyncRetryNs) {
     awaitingResync_ = false;  // lost or ignored: ask again at the next mismatch
+  }
+  // v0.92: a wake waits for its snapshot; a lost request is asked again.
+  if (wakePending_ && resumePending_ && !resumeSnapshot_ && !awaitingResync_ && !background_ &&
+      state_ == ClientState::Running) {
+    requestResync(world_.tick, 0);
   }
 }
 
@@ -275,6 +299,7 @@ void NetClient::onPacket(const Packet& packet) {
       DisconnectMsg d;
       if (!decode(packet.data, d)) break;
       disconnectReason_ = d.reason;
+      disconnectCause_ = DisconnectCause::ServerDisconnect;
       state_ = ClientState::Disconnected;
       return;
     }
@@ -422,6 +447,7 @@ void NetClient::tryResume(uint64_t nowNs) {
   }
   resumePending_ = false;
   resumeSnapshot_ = false;
+  wakePending_ = false;
   promotePending_ = false;  // the lead is set here
   if (resumeIsRestart_) {
     adoptRestart();

@@ -68,6 +68,25 @@ constexpr uint64_t kNsPerSecond = 1'000'000'000ull;
   return "unknown";
 }
 
+// v0.92: what the server saw when a peer left.
+[[nodiscard]] const char* leaveCauseName(net::LeaveCause cause) {
+  switch (cause) {
+    case net::LeaveCause::Quit:
+      return "quit";
+    case net::LeaveCause::Closed:
+      return "link-closed";
+    case net::LeaveCause::Timeout:
+      return "timeout";
+    case net::LeaveCause::HelloTimeout:
+      return "hello-timeout";
+    case net::LeaveCause::Replaced:
+      return "replaced";
+    case net::LeaveCause::ShuttingDown:
+      return "shutting-down";
+  }
+  return "unknown";
+}
+
 [[nodiscard]] std::string scoreList(const sim::WorldState& w) {
   std::string out;
   for (uint8_t s = 0; s < sim::kMaxPlayers; ++s) {
@@ -311,17 +330,34 @@ void ServerHost::frame(uint64_t nowNs) {
     clockTicks_ = 0;
   } else if (!server_->shuttingDown()) {
     uint32_t ran = 0;
-    while (nowNs_ >= tickDueAt(clockTicks_) && (!room_ || room_->playing())) {
-      if (ran == config_.maxCatchUpTicks) {
-        // A stalled host must not run seconds of ticks at once: drop the
-        // backlog (the clients' lead control absorbs the jump) and rebase.
-        const uint64_t behind = (nowNs_ - tickDueAt(clockTicks_)) * sim::kTickHz / kNsPerSecond;
+    if (nowNs_ >= tickDueAt(clockTicks_)) {
+      const uint64_t behindNs = nowNs_ - tickDueAt(clockTicks_);
+      if (behindNs > config_.maxBacklogNs) {
+        // Past the clients' timeout: they reconnect anyway; drop and rebase.
+        const uint64_t behind = behindNs * sim::kTickHz / kNsPerSecond;
         stats_.droppedTicks += behind + 1;
-        log("clock stalled: dropped {} ticks", behind + 1);
+        log("clock stalled {} ms: dropped {} ticks", behindNs / 1'000'000, behind + 1);
         clockBaseNs_ = nowNs_;
-        clockTicks_ = 1;
-        break;
+        clockTicks_ = 0;
+        catchingUp_ = false;
+      } else if (behindNs >= uint64_t{config_.maxCatchUpTicks} * kNsPerSecond / sim::kTickHz) {
+        // A stalled process (a throttled or paused VM): run the backlog over
+        // the next frames, so the server's tick stays where the clients'
+        // clocks expect it (§6.2) and their early inputs stay in the window.
+        stats_.maxBehindNs = std::max(stats_.maxBehindNs, behindNs);
+        if (!catchingUp_) {
+          catchingUp_ = true;
+          ++stats_.stalls;
+          log("clock stalled {} ms: catching up", behindNs / 1'000'000);
+        }
+      } else {
+        catchingUp_ = false;
       }
+    } else {
+      catchingUp_ = false;
+    }
+    while (nowNs_ >= tickDueAt(clockTicks_) && (!room_ || room_->playing())) {
+      if (ran == config_.maxCatchUpTicks) break;  // the rest in the next frames
       server_->tick(nowNs_);
       ++clockTicks_;
       ++ran;
@@ -642,9 +678,22 @@ void ServerHost::logServerEvents() {
       case net::ServerEventKind::PeerRejected:
         log("reject peer={} reason={}", peer, rejectName(e.reason));
         break;
-      case net::ServerEventKind::PeerLeft:
-        log("leave peer={} slots={} reason={}", peer, slotList(e.slots), disconnectName(e.reason));
+      case net::ServerEventKind::PeerLeft: {
+        // v0.92: the cause the server saw, how long the peer had been silent
+        // and what became of its slots, so a report of a drop is diagnosable.
+        std::string held;
+        if (e.slots != 0) {
+          held = e.reserved ? std::format(" kept={}s",
+                                          server_->config().reconnectGraceTicks / sim::kTickHz)
+                            : std::string(" released");
+        }
+        log("leave peer={} slots={} cause={}{} silent={}ms{}", peer, slotList(e.slots),
+            leaveCauseName(e.cause),
+            e.cause == net::LeaveCause::Quit ? std::format(" reason={}", disconnectName(e.reason))
+                                             : std::string(),
+            e.silentNs / 1'000'000, held);
         break;
+      }
       case net::ServerEventKind::PeerKicked:
         log("kick peer={} slots={} reason={}", peer, slotList(e.slots), disconnectName(e.reason));
         break;
@@ -683,7 +732,8 @@ void ServerHost::logStats(uint64_t nowNs) {
       std::popcount(uint32_t{server_->present()} & ~uint32_t{server_->bots()}));
   log("stats peers={} players={} bots={} ticks={} subst/s={:.2f} in={:.0f}B/s out={:.0f}B/s "
       "joins=+{} reconnects=+{} rejects=+{} kicks=+{} resyncs=+{} protocol_errors=+{} "
-      "rate_limited=+{} rejected_inputs=+{} late_inputs/s={:.1f} dropped_ticks=+{}{}{}",
+      "rate_limited=+{} rejected_inputs=+{} late_inputs/s={:.1f} dropped_ticks=+{} "
+      "timeouts=+{} closed=+{} idle/s={:.2f} early_inputs=+{} stalls=+{}{}{}",
       peers.size(), players, std::popcount(static_cast<uint32_t>(server_->bots())),
       s.ticks - l.ticks, perSecond(s.substitutedInputs - l.substitutedInputs, ns),
       perSecond(s.bytesReceived - l.bytesReceived, ns), perSecond(s.bytesSent - l.bytesSent, ns),
@@ -691,7 +741,10 @@ void ServerHost::logStats(uint64_t nowNs) {
       s.resyncsServed - l.resyncsServed, s.protocolErrors - l.protocolErrors,
       s.rateLimited - l.rateLimited, s.rejectedInputs - l.rejectedInputs,
       perSecond(s.inputsLate - l.inputsLate, ns), stats_.droppedTicks - lastHostStats_.droppedTicks,
-      botStats(), config_.statsSuffix ? config_.statsSuffix(nowNs) : std::string());
+      s.timeouts - l.timeouts, s.closedLinks - l.closedLinks,
+      perSecond(s.idledInputs - l.idledInputs, ns), s.inputsTooEarly - l.inputsTooEarly,
+      stats_.stalls - lastHostStats_.stalls, botStats(),
+      config_.statsSuffix ? config_.statsSuffix(nowNs) : std::string());
   if (config_.verbose) {
     for (const net::ServerPeerInfo& p : peers) {
       log("  peer={} slots={} margin={:.1f} lead={:.1f} subst={} in={} out={} errors={}",

@@ -5,6 +5,7 @@ kfm_add_test_exe(kfm_netcode_tests
   netcode_test.cpp
   outage_test.cpp
   session_test.cpp
+  stall_test.cpp
 )
 target_link_libraries(kfm_netcode_tests PRIVATE kfm::netsim)
 

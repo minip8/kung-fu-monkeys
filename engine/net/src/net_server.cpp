@@ -83,6 +83,7 @@ NetServer::NetServer(ITransport& transport, const sim::ContentDB& content, Serve
       peers_(kMaxPeers),
       buf_(kMaxReliableBytes) {
   assembler_.setPresent(present_);
+  assembler_.setIdleAfterTicks(config_.idleAfterTicks);
 }
 
 // --- roster -----------------------------------------------------------------------
@@ -255,11 +256,11 @@ NetServer::Peer* NetServer::addPeer(PeerId id, uint64_t nowNs) {
   return nullptr;
 }
 
-void NetServer::removePeer(Peer& p, bool reserve) {
+bool NetServer::removePeer(Peer& p, bool reserve) {
   const sim::PlayerMask slots = p.info.slots;
   p.info.slots = 0;
   p.used = false;
-  if (slots == 0) return;
+  if (slots == 0) return false;
   if (reserve && p.tokenLength > 0) {
     for (Reservation& r : reservations_) {
       if (r.used) continue;
@@ -268,10 +269,19 @@ void NetServer::removePeer(Peer& p, bool reserve) {
       r.expires = nextTick().plus(static_cast<int32_t>(config_.reconnectGraceTicks));
       r.token = p.token;
       r.tokenLength = p.tokenLength;
-      return;
+      return true;
     }
   }
   releaseSlots(slots, p.info.peer);
+  return false;
+}
+
+void NetServer::leave(Peer& p, LeaveCause cause, bool reserve, uint8_t reason) {
+  emit(ServerEventKind::PeerLeft, p.info.peer, p.info.slots, reason);
+  const size_t at = events_.size() - 1;
+  events_[at].cause = cause;
+  events_[at].silentNs = nowNs_ > p.lastRecvNs ? nowNs_ - p.lastRecvNs : 0;
+  events_[at].reserved = removePeer(p, reserve);
 }
 
 std::optional<ServerPeerInfo> NetServer::peerInfo(PeerId peer) const {
@@ -362,9 +372,8 @@ void NetServer::closeAll() {
   for (Peer& q : peers_) {
     if (!q.used) continue;
     transport_->disconnect(q.info.peer);
-    emit(ServerEventKind::PeerLeft, q.info.peer, q.info.slots,
-         static_cast<uint8_t>(DisconnectReason::ServerShuttingDown));
-    removePeer(q, false);
+    leave(q, LeaveCause::ShuttingDown, false,
+          static_cast<uint8_t>(DisconnectReason::ServerShuttingDown));
   }
 }
 
@@ -438,13 +447,9 @@ void NetServer::pump(uint64_t nowNs) {
   connEvents_.clear();
   transport_->poll(nowNs, connEvents_);
   for (const ConnectionEvent& ev : connEvents_.span()) {
-    if (ev.kind == ConnectionEventKind::Connected) {
-      if (findPeer(ev.peer) == nullptr && addPeer(ev.peer, nowNs) == nullptr) {
-        transport_->disconnect(ev.peer);  // peer table full
-      }
-    } else if (Peer* p = findPeer(ev.peer)) {
-      emit(ServerEventKind::PeerLeft, ev.peer, p->info.slots);
-      removePeer(*p, true);
+    if (ev.kind != ConnectionEventKind::Connected) continue;
+    if (findPeer(ev.peer) == nullptr && addPeer(ev.peer, nowNs) == nullptr) {
+      transport_->disconnect(ev.peer);  // peer table full
     }
   }
 
@@ -458,17 +463,34 @@ void NetServer::pump(uint64_t nowNs) {
     onPacket(*p, packet);
   }
 
+  // v0.92: closes after the messages of the same poll. A client that leaves
+  // sends Disconnect{Quit} and closes at once; both arrive together, and
+  // read in the other order the quit was taken for a lost link, which kept
+  // the leaver's monkey standing in the match for the whole grace window.
+  for (const ConnectionEvent& ev : connEvents_.span()) {
+    if (ev.kind != ConnectionEventKind::Disconnected) continue;
+    if (Peer* p = findPeer(ev.peer)) {
+      ++stats_.closedLinks;
+      leave(*p, LeaveCause::Closed, true);
+    }
+  }
+
   for (Peer& p : peers_) {
     if (!p.used) continue;
     const bool silent = nowNs - p.lastRecvNs > config_.peerTimeoutNs;
     const bool noHello =
         p.info.state == PeerState::AwaitingHello && nowNs - p.connectedNs > config_.helloTimeoutNs;
     if (!silent && !noHello) continue;
-    if (!silent) ++stats_.helloTimeouts;
+    if (silent) {
+      ++stats_.timeouts;
+      // Best effort: if only the uplink died, the client learns why.
+      sendReliableMsg(p, DisconnectMsg{DisconnectReason::Timeout});
+    } else {
+      ++stats_.helloTimeouts;
+    }
     transport_->disconnect(p.info.peer);
-    emit(ServerEventKind::PeerLeft, p.info.peer, p.info.slots,
-         static_cast<uint8_t>(DisconnectReason::Timeout));
-    removePeer(p, true);
+    leave(p, silent ? LeaveCause::Timeout : LeaveCause::HelloTimeout, true,
+          static_cast<uint8_t>(DisconnectReason::Timeout));
   }
 }
 
@@ -509,8 +531,8 @@ void NetServer::onPacket(Peer& p, const Packet& packet) {
         return;
       }
       transport_->disconnect(p.info.peer);
-      emit(ServerEventKind::PeerLeft, p.info.peer, p.info.slots, static_cast<uint8_t>(d.reason));
-      removePeer(p, false);  // a deliberate quit gives the slots up at once
+      // A deliberate quit gives the slots up at once.
+      leave(p, LeaveCause::Quit, false, static_cast<uint8_t>(d.reason));
       return;
     }
     default:
@@ -592,9 +614,11 @@ void NetServer::onHello(Peer& p, const Packet& packet) {
         reclaimed = q.info.slots;
         p.queued = q.queued;  // v0.44: a waiting peer keeps its place
         p.queuedSeq = q.queuedSeq;
-        q.info.slots = 0;  // handed over, not released
         transport_->disconnect(q.info.peer);
         emit(ServerEventKind::PeerLeft, q.info.peer, reclaimed);
+        events_.back().cause = LeaveCause::Replaced;
+        events_.back().silentNs = nowNs_ > q.lastRecvNs ? nowNs_ - q.lastRecvNs : 0;
+        q.info.slots = 0;  // handed over, not released
         removePeer(q, false);
         reconnect = true;
         break;
@@ -683,6 +707,10 @@ void NetServer::onInput(Peer& p, const Packet& packet) {
           ++stats_.inputsLate;
           break;
         case InputFrameAssembler::PutResult::TooEarly:
+          // v0.92: not an error. A client runs this far ahead of a server
+          // whose host stalled; the input is dropped, the slot substituted.
+          ++stats_.inputsTooEarly;
+          break;
         case InputFrameAssembler::PutResult::BadSlot:
           bad = true;
           ++stats_.rejectedInputs;
@@ -832,7 +860,8 @@ void NetServer::tick(uint64_t nowNs) {
   }
   assembler_.setPresent(present_);
   sim::PlayerMask substituted = 0;
-  const sim::InputFrame frame = assembler_.assembleNext(&substituted);
+  sim::PlayerMask idled = 0;
+  const sim::InputFrame frame = assembler_.assembleNext(&substituted, &idled);
   stats_.substitutedLastTick = 0;
   for (Peer& p : peers_) {
     if (!p.used) continue;
@@ -841,6 +870,10 @@ void NetServer::tick(uint64_t nowNs) {
     p.info.substitutions += n;
     stats_.substitutedInputs += n;
     stats_.substitutedLastTick += n;
+    const auto idle =
+        static_cast<uint32_t>(popcount(static_cast<sim::PlayerMask>(idled & p.info.slots)));
+    p.info.idled += idle;
+    stats_.idledInputs += idle;
   }
   sink_.clear();
   sim::step(world_, frame, content, sink_);

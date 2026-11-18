@@ -121,7 +121,7 @@ struct Rig {
 
   void step() {
     now += kMs;
-    host->frame(now);
+    if (!hostStalled) host->frame(now);
     for (auto& f : fakes)
       f->poll(now, host->server().nextTick());
     record();
@@ -180,6 +180,7 @@ struct Rig {
 
   sim::ContentDB content;  // before host and clients, which keep a reference
   uint64_t now{0};
+  bool hostStalled{false};  // the host's process does not run (its clients do)
   LoopbackNetwork net;
   std::vector<std::string> lines;
   std::unique_ptr<server::ServerHost> host;
@@ -209,12 +210,48 @@ TEST_CASE("ServerHost ticks at exactly 60 Hz on its own clock", "[server]") {
   CHECK(rig.host->stats().droppedTicks == 0);
   CHECK(rig.host->nsUntilNextTick(rig.now) == 10 * kSec + kSec / 60 - rig.now);
 
-  // A one-second stall runs at most maxCatchUpTicks and drops the rest.
+  // v0.92: a one-second stall runs at most maxCatchUpTicks per frame and the
+  // rest over the next frames: no tick is dropped, the clock keeps its base.
   rig.now += kSec;
   rig.host->frame(rig.now);
   CHECK(rig.host->stats().ticks == 609);
-  CHECK(rig.host->stats().droppedTicks > 40);
-  CHECK(rig.linesWith("clock stalled") == 1);
+  CHECK(rig.linesWith("clock stalled 983 ms: catching up") == 1);
+  rig.runFor(10 * kMs);
+  CHECK(rig.host->stats().ticks == 661);  // ticks 0..660 were due by 11 s
+  CHECK(rig.host->stats().droppedTicks == 0);
+  CHECK(rig.host->stats().stalls == 1);
+  CHECK(rig.host->nsUntilNextTick(rig.now) == 11 * kSec + kSec / 60 - rig.now);
+
+  // One past maxBacklogNs (the clients have given up by then) is dropped.
+  rig.now += 12 * kSec;
+  rig.host->frame(rig.now);
+  CHECK(rig.host->stats().droppedTicks > 700);
+  CHECK(rig.linesWith("dropped") == 1);
+  CHECK(rig.host->stats().ticks == 662);  // the first tick of the new base
+}
+
+// v0.92: a stalled host process (a VM's CPU throttled or paused) while its
+// clients keep playing. Before v0.92 the host dropped the backlog past
+// maxCatchUpTicks, so every client found itself that many ticks early, and
+// past the assembler's 64-tick window every Input was a protocol error: the
+// players were kicked a fraction of a second after the stall.
+TEST_CASE("a stalled server host keeps its players", "[server][stall]") {
+  const uint64_t stall = GENERATE(uint64_t{500} * kMs, uint64_t{1500} * kMs, uint64_t{4} * kSec);
+  Rig rig(botConfig(1));
+  NetClient& c = rig.addClient("human");
+  REQUIRE(rig.runUntil([&] { return c.running(); }, 3 * kSec));
+  rig.runFor(3 * kSec);
+  const uint64_t kicks = rig.host->server().stats().kicks;
+  rig.hostStalled = true;
+  rig.runFor(stall);
+  rig.hostStalled = false;
+  rig.runFor(3 * kSec);
+  INFO("stall " << stall / kMs << " ms");
+  CHECK(rig.host->server().stats().kicks == kicks);
+  CHECK(c.running());
+  CHECK(c.localSlots() == 0b10);
+  // The lead is the lead again: no client left far ahead of the server.
+  CHECK(c.localTick().minus(rig.host->server().nextTick()) < 10);
 }
 
 TEST_CASE("ServerHost plays a match with bots to the end, restarts it and keeps playing",
