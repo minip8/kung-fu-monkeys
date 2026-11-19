@@ -1049,6 +1049,21 @@ void onEvent(void* user, const SDL_Event& event) {
     // while the room waits or shows its match over.
     client::NetSession& n = *app->net;
     const client::MenuAction action = app->menuInput.translate(*input, true);
+    // v0.97: the host's power-up picker takes its presses first (a pad's B
+    // closes it, not the room), then Tab or a pad's Back (View) opens
+    // Settings over the waiting room.
+    if (n.phase() == client::NetPhase::Waiting && n.isHost()) {
+      bool changed = false;
+      if (pickerEvent(*app, app->roomMenu, *input, true, changed)) {
+        app->roomChanged = app->roomChanged || changed;
+        return;
+      }
+    }
+    if (n.phase() == client::NetPhase::Waiting && client::isSettingsEvent(*input, true)) {
+      app->audio.click();
+      app->settingsMenu.open();
+      return;
+    }
     // v0.94: a pad's B (or Back) leaves the waiting room or a connection
     // screen, as Escape does; the lost connection has its own buttons.
     if (client::isMenuBack(*input) && !n.running() && !n.canReconnect() &&
@@ -1056,18 +1071,7 @@ void onEvent(void* user, const SDL_Event& event) {
       app->leaveRequested = true;
       return;
     }
-    // v0.97: Tab or a pad's Back (View) opens Settings over the waiting room.
-    if (n.phase() == client::NetPhase::Waiting && client::isSettingsEvent(*input, true)) {
-      app->audio.click();
-      app->settingsMenu.open();
-      return;
-    }
     if (n.phase() == client::NetPhase::Waiting && n.isHost()) {
-      bool changed = false;
-      if (pickerEvent(*app, app->roomMenu, *input, true, changed)) {
-        app->roomChanged = app->roomChanged || changed;
-        return;
-      }
       // Enter is Start (the button says so), not a pick: never held back.
       if (!revealOnly(*app, action, false) && action != client::MenuAction::None &&
           app->roomMenu.apply(action)) {
