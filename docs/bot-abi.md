@@ -325,7 +325,11 @@ pulls it home while the button stays held: the banana flies straight at the monk
 up from rest, and slides along walls (it can stick behind one). Letting go drops it where it
 is (a pickup again). It is reported as a Returning banana of its owner; below the throw's
 recall harm speed it passes through other monkeys, faster it hits like any returning banana.
-A pulled banana that reaches the hand starts no throw; the next press does.
+A pulled banana that reaches the hand starts no throw; the next press does. Since architecture
+v0.95 a pull that reaches the hand while the button is still held lifts the monkey's next
+nearest banana on the floor at once, and so on until its hand is full (its capacity with
+power-ups) or none is left: only the first pull needs an empty hand, and one banana per monkey is
+pulled at a time.
 
 ### 2.6 `self` (offset 228, 244 bytes)
 

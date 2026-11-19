@@ -697,8 +697,19 @@ current tick's, so rotation never costs anything (§5.12).
   comes up (`count − 1`, the pickup despawned at 0), as a fresh `Recalled` banana of the monkey
   at rest where it lay, with its projectile modifiers (§5.8), and `BananaRecallStarted`; a full
   boomerang pool leaves it on the floor. One at a time, decided: the nearest is the one the
-  player is reaching for, and the hand must be empty to start, so a pull that lands ends the
-  wanting. The pull itself is `ProjectileSystem`'s (§5.7), which drops the banana when
+  player is reaching for, and the hand must be empty to start. v0.95, the chain (the owner's
+  choice, "keep pulling, one by one"): a pull that reaches the hand while the button is still
+  held lifts the next nearest at once (`continueRecall`, called by the catch rows 11 and 40
+  once the pulled banana is in the hand), and so on until the hand is full (`Stats::ammoMax`,
+  the power-ups' capacity, not the def's) or none of the monkey's bananas is left on the floor;
+  only the first pull needs an empty hand, so a press with a banana in the hand still throws or
+  charges, and still one banana per puller is in the air. Its edges: a hand filled from
+  elsewhere meanwhile (a pickup, a catch) ends the chain at full, and a pull then arriving at a
+  full hand drops at the catch point as ever (no banana is lost); a stack gives one banana a
+  pull; an ammo power-up that runs out lowers the capacity and so ends it the same way; a death
+  or a fall drops the pull in flight (`heldRecallDef`, `releaseBananasOf`); Fast Hands'
+  `throw_fast` recalls and chains like `throw`. No state: the chain is carried by the pull in
+  flight, and letting go drops that one where it is, which ends it. The pull itself is `ProjectileSystem`'s (§5.7), which drops the banana when
   `heldRecallDef` (the recalling slot Idle, its button held, the monkey neither eliminated nor
   falling) says the owner let go. A banana pulled into the hand while the button is still down
   starts no throw: a throw needs a press edge (`InputSystem`), and a held button is no edge;
@@ -799,7 +810,9 @@ slower than its owner's `recallHarmSpeed` (times its `speedMul`), `slowRecallPas
 contact and nothing happens, so the slow lift drifts through anyone; at or above it the
 handler declines and the scan goes on (a banana whose owner no longer recalls declines too).
 Decided: harmless below a speed rather than for a time, because the speed is what a player
-sees, and a pull a wall holds back stays slow.
+sees, and a pull a wall holds back stays slow. v0.95: rows 11 and 40, catching the catcher's
+own `Recalled` banana into a hand with room, go on to the next pull of the chain while the
+button is held (`continueRecall`, §5.5).
 
 The glide (v0.95, §5.7). An arc banana that gave up on the way home (it flew past its owner,
 ran out of return time or met a wall) has its own phase, `Gliding`, which `kPhaseInFlight` and
@@ -1183,7 +1196,8 @@ is a defence only for a player who has thrown.
   a recalling def, it drops where it is (`BananaRecallEnded`, Grounded, a pickup again that the
   owner may lift again). It flies over pits, and one let go over a pit sinks. Reaching the
   owner, row 40 puts it in the hand (`BoomerangCaught`, `Auto`; at full ammo it drops at the
-  catch point as ever). It counts as owned for the regrow clock, as in flight for
+  catch point as ever), and with the button still held and room in the hand the next pull
+  starts on that tick (v0.95, the chain, §5.5). It counts as owned for the regrow clock, as in flight for
   `dropBananasOf` / `releaseBananasOf` (a dead owner's pull drops or vanishes like its throws,
   `inFlight()`), and as a banana left for the dry-round rule (it is not Sinking).
 - The last owner (v0.89). A pickup's `spawner` byte (a power-up's spawner, a flag's team) is,
