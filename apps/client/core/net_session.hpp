@@ -56,6 +56,15 @@
 // (anyone may call them: the server ignores a non-host). slotName() is a
 // human slot's nickname, else its label.
 //
+// Host controls of a running match (v0.96, protocol 9): endMatch() stops
+// the match and brings everyone back to the waiting room (Playing →
+// Waiting, settings and roster kept), restartMatch() starts a fresh match
+// at once with the same settings (Playing or Over → Playing; at Over it is
+// "play again", start() stays "back to the lobby"). canEndMatch() and
+// canRestartMatch() say whether the server would accept them now;
+// matchEndedByHost() tells a Waiting room the host's endMatch() made from
+// any other.
+//
 // Reconnect from the UI (v0.44, §6.6): a session that ran and then lost its
 // link (Disconnected by a timeout, a closed transport or the lobby's
 // `kicked`, not a quit, a kick by the server, a shutdown or a closed room)
@@ -356,6 +365,20 @@ class NetSession {
   // match; Over: back to Waiting).
   void sendSettings(const net::RoomSettings& settings);
   void start();
+  // v0.96: the host's controls of a running match (see the header comment).
+  // Sent by anyone (the server ignores a non-host's, and one in a phase it
+  // does not apply to, and answers with the RoomState either way); a no-op
+  // before the session is synced.
+  void endMatch();
+  void restartMatch();
+  // Whether the server would take them now: a local slot is the host and
+  // the room is Playing (endMatch), Playing or Over (restartMatch), and the
+  // session is synced.
+  [[nodiscard]] bool canEndMatch() const;
+  [[nodiscard]] bool canRestartMatch() const;
+  // The room is Waiting because the host ended the running match (until the
+  // next match starts).
+  [[nodiscard]] bool matchEndedByHost() const { return client_->roomEndedByHost(); }
   // A human slot's nickname, else "P<n>" ("BOT<n>" for a bot slot).
   [[nodiscard]] std::string slotName(PlayerId slot) const;
 

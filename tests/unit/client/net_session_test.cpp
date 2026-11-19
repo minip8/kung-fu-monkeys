@@ -31,6 +31,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace kfm;
@@ -635,6 +636,132 @@ TEST_CASE("the nickname rides in Hello; the room view follows RoomState (v0.42)"
   REQUIRE(rig.runUntil([&] { return s.phase() == NetPhase::Over; }, kSec));
   CHECK(s.client().holding());
   CHECK(s.statusText().find("match over") != std::string::npos);
+}
+
+// v0.96 (protocol 9): the host's controls of a running match. The server is
+// scripted as in the test above (its RoomStates are set by hand; the room
+// policy itself is ServerHost's, tested in tests/unit/server/room_flow_test).
+TEST_CASE("the host's end and restart: senders, availability, the end mid-match (v0.96)",
+          "[client][net][room]") {
+  Rig rig;
+  rig.ticking = false;
+  Rig::Session& hr = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), {}, 10 * kMs);
+  Rig::Session& gr = rig.addSession(lobby({platform::DeviceBinding::keyboard(0)}), {}, 10 * kMs);
+  NetSession& host = *hr.s;
+  NetSession& guest = *gr.s;
+  REQUIRE(rig.runUntil([&] { return host.synced() && guest.synced(); }, 2 * kSec));
+  REQUIRE(host.localSlots() == 0b01);
+  REQUIRE(guest.localSlots() == 0b10);
+  // No room (the M3 flow): nothing to control.
+  CHECK_FALSE(host.canEndMatch());
+  CHECK_FALSE(host.canRestartMatch());
+  CHECK_FALSE(host.matchEndedByHost());
+
+  net::RoomStateMsg room;
+  room.host = PlayerId{0};
+  room.humans = 0b11;
+  rig.server->setRoomState(room);
+  REQUIRE(rig.runUntil([&] { return guest.phase() == NetPhase::Waiting; }, kSec));
+  CHECK(host.isHost());
+  CHECK_FALSE(host.canEndMatch());  // Waiting: start() is the control
+  CHECK_FALSE(host.canRestartMatch());
+  CHECK_FALSE(host.matchEndedByHost());  // the first Waiting is not an end
+
+  // The match runs.
+  rig.server->restartMatch(rig.server->matchConfig(), rig.server->nextTick(), 5);
+  room.phase = net::RoomPhase::Playing;
+  rig.server->setRoomState(room);
+  rig.ticking = true;
+  REQUIRE(rig.runUntil(
+      [&] {
+        return host.running() && guest.running() && !host.client().holding() &&
+               !guest.client().holding();
+      },
+      2 * kSec));
+  CHECK(host.canEndMatch());
+  CHECK(host.canRestartMatch());
+  CHECK_FALSE(guest.canEndMatch());
+  CHECK_FALSE(guest.canRestartMatch());
+
+  // Every call reaches the server as an event with the sender's slots: the
+  // server (ServerHost's Room) judges who is host.
+  rig.netEvents.clear();
+  host.endMatch();
+  host.restartMatch();
+  guest.endMatch();
+  rig.runFor(200 * kMs);
+  std::vector<std::pair<sim::PlayerMask, uint8_t>> commands;
+  for (const net::ServerEvent& e : rig.netEvents)
+    if (e.kind == net::ServerEventKind::RoomCommandRequested)
+      commands.emplace_back(e.slots, e.reason);
+  const auto end = static_cast<uint8_t>(net::RoomCommand::EndMatch);
+  const auto restart = static_cast<uint8_t>(net::RoomCommand::Restart);
+  CHECK(commands == std::vector<std::pair<sim::PlayerMask, uint8_t>>{
+                        {0b01, end}, {0b01, restart}, {0b10, end}});
+
+  // The host ended it: both sessions are back in the waiting room, holding
+  // over the last world, and know it was the host's end.
+  room.phase = net::RoomPhase::Waiting;
+  rig.server->setRoomState(room);
+  rig.ticking = false;
+  REQUIRE(rig.runUntil(
+      [&] { return host.phase() == NetPhase::Waiting && guest.phase() == NetPhase::Waiting; },
+      kSec));
+  CHECK(host.matchEndedByHost());
+  CHECK(guest.matchEndedByHost());
+  CHECK(host.client().holding());
+  CHECK_FALSE(host.canEndMatch());
+  const Tick held = guest.client().localTick();
+  const uint64_t accepted = rig.server->stats().inputsAccepted;
+  rig.runFor(500 * kMs);
+  CHECK(guest.client().localTick() == held);
+  CHECK(rig.server->stats().inputsAccepted == accepted);
+  CHECK(guest.ticksThisFrame() == 0);
+
+  // The next match plays normally.
+  sim::MatchConfig next = rig.server->matchConfig();
+  next.seed = 99;
+  rig.server->restartMatch(next, rig.server->nextTick(), 6);
+  room.phase = net::RoomPhase::Playing;
+  rig.server->setRoomState(room);
+  rig.ticking = true;
+  REQUIRE(rig.runUntil(
+      [&] { return guest.running() && !guest.client().holding() && !host.client().holding(); },
+      2 * kSec));
+  CHECK_FALSE(host.matchEndedByHost());
+  CHECK_FALSE(guest.matchEndedByHost());
+  CHECK(guest.client().matchConfig().seed == 99);
+  rig.runFor(2 * kSec);
+  CHECK(rig.server->stats().inputsAccepted > accepted + 60);
+  CHECK(guest.client().netStats().checksumMismatches == 0);
+  CHECK(host.client().netStats().checksumMismatches == 0);
+  CHECK(guest.client().netStats().checksumsCompared > 0);
+
+  // Over: restart only.
+  room.phase = net::RoomPhase::Over;
+  rig.server->setRoomState(room);
+  rig.ticking = false;
+  REQUIRE(rig.runUntil([&] { return host.phase() == NetPhase::Over; }, kSec));
+  CHECK_FALSE(host.canEndMatch());
+  CHECK(host.canRestartMatch());
+  CHECK_FALSE(guest.canRestartMatch());
+  CHECK_FALSE(host.matchEndedByHost());
+
+  // A Waiting reached from Over, or from a room that emptied, is not an end
+  // by the host.
+  room.phase = net::RoomPhase::Waiting;
+  rig.server->setRoomState(room);
+  REQUIRE(rig.runUntil([&] { return guest.phase() == NetPhase::Waiting; }, kSec));
+  CHECK_FALSE(guest.matchEndedByHost());
+  room.phase = net::RoomPhase::Playing;
+  rig.server->setRoomState(room);
+  rig.runFor(100 * kMs);
+  room.phase = net::RoomPhase::Waiting;
+  room.humans = 0;
+  room.host = PlayerId::invalid();
+  rig.server->setRoomState(room);
+  REQUIRE(rig.runUntil([&] { return guest.phase() == NetPhase::Waiting; }, kSec));
+  CHECK_FALSE(guest.matchEndedByHost());
 }
 
 TEST_CASE("mouse aim online follows the predicted monkey, not the confirmed one (v0.45)",
