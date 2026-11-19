@@ -64,6 +64,8 @@ struct BananaTrack {
   float returnStartDistance{-1.0f};  // owner distance when first seen Returning; < 0 = unset
   float trailTimer{0.0f};            // seconds until the next trail puff
   float tetherTimer{0.0f};           // v0.89: seconds until the next recall tether
+  float lastArc{0.0f};               // v0.95: the arc drawn last frame
+  float glideFromArc{-1.0f};         // v0.95: the arc when first seen Gliding; < 0 = unset
 };
 
 // Everything presentation remembers between frames. Trivially copyable,
@@ -161,7 +163,10 @@ void onRollback(PresentationState& ps, const sim::WorldState& newPrev,
 // Outbound: kBananaArcPeak × sin(pi/2 × ticksInPhase / outboundTicks).
 // Returning: kBananaArcPeak × sin(pi/2 × clamp(distanceToOwner / returnStartDistance)).
 // Grounded: 0.
+// Gliding (v0.95): from glideFromArc evenly down to the pickup's height
+// (kPickupHeight - kBananaHandHeight) over BoomerangDef::arcGlideTicks.
 [[nodiscard]] float bananaArcHeight(const sim::Boomerang& b, float distanceToOwner,
-                                    float returnStartDistance, const sim::ContentDB& content);
+                                    float returnStartDistance, const sim::ContentDB& content,
+                                    float glideFromArc = 0.0f);
 
 }  // namespace kfm::presentation

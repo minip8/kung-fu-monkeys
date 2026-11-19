@@ -2038,6 +2038,79 @@ reconnect states v0.92 adds draw through the same status screen. Verified: clien
 of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
 unchanged.
 
+v0.95 changes: the arc's way home (§5.6, §5.7, §7). The owner's playtest: "the boomerang drops
+too fast now"; asked what that meant, they chose "it gives up too easily on the way home. It
+should home on a moving thrower much better, return for longer, and glide on past you for a
+moment instead of dropping dead the instant it misses. Still no endless circling." v0.89's arc
+steered 96 BAM a tick and dropped the instant its velocity pointed away from its thrower, it
+touched a wall on the way home or it had returned 60 ticks: on an open floor it caught 4 of 16
+full-speed walks (tap and full charge, eight directions) and missed every dash. Now: it steers
+`arc_turn_rate_bam` = 384 (2.1°) a tick for up to `arc_return_ticks` = 84; its top speed home
+is `arc_return_speed × speedMul` held within two new keys, `arc_return_min_speed` = 18 and
+`arc_return_max_speed` = 24 u/s (a tap's ×0.6 would come home at 12, slower than a walk's 7
+plus the gap; a full charge's ×1.5 at 30 ran down a thrower who kept dashing away), so the
+charge no longer leaves the time in the air unchanged (a standing tap 65 ticks, a full charge
+80). Where it dropped it now glides: a new banana phase, `BoomerangPhase::Gliding` (5,
+appended), entered when it passes its thrower, runs out of homing time or meets a wall (it
+bounces off the wall first: one bounce home, then the glide, never a rattle); it flies straight
+on, never steering (at most one pass, no orbit), its n-th tick keeping `(G − n)/(G − n + 1)` of
+the last tick's velocity, so it slows evenly from its speed to rest over `arc_glide_ticks` = 24
+(a pass at 20 u/s glides about 4 units), and lands as a pickup its thrower may recall; a bounce
+while gliding costs `arc_bounce_ticks`. To the rules it is a returning banana (in
+`kPhaseInFlight` and `kPhaseReturning` wherever Returning is; a test pins it): it hits, is
+perfect-caught, parried, slammed and blocked, and its thrower catches it by touching it.
+Worst case in the air: `arc_outbound_ticks + arc_return_ticks + 1 + arc_glide_ticks` = 145
+ticks (2.4 s). Measured on an open floor (`banana_homing_scenario.cpp`, its hidden `[measure]`
+case; the §5.7 table): standing, a tap 65 ticks, a full charge 80; every full-speed walk caught,
+the slowest walking straight away (106 and 113 ticks), each at least 7 ticks before the homing
+ends; one dash back and walking on, caught (123, 124, in the glide); dashing back whenever the
+dash is ready, both lost, down at 144 ticks; dashing sideways whenever ready, caught; a late
+sidestep (a dash at 3 units) makes a tap pass and glide (down at 107), a full charge too fast to
+dodge that late. New content keys in `content/boomerang.toml` and `defaultContent()`, `visit()`
+(`BoomerangDef` 17 → 20 fields), the hash test, the loader (max at least min when set) and the
+F1 tuning core's `contentToCpp`. Presentation draws a glide as a returning banana coming down
+evenly from the height it had to the pickup's (`BananaTrack::glideFromArc`). Bots: Observation
+v2 unchanged; a gliding banana reads as Returning with its `ticksInPhase` counting the glide,
+`bananaMaxReturnTicks` is the homing budget (`docs/bot-abi.md` §2.5, §2.8); the reference bot
+is unchanged (its flight prediction was already an approximation in an arc mode). Considered and
+not taken: steering at a lead point ahead of a moving thrower (pure pursuit at 384 BAM already
+catches every walk); dropping at the timeout rather than gliding (it would still drop dead in
+the air, the owner's complaint); sliding along a wall on the way home (it sticks there, homing,
+for the rest of its time); a charge-independent return speed (a min and a max keep the power-ups'
+and the charge's effect inside a band). Tests: `banana_homing_scenario.cpp` (the walks, the
+dashes, the glide, a gliding banana caught, hitting and dash-caught, the wall, a 50-throw
+bounded-air sweep in a small room with a pillar), the arc scenario's numbers, the mask pin, the
+observation, the presentation's glide height; `kfm_arena`'s "reference bots finish a match"
+moves to seed 4 (seed 2's match no longer had both slots lose a round). Replay checksums:
+changed, corpus regenerated because every arc mode's banana homes, glides and lands differently;
+the grid, contest and control entries (`scripted_*grid_rounds*`, `scripted_10p_contest*`,
+`scripted_10p_control_1t_1800t`) and the empty ones keep every per-tick checksum, only their
+content hash moved; `scripted_4p_recall_1800t` takes input seed 0x5C1284 (with 0x5C1265 more
+bananas come home in flight and a single pull, let go, was left).
+The recall chain (§5.5, §5.6, §5.7; the owner chose "keep pulling, one by one"). With an ammo
+power-up a monkey can have three bananas on the floor, but the pull stopped once the first landed
+in the hand, the button still held, and the others needed another throw first. Now a pull that
+reaches the hand while the button is still held lifts the next nearest at once, and so on until
+the hand is full (`Stats::ammoMax`, not the def's) or none of its bananas is left on the floor;
+letting go drops the one in flight, as before. Starting still needs an empty hand (a press with a
+banana throws or charges as ever), one banana per puller is in the air, and no throw starts until
+the next press. Mechanism: no new state; the catch rows that put the monkey's own `Recalled`
+banana in its hand (11 and 40) call `continueRecall`, which lifts the next (`liftNearest`, shared
+with `throwOnIdleHold`) while `heldRecallDef` holds and the hand has room, so the chain is carried
+by the pull in flight and ends with a released button, a full hand or an empty floor. The edges,
+each a scenario (`recall_chain_scenario.cpp`): three out and held, all three home nearest first,
+each starting on the tick the one before is caught; let go mid-chain, the one in flight drops and
+a new hold with a banana charges a throw; a full hand stops it with the rest on the floor; a stack
+of three comes home one at a time; a hand filled underfoot mid-pull ends the chain and the arriving
+pull drops at the catch point (no banana lost); the ammo power-up running out mid-chain ends it
+the same way; a fall drops the pull in flight; Fast Hands' throw chains. Considered and not
+taken: pulling every own banana at once (still one at a time, so the pull stays an aimed reach);
+a chain marker on the monkey (a `Player` field: the pull in flight already says it); continuing
+from `throwOnIdleHold` on any held Idle slot with room (it would turn a press lost to the
+cooldown with a banana in the hand into a pull). The scripted generator still holds Throw only
+with an empty hand, so no corpus entry chains (the first catch releases); the reference bot does
+not recall. Replay checksums: unchanged by the chain (the corpus regenerated byte for byte).
+
 v0.96 changes: host controls for a running online match (§6.3 protocol version 9, §6.6 the
 online room, "M6b design"), from the owner's playtest note: "host should have more options mid
 game to do stuff, e.g. (start/end the game, go back to lobby, etc...)". Until now a Playing

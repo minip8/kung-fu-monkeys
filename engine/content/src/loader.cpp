@@ -694,6 +694,9 @@ class Builder {
     s.integer("arc_return_ticks", b.arcReturnTicks, 0, 65535);
     s.integer("arc_turn_rate_bam", b.arcTurnRateBam, 0, 32768);
     s.integer("arc_bounce_ticks", b.arcBounceTicks, 0, 65535);
+    s.integer("arc_glide_ticks", b.arcGlideTicks, 0, 65535);  // v0.95
+    s.speed("arc_return_min_speed", b.arcReturnMinSpeed);
+    s.speed("arc_return_max_speed", b.arcReturnMaxSpeed);
   }
 
   void parsePickup(Section& s) {
@@ -2072,6 +2075,11 @@ bool validateContent(const ContentDB& c, Diagnostics& diag) {
         "[boomerang] a mode flies the arc (banana_flight): it needs arc_launch_speed > 0, "
         "0 <= arc_apex_speed <= arc_launch_speed, arc_return_speed > 0 and arc_outbound_ticks, "
         "arc_return_accel_ticks, arc_return_ticks >= 1");
+  }
+  // v0.95: the bounds on the top speed home, when both are set, in order.
+  if (const sim::BoomerangDef& b = c.boomerang;
+      b.arcReturnMaxSpeed > Fixed::zero() && b.arcReturnMaxSpeed < b.arcReturnMinSpeed) {
+    fail("[boomerang] arc_return_max_speed (0 = no cap) must be at least arc_return_min_speed");
   }
   // The default dash attack needs a banana in hand (§5.6); 0 would make
   // every dash an attack.

@@ -103,13 +103,16 @@ TEST_CASE("rules table is sorted and every row ignores eliminated players", "[si
     CHECK(rules[i].resolve != nullptr);
     // v0.57: a falling monkey is out of reach, and so is a banana sinking
     // into a pit: every Boomerang row names Outbound/Returning (v0.89: or
-    // Recalled) only.
+    // Recalled, v0.95: or Gliding) only. A gliding banana is a returning one
+    // for every row.
     CHECK(rules[i].forbidA.has(Tag::Falling));
     if (rules[i].kindB == EntityKind::Player) CHECK(rules[i].forbidB.has(Tag::Falling));
     if (rules[i].kindB == EntityKind::Boomerang) {
       CHECK(rules[i].phaseMaskB != kPhaseAny);
       CHECK_FALSE(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::Sinking));
       CHECK_FALSE(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::Grounded));
+      CHECK(phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::Gliding) ==
+            phaseMaskMatches(rules[i].phaseMaskB, BoomerangPhase::Returning));
     }
   }
 }

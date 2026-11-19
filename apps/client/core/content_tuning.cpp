@@ -108,6 +108,10 @@ std::string contentToCpp(const sim::ContentDB& c) {
   appendLine(out, "c.boomerang.arcReturnTicks", c.boomerang.arcReturnTicks);
   appendLine(out, "c.boomerang.arcTurnRateBam", c.boomerang.arcTurnRateBam);
   appendLine(out, "c.boomerang.arcBounceTicks", c.boomerang.arcBounceTicks);
+  // v0.95: the arc's way home.
+  appendLine(out, "c.boomerang.arcGlideTicks", c.boomerang.arcGlideTicks);
+  appendLine(out, "c.boomerang.arcReturnMinSpeed", fixedToCpp(c.boomerang.arcReturnMinSpeed, true));
+  appendLine(out, "c.boomerang.arcReturnMaxSpeed", fixedToCpp(c.boomerang.arcReturnMaxSpeed, true));
 
   appendLine(out, "c.player.moveSpeed", fixedToCpp(c.player.moveSpeed, true));
   appendLine(out, "c.player.ammoMax", c.player.ammoMax);

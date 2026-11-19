@@ -326,8 +326,11 @@ void fillBananas(const sim::WorldState& world, const sim::MatchContent& content,
     o.valid = 1;
     // v0.89: a banana pulled back (Recalled) reads as Returning, which is
     // what it is to a bot: in flight toward its owner, caught on contact.
-    o.phase = b.phase == sim::BoomerangPhase::Recalled ? byteOf(ObsBananaPhase::Returning)
-                                                       : byteOf(b.phase);
+    // v0.95: so does one gliding past its owner (Gliding; its ticksInPhase
+    // counts the glide from 0), so no value is added to the phase byte.
+    o.phase = b.phase == sim::BoomerangPhase::Recalled || b.phase == sim::BoomerangPhase::Gliding
+                  ? byteOf(ObsBananaPhase::Returning)
+                  : byteOf(b.phase);
     o.owner = b.owner.value;
     o.ownerRelation = relationTo(content, self, b.owner);
     o.damage = b.damage;

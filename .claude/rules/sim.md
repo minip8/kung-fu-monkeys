@@ -49,7 +49,8 @@ screen"), which always apply.
   bananas when it runs out and a banana harvest banks (a point now; a theft gives it back). A
   grounded banana wholly over a pit sinks instead (`BoomerangPhase::Sinking`, never a pickup);
   a new Boomerang row must name an Outbound/Returning phase mask so it never touches a sinking
-  one (a test pins it).
+  one (a test pins it), and treat `Gliding` (v0.95: an arc banana gliding past its owner) as it
+  treats `Returning`: name `kPhaseInFlight` / `kPhaseReturning`, never a hand-made mask.
 - A new round-ending rule must wait for falls (`anyFalling`), or a doomed last monkey wins; the
   round kinds also end a dry round (no banana left anywhere, `roundRanDry`, `[[mode]]
   dry_round_ticks`), and anything new that makes bananas must count in `bananaLeft`.

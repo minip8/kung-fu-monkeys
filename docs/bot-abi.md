@@ -10,7 +10,9 @@ mode kind 8, the spawner's `tree` byte (was `pad0`) and harvest's `modeData` wor
 §3.3), so a version 1 module plays the kind whole. Architecture v0.89 (the arc flight and the
 recall) also stays within version 2 and changes no byte of a classic-flight mode's observation:
 a pulled banana reads as Returning, a banana pickup's `spawner` names who may recall it, and
-the rules block's flight fields report the arc's numbers in an arc mode (§2.5, §2.8, §2.9). The
+the rules block's flight fields report the arc's numbers in an arc mode (§2.5, §2.8, §2.9).
+Architecture v0.95 (the arc's way home: a miss glides on) stays within version 2 too: a gliding
+banana reads as Returning (§2.5, §2.8). The
 design and its rationale are in
 `docs/architecture.md` §8 and §11 ("Contest design"); this document is what an SDK author implements against. The C++ source of truth is `engine/ai/include/kfm/ai/observation.hpp`; a unit
 test (`tests/unit/ai/observation_test.cpp`) checks offsets from the tables below against it, and the
@@ -184,7 +186,7 @@ Enumerations (byte values):
 | mode kind | 0 Rounds, 1 Deathmatch, 2 Survival, 3 TeamRounds, 4 TeamDeathmatch (architecture v0.32), 5 Hill, 6 Capture (architecture v0.33), 7 Control (architecture v0.80: capture the arena's zones and keep them; its state in `reservedModeData` words 0–7, §3; a version 1 module sees the 7 too and treats it as "something else"), 8 Harvest (architecture v0.82: carry bananas from the trees to the team's home zone and bank them, §3.3; version 1 and 2 modules alike see the 8), 9 KillRounds (architecture v0.90: free-for-all rounds as Rounds, but `scores` count eliminations, +1 to the attacker when it happens, and the match ends at a round's end once the strict leader has `scoreToWin`; no `modeData`) |
 | ability kind | 0 None, 1 Dash, 2 Throw, 3 Blink, 4 Slam, 5 Parry, 6 Call (architecture v0.35: a press shouts the aim byte to every monkey within `defParam0` units, Chebyshev between the centres; §3.2) |
 | ability phase | 0 Idle, 1 Startup, 2 Active, 3 Recovery |
-| banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup). Architecture v0.89: a banana its owner pulls back off the floor (the recall, §2.5; the sim's `Recalled`, 4) is reported as 1 Returning: it flies toward its owner and is caught on contact, so no value is added |
+| banana phase | 0 Outbound, 1 Returning, 2 Grounded, 3 Sinking (architecture v0.57: came down wholly over a pit and dropping into the hole; harmless, then gone, never a pickup). Architecture v0.89: a banana its owner pulls back off the floor (the recall, §2.5; the sim's `Recalled`, 4) is reported as 1 Returning: it flies toward its owner and is caught on contact, so no value is added. Architecture v0.95: an arc banana gliding on past its owner (the sim's `Gliding`, 5; §2.5) is reported as 1 Returning too: it is in flight, hits and is caught on contact like one, so again no value is added |
 | pickup kind | 0 Banana, 1 PowerUp, 2 Flag (architecture v0.33: a capture team's flag; `spawner` holds its team, which is also its home zone's index; taken by an enemy of that team that carries no flag yet) |
 | hazard kind | 0 Pit (a monkey whose whole disc ends a tick inside the union of the pit boxes while not Dashing falls: tag Falling for `fall_ticks`, then eliminated by nobody; architecture v0.57), 1 Slow (move speed × `speedMul` inside) |
 
@@ -263,7 +265,7 @@ the entry index times the entry size for arrays (for example `players[3].posX` i
 | 20 | i32 | `bananaRestitution` | Q16.16: wall bounce speed scale |
 | 24 | i32 | `pickupRadius` | Q16.16: pickup contact radius |
 | 28 | u16 | `bananaOutboundTicks` | ticks a banana flies straight before it turns home: the match's effective value (architecture v0.80: the mode's `banana_outbound_ticks` when it sets one, else the banana def's) |
-| 30 | u16 | `bananaMaxReturnTicks` | ticks returning before it drops; it drops at once when its owner is gone |
+| 30 | u16 | `bananaMaxReturnTicks` | ticks returning before it drops (an arc mode, architecture v0.95: before it gives up homing and glides, §2.5); it drops at once when its owner is gone |
 | 32 | u16 | `bananaTurnRateBam` | bam per tick: the most a returning banana turns toward its owner; the match's effective value (architecture v0.80: the mode's `banana_turn_rate` when it sets one, else the banana def's) |
 | 34 | u16 | `hitStunTicks` | ticks of HitStun after a hit |
 | 36 | u8 | `bananaDamage` | base hp per banana hit |
@@ -298,11 +300,16 @@ The arc flight (architecture v0.89, §5.7). A mode flies one of two flights (`ba
 `grid_rounds_1t`, `contest`, `control_1t`), whose observations did not change by a byte; and
 `arc`, every continuous mode's. An arc banana leaves fast and slows evenly to its apex at
 `bananaOutboundTicks`, turns at once to face its owner there, speeds up again on the way home
-while steering at most `bananaTurnRateBam` a tick (far less than classic: it does not chase a
-thrower who runs off), and drops (Grounded, then a pickup) once it has flown past its owner
-(its velocity points away from the owner), when it hits a wall on its way home, after
-`bananaMaxReturnTicks` returning, or when its owner is gone; a wall on the way out bounces it
-and shortens its flight. In an arc mode the rules block reports the arc's numbers:
+while steering at most `bananaTurnRateBam` a tick (less than classic: it catches a thrower who
+walks off, not one who keeps dashing away), and drops (Grounded, then a pickup) at once when its
+owner is gone. Since architecture v0.95 it no longer drops the moment it misses: once it has
+flown past its owner (its velocity points away from the owner), after `bananaMaxReturnTicks`
+returning, or when it meets a wall on its way home (it bounces off), it glides on in a straight
+line, no longer steering, slowing evenly to rest over the content's glide ticks (24 shipped),
+and only then drops. A gliding banana is reported as Returning, and its `ticksInPhase` starts
+again from 0 at the glide; it still hits, and its owner still catches it by touching it. A wall
+on the way out bounces it and shortens its flight. In an arc mode the rules block reports the
+arc's numbers:
 `bananaOutboundTicks`, `bananaTurnRateBam` and `bananaMaxReturnTicks` are the arc's, and
 `bananaSpeed` is the mean speed out (launch and apex speeds averaged), so that, as before,
 `bananaSpeed × charge × bananaOutboundTicks + bananaSpawnOffset` is the reach of a throw. The
@@ -318,7 +325,11 @@ pulls it home while the button stays held: the banana flies straight at the monk
 up from rest, and slides along walls (it can stick behind one). Letting go drops it where it
 is (a pickup again). It is reported as a Returning banana of its owner; below the throw's
 recall harm speed it passes through other monkeys, faster it hits like any returning banana.
-A pulled banana that reaches the hand starts no throw; the next press does.
+A pulled banana that reaches the hand starts no throw; the next press does. Since architecture
+v0.95 a pull that reaches the hand while the button is still held lifts the monkey's next
+nearest banana on the floor at once, and so on until its hand is full (its capacity with
+power-ups) or none is left: only the first pull needs an empty hand, and one banana per monkey is
+pulled at a time.
 
 ### 2.6 `self` (offset 228, 244 bytes)
 

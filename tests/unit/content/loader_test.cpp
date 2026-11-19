@@ -1315,6 +1315,13 @@ score_to_win = 0
                  "arc_return_accel_ticks"));
   CHECK(contains(loadErrors(replaced(base, "arc_apex_speed = 3", "arc_apex_speed = 30")),
                  "arc_apex_speed <= arc_launch_speed"));
+  // v0.95: the bounds on the top speed home in order (0 = no cap).
+  CHECK(contains(loadErrors(replaced(base, "arc_return_ticks = 60",
+                                     "arc_return_ticks = 60\narc_return_min_speed = 18\n"
+                                     "arc_return_max_speed = 12")),
+                 "arc_return_max_speed"));
+  CHECK(loads(replaced(base, "arc_return_ticks = 60",
+                       "arc_return_ticks = 60\narc_return_min_speed = 18\narc_glide_ticks = 24")));
   {
     std::string classic = replaced(base, "arc_launch_speed = 29", "");
     classic =

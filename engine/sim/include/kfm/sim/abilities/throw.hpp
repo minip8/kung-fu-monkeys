@@ -47,9 +47,12 @@ bool throwHoldsPhase(const AbilityState& st, const AbilityDef& def, bool buttonH
 // bananaLastOwner(), within the def's recallRange when that is set) as a
 // Recalled banana (BananaRecallStarted); ProjectileSystem pulls it home while
 // the button stays held (heldRecallDef) and drops it when it is let go. One
-// at a time: the hand is empty only until the pull arrives, and a monkey
-// with a banana of its own Recalled lifts no other. The pull consumes no
-// press: a banana pulled into the hand while the button is still held
+// at a time: a monkey with a banana of its own Recalled lifts no other.
+// v0.95, the chain: a pull that reaches the hand while the button is still
+// held lifts the next nearest (continueRecall, from the catch rows), and so
+// on until the hand is full (Stats::ammoMax) or none of its bananas is left
+// on the floor; only the first pull needs an empty hand. The pull consumes
+// no press: a banana pulled into the hand while the button is still held
 // starts no throw (a throw needs a fresh press edge).
 [[nodiscard]] constexpr bool throwRecalls(const AbilityDef& def) {
   return def.kind == AbilityKind::Throw && def.recallSpeed > Fixed{};
@@ -67,6 +70,10 @@ bool throwHoldsPhase(const AbilityState& st, const AbilityDef& def, bool buttonH
 
 void throwOnIdleHold(WorldState& s, Player& p, AbilityState& st, const AbilityDef& def,
                      const MatchContent& content, EventSink& sink);
+// v0.95: called by the catch rows once p's own Recalled banana is in its
+// hand: while p still holds the recall (heldRecallDef) and its hand has room,
+// lifts its next nearest banana off the floor (as throwOnIdleHold does).
+void continueRecall(WorldState& s, const Player& p, const MatchContent& content, EventSink& sink);
 
 [[nodiscard]] constexpr AbilityBehavior throwBehavior() {
   return AbilityBehavior{&throwCanActivate, &throwOnActivate, &throwOnTick,     &throwOnPhaseChange,

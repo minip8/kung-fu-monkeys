@@ -85,16 +85,20 @@ constexpr ContentDB makeDefaultContent() {
   c.boomerang.pitSinkTicks = 18;
   // v0.89, the arc flight (boomerang.toml arc_*): 29 units/s slowing to 3
   // over 36 ticks out (a mean of 16: the classic reach), back up to 20 over
-  // 24 ticks, 96 BAM a tick of steering, 60 ticks returning at most, 9
-  // ticks of flight per bounce out.
+  // 24 ticks, 9 ticks of flight per bounce out. v0.95: 384 BAM a tick of
+  // steering, 84 ticks homing at most, the top speed home held within 18 to
+  // 24 units/s, then a 24-tick glide.
   c.boomerang.arcLaunchSpeed = perSecond(29);
   c.boomerang.arcApexSpeed = perSecond(3);
   c.boomerang.arcOutboundTicks = 36;
   c.boomerang.arcReturnSpeed = perSecond(20);
   c.boomerang.arcReturnAccelTicks = 24;
-  c.boomerang.arcReturnTicks = 60;
-  c.boomerang.arcTurnRateBam = 96;
+  c.boomerang.arcReturnTicks = 84;
+  c.boomerang.arcTurnRateBam = 384;
   c.boomerang.arcBounceTicks = 9;
+  c.boomerang.arcGlideTicks = 24;
+  c.boomerang.arcReturnMinSpeed = perSecond(18);
+  c.boomerang.arcReturnMaxSpeed = perSecond(24);
 
   c.pickup.radius = Fixed::half();
 
