@@ -119,13 +119,32 @@ struct Player {
 // the button is held and drops where it is when it is let go. In flight for
 // the rules table (every InFlight row, the own-catch and auto-catch rows),
 // harmless to others while slower than the def's recallHarmSpeed (row 5).
-enum class BoomerangPhase : uint8_t { Outbound = 0, Returning, Grounded, Sinking, Recalled };
+// v0.95: Gliding, an arc banana that gave up on the way home (it flew past
+// its owner, ran out of return time or met a wall): it flies straight on,
+// slowing evenly to rest over BoomerangDef::arcGlideTicks, then lands. No
+// steering, so at most one pass. For the rules table it is a returning
+// banana (every InFlight row, the own-catch and auto-catch rows).
+enum class BoomerangPhase : uint8_t {
+  Outbound = 0,
+  Returning,
+  Grounded,
+  Sinking,
+  Recalled,
+  Gliding
+};
 
-// Whether a banana is in the air: thrown (Outbound, Returning) or pulled
-// back (Recalled, v0.89), so still away from its owner's hand.
+// Whether a banana is in the air: thrown (Outbound, Returning, Gliding) or
+// pulled back (Recalled, v0.89), so still away from its owner's hand.
 [[nodiscard]] constexpr bool inFlight(BoomerangPhase p) {
   return p == BoomerangPhase::Outbound || p == BoomerangPhase::Returning ||
-         p == BoomerangPhase::Recalled;
+         p == BoomerangPhase::Recalled || p == BoomerangPhase::Gliding;
+}
+
+// Whether a banana in flight is on its way home: returning, pulled back or
+// gliding past (v0.95). Its owner catches it by touching it.
+[[nodiscard]] constexpr bool homeward(BoomerangPhase p) {
+  return p == BoomerangPhase::Returning || p == BoomerangPhase::Recalled ||
+         p == BoomerangPhase::Gliding;
 }
 
 struct Boomerang {

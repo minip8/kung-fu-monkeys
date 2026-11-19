@@ -200,6 +200,10 @@ TEST_CASE("Room decoders survive arbitrary bytes", "[net][messages][fuzz][room]"
              std::vector<RoomSettingsMsg>{{}, {RoomSettings{3, 1, 2, 0x00FF, 4}}}, 5'000, 16)
             .accepted > 0);
   CHECK(fuzz(MessageType::Start, std::vector<StartMsg>{{}}, 2'000, 17).accepted > 0);
+  CHECK(fuzz(MessageType::RoomCommand,
+             std::vector<RoomCommandMsg>{{RoomCommand::EndMatch}, {RoomCommand::Restart}}, 2'000,
+             19)
+            .accepted > 0);
   RoomStateMsg r;
   r.phase = RoomPhase::Playing;
   r.host = PlayerId{2};

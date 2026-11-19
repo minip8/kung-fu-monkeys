@@ -181,6 +181,7 @@ void chargeView(const Player& p, const ContentDB& content, RenderPlayer& rp) {
       return BananaPhase::Outbound;
     case BoomerangPhase::Returning:
     case BoomerangPhase::Recalled:  // v0.89: on its way home, drawn like a return
+    case BoomerangPhase::Gliding:   // v0.95: past its owner, still in flight
       return BananaPhase::Returning;
     case BoomerangPhase::Sinking:
       return BananaPhase::Sinking;
@@ -409,7 +410,7 @@ void recallTether(PresentationState& ps, const WorldState& curr, const Boomerang
 // bananaArcHeight() over the outbound ticks the match flies (v0.80: a mode
 // may override the BoomerangDef's, MatchContent::bananaOutboundTicks).
 [[nodiscard]] float bananaArc(const Boomerang& b, float distanceToOwner, float returnStartDistance,
-                              uint16_t outboundTicks) {
+                              uint16_t outboundTicks, uint16_t glideTicks, float glideFromArc) {
   switch (b.phase) {
     case BoomerangPhase::Outbound: {
       if (outboundTicks == 0) return kBananaArcPeak;
@@ -424,6 +425,13 @@ void recallTether(PresentationState& ps, const WorldState& curr, const Boomerang
     }
     case BoomerangPhase::Recalled:  // v0.89: lifted off the floor, floating home
       return kBananaRecallLift;
+    case BoomerangPhase::Gliding: {  // v0.95: from where it was down to the floor
+      const float u =
+          glideTicks == 0
+              ? 1.0f
+              : clamp01(static_cast<float>(b.ticksInPhase) / static_cast<float>(glideTicks));
+      return glideFromArc + (((kPickupHeight - kBananaHandHeight) - glideFromArc) * u);
+    }
     case BoomerangPhase::Grounded:
     case BoomerangPhase::Sinking:  // v0.57: bananaSinkHeight
       break;
@@ -434,7 +442,8 @@ void recallTether(PresentationState& ps, const WorldState& curr, const Boomerang
 void buildBananas(PresentationState& ps, const WorldState& prev, const WorldState& curr,
                   float alpha, const sim::MatchContent& match, float dt, RenderState& out) {
   const ContentDB& content = match.db;
-  const uint16_t outboundTicks = match.bananaOutboundTicks();  // v0.80: the mode's
+  const uint16_t outboundTicks = match.bananaOutboundTicks();   // v0.80: the mode's
+  const uint16_t glideTicks = content.boomerang.arcGlideTicks;  // v0.95
   const float radius = content.boomerang.radius.toFloat();
   for (uint16_t i = 0; i < sim::kMaxBoomerangs; ++i) {
     if (!curr.boomerangs.isAliveIndex(i)) {
@@ -447,6 +456,8 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     BananaTrack& track = ps.bananas[i];
     if (refreshTrack(track.motion, gen)) {
       track.returnStartDistance = -1.0f;
+      track.lastArc = 0.0f;
+      track.glideFromArc = -1.0f;
       track.trailTimer = 0.0f;
       track.tetherTimer = 0.0f;
     }
@@ -460,13 +471,21 @@ void buildBananas(PresentationState& ps, const WorldState& prev, const WorldStat
     const float dCurr = ownerDistance(curr, cb, track.returnStartDistance);
     if (cb.phase == BoomerangPhase::Returning && track.returnStartDistance < 0.0f)
       track.returnStartDistance = std::max(dCurr, 0.01f);
-    const float arcCurr = bananaArc(cb, dCurr, track.returnStartDistance, outboundTicks);
+    // v0.95: a glide comes down from the height the banana had when it began.
+    if (cb.phase == BoomerangPhase::Gliding && track.glideFromArc < 0.0f)
+      track.glideFromArc = std::max(track.lastArc, 0.0f);
+    const float glideFrom = std::max(track.glideFromArc, 0.0f);
+    const float arcCurr =
+        bananaArc(cb, dCurr, track.returnStartDistance, outboundTicks, glideTicks, glideFrom);
+    track.lastArc = arcCurr;
     float arc = arcCurr;
     float heading = simAngleToYaw(cb.transform.facing);
     float spin = simAngleToYaw(cb.spin);
     if (lerped) {
       const float dPrev = ownerDistance(prev, *pb, track.returnStartDistance);
-      arc = lerp(bananaArc(*pb, dPrev, track.returnStartDistance, outboundTicks), arcCurr, alpha);
+      arc = lerp(
+          bananaArc(*pb, dPrev, track.returnStartDistance, outboundTicks, glideTicks, glideFrom),
+          arcCurr, alpha);
       heading = lerpAngle(simAngleToYaw(pb->transform.facing), heading, alpha);
       spin = lerpAngle(simAngleToYaw(pb->spin), spin, alpha);
     }
@@ -645,8 +664,9 @@ float playerHeight(const Player& p, const ContentDB& content) {
 }
 
 float bananaArcHeight(const Boomerang& b, float distanceToOwner, float returnStartDistance,
-                      const ContentDB& content) {
-  return bananaArc(b, distanceToOwner, returnStartDistance, content.boomerang.outboundTicks);
+                      const ContentDB& content, float glideFromArc) {
+  return bananaArc(b, distanceToOwner, returnStartDistance, content.boomerang.outboundTicks,
+                   content.boomerang.arcGlideTicks, glideFromArc);
 }
 
 void buildRenderState(PresentationState& ps, const WorldState& prev, const WorldState& curr,

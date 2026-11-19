@@ -26,6 +26,12 @@ bool isMenuBack(const platform::InputEvent& event) {
          (event.button == PadButton::East || event.button == PadButton::Back);
 }
 
+bool isSettingsEvent(const platform::InputEvent& event, bool deviceBound) {
+  if (event.kind == InputEventKind::KeyDown) return event.key == Key::Tab;
+  return deviceBound && event.kind == InputEventKind::PadButtonDown &&
+         event.button == PadButton::Back;
+}
+
 // --- MainMenu ---------------------------------------------------------------------------
 
 MainMenu::MainMenu(bool quitItem) {
@@ -88,7 +94,7 @@ const char* MainMenu::hint(MainMenuItem item) const {
     case MainMenuItem::HowToPlay:
       return "The controls, and how to catch a banana";
     case MainMenuItem::Settings:
-      return "Your name, sound and the bots' difficulty";
+      return "Your name, the volume, the arena's look and mouse aim";
     case MainMenuItem::Quit:
       return "Back to your desktop";
   }
@@ -98,9 +104,9 @@ const char* MainMenu::hint(MainMenuItem item) const {
 // --- SettingsMenu -----------------------------------------------------------------------
 
 namespace {
-constexpr std::array<SettingsRow, 7> kSettingsRows{
-    SettingsRow::Name,  SettingsRow::Volume,   SettingsRow::Sound, SettingsRow::BotDifficulty,
-    SettingsRow::Theme, SettingsRow::MouseAim, SettingsRow::Back};
+constexpr std::array<SettingsRow, 6> kSettingsRows{SettingsRow::Name,     SettingsRow::Volume,
+                                                   SettingsRow::Sound,    SettingsRow::Theme,
+                                                   SettingsRow::MouseAim, SettingsRow::Back};
 }  // namespace
 
 std::span<const SettingsRow> SettingsMenu::rows() {
@@ -143,13 +149,6 @@ bool SettingsMenu::change(std::size_t row, int direction, LobbySettings& setting
     case SettingsRow::Sound:
       settings.mute = !settings.mute;
       break;
-    case SettingsRow::BotDifficulty: {
-      constexpr int kTiers = 3;  // easy, medium, hard
-      const int t =
-          (static_cast<int>(settings.botTier) + (direction > 0 ? 1 : kTiers - 1)) % kTiers;
-      settings.botTier = static_cast<ai::ReferenceTier>(t);
-      break;
-    }
     case SettingsRow::Theme:
       settings.theme = presentation::cycleThemeChoice(settings.theme, direction);
       break;
@@ -161,6 +160,29 @@ bool SettingsMenu::change(std::size_t row, int direction, LobbySettings& setting
       break;
   }
   return !(settings == before);
+}
+
+SettingsMenu::Press SettingsMenu::press(const platform::InputEvent& event) {
+  if (event.kind == InputEventKind::KeyDown && event.key == Key::Escape) return Press::Close;
+  if (isMenuBack(event)) return Press::Close;
+  if (isMenuActivate(event)) return Press::Activate;
+  return Press::None;
+}
+
+SettingsMenu::Activation SettingsMenu::activate(LobbySettings& settings) {
+  switch (focusedRow()) {
+    case SettingsRow::Name:
+      return Activation::EditName;
+    case SettingsRow::Back:
+      close();
+      return Activation::Closed;
+    case SettingsRow::Volume:
+    case SettingsRow::Sound:
+    case SettingsRow::Theme:
+    case SettingsRow::MouseAim:
+      break;
+  }
+  return change(focus_, +1, settings) ? Activation::Changed : Activation::None;
 }
 
 bool SettingsMenu::setNick(std::string& nick, std::string_view text) {
@@ -178,14 +200,12 @@ const char* SettingsMenu::rowLabel(SettingsRow row) {
       return "Volume";
     case SettingsRow::Sound:
       return "Sound";
-    case SettingsRow::BotDifficulty:
-      return "Bot difficulty";
     case SettingsRow::Theme:
       return "Arena theme";
     case SettingsRow::MouseAim:
       return "Mouse aim";
     case SettingsRow::Back:
-      return "Back";
+      return "Done";
   }
   return "";
 }
@@ -199,9 +219,9 @@ std::string SettingsMenu::rowValue(SettingsRow row, const LobbySettings& setting
       return std::to_string(settings.volume) + "%";
     case SettingsRow::Sound:
       return settings.mute ? "muted" : "on";
-    case SettingsRow::BotDifficulty:
-      return std::string(ai::toString(settings.botTier));
     case SettingsRow::Theme:
+      // v0.97: Auto says what it means.
+      if (settings.theme == presentation::ThemeChoice::Auto) return "auto (per arena)";
       return std::string(presentation::themeChoiceName(settings.theme));
     case SettingsRow::MouseAim:
       return settings.mouseAim ? "on" : "off";
@@ -239,24 +259,82 @@ void ButtonMenu::apply(MenuAction action) {
 
 // --- PauseMenu --------------------------------------------------------------------------
 
-namespace {
-constexpr std::array<PauseItem, 4> kLocalPause{PauseItem::Resume, PauseItem::HowToPlay,
-                                               PauseItem::BackToLobby, PauseItem::MainMenu};
-constexpr std::array<PauseItem, 3> kOnlinePause{PauseItem::Resume, PauseItem::HowToPlay,
-                                                PauseItem::LeaveRoom};
-}  // namespace
+PauseItems pauseItems(PauseContext context) {
+  PauseItems out;
+  const auto add = [&](PauseItem item) { out.items[out.count++] = item; };
+  add(PauseItem::Resume);
+  add(PauseItem::Settings);
+  add(PauseItem::HowToPlay);
+  if (context.online) {
+    // v0.97: the host's controls of the running match (v0.96).
+    if (context.canRestart) add(PauseItem::Restart);
+    if (context.canEnd) add(PauseItem::EndMatch);
+    add(PauseItem::LeaveRoom);
+  } else {
+    add(PauseItem::Restart);
+    add(PauseItem::BackToLobby);
+    add(PauseItem::MainMenu);
+  }
+  return out;
+}
 
-void PauseMenu::open(bool online) {
+void PauseMenu::open(PauseContext context) {
   open_ = true;
   help_ = false;
-  online_ = online;
-  buttons_.setCount(items().size());
+  armed_.reset();
+  context_ = context;
+  items_ = pauseItems(context);
+  buttons_.setCount(items_.count);
   buttons_.setFocus(0);
 }
 
-std::span<const PauseItem> PauseMenu::items() const {
-  if (online_) return kOnlinePause;
-  return kLocalPause;
+void PauseMenu::setContext(PauseContext context) {
+  if (context == context_) return;
+  const PauseItem focused = focusedItem();
+  context_ = context;
+  items_ = pauseItems(context);
+  buttons_.setCount(items_.count);
+  const auto items = items_.view();
+  if (const auto it = std::ranges::find(items, focused); it != items.end()) {
+    buttons_.setFocus(static_cast<std::size_t>(it - items.begin()));
+  }
+  if (armed_ && std::ranges::find(items, *armed_) == items.end()) armed_.reset();
+}
+
+void PauseMenu::setFocus(std::size_t index) {
+  if (index != buttons_.focus()) armed_.reset();
+  buttons_.setFocus(index);
+}
+
+void PauseMenu::apply(MenuAction action) {
+  if (action != MenuAction::None) armed_.reset();
+  buttons_.apply(action);
+}
+
+bool PauseMenu::needsConfirm(PauseItem item) const {
+  return context_.online && (item == PauseItem::Restart || item == PauseItem::EndMatch);
+}
+
+std::optional<PauseItem> PauseMenu::pick(PauseItem item) {
+  if (!needsConfirm(item) || armed_ == item) {
+    armed_.reset();
+    return item;
+  }
+  armed_ = item;
+  return std::nullopt;
+}
+
+const char* PauseMenu::buttonLabel(PauseItem item) const {
+  if (armed_ == item) {
+    if (item == PauseItem::EndMatch) return "Yes, end for everyone";
+    if (item == PauseItem::Restart) return "Yes, restart for all";
+  }
+  return label(item);
+}
+
+PauseContext pauseContext(const NetSession& session) {
+  return PauseContext{
+      .online = true, .canRestart = session.canRestartMatch(), .canEnd = session.canEndMatch()};
 }
 
 std::optional<PauseItem> PauseMenu::press(const platform::InputEvent& event) const {
@@ -283,12 +361,18 @@ const char* PauseMenu::label(PauseItem item) {
   switch (item) {
     case PauseItem::Resume:
       return "Resume";
+    case PauseItem::Settings:
+      return "Settings";
+    case PauseItem::Restart:
+      return "Restart match";
     case PauseItem::BackToLobby:
       return "Back to lobby";
     case PauseItem::MainMenu:
       return "Main menu";
     case PauseItem::LeaveRoom:
       return "Leave room";
+    case PauseItem::EndMatch:
+      return "End match";
     case PauseItem::HowToPlay:
       return "How to play";
   }
@@ -302,7 +386,7 @@ bool isPauseEvent(const platform::InputEvent& event, bool deviceBound) {
 }
 
 void openPauseMenu(PauseMenu& menu, MatchSession& session) {
-  menu.open(false);
+  menu.open(PauseContext{.online = false, .canRestart = true, .canEnd = false});
   session.setPaused(true);
 }
 
@@ -316,7 +400,7 @@ void closePauseMenu(PauseMenu& menu, MatchSession& session) {
 }
 
 void openPauseMenu(PauseMenu& menu, NetSession& session) {
-  menu.open(true);
+  menu.open(pauseContext(session));
   session.setInputSuspended(true);
 }
 

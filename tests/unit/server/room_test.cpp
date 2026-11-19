@@ -1,6 +1,7 @@
 // The Room state machine on its own (apps/server/room.hpp, architecture
 // §6.6, v0.42): members and the host role, settings validation, Start in
-// each state, the match end and the return to Waiting.
+// each state, the match end and the return to Waiting; v0.96: the host's
+// RoomCommand (end, restart) in each state.
 #include "room.hpp"
 
 #include "kfm/net/messages.hpp"
@@ -115,6 +116,50 @@ TEST_CASE("Room: Start, match over, play again", "[server][room]") {
   CHECK(room.phase() == RoomPhase::Waiting);
   CHECK(!room.winner().isValid());
   CHECK(room.settings() == RoomSettings{.bots = 2});  // the same settings
+}
+
+TEST_CASE("Room: the host ends a running match, only while it runs", "[server][room]") {
+  const sim::ContentDB db = sim::defaultContent();
+  Room room(db, sim::kMaxPlayers, RoomSettings{.bots = 2});
+  room.updateMembers(0b11);
+  const auto end = net::RoomCommand::EndMatch;
+  CHECK(room.requestCommand(0b01, end) == Room::CommandResult::Ignored);  // Waiting
+  CHECK(room.phase() == RoomPhase::Waiting);
+  CHECK(room.requestStart(0b01) == Room::StartResult::Start);
+  CHECK(room.requestCommand(0b10, end) == Room::CommandResult::Ignored);  // not the host
+  CHECK(room.playing());
+  CHECK(room.requestCommand(0, end) == Room::CommandResult::Ignored);  // a spectator
+  CHECK(room.requestCommand(0b01, end) == Room::CommandResult::EndMatch);
+  CHECK(room.phase() == RoomPhase::Waiting);
+  CHECK(room.settings() == RoomSettings{.bots = 2});  // settings and roster kept
+  CHECK(room.memberCount() == 2);
+  CHECK(room.host() == PlayerId{0});
+  // And Start plays the next one.
+  CHECK(room.requestStart(0b01) == Room::StartResult::Start);
+  CHECK(room.matchEnded(PlayerId{0}));
+  CHECK(room.requestCommand(0b01, end) == Room::CommandResult::Ignored);  // Over: Start does it
+  CHECK(room.phase() == RoomPhase::Over);
+  CHECK(room.winner() == PlayerId{0});
+}
+
+TEST_CASE("Room: the host restarts a running or an ended match", "[server][room]") {
+  const sim::ContentDB db = sim::defaultContent();
+  Room room(db, sim::kMaxPlayers, RoomSettings{.bots = 1});
+  room.updateMembers(0b101);
+  const auto restart = net::RoomCommand::Restart;
+  CHECK(room.requestCommand(0b001, restart) == Room::CommandResult::Ignored);  // Waiting: Start
+  CHECK(room.phase() == RoomPhase::Waiting);
+  CHECK(room.requestStart(0b001) == Room::StartResult::Start);
+  CHECK(room.requestCommand(0b100, restart) == Room::CommandResult::Ignored);  // not the host
+  CHECK(room.requestCommand(0b001, restart) == Room::CommandResult::Restart);  // mid-match
+  CHECK(room.playing());
+  CHECK(room.matchEnded(PlayerId{2}));
+  CHECK(room.requestCommand(0b100, restart) == Room::CommandResult::Ignored);
+  CHECK(room.phase() == RoomPhase::Over);
+  CHECK(room.requestCommand(0b001, restart) == Room::CommandResult::Restart);  // play again
+  CHECK(room.playing());
+  CHECK(!room.winner().isValid());
+  CHECK(room.settings() == RoomSettings{.bots = 1});
 }
 
 TEST_CASE("Room: the last human leaving returns it to Waiting; reset takes new settings",

@@ -1,7 +1,7 @@
 // The arc flight and the recall (architecture §5.7, v0.89), through step().
 // The arc: a throw slows to its apex and speeds home, the charge scales its
-// reach and not its time, a banana that misses its moving thrower drops, a
-// bounce out costs flight, a wall on the way home drops it. The recall: an
+// reach, a bounce out costs flight (the way home, v0.95, is
+// banana_homing_scenario.cpp). The recall: an
 // empty hand held on Throw pulls the own banana off the floor, slow at first
 // (harmless) then fast (it hits), into the hand without starting a throw;
 // walls block it, letting go drops it, nobody else can pull it. The grid
@@ -128,7 +128,7 @@ struct RecallLab {
 
 }  // namespace
 
-TEST_CASE("arc: a throw slows to its apex, turns, and is caught in about 1.25 s",
+TEST_CASE("arc: a throw slows to its apex, turns, and is caught in 1 to 1.5 s",
           "[scenario][projectile][arc]") {
   const ContentDB& c = defaultContent();
   REQUIRE(c.modes[0].bananaFlight == BananaFlight::Arc);
@@ -142,14 +142,16 @@ TEST_CASE("arc: a throw slows to its apex, turns, and is caught in about 1.25 s"
   CHECK(tap.reach < 7.5f);
   CHECK(full.reach > 14.0f);
   CHECK(full.reach < 16.5f);
-  // Caught by its thrower standing still, in the air 1.2 to 1.6 s whatever
-  // the charge.
+  // Caught by its thrower standing still, in the air 1 to 1.5 s: v0.95
+  // holds the top speed home within 18 to 24 units/s, so a full charge,
+  // from farther, is home a little later than a tap.
   for (const Flight& f : {tap, full}) {
-    CHECK(f.airTicks >= 72);
-    CHECK(f.airTicks <= 96);
+    CHECK(f.airTicks >= 60);
+    CHECK(f.airTicks <= 90);
     CHECK(f.returningAt == int{c.boomerang.arcOutboundTicks});
   }
-  CHECK(std::abs(tap.airTicks - full.airTicks) <= 6);
+  CHECK(tap.airTicks <= full.airTicks);
+  CHECK(full.airTicks - tap.airTicks <= 20);
 }
 
 TEST_CASE("arc: the speed falls evenly to the apex and rises evenly home",
@@ -184,52 +186,13 @@ TEST_CASE("arc: the speed falls evenly to the apex and rises evenly home",
     if (b == nullptr) break;  // home already
     const Fixed speed = length(b->transform.vel);
     CHECK(speed >= last);
+    // speedMul 1: arc_return_speed, within the v0.95 bounds.
     CHECK(speed <= d.arcReturnSpeed + Fixed::fromRaw(8));
     last = speed;
   }
 }
 
-TEST_CASE("arc: a thrower who runs off is missed, and the banana drops within its budget",
-          "[scenario][projectile][arc]") {
-  const ContentDB& c = defaultContent();
-  const BoomerangDef& d = c.boomerang;
-  // North from the south side, south from the north side: room to run.
-  for (const uint8_t dir : {uint8_t{64}, uint8_t{192}}) {
-    INFO("run " << int{dir});
-    const Flight f = throwEast(c, kFull, at(-12, dir == 64 ? -7 : 7), dir);
-    CHECK(f.airTicks < 0);  // never caught
-    REQUIRE(f.groundedAt >= 0);
-    CHECK(f.groundedAt <= d.arcOutboundTicks + d.arcReturnTicks + 1);
-    CHECK(f.groundedAt <= 150);  // never much beyond 2.5 s
-    // A step of a fifth of a second aside is still caught: the steering
-    // makes up for a step, not for a run.
-    const Flight step = throwEast(c, kFull, at(-12, dir == 64 ? -7 : 7), dir, 12);
-    CHECK(step.airTicks > 0);
-  }
-}
-
-TEST_CASE("arc: a missed banana lies there as its thrower's to recall",
-          "[scenario][projectile][arc][recall]") {
-  const ContentDB& c = defaultContent();
-  const MatchContent m(c);
-  WorldState s = makePlayingWorld(5, 0b1, c);
-  placePlayer(s, kP0, at(-12, -7));
-  bool grounded = false;
-  for (int k = 0; k < 300 && !grounded; ++k) {
-    const PlayerInput in = k < kFull ? holding(kThrow) : walking(64);
-    grounded = findEvent(tick(s, m, in), EventKind::BoomerangGrounded) != nullptr;
-  }
-  REQUIRE(grounded);
-  int lying = 0;
-  s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
-    CHECK(bananaLastOwner(k) == kP0);
-    ++lying;
-  });
-  CHECK(lying == 1);
-}
-
-TEST_CASE("arc: a bounce on the way out costs flight; a wall on the way home drops it",
-          "[scenario][projectile][arc]") {
+TEST_CASE("arc: a bounce on the way out costs flight", "[scenario][projectile][arc]") {
   const ContentDB& c = defaultContent();
   const BoomerangDef& d = c.boomerang;
   // A tap from 13 units east of the centre reaches the outer wall at 16.
@@ -239,31 +202,6 @@ TEST_CASE("arc: a bounce on the way out costs flight; a wall on the way home dro
   REQUIRE(bounced.returningAt > 0);
   // The bounce aged the flight by arc_bounce_ticks: it turned that much sooner.
   CHECK(bounced.returningAt == open.returningAt - int{d.arcBounceTicks});
-
-  // A returning banana that meets a wall drops at it.
-  ContentDB walled = c;
-  walled.arenas[0].walls[0] = Wall{at(2, -3), at(3, 3)};
-  walled.arenas[0].wallCount = 1;
-  const MatchContent m(walled);
-  WorldState s = makePlayingWorld(9, 0b1, walled);
-  placePlayer(s, kP0, at(-2, 0));
-  Boomerang& b = s.boomerangs.items[spawnBanana(s, kP0, at(8, 0), Vec2{-Fixed::half(), Fixed{}},
-                                                BoomerangPhase::Returning, walled)
-                                        .index];
-  b.ticksInPhase = 4;
-  b.transform.facing = Angle::fromDegrees(180);
-  EventLog log;
-  for (int k = 0; k < 40 && findEvent(log, EventKind::BoomerangGrounded) == nullptr; ++k) {
-    const EventLog one = tick(s, m, PlayerInput{});
-    log.insert(log.end(), one.begin(), one.end());
-  }
-  CHECK(countEvents(log, EventKind::BoomerangBounced) == 1);
-  CHECK(countEvents(log, EventKind::BoomerangCaught) == 0);
-  REQUIRE(countEvents(log, EventKind::BoomerangGrounded) == 1);
-  s.pickups.forEachAlive([&](EntityId /*id*/, const Pickup& k) {
-    CHECK(k.pos.x >= Fixed::fromInt(3));  // on the far side, against the wall
-    CHECK(k.pos.x < Fixed::fromInt(4));
-  });
 }
 
 TEST_CASE("recall: an empty hand held on Throw pulls the own banana home, into the hand",

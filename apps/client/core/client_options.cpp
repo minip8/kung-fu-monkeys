@@ -431,10 +431,12 @@ bool parseClientOptions(std::span<const char* const> args, ClientOptions& out, s
         return false;
       }
       const std::string_view v = args[++i];
-      if (v != "menu" && v != "settings" && v != "online" && v != "local" && v != "paused" &&
-          v != "howto") {
-        error = "--screen must be menu, settings, online, local, paused or howto, got '" +
-                std::string(v) + "'";
+      if (std::ranges::find(kScreens, v) == kScreens.end()) {
+        error = "--screen must be one of";
+        for (const std::string_view s : kScreens) {
+          error += " " + std::string(s);
+        }
+        error += ", got '" + std::string(v) + "'";
         return false;
       }
       out.screen = v;

@@ -33,15 +33,20 @@
 // the apex it turns to face its owner at once (it is slow there: the hang
 // of a boomerang), then speeds up evenly to arcReturnSpeed over
 // arcReturnAccelTicks, steering by at most the turn rate. A returning banana
-// drops (Grounded, then a pickup) when its owner is gone, when it has been
-// returning longer than arcReturnTicks, when it has passed its owner (its
-// velocity points away from the owner: dot < 0, judged before it moves, so
-// one that reaches the owner this tick is still caught), and when it hits a
-// wall: on the way back a bounce would aim it away from home, and a wall in
-// the way is a miss. A wall on the way out bounces it as ever and ages the
-// flight by arcBounceTicks (ticksInPhase), so every bounce costs speed and
-// brings the apex nearer. Every number is the BoomerangDef's and times the
-// banana's speedMul, so the charge scales the reach and not the time.
+// drops (Grounded, then a pickup) when its owner is gone. v0.95: the top
+// speed home is arcReturnSpeed x speedMul held within arcReturnMinSpeed and
+// arcReturnMaxSpeed; and where v0.89 dropped it, it now gives up and glides
+// (Gliding): when it has been returning longer than arcReturnTicks, when it
+// has passed its owner (its velocity points away from the owner: dot < 0,
+// judged before it moves, so one that reaches the owner this tick is still
+// caught), and when it meets a wall (it bounces off: one bounce home, then
+// the glide). A glide flies straight on, never steering (at most one pass),
+// slowing evenly to rest over arcGlideTicks, then grounds. A wall on the way
+// out (or while gliding) bounces it as ever and ages the phase by
+// arcBounceTicks (ticksInPhase), so every bounce costs speed and brings the
+// apex (or the landing) nearer. Every number is the BoomerangDef's and
+// (but for the bounds on the top speed home) times the banana's speedMul, so
+// the charge scales the reach.
 //
 // v0.89, the recall (recallTick): a Recalled banana flies straight at its
 // owner while the owner holds the recalling throw's button
@@ -104,12 +109,20 @@ void ground(Boomerang& b) {
   return def.arcLaunchSpeed - ((def.arcLaunchSpeed - def.arcApexSpeed) * k / total);
 }
 
-// The arc's speed on its n-th returning tick (0 = the apex), from
-// arcApexSpeed up to arcReturnSpeed at n = arcReturnAccelTicks.
-[[nodiscard]] Fixed arcReturnSpeed(const BoomerangDef& def, uint16_t n) {
+// The arc's speed (units/tick) on its n-th returning tick (0 = the apex) of
+// a banana with speed multiplier `mul`: from arcApexSpeed x mul up to the top
+// speed at n = arcReturnAccelTicks, arcReturnSpeed x mul but (v0.95) never
+// below arcReturnMinSpeed (a tap still outruns its thrower) nor above
+// arcReturnMaxSpeed when that is set (a full charge does not run down a
+// thrower who dashes off).
+[[nodiscard]] Fixed arcReturnSpeed(const BoomerangDef& def, uint16_t n, Fixed mul) {
   const int32_t total = std::max<int32_t>(def.arcReturnAccelTicks, 1);
   const int32_t k = std::min<int32_t>(n, total);
-  return def.arcApexSpeed + ((def.arcReturnSpeed - def.arcApexSpeed) * k / total);
+  const Fixed apex = def.arcApexSpeed * mul;
+  Fixed top = def.arcReturnSpeed * mul;
+  if (def.arcReturnMaxSpeed > Fixed{}) top = min(top, def.arcReturnMaxSpeed);
+  top = max(top, def.arcReturnMinSpeed);
+  return apex + ((top - apex) * k / total);
 }
 
 // Whether v points away from `to` (an exact int64 dot product; coordinates
@@ -118,8 +131,14 @@ void ground(Boomerang& b) {
   return (int64_t{v.x.raw} * to.x.raw) + (int64_t{v.y.raw} * to.y.raw) < 0;
 }
 
-// One Playing tick of an Outbound or Returning banana in an arc mode (the
-// header). ticksInPhase has already advanced.
+// Ages a banana's phase by `ticks` (a bounce's cost), saturating.
+constexpr void age(Boomerang& b, uint16_t ticks) {
+  const uint32_t aged = uint32_t{b.ticksInPhase} + ticks;
+  b.ticksInPhase = static_cast<uint16_t>(std::min<uint32_t>(aged, UINT16_MAX));
+}
+
+// One Playing tick of an Outbound, Returning or Gliding banana in an arc
+// mode (the header). ticksInPhase has already advanced.
 void arcFlightTick(WorldState& s, const MatchContent& content, EntityId id, Boomerang& b,
                    EventSink& sink) {
   const BoomerangDef& def = content.db.boomerang;
@@ -135,19 +154,30 @@ void arcFlightTick(WorldState& s, const MatchContent& content, EntityId id, Boom
 
   if (b.phase == BoomerangPhase::Returning) {
     const Player* owner = s.playerBySlot(b.owner);
-    if (owner == nullptr || b.ticksInPhase > def.arcReturnTicks) {
+    if (owner == nullptr) {
       ground(b);
       return;
     }
-    // Passed its owner: it flew by (the owner moved off its line), so it
-    // drops instead of circling back.
-    if (b.ticksInPhase > 0 && pointsAway(t.vel, owner->transform.pos - t.pos)) {
+    // Out of return time, or past its owner (it flew by: the owner moved off
+    // its line), it gives up and glides on instead of circling back.
+    if (b.ticksInPhase > def.arcReturnTicks ||
+        (b.ticksInPhase > 0 && pointsAway(t.vel, owner->transform.pos - t.pos))) {
+      enterPhase(b, BoomerangPhase::Gliding);
+    } else {
+      steerToward(b, owner->transform.pos, content.bananaTurnRateBam(),
+                  arcReturnSpeed(def, b.ticksInPhase, b.speedMul));
+    }
+  }
+  if (b.phase == BoomerangPhase::Gliding) {
+    // v0.95: straight on, slowing evenly to rest at arcGlideTicks: the n-th
+    // tick keeps (G - n) / (G - n + 1) of the last one's speed.
+    if (b.ticksInPhase >= def.arcGlideTicks) {
       ground(b);
       return;
     }
-    steerToward(b, owner->transform.pos, content.bananaTurnRateBam(),
-                arcReturnSpeed(def, b.ticksInPhase) * b.speedMul);
-  } else {
+    const int32_t left = int32_t{def.arcGlideTicks} - b.ticksInPhase;
+    t.vel = t.vel * left / (left + 1);
+  } else if (b.phase == BoomerangPhase::Outbound) {
     t.vel = Vec2::fromAngle(t.facing, arcOutboundSpeed(def, outbound, b.ticksInPhase) * b.speedMul);
   }
 
@@ -158,12 +188,13 @@ void arcFlightTick(WorldState& s, const MatchContent& content, EntityId id, Boom
   t.pos = moved.pos;
   if (moved.hitWall || moved.hitOuter) {
     sink.push(SimEvent{.kind = EventKind::BoomerangBounced, .tick = s.tick, .entity = id});
+    if (t.vel != Vec2::zero()) t.facing = angleOf(t.vel);
     if (b.phase == BoomerangPhase::Returning) {
-      ground(b);  // a wall on the way home: it drops there
+      // v0.95: a wall on the way home ends the homing: it bounces off and
+      // glides to rest (one bounce home, never a rattle).
+      enterPhase(b, BoomerangPhase::Gliding);
     } else {
-      if (t.vel != Vec2::zero()) t.facing = angleOf(t.vel);
-      const uint32_t aged = uint32_t{b.ticksInPhase} + def.arcBounceTicks;
-      b.ticksInPhase = static_cast<uint16_t>(std::min<uint32_t>(aged, UINT16_MAX));
+      age(b, def.arcBounceTicks);
     }
   }
 }

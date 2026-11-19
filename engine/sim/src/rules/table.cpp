@@ -38,7 +38,11 @@ constexpr uint8_t kReach = 1;
 // it starts to fall (v0.57), unless it is Dashing: a dash carries a monkey
 // over a pit, and it falls if its dash ends with the centre still over one.
 // Every Boomerang row names a phase mask of Outbound/Returning (v0.89: and
-// Recalled), so a banana sinking into a pit (v0.57) matches none.
+// Recalled; v0.95: and Gliding), so a banana sinking into a pit (v0.57)
+// matches none.
+// The glide (v0.95): an arc banana gliding on past its owner (Gliding) is in
+// kPhaseInFlight and kPhaseReturning wherever Returning is, so every row
+// treats it as a returning banana (a test pins it).
 // The recall (v0.89): a banana pulled back off the floor (Recalled) is in
 // kPhaseInFlight and kPhaseReturning, so it hits, is caught, parried,
 // slammed and blocked as a returning banana and its owner catches it on

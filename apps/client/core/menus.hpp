@@ -14,18 +14,25 @@
 //                 Quit (native only); Play online is greyed and skipped
 //                 without a way online (no lobby URL and no --connect
 //                 server).
-//   SettingsMenu  Name (the nickname, a text field), Volume, Sound, Bot
-//                 difficulty, Arena theme, Mouse aim (on/off: the cursor
-//                 aims for keyboard + mouse), Back: what a player (not a
-//                 developer) sets once; the lobby keeps the match's own
-//                 settings.
+//   SettingsMenu  Name (the nickname, a text field), Volume, Sound, Arena
+//                 theme, Mouse aim (on/off: the cursor aims for keyboard +
+//                 mouse), Done: the player's preferences, never the match's
+//                 (v0.97: Bot difficulty moved to the game-setup panel).
+//                 v0.97: an overlay, opened over whatever screen asked for it
+//                 (the main menu's Settings, the local lobby's and the
+//                 waiting room's Settings button, Tab or a pad's Back/View
+//                 there, the pause menu's Settings) and closed back onto it;
+//                 a change applies at once and is saved.
 //   ButtonMenu    a focus over N buttons (Play again / Back to lobby).
 //   PauseMenu     v0.46: Escape (or a bound pad's Start) over a running
-//                 match: Resume, Back to lobby, Main menu locally (the match
-//                 is paused while it is open), Resume, Leave room online (the
-//                 server's match runs on; the local slots send idle input).
-//                 v0.94: How to play, which shows the controls card in the
-//                 menu's place until Back (Esc, a pad's B, Enter).
+//                 match. v0.97: locally Resume, Settings, How to play,
+//                 Restart match, Back to lobby, Main menu (the match is
+//                 paused while it is open); online Resume, Settings, How to
+//                 play, the host's Restart match and End match (asked
+//                 twice), Leave room (the server's match runs on; the local
+//                 slots send idle input). pauseItems() builds the list from a
+//                 PauseContext. v0.94: How to play shows the controls card in
+//                 the menu's place until Back (Esc, a pad's B, Enter).
 #pragma once
 
 #include "kfm/platform/input_event.hpp"
@@ -49,6 +56,10 @@ class NetSession;
 [[nodiscard]] bool isMenuActivate(const platform::InputEvent& event);
 // Any pad's East or Back.
 [[nodiscard]] bool isMenuBack(const platform::InputEvent& event);
+// v0.97: the press that opens Settings over the local lobby or a waiting
+// room: Tab, or the Back (View / Select) of a pad that navigates there
+// (`deviceBound`, as MenuInput::translate()). Checked before isMenuBack().
+[[nodiscard]] bool isSettingsEvent(const platform::InputEvent& event, bool deviceBound);
 
 // --- the main menu --------------------------------------------------------------------
 
@@ -86,12 +97,22 @@ class MainMenu {
   bool online_{true};
 };
 
-// --- the settings screen --------------------------------------------------------------
+// --- the settings overlay -------------------------------------------------------------
 
-enum class SettingsRow : uint8_t { Name = 0, Volume, Sound, BotDifficulty, Theme, MouseAim, Back };
+inline constexpr uint8_t kVolumeStep = 10;  // percent per Left/Right
+
+enum class SettingsRow : uint8_t { Name = 0, Volume, Sound, Theme, MouseAim, Back };
 
 class SettingsMenu {
  public:
+  // v0.97: opens over the current screen, the focus on the first row.
+  void open() {
+    open_ = true;
+    focus_ = 0;
+  }
+  void close() { open_ = false; }
+  [[nodiscard]] bool isOpen() const { return open_; }
+
   [[nodiscard]] static std::span<const SettingsRow> rows();
   [[nodiscard]] std::size_t focus() const { return focus_; }
   [[nodiscard]] SettingsRow focusedRow() const { return rows()[focus_]; }
@@ -99,9 +120,18 @@ class SettingsMenu {
 
   // Up/Down move the focus (wrapping); Left/Right change the focused value
   // in `settings` (volume by kVolumeStep within 0..100, sound and mouse aim
-  // toggle, the bot difficulty and theme cycle). True when a setting changed.
+  // toggle, the theme cycles). True when a setting changed.
   bool apply(MenuAction action, LobbySettings& settings);
   static bool change(std::size_t row, int direction, LobbySettings& settings);
+
+  // v0.97: what a press asks for while the overlay is open: Close (Escape,
+  // a pad's East or Back), Activate (isMenuActivate()) or nothing.
+  enum class Press : uint8_t { None = 0, Activate, Close };
+  [[nodiscard]] static Press press(const platform::InputEvent& event);
+  // Activate on the focused row: Name puts the keyboard into the field,
+  // Done closes, any other row changes as Right does.
+  enum class Activation : uint8_t { None = 0, EditName, Changed, Closed };
+  Activation activate(LobbySettings& settings);
 
   // A typed name made valid (net::Nickname::from). An empty result keeps
   // the old name (a player always has one online). True when it changed.
@@ -112,6 +142,7 @@ class SettingsMenu {
                                             const std::string& nick);
 
  private:
+  bool open_{false};
   std::size_t focus_{0};
 };
 
@@ -134,30 +165,79 @@ class ButtonMenu {
 
 // --- the pause menu (v0.46) ------------------------------------------------------------
 
-enum class PauseItem : uint8_t { Resume = 0, BackToLobby, MainMenu, LeaveRoom, HowToPlay };
+// v0.97: Settings (the overlay over the menu) and, locally, Restart match (a
+// fresh match with the same setup and players) join the items.
+enum class PauseItem : uint8_t {
+  Resume = 0,
+  Settings,
+  HowToPlay,
+  Restart,  // locally MatchSession::restart, online the host's NetSession::restartMatch
+  BackToLobby,
+  MainMenu,
+  LeaveRoom,
+  EndMatch,  // v0.97 (v0.96's RoomCommand): the online host's, everyone back to the room
+};
+
+// v0.97: where the pause menu is open. Online, `canRestart` and `canEnd`
+// are the host's NetSession::canRestartMatch() / canEndMatch(), read every
+// frame (setContext()): the host role can move while the menu is open.
+struct PauseContext {
+  bool online{false};
+  bool canRestart{false};
+  bool canEnd{false};
+  constexpr bool operator==(const PauseContext&) const = default;
+};
+
+inline constexpr std::size_t kMaxPauseItems = 8;
+struct PauseItems {
+  std::array<PauseItem, kMaxPauseItems> items{};
+  std::size_t count{0};
+  [[nodiscard]] std::span<const PauseItem> view() const { return {items.data(), count}; }
+};
+// The buttons for a context, top to bottom: Resume first, the way out last.
+// Locally Resume, Settings, How to play, Restart match, Back to lobby, Main
+// menu; online Resume, Settings, How to play, then the host's Restart match
+// and End match when the server would take them, and Leave room.
+[[nodiscard]] PauseItems pauseItems(PauseContext context);
 
 class PauseMenu {
  public:
-  // Opens with the local buttons (Resume, Back to lobby, Main menu) or the
-  // online ones (Resume, Leave room), the focus on Resume.
-  void open(bool online);
+  // Opens with the context's buttons (pauseItems()), the focus on Resume.
+  void open(PauseContext context);
   void close() {
     open_ = false;
     help_ = false;
+    armed_.reset();
   }
+  // v0.97: a new context while open (the host role moved, the match ended):
+  // the buttons follow, the focus stays on the same item when it is still
+  // there (else on the one now in its place), a confirmation whose item went
+  // away is dropped.
+  void setContext(PauseContext context);
   [[nodiscard]] bool isOpen() const { return open_; }
   // v0.94: the controls card in the menu's place (How to play).
   [[nodiscard]] bool helpOpen() const { return open_ && help_; }
   void setHelp(bool open) { help_ = open && open_; }
-  [[nodiscard]] bool online() const { return online_; }
+  [[nodiscard]] bool online() const { return context_.online; }
+  [[nodiscard]] PauseContext context() const { return context_; }
 
-  [[nodiscard]] std::span<const PauseItem> items() const;
+  [[nodiscard]] std::span<const PauseItem> items() const { return items_.view(); }
   [[nodiscard]] std::size_t focus() const { return buttons_.focus(); }
   [[nodiscard]] PauseItem focusedItem() const { return items()[buttons_.focus()]; }
   [[nodiscard]] ButtonMenu& buttons() { return buttons_; }
-  void setFocus(std::size_t index) { buttons_.setFocus(index); }
-  // Any direction moves the focus, wrapping (ButtonMenu).
-  void apply(MenuAction action) { buttons_.apply(action); }
+  void setFocus(std::size_t index);
+  // Any direction moves the focus, wrapping (ButtonMenu), and drops a
+  // confirmation.
+  void apply(MenuAction action);
+  // v0.97: online, Restart match and End match stop everyone's game: the
+  // first press arms the button ("Yes, end for everyone"), a second on it
+  // confirms. pick() is what a press or click on `item` does: the item to
+  // act on, or nullopt when it only armed it.
+  [[nodiscard]] bool needsConfirm(PauseItem item) const;
+  [[nodiscard]] std::optional<PauseItem> pick(PauseItem item);
+  [[nodiscard]] std::optional<PauseItem> armed() const { return armed_; }
+  // The button's text: label(), or the confirmation while armed.
+  [[nodiscard]] const char* buttonLabel(PauseItem item) const;
   // What a press asks for while the menu is open: Escape or any pad's East,
   // Back or Start resume; Enter, keypad Enter, Space or a pad's South pick
   // the focused item; anything else nothing. v0.94: with the controls card
@@ -169,10 +249,15 @@ class PauseMenu {
 
  private:
   bool open_{false};
-  bool online_{false};
   bool help_{false};
+  PauseContext context_{};
+  PauseItems items_{};
   ButtonMenu buttons_;
+  std::optional<PauseItem> armed_;
 };
+
+// v0.97: the online pause menu's context for this session.
+[[nodiscard]] PauseContext pauseContext(const NetSession& session);
 
 // Whether `event` opens the pause menu over a running match: Escape, or the
 // Start of a pad bound to a slot (`deviceBound`, eventDeviceBound(); an

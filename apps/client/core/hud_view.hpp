@@ -166,8 +166,10 @@ struct MatchOverView {
 // Locally: Play again (a new seed) and Back to lobby.
 [[nodiscard]] MatchOverView localMatchOverView(const HudView& view,
                                                const presentation::RenderHud& hud);
-// In an online room: the host's Play again and Leave; everyone else Leave,
-// waiting for `hostName` (empty: "the host") to play again.
+// In an online room (v0.97): the host's Play again (a fresh match at once),
+// Back to lobby (the waiting room) and Leave room; everyone else Leave room,
+// under "`hostName` (empty: "The host") chooses: play again or back to the
+// room".
 [[nodiscard]] MatchOverView roomMatchOverView(const HudView& view,
                                               const presentation::RenderHud& hud, bool host,
                                               std::string_view hostName);

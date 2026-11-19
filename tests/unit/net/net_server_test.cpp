@@ -915,6 +915,52 @@ TEST_CASE("room messages are rate-limited and refused before the handshake",
   CHECK(rig.server->stats().protocolErrors == 1);
 }
 
+// v0.96 (protocol 9): a RoomCommand is reported with its kind for the host
+// to judge (NetServer applies no room policy), shares the room bucket, and a
+// malformed one is a protocol error.
+TEST_CASE("NetServer reports RoomCommand requests", "[net][server][room]") {
+  ServerConfig cfg;
+  cfg.roomMsgsPerSecond = 3;
+  Rig rig(cfg);
+  Raw& a = rig.join(1);
+  Raw& s = rig.join(0);
+  rig.server->clearEvents();
+  a.reliable(RoomCommandMsg{RoomCommand::EndMatch});
+  s.reliable(RoomCommandMsg{RoomCommand::Restart});
+  rig.pump();
+  std::vector<ServerEvent> room;
+  for (const ServerEvent& e : rig.server->events())
+    if (e.kind == ServerEventKind::RoomCommandRequested) room.push_back(e);
+  REQUIRE(room.size() == 2);
+  CHECK(room[0].peer == a.t_->self());
+  CHECK(room[0].slots == 0b1);
+  CHECK(room[0].reason == static_cast<uint8_t>(RoomCommand::EndMatch));
+  CHECK(room[1].peer == s.t_->self());
+  CHECK(room[1].slots == 0);  // a spectator: the host judges it
+  CHECK(room[1].reason == static_cast<uint8_t>(RoomCommand::Restart));
+  CHECK(rig.server->stats().protocolErrors == 0);
+
+  // The bucket is the room's: two left for a, then the third is dropped.
+  rig.server->clearEvents();
+  a.reliable(StartMsg{});
+  a.reliable(RoomCommandMsg{RoomCommand::Restart});
+  a.reliable(RoomCommandMsg{RoomCommand::Restart});
+  rig.pump();
+  CHECK(rig.server->events().size() == 2);
+  CHECK(rig.server->stats().roomRateLimited == 1);
+
+  // An undefined kind: a protocol error, no event.
+  for (int i = 0; i < 1'000; ++i)
+    rig.pump();
+  rig.server->clearEvents();
+  const std::array<std::byte, 2> bad{std::byte{static_cast<uint8_t>(MessageType::RoomCommand)},
+                                     std::byte{kRoomCommandCount}};
+  a.rawReliable(bad);
+  rig.pump();
+  CHECK(rig.server->events().empty());
+  CHECK(rig.server->stats().protocolErrors == 1);
+}
+
 // --- abuse resistance (v0.70) ------------------------------------------------------
 
 TEST_CASE("JoinMatch is rate-limited per peer", "[net][server][abuse]") {

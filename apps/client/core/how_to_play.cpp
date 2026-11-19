@@ -204,7 +204,7 @@ HowToPlay howToPlay(const platform::KeyboardProfile& keys,
                     .keyboard = keysOf(keys, Action::Throw),
                     .gamepad = buttonsOf(pad, Action::Throw)});
   h.rows.push_back({.action = "Recall",
-                    .what = "Empty-handed, hold Throw: your dropped banana flies back to you.",
+                    .what = "Empty-handed, hold Throw: your dropped bananas fly back, one by one.",
                     .keyboard = "Hold " + keysOf(keys, Action::Throw),
                     .gamepad = "Hold " + buttonsOf(pad, Action::Throw)});
   h.rows.push_back({.action = "Dash",
@@ -221,7 +221,7 @@ HowToPlay howToPlay(const platform::KeyboardProfile& keys,
                      keysOf(keysRight, Action::Ability) + " ability.";
   h.tips = {
       "Bananas fly out and curve back like boomerangs: one hit knocks a monkey out.",
-      "Missed? Your banana comes home, or lies where it fell until you pick it up or recall it.",
+      "Missed? Your banana glides on and lands: pick it up, or recall it from anywhere.",
       "Join local play by pressing Throw or Dash on a free keyboard side, or any button on a pad.",
   };
   return h;

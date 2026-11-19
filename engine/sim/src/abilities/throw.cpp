@@ -130,16 +130,16 @@ const AbilityDef* heldRecallDef(const Player& p, const MatchContent& content) {
   return (p.intent.held & slotButton(slot)) != 0 ? def : nullptr;
 }
 
-// v0.89: an empty hand held on a recalling throw lifts the nearest own
-// banana off the floor (the squared distance, the lowest pickup index on a
-// tie), unless one of its own is already being pulled. One banana of a
-// stack comes up; the rest stay. The banana is a fresh Recalled entity at
-// rest where the pickup lay, with the puller's projectile modifiers (§5.8);
-// ProjectileSystem moves it from this tick on.
-// NOLINTNEXTLINE(misc-const-correctness): parameter types fixed by AbilityBehavior
-void throwOnIdleHold(WorldState& s, Player& p, AbilityState& /*st*/, const AbilityDef& def,
-                     const MatchContent& content, EventSink& sink) {
-  if (!throwRecalls(def) || p.ammo > 0 || heldRecallDef(p, content) != &def) return;
+namespace {
+
+// v0.89: lifts p's nearest own banana off the floor (the squared distance,
+// the lowest pickup index on a tie) with the recalling `def`, unless one of
+// its own is already being pulled. One banana of a stack comes up; the rest
+// stay. The banana is a fresh Recalled entity at rest where the pickup lay,
+// with the puller's projectile modifiers (§5.8); ProjectileSystem moves it
+// from its next step on.
+void liftNearest(WorldState& s, const Player& p, const AbilityDef& def, const MatchContent& content,
+                 EventSink& sink) {
   bool pulling = false;
   s.boomerangs.forEachAlive([&](EntityId /*id*/, const Boomerang& b) {
     if (b.owner == p.id && b.phase == BoomerangPhase::Recalled) pulling = true;
@@ -176,6 +176,30 @@ void throwOnIdleHold(WorldState& s, Player& p, AbilityState& /*st*/, const Abili
   b.transform.prevPos = at;
   b.transform.facing = angleOf(p.transform.pos - at);
   sink.push(SimEvent{EventKind::BananaRecallStarted, s.tick, p.id, id, 0, 0});
+}
+
+}  // namespace
+
+// v0.89: an empty hand held on a recalling throw starts a pull (liftNearest);
+// a hand with a banana in it throws or charges instead (v0.95: so only the
+// first pull of a chain starts here).
+// NOLINTNEXTLINE(misc-const-correctness): parameter types fixed by AbilityBehavior
+void throwOnIdleHold(WorldState& s, Player& p, AbilityState& /*st*/, const AbilityDef& def,
+                     const MatchContent& content, EventSink& sink) {
+  if (!throwRecalls(def) || p.ammo > 0 || heldRecallDef(p, content) != &def) return;
+  liftNearest(s, p, def, content, sink);
+}
+
+// v0.95, the chain: the pulled banana is in the hand (the catch rows call
+// this after the ammo went up) and the button is still held: the next one
+// comes, until the hand is full. A hand filled from elsewhere meanwhile (a
+// pickup, a catch) ends the chain the same way; the banana then in flight,
+// if any, drops at the catch point when it arrives (rules/bananas.hpp).
+void continueRecall(WorldState& s, const Player& p, const MatchContent& content, EventSink& sink) {
+  if (p.ammo >= p.stats.ammoMax) return;
+  const AbilityDef* def = heldRecallDef(p, content);
+  if (def == nullptr) return;
+  liftNearest(s, p, *def, content, sink);
 }
 
 }  // namespace kfm::sim

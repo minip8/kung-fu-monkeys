@@ -196,6 +196,16 @@ bool beginScreen(const char* id, float width, float centreY = 0.5f, ImU32 fill =
 void endScreen();
 // The cream wash over the arena behind the menu screens.
 void menuBackdrop();
+// v0.97: an overlay, a card over whatever screen is open (the power-up
+// picker, Settings): a modal window, so the screen behind it is dimmed
+// (kScrim) and takes no pointer, and it stays above it. Drawn at the top
+// level (outside every other window), each frame its model is open; when it
+// returns true draw the content and call endOverlay(). A frame that no
+// longer draws an overlay closes it in finishOverlays(), which main.cpp
+// calls once a frame before debugUiFlush().
+bool beginOverlay(const char* id, float width);
+void endOverlay();
+void finishOverlays();
 // A heading line inside a screen: teal Lilita One.
 void heading(const char* text, ImU32 color = kTitle, float size = kFontHeading);
 // Wrapped body text in a colour (TextWrapped with a pushed colour).

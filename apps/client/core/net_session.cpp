@@ -683,6 +683,24 @@ void NetSession::start() {
   if (failure_.empty()) client_->sendStart();
 }
 
+void NetSession::endMatch() {
+  if (failure_.empty()) client_->sendEndMatch();
+}
+
+void NetSession::restartMatch() {
+  if (failure_.empty()) client_->sendRestart();
+}
+
+bool NetSession::canEndMatch() const {
+  const std::optional<net::RoomStateMsg>& room = client_->roomState();
+  return room && room->phase == net::RoomPhase::Playing && synced() && isHost();
+}
+
+bool NetSession::canRestartMatch() const {
+  const std::optional<net::RoomStateMsg>& room = client_->roomState();
+  return room && room->phase != net::RoomPhase::Waiting && synced() && isHost();
+}
+
 std::string NetSession::slotName(PlayerId slot) const {
   if (!slot.isValid() || slot.value >= sim::kMaxPlayers) return {};
   const std::optional<net::RoomStateMsg>& room = client_->roomState();

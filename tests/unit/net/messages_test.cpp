@@ -456,7 +456,8 @@ TEST_CASE("Nicknames: validation and sanitising", "[net][messages][room]") {
 }
 
 TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
-  CHECK(kProtocolVersion == 8);  // v7: RoomState's botPlacement; v8: its maxPlayers
+  // v7: RoomState's botPlacement; v8: its maxPlayers; v9: RoomCommand.
+  CHECK(kProtocolVersion == 9);
   HelloMsg h;
   h.contentHash = 5;
   h.requestedSlots = 2;
@@ -522,6 +523,31 @@ TEST_CASE("Protocol 6 messages round-trip", "[net][messages][room]") {
   playing.humans = 0b1;
   playing.names[0] = nick("x");
   roundTrip(playing);
+}
+
+// v9 (v0.96): the host's controls of a running match.
+TEST_CASE("RoomCommand round-trips and rejects unknown commands", "[net][messages][room]") {
+  CHECK(kMessageTypeCount == 18);
+  size_t n = 0;
+  CHECK(roundTrip(RoomCommandMsg{RoomCommand::EndMatch}, &n).command == RoomCommand::EndMatch);
+  CHECK(n == kRoomCommandMsgBytes);
+  CHECK(roundTrip(RoomCommandMsg{RoomCommand::Restart}, &n).command == RoomCommand::Restart);
+  CHECK(n == kRoomCommandMsgBytes);
+
+  std::vector<std::byte> buf(kMaxReliableBytes);
+  CHECK(encode(RoomCommandMsg{static_cast<RoomCommand>(kRoomCommandCount)}, buf) == 0);
+  n = encode(RoomCommandMsg{RoomCommand::Restart}, buf);
+  REQUIRE(n == 2);
+  CHECK(peekType({buf.data(), n}).value_or(MessageType::Input) == MessageType::RoomCommand);
+  RoomCommandMsg out;
+  buf[1] = std::byte{kRoomCommandCount};  // the first kind not defined
+  CHECK(decode({buf.data(), n}, out).error() == DecodeError::OutOfRange);
+  buf[1] = std::byte{0};
+  CHECK(decode({buf.data(), n - 1}, out).error() == DecodeError::Truncated);
+  buf[n] = std::byte{0};
+  CHECK(decode({buf.data(), n + 1}, out).error() == DecodeError::TrailingBytes);
+  StartMsg start;
+  CHECK(decode({buf.data(), n}, start).error() == DecodeError::WrongType);
 }
 
 TEST_CASE("Protocol 6 encoders refuse invalid messages", "[net][messages][room]") {

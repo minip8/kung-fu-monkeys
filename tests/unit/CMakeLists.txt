@@ -172,6 +172,7 @@ if(NOT KFM_HEADLESS)
     client/replay_session_test.cpp
     client/replay_controls_test.cpp
     client/content_labels_test.cpp
+    client/presets_test.cpp
   )
   target_link_libraries(kfm_client_tests PRIVATE kfm::client_core kfm::client_sdl kfm::content)
   # The replay viewer plays the determinism corpus back (tools/replay-corpus):

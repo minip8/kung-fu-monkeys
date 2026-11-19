@@ -23,6 +23,15 @@ These add to the platform and presentation rules in `CLAUDE.md`, which always ap
   highlights only the hovered item, keys/pad mode the focus, and the first key press from mouse
   mode only reveals it. Draw menu buttons and rows through `ui::bigButton` / `ui::showsFocus` /
   `ui::pointerTakesFocus`, never from `focus()` alone.
+- The game-setup panel (`core/lobby_menu.hpp`, the local lobby's and the room host's) has a
+  fixed set of rows in fixed places: a row that does not apply is greyed with a reason
+  (`rowEnabled` / `rowReason`), never inserted or removed because a value changed; a
+  variable-length choice goes in an overlay (the power-up picker). Match settings live there,
+  player preferences in Settings (`SettingsMenu`), never both.
+- A card over a screen (Settings, the power-up picker) is a `ui::beginOverlay` modal drawn at
+  the top level, after the screen, every frame its model is open; `ui::finishOverlays()` (in
+  `frame()`, before `debugUiFlush()`) closes one no longer drawn. Presets are a client table by
+  content names (`core/presets.cpp`), never content.
 - A frame in which a new ImGui window measures itself is not presented
   (`debugUiMeasuring()`); a screen's panel card drawn outside its window must not be relied on
   in that frame.

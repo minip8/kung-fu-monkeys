@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.94 (2026-11-18), a living document: it describes the system as built and deployed,
+Status: v0.97 (2026-11-19), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -697,8 +697,19 @@ current tick's, so rotation never costs anything (§5.12).
   comes up (`count − 1`, the pickup despawned at 0), as a fresh `Recalled` banana of the monkey
   at rest where it lay, with its projectile modifiers (§5.8), and `BananaRecallStarted`; a full
   boomerang pool leaves it on the floor. One at a time, decided: the nearest is the one the
-  player is reaching for, and the hand must be empty to start, so a pull that lands ends the
-  wanting. The pull itself is `ProjectileSystem`'s (§5.7), which drops the banana when
+  player is reaching for, and the hand must be empty to start. v0.95, the chain (the owner's
+  choice, "keep pulling, one by one"): a pull that reaches the hand while the button is still
+  held lifts the next nearest at once (`continueRecall`, called by the catch rows 11 and 40
+  once the pulled banana is in the hand), and so on until the hand is full (`Stats::ammoMax`,
+  the power-ups' capacity, not the def's) or none of the monkey's bananas is left on the floor;
+  only the first pull needs an empty hand, so a press with a banana in the hand still throws or
+  charges, and still one banana per puller is in the air. Its edges: a hand filled from
+  elsewhere meanwhile (a pickup, a catch) ends the chain at full, and a pull then arriving at a
+  full hand drops at the catch point as ever (no banana is lost); a stack gives one banana a
+  pull; an ammo power-up that runs out lowers the capacity and so ends it the same way; a death
+  or a fall drops the pull in flight (`heldRecallDef`, `releaseBananasOf`); Fast Hands'
+  `throw_fast` recalls and chains like `throw`. No state: the chain is carried by the pull in
+  flight, and letting go drops that one where it is, which ends it. The pull itself is `ProjectileSystem`'s (§5.7), which drops the banana when
   `heldRecallDef` (the recalling slot Idle, its button held, the monkey neither eliminated nor
   falling) says the owner let go. A banana pulled into the hand while the button is still down
   starts no throw: a throw needs a press edge (`InputSystem`), and a held button is no edge;
@@ -769,7 +780,8 @@ despawned is skipped. Every row forbids `Tag::Eliminated` on the player: a playe
 earlier in the same tick stays in the pool until `LifecycleSystem` and must not be hit, catch
 or pick up again. v0.57: the same set (`kGone`) holds `Tag::Falling`, so no row touches a
 monkey falling down a pit either, on whichever side of the pair it is; and every Boomerang row
-names an Outbound/Returning phase mask, so no row touches a banana sinking into a pit either.
+names an Outbound/Returning phase mask (v0.89 and v0.95: with Recalled and Gliding), so no row
+touches a banana sinking into a pit either.
 
 ```
 prio  A                          B                              handler
@@ -798,7 +810,18 @@ slower than its owner's `recallHarmSpeed` (times its `speedMul`), `slowRecallPas
 contact and nothing happens, so the slow lift drifts through anyone; at or above it the
 handler declines and the scan goes on (a banana whose owner no longer recalls declines too).
 Decided: harmless below a speed rather than for a time, because the speed is what a player
-sees, and a pull a wall holds back stays slow.
+sees, and a pull a wall holds back stays slow. v0.95: rows 11 and 40, catching the catcher's
+own `Recalled` banana into a hand with room, go on to the next pull of the chain while the
+button is held (`continueRecall`, §5.5).
+
+The glide (v0.95, §5.7). An arc banana that gave up on the way home (it flew past its owner,
+ran out of return time or met a wall) has its own phase, `Gliding`, which `kPhaseInFlight` and
+`kPhaseReturning` include exactly as `Returning` is included: to every row it is a returning
+banana. It hits (rows 30, 31), is perfect-caught (rows 10, 11), parried, slammed and blocked,
+and its owner catches it by touching it (row 40); row 5 does not name it. A test pins that
+every Boomerang row matches `Gliding` exactly when it matches `Returning`. Decided: the glide
+is the end of a throw, not a new kind of banana, so a rule that knows returning bananas knows
+gliding ones; a glide that ran into a monkey and did nothing would read as a bug.
 
 Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
 `0 <= (tick + tHit) − (pressTime + startupTicks) < activeTicks`; outside the window the handler
@@ -1087,49 +1110,82 @@ is a defence only for a player who has thrown.
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
   `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
   cannot kill the winner or return to its owner during the pause; `RoundEnded` then clears it.
-- The arc (v0.89). The flight above flew for seconds: a banana that missed its moving owner
-  kept homing at 6.6°/tick for up to 4 s, circling and bouncing off walls at full speed. A mode
-  now picks one of two flights, `ModeDef::bananaFlight` (TOML `banana_flight`): `classic`, the
-  flight above bit for bit, kept by the four grid modes (`grid_rounds`, `grid_rounds_1t`,
-  `contest`, `control_1t`: the bot contest's, whose corpus checksums did not move), and `arc`,
-  the loader's default and every other shipped mode's (`ModeDef{}` stays classic, so a mode
-  built by hand plays as before). The arc is the genre's boomerang in our own numbers (no other
-  game's code or values): every speed is a function of the phase and its `ticksInPhase` times
-  the banana's `speedMul`, so it adds no `Boomerang` field and the charge scales the reach,
-  never the time in the air.
+- The arc (v0.89, the way home v0.95). The flight above flew for seconds: a banana that missed
+  its moving owner kept homing at 6.6°/tick for up to 4 s, circling and bouncing off walls at
+  full speed. A mode now picks one of two flights, `ModeDef::bananaFlight` (TOML
+  `banana_flight`): `classic`, the flight above bit for bit, kept by the four grid modes
+  (`grid_rounds`, `grid_rounds_1t`, `contest`, `control_1t`: the bot contest's, whose corpus
+  checksums did not move), and `arc`, the loader's default and every other shipped mode's
+  (`ModeDef{}` stays classic, so a mode built by hand plays as before). The arc is the genre's
+  boomerang in our own numbers (no other game's code or values): every speed is a function of
+  the phase and its `ticksInPhase` and the banana's `speedMul` (the glide's of the last tick's
+  speed), so it adds no `Boomerang` field; the charge scales the reach, and within the bounds
+  of the top speed home the time too.
   - Out: `arcLaunchSpeed` on the first tick, slowing evenly to `arcApexSpeed` at the outbound
     ticks (`arcOutboundTicks`; a mode's `banana_outbound_ticks` overrides it as in classic).
     At the apex it turns at once to face its owner (it is slow there: the hang of a boomerang
-    at the top of its loop), then speeds up evenly from the apex speed to `arcReturnSpeed` over
+    at the top of its loop), then speeds up evenly from the apex speed to its top speed over
     `arcReturnAccelTicks`, steering toward the owner's current position by at most
-    `arcTurnRateBam` a tick (a mode's `banana_turn_rate` overrides it).
-  - It drops (Grounded, then a pickup in `LifecycleSystem` as ever) when its owner is gone,
-    after `arcReturnTicks` returning, and the moment it has passed its owner: its velocity
-    points away from the owner (an exact int64 dot product below zero), judged before it moves,
-    so a banana that reaches its owner this tick is still caught. It never circles back.
+    `arcTurnRateBam` a tick (a mode's `banana_turn_rate` overrides it). The top speed is
+    `arcReturnSpeed × speedMul` held within `arcReturnMinSpeed` and `arcReturnMaxSpeed` (v0.95;
+    0 = no cap): a tap's ×0.6 would come home slower than a walking thrower, a full charge's
+    ×1.5 would run down a thrower who dashes off.
+  - It gives up (v0.95; v0.89 dropped it on the spot, which the owner's playtest read as "the
+    boomerang drops too fast") the moment it has passed its owner (its velocity points away from
+    the owner: an exact int64 dot product below zero, judged before it moves, so a banana that
+    reaches its owner this tick is still caught), after `arcReturnTicks` returning, and when it
+    meets a wall. Then it glides (`BoomerangPhase::Gliding`, §5.6): straight on along its last
+    heading, with no steering at all, its n-th glide tick keeping `(G − n) / (G − n + 1)` of the
+    last tick's velocity (G = `arcGlideTicks`), so it slows evenly from the speed it had to rest
+    at G and lands there (Grounded, then a pickup in `LifecycleSystem` as ever, its owner's to
+    recall). A glide is at most one pass: nothing turns it back, so it never circles. A banana
+    whose owner is gone still drops at once.
   - Walls: on the way out a wall bounces it as in classic (`restitution` for the bounce tick)
     and ages the flight by `arcBounceTicks` (added to `ticksInPhase`): each bounce slows it and
-    brings the turn nearer, so bounce shots (`corridors`) stay, at a cost. On the way back a
-    wall drops it where it hit (still one `BoomerangBounced`). Decided: a reflection on the way
-    home points away from the owner, which the passed-owner rule would drop on the next tick
-    anyway, and a wall between a banana and its thrower is a miss the thrower pays for (or
-    pulls back, below), not a ricochet that finds them.
+    brings the turn nearer, so bounce shots (`corridors`) stay, at a cost. On the way back a wall
+    bounces it off and ends the homing: it glides from the bounce (v0.95; v0.89 dropped it at
+    the wall). A bounce while gliding costs `arcBounceTicks` of the glide. Decided: a wall in the
+    way is still a miss the thrower pays for (the glide does not steer, so it does not ricochet
+    toward them except by geometry), but it no longer dies on the wall; and there is one bounce
+    home at most before the glide, so a banana never rattles between walls. The time in the air
+    is bounded by content alone: at most `arcOutboundTicks + arcReturnTicks + 1 +
+    arcGlideTicks` ticks.
   - Shipped (`content/boomerang.toml`): 29 u/s slowing to 3 over 36 ticks (a mean of 16 u/s,
     the classic speed, so the reach out is the classic one: 9.6 units, a tap 5.8, a full charge
-    14.4, plus the 1-unit spawn offset), home at up to 20 u/s reached in 24 ticks, 96 BAM
-    (about 0.5°) of steering a tick, 60 ticks of return at most, 9 ticks of flight a bounce.
-    Thrown east into the open from 12 units west of the dojo's centre and caught by a thrower
-    standing still, a tap reaches 6.6 units and is in the air 74 ticks, a full charge 15.0 and
-    73 (classic: 8.1 and 18.7 at the farthest, the loop past the turn included, 100 ticks
-    each); no banana is in the air past 96 ticks. A thrower who walks off sideways at full speed
-    is missed; one who steps aside for a fifth of a second is still caught
-    (`banana_arc_scenario.cpp`, which also prints the table: its hidden `[measure]` case).
+    14.4, plus the 1-unit spawn offset), home at up to 20 u/s × the multiplier held within 18 and
+    24 u/s, reached in 24 ticks, 384 BAM (about 2.1°) of steering a tick, 84 ticks of homing at
+    most, a 24-tick glide, 9 ticks of flight a bounce: never more than 145 ticks (2.4 s) in the
+    air. Measured on an open floor (`banana_homing_scenario.cpp`, whose hidden `[measure]` case
+    prints the table; thrown east, the thrower walking or dashing from the release on):
+
+    | thrower after the throw | tap | full charge |
+    |---|---|---|
+    | stands | caught, 65 ticks (1.08 s), reach 6.6 | caught, 80 (1.33 s), reach 15.0 |
+    | walks E (toward the apex) | caught, 44 | caught, 62 |
+    | walks NE / SE | caught, 61 | caught, 70 |
+    | walks N / S | caught, 82 | caught, 89 |
+    | walks NW / SW | caught, 99 | caught, 106 |
+    | walks W (away) | caught, 106 (1.77 s) | caught, 113 (1.88 s) |
+    | dashes once W, walks on | caught, 123 (in the glide) | caught, 124 (in the glide) |
+    | dashes once N, walks on | caught, 95 | caught, 95 |
+    | dashes W whenever it can | missed, glides from 120, down at 144 (2.4 s) | missed, down at 144 |
+    | dashes N whenever it can | caught, 131 (in the glide) | caught, 112 |
+    | sidesteps (dashes N when it is 3 units off) | missed: passes at 83, down at 107 | caught, 80 |
+
+    Every full-speed walk is homed in at least 7 ticks before the homing ends; v0.89's numbers
+    caught 4 of the 16 walks (both charges walking out east, a full charge walking NW and SW)
+    and missed every dash.
+    Thrown east from 12 units west of the dojo's centre and caught standing, a tap is in the air
+    65 ticks and a full charge 80 (v0.89: 74 and 73; classic: 100 each).
   - Readers outside the sim get the arc's numbers through the same helpers:
     `bananaOutboundTicksOf`, `bananaTurnRateBamOf`, `bananaMaxReturnTicksOf` (the arc's
-    `arcReturnTicks`) and `bananaFlightSpeedOf` (classic: `speed`; arc: the mean speed out,
+    `arcReturnTicks`: the ticks it homes before it gives up and glides) and `bananaFlightSpeedOf` (classic: `speed`; arc: the mean speed out,
     `(arcLaunchSpeed + arcApexSpeed) / 2`, so speed × outbound ticks is the reach either way).
-    The observation's rules block reports them (`docs/bot-abi.md` §2.5); the presentation's
-    height arc reads the outbound ticks.
+    The observation's rules block reports them (`docs/bot-abi.md` §2.5); a gliding banana is
+    reported as Returning (no phase value is added; its `ticksInPhase` counts the glide), and
+    the presentation draws it as a returning banana coming down evenly from the height it had to
+    the pickup's over the glide (`BananaTrack::glideFromArc`). The presentation's height arc
+    reads the outbound ticks.
 - The recall's flight (v0.89, `Recalled`, §5.5). While its owner holds the recalling throw's
   button (`heldRecallDef`), a `Recalled` banana flies straight at the owner's current position,
   from rest up to the def's `recallSpeed` (times its `speedMul`) evenly over
@@ -1140,7 +1196,8 @@ is a defence only for a player who has thrown.
   a recalling def, it drops where it is (`BananaRecallEnded`, Grounded, a pickup again that the
   owner may lift again). It flies over pits, and one let go over a pit sinks. Reaching the
   owner, row 40 puts it in the hand (`BoomerangCaught`, `Auto`; at full ammo it drops at the
-  catch point as ever). It counts as owned for the regrow clock, as in flight for
+  catch point as ever), and with the button still held and room in the hand the next pull
+  starts on that tick (v0.95, the chain, §5.5). It counts as owned for the regrow clock, as in flight for
   `dropBananasOf` / `releaseBananasOf` (a dead owner's pull drops or vanishes like its throws,
   `inFlight()`), and as a banana left for the dry-round rule (it is not Sinking).
 - The last owner (v0.89). A pickup's `spawner` byte (a power-up's spawner, a flag's team) is,
@@ -2147,7 +2204,8 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 | `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
 | `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, the bots' placement (v0.75), the player cap (v0.76), winner, nicknames |
-| `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
+| `Start` (v0.42) | C→S | reliable | the host starts the match, or goes back to the waiting room after it |
+| `RoomCommand` (v0.96) | C→S | reliable | the host's control of a running match: end it (back to the waiting room) or restart it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
 consecutive packets vanish. A longer burst (an outage of the server-to-client direction past the
@@ -2197,6 +2255,10 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   the bot mask (§6.6). Protocol version 8 (v0.76) adds the server's player cap after the
   placement mask, u4 holding the cap − 1: 1 to `kMaxPlayers`, with no human, bot or placement
   slot at or above it (refused on encode and on decode). `RoomState` is then at most 179 B.
+  Protocol version 9 (v0.96) adds `RoomCommand`, the host's controls of a running match: the
+  type byte and a command u8 (`EndMatch` 0, `Restart` 1; an undefined value is refused on
+  encode and decode, so later kinds append without a new message type): 2 B
+  (`kRoomCommandMsgBytes`). `Start` keeps its layout and meaning.
 - `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
   with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
   shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
@@ -2583,8 +2645,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   (§5.3), at the farthest spawn point.
 - The online room (v0.42, M6b; `apps/server/room.hpp`, `ServerHost` with `HostConfig::room`):
   room state lives in the host beside `ServerHost`, never in `WorldState`, and `NetServer`
-  keeps no policy (it reports `RoomSettings`/`Start` as events and sends the `RoomState` the host
-  sets, to every peer at once and to each joiner after its `Welcome` and `Snapshot`). Three
+  keeps no policy (it reports `RoomSettings`/`Start`/`RoomCommand` as events and sends the
+  `RoomState` the host sets, to every peer at once and to each joiner after its `Welcome` and `Snapshot`). Three
   phases. **Waiting**: no match runs. The sim leaves `MatchPhase::Lobby` on its first step, so
   it cannot idle: the host pumps the `NetServer` but never calls `tick()` (the server tick does
   not move, the host clock is rebased every frame so the first tick after Start runs no
@@ -2594,8 +2656,18 @@ C++ server library is mature. The seam makes that swap a contained change.
   `MatchEnded`; again no tick, the clients show the final world and the winner. Transitions:
   the host's `Start` in Waiting places the bots and calls `restartMatch(config, nextTick(),
   botSeed)` with the room's settings (next seeds as after a match end, teams by `teamsFor`);
-  its `Start` in Over removes the bots and returns to Waiting with the same settings ("play
-  again"); the room returns to Waiting when its last human slot is gone, and `openRoom()` (a new
+  its `Start` in Over removes the bots and returns to Waiting with the same settings ("back to
+  the lobby"). The host's `RoomCommand` (v0.96, protocol 9) controls a running match:
+  `EndMatch` in Playing stops the match where it is and returns to Waiting with the settings
+  and roster kept, removing the bots, dropping a pending bot yield and releasing reservations
+  at once as any Waiting does (a reconnecting peer joins afresh); `Restart` in Playing or Over
+  removes the bots, hands the free slots to a queued joiner first (the fresh world never saw
+  the yielded bot, so no tick needs to separate the two), places the bots again and calls
+  `restartMatch(config, nextTick(), botSeed)` exactly as Start does, without the waiting room
+  (in Playing reservations keep their grace; at Over it is the match-over screen's "play
+  again"). `EndMatch` in Waiting or Over and `Restart` in Waiting (Start's job) are ignored, as
+  is a non-host's, and every command is answered with the `RoomState`. The room returns to
+  Waiting when its last human slot is gone, and `openRoom()` (a new
   lobby room with no peer) resets it to the server's defaults. The host is a slot, not a peer:
   the first human slot to appear, then the longest-present one left, none without a human; a
   slot reserved for a reconnect stays a member, so a host who drops mid-match keeps the role,
@@ -2618,7 +2690,16 @@ C++ server library is mature. The seam makes that swap a contained change.
   tick past it, then hard-loads it and runs forward to estimated server tick + target lead with
   the lead controller and clock reset, exactly as the initial sync: the lead never carries the
   pause over. A client of a server that sends no `RoomState` (the M3 policy, `kfm_netsim`, the
-  netcode tests) never holds.
+  netcode tests) never holds. A host's `EndMatch` reaches a running client as a `RoomState`
+  that turns Waiting mid-match: it holds at once over its last predicted world (spectators and
+  queued joiners alike; the unconfirmed ticks past the server's last one are simply dropped by
+  the next load), and the next Start resumes it through the path above. A `Restart` in Playing
+  never holds: the client takes the `MatchConfig` and the snapshot at its start tick as it
+  takes the M3 policy's back-to-back restart (checksums from the start tick dropped until the
+  snapshot, then a hard load and a run forward to its lead). `NetClient::roomEndedByHost()`
+  reads a `RoomState` that went from Playing to Waiting with a human in the room as the host's
+  end (the only other way back from Playing is the last human leaving), so the waiting screen
+  can say so without a wire field.
 - Bots yield (v0.44, M6b): in the room flow `ServerConfig::queueForBotSlots` is on, so a `Hello`
   (or `JoinMatch`) that wants more slots than are free, but no more than are free or held by
   bots, is answered with a `Welcome` of no slots instead of `Reject{MatchFull}`: the peer
@@ -3120,6 +3201,91 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
     from this device: 1 monkey" and has Cancel (Back to the menu once it failed). A joined
     pad's B leaves the local lobby, and any pad's B a waiting room or connection screen, as
     Escape does.
+  v0.97, the game-setup revamp (a playtest after v0.94: "still pretty unintuitive ... changing
+  options suddenly introduces new options", presets "for specific gamemodes", settings
+  "separated from game selection" and "accessible mid game"; the findings are the changelog's):
+  - Presets (`core/presets.{hpp,cpp}`): a client-side table of named matches, each a mode, an
+    arena made for it, a kit, a power-up set and the monkeys it is meant for: Classic (Last
+    Monkey Standing on the Dojo with Power-ups, the first-run default), Brawl (`pillars`),
+    Power-up Frenzy (Brawl on `marsh`), Survival (`island`), Knockout (Knockout Rounds on
+    `corridors`), Team Brawl (`compound`), Team Rounds (`standoff`), King of the Hill
+    (`hilltop`), Capture the Flag (`outposts`) and Grid Rounds (`courtyard`): one per mode a
+    human lobby offers, the bot contests left out. The table names content by its names and is
+    resolved against the loaded `ContentDB` (`resolvePresets`); a preset the content cannot
+    play (an unknown name, an arena that does not suit its mode) is left out, so `content/`
+    and its hash never change for presets. Which preset is active is derived, never stored:
+    the first whose mode, arena, kit (unless the mode hands kits out by role) and power-ups
+    (only those the arena's spawners can draw) the settings equal, else Custom; bots and their
+    difficulty are not compared, so adding a bot keeps the preset. Picking one raises the
+    bots, never lowers them, until the humans and bots make its players (4, 6 for Power-up
+    Frenzy). Online a preset is the `RoomSettings` it implies: no wire change.
+  - A stable setup panel (`LobbyMenu`, the local lobby's and the room host's, one component):
+    seven rows that never change with a value, Game (the preset, or Custom), Mode, Arena, Kit,
+    Power-ups, Bots, Bot difficulty. The rule: the set and place of the controls never depend on
+    a value. A row that does not apply stays in its place, greyed, its arrows flat, its short
+    reason as the value ("By role" for the Kit under a mode that hands kits out by role, "None
+    in this arena" for Power-ups on an arena without power-up spawners, "Server's choice" for
+    Bot difficulty in a room, where the server runs the bots); `rowReason()` has the sentence,
+    shown when the pointer is over it, and Up/Down step over it. The power-up set is one row:
+    All, None or "3 of 5", Left/Right cycling All → None → Custom, which opens the
+    `PowerUpPicker`, a fixed grid over the panel (an overlay: a modal ImGui window,
+    `ui::beginOverlay`) of the arena's power-ups two to a row with All, None and Done under
+    them; a click on the row's value opens it too. When one choice forces another, the Arena
+    row only offers arenas that suit the mode (as since v0.32) and a line under the rows,
+    always there and two lines high, says what changed and why ("Arena set to Standoff: Team
+    Rounds needs a starting side for each team.", `notice()`), else the preset's blurb. The Kit
+    row skips the kits a mode hands out by role (`isRoleLoadout`: `grid`, `catcher` and the
+    contests'), and the preview says "Kits by place in the team" for such a mode. Volume, Sound
+    and Arena theme left the panel for Settings; the read-only Teams row is gone (the preview
+    says it). `--screen powerups` opens the local lobby under the picker.
+  - Settings apart from the match, reachable everywhere: `SettingsMenu` (Name, Volume, Sound,
+    Arena theme, Mouse aim, Done; Bot difficulty moved to the setup panel) is an overlay, a
+    modal card drawn at the top level over whatever screen opened it (`drawSettingsOverlay`,
+    `ui::beginOverlay`), and closing it (Done, Escape, a pad's B or View) returns to that
+    screen: from the main menu's Settings, the local lobby's and the waiting room's Settings
+    button (Back / Leave, Settings, Start match along the bottom) or Tab / a pad's View there
+    (`isSettingsEvent`), and the pause menu's Settings, locally (the match stays paused under
+    it) and online (the match runs on with the local slots idle, as the pause menu has them). A
+    change applies at once (the volume audibly, `applyPreferences`: the audio, the theme, mouse
+    aim, never the match's settings) and is saved as before. A modal ImGui window keeps every
+    window under it from the pointer and stays above them; one not drawn in a frame is closed
+    by `ui::finishOverlays()` before `debugUiFlush()`, since a modal ImGui keeps open would
+    block the screens under it.
+  - The pause menu: locally Resume, Settings, How to play, Restart match (a fresh match, new
+    seed, the same setup and players: `MatchSession::restart`), Back to lobby, Main menu;
+    online Resume, Settings, How to play, then for the host Restart match and End match (to
+    the room), and Leave room. `pauseItems(PauseContext{online, canRestart, canEnd})` builds
+    the list from `NetSession::canRestartMatch()` / `canEndMatch()`, read every frame while
+    the menu is open (`PauseMenu::setContext`: the host role can move, the focus stays on its
+    item), so a guest never sees them and a host who loses the role loses them at once.
+  - The host's controls drive v0.96's `RoomCommand`: online, Restart match and End match stop
+    everyone's game, so the first press arms the button in coral ("Yes, end for everyone",
+    "Yes, restart for all", with a line saying what happens) and a second press or click on it
+    acts; any other press, a move or the role going away cancels (`PauseMenu::pick`,
+    `armed()`). Locally Restart and Back to lobby act at once (only the couch's own match).
+    A mid-match restart (`FrameReport::matchRestarted`) closes everyone's pause menu and
+    resets the match-over focus. The online match-over screen gives the host the local
+    screen's two buttons in the same order, Play again (the lead, `restartMatch()`) and Back
+    to lobby (`start()`: the waiting room), then Leave room; a guest sees Leave room under
+    "Mango chooses: play again or back to the room". `MatchOverAction::Leave` reads "Leave
+    room", as in the pause menu. A waiting room the host's End match made says so to
+    everyone ("Mango ended the match: everyone is back in the room", "You ended ..." for the
+    host, `matchEndedByHost()`).
+  - A fresh room is not Custom: when this client created the room through the lobby and is
+    its host, its first waiting room sends its own setup (the local lobby's, the Classic
+    preset on a first run) once through `sendSettings()` (`createdRoomSetup`: the match of
+    the local settings, bots clamped to the room's cap, nothing when the pair does not suit
+    the content or the room already has it); a refusal leaves the server's, never retried,
+    and a guest or a `--connect` client (whose server's flags chose the defaults) never sends.
+  - Polish: one button row per setup screen (Back / Leave plain, Settings plain, Start match
+    the lead), shorter hint lines that name the keys the screen has, the slot card's
+    "Keys + mouse" (was cut off), the waiting room's code on one row with Copy and the preview
+    at most 150 px high, so the lobby and the room (with its code) fit 1280×720 and 700 px.
+    `--screen local-settings` / `paused-settings` open Settings over the lobby / the pause
+    menu, and with `--connect` or a room `--screen settings` / `paused` / `paused-settings`
+    open them over the room or the running match; online `paused`, `paused-settings` and
+    `match` have the host start the room's match first (once the server took its settings),
+    and locally `match` starts a match at once.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.
@@ -3253,7 +3419,8 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
 - Height curves: dash hop `0.35·sin(πu)` over the Dash active phase; hit-stun lift
   `0.4·sin(πu)`; a flying banana rides at hand height 0.6 plus an arc of 0.5 that rises as a
   sine over the outbound phase and falls with the remaining distance to the owner while
-  returning, so it is on the ground at the throw and at the owner; pickups hover at 0.15 ± 0.08
+  returning, so it is on the ground at the throw and at the owner (v0.95: a gliding banana comes
+  down evenly from where it was to the pickup's height over the glide); pickups hover at 0.15 ± 0.08
   and spin slowly. The monkey placeholder capsule is 3.2 radii tall.
 - Facing: body yaw follows the dash direction while dashing, otherwise the move direction
   (keeping the last non-zero one), limited to 720°/s; aim yaw follows the aim directly. A dash
@@ -3443,8 +3610,11 @@ is in `platform`.
   no device before input, "audio open: emscripten, 48000 Hz" and a running `AudioContext` after
   the key presses, 60 fps unchanged, no console errors (one Chromium deprecation warning about
   SDL's `ScriptProcessorNode`); with `?mute` no `AudioContext` is created.
-- `kfm_client --mute` and `--volume 0..100` (default 80; `?mute&volume=50` in the browser) set
-  the mixer; the F1 overlay's Audio panel (local and online) toggles mute, sets the volume, plays
+- `kfm_client --mute` and `--volume 0..100` (default 40 since v0.97, was 80: a playtest found
+  the game too loud out of the box; `presentation::kDefaultMasterVolume` 0.4; `?mute&volume=50`
+  in the browser) set the mixer; a settings text older than `settings_version=3` that says
+  `volume=80` never chose it (every install saved the old default) and reads as 40, as v0.93
+  moved `theme=auto`; the F1 overlay's Audio panel (local and online) toggles mute, sets the volume, plays
   a test click and shows the device status, voices, steals and underruns. The client glue is
   `apps/client/client_audio.{hpp,cpp}` (`ClientAudio`: `init`, `frame`, `onUserGesture`,
   `click`, `setMuted`, `setVolumePercent`), which the lobby UI uses for its own controls and
@@ -4495,7 +4665,7 @@ the server holds the initial world and ticks nothing for the sim; peers occupy s
 roster, the settings and who is host), Playing (as today: a joiner spectates until the round
 break in a rounds mode or spawns after `respawnTicks` in a deathmatch) and Over (the match-over
 screen; the host's "play again" returns to Waiting with the same settings, a leaver's slot is
-freed). The host is the room's creator, then the longest-present human when the host leaves.
+freed; v0.96: the host's Restart plays again at once and Start goes back to Waiting). The host is the room's creator, then the longest-present human when the host leaves.
 Protocol version 6 adds three reliable messages: `RoomSettings` (host → server: the
 `MatchConfig` axes and the bot count; the server validates against its content and
 `ContentDB::compatible` and answers with the state), `RoomState` (server → everyone on every

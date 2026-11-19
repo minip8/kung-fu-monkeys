@@ -13,6 +13,9 @@
 // another team; every other slot in a free-for-all) adds ModeDef::catchScore
 // to the catcher's slot (ScoreChanged, reason Catch); the own banana or an
 // ally's scores nothing. Only point-scoring kinds carry a catch score.
+// v0.95: the catcher's own pulled (Recalled) banana goes on to the next pull
+// while the button is held (continueRecall), as at row 40.
+#include "kfm/sim/abilities/throw.hpp"
 #include "kfm/sim/rules/handlers.hpp"
 #include "kfm/sim/systems.hpp"
 #include "modes/mode_flow.hpp"
@@ -39,6 +42,7 @@ bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, Enti
   if (delta < Fixed::zero() || delta >= Fixed::fromInt(def.perfectWindowTicks)) return false;
 
   const PlayerId thrower = banana->owner;  // read before the despawn
+  const bool pulled = banana->phase == BoomerangPhase::Recalled && thrower == p->id;
   s.boomerangs.despawn(b);
   ++p->ammo;  // below ammoMax, checked above
   sink.push(SimEvent{EventKind::BoomerangCaught, s.tick, p->id, b,
@@ -47,6 +51,7 @@ bool catchBoomerang(WorldState& s, const MatchContent& content, EntityId a, Enti
       content.relation(thrower, p->id) == Relation::Enemy) {
     addScore(s, p->id, content.mode.catchScore, ScoreReason::Catch, sink);
   }
+  if (pulled) continueRecall(s, *p, content, sink);
   return true;
 }
 

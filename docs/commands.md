@@ -92,8 +92,16 @@ python3 tools/web/check_browser.py 'http://127.0.0.1:8000/kfm_client.html?autost
 
 - The client opens on the main menu unless `--autostart` / `--connect` / `--room` / `--create`
   (browser: `?autostart`, `?connect=`, `?room=`, `?create`). `--screen
-  menu|settings|online|local|paused|howto` opens another screen (for screenshots; `paused` is a local
-  match under the pause menu).
+  menu|settings|online|local|paused|howto|powerups|local-settings|paused-settings` opens another
+  screen (for screenshots; `settings` is the Settings overlay over the main menu, `paused` a local
+  match under the pause menu, `powerups` the local lobby under its power-up picker,
+  `local-settings` / `paused-settings` Settings over the lobby / the pause menu). With `--connect`
+  or a room, `settings` opens Settings over the waiting room and `paused` / `paused-settings` the
+  pause menu once the match runs; `match` (and, online, `paused` / `paused-settings`) has the
+  host start the room's match (locally `match` starts one). The online match-over screen renders
+  with a server and client on a copy of `content/` whose deathmatch `time_limit_ticks` is short
+  (both `--content DIR`, `kfm_server --mode deathmatch`, the client `--screen match`). With nothing saved and no match flag the lobby opens on the
+  Classic preset with three bots.
 - Match selection: `--arena NAME --mode NAME --loadout NAME --powerups all|none|a,b`. Settings
   are saved between runs (SDL pref dir / browser localStorage); flags win; `--no-settings`
   ignores the saved file. Other saved settings with a flag: `--nick NAME` (`?nick=`),

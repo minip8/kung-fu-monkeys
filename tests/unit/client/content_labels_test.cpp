@@ -19,9 +19,6 @@
 #include <vector>
 
 using namespace kfm;
-using client::LobbyMenu;
-using client::LobbyRowKind;
-using client::MenuAction;
 
 namespace {
 
@@ -103,51 +100,24 @@ TEST_CASE("bot contests are not offered to people", "[client][labels][lobby]") {
   CHECK_FALSE(client::isBotLoadout(db, loadout("slam")));
 }
 
-TEST_CASE("the panel shows the power-ups the arena can draw, never the Teams row",
-          "[client][lobby]") {
+TEST_CASE("role kits are the ones a mode hands out by role (v0.97)", "[client][lobby]") {
   const sim::ContentDB& db = shipped();
-  const uint8_t dojo = db.findArena("dojo").value_or(0xFF);
-  const uint8_t powerups = db.findArena("dojo_powerups").value_or(0xFF);
-  REQUIRE(dojo != 0xFF);
-  REQUIRE(powerups != 0xFF);
-  CHECK(client::arenaPowerUps(db, db.arenaAt(dojo)) == 0);  // the dojo has no spawner
-  const uint16_t drawn = client::arenaPowerUps(db, db.arenaAt(powerups));
-  CHECK(drawn != 0);
-
-  LobbyMenu m;
-  m.setContent(db);
-  const auto shownPowerUps = [&] {
-    int n = 0;
-    for (std::size_t i = 0; i < m.rows().size(); ++i) {
-      if (m.rows()[i].kind == LobbyRowKind::PowerUp && m.rowShown(i)) ++n;
-      if (m.rows()[i].kind == LobbyRowKind::Teams) CHECK_FALSE(m.rowShown(i));
-    }
-    return n;
+  const auto loadout = [&](std::string_view name) {
+    const std::optional<uint8_t> l = db.findLoadout(name);
+    if (!l) FAIL("no loadout " << name);
+    return l.value_or(0);
   };
-  m.settings().arena = dojo;
-  CHECK(shownPowerUps() == 0);
-  // Down from Mode skips the hidden Teams row and every hidden toggle.
-  m.setFocus(1);
-  REQUIRE(m.focusedRow().kind == LobbyRowKind::Mode);
-  m.apply(MenuAction::Down);
-  CHECK(m.focusedRow().kind == LobbyRowKind::Loadout);
-  m.apply(MenuAction::Down);
-  CHECK(m.focusedRow().kind == LobbyRowKind::Bots);
-  m.apply(MenuAction::Up);
-  CHECK(m.focusedRow().kind == LobbyRowKind::Loadout);
-
-  m.settings().arena = powerups;
-  int expected = 0;
-  for (std::size_t i = 0; i < m.rows().size(); ++i) {
-    const client::LobbyRow& r = m.rows()[i];
-    if (r.kind == LobbyRowKind::PowerUp && (drawn & (1u << r.powerUp)) != 0) ++expected;
-  }
-  CHECK(expected > 0);
-  CHECK(shownPowerUps() == expected);
-  m.setFocus(3);  // Loadout
-  m.apply(MenuAction::Down);
-  CHECK(m.focusedRow().kind == LobbyRowKind::PowerUp);
-  CHECK_FALSE(m.rowShown(m.rows().size()));  // out of range
+  CHECK(client::isRoleLoadout(db, loadout("grid")));  // grid_rounds hands it out
+  CHECK(client::isRoleLoadout(db, loadout("catcher")));
+  CHECK(client::isRoleLoadout(db, loadout("grid_1t")));
+  CHECK(client::isRoleLoadout(db, loadout("catcher_1t")));
+  CHECK_FALSE(client::isRoleLoadout(db, loadout("base")));
+  CHECK_FALSE(client::isRoleLoadout(db, loadout("slam")));
+  CHECK_FALSE(client::isRoleLoadout(db, loadout("blink")));
+  CHECK_FALSE(client::isRoleLoadout(db, loadout("parry")));
+  // The dojo draws no power-up; its twin with spawners does.
+  CHECK(client::arenaPowerUps(db, db.arenaAt(db.findArena("dojo").value_or(0))) == 0);
+  CHECK(client::arenaPowerUps(db, db.arenaAt(db.findArena("dojo_powerups").value_or(0))) != 0);
 }
 
 TEST_CASE("How to play reads the bindings the sampler plays with", "[client][howto]") {

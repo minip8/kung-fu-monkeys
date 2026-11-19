@@ -222,7 +222,7 @@ const char* matchOverLabel(MatchOverAction action) {
     case MatchOverAction::BackToLobby:
       return "Back to lobby";
     case MatchOverAction::Leave:
-      return "Leave";
+      return "Leave room";  // v0.97: as the pause menu says it
   }
   return "";
 }
@@ -281,12 +281,13 @@ MatchOverView roomMatchOverView(const HudView& view, const presentation::RenderH
                                 std::string_view hostName) {
   MatchOverView v = matchOverView(view, hud);
   if (host) {
-    v.actions = {MatchOverAction::PlayAgain, MatchOverAction::Leave};
+    // v0.97: the local screen's two (Play again: NetSession::restartMatch,
+    // Back to lobby: start(), the waiting room), then the way out.
+    v.actions = {MatchOverAction::PlayAgain, MatchOverAction::BackToLobby, MatchOverAction::Leave};
   } else {
     v.actions = {MatchOverAction::Leave};
-    v.waiting = "Waiting for " +
-                (hostName.empty() ? std::string("the host") : std::string(hostName)) +
-                " to play again";
+    v.waiting = (hostName.empty() ? std::string("The host") : std::string(hostName)) +
+                " chooses: play again or back to the room";
   }
   return v;
 }

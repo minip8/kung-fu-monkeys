@@ -76,13 +76,15 @@ TEST_CASE("main menu: without a way online, Play online is greyed and skipped", 
   CHECK(m.activate() == MainMenuItem::PlayOnline);
 }
 
-TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme, mouse aim",
+TEST_CASE("settings menu: name, volume, sound, theme, mouse aim (v0.97: no bot difficulty)",
           "[client][menu][settings]") {
   SettingsMenu m;
   LobbySettings ls;
   ls.volume = 80;
   std::string nick = "Bonobo 42";
-  REQUIRE(SettingsMenu::rows().size() == 7);
+  REQUIRE(SettingsMenu::rows().size() == 6);
+  for (const SettingsRow r : SettingsMenu::rows())
+    CHECK(std::string(SettingsMenu::rowLabel(r)) != "Bot difficulty");  // the setup panel's
   CHECK(m.focusedRow() == SettingsRow::Name);
   CHECK(SettingsMenu::rowValue(SettingsRow::Name, ls, nick) == "Bonobo 42");
   CHECK_FALSE(m.apply(MenuAction::Right, ls));  // the name is typed, not cycled
@@ -101,20 +103,12 @@ TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme, mouse aim"
   CHECK(ls.mute);
   CHECK(SettingsMenu::rowValue(SettingsRow::Sound, ls, nick) == "muted");
 
-  m.apply(MenuAction::Down, ls);
-  REQUIRE(m.focusedRow() == SettingsRow::BotDifficulty);
-  ls.botTier = ai::ReferenceTier::Hard;
-  CHECK(m.apply(MenuAction::Right, ls));  // wraps
-  CHECK(ls.botTier == ai::ReferenceTier::Easy);
-  CHECK(m.apply(MenuAction::Left, ls));
-  CHECK(ls.botTier == ai::ReferenceTier::Hard);
-
   m.apply(MenuAction::Down, ls);  // v0.52
   REQUIRE(m.focusedRow() == SettingsRow::Theme);
   CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "beach");  // v0.93's default
   CHECK(m.apply(MenuAction::Right, ls));                                   // wraps
   CHECK(ls.theme == kfm::presentation::ThemeChoice::Auto);
-  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "auto");
+  CHECK(SettingsMenu::rowValue(SettingsRow::Theme, ls, nick) == "auto (per arena)");
   CHECK(m.apply(MenuAction::Left, ls));
   CHECK(ls.theme == kfm::presentation::ThemeChoice::Beach);
 
@@ -134,6 +128,7 @@ TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme, mouse aim"
 
   m.apply(MenuAction::Down, ls);
   CHECK(m.focusedRow() == SettingsRow::Back);
+  CHECK(std::string(SettingsMenu::rowLabel(SettingsRow::Back)) == "Done");
   m.apply(MenuAction::Down, ls);  // wraps
   CHECK(m.focusedRow() == SettingsRow::Name);
 
@@ -145,6 +140,65 @@ TEST_CASE("settings menu: name, volume, sound, bot difficulty, theme, mouse aim"
   CHECK(nick == "Grumpy Gibbon");
   CHECK(SettingsMenu::setNick(nick, "A name far longer than sixteen bytes"));
   CHECK(nick.size() <= 16);
+}
+
+TEST_CASE("settings overlay: opens over a screen, closes back, Enter acts (v0.97)",
+          "[client][menu][settings]") {
+  using platform::InputEvent;
+  using platform::InputEventKind;
+  using platform::Key;
+  using platform::PadButton;
+  const auto keyDown = [](Key k) {
+    InputEvent e;
+    e.kind = InputEventKind::KeyDown;
+    e.key = k;
+    return e;
+  };
+  const auto pad = [](PadButton b) {
+    InputEvent e;
+    e.kind = InputEventKind::PadButtonDown;
+    e.deviceId = 2;
+    e.button = b;
+    return e;
+  };
+  SettingsMenu m;
+  LobbySettings ls;
+  CHECK_FALSE(m.isOpen());
+  m.setFocus(3);
+  m.open();
+  CHECK(m.isOpen());
+  CHECK(m.focus() == 0);  // opens on the first row
+
+  using Press = SettingsMenu::Press;
+  CHECK(SettingsMenu::press(keyDown(Key::Escape)) == Press::Close);
+  CHECK(SettingsMenu::press(pad(PadButton::East)) == Press::Close);
+  CHECK(SettingsMenu::press(pad(PadButton::Back)) == Press::Close);
+  CHECK(SettingsMenu::press(keyDown(Key::Enter)) == Press::Activate);
+  CHECK(SettingsMenu::press(keyDown(Key::Space)) == Press::Activate);
+  CHECK(SettingsMenu::press(pad(PadButton::South)) == Press::Activate);
+  CHECK(SettingsMenu::press(keyDown(Key::Down)) == Press::None);
+  CHECK(SettingsMenu::press(keyDown(Key::J)) == Press::None);
+
+  using Activation = SettingsMenu::Activation;
+  CHECK(m.activate(ls) == Activation::EditName);  // the name field takes the keyboard
+  m.setFocus(2);
+  REQUIRE(m.focusedRow() == SettingsRow::Sound);
+  CHECK(m.activate(ls) == Activation::Changed);  // as Right: toggles
+  CHECK(ls.mute);
+  m.setFocus(1);
+  ls.volume = 100;
+  CHECK(m.activate(ls) == Activation::None);  // already at the top
+  m.setFocus(SettingsMenu::rows().size() - 1);
+  CHECK(m.activate(ls) == Activation::Closed);  // Done
+  CHECK_FALSE(m.isOpen());
+
+  // Tab, or the Back (View) of a pad that navigates there, opens it from the
+  // lobby or the waiting room; nothing else does.
+  CHECK(client::isSettingsEvent(keyDown(Key::Tab), true));
+  CHECK(client::isSettingsEvent(pad(PadButton::Back), true));
+  CHECK_FALSE(client::isSettingsEvent(pad(PadButton::Back), false));  // an unbound pad joins
+  CHECK_FALSE(client::isSettingsEvent(keyDown(Key::Escape), true));
+  CHECK_FALSE(client::isSettingsEvent(pad(PadButton::East), true));
 }
 
 TEST_CASE("button row: any direction moves the focus, wrapping", "[client][menu]") {
@@ -192,25 +246,24 @@ TEST_CASE("menu presses: activate and back, from any device", "[client][menu][in
   CHECK(client::isMenuBack(e));
 }
 
-TEST_CASE("the room host's menu has only the rows a RoomSettings carries (v0.43)",
+TEST_CASE("the room host's menu: the same rows, Bot difficulty the server's (v0.97)",
           "[client][menu][lobby]") {
   client::LobbyMenu m;
-  const std::size_t all = m.rows().size();
+  const std::size_t all = client::LobbyMenu::rows().size();
   m.setRoomRows(true);
-  CHECK(m.rows().size() == all - 4);
-  for (const client::LobbyRow& r : m.rows()) {
-    CHECK(r.kind != client::LobbyRowKind::BotDifficulty);
-    CHECK(r.kind != client::LobbyRowKind::Volume);
-    CHECK(r.kind != client::LobbyRowKind::Mute);
-    CHECK(r.kind != client::LobbyRowKind::Theme);  // v0.52: personal, not the room's
-  }
-  CHECK(m.rows().back().kind == client::LobbyRowKind::Bots);
-  // Navigation stays on those rows: Up from the first wraps to Bots.
+  CHECK(client::LobbyMenu::rows().size() == all);  // v0.97: fixed (v0.43 dropped rows)
+  CHECK_FALSE(m.rowEnabled(client::LobbyRowKind::BotDifficulty));
+  // Navigation skips it: Up from the first wraps to Bots.
   m.setFocus(0);
   CHECK_FALSE(m.apply(MenuAction::Up));
-  CHECK(m.focusedRow().kind == client::LobbyRowKind::Bots);
+  CHECK(m.focusedRow() == client::LobbyRowKind::Bots);
+  // Focused when the room's panel came: back on the first row.
+  client::LobbyMenu focused;
+  focused.setFocus(client::LobbyMenu::rows().size() - 1);
+  focused.setRoomRows(true);
+  CHECK(focused.focus() == 0);
   m.setRoomRows(false);
-  CHECK(m.rows().size() == all);
+  CHECK(m.rowEnabled(client::LobbyRowKind::BotDifficulty));
 }
 
 TEST_CASE("--screen opens a front-end screen (v0.43)", "[client][menu][options]") {
@@ -227,6 +280,10 @@ TEST_CASE("--screen opens a front-end screen (v0.43)", "[client][menu][options]"
   CHECK(o.screen == "local");
   REQUIRE(parse({"--screen", "paused"}, o, error));  // v0.46
   CHECK(o.screen == "paused");
+  for (const char* s : {"howto", "powerups", "local-settings", "paused-settings", "match"}) {
+    REQUIRE(parse({"--screen", s}, o, error));
+    CHECK(o.screen == s);
+  }
   client::ClientOptions bad;
   CHECK_FALSE(parse({"--screen", "credits"}, bad, error));
   CHECK(error.find("--screen") != std::string::npos);
@@ -255,20 +312,25 @@ TEST_CASE("--window sets the native window's size (v0.94)", "[client][options]")
 }
 
 TEST_CASE("pause menu: the local and online buttons, focus on Resume (v0.46)", "[client][menu]") {
+  using client::PauseContext;
   client::PauseMenu m;
   CHECK_FALSE(m.isOpen());
-  m.open(false);
+  m.open(PauseContext{.online = false});
   REQUIRE(m.isOpen());
   CHECK_FALSE(m.online());
-  REQUIRE(m.items().size() == 4);
+  // v0.97: Settings and Restart match join.
+  REQUIRE(m.items().size() == 6);
   CHECK(m.items()[0] == PauseItem::Resume);
-  CHECK(m.items()[1] == PauseItem::HowToPlay);  // v0.94
-  CHECK(m.items()[2] == PauseItem::BackToLobby);
-  CHECK(m.items()[3] == PauseItem::MainMenu);
+  CHECK(m.items()[1] == PauseItem::Settings);
+  CHECK(m.items()[2] == PauseItem::HowToPlay);  // v0.94
+  CHECK(m.items()[3] == PauseItem::Restart);
+  CHECK(m.items()[4] == PauseItem::BackToLobby);
+  CHECK(m.items()[5] == PauseItem::MainMenu);
+  CHECK(std::string(client::PauseMenu::label(PauseItem::Settings)) == "Settings");
+  CHECK(std::string(client::PauseMenu::label(PauseItem::Restart)) == "Restart match");
   CHECK(m.focusedItem() == PauseItem::Resume);
-  m.apply(MenuAction::Down);
-  m.apply(MenuAction::Down);
-  m.apply(MenuAction::Down);
+  for (int i = 0; i < 5; ++i)
+    m.apply(MenuAction::Down);
   CHECK(m.focusedItem() == PauseItem::MainMenu);
   m.apply(MenuAction::Down);  // wraps
   CHECK(m.focusedItem() == PauseItem::Resume);
@@ -276,21 +338,102 @@ TEST_CASE("pause menu: the local and online buttons, focus on Resume (v0.46)", "
   CHECK(m.focusedItem() == PauseItem::MainMenu);
   CHECK(std::string(client::PauseMenu::label(PauseItem::BackToLobby)) == "Back to lobby");
 
-  // Reopened online: three buttons, the focus back on Resume (clamped from 3).
+  // Reopened online: four buttons, the focus back on Resume (clamped from 5).
   m.close();
   CHECK_FALSE(m.isOpen());
-  m.open(true);
+  m.open(PauseContext{.online = true});
   CHECK(m.online());
-  REQUIRE(m.items().size() == 3);
+  REQUIRE(m.items().size() == 4);
   CHECK(m.items()[0] == PauseItem::Resume);
-  CHECK(m.items()[1] == PauseItem::HowToPlay);
-  CHECK(m.items()[2] == PauseItem::LeaveRoom);
+  CHECK(m.items()[1] == PauseItem::Settings);
+  CHECK(m.items()[2] == PauseItem::HowToPlay);
+  CHECK(m.items()[3] == PauseItem::LeaveRoom);
   CHECK(m.focusedItem() == PauseItem::Resume);
-  m.setFocus(2);
+  CHECK(m.context().online);
+  m.setFocus(3);
   CHECK(m.focusedItem() == PauseItem::LeaveRoom);
-  m.setFocus(3);  // out of range: ignored
+  m.setFocus(4);  // out of range: ignored
   CHECK(m.focusedItem() == PauseItem::LeaveRoom);
   CHECK(std::string(client::PauseMenu::label(PauseItem::LeaveRoom)) == "Leave room");
+}
+
+TEST_CASE("pause menu: the online host's Restart and End match, live (v0.97)", "[client][menu]") {
+  using client::PauseContext;
+  const PauseContext guest{.online = true};
+  const PauseContext host{.online = true, .canRestart = true, .canEnd = true};
+  const auto list = [](PauseContext c) {
+    const client::PauseItems items = client::pauseItems(c);
+    return std::vector<PauseItem>(items.view().begin(), items.view().end());
+  };
+  CHECK(list(guest) == std::vector<PauseItem>{PauseItem::Resume, PauseItem::Settings,
+                                              PauseItem::HowToPlay, PauseItem::LeaveRoom});
+  CHECK(list(host) == std::vector<PauseItem>{PauseItem::Resume, PauseItem::Settings,
+                                             PauseItem::HowToPlay, PauseItem::Restart,
+                                             PauseItem::EndMatch, PauseItem::LeaveRoom});
+  CHECK(std::string(client::PauseMenu::label(PauseItem::EndMatch)) == "End match");
+
+  client::PauseMenu m;
+  m.open(host);
+  m.setFocus(5);
+  REQUIRE(m.focusedItem() == PauseItem::LeaveRoom);
+  SECTION("the host leaves while the menu is open: the items go, the focus stays put") {
+    m.setContext(guest);
+    CHECK(m.items().size() == 4);
+    CHECK(m.focusedItem() == PauseItem::LeaveRoom);
+    // ... and come back when the role does.
+    m.setContext(host);
+    CHECK(m.items().size() == 6);
+    CHECK(m.focusedItem() == PauseItem::LeaveRoom);
+  }
+  SECTION("a focused host item that goes away leaves the focus in range") {
+    m.setFocus(4);
+    REQUIRE(m.focusedItem() == PauseItem::EndMatch);
+    m.setContext(guest);
+    CHECK(m.focus() < m.items().size());
+    // At Over only Restart is left (End match needs a running match).
+    m.setContext(PauseContext{.online = true, .canRestart = true});
+    CHECK(list(m.context()) == std::vector<PauseItem>{PauseItem::Resume, PauseItem::Settings,
+                                                      PauseItem::HowToPlay, PauseItem::Restart,
+                                                      PauseItem::LeaveRoom});
+  }
+}
+
+TEST_CASE("pause menu: online Restart and End match ask again first (v0.97)", "[client][menu]") {
+  client::PauseMenu m;
+  m.open(client::PauseContext{.online = true, .canRestart = true, .canEnd = true});
+  m.setFocus(4);
+  REQUIRE(m.focusedItem() == PauseItem::EndMatch);
+  CHECK(m.needsConfirm(PauseItem::EndMatch));
+  CHECK(m.needsConfirm(PauseItem::Restart));
+  CHECK_FALSE(m.needsConfirm(PauseItem::LeaveRoom));
+  CHECK_FALSE(m.needsConfirm(PauseItem::Resume));
+  // The first press arms it and says so; the second acts.
+  CHECK_FALSE(m.pick(PauseItem::EndMatch).has_value());
+  CHECK(m.armed() == PauseItem::EndMatch);
+  CHECK(std::string(m.buttonLabel(PauseItem::EndMatch)) == "Yes, end for everyone");
+  CHECK(std::string(m.buttonLabel(PauseItem::Restart)) == "Restart match");
+  CHECK(m.pick(PauseItem::EndMatch) == PauseItem::EndMatch);
+  CHECK_FALSE(m.armed().has_value());
+  // Anything else cancels: another item, a move, the role going away, closing.
+  CHECK_FALSE(m.pick(PauseItem::Restart).has_value());
+  CHECK(std::string(m.buttonLabel(PauseItem::Restart)) == "Yes, restart for all");
+  CHECK_FALSE(m.pick(PauseItem::EndMatch).has_value());  // re-armed on End match instead
+  CHECK(m.armed() == PauseItem::EndMatch);
+  m.apply(MenuAction::Down);
+  CHECK_FALSE(m.armed().has_value());
+  (void)m.pick(PauseItem::Restart);
+  m.setContext(client::PauseContext{.online = true});
+  CHECK_FALSE(m.armed().has_value());
+  m.setContext(client::PauseContext{.online = true, .canRestart = true, .canEnd = true});
+  (void)m.pick(PauseItem::Restart);
+  m.close();
+  CHECK_FALSE(m.armed().has_value());
+  // Resume and the others never ask; locally nothing does.
+  m.open(client::PauseContext{.online = true, .canRestart = true, .canEnd = true});
+  CHECK(m.pick(PauseItem::LeaveRoom) == PauseItem::LeaveRoom);
+  m.open(client::PauseContext{.online = false, .canRestart = true});
+  CHECK(m.pick(PauseItem::Restart) == PauseItem::Restart);
+  CHECK(m.pick(PauseItem::BackToLobby) == PauseItem::BackToLobby);
 }
 
 TEST_CASE("pause menu: what opens it, what resumes, what picks (v0.46)", "[client][menu][input]") {
@@ -323,7 +466,7 @@ TEST_CASE("pause menu: what opens it, what resumes, what picks (v0.46)", "[clien
   client::PauseMenu m;
   CHECK_FALSE(m.press(keyDown(Key::Enter)));  // closed: nothing
   for (const bool online : {false, true}) {
-    m.open(online);
+    m.open(client::PauseContext{.online = online});
     m.apply(MenuAction::Down);  // off Resume
     REQUIRE(m.focusedItem() != PauseItem::Resume);
     // Every resume path, whatever the focus.
@@ -348,8 +491,8 @@ TEST_CASE("pause menu: what opens it, what resumes, what picks (v0.46)", "[clien
 
   // v0.94: How to play shows the controls in the menu's place; every back
   // or pick press then closes the card (HowToPlay), never resumes.
-  m.open(false);
-  m.setFocus(1);
+  m.open(client::PauseContext{});
+  m.setFocus(2);
   REQUIRE(m.press(keyDown(Key::Enter)) == PauseItem::HowToPlay);
   m.setHelp(true);
   CHECK(m.helpOpen());

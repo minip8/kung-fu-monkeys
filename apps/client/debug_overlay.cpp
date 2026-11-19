@@ -72,6 +72,8 @@ constexpr float kDebugFontSize = 13.0f;
       return "Sinking";
     case sim::BoomerangPhase::Recalled:  // v0.89
       return "Recalled";
+    case sim::BoomerangPhase::Gliding:  // v0.95
+      return "Gliding";
   }
   return "?";
 }
@@ -363,6 +365,14 @@ void tuningSection(MatchSession& s, std::string& printed) {
   sliderU16("arc return ticks", c.boomerang.arcReturnTicks, 1, 240);
   sliderU16("arc turn rate (BAM/tick)", c.boomerang.arcTurnRateBam, 0, 4096);
   sliderU16("arc bounce ticks", c.boomerang.arcBounceTicks, 0, 60);
+  // v0.95: the glide after a miss and the bounds on the speed home (max 0: no cap).
+  sliderU16("arc glide ticks", c.boomerang.arcGlideTicks, 0, 60);
+  sliderPerSecond("arc return min speed", c.boomerang.arcReturnMinSpeed, 0.0f, 60.0f);
+  sliderPerSecond("arc return max speed", c.boomerang.arcReturnMaxSpeed, 0.0f, 60.0f);
+  if (c.boomerang.arcReturnMaxSpeed > Fixed{}) {
+    c.boomerang.arcReturnMaxSpeed =
+        std::max(c.boomerang.arcReturnMaxSpeed, c.boomerang.arcReturnMinSpeed);
+  }
 
   ImGui::SeparatorText("Player");
   sliderPerSecond("move speed", c.player.moveSpeed, 2.0f, 20.0f);

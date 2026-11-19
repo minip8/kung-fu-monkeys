@@ -68,6 +68,17 @@ constexpr uint64_t kNsPerSecond = 1'000'000'000ull;
   return "unknown";
 }
 
+// v0.96: a RoomCommand as the log shows it.
+[[nodiscard]] const char* roomCommandName(net::RoomCommand command) {
+  switch (command) {
+    case net::RoomCommand::EndMatch:
+      return "end-match";
+    case net::RoomCommand::Restart:
+      return "restart";
+  }
+  return "unknown";
+}
+
 // v0.92: what the server saw when a peer left.
 [[nodiscard]] const char* leaveCauseName(net::LeaveCause cause) {
   switch (cause) {
@@ -607,6 +618,29 @@ void ServerHost::startRoomMatch() {
   log("room start seed=0x{:x} {}", c.seed, roomText());
 }
 
+void ServerHost::endRoomMatch() {
+  // As Over → Waiting, from a running match: no tick runs from here on, so
+  // its bots go, a bot yield waiting for a tick is moot and a reservation
+  // is freed now (no tick would expire it).
+  removeRoomBots();
+  yieldedAt_.reset();
+  server_->releaseReservations();
+  log("room match ended by the host at tick {}: waiting {}", server_->nextTick().value, roomText());
+}
+
+void ServerHost::restartRoomMatch() {
+  // A fresh match with the room's settings, as Start does from Waiting: the
+  // bots are placed again (a yielded one comes back when there is room), a
+  // queued joiner gets the slots its bot gave up first (the new world has
+  // never seen that bot, so no tick needs to separate the two), and
+  // reservations of the running match keep their grace.
+  removeRoomBots();
+  yieldedAt_.reset();
+  while (serveQueue(false, false)) {
+  }
+  startRoomMatch();
+}
+
 void ServerHost::updateRoom() {
   // Outside a match nobody waits to reconnect: a leaver's slot is free.
   if (!room_->playing()) server_->releaseReservations();
@@ -614,16 +648,18 @@ void ServerHost::updateRoom() {
     net::ServerEventKind kind;
     sim::PlayerMask slots;
     net::RoomSettings settings;
+    uint8_t command;  // RoomCommandRequested: the net::RoomCommand
   };
   std::vector<Request> requests;
   for (const net::ServerEvent& e : server_->events()) {
     if (e.kind == net::ServerEventKind::RoomSettingsRequested ||
-        e.kind == net::ServerEventKind::StartRequested) {
+        e.kind == net::ServerEventKind::StartRequested ||
+        e.kind == net::ServerEventKind::RoomCommandRequested) {
       const sim::PlayerMask slots =
           server_->peerInfo(e.peer)
               .transform([](const net::ServerPeerInfo& p) { return p.slots; })
               .value_or(sim::PlayerMask{0});
-      requests.push_back(Request{e.kind, slots, e.settings});
+      requests.push_back(Request{e.kind, slots, e.settings, e.reason});
     }
   }
   const net::RoomPhase before = room_->phase();
@@ -636,6 +672,23 @@ void ServerHost::updateRoom() {
     if (q.kind == net::ServerEventKind::RoomSettingsRequested) {
       const bool ok = room_->requestSettings(q.slots, q.settings);
       log("room settings {} {}", ok ? "applied" : "refused", roomText());
+      dirty = true;  // answered with the state either way
+      continue;
+    }
+    if (q.kind == net::ServerEventKind::RoomCommandRequested) {
+      // v0.96: NetServer decoded it, so the value is a RoomCommand.
+      const auto command = static_cast<net::RoomCommand>(q.command);
+      switch (room_->requestCommand(q.slots, command)) {
+        case Room::CommandResult::Ignored:
+          log("room {} refused {}", roomCommandName(command), roomText());
+          break;
+        case Room::CommandResult::EndMatch:
+          endRoomMatch();
+          break;
+        case Room::CommandResult::Restart:
+          restartRoomMatch();
+          break;
+      }
       dirty = true;  // answered with the state either way
       continue;
     }
@@ -717,6 +770,12 @@ void ServerHost::logServerEvents() {
           log("{} peer={} slots={}",
               e.kind == net::ServerEventKind::StartRequested ? "start request" : "settings request",
               peer, slotList(e.slots));
+        }
+        break;
+      case net::ServerEventKind::RoomCommandRequested:
+        if (config_.verbose) {
+          log("{} request peer={} slots={}",
+              roomCommandName(static_cast<net::RoomCommand>(e.reason)), peer, slotList(e.slots));
         }
         break;
     }

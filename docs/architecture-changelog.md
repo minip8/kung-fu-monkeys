@@ -2037,3 +2037,184 @@ reconnect states v0.92 adds draw through the same status screen. Verified: clien
 (the new `content_labels_test.cpp`; the menus, room and lobby tests updated), off-screen renders
 of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
 unchanged.
+
+v0.95 changes: the arc's way home (§5.6, §5.7, §7). The owner's playtest: "the boomerang drops
+too fast now"; asked what that meant, they chose "it gives up too easily on the way home. It
+should home on a moving thrower much better, return for longer, and glide on past you for a
+moment instead of dropping dead the instant it misses. Still no endless circling." v0.89's arc
+steered 96 BAM a tick and dropped the instant its velocity pointed away from its thrower, it
+touched a wall on the way home or it had returned 60 ticks: on an open floor it caught 4 of 16
+full-speed walks (tap and full charge, eight directions) and missed every dash. Now: it steers
+`arc_turn_rate_bam` = 384 (2.1°) a tick for up to `arc_return_ticks` = 84; its top speed home
+is `arc_return_speed × speedMul` held within two new keys, `arc_return_min_speed` = 18 and
+`arc_return_max_speed` = 24 u/s (a tap's ×0.6 would come home at 12, slower than a walk's 7
+plus the gap; a full charge's ×1.5 at 30 ran down a thrower who kept dashing away), so the
+charge no longer leaves the time in the air unchanged (a standing tap 65 ticks, a full charge
+80). Where it dropped it now glides: a new banana phase, `BoomerangPhase::Gliding` (5,
+appended), entered when it passes its thrower, runs out of homing time or meets a wall (it
+bounces off the wall first: one bounce home, then the glide, never a rattle); it flies straight
+on, never steering (at most one pass, no orbit), its n-th tick keeping `(G − n)/(G − n + 1)` of
+the last tick's velocity, so it slows evenly from its speed to rest over `arc_glide_ticks` = 24
+(a pass at 20 u/s glides about 4 units), and lands as a pickup its thrower may recall; a bounce
+while gliding costs `arc_bounce_ticks`. To the rules it is a returning banana (in
+`kPhaseInFlight` and `kPhaseReturning` wherever Returning is; a test pins it): it hits, is
+perfect-caught, parried, slammed and blocked, and its thrower catches it by touching it.
+Worst case in the air: `arc_outbound_ticks + arc_return_ticks + 1 + arc_glide_ticks` = 145
+ticks (2.4 s). Measured on an open floor (`banana_homing_scenario.cpp`, its hidden `[measure]`
+case; the §5.7 table): standing, a tap 65 ticks, a full charge 80; every full-speed walk caught,
+the slowest walking straight away (106 and 113 ticks), each at least 7 ticks before the homing
+ends; one dash back and walking on, caught (123, 124, in the glide); dashing back whenever the
+dash is ready, both lost, down at 144 ticks; dashing sideways whenever ready, caught; a late
+sidestep (a dash at 3 units) makes a tap pass and glide (down at 107), a full charge too fast to
+dodge that late. New content keys in `content/boomerang.toml` and `defaultContent()`, `visit()`
+(`BoomerangDef` 17 → 20 fields), the hash test, the loader (max at least min when set) and the
+F1 tuning core's `contentToCpp`; the F1 overlay names the phase and has the three sliders (a set
+max speed is held at or above the min, as the loader asks), and How to play's Recall row and
+miss tip say "one by one" and "glides on". Presentation draws a glide as a returning banana
+coming down evenly from the height it had to the pickup's (`BananaTrack::glideFromArc`). Bots:
+Observation v2 unchanged; a gliding banana reads as Returning with its `ticksInPhase` counting the glide,
+`bananaMaxReturnTicks` is the homing budget (`docs/bot-abi.md` §2.5, §2.8); the reference bot
+is unchanged (its flight prediction was already an approximation in an arc mode). Considered and
+not taken: steering at a lead point ahead of a moving thrower (pure pursuit at 384 BAM already
+catches every walk); dropping at the timeout rather than gliding (it would still drop dead in
+the air, the owner's complaint); sliding along a wall on the way home (it sticks there, homing,
+for the rest of its time); a charge-independent return speed (a min and a max keep the power-ups'
+and the charge's effect inside a band). Tests: `banana_homing_scenario.cpp` (the walks, the
+dashes, the glide, a gliding banana caught, hitting and dash-caught, the wall, a 50-throw
+bounded-air sweep in a small room with a pillar), the arc scenario's numbers, the mask pin, the
+observation, the presentation's glide height; `kfm_arena`'s "reference bots finish a match"
+moves to seed 4 (seed 2's match no longer had both slots lose a round). Replay checksums:
+changed, corpus regenerated because every arc mode's banana homes, glides and lands differently;
+the grid, contest and control entries (`scripted_*grid_rounds*`, `scripted_10p_contest*`,
+`scripted_10p_control_1t_1800t`) and the empty ones keep every per-tick checksum, only their
+content hash moved; `scripted_4p_recall_1800t` takes input seed 0x5C1284 (with 0x5C1265 more
+bananas come home in flight and a single pull, let go, was left).
+The recall chain (§5.5, §5.6, §5.7; the owner chose "keep pulling, one by one"). With an ammo
+power-up a monkey can have three bananas on the floor, but the pull stopped once the first landed
+in the hand, the button still held, and the others needed another throw first. Now a pull that
+reaches the hand while the button is still held lifts the next nearest at once, and so on until
+the hand is full (`Stats::ammoMax`, not the def's) or none of its bananas is left on the floor;
+letting go drops the one in flight, as before. Starting still needs an empty hand (a press with a
+banana throws or charges as ever), one banana per puller is in the air, and no throw starts until
+the next press. Mechanism: no new state; the catch rows that put the monkey's own `Recalled`
+banana in its hand (11 and 40) call `continueRecall`, which lifts the next (`liftNearest`, shared
+with `throwOnIdleHold`) while `heldRecallDef` holds and the hand has room, so the chain is carried
+by the pull in flight and ends with a released button, a full hand or an empty floor. The edges,
+each a scenario (`recall_chain_scenario.cpp`): three out and held, all three home nearest first,
+each starting on the tick the one before is caught; let go mid-chain, the one in flight drops and
+a new hold with a banana charges a throw; a full hand stops it with the rest on the floor; a stack
+of three comes home one at a time; a hand filled underfoot mid-pull ends the chain and the arriving
+pull drops at the catch point (no banana lost); the ammo power-up running out mid-chain ends it
+the same way; a fall drops the pull in flight; Fast Hands' throw chains. Considered and not
+taken: pulling every own banana at once (still one at a time, so the pull stays an aimed reach);
+a chain marker on the monkey (a `Player` field: the pull in flight already says it); continuing
+from `throwOnIdleHold` on any held Idle slot with room (it would turn a press lost to the
+cooldown with a banana in the hand into a pull). The scripted generator still holds Throw only
+with an empty hand, so no corpus entry chains (the first catch releases); the reference bot does
+not recall. Replay checksums: unchanged by the chain (the corpus regenerated byte for byte).
+
+v0.96 changes: host controls for a running online match (§6.3 protocol version 9, §6.6 the
+online room, "M6b design"), from the owner's playtest note: "host should have more options mid
+game to do stuff, e.g. (start/end the game, go back to lobby, etc...)". Until now a Playing
+room gave its host nothing but Leave. Protocol version 9 adds one reliable client-to-server
+message, `RoomCommand` (the type byte and a command u8, 2 B), whose kinds are `EndMatch` and
+`Restart`; `Start` is unchanged. Policy stays in `Room` (`requestCommand()`, returning
+`CommandResult` beside `requestStart()`), `ServerHost` carries it out and `NetServer` only
+reports `ServerEventKind::RoomCommandRequested` with the kind (one more message on the room's
+token bucket). `EndMatch` (Playing only) stops the match where it is: Waiting with the settings
+and roster kept, the bots removed, a pending bot yield dropped and reservations released at
+once, as in any Waiting; a queued joiner then gets a slot from the free ones. `Restart`
+(Playing or Over) removes the bots, seats a queued joiner first, places the bots again and
+restarts the match at the next tick as Start does: in Playing the clients never hold (they take
+the `MatchConfig` and the start tick's snapshot as in the M3 back-to-back restart), at Over it
+is the match-over screen's real "Play again" beside Start's "Back to lobby". A non-host's
+command, `EndMatch` in Waiting or Over and `Restart` in Waiting are ignored and answered with
+the `RoomState`. Clients needed no change to stop and hold on a mid-match Waiting (the hold
+path of v0.42 covers players, spectators, queued joiners and a client mid-rollback); they gain
+`NetClient::sendEndMatch()`/`sendRestart()` and `roomEndedByHost()` (a Playing → Waiting
+`RoomState` with a human in the room: the only other way back from Playing is the room
+emptying), and `NetSession` gains `endMatch()`, `restartMatch()`, `canEndMatch()`,
+`canRestartMatch()` and `matchEndedByHost()` for the pause menu, which a later change wires.
+Considered and not taken: overloading `Start` with a phase-dependent meaning mid-match (one
+message already means two things; a third would make a stray press end a match); a reason
+field in `RoomState` for "ended by the host" (the inference is exact today and costs no
+layout change; a later reason can still be appended); a pause command (one player cannot
+pause a server match, v0.46); keeping the bots across a restart (re-placing them is Start's
+rule, so a yielded bot comes back when there is room, and a queued joiner is seated); keeping
+a reconnect reservation across an end (no tick runs to expire it, the v0.42 rule). The lobby
+protocol is unaffected. Verified: `Room` unit tests for every command in every phase;
+`room_flow_test.cpp` over the loopback with real `NetClient`s (an end mid-match with a
+spectator, a queued joiner and a lost link around, then a second match without desync; a
+restart mid-match and at Over; a restart that seats a queued joiner); the message round-trip,
+range and fuzz tests; `NetServer`'s event, rate-limit and malformed-message test; a
+`NetSession` test of the senders, the availability and the hold mid-match. No sim or content
+change. Replay checksums: unchanged.
+
+v0.97 changes: the game-setup revamp (§7, the front end), from a playtest after v0.94: "the ui
+needs polishing, and is still pretty unintuitive to use ... changing options suddenly introduces
+new options ... add preset defaults for like specific gamemodes ... settings such as volume,
+sound, etc. should be separated from game selection", "settings should be accessible mid game",
+"default sound should be quieter". Quieter sound: the default master volume falls from 80 % to
+40 % (`presentation::kDefaultMasterVolume` 0.4, `client::kDefaultVolume`; a linear gain, so
+6 dB down); the settings text goes to `settings_version=3`, and an older text's `volume=80`
+(saved by every install whether chosen or not) reads as 40 once, the v0.93 `theme=auto`
+precedent, so a later deliberate 80 is kept. Presets (`core/presets`): ten named matches, one
+per mode a human lobby offers, each with an arena made for it, defined by content names in a
+client table and resolved against the loaded content (content hash unchanged), the active one
+derived by comparing settings (no new persisted key); a unit test resolves every preset against
+the shipped content to a compatible pair and checks that the table covers every human mode.
+The audit of the local lobby (1280×720 and 700 px) behind the panel: one list of arrow rows
+(Arena, Mode, Loadout, a "Power-ups in this arena" block, Bots, Bot difficulty, Volume, Sound,
+Arena theme); changing the arena added or removed up to six power-up toggles and moved every row
+under them, changing the mode could move the arena without a word, a grid mode's Loadout row
+changed a kit no one played (the roles hand kits out), it offered the grid's role kits in every
+mode, and Volume, Sound, Bot difficulty and the theme were in both the lobby and Settings. The
+panel is now seven fixed rows (Game, Mode, Arena, Kit, Power-ups, Bots, Bot difficulty), a row
+that does not apply stays greyed with its reason, the power-ups are one row (All / None /
+"3 of 5") with a picker over the panel for the rest, and a line under the rows says what a
+change forced and why. A first run (nothing saved, no match flag) opens on Classic with three
+bots beside the keyboard player. Settings: Name, Volume, Sound, Arena theme and Mouse aim only
+(Bot difficulty moved to the setup panel, Volume, Sound and the theme left it), as an overlay
+(a modal card over the screen that opened it, `ui::beginOverlay`) reachable from the main menu,
+the local lobby and the waiting room (a Settings button, Tab or a pad's View) and mid-game from
+the pause menu, local and online; closing it returns there, a change applies at once and is
+saved. The pause menu: Resume, Settings, How to play, Restart match, Back to lobby, Main menu
+locally; Resume, Settings, How to play, Leave room online, built by `pauseItems(PauseContext)`
+so the online host's End match and Restart match can join once `NetSession` asks the server for
+them. Considered and not taken: presets in `content/*.toml` (they would move the content hash
+and the replay corpus for a front-end choice); a persisted preset key (the active preset is
+derived, so a saved text from before stays valid and a preset is never out of step with the
+settings); keeping per-power-up toggles in the panel as a grid (still a variable count per
+arena: the picker keeps the panel fixed); hiding rows that do not apply (the complaint itself:
+greyed rows with a reason keep every control where it was); stepping onto a greyed row with
+Up/Down (nothing to do there, the reason is in its value); a separate Settings screen per
+context (one overlay, one model). Verified: client unit tests (`presets_test.cpp`, the setup
+panel's fixed rows, greying, presets, the notice and the picker in `lobby_test.cpp`, Settings
+and the pause menu in `menus_test.cpp`, the volume migration), clang-format 23.1.3 and
+clang-tidy 23.1.4 on every touched file, off-screen renders (`SDL_VIDEODRIVER=offscreen`) at
+1280×720 and 700 px of the main menu, Settings over the menu, the lobby and the pause menu, the
+local lobby on several presets, the power-up picker, the local pause menu, and against a local
+`kfm_server` (and the lobby service for a room code) the host's and a guest's waiting room,
+Settings over it, the online pause menu and Settings over it. Not looked at: the browser build,
+and anything that needs a key press (keyboard-mode highlights, the picker in a room). That part
+changes no sim, content or wire. Then the host's controls, on v0.96's `RoomCommand` (the UI
+drives it; no message is added): the online pause menu gives the host Restart match and End
+match before Leave room, following `canRestartMatch()` / `canEndMatch()` every frame so a host
+change while it is open adds or removes them; both stop everyone's game, so the first press arms
+the button ("Yes, end for everyone") and a second acts, anything else cancels (local Restart and
+Back to lobby stay one press: the couch's own match). The online match-over screen gives the
+host Play again (`restartMatch()`, a fresh match at once; it was `start()`, which only went back
+to the room) and Back to lobby (`start()`), as the local screen, then Leave room; a guest sees
+"Mango chooses: play again or back to the room". A waiting room the host ended says so to
+everyone. A mid-match restart closes the pause menu. A room this client created opens on its own
+setup (`createdRoomSetup`, sent once by the host through `sendSettings()`, never by a guest or a
+`--connect` client, a refusal kept), so a first-run room is Classic, not Custom. Considered and
+not taken: a two-button confirm row (the armed button keeps the list's shape and needs nothing
+new from a pad); confirming the local Restart (one press undoes nothing anyone else cared
+about). Verified: `menus_test.cpp` (the host's and a guest's lists, the list following a role
+change, the confirmation), `hud_view_test.cpp` (the match-over buttons), `lobby_test.cpp`
+(`createdRoomSetup`); off-screen renders against `kfm_server` and the lobby service of a fresh
+room (Classic), the host's online pause menu and the host's and a guest's match-over screens.
+Not looked at: the armed confirmation and the "ended the match" line on screen (they need a
+press), the host role moving while the menu is open (tested headless only). No sim or content
+change. Replay checksums: unchanged.

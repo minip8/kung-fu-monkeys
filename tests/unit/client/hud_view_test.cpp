@@ -212,20 +212,23 @@ TEST_CASE("match over: typed buttons locally and in an online room", "[client][h
   const HudView online = threeSlots(true);
   const client::MatchOverView host =
       client::roomMatchOverView(online, matchEnded(0), true, "Bonobo 42");
-  CHECK(host.actions ==
-        std::vector<MatchOverAction>{MatchOverAction::PlayAgain, MatchOverAction::Leave});
+  // v0.97: the host's two are the local screen's, in the same order (Play
+  // again leads), then Leave room.
+  CHECK(host.actions == std::vector<MatchOverAction>{MatchOverAction::PlayAgain,
+                                                     MatchOverAction::BackToLobby,
+                                                     MatchOverAction::Leave});
   CHECK(host.waiting.empty());
   const client::MatchOverView guest =
       client::roomMatchOverView(online, matchEnded(0), false, "Bonobo 42");
   CHECK(guest.actions == std::vector<MatchOverAction>{MatchOverAction::Leave});
   CHECK(guest.actionAt(0) == MatchOverAction::Leave);
-  CHECK(guest.waiting == "Waiting for Bonobo 42 to play again");
+  CHECK(guest.waiting == "Bonobo 42 chooses: play again or back to the room");
   CHECK(client::roomMatchOverView(online, matchEnded(0), false, "").waiting ==
-        "Waiting for the host to play again");
+        "The host chooses: play again or back to the room");
 
   CHECK(std::string(client::matchOverLabel(MatchOverAction::PlayAgain)) == "Play again");
   CHECK(std::string(client::matchOverLabel(MatchOverAction::BackToLobby)) == "Back to lobby");
-  CHECK(std::string(client::matchOverLabel(MatchOverAction::Leave)) == "Leave");
+  CHECK(std::string(client::matchOverLabel(MatchOverAction::Leave)) == "Leave room");
 }
 
 TEST_CASE("lost connection: Reconnect and Leave only while the session can reconnect",
