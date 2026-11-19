@@ -8,6 +8,7 @@
 #include <cfloat>
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 
 namespace kfm::client::assets {
 // The embedded fonts (generated from assets/fonts/ by cmake/EmbedFile.cmake).
@@ -262,6 +263,81 @@ void menuBackdrop() {
   const ImU32 top = withAlpha(kGround, 150);
   const ImU32 bottom = kWash;
   dl->AddRectFilledMultiColor(ImVec2(0.0f, 0.0f), view, top, top, bottom, bottom);
+}
+
+namespace {
+constexpr ImGuiWindowFlags kOverlayFlags =
+    ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground;
+// The overlays seen this frame and the ones open in ImGui: an overlay open
+// but not drawn this frame is closed by finishOverlays() (a modal ImGui
+// keeps open blocks every window under it).
+constexpr std::size_t kMaxOverlays = 4;
+std::array<const char*, kMaxOverlays> gOverlayIds{};
+std::array<bool, kMaxOverlays> gOverlayDrawn{};
+
+void noteOverlay(const char* id) {
+  for (std::size_t i = 0; i < kMaxOverlays; ++i) {
+    if (gOverlayIds[i] == nullptr || std::strcmp(gOverlayIds[i], id) == 0) {
+      gOverlayIds[i] = id;
+      gOverlayDrawn[i] = true;
+      return;
+    }
+  }
+}
+}  // namespace
+
+bool beginOverlay(const char* id, float width) {
+  noteOverlay(id);
+  if (!ImGui::IsPopupOpen(id)) ImGui::OpenPopup(id);
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  constexpr float kMargin = 12.0f;
+  ImGui::SetNextWindowPos(ImVec2(view.x * 0.5f, (view.y - kPanelDrop) * 0.5f), ImGuiCond_Always,
+                          ImVec2(0.5f, 0.5f));
+  ImGui::SetNextWindowSize(ImVec2(std::min(width, view.x - (2.0f * kMargin)), 0.0f),
+                           ImGuiCond_Always);
+  ImGui::SetNextWindowSizeConstraints(
+      ImVec2(0.0f, 0.0f),
+      ImVec2(FLT_MAX, std::max(120.0f, view.y - (2.0f * kMargin) - kPanelDrop)));
+  ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, vec4(kScrim));
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, kPanelRounding);
+  const bool narrow = view.x < 760.0f;
+  if (narrow) ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(18.0f, 16.0f));
+  const bool open = ImGui::BeginPopupModal(id, nullptr, kOverlayFlags);
+  ImGui::PopStyleVar(narrow ? 3 : 2);
+  ImGui::PopStyleColor();
+  if (!open) return false;
+  // The card on the window's own list, under its items (the background list
+  // would put it under the screen behind); its shadow reaches past the window.
+  const ImVec2 pos = ImGui::GetWindowPos();
+  const ImVec2 size = ImGui::GetWindowSize();
+  ImDrawList* dl = ImGui::GetWindowDrawList();
+  dl->PushClipRectFullScreen();
+  card(dl, pos, ImVec2(pos.x + size.x, pos.y + size.y), kPanelBg, kPanelRounding);
+  dl->PopClipRect();
+  return true;
+}
+
+void endOverlay() {
+  ImGui::EndPopup();
+}
+
+void finishOverlays() {
+  for (std::size_t i = 0; i < kMaxOverlays; ++i) {
+    const char* id = gOverlayIds[i];
+    if (id == nullptr) continue;
+    if (!gOverlayDrawn[i] && ImGui::IsPopupOpen(id)) {
+      // Submitted once more, empty and without the dim, to close it.
+      ImGui::PushStyleColor(ImGuiCol_ModalWindowDimBg, vec4(kTransparent));
+      if (ImGui::BeginPopupModal(id, nullptr, kOverlayFlags)) {
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+      }
+      ImGui::PopStyleColor();
+    }
+    gOverlayDrawn[i] = false;
+  }
 }
 
 void heading(const char* text, ImU32 color, float size) {

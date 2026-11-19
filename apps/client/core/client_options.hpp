@@ -79,7 +79,7 @@ inline constexpr const char* kUsage =
     "                  [--connect ws://host:port [--token T] [--spectate] [--stun URL]\n"
     "                   [--players N]]\n"
     "                  [--lobby URL] [--room CODE | --create [--region R]] [--nick NAME]\n"
-    "                  [--screen menu|settings|online|local|paused|howto] [--replay SRC]\n"
+    "                  [--screen S] [--replay SRC]\n"
     "  --autostart            skip the lobby: start the match on the first frame\n"
     "  --bots N               bots filling the slots after the local players (0-9)\n"
     "  --seed S               world seed (MatchConfig::seed)\n"
@@ -137,8 +137,9 @@ inline constexpr const char* kUsage =
     "                         random monkey name picked once)\n"
     "  --screen S             open on this screen instead of the main menu: menu,\n"
     "                         settings, online (Play online), local (the lobby) or\n"
-    "                         paused (a local match under the pause menu) or howto\n"
-    "                         (the How to play card)\n"
+    "                         paused (a local match under the pause menu), howto\n"
+    "                         (the How to play card) or powerups (the lobby's\n"
+    "                         power-up picker)\n"
     "replays:\n"
     "  --replay SRC           watch a replay (.kfmr): a file path natively, a URL in\n"
     "                         the browser (?replay=URL); it must come from this\n"
@@ -158,6 +159,11 @@ inline constexpr uint8_t kDefaultVolume = 40;
 // volume=80 never chose it (every install saved it) and reads as
 // kDefaultVolume (applySettingsText()).
 inline constexpr uint8_t kOldDefaultVolume = 80;
+
+// --screen's values (v0.43; v0.94 howto; v0.97 powerups: the local lobby
+// under its power-up picker).
+inline constexpr std::array<std::string_view, 7> kScreens{"menu",   "settings", "online",  "local",
+                                                          "paused", "howto",    "powerups"};
 
 inline constexpr uint64_t kMinWindowSide = 320;
 inline constexpr uint64_t kMaxWindowSide = 8192;

@@ -14,7 +14,9 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <set>
@@ -25,7 +27,6 @@
 using namespace kfm;
 using client::ClientOptions;
 using client::LobbyMenu;
-using client::LobbyRow;
 using client::LobbyRowKind;
 using client::LobbySettings;
 using client::MenuAction;
@@ -52,16 +53,9 @@ const sim::ContentDB& shipped() {
   return shipped().findArena(name).value_or(0xFF);
 }
 
-[[nodiscard]] std::size_t rowOf(const LobbyMenu& m, LobbyRowKind kind, uint8_t powerUp = 0) {
-  const auto rows = m.rows();
-  std::size_t found = rows.size();
-  for (std::size_t i = 0; i < rows.size() && found == rows.size(); ++i) {
-    if (rows[i].kind == kind && (kind != LobbyRowKind::PowerUp || rows[i].powerUp == powerUp)) {
-      found = i;
-    }
-  }
-  if (found == rows.size()) FAIL("no such row");  // MSVC: no unreachable return after FAIL
-  return found;
+[[nodiscard]] std::size_t rowOf(LobbyRowKind kind) {
+  const auto rows = LobbyMenu::rows();
+  return static_cast<std::size_t>(std::ranges::find(rows, kind) - rows.begin());
 }
 
 [[nodiscard]] InputEvent key(Key k) {
@@ -96,75 +90,189 @@ const sim::ContentDB& shipped() {
 
 }  // namespace
 
-TEST_CASE("lobby menu rows follow the content", "[client][lobby]") {
+TEST_CASE("the setup panel has the same seven rows whatever the values (v0.97)",
+          "[client][lobby]") {
   const sim::ContentDB& db = shipped();
-  REQUIRE(db.arenaCount >= 2);
-  REQUIRE(db.modeCount >= 2);
-  REQUIRE(db.powerUpCount >= 2);
   LobbyMenu m;
   m.setContent(db);
-  const auto rows = m.rows();
-  // v0.34: a mode's baseline gets no toggle (the grid modes name two, v0.80
-  // the contest a third, kept by control_1t, and v0.82 the harvest contest a
-  // fourth). The rest keep their content order: the contest's _1t twins come
-  // after the first three baselines in powerups.toml.
-  std::vector<uint8_t> toggled;
-  for (uint8_t i = 0; i < db.powerUpCount; ++i) {
-    bool baseline = false;
-    for (uint8_t k = 0; k < db.modeCount; ++k)
-      baseline = baseline || db.modes[k].baseline == i;
-    if (!baseline) toggled.push_back(i);
+  const std::array<LobbyRowKind, 7> expected{
+      LobbyRowKind::Game,     LobbyRowKind::Mode, LobbyRowKind::Arena,        LobbyRowKind::Loadout,
+      LobbyRowKind::PowerUps, LobbyRowKind::Bots, LobbyRowKind::BotDifficulty};
+  const auto same = [&] {
+    const auto rows = LobbyMenu::rows();
+    REQUIRE(rows.size() == expected.size());
+    for (std::size_t i = 0; i < rows.size(); ++i)
+      CHECK(rows[i] == expected[i]);
+  };
+  same();
+  CHECK(std::string(LobbyMenu::rowLabel(LobbyRowKind::Game)) == "Game");
+  CHECK(std::string(LobbyMenu::rowLabel(LobbyRowKind::Loadout)) == "Kit");
+  CHECK(std::string(LobbyMenu::rowLabel(LobbyRowKind::PowerUps)) == "Power-ups");
+  // Every arena, every mode: the rows stay; only whether they apply changes.
+  for (uint8_t mode = 0; mode < db.modeCount; ++mode) {
+    for (uint8_t arena = 0; arena < db.arenaCount; ++arena) {
+      m.settings().mode = mode;
+      m.settings().arena = arena;
+      same();
+      const bool spawners = client::arenaPowerUps(db, db.arenas[arena]) != 0;
+      CHECK(m.rowEnabled(LobbyRowKind::PowerUps) == spawners);
+      CHECK(m.rowEnabled(LobbyRowKind::Loadout) == (db.modes[mode].roleCount == 0));
+      CHECK(m.rowEnabled(LobbyRowKind::Game));
+      CHECK(m.rowEnabled(LobbyRowKind::Mode));
+      CHECK(m.rowEnabled(LobbyRowKind::Arena));
+      CHECK(m.rowEnabled(LobbyRowKind::Bots));
+      CHECK(m.rowEnabled(LobbyRowKind::BotDifficulty));
+    }
   }
-  CHECK(db.powerUpCount - toggled.size() == 4u);
-  const auto toggles = static_cast<uint8_t>(toggled.size());
-  REQUIRE(rows.size() == 9u + toggles);
-  CHECK(rows[0].kind == LobbyRowKind::Arena);
-  CHECK(rows[1].kind == LobbyRowKind::Mode);
-  CHECK(rows[2].kind == LobbyRowKind::Teams);  // v0.32
-  CHECK(m.rowLabel(rows[2]) == "Teams");
-  CHECK(m.rowValue(rows[2]) == "free-for-all");
-  CHECK(rows[3].kind == LobbyRowKind::Loadout);
-  CHECK(m.rowLabel(rows[3]) == "Loadout");
-  CHECK(m.rowValue(rows[3]) == "Standard");  // v0.94: base, in plain words
-  for (uint8_t i = 0; i < toggles; ++i) {
-    CHECK(rows[4 + i] == LobbyRow{LobbyRowKind::PowerUp, toggled[i]});
-    CHECK(m.rowLabel(rows[4 + i]) == client::powerUpTitle(db.powerUps[toggled[i]].name.view()));
-  }
-  CHECK(rows[rows.size() - 5].kind == LobbyRowKind::Bots);
-  CHECK(rows[rows.size() - 4].kind == LobbyRowKind::BotDifficulty);
-  CHECK(m.rowLabel(rows[rows.size() - 4]) == "Bot difficulty");
-  CHECK(rows[rows.size() - 3].kind == LobbyRowKind::Volume);
-  CHECK(rows[rows.size() - 2].kind == LobbyRowKind::Mute);
-  CHECK(rows.back().kind == LobbyRowKind::Theme);  // v0.52
-  CHECK(m.rowLabel(rows.back()) == "Arena theme");
-  CHECK(m.focus() == 0);
-
-  // A menu that never saw content still has the default fixture's rows.
+  // The room's panel is the same rows: Bot difficulty greyed (the server's).
+  m.setRoomRows(true);
+  same();
+  CHECK_FALSE(m.rowEnabled(LobbyRowKind::BotDifficulty));
+  CHECK(m.rowValue(LobbyRowKind::BotDifficulty) == "Server's choice");
+  CHECK_FALSE(m.rowReason(LobbyRowKind::BotDifficulty).empty());
+  m.setRoomRows(false);
+  CHECK(m.rowEnabled(LobbyRowKind::BotDifficulty));
+  CHECK(m.rowReason(LobbyRowKind::BotDifficulty).empty());
+  // A menu that never saw content has them too.
   const LobbyMenu bare;
-  CHECK(bare.rows().size() == 9u + sim::defaultContent().powerUpCount);
+  CHECK(bare.rowEnabled(LobbyRowKind::Game));
 }
 
-TEST_CASE("lobby menu: a team mode shows its teams and keeps a suitable arena (v0.32)",
-          "[client][lobby][teams]") {
+TEST_CASE("a row that does not apply stays, greyed, says why and is skipped (v0.97)",
+          "[client][lobby]") {
   const sim::ContentDB& db = shipped();
-  const uint8_t teamRounds = db.findMode("team_rounds").value_or(0);
-  const uint8_t standoff = db.findArena("standoff").value_or(0);
-  REQUIRE(teamRounds != 0);
-  REQUIRE(standoff != 0);
   LobbyMenu m;
   m.setContent(db);
+  SECTION("an arena without power-up spawners greys Power-ups") {
+    m.settings().arena = arenaIndex("dojo");
+    REQUIRE(client::arenaPowerUps(db, db.arenaAt(m.settings().arena)) == 0);
+    CHECK_FALSE(m.rowEnabled(LobbyRowKind::PowerUps));
+    CHECK(m.rowValue(LobbyRowKind::PowerUps) == "None in this arena");
+    CHECK(m.rowReason(LobbyRowKind::PowerUps).find("no power-up spawners") != std::string::npos);
+    // Down from Kit steps over it to Bots; Up from Bots back to Kit.
+    m.setFocus(rowOf(LobbyRowKind::Loadout));
+    CHECK_FALSE(m.apply(MenuAction::Down));
+    CHECK(m.focusedRow() == LobbyRowKind::Bots);
+    CHECK_FALSE(m.apply(MenuAction::Up));
+    CHECK(m.focusedRow() == LobbyRowKind::Loadout);
+    // Left/Right on it (a click on its flat arrows) do nothing, nor the picker.
+    const LobbySettings before = m.settings();
+    CHECK_FALSE(m.change(rowOf(LobbyRowKind::PowerUps), +1));
+    m.openPicker();
+    CHECK_FALSE(m.pickerOpen());
+    CHECK(m.settings() == before);
+  }
+  SECTION("a mode that hands kits out by role greys Kit") {
+    m.settings().mode = db.findMode("grid_rounds").value_or(0);
+    m.settings().arena = arenaIndex("courtyard");
+    CHECK_FALSE(m.rowEnabled(LobbyRowKind::Loadout));
+    CHECK(m.rowValue(LobbyRowKind::Loadout) == "By role");
+    CHECK(m.rowReason(LobbyRowKind::Loadout).find("Grid Rounds") != std::string::npos);
+    CHECK_FALSE(m.change(rowOf(LobbyRowKind::Loadout), +1));
+    m.setFocus(rowOf(LobbyRowKind::Arena));
+    CHECK_FALSE(m.apply(MenuAction::Down));
+    CHECK(m.focusedRow() == LobbyRowKind::PowerUps);  // the courtyard drops Quick Hands
+  }
+  SECTION("Up from Game wraps to the last row that applies") {
+    m.setFocus(0);
+    CHECK_FALSE(m.apply(MenuAction::Up));
+    CHECK(m.focusedRow() == LobbyRowKind::BotDifficulty);
+    m.setRoomRows(true);
+    m.setFocus(0);
+    CHECK_FALSE(m.apply(MenuAction::Up));
+    CHECK(m.focusedRow() == LobbyRowKind::Bots);
+    CHECK_FALSE(m.apply(MenuAction::Down));
+    CHECK(m.focusedRow() == LobbyRowKind::Game);
+  }
+}
+
+TEST_CASE("the Game row picks presets, and says Custom once edited (v0.97)",
+          "[client][lobby][presets]") {
+  const sim::ContentDB& db = shipped();
+  LobbyMenu m;
+  m.setContent(db);
+  m.setHumans(1);
+  const auto presets = m.presets();
+  REQUIRE(presets.size() >= 3);
+  const std::size_t game = rowOf(LobbyRowKind::Game);
+  // The defaults (rounds on the dojo) are no preset.
+  CHECK_FALSE(m.activePreset().has_value());
+  CHECK(m.rowValue(LobbyRowKind::Game) == "Custom");
+
+  // Right from Custom starts the list (Left would end it); each step
+  // applies a whole preset.
+  LobbyMenu left = m;
+  CHECK(left.change(game, -1));
+  CHECK(left.activePreset().value_or(99) == presets.size() - 1);
+  CHECK(m.change(game, +1));
+  REQUIRE(m.activePreset().has_value());
+  CHECK(m.activePreset().value_or(99) == 0);
+  for (std::size_t i = 1; i < presets.size() + 1; ++i) {
+    (void)m.change(game, +1);
+    const std::size_t at = i % presets.size();
+    CHECK(m.activePreset().value_or(99) == at);
+    CHECK(m.rowValue(LobbyRowKind::Game) == presets[at].def->title);
+    CHECK(m.settings().mode == presets[at].mode);
+    CHECK(m.settings().arena == presets[at].arena);
+    CHECK(db.compatible(m.settings().arena, m.settings().mode));
+  }
+  // Classic (the first) is for 4: the bots were raised to 3 beside 1 human.
+  CHECK(m.applyPreset(0) == false);  // already it
+  m.settings().bots = 0;
+  CHECK(m.applyPreset(0));
+  CHECK(m.settings().bots == 3);
+  CHECK(m.notice() == "Added 3 bots: Classic is for 4 monkeys.");
+
+  // A changed kit makes it Custom; Left goes back to Classic, Right on.
+  CHECK(m.change(rowOf(LobbyRowKind::Loadout), +1));
+  CHECK(m.notice().empty());
+  CHECK(m.rowValue(LobbyRowKind::Game) == "Custom");
+  LobbyMenu copy = m;
+  CHECK(copy.change(game, -1));
+  CHECK(copy.activePreset().value_or(99) == 0);
+  CHECK(m.change(game, +1));
+  CHECK(m.activePreset().value_or(99) == 1);
+  // Bots and their difficulty never make a preset Custom.
+  CHECK(m.change(rowOf(LobbyRowKind::Bots), +1));
+  CHECK(m.change(rowOf(LobbyRowKind::BotDifficulty), +1));
+  CHECK(m.activePreset().value_or(99) == 1);
+  // Picking a preset never lowers the bots.
+  m.settings().bots = 8;
+  (void)m.applyPreset(0);
+  CHECK(m.settings().bots == 8);
+}
+
+TEST_CASE("a mode change that moves the arena says so (v0.97)", "[client][lobby][teams]") {
+  const sim::ContentDB& db = shipped();
+  const uint8_t teamRounds = db.findMode("team_rounds").value_or(0);
+  const uint8_t standoff = arenaIndex("standoff");
+  REQUIRE(teamRounds != 0);
+  LobbyMenu m;
+  m.setContent(db);
+  const std::size_t modeRow = rowOf(LobbyRowKind::Mode);
   // Cycling the mode into team_rounds moves the arena off the dojo.
-  const std::size_t modeRow = rowOf(m, LobbyRowKind::Mode);
   while (m.settings().mode != teamRounds)
     (void)m.change(modeRow, +1);
   CHECK(m.settings().arena == standoff);
-  CHECK(m.rowValue(m.rows()[rowOf(m, LobbyRowKind::Teams)]) == "2 (by mode)");
-  CHECK_FALSE(m.change(rowOf(m, LobbyRowKind::Teams), +1));  // derived, not set
-  // The arena row only offers arenas that suit the mode.
+  CHECK(m.notice() == "Arena set to Standoff: Team Rounds needs a starting side for each team.");
+  // The arena row only offers arenas that suit the mode, and says nothing.
   for (int i = 0; i < 2 * db.arenaCount; ++i) {
-    (void)m.change(rowOf(m, LobbyRowKind::Arena), +1);
+    (void)m.change(rowOf(LobbyRowKind::Arena), +1);
     CHECK(db.compatible(m.settings().arena, m.settings().mode));
+    CHECK(m.notice().empty());
   }
+  // A mode with its own arena brings it, and says so.
+  const uint8_t grid = db.findMode("grid_rounds").value_or(0);
+  while (m.settings().mode != grid)
+    (void)m.change(modeRow, +1);
+  CHECK(m.settings().arena == arenaIndex("courtyard"));
+  CHECK(m.notice().find("Arena set to Courtyard") == 0);
+  // A mode the arena already suits keeps it, without a word.
+  m.settings().mode = 0;
+  m.settings().arena = arenaIndex("pillars");
+  (void)m.change(modeRow, +1);
+  CHECK(m.settings().arena == arenaIndex("pillars"));
+  CHECK(m.notice().empty());
   // Content that loads with an unsuitable pair is clamped too.
   LobbyMenu fresh;
   fresh.settings().mode = teamRounds;
@@ -180,6 +288,8 @@ TEST_CASE("lobby menu: a team mode shows its teams and keeps a suitable arena (v
   CHECK(ls.arena == standoff);
   o.arena = "lava";
   CHECK_FALSE(lobbySettingsFrom(o, db, ls, error));
+  CHECK_FALSE(client::arenaNeed(db.modes[teamRounds]).empty());
+  CHECK(client::arenaNeed(db.modes[0]).empty());  // rounds: any arena
 }
 
 TEST_CASE("lobby menu: a grid mode opens on its own arena and keeps arenas with cells (v0.34)",
@@ -191,13 +301,12 @@ TEST_CASE("lobby menu: a grid mode opens on its own arena and keeps arenas with 
   REQUIRE(courtyard != 0);
   LobbyMenu m;
   m.setContent(db);
-  const std::size_t modeRow = rowOf(m, LobbyRowKind::Mode);
+  const std::size_t modeRow = rowOf(LobbyRowKind::Mode);
   while (m.settings().mode != grid)
     (void)m.change(modeRow, +1);
   CHECK(m.settings().arena == courtyard);  // ModeDef::arena, not the first tilemap
-  CHECK(m.rowValue(m.rows()[rowOf(m, LobbyRowKind::Teams)]) == "2 (by mode)");
   for (int i = 0; i < 2 * db.arenaCount; ++i) {
-    (void)m.change(rowOf(m, LobbyRowKind::Arena), +1);
+    (void)m.change(rowOf(LobbyRowKind::Arena), +1);
     CHECK(db.compatible(m.settings().arena, m.settings().mode));
     CHECK(db.arenas[m.settings().arena].cellSize > Fixed::zero());
   }
@@ -212,24 +321,17 @@ TEST_CASE("lobby menu: a grid mode opens on its own arena and keeps arenas with 
   CHECK(ls.arena == courtyard);
 }
 
-TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][lobby]") {
+TEST_CASE("lobby menu: focus wraps, values cycle and clamp", "[client][lobby]") {
   const sim::ContentDB& db = shipped();
   LobbyMenu m;
   m.setContent(db);
-  const std::size_t n = m.rows().size();
+  m.setFocus(rowOf(LobbyRowKind::Arena));
 
-  SECTION("Up from the first row wraps to the last, Down back") {
-    CHECK_FALSE(m.apply(MenuAction::Up));
-    CHECK(m.focus() == n - 1);
-    CHECK_FALSE(m.apply(MenuAction::Down));
-    CHECK(m.focus() == 0);
-    CHECK_FALSE(m.apply(MenuAction::None));
-  }
   SECTION("arena cycles both ways with wrap-around") {
-    CHECK(m.rowValue(m.focusedRow()) == "Dojo");  // v0.94: the arena's title
+    CHECK(m.rowValue(LobbyRowKind::Arena) == "Dojo");  // v0.94: the arena's title
     CHECK(m.apply(MenuAction::Right));
     CHECK(m.settings().arena == 1);
-    CHECK(m.rowValue(m.focusedRow()) == client::arenaTitle(db.arenas[1].name.view()));
+    CHECK(m.rowValue(LobbyRowKind::Arena) == client::arenaTitle(db.arenas[1].name.view()));
     CHECK(m.apply(MenuAction::Left));
     CHECK(m.apply(MenuAction::Left));
     CHECK(m.settings().arena == db.arenaCount - 1);
@@ -237,8 +339,7 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
     CHECK(m.settings().arena == 0);
   }
   SECTION("mode cycles over the modes for people (v0.94: not the bot contests)") {
-    (void)m.apply(MenuAction::Down);
-    CHECK(m.focusedRow().kind == LobbyRowKind::Mode);
+    m.setFocus(rowOf(LobbyRowKind::Mode));
     std::vector<uint8_t> human;
     for (uint8_t i = 0; i < db.modeCount; ++i) {
       if (!client::isBotMode(db.modes[i])) human.push_back(i);
@@ -250,70 +351,63 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
       CHECK_FALSE(client::isBotMode(db.modeAt(m.settings().mode)));
     }
   }
-  SECTION("loadout cycles through base and content/loadouts.toml (v0.31)") {
+  SECTION("kit cycles over the kits every monkey can play (v0.97: not the role kits)") {
     REQUIRE(db.loadoutCount >= 2);
-    m.setFocus(rowOf(m, LobbyRowKind::Loadout));
-    // v0.94: past the loadouts only bot contests hand out (grid_1t, catcher_1t).
-    std::vector<uint8_t> human;
+    m.setFocus(rowOf(LobbyRowKind::Loadout));
+    std::vector<uint8_t> kits;
     for (uint8_t i = 0; i < db.loadoutCount; ++i) {
-      if (!client::isBotLoadout(db, i)) human.push_back(i);
+      if (!client::isRoleLoadout(db, i)) kits.push_back(i);
     }
-    REQUIRE(human.size() < db.loadoutCount);
-    for (std::size_t i = 1; i <= human.size(); ++i) {
+    REQUIRE(kits.size() == 4u);  // base, blink, slam, parry
+    for (std::size_t i = 1; i <= kits.size(); ++i) {
       CHECK(m.apply(MenuAction::Right));
-      CHECK(m.settings().loadout == human[i % human.size()]);
-      CHECK(m.rowValue(m.focusedRow()) ==
+      CHECK(m.settings().loadout == kits[i % kits.size()]);
+      CHECK(m.rowValue(LobbyRowKind::Loadout) ==
             client::loadoutTitle(db.loadoutAt(m.settings().loadout).name.view()));
     }
     CHECK(m.apply(MenuAction::Left));
-    CHECK(m.settings().loadout == human.back());
+    CHECK(m.settings().loadout == kits.back());
   }
-  SECTION("a power-up toggles with either direction") {
-    const std::size_t row = rowOf(m, LobbyRowKind::PowerUp, 1);
-    CHECK(m.settings().powerUps == sim::kAllPowerUps);
+  SECTION("power-ups cycle All, None and Custom, which opens the picker (v0.97)") {
+    m.settings().arena = arenaIndex("dojo_powerups");
+    const std::size_t row = rowOf(LobbyRowKind::PowerUps);
+    REQUIRE(m.rowEnabled(LobbyRowKind::PowerUps));
+    CHECK(m.powerUpChoice() == client::PowerUpChoice::All);
+    CHECK(m.rowValue(LobbyRowKind::PowerUps) == "All");
     CHECK(m.change(row, +1));
-    CHECK((m.settings().powerUps & 0b10) == 0);
-    CHECK(m.rowValue(m.rows()[row]) == "off");
-    CHECK(m.change(row, -1));
+    CHECK(m.settings().powerUps == 0);
+    CHECK(m.rowValue(LobbyRowKind::PowerUps) == "None");
+    CHECK_FALSE(m.pickerOpen());
+    CHECK_FALSE(m.change(row, +1));  // Custom: nothing changes yet
+    CHECK(m.pickerOpen());
+    m.picker().close();
+    CHECK(m.change(row, -1));  // from None, Left is All
     CHECK(m.settings().powerUps == sim::kAllPowerUps);
-    CHECK(m.rowValue(m.rows()[row]) == "on");
+    CHECK_FALSE(m.change(row, -1));  // from All, Left is Custom
+    CHECK(m.pickerOpen());
+    // Two of the five off: "3 of 5", and Right goes on to All.
+    m.picker().close();
+    m.settings().powerUps = static_cast<uint16_t>(sim::kAllPowerUps & ~0b11u);
+    CHECK(m.powerUpChoice() == client::PowerUpChoice::Custom);
+    CHECK(m.rowValue(LobbyRowKind::PowerUps) == "3 of 5");
+    CHECK(m.change(row, +1));
+    CHECK(m.powerUpChoice() == client::PowerUpChoice::All);
   }
-  SECTION("bots step within 0..9, volume within 0..100 by 10, mute toggles") {
-    const std::size_t bots = rowOf(m, LobbyRowKind::Bots);
+  SECTION("bots step within 0..9 and clamp") {
+    const std::size_t bots = rowOf(LobbyRowKind::Bots);
     CHECK_FALSE(m.change(bots, -1));  // already 0: nothing changes
     for (int i = 0; i < 12; ++i)
       (void)m.change(bots, +1);
     CHECK(m.settings().bots == sim::kMaxPlayers - 1);
     CHECK_FALSE(m.change(bots, +1));
-
-    const std::size_t volume = rowOf(m, LobbyRowKind::Volume);
-    CHECK(m.settings().volume == 40);  // v0.97: quieter out of the box
-    for (int i = 0; i < 5; ++i)
-      CHECK(m.change(volume, +1));
-    CHECK(m.settings().volume == 90);
-    CHECK(m.change(volume, +1));
-    CHECK_FALSE(m.change(volume, +1));
-    CHECK(m.rowValue(m.rows()[volume]) == "100%");
-    for (int i = 0; i < 12; ++i)
-      (void)m.change(volume, -1);
-    CHECK(m.settings().volume == 0);
-
-    const std::size_t mute = rowOf(m, LobbyRowKind::Mute);
-    m.setFocus(mute);
-    CHECK(m.apply(MenuAction::Right));
-    CHECK(m.settings().mute);
-    CHECK(m.rowValue(m.focusedRow()) == "muted");
-    CHECK(m.apply(MenuAction::Left));
-    CHECK_FALSE(m.settings().mute);
+    CHECK(m.rowValue(LobbyRowKind::Bots) == "9");
   }
   SECTION("bot difficulty cycles easy, medium, hard with wrap-around") {
-    const std::size_t row = rowOf(m, LobbyRowKind::BotDifficulty);
-    m.setFocus(row);
+    m.setFocus(rowOf(LobbyRowKind::BotDifficulty));
     CHECK(m.settings().botTier == ai::ReferenceTier::Medium);  // the casual default
-    CHECK(m.rowValue(m.focusedRow()) == "medium");
+    CHECK(m.rowValue(LobbyRowKind::BotDifficulty) == "medium");
     CHECK(m.apply(MenuAction::Right));
     CHECK(m.settings().botTier == ai::ReferenceTier::Hard);
-    CHECK(m.rowValue(m.focusedRow()) == "hard");
     CHECK(m.apply(MenuAction::Right));
     CHECK(m.settings().botTier == ai::ReferenceTier::Easy);
     CHECK(m.apply(MenuAction::Left));
@@ -321,27 +415,97 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
     CHECK(m.settings().botTier == ai::ReferenceTier::Medium);
   }
   SECTION("out-of-range rows and directions do nothing") {
-    CHECK_FALSE(m.change(n, +1));
+    CHECK_FALSE(m.change(LobbyMenu::rows().size(), +1));
     CHECK_FALSE(m.change(0, 0));
-    m.setFocus(n + 3);
-    CHECK(m.focus() == 0);
+    m.setFocus(LobbyMenu::rows().size() + 3);
+    CHECK(m.focusedRow() == LobbyRowKind::Arena);
   }
 }
 
-TEST_CASE("lobby menu: new content clamps the settings and keeps the focus", "[client][lobby]") {
+TEST_CASE("the power-up picker: the arena's power-ups in a fixed grid (v0.97)",
+          "[client][lobby][picker]") {
+  const sim::ContentDB& db = shipped();
+  LobbyMenu m;
+  m.setContent(db);
+  m.settings().arena = arenaIndex("dojo_powerups");
+  m.openPicker();
+  REQUIRE(m.pickerOpen());
+  client::PowerUpPicker& p = m.picker();
+  using Kind = client::PowerUpPicker::ItemKind;
+  const uint16_t drawn = client::arenaPowerUps(db, db.arenaAt(m.settings().arena));
+  REQUIRE(p.toggleCount() == static_cast<std::size_t>(std::popcount(unsigned{drawn})));
+  REQUIRE(p.toggleCount() == 5u);  // speed, big, triple, shield, fast hands
+  const auto items = p.items();
+  REQUIRE(items.size() == 8u);
+  for (std::size_t i = 0; i < p.toggleCount(); ++i) {
+    CHECK(items[i].kind == Kind::Toggle);
+    CHECK((drawn & (1u << items[i].powerUp)) != 0);
+    if (i > 0) CHECK(items[i].powerUp > items[i - 1].powerUp);  // content order
+  }
+  CHECK(items[5].kind == Kind::All);
+  CHECK(items[6].kind == Kind::None);
+  CHECK(items[7].kind == Kind::Done);
+  // Rows of two toggles (the last one alone), then the buttons.
+  CHECK(p.rowCount() == 4u);
+  CHECK(p.rowOf(4) == 2u);
+  CHECK(p.rowOf(6) == 3u);
+  CHECK(p.columnOf(7) == 2u);
+
+  SECTION("grid navigation keeps the column, wraps along rows and between them") {
+    CHECK(p.focus() == 0);
+    p.apply(MenuAction::Right);
+    CHECK(p.focus() == 1);
+    p.apply(MenuAction::Right);  // wraps along the row
+    CHECK(p.focus() == 0);
+    p.apply(MenuAction::Down);
+    CHECK(p.focus() == 2);
+    p.apply(MenuAction::Right);
+    p.apply(MenuAction::Down);  // column 1 of a one-item row: its only item
+    CHECK(p.focus() == 4);
+    p.apply(MenuAction::Down);
+    CHECK(p.focusedItem().kind == Kind::All);
+    p.apply(MenuAction::Left);  // wraps to Done
+    CHECK(p.focusedItem().kind == Kind::Done);
+    p.apply(MenuAction::Up);  // Done is column 2: the last of the row above
+    CHECK(p.focus() == 4);
+    p.setFocus(0);
+    p.apply(MenuAction::Up);  // from the top to the buttons
+    CHECK(p.focusedItem().kind == Kind::All);
+  }
+  SECTION("toggles flip one, All and None the set, Done closes") {
+    const uint8_t first = items[0].powerUp;
+    CHECK(p.activate(0, m.settings()));
+    CHECK((m.settings().powerUps & (1u << first)) == 0);
+    CHECK(m.powerUpChoice() == client::PowerUpChoice::Custom);
+    CHECK(m.rowValue(LobbyRowKind::PowerUps) == "4 of 5");
+    CHECK(p.activate(6, m.settings()));  // None
+    CHECK(m.settings().powerUps == 0);
+    CHECK(p.activate(5, m.settings()));  // All
+    CHECK(m.settings().powerUps == sim::kAllPowerUps);
+    CHECK_FALSE(p.activate(7, m.settings()));  // Done
+    CHECK_FALSE(m.pickerOpen());
+    CHECK_FALSE(p.activate(0, m.settings()));  // closed: nothing
+  }
+  SECTION("new content closes it") {
+    m.setContent(db);
+    CHECK_FALSE(m.pickerOpen());
+  }
+}
+
+TEST_CASE("lobby menu: new content clamps the settings", "[client][lobby]") {
   const sim::ContentDB& db = shipped();
   LobbyMenu m;
   m.setContent(db);
   m.settings().arena = static_cast<uint8_t>(db.arenaCount - 1);
   m.settings().mode = static_cast<uint8_t>(db.modeCount - 1);
   m.settings().loadout = static_cast<uint8_t>(db.loadoutCount - 1);
-  m.setFocus(rowOf(m, LobbyRowKind::Volume));
+  m.setFocus(rowOf(LobbyRowKind::Bots));
   m.setContent(sim::defaultContent());  // one arena, one mode, one loadout
   CHECK(m.settings().arena == 0);
   CHECK(m.settings().mode == 0);
   CHECK(m.settings().loadout == 0);
-  CHECK(m.focusedRow().kind == LobbyRowKind::Volume);
-  m.setFocus(rowOf(m, LobbyRowKind::Arena));
+  CHECK(m.focusedRow() == LobbyRowKind::Bots);
+  m.setFocus(rowOf(LobbyRowKind::Arena));
   CHECK_FALSE(m.apply(MenuAction::Right));  // a single arena cycles onto itself
 }
 
@@ -360,12 +524,13 @@ TEST_CASE("lobby menu: a mode with an arena pool brings its first member (v0.82)
   db.modeCount = 2;
   LobbyMenu m;
   m.setContent(db);
-  const std::size_t mode = rowOf(m, LobbyRowKind::Mode);
+  const std::size_t mode = rowOf(LobbyRowKind::Mode);
   REQUIRE(m.settings().arena == 0);
   CHECK(m.change(mode, +1));  // to the pooled mode: arena 0 is not a member
   CHECK(m.settings().mode == 1);
   CHECK(m.settings().arena == 1);  // the pool's first suitable member
-  CHECK(m.change(mode, +1));       // back: the rounds mode keeps the arena
+  CHECK(m.notice() == "Arena set to Pool A, the first of Pooled's arenas.");
+  CHECK(m.change(mode, +1));  // back: the rounds mode keeps the arena
   CHECK(m.settings().arena == 1);
   m.settings().arena = 2;
   CHECK(m.change(mode, +1));  // a member already: kept
@@ -381,7 +546,7 @@ TEST_CASE("lobby menu: the room's Bots row stops under the server's player cap",
   LobbyMenu m;
   m.setContent(shipped());
   m.setRoomRows(true);
-  const std::size_t bots = rowOf(m, LobbyRowKind::Bots);
+  const std::size_t bots = rowOf(LobbyRowKind::Bots);
   const auto most = [&] {
     for (int i = 0; i < 12; ++i)
       (void)m.change(bots, +1);
@@ -394,7 +559,7 @@ TEST_CASE("lobby menu: the room's Bots row stops under the server's player cap",
   m.setPlayerCap(3);
   CHECK(m.maxBots() == 2);
   CHECK(m.settings().bots == 2);
-  CHECK(m.rowValue(m.rows()[bots]) == "2");
+  CHECK(m.rowValue(LobbyRowKind::Bots) == "2");
   CHECK_FALSE(m.change(bots, +1));  // already at the limit
   CHECK(m.change(bots, -1));
   CHECK(m.settings().bots == 1);
@@ -827,29 +992,9 @@ TEST_CASE("the arena theme: flag, settings and the lobby row (v0.52)", "[client]
   REQUIRE(client::lobbySettingsFrom(o, db, ls, error));
   CHECK(ls.theme == presentation::ThemeChoice::Beach);
 
-  // The panel's row cycles through every choice; Auto names the arena's own theme.
-  LobbyMenu m;
-  m.setContent(db);
-  const auto rows = m.rows();
-  const std::size_t row = rows.size() - 1;
-  REQUIRE(rows[row].kind == LobbyRowKind::Theme);
-  CHECK(m.rowValue(rows[row]) == "beach");  // v0.93: the default
-  CHECK(m.change(row, +1));                 // wraps to the first choice
-  CHECK(m.settings().theme == presentation::ThemeChoice::Auto);
-  CHECK(m.rowValue(rows[row]) == "auto (temple)");  // the dojo, arena 0, is a temple
-  CHECK(m.change(row, +1));
-  CHECK(m.settings().theme == presentation::ThemeChoice::Jungle);
-  CHECK(m.rowValue(rows[row]) == "jungle");
-  CHECK(m.change(row, -1));
-  CHECK(m.change(row, -1));  // wraps to the last choice
-  CHECK(m.settings().theme == presentation::ThemeChoice::Beach);
-
-  // The room's panel carries only what a RoomSettings carries: no theme there.
-  LobbyMenu room;
-  room.setRoomRows(true);
-  room.setContent(db);
-  for (const LobbyRow& r : room.rows())
-    CHECK(r.kind != LobbyRowKind::Theme);
+  // v0.97: the theme is Settings', not the setup panel's.
+  for (const LobbyRowKind r : LobbyMenu::rows())
+    CHECK(std::string(LobbyMenu::rowLabel(r)) != "Arena theme");
 }
 
 TEST_CASE("saved settings from before v0.93 move from auto to the beach once",

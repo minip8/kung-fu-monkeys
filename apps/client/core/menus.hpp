@@ -86,6 +86,8 @@ class MainMenu {
   bool online_{true};
 };
 
+inline constexpr uint8_t kVolumeStep = 10;  // percent per Left/Right
+
 // --- the settings screen --------------------------------------------------------------
 
 enum class SettingsRow : uint8_t { Name = 0, Volume, Sound, BotDifficulty, Theme, MouseAim, Back };

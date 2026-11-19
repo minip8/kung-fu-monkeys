@@ -557,7 +557,7 @@ void shortDeviceText(const platform::DeviceBinding& d, char (&out)[24]) {
   switch (d.kind) {
     case platform::DeviceKind::Keyboard:
       if (d.keyboardProfile == 0) {
-        std::snprintf(out, sizeof out, "Keyboard + mouse");  // v0.45
+        std::snprintf(out, sizeof out, "Keys + mouse");  // v0.45; v0.97 fits a card
       } else if (d.keyboardProfile == 1) {
         std::snprintf(out, sizeof out, "keys right");
       } else {
@@ -760,9 +760,20 @@ void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   if (mode.teams > 0) {
     ImGui::TextWrapped("%u teams, balanced as players join.", static_cast<unsigned>(mode.teams));
   }
-  ImGui::TextWrapped("Kit: %s (%s).",
-                     loadoutTitle(db.loadoutAt(config.loadout).name.view()).c_str(),
-                     loadoutSummary(db, config.loadout).c_str());
+  if (mode.roleCount > 0) {
+    // v0.97: a mode that hands kits out by role plays no match kit.
+    std::string kits;
+    for (uint8_t r = 0; r < mode.roleCount && r < sim::kMaxPlayers; ++r) {
+      const std::string k = loadoutTitle(db.loadoutAt(mode.roles[r]).name.view());
+      if (kits.contains(k)) continue;
+      kits += (kits.empty() ? "" : ", ") + k;
+    }
+    ImGui::TextWrapped("Kits by place in the team: %s.", kits.c_str());
+  } else {
+    ImGui::TextWrapped("Kit: %s (%s).",
+                       loadoutTitle(db.loadoutAt(config.loadout).name.view()).c_str(),
+                       loadoutSummary(db, config.loadout).c_str());
+  }
   const ArenaSpawners spawners = arenaSpawners(arena);
   if (spawners.powerUps == 0) {
     ImGui::TextWrapped("No power-ups in this arena.");
@@ -781,92 +792,52 @@ void matchConfigText(const sim::ContentDB& db, const sim::MatchConfig& config) {
   ImGui::PopStyleColor();
 }
 
-// The settings rows (LobbyMenu): the focused row on the focus bar, a click
-// focuses a row, the arrow buttons change it like Left/Right. v0.43:
-// compact, and the power-up toggles two to a line, a click on one toggling
-// it. v0.94: only the rows the menu shows (LobbyMenu::rowShown()), widths
-// that follow the column (a 700 px window too), and `readOnly` for a room's
-// guest: the same rows with flat arrows and no focus, the host's to change.
-bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db, bool readOnly = false) {
+// The game-setup rows (LobbyMenu, v0.97): always the same seven, in the
+// same places. The focused row on the focus bar, a click focuses a row, the
+// arrow buttons change it like Left/Right; a greyed row (LobbyMenu::rowEnabled)
+// keeps its place with flat arrows and its short reason as the value; a click
+// on the Power-ups value opens the picker. Under the rows a line that is
+// always there: what the last change did besides itself (notice()), why the
+// greyed row under the pointer is greyed, or the preset's blurb. `readOnly`
+// for a room's guest: the same rows with flat arrows and no focus.
+bool drawSettingsRows(LobbyMenu& menu, bool readOnly = false) {
   bool changed = false;
-  const auto rows = menu.rows();
+  const auto rows = LobbyMenu::rows();
   constexpr float kRowFont = 17.0f;
   ImGui::PushFont(nullptr, kRowFont);
   ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 3.0f));
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
   const float full = ImGui::GetContentRegionAvail().x;
   const float frameH = ImGui::GetFrameHeight();
-  const float valueX = std::clamp(full * 0.34f, 88.0f, 140.0f);
+  const float valueX = std::clamp(full * 0.34f, 92.0f, 140.0f);
   const float valueW = std::max(60.0f, full - valueX - (2.0f * frameH) - 24.0f);
-  int powerUpColumn = 0;
+  std::string pointedReason;  // a greyed row under the pointer: why
   for (std::size_t i = 0; i < rows.size(); ++i) {
-    if (!menu.rowShown(i)) continue;
-    const LobbyRow& row = rows[i];
-    const bool focused = !readOnly && i == menu.focus();
+    const LobbyRowKind row = rows[i];
+    const bool enabled = menu.rowEnabled(row);
+    const bool live = enabled && !readOnly;
+    const bool focused = live && i == menu.focus();
     ImGui::PushID(static_cast<int>(i));
-    if (row.kind == LobbyRowKind::PowerUp) {
-      if (powerUpColumn == 0) {
-        ImGui::TextDisabled("Power-ups in this arena");
-      } else if (powerUpColumn % 2 == 1) {
-        ImGui::SameLine(0.0f, 8.0f);
-      }
-      ++powerUpColumn;
-      // One toggle: the colour, the name, on/off at the right.
-      const float w = (full - 8.0f) * 0.5f;
-      const ImVec2 min = ImGui::GetCursorScreenPos();
-      if (ImGui::InvisibleButton("##toggle", ImVec2(w, frameH)) && !readOnly) {
-        menu.setFocus(i);
-        changed = menu.change(i, +1) || changed;
-      }
-      if (!readOnly && ui::pointerTakesFocus()) menu.setFocus(i);
-      ImDrawList* dl = ImGui::GetWindowDrawList();
-      const bool on = (menu.settings().powerUps & (1u << row.powerUp)) != 0;
-      const ImVec2 max{min.x + w, min.y + frameH};
-      // v0.55: highlighted by the menu's device (ui::showsFocus).
-      if (!readOnly && ui::showsFocus(focused, ui::pointerOverItem())) {
-        ui::focusBar(min, max);
-      } else {
-        dl->AddRectFilled(min, max, ui::kInset, ui::kRowRounding);
-      }
-      const uint8_t color = db.powerUpAt(row.powerUp).visual.color;
-      dl->AddCircleFilled(ImVec2(min.x + 12.0f, min.y + (frameH * 0.5f)), 5.0f, slotColor(color));
-      const float textY = min.y + ((frameH - kRowFont) * 0.5f);
-      const char* state = on ? "on" : "off";
-      const float stateW = textWidth(kRowFont, state, Face::Body);
-      dl->PushClipRect(min, ImVec2(max.x - stateW - 14.0f, max.y), true);
-      dl->AddText(ImGui::GetFont(), kRowFont, ImVec2(min.x + 24.0f, textY),
-                  on ? ui::kText : ui::kTextDim, menu.rowLabel(row).c_str());
-      dl->PopClipRect();
-      dl->AddText(ImGui::GetFont(), kRowFont, ImVec2(max.x - stateW - 10.0f, textY),
-                  on ? ui::kTeal : ui::kTextDim, state);
-      ImGui::PopID();
-      continue;
-    }
-    powerUpColumn = 0;
     const float x0 = ImGui::GetCursorPosX();
     const ImVec2 min = ImGui::GetCursorScreenPos();
-    ImGui::PushStyleColor(ImGuiCol_Header, ui::vec4(ui::kTransparent));
-    // v0.55: no hover tint of its own: the focus bar is the highlight.
-    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ui::vec4(ui::kTransparent));
-    ImGui::PushStyleColor(ImGuiCol_HeaderActive, ui::vec4(readOnly ? ui::kTransparent : ui::kSand));
-    if (ImGui::Selectable("##row", focused, ImGuiSelectableFlags_AllowOverlap,
-                          ImVec2(0.0f, frameH)) &&
-        !readOnly) {
+    if (ImGui::InvisibleButton("##row", ImVec2(full, frameH), ImGuiButtonFlags_AllowOverlap) &&
+        live) {
       menu.setFocus(i);
     }
-    ImGui::PopStyleColor(3);
     const ImVec2 barMin{min.x - 2.0f, min.y - 1.0f};
     const ImVec2 barMax{min.x + full + 2.0f, min.y + frameH + 1.0f};
-    const bool over = !readOnly && ui::pointerOverRect(barMin, barMax);
-    if (!readOnly && ui::pointerTakesFocus(over)) menu.setFocus(i);
-    if (!readOnly && ui::showsFocus(focused, over)) ui::focusBar(barMin, barMax);
-    ImGui::SameLine(x0 + 8.0f);
+    const bool over = ui::pointerOverRect(barMin, barMax);
+    if (live && ui::pointerTakesFocus(over)) menu.setFocus(i);
+    if (!enabled && over) pointedReason = menu.rowReason(row);
+    if (live && ui::showsFocus(focused, over)) ui::focusBar(barMin, barMax);
+    ImGui::SetCursorScreenPos(min);
+    ImGui::SetCursorPosX(x0 + 8.0f);
     ImGui::AlignTextToFramePadding();
-    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(readOnly ? ui::kTextDim : ui::kText));
-    ImGui::TextUnformatted(menu.rowLabel(row).c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(live ? ui::kText : ui::kTextDim));
+    ImGui::TextUnformatted(LobbyMenu::rowLabel(row));
     ImGui::PopStyleColor();
     ImGui::SameLine(x0 + valueX);
-    if (ui::arrowButton("##l", ImGuiDir_Left, !readOnly)) {
+    if (ui::arrowButton("##l", ImGuiDir_Left, live)) {
       menu.setFocus(i);
       changed = menu.change(i, -1) || changed;
     }
@@ -878,12 +849,36 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db, bool readOnly =
     {
       // The value, clipped to its slot so a long name never runs into the arrow.
       const ImVec2 vmin = ImGui::GetCursorScreenPos();
+      ImU32 color = ui::kText;
+      if (!enabled || readOnly) {
+        color = ui::kTextDim;
+      } else if (row == LobbyRowKind::Game) {
+        color = ui::kTeal;  // the preset: the row that sets the others
+      }
       ImGui::PushClipRect(vmin, ImVec2(vmin.x + tw + 2.0f, vmin.y + frameH), true);
+      ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(color));
       ImGui::TextUnformatted(value.c_str());
+      ImGui::PopStyleColor();
       ImGui::PopClipRect();
+      if (row == LobbyRowKind::PowerUps && live) {
+        // A click on the set opens the picker; a dotted underline says so.
+        const float lineY = vmin.y + frameH - 5.0f;
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        const int dashes = static_cast<int>(std::ceil(tw / 5.0f));
+        for (int d = 0; d < dashes; ++d) {
+          const float x = vmin.x + (5.0f * static_cast<float>(d));
+          dl->AddLine(ImVec2(x, lineY), ImVec2(std::min(x + 2.5f, vmin.x + tw), lineY), ui::kTeal,
+                      1.5f);
+        }
+        ImGui::SetCursorScreenPos(vmin);
+        if (ImGui::InvisibleButton("##pick", ImVec2(std::max(tw, 1.0f), frameH))) {
+          menu.setFocus(i);
+          menu.openPicker();
+        }
+      }
     }
     ImGui::SameLine(vx + valueW);
-    if (ui::arrowButton("##r", ImGuiDir_Right, !readOnly)) {
+    if (ui::arrowButton("##r", ImGuiDir_Right, live)) {
       menu.setFocus(i);
       changed = menu.change(i, +1) || changed;
     }
@@ -891,6 +886,110 @@ bool drawSettingsRows(LobbyMenu& menu, const sim::ContentDB& db, bool readOnly =
   }
   ImGui::PopStyleVar(2);
   ImGui::PopFont();
+
+  // The line under the rows, two lines high whatever it says.
+  std::string line = menu.notice();
+  ImU32 color = ui::kTeal;
+  if (line.empty() && !pointedReason.empty()) {
+    line = pointedReason;
+    color = ui::kTextDim;
+  }
+  if (line.empty()) {
+    color = ui::kTextDim;
+    if (const std::optional<std::size_t> p = menu.activePreset()) {
+      line = std::string(menu.presets()[*p].def->blurb);
+    } else {
+      line = "Custom: your own mix. Change Game to start again from a preset.";
+    }
+  }
+  ImGui::PushFont(nullptr, ui::kFontSmall);
+  const float y0 = ImGui::GetCursorPosY() + 2.0f;
+  ImGui::SetCursorPosY(y0);
+  ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(color));
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + full);
+  ImGui::TextUnformatted(line.c_str());
+  ImGui::PopTextWrapPos();
+  ImGui::PopStyleColor();
+  const float used = ImGui::GetCursorPosY() - y0;
+  const float room = 2.0f * ImGui::GetTextLineHeightWithSpacing();
+  if (used < room) ImGui::Dummy(ImVec2(0.0f, room - used - ImGui::GetStyle().ItemSpacing.y));
+  ImGui::PopFont();
+  return changed;
+}
+
+// v0.97: the power-up picker over the setup panel (PowerUpPicker): a toggle
+// per power-up the arena can draw, two to a row (its colour, its name, on or
+// off), then All, None and Done. True when the set changed.
+bool drawPowerUpPicker(LobbyMenu& menu, const sim::ContentDB& db) {
+  PowerUpPicker& picker = menu.picker();
+  if (!picker.isOpen()) return false;
+  bool changed = false;
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (!ui::beginOverlay("##powerups", std::min(600.0f, view.x - 24.0f))) return false;
+  ui::heading("Power-ups");
+  ui::bodyText(("The spawners on " + arenaTitle(db.arenaAt(picker.arena()).name.view()) +
+                " drop the ones switched on, picked at random.")
+                   .c_str(),
+               ui::kTextDim, ui::kFontSmall);
+  ImGui::Spacing();
+  const auto items = picker.items();
+  constexpr float kFont = 18.0f;
+  ImGui::PushFont(nullptr, kFont);
+  const float full = ImGui::GetContentRegionAvail().x;
+  const float gap = 10.0f;
+  const float w = (full - gap) * 0.5f;
+  const float h = kFont + 18.0f;
+  for (std::size_t i = 0; i < picker.toggleCount(); ++i) {
+    const PowerUpPicker::Item& item = items[i];
+    if (picker.columnOf(i) > 0) ImGui::SameLine(0.0f, gap);
+    ImGui::PushID(static_cast<int>(i));
+    const ImVec2 min = ImGui::GetCursorScreenPos();
+    if (ImGui::InvisibleButton("##toggle", ImVec2(w, h))) {
+      changed = picker.activate(i, menu.settings()) || changed;
+    }
+    const bool over = ui::pointerOverItem();
+    if (ui::pointerTakesFocus(over)) picker.setFocus(i);
+    const ImVec2 max{min.x + w, min.y + h};
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const bool on = (menu.settings().powerUps & (1u << item.powerUp)) != 0;
+    if (ui::showsFocus(i == picker.focus(), over)) {
+      ui::focusBar(min, max);
+    } else {
+      dl->AddRectFilled(min, max, on ? ui::kFoamPale : ui::kInset, ui::kRowRounding);
+    }
+    const uint8_t color = db.powerUpAt(item.powerUp).visual.color;
+    dl->AddCircleFilled(ImVec2(min.x + 16.0f, min.y + (h * 0.5f)), 6.0f,
+                        on ? slotColor(color) : slotColor(color, 90));
+    const float textY = min.y + ((h - kFont) * 0.5f);
+    const char* state = on ? "on" : "off";
+    const float stateW = textWidth(kFont, state, Face::Strong);
+    dl->PushClipRect(min, ImVec2(max.x - stateW - 16.0f, max.y), true);
+    dl->AddText(ImGui::GetFont(), kFont, ImVec2(min.x + 30.0f, textY),
+                on ? ui::kText : ui::kTextDim,
+                powerUpTitle(db.powerUpAt(item.powerUp).name.view()).c_str());
+    dl->PopClipRect();
+    dl->AddText(ui::font(Face::Strong), kFont, ImVec2(max.x - stateW - 12.0f, textY),
+                on ? ui::kTeal : ui::kTextDim, state);
+    ImGui::PopID();
+  }
+  ImGui::PopFont();
+  ImGui::Spacing();
+  ImGui::Spacing();
+  const float bw = (full - (2.0f * ImGui::GetStyle().ItemSpacing.x)) / 3.0f;
+  for (std::size_t i = picker.toggleCount(); i < items.size(); ++i) {
+    if (i > picker.toggleCount()) ImGui::SameLine();
+    const PowerUpPicker::ItemKind kind = items[i].kind;
+    const bool done = kind == PowerUpPicker::ItemKind::Done;
+    if (ui::bigButton(PowerUpPicker::label(kind), i == picker.focus(), bw, true,
+                      ui::kFontButton - 4.0f, done ? ui::Tone::Lead : ui::Tone::Plain)) {
+      changed = picker.activate(i, menu.settings()) || changed;
+    }
+    if (ui::pointerTakesFocus()) picker.setFocus(i);
+  }
+  ImGui::PushFont(nullptr, ui::kFontSmall);
+  ImGui::TextDisabled("Arrows: choose. Enter / A: switch on or off. Esc / B: done.");
+  ImGui::PopFont();
+  ui::endOverlay();
   return changed;
 }
 
@@ -1084,8 +1183,8 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
     ImGui::PushFont(nullptr, ui::kFontSmall);
     ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kTextDim));
     ImGui::TextWrapped(
-        "More players: press Throw or Dash on a free side of the keyboard, or any button on a "
-        "gamepad. Bots fill the slots you leave free.");
+        "More players: press Throw or Dash on a free side of the keyboard, or any gamepad "
+        "button.");
     ImGui::PopStyleColor();
     ImGui::PopFont();
     const sim::PlayerMask dropped = session.droppedMask();
@@ -1111,7 +1210,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
       ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.1f);
       ImGui::TableSetupColumn("preview", ImGuiTableColumnFlags_WidthStretch, 1.0f);
       ImGui::TableNextColumn();
-      out.changed = drawSettingsRows(menu, db);
+      out.changed = drawSettingsRows(menu);
       ImGui::TableNextColumn();
       ImGui::PushFont(nullptr, ui::kFontSmall);
       const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
@@ -1120,7 +1219,7 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
       ImGui::PopFont();
       ImGui::EndTable();
     } else if (!twoColumns) {
-      out.changed = drawSettingsRows(menu, db);
+      out.changed = drawSettingsRows(menu);
       ImGui::Spacing();
       ImGui::PushFont(nullptr, ui::kFontSmall);
       matchConfigText(db, preview);
@@ -1145,12 +1244,13 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
       ImGui::TextWrapped("A round needs two monkeys to end: add a player or a bot.");
     }
     ImGui::TextWrapped(
-        "Enter / Start: start. Up/Down: choose a setting, Left/Right: change it. - / =: bots. "
-        "Esc / B: back. The controls: How to play, in the menu.");
+        "Enter / Start: start. Arrows: choose and change a setting. Esc / B: back.");
     ImGui::PopStyleColor();
     ImGui::PopFont();
   }
   ui::endScreen();
+  // v0.97: the power-up picker over the panel.
+  out.changed = drawPowerUpPicker(menu, session.content()) || out.changed;
   return out;
 }
 
@@ -1231,7 +1331,7 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
                            hostName.c_str());
         ImGui::PopFont();
       }
-      out.settingsChanged = drawSettingsRows(menu, db, !host) && host;
+      out.settingsChanged = drawSettingsRows(menu, !host) && host;
     };
     if (twoColumns && ImGui::BeginTable("room_match", 2, ImGuiTableFlags_SizingStretchProp)) {
       ImGui::TableSetupColumn("rows", ImGuiTableColumnFlags_WidthStretch, 1.1f);
@@ -1283,6 +1383,8 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     ImGui::PopFont();
   }
   ui::endScreen();
+  // v0.97: the host's power-up picker over the panel.
+  if (host && drawPowerUpPicker(menu, db)) out.settingsChanged = true;
   return out;
 }
 

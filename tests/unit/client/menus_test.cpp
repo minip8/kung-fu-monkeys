@@ -192,25 +192,24 @@ TEST_CASE("menu presses: activate and back, from any device", "[client][menu][in
   CHECK(client::isMenuBack(e));
 }
 
-TEST_CASE("the room host's menu has only the rows a RoomSettings carries (v0.43)",
+TEST_CASE("the room host's menu: the same rows, Bot difficulty the server's (v0.97)",
           "[client][menu][lobby]") {
   client::LobbyMenu m;
-  const std::size_t all = m.rows().size();
+  const std::size_t all = client::LobbyMenu::rows().size();
   m.setRoomRows(true);
-  CHECK(m.rows().size() == all - 4);
-  for (const client::LobbyRow& r : m.rows()) {
-    CHECK(r.kind != client::LobbyRowKind::BotDifficulty);
-    CHECK(r.kind != client::LobbyRowKind::Volume);
-    CHECK(r.kind != client::LobbyRowKind::Mute);
-    CHECK(r.kind != client::LobbyRowKind::Theme);  // v0.52: personal, not the room's
-  }
-  CHECK(m.rows().back().kind == client::LobbyRowKind::Bots);
-  // Navigation stays on those rows: Up from the first wraps to Bots.
+  CHECK(client::LobbyMenu::rows().size() == all);  // v0.97: fixed (v0.43 dropped rows)
+  CHECK_FALSE(m.rowEnabled(client::LobbyRowKind::BotDifficulty));
+  // Navigation skips it: Up from the first wraps to Bots.
   m.setFocus(0);
   CHECK_FALSE(m.apply(MenuAction::Up));
-  CHECK(m.focusedRow().kind == client::LobbyRowKind::Bots);
+  CHECK(m.focusedRow() == client::LobbyRowKind::Bots);
+  // Focused when the room's panel came: back on the first row.
+  client::LobbyMenu focused;
+  focused.setFocus(client::LobbyMenu::rows().size() - 1);
+  focused.setRoomRows(true);
+  CHECK(focused.focus() == 0);
   m.setRoomRows(false);
-  CHECK(m.rows().size() == all);
+  CHECK(m.rowEnabled(client::LobbyRowKind::BotDifficulty));
 }
 
 TEST_CASE("--screen opens a front-end screen (v0.43)", "[client][menu][options]") {

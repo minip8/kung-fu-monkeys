@@ -3138,6 +3138,25 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
     difficulty are not compared, so adding a bot keeps the preset. Picking one raises the
     bots, never lowers them, until the humans and bots make its players (4, 6 for Power-up
     Frenzy). Online a preset is the `RoomSettings` it implies: no wire change.
+  - A stable setup panel (`LobbyMenu`, the local lobby's and the room host's, one component):
+    seven rows that never change with a value, Game (the preset, or Custom), Mode, Arena, Kit,
+    Power-ups, Bots, Bot difficulty. The rule: the set and place of the controls never depend on
+    a value. A row that does not apply stays in its place, greyed, its arrows flat, its short
+    reason as the value ("By role" for the Kit under a mode that hands kits out by role, "None
+    in this arena" for Power-ups on an arena without power-up spawners, "Server's choice" for
+    Bot difficulty in a room, where the server runs the bots); `rowReason()` has the sentence,
+    shown when the pointer is over it, and Up/Down step over it. The power-up set is one row:
+    All, None or "3 of 5", Left/Right cycling All → None → Custom, which opens the
+    `PowerUpPicker`, a fixed grid over the panel (an overlay: a modal ImGui window,
+    `ui::beginOverlay`) of the arena's power-ups two to a row with All, None and Done under
+    them; a click on the row's value opens it too. When one choice forces another, the Arena
+    row only offers arenas that suit the mode (as since v0.32) and a line under the rows,
+    always there and two lines high, says what changed and why ("Arena set to Standoff: Team
+    Rounds needs a starting side for each team.", `notice()`), else the preset's blurb. The Kit
+    row skips the kits a mode hands out by role (`isRoleLoadout`: `grid`, `catcher` and the
+    contests'), and the preview says "Kits by place in the team" for such a mode. Volume, Sound
+    and Arena theme left the panel for Settings; the read-only Teams row is gone (the preview
+    says it). `--screen powerups` opens the local lobby under the picker.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.

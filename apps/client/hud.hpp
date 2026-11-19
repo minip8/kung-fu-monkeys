@@ -78,11 +78,12 @@ struct NetStatusOutcome {
 [[nodiscard]] NetStatusOutcome drawNetStatus(const NetSession& session, const ShareView& share,
                                              ButtonMenu& buttons);
 
-// The local lobby (v0.24, restyled in v0.43): a card per slot (colour,
-// label, device or bot), the settings panel (LobbyMenu rows: arena, mode,
-// power-up toggles, bots, bot difficulty, volume, mute; mouse, keyboard or
-// pad) beside an arena preview and the mode's key numbers, the join help and
-// the start button.
+// The local lobby (v0.24, restyled in v0.43, v0.97): a card per slot
+// (colour, label, device or bot), the game-setup panel (LobbyMenu's seven
+// fixed rows, Game to Bot difficulty, greyed where they do not apply, and
+// the line under them; mouse, keyboard or pad) beside an arena preview and
+// the match in words, the join help and the start button; over it, while
+// open, the power-up picker (an overlay).
 struct LobbyOutcome {
   bool start{false};    // the start button was pressed
   bool changed{false};  // a setting changed through the panel's mouse controls

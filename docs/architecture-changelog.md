@@ -2051,3 +2051,14 @@ per mode a human lobby offers, each with an arena made for it, defined by conten
 client table and resolved against the loaded content (content hash unchanged), the active one
 derived by comparing settings (no new persisted key); a unit test resolves every preset against
 the shipped content to a compatible pair and checks that the table covers every human mode.
+The audit of the local lobby (1280×720 and 700 px) behind the panel: one list of arrow rows
+(Arena, Mode, Loadout, a "Power-ups in this arena" block, Bots, Bot difficulty, Volume, Sound,
+Arena theme); changing the arena added or removed up to six power-up toggles and moved every row
+under them, changing the mode could move the arena without a word, a grid mode's Loadout row
+changed a kit no one played (the roles hand kits out), it offered the grid's role kits in every
+mode, and Volume, Sound, Bot difficulty and the theme were in both the lobby and Settings. The
+panel is now seven fixed rows (Game, Mode, Arena, Kit, Power-ups, Bots, Bot difficulty), a row
+that does not apply stays greyed with its reason, the power-ups are one row (All / None /
+"3 of 5") with a picker over the panel for the rest, and a line under the rows says what a
+change forced and why. A first run (nothing saved, no match flag) opens on Classic with three
+bots beside the keyboard player.

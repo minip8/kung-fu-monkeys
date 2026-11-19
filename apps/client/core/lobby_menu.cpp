@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cmath>
 #include <cstdio>
 #include <utility>
@@ -12,16 +13,6 @@
 namespace kfm::client {
 
 namespace {
-
-// Whether a power-up is some mode's baseline (v0.32, ModeDef::baseline):
-// the lobby lists no toggle for it, since a baseline is part of its mode's
-// rules and no shipped spawner draws it.
-[[nodiscard]] bool isBaseline(const sim::ContentDB& content, uint8_t powerUp) {
-  for (uint8_t m = 0; m < content.modeCount && m < sim::kMaxModes; ++m) {
-    if (content.modes[m].baseline == powerUp) return true;
-  }
-  return false;
-}
 
 using platform::InputEventKind;
 using platform::Key;
@@ -155,6 +146,109 @@ bool uiCapturesEvent(const platform::InputEvent& event, bool uiWantsKeyboard, bo
   return false;
 }
 
+// --- PowerUpPicker ---------------------------------------------------------------
+
+void PowerUpPicker::open(const sim::ContentDB& content, uint8_t arena) {
+  open_ = true;
+  arena_ = arena;
+  count_ = 0;
+  const uint16_t drawn = arenaPowerUps(content, content.arenaAt(arena));
+  for (uint8_t i = 0; i < content.powerUpCount && i < sim::kMaxPowerUps; ++i) {
+    if ((drawn & (1u << i)) != 0) items_[count_++] = Item{ItemKind::Toggle, i};
+  }
+  toggles_ = count_;
+  items_[count_++] = Item{ItemKind::All};
+  items_[count_++] = Item{ItemKind::None};
+  items_[count_++] = Item{ItemKind::Done};
+  focus_ = 0;
+}
+
+void PowerUpPicker::setFocus(std::size_t index) {
+  if (index < count_) focus_ = index;
+}
+
+std::size_t PowerUpPicker::rowCount() const {
+  return ((toggles_ + kColumns - 1) / kColumns) + 1;  // the toggles, then the buttons
+}
+
+std::size_t PowerUpPicker::rowOf(std::size_t index) const {
+  return index < toggles_ ? index / kColumns : rowCount() - 1;
+}
+
+std::size_t PowerUpPicker::columnOf(std::size_t index) const {
+  return index < toggles_ ? index % kColumns : index - toggles_;
+}
+
+std::size_t PowerUpPicker::rowStart(std::size_t row) const {
+  return row + 1 < rowCount() ? row * kColumns : toggles_;
+}
+
+std::size_t PowerUpPicker::rowLength(std::size_t row) const {
+  if (row + 1 >= rowCount()) return count_ - toggles_;
+  return std::min(kColumns, toggles_ - (row * kColumns));
+}
+
+void PowerUpPicker::apply(MenuAction action) {
+  if (count_ == 0) return;
+  const std::size_t rows = rowCount();
+  const std::size_t row = rowOf(focus_);
+  const std::size_t column = columnOf(focus_);
+  switch (action) {
+    case MenuAction::Up:
+    case MenuAction::Down: {
+      const std::size_t to =
+          action == MenuAction::Down ? (row + 1) % rows : (row + rows - 1) % rows;
+      focus_ = rowStart(to) + std::min(column, rowLength(to) - 1);
+      break;
+    }
+    case MenuAction::Left:
+    case MenuAction::Right: {
+      const std::size_t n = rowLength(row);
+      const std::size_t to = action == MenuAction::Right ? (column + 1) % n : (column + n - 1) % n;
+      focus_ = rowStart(row) + to;
+      break;
+    }
+    case MenuAction::None:
+      break;
+  }
+}
+
+bool PowerUpPicker::activate(std::size_t index, LobbySettings& settings) {
+  if (!open_ || index >= count_) return false;
+  focus_ = index;
+  const uint16_t before = settings.powerUps;
+  const Item& item = items_[index];
+  switch (item.kind) {
+    case ItemKind::Toggle:
+      settings.powerUps = static_cast<uint16_t>(settings.powerUps ^ (1u << item.powerUp));
+      break;
+    case ItemKind::All:
+      settings.powerUps = sim::kAllPowerUps;
+      break;
+    case ItemKind::None:
+      settings.powerUps = 0;
+      break;
+    case ItemKind::Done:
+      open_ = false;
+      break;
+  }
+  return settings.powerUps != before;
+}
+
+const char* PowerUpPicker::label(ItemKind kind) {
+  switch (kind) {
+    case ItemKind::All:
+      return "All";
+    case ItemKind::None:
+      return "None";
+    case ItemKind::Done:
+      return "Done";
+    case ItemKind::Toggle:
+      break;
+  }
+  return "";
+}
+
 // --- LobbyMenu -------------------------------------------------------------------
 
 LobbyMenu::LobbyMenu() {
@@ -167,13 +261,28 @@ const sim::ContentDB& LobbyMenu::content() const {
 
 void LobbyMenu::setContent(const sim::ContentDB& content) {
   content_ = &content;
-  rebuildRows();
+  presets_ = resolvePresets(content);
+  lastPreset_.reset();
+  picker_.close();
+  notice_.clear();
+  clampSettings();
+  if (const std::optional<std::size_t> p = activePreset()) lastPreset_ = p;
+  if (!rowEnabled(focusedRow())) focus_ = 0;
+}
+
+void LobbyMenu::clampSettings() {
+  const sim::ContentDB& db = content();
+  if (settings_.arena >= db.arenaCount) settings_.arena = 0;
+  if (settings_.mode >= db.modeCount) settings_.mode = 0;
+  if (settings_.loadout >= db.loadoutCount) settings_.loadout = 0;
+  if (!db.compatible(settings_.arena, settings_.mode)) {
+    settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(0);
+  }
 }
 
 void LobbyMenu::setRoomRows(bool room) {
-  if (room == roomRows_) return;
   roomRows_ = room;
-  rebuildRows();
+  if (!rowEnabled(focusedRow())) focus_ = 0;
 }
 
 void LobbyMenu::setPlayerCap(uint8_t maxPlayers) {
@@ -181,63 +290,89 @@ void LobbyMenu::setPlayerCap(uint8_t maxPlayers) {
   settings_.bots = std::min(settings_.bots, maxBots());
 }
 
-void LobbyMenu::rebuildRows() {
-  const sim::ContentDB& content = this->content();
-  const LobbyRow focused = rowCount_ > 0 ? rows_[focus_] : LobbyRow{};
-  rowCount_ = 0;
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Arena};
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mode};
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Teams};
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Loadout};
-  const uint8_t powerUps = std::min<uint8_t>(content.powerUpCount, sim::kMaxPowerUps);
-  for (uint8_t i = 0; i < powerUps; ++i) {
-    if (isBaseline(content, i)) continue;  // v0.34: a mode's rules, never spawned
-    rows_[rowCount_++] = LobbyRow{LobbyRowKind::PowerUp, i};
-  }
-  rows_[rowCount_++] = LobbyRow{LobbyRowKind::Bots};
-  if (!roomRows_) {
-    rows_[rowCount_++] = LobbyRow{LobbyRowKind::BotDifficulty};
-    rows_[rowCount_++] = LobbyRow{LobbyRowKind::Volume};
-    rows_[rowCount_++] = LobbyRow{LobbyRowKind::Mute};
-    rows_[rowCount_++] = LobbyRow{LobbyRowKind::Theme};
-  }
-  if (settings_.arena >= content.arenaCount) settings_.arena = 0;
-  if (settings_.mode >= content.modeCount) settings_.mode = 0;
-  if (settings_.loadout >= content.loadoutCount) settings_.loadout = 0;
-  if (!content.compatible(settings_.arena, settings_.mode)) {
-    settings_.arena = content.firstCompatibleArena(settings_.mode).value_or(0);
-  }
-  focus_ = 0;
-  for (std::size_t i = 0; i < rowCount_; ++i) {
-    if (rows_[i] == focused) focus_ = i;
-  }
-}
-
 void LobbyMenu::setFocus(std::size_t row) {
-  if (row < rowCount_) focus_ = row;
+  if (row < kLobbyRows.size()) focus_ = row;
 }
 
-bool LobbyMenu::rowShown(std::size_t row) const {
-  if (row >= rowCount_) return false;
-  const LobbyRow& r = rows_[row];
-  if (r.kind == LobbyRowKind::Teams) return false;
-  if (r.kind == LobbyRowKind::PowerUp) {
-    const sim::ContentDB& db = content();
-    return (arenaPowerUps(db, db.arenaAt(settings_.arena)) & (1u << r.powerUp)) != 0;
+bool LobbyMenu::rowEnabled(LobbyRowKind row) const {
+  const sim::ContentDB& db = content();
+  switch (row) {
+    case LobbyRowKind::Loadout:
+      return db.modeAt(settings_.mode).roleCount == 0;
+    case LobbyRowKind::PowerUps:
+      return arenaPowerUps(db, db.arenaAt(settings_.arena)) != 0;
+    case LobbyRowKind::BotDifficulty:
+      return !roomRows_;
+    case LobbyRowKind::Game:
+    case LobbyRowKind::Mode:
+    case LobbyRowKind::Arena:
+    case LobbyRowKind::Bots:
+      break;
   }
   return true;
 }
 
+std::string LobbyMenu::rowReason(LobbyRowKind row) const {
+  if (rowEnabled(row)) return {};
+  const sim::ContentDB& db = content();
+  switch (row) {
+    case LobbyRowKind::Loadout:
+      return modeLabel(db.modeAt(settings_.mode).name.view()).title +
+             " gives each monkey its kit by its place in the team.";
+    case LobbyRowKind::PowerUps:
+      return arenaTitle(db.arenaAt(settings_.arena).name.view()) +
+             " has no power-up spawners: pick an arena with them for power-ups.";
+    case LobbyRowKind::BotDifficulty:
+      return "Online, the room's server runs the bots and sets how they play.";
+    case LobbyRowKind::Game:
+    case LobbyRowKind::Mode:
+    case LobbyRowKind::Arena:
+    case LobbyRowKind::Bots:
+      break;
+  }
+  return {};
+}
+
+std::optional<std::size_t> LobbyMenu::activePreset() const {
+  return findPreset(content(), presets(), settings_);
+}
+
+bool LobbyMenu::applyPreset(std::size_t index) {
+  if (index >= presets_.count) return false;
+  const LobbySettings before = settings_;
+  const ResolvedPreset& p = presets_.items[index];
+  const uint8_t freeSlots = static_cast<uint8_t>(playerCap_ > humans_ ? playerCap_ - humans_ : 0);
+  const uint8_t oldBots = settings_.bots;
+  if (client::applyPreset(p, humans_, std::min(maxBots(), freeSlots), settings_)) {
+    const unsigned added = static_cast<unsigned>(settings_.bots - oldBots);
+    notice_ = "Added " + std::to_string(added) + (added == 1 ? " bot: " : " bots: ") +
+              std::string(p.def->title) + " is for " +
+              std::to_string(static_cast<unsigned>(p.def->players)) + " monkeys.";
+  }
+  lastPreset_ = index;
+  return !(settings_ == before);
+}
+
+PowerUpChoice LobbyMenu::powerUpChoice() const {
+  const sim::ContentDB& db = content();
+  const uint16_t drawn = arenaPowerUps(db, db.arenaAt(settings_.arena));
+  const auto on = static_cast<uint16_t>(drawn & settings_.powerUps);
+  if (on == 0) return PowerUpChoice::None;
+  return on == drawn ? PowerUpChoice::All : PowerUpChoice::Custom;
+}
+
+void LobbyMenu::openPicker() {
+  if (!rowEnabled(LobbyRowKind::PowerUps)) return;
+  picker_.open(content(), settings_.arena);
+}
+
 bool LobbyMenu::apply(MenuAction action) {
-  // Up/Down step over the rows the panel does not show.
+  // Up/Down step over the greyed rows.
   const auto step = [&](bool down) {
-    for (std::size_t n = 0; n < rowCount_; ++n) {
-      if (down) {
-        focus_ = focus_ + 1 >= rowCount_ ? 0 : focus_ + 1;
-      } else {
-        focus_ = focus_ == 0 ? rowCount_ - 1 : focus_ - 1;
-      }
-      if (rowShown(focus_)) return;
+    const std::size_t n = kLobbyRows.size();
+    for (std::size_t k = 0; k < n; ++k) {
+      focus_ = down ? (focus_ + 1) % n : (focus_ + n - 1) % n;
+      if (rowEnabled(kLobbyRows[focus_])) return;
     }
   };
   switch (action) {
@@ -257,8 +392,41 @@ bool LobbyMenu::apply(MenuAction action) {
   return false;
 }
 
+void LobbyMenu::changeMode(int direction) {
+  const sim::ContentDB& db = content();
+  const auto count = db.modeCount;
+  const uint8_t oldArena = settings_.arena;
+  // v0.94: past the bot-contest modes (a --mode flag may still pick one).
+  for (uint8_t n = 0; n < count; ++n) {
+    settings_.mode =
+        static_cast<uint8_t>((settings_.mode + (direction > 0 ? 1 : count - 1)) % count);
+    if (!isBotMode(db.modeAt(settings_.mode))) break;
+  }
+  // v0.34: a mode that names its arena (ModeDef::arena) brings it; v0.82: a
+  // mode with a pool brings its first member unless the arena already is
+  // one; an arena that does not suit the mode gives way (v0.32).
+  const sim::ModeDef& m = db.modeAt(settings_.mode);
+  const bool fits = db.compatible(settings_.arena, settings_.mode);
+  if (m.hasArena() || (m.hasArenaSet() && !m.inArenaSet(settings_.arena)) || !fits) {
+    settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(settings_.arena);
+  }
+  if (settings_.arena == oldArena) return;
+  // v0.97: say so, and why.
+  const std::string arena = arenaTitle(db.arenaAt(settings_.arena).name.view());
+  const std::string mode = modeLabel(m.name.view()).title;
+  if (!fits && !arenaNeed(m).empty()) {
+    notice_ = "Arena set to " + arena + ": " + mode + " needs " + std::string(arenaNeed(m)) + ".";
+  } else if (m.hasArena()) {
+    notice_ = "Arena set to " + arena + ", " + mode + "'s own arena.";
+  } else {
+    notice_ = "Arena set to " + arena + ", the first of " + mode + "'s arenas.";
+  }
+}
+
 bool LobbyMenu::change(std::size_t row, int direction) {
-  if (row >= rowCount_ || direction == 0) return false;
+  if (row >= kLobbyRows.size() || direction == 0) return false;
+  const LobbyRowKind kind = kLobbyRows[row];
+  if (!rowEnabled(kind)) return false;
   const LobbySettings before = settings_;
   const sim::ContentDB& db = content();
   const auto cycle = [&](uint8_t value, uint8_t count) {
@@ -266,8 +434,25 @@ bool LobbyMenu::change(std::size_t row, int direction) {
     const int next = (static_cast<int>(value) + (direction > 0 ? 1 : count - 1)) % count;
     return static_cast<uint8_t>(next);
   };
-  const LobbyRow& r = rows_[row];
-  switch (r.kind) {
+  notice_.clear();
+  switch (kind) {
+    case LobbyRowKind::Game: {
+      const std::size_t n = presets_.count;
+      if (n == 0) break;
+      std::size_t next = 0;
+      if (const std::optional<std::size_t> at = activePreset()) {
+        next = direction > 0 ? (*at + 1) % n : (*at + n - 1) % n;
+      } else if (lastPreset_) {
+        // Custom sits right after the preset it was edited from: Left goes
+        // back to that one, Right on to the next.
+        const std::size_t from = std::min(*lastPreset_, n - 1);
+        next = direction > 0 ? (from + 1) % n : from;
+      } else {
+        next = direction > 0 ? 0 : n - 1;  // before any preset: the ends of the list
+      }
+      (void)applyPreset(next);
+      break;
+    }
     case LobbyRowKind::Arena:
       // The next arena that suits the mode (v0.32); the current one when
       // no other does.
@@ -277,31 +462,29 @@ bool LobbyMenu::change(std::size_t row, int direction) {
       }
       break;
     case LobbyRowKind::Mode:
-      // v0.94: past the bot-contest modes (a --mode flag may still pick one).
-      for (uint8_t n = 0; n < db.modeCount; ++n) {
-        settings_.mode = cycle(settings_.mode, db.modeCount);
-        if (!isBotMode(db.modeAt(settings_.mode))) break;
-      }
-      // v0.34: a mode that names its arena (ModeDef::arena) brings it;
-      // v0.82: a mode with a pool brings its first member unless the
-      // arena already is one.
-      if (const sim::ModeDef& m = db.modeAt(settings_.mode);
-          m.hasArena() || (m.hasArenaSet() && !m.inArenaSet(settings_.arena)) ||
-          !db.compatible(settings_.arena, settings_.mode)) {
-        settings_.arena = db.firstCompatibleArena(settings_.mode).value_or(settings_.arena);
-      }
+      changeMode(direction);
       break;
-    case LobbyRowKind::Teams:
-      break;  // derived from the mode
     case LobbyRowKind::Loadout:
+      // v0.97: past the kits a mode hands out by role (and so the bot
+      // contests', v0.94).
       for (uint8_t n = 0; n < db.loadoutCount; ++n) {
         settings_.loadout = cycle(settings_.loadout, db.loadoutCount);
-        if (!isBotLoadout(db, settings_.loadout)) break;
+        if (!isRoleLoadout(db, settings_.loadout)) break;
       }
       break;
-    case LobbyRowKind::PowerUp:
-      settings_.powerUps = static_cast<uint16_t>(settings_.powerUps ^ (1u << r.powerUp));
+    case LobbyRowKind::PowerUps: {
+      // All -> None -> Custom (the picker) -> All.
+      const auto at = static_cast<uint8_t>(powerUpChoice());
+      const auto next = static_cast<PowerUpChoice>(cycle(at, 3));
+      if (next == PowerUpChoice::All) {
+        settings_.powerUps = sim::kAllPowerUps;
+      } else if (next == PowerUpChoice::None) {
+        settings_.powerUps = 0;
+      } else {
+        openPicker();
+      }
       break;
+    }
     case LobbyRowKind::Bots: {
       const int bots = std::clamp(static_cast<int>(settings_.bots) + (direction > 0 ? 1 : -1), 0,
                                   static_cast<int>(maxBots()));
@@ -314,82 +497,88 @@ bool LobbyMenu::change(std::size_t row, int direction) {
           static_cast<ai::ReferenceTier>(cycle(static_cast<uint8_t>(settings_.botTier), kTiers));
       break;
     }
-    case LobbyRowKind::Volume: {
-      const int volume = std::clamp(
-          static_cast<int>(settings_.volume) + (direction > 0 ? kVolumeStep : -kVolumeStep), 0,
-          100);
-      settings_.volume = static_cast<uint8_t>(volume);
-      break;
-    }
-    case LobbyRowKind::Mute:
-      settings_.mute = !settings_.mute;
-      break;
-    case LobbyRowKind::Theme:
-      settings_.theme = presentation::cycleThemeChoice(settings_.theme, direction);
-      break;
   }
+  if (const std::optional<std::size_t> p = activePreset()) lastPreset_ = p;
   return !(settings_ == before);
 }
 
-std::string LobbyMenu::rowLabel(const LobbyRow& row) const {
-  switch (row.kind) {
-    case LobbyRowKind::Arena:
-      return "Arena";
+const char* LobbyMenu::rowLabel(LobbyRowKind row) {
+  switch (row) {
+    case LobbyRowKind::Game:
+      return "Game";
     case LobbyRowKind::Mode:
       return "Mode";
-    case LobbyRowKind::Teams:
-      return "Teams";
+    case LobbyRowKind::Arena:
+      return "Arena";
     case LobbyRowKind::Loadout:
-      return "Loadout";
-    case LobbyRowKind::PowerUp:
-      return powerUpTitle(content().powerUpAt(row.powerUp).name.view());
+      return "Kit";
+    case LobbyRowKind::PowerUps:
+      return "Power-ups";
     case LobbyRowKind::Bots:
       return "Bots";
     case LobbyRowKind::BotDifficulty:
       return "Bot difficulty";
-    case LobbyRowKind::Volume:
-      return "Volume";
-    case LobbyRowKind::Mute:
-      return "Sound";
-    case LobbyRowKind::Theme:
-      return "Arena theme";
+  }
+  return "";
+}
+
+std::string LobbyMenu::rowValue(LobbyRowKind row) const {
+  const sim::ContentDB& db = content();
+  switch (row) {
+    case LobbyRowKind::Game: {
+      const std::optional<std::size_t> p = activePreset();
+      return p ? std::string(presets_.items[*p].def->title) : std::string("Custom");
+    }
+    case LobbyRowKind::Mode:
+      return modeLabel(db.modeAt(settings_.mode).name.view()).title;
+    case LobbyRowKind::Arena:
+      return arenaTitle(db.arenaAt(settings_.arena).name.view());
+    case LobbyRowKind::Loadout:
+      if (!rowEnabled(row)) return "By role";
+      return loadoutTitle(db.loadoutAt(settings_.loadout).name.view());
+    case LobbyRowKind::PowerUps: {
+      if (!rowEnabled(row)) return "None in this arena";
+      const uint16_t drawn = arenaPowerUps(db, db.arenaAt(settings_.arena));
+      switch (powerUpChoice()) {
+        case PowerUpChoice::All:
+          return "All";
+        case PowerUpChoice::None:
+          return "None";
+        case PowerUpChoice::Custom:
+          break;
+      }
+      const auto on = std::popcount(static_cast<unsigned>(drawn & settings_.powerUps));
+      return std::to_string(on) + " of " + std::to_string(std::popcount(unsigned{drawn}));
+    }
+    case LobbyRowKind::Bots:
+      return std::to_string(settings_.bots);
+    case LobbyRowKind::BotDifficulty:
+      if (!rowEnabled(row)) return "Server's choice";
+      return std::string(ai::toString(settings_.botTier));
   }
   return {};
 }
 
-std::string LobbyMenu::rowValue(const LobbyRow& row) const {
-  const sim::ContentDB& db = content();
-  switch (row.kind) {
-    case LobbyRowKind::Arena:
-      return arenaTitle(db.arenaAt(settings_.arena).name.view());
-    case LobbyRowKind::Mode:
-      return modeLabel(db.modeAt(settings_.mode).name.view()).title;
-    case LobbyRowKind::Teams: {
-      const uint8_t teams = db.modeAt(settings_.mode).teams;
-      return teams == 0 ? std::string("free-for-all") : std::to_string(teams) + " (by mode)";
-    }
-    case LobbyRowKind::Loadout:
-      return loadoutTitle(db.loadoutAt(settings_.loadout).name.view());
-    case LobbyRowKind::PowerUp:
-      return (settings_.powerUps & (1u << row.powerUp)) != 0 ? "on" : "off";
-    case LobbyRowKind::Bots:
-      return std::to_string(settings_.bots);
-    case LobbyRowKind::BotDifficulty:
-      return std::string(ai::toString(settings_.botTier));
-    case LobbyRowKind::Volume:
-      return std::to_string(settings_.volume) + "%";
-    case LobbyRowKind::Mute:
-      return settings_.mute ? "muted" : "on";
-    case LobbyRowKind::Theme: {
-      std::string choice(presentation::themeChoiceName(settings_.theme));
-      if (settings_.theme != presentation::ThemeChoice::Auto) return choice;
-      // Auto shows the theme this arena brings.
-      return choice + " (" +
-             std::string(presentation::themeName(
-                 presentation::suggestedTheme(db.arenaAt(settings_.arena).name.view()))) +
-             ")";
-    }
+std::string_view arenaNeed(const sim::ModeDef& mode) {
+  if (mode.space == sim::Space::Grid || mode.vision.fog()) return "a grid arena";
+  switch (mode.kind) {
+    case sim::ModeKind::Hill:
+    case sim::ModeKind::Control:
+      return "an arena with a hill zone";
+    case sim::ModeKind::Capture:
+      return "an arena with a base for each team";
+    case sim::ModeKind::Harvest:
+      return "an arena with a home for each team and a tree";
+    case sim::ModeKind::Rounds:
+    case sim::ModeKind::Deathmatch:
+    case sim::ModeKind::Survival:
+    case sim::ModeKind::TeamRounds:
+    case sim::ModeKind::TeamDeathmatch:
+    case sim::ModeKind::KillRounds:
+    case sim::ModeKind::kCount:
+      break;
   }
+  if (mode.teams > 0) return "a starting side for each team";
   return {};
 }
 

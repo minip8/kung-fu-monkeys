@@ -640,6 +640,33 @@ void choosePauseItem(App& app, client::PauseItem item) {
   return app.highlight.reveal(client::ui::pointerOnFocus());
 }
 
+// v0.97: an event while a setup panel's power-up picker is open: the
+// navigation moves over it, Enter / Space / a pad's South or Start presses
+// the focused item, Escape or a pad's East / Back closes it. True when the
+// event was the picker's (a setting changed: `changed`).
+bool pickerEvent(App& app, client::LobbyMenu& menu, const platform::InputEvent& input,
+                 bool deviceBound, bool& changed) {
+  if (!menu.pickerOpen()) return false;
+  const bool press = input.kind == platform::InputEventKind::KeyDown ||
+                     input.kind == platform::InputEventKind::PadButtonDown;
+  if (!press || !deviceBound) return false;
+  if ((input.kind == platform::InputEventKind::KeyDown && input.key == platform::Key::Escape) ||
+      client::isMenuBack(input)) {
+    app.audio.click();
+    menu.picker().close();
+    return true;
+  }
+  const client::MenuAction action = app.menuInput.translate(input, true);
+  const bool pick = client::isMenuActivate(input);
+  if (revealOnly(app, action, pick)) return true;
+  menu.picker().apply(action);
+  if (pick) {
+    app.audio.click();
+    if (menu.picker().activate(menu.settings())) changed = true;
+  }
+  return true;
+}
+
 // v0.46: an event while the pause menu is open, or the one that opens it.
 // True when the event was the menu's: presses stay out of the session.
 bool pauseMenuEvent(App& app, const platform::InputEvent& input) {
@@ -858,6 +885,8 @@ void handleShortcut(App& app, const platform::InputEvent& input) {
   if (gameInputBlocked()) return;
   // M7 step 6: the replay screen's keys are its control bar's (replayEvent).
   if (app.screen == Screen::Replay) return;
+  // v0.97: the power-up picker takes Escape itself (pickerEvent).
+  if (app.lobby.pickerOpen() || app.roomMenu.pickerOpen()) return;
   // v0.46: Escape over a running match is the pause menu's (onEvent), and
   // the developer's P / O wait while it is open.
   if (app.pauseMenu.isOpen() || (key == Key::Escape && pauseApplies(app))) return;
@@ -947,6 +976,11 @@ void onEvent(void* user, const SDL_Event& event) {
       return;
     }
     if (n.phase() == client::NetPhase::Waiting && n.isHost()) {
+      bool changed = false;
+      if (pickerEvent(*app, app->roomMenu, *input, true, changed)) {
+        app->roomChanged = app->roomChanged || changed;
+        return;
+      }
       // Enter is Start (the button says so), not a pick: never held back.
       if (!revealOnly(*app, action, false) && action != client::MenuAction::None &&
           app->roomMenu.apply(action)) {
@@ -1000,6 +1034,11 @@ void onEvent(void* user, const SDL_Event& event) {
   MatchSession& s = *app->session;
   const bool bound = client::eventDeviceBound(s.sampler(), *input);
   if (s.phase() == SessionPhase::Lobby) {
+    bool changed = false;
+    if (pickerEvent(*app, app->lobby, *input, bound, changed)) {
+      app->lobbyChanged = app->lobbyChanged || changed;
+      return;
+    }
     // v0.94: a joined pad's B (or Back) is the lobby's Back, as Escape; an
     // unbound pad's press is still its join.
     if (bound && input->kind == platform::InputEventKind::PadButtonDown &&
@@ -1163,6 +1202,15 @@ void menuFrame(App& app, std::uint64_t now) {
   }
 }
 
+// v0.97: the humans in the local lobby: the slots a device is bound to.
+[[nodiscard]] std::uint8_t lobbyHumans(const MatchSession& s) {
+  std::uint8_t n = 0;
+  for (std::uint8_t i = 0; i < sim::kMaxPlayers; ++i) {
+    if (s.sampler().binding(PlayerId{i}).kind != platform::DeviceKind::None) ++n;
+  }
+  return n;
+}
+
 // The local frame: the menus, the lobby or a local match (M2).
 presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, int h,
                                 float density) {
@@ -1195,6 +1243,10 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
 
   platform::debugUiNewFrame(w, h, dt, density);
   if (s.phase() == SessionPhase::Lobby) syncLobbySettings(app);
+  // v0.97: a preset's players count the humans in; the picker belongs to
+  // the lobby's screen.
+  app.lobby.setHumans(lobbyHumans(s));
+  if (app.screen != Screen::Play || s.phase() != SessionPhase::Lobby) app.lobby.picker().close();
   if (app.screen != Screen::Play) {
     menuFrame(app, now);
   } else if (s.phase() == SessionPhase::Lobby) {
@@ -1296,6 +1348,7 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
   // v8 (issue #83): the Bots row asks for no more bots than the server's
   // cap leaves room for (it would ignore the request).
   app.roomMenu.setPlayerCap(room->maxPlayers);
+  app.roomMenu.setHumans(static_cast<std::uint8_t>(std::popcount(room->humans)));
   client::LobbySettings& ls = app.roomMenu.settings();
   if (!app.roomSentAt) {
     ls.arena = room->settings.arena;
@@ -1363,6 +1416,8 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
     share.copied = app.copiedAtNs != 0 && now - app.copiedAtNs < kCopiedShowNs;
   }
   const client::NetPhase phase = n.phase();
+  // v0.97: the host's power-up picker belongs to the waiting room.
+  if (phase != client::NetPhase::Waiting || !n.isHost()) app.roomMenu.picker().close();
   client::HudView view = client::hudView(n);
   view.overScreen = phase == client::NetPhase::Over && n.roomState().has_value();
   if (n.everRan() && phase != client::NetPhase::Waiting) {
@@ -1494,6 +1549,7 @@ bool frame(void* user) {
   } else {
     camera = localFrame(*app, now, dt, w, h, density);
   }
+  client::ui::finishOverlays();  // v0.97: an overlay no longer drawn closes
   platform::debugUiFlush();
   if (app->leaveRequested && app->net) leaveNetwork(*app);
   if (app->leaveReplayRequested) leaveReplay(*app);
@@ -1624,8 +1680,10 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
   // Saved lobby settings first, then the command line (or URL) again on top,
   // so a flag always wins for this run.
+  bool savedSettings = false;  // v0.97: none on a first run (or with --no-settings)
   if (app.options.settings) {
     const std::string saved = app.services->loadPref("settings");
+    savedSettings = !saved.empty();
     if (!saved.empty()) {
       client::ClientOptions merged;
       std::vector<std::string> warnings;
@@ -1648,6 +1706,18 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
   }
   app.lobby.setContent(app.content.db);
   app.lobby.settings() = lobby;
+  // v0.97: a first run (nothing saved) that names no match opens on the
+  // default preset (presets.hpp: Classic), made up to its players with bots
+  // beside the keyboard player.
+  const bool matchFlags = !app.options.arena.empty() || !app.options.mode.empty() ||
+                          !app.options.loadout.empty() || !app.options.powerUps.empty() ||
+                          app.options.bots != 0;
+  if (!savedSettings && !matchFlags && !app.lobby.presets().empty()) {
+    app.lobby.setHumans(1);
+    (void)app.lobby.applyPreset(0);
+    app.lobby.clearNotice();
+    lobby = app.lobby.settings();
+  }
   app.roomMenu.setRoomRows(true);
   app.onlineMenu.setRegion(lobby.region);
   app.mainMenu.setOnlineAvailable(!app.services->lobbyUrl().empty() ||
@@ -1732,6 +1802,10 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
       app.screen = Screen::HowTo;
     } else if (app.options.screen == "local") {
       app.screen = Screen::Play;
+    } else if (app.options.screen == "powerups") {
+      // v0.97: the local lobby under its power-up picker (screenshots).
+      app.screen = Screen::Play;
+      app.lobby.openPicker();
     } else if (app.options.screen == "paused") {
       // v0.46: a local match under its pause menu (screenshots).
       app.screen = Screen::Play;
