@@ -2068,9 +2068,11 @@ dash is ready, both lost, down at 144 ticks; dashing sideways whenever ready, ca
 sidestep (a dash at 3 units) makes a tap pass and glide (down at 107), a full charge too fast to
 dodge that late. New content keys in `content/boomerang.toml` and `defaultContent()`, `visit()`
 (`BoomerangDef` 17 → 20 fields), the hash test, the loader (max at least min when set) and the
-F1 tuning core's `contentToCpp`. Presentation draws a glide as a returning banana coming down
-evenly from the height it had to the pickup's (`BananaTrack::glideFromArc`). Bots: Observation
-v2 unchanged; a gliding banana reads as Returning with its `ticksInPhase` counting the glide,
+F1 tuning core's `contentToCpp`; the F1 overlay names the phase and has the three sliders (a set
+max speed is held at or above the min, as the loader asks), and How to play's Recall row and
+miss tip say "one by one" and "glides on". Presentation draws a glide as a returning banana
+coming down evenly from the height it had to the pickup's (`BananaTrack::glideFromArc`). Bots:
+Observation v2 unchanged; a gliding banana reads as Returning with its `ticksInPhase` counting the glide,
 `bananaMaxReturnTicks` is the homing budget (`docs/bot-abi.md` §2.5, §2.8); the reference bot
 is unchanged (its flight prediction was already an approximation in an arc mode). Considered and
 not taken: steering at a lead point ahead of a moving thrower (pure pursuit at 384 BAM already
