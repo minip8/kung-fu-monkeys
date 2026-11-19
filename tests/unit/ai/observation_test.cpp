@@ -1041,6 +1041,16 @@ TEST_CASE("an arc mode reports the arc's flight; a pulled banana reads as Return
   CHECK(b.velX == fx(-1, 10).raw);
   // A banana pickup names the slot that may recall it, + 1.
   CHECK(obs.pickups[lying.index].spawner == kP1.value + 1);
+  // v0.95: a banana gliding past its owner reads as Returning too, its
+  // ticksInPhase the glide's.
+  const EntityId gliding =
+      spawnBanana(s, kP0, Vec2{fx(-4), fx(-2)}, Vec2{fx(1, 10), Fixed{}}, BoomerangPhase::Gliding);
+  s.boomerangs.items[gliding.index].ticksInPhase = 5;
+  buildObservation(s, MatchContent(c), kP0, 0, obs);
+  const ObsBanana& g = obs.bananas[gliding.index];
+  CHECK(g.valid == 1);
+  CHECK(g.phase == static_cast<uint8_t>(ObsBananaPhase::Returning));
+  CHECK(g.ticksInPhase == 5);
 }
 
 TEST_CASE("a bot in the shipped contest is told 3 turns out and 85 degrees a turn home (v0.80)",

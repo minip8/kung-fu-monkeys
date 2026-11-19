@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.94 (2026-11-18), a living document: it describes the system as built and deployed,
+Status: v0.95 (2026-11-19), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -769,7 +769,8 @@ despawned is skipped. Every row forbids `Tag::Eliminated` on the player: a playe
 earlier in the same tick stays in the pool until `LifecycleSystem` and must not be hit, catch
 or pick up again. v0.57: the same set (`kGone`) holds `Tag::Falling`, so no row touches a
 monkey falling down a pit either, on whichever side of the pair it is; and every Boomerang row
-names an Outbound/Returning phase mask, so no row touches a banana sinking into a pit either.
+names an Outbound/Returning phase mask (v0.89 and v0.95: with Recalled and Gliding), so no row
+touches a banana sinking into a pit either.
 
 ```
 prio  A                          B                              handler
@@ -799,6 +800,15 @@ contact and nothing happens, so the slow lift drifts through anyone; at or above
 handler declines and the scan goes on (a banana whose owner no longer recalls declines too).
 Decided: harmless below a speed rather than for a time, because the speed is what a player
 sees, and a pull a wall holds back stays slow.
+
+The glide (v0.95, §5.7). An arc banana that gave up on the way home (it flew past its owner,
+ran out of return time or met a wall) has its own phase, `Gliding`, which `kPhaseInFlight` and
+`kPhaseReturning` include exactly as `Returning` is included: to every row it is a returning
+banana. It hits (rows 30, 31), is perfect-caught (rows 10, 11), parried, slammed and blocked,
+and its owner catches it by touching it (row 40); row 5 does not name it. A test pins that
+every Boomerang row matches `Gliding` exactly when it matches `Returning`. Decided: the glide
+is the end of a throw, not a new kind of banana, so a rule that knows returning bananas knows
+gliding ones; a glide that ran into a monkey and did nothing would read as a bug.
 
 Parry (v0.21, row 15, `rules/parry.cpp`). Judged like the catch: parried iff
 `0 <= (tick + tHit) − (pressTime + startupTicks) < activeTicks`; outside the window the handler
@@ -1087,49 +1097,82 @@ is a defence only for a player who has thrown.
   and `MatchEnded` they are frozen like the players (`prevPos = pos`, timers stop) and
   `InteractionSystem` resolves nothing, so a banana still in the air when the round is decided
   cannot kill the winner or return to its owner during the pause; `RoundEnded` then clears it.
-- The arc (v0.89). The flight above flew for seconds: a banana that missed its moving owner
-  kept homing at 6.6°/tick for up to 4 s, circling and bouncing off walls at full speed. A mode
-  now picks one of two flights, `ModeDef::bananaFlight` (TOML `banana_flight`): `classic`, the
-  flight above bit for bit, kept by the four grid modes (`grid_rounds`, `grid_rounds_1t`,
-  `contest`, `control_1t`: the bot contest's, whose corpus checksums did not move), and `arc`,
-  the loader's default and every other shipped mode's (`ModeDef{}` stays classic, so a mode
-  built by hand plays as before). The arc is the genre's boomerang in our own numbers (no other
-  game's code or values): every speed is a function of the phase and its `ticksInPhase` times
-  the banana's `speedMul`, so it adds no `Boomerang` field and the charge scales the reach,
-  never the time in the air.
+- The arc (v0.89, the way home v0.95). The flight above flew for seconds: a banana that missed
+  its moving owner kept homing at 6.6°/tick for up to 4 s, circling and bouncing off walls at
+  full speed. A mode now picks one of two flights, `ModeDef::bananaFlight` (TOML
+  `banana_flight`): `classic`, the flight above bit for bit, kept by the four grid modes
+  (`grid_rounds`, `grid_rounds_1t`, `contest`, `control_1t`: the bot contest's, whose corpus
+  checksums did not move), and `arc`, the loader's default and every other shipped mode's
+  (`ModeDef{}` stays classic, so a mode built by hand plays as before). The arc is the genre's
+  boomerang in our own numbers (no other game's code or values): every speed is a function of
+  the phase and its `ticksInPhase` and the banana's `speedMul` (the glide's of the last tick's
+  speed), so it adds no `Boomerang` field; the charge scales the reach, and within the bounds
+  of the top speed home the time too.
   - Out: `arcLaunchSpeed` on the first tick, slowing evenly to `arcApexSpeed` at the outbound
     ticks (`arcOutboundTicks`; a mode's `banana_outbound_ticks` overrides it as in classic).
     At the apex it turns at once to face its owner (it is slow there: the hang of a boomerang
-    at the top of its loop), then speeds up evenly from the apex speed to `arcReturnSpeed` over
+    at the top of its loop), then speeds up evenly from the apex speed to its top speed over
     `arcReturnAccelTicks`, steering toward the owner's current position by at most
-    `arcTurnRateBam` a tick (a mode's `banana_turn_rate` overrides it).
-  - It drops (Grounded, then a pickup in `LifecycleSystem` as ever) when its owner is gone,
-    after `arcReturnTicks` returning, and the moment it has passed its owner: its velocity
-    points away from the owner (an exact int64 dot product below zero), judged before it moves,
-    so a banana that reaches its owner this tick is still caught. It never circles back.
+    `arcTurnRateBam` a tick (a mode's `banana_turn_rate` overrides it). The top speed is
+    `arcReturnSpeed × speedMul` held within `arcReturnMinSpeed` and `arcReturnMaxSpeed` (v0.95;
+    0 = no cap): a tap's ×0.6 would come home slower than a walking thrower, a full charge's
+    ×1.5 would run down a thrower who dashes off.
+  - It gives up (v0.95; v0.89 dropped it on the spot, which the owner's playtest read as "the
+    boomerang drops too fast") the moment it has passed its owner (its velocity points away from
+    the owner: an exact int64 dot product below zero, judged before it moves, so a banana that
+    reaches its owner this tick is still caught), after `arcReturnTicks` returning, and when it
+    meets a wall. Then it glides (`BoomerangPhase::Gliding`, §5.6): straight on along its last
+    heading, with no steering at all, its n-th glide tick keeping `(G − n) / (G − n + 1)` of the
+    last tick's velocity (G = `arcGlideTicks`), so it slows evenly from the speed it had to rest
+    at G and lands there (Grounded, then a pickup in `LifecycleSystem` as ever, its owner's to
+    recall). A glide is at most one pass: nothing turns it back, so it never circles. A banana
+    whose owner is gone still drops at once.
   - Walls: on the way out a wall bounces it as in classic (`restitution` for the bounce tick)
     and ages the flight by `arcBounceTicks` (added to `ticksInPhase`): each bounce slows it and
-    brings the turn nearer, so bounce shots (`corridors`) stay, at a cost. On the way back a
-    wall drops it where it hit (still one `BoomerangBounced`). Decided: a reflection on the way
-    home points away from the owner, which the passed-owner rule would drop on the next tick
-    anyway, and a wall between a banana and its thrower is a miss the thrower pays for (or
-    pulls back, below), not a ricochet that finds them.
+    brings the turn nearer, so bounce shots (`corridors`) stay, at a cost. On the way back a wall
+    bounces it off and ends the homing: it glides from the bounce (v0.95; v0.89 dropped it at
+    the wall). A bounce while gliding costs `arcBounceTicks` of the glide. Decided: a wall in the
+    way is still a miss the thrower pays for (the glide does not steer, so it does not ricochet
+    toward them except by geometry), but it no longer dies on the wall; and there is one bounce
+    home at most before the glide, so a banana never rattles between walls. The time in the air
+    is bounded by content alone: at most `arcOutboundTicks + arcReturnTicks + 1 +
+    arcGlideTicks` ticks.
   - Shipped (`content/boomerang.toml`): 29 u/s slowing to 3 over 36 ticks (a mean of 16 u/s,
     the classic speed, so the reach out is the classic one: 9.6 units, a tap 5.8, a full charge
-    14.4, plus the 1-unit spawn offset), home at up to 20 u/s reached in 24 ticks, 96 BAM
-    (about 0.5°) of steering a tick, 60 ticks of return at most, 9 ticks of flight a bounce.
-    Thrown east into the open from 12 units west of the dojo's centre and caught by a thrower
-    standing still, a tap reaches 6.6 units and is in the air 74 ticks, a full charge 15.0 and
-    73 (classic: 8.1 and 18.7 at the farthest, the loop past the turn included, 100 ticks
-    each); no banana is in the air past 96 ticks. A thrower who walks off sideways at full speed
-    is missed; one who steps aside for a fifth of a second is still caught
-    (`banana_arc_scenario.cpp`, which also prints the table: its hidden `[measure]` case).
+    14.4, plus the 1-unit spawn offset), home at up to 20 u/s × the multiplier held within 18 and
+    24 u/s, reached in 24 ticks, 384 BAM (about 2.1°) of steering a tick, 84 ticks of homing at
+    most, a 24-tick glide, 9 ticks of flight a bounce: never more than 145 ticks (2.4 s) in the
+    air. Measured on an open floor (`banana_homing_scenario.cpp`, whose hidden `[measure]` case
+    prints the table; thrown east, the thrower walking or dashing from the release on):
+
+    | thrower after the throw | tap | full charge |
+    |---|---|---|
+    | stands | caught, 65 ticks (1.08 s), reach 6.6 | caught, 80 (1.33 s), reach 15.0 |
+    | walks E (toward the apex) | caught, 44 | caught, 62 |
+    | walks NE / SE | caught, 61 | caught, 70 |
+    | walks N / S | caught, 82 | caught, 89 |
+    | walks NW / SW | caught, 99 | caught, 106 |
+    | walks W (away) | caught, 106 (1.77 s) | caught, 113 (1.88 s) |
+    | dashes once W, walks on | caught, 123 (in the glide) | caught, 124 (in the glide) |
+    | dashes once N, walks on | caught, 95 | caught, 95 |
+    | dashes W whenever it can | missed, glides from 120, down at 144 (2.4 s) | missed, down at 144 |
+    | dashes N whenever it can | caught, 131 (in the glide) | caught, 112 |
+    | sidesteps (dashes N when it is 3 units off) | missed: passes at 83, down at 107 | caught, 80 |
+
+    Every full-speed walk is homed in at least 7 ticks before the homing ends; v0.89's numbers
+    caught 4 of the 16 walks (both charges walking out east, a full charge walking NW and SW)
+    and missed every dash.
+    Thrown east from 12 units west of the dojo's centre and caught standing, a tap is in the air
+    65 ticks and a full charge 80 (v0.89: 74 and 73; classic: 100 each).
   - Readers outside the sim get the arc's numbers through the same helpers:
     `bananaOutboundTicksOf`, `bananaTurnRateBamOf`, `bananaMaxReturnTicksOf` (the arc's
-    `arcReturnTicks`) and `bananaFlightSpeedOf` (classic: `speed`; arc: the mean speed out,
+    `arcReturnTicks`: the ticks it homes before it gives up and glides) and `bananaFlightSpeedOf` (classic: `speed`; arc: the mean speed out,
     `(arcLaunchSpeed + arcApexSpeed) / 2`, so speed × outbound ticks is the reach either way).
-    The observation's rules block reports them (`docs/bot-abi.md` §2.5); the presentation's
-    height arc reads the outbound ticks.
+    The observation's rules block reports them (`docs/bot-abi.md` §2.5); a gliding banana is
+    reported as Returning (no phase value is added; its `ticksInPhase` counts the glide), and
+    the presentation draws it as a returning banana coming down evenly from the height it had to
+    the pickup's over the glide (`BananaTrack::glideFromArc`). The presentation's height arc
+    reads the outbound ticks.
 - The recall's flight (v0.89, `Recalled`, §5.5). While its owner holds the recalling throw's
   button (`heldRecallDef`), a `Recalled` banana flies straight at the owner's current position,
   from rest up to the def's `recallSpeed` (times its `speedMul`) evenly over
@@ -3253,7 +3296,8 @@ M2 presentation decisions (v0.15), all constants in `kfm/presentation/tuning.hpp
 - Height curves: dash hop `0.35·sin(πu)` over the Dash active phase; hit-stun lift
   `0.4·sin(πu)`; a flying banana rides at hand height 0.6 plus an arc of 0.5 that rises as a
   sine over the outbound phase and falls with the remaining distance to the owner while
-  returning, so it is on the ground at the throw and at the owner; pickups hover at 0.15 ± 0.08
+  returning, so it is on the ground at the throw and at the owner (v0.95: a gliding banana comes
+  down evenly from where it was to the pickup's height over the glide); pickups hover at 0.15 ± 0.08
   and spin slowly. The monkey placeholder capsule is 3.2 radii tall.
 - Facing: body yaw follows the dash direction while dashing, otherwise the move direction
   (keeping the last non-zero one), limited to 720°/s; aim yaw follows the aim directly. A dash

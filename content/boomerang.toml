@@ -18,15 +18,22 @@
 # It leaves at arc_launch_speed and slows evenly to arc_apex_speed over
 # arc_outbound_ticks (the mean, 16 units/s, makes the classic reach: 9.6
 # units, a tap 5.8, a full charge 14.4). At the apex it turns to face its
-# thrower, then speeds up evenly to arc_return_speed over
-# arc_return_accel_ticks, steering at most arc_turn_rate_bam a tick: a
-# thrower who stands or steps into its path catches it, one who runs off
-# does not. It drops to the ground (a pickup) the moment it has flown past
-# its thrower, when it hits a wall on the way back, or after arc_return_ticks
-# returning. A wall on the way out bounces it and costs arc_bounce_ticks of
-# its flight, so each bounce slows it and brings the turn nearer. In the
-# open, a throw is in the air about 1.25 s, whatever its charge; never more
-# than arc_outbound_ticks + arc_return_ticks (1.6 s).
+# thrower, then speeds up evenly to its top speed home over
+# arc_return_accel_ticks, steering at most arc_turn_rate_bam a tick. The top
+# speed is arc_return_speed times the multiplier, held within
+# arc_return_min_speed and arc_return_max_speed (v0.95): a tap still outruns
+# its thrower, a full charge does not run down one who dashes off. A thrower
+# who stands, or walks off in any direction, catches it; one who dashes away
+# or puts a wall between can lose it. On the way home it gives up when it has
+# flown past its thrower, after arc_return_ticks or when it meets a wall (it
+# bounces off): then it glides on in a straight line, slowing evenly to rest
+# over arc_glide_ticks, still in flight (it hits, its thrower catches it by
+# touching it) but never steering back, and lands as a pickup. A wall on the
+# way out bounces it and costs arc_bounce_ticks of its flight, so each bounce
+# slows it and brings the turn nearer (a bounce while gliding costs as much
+# of the glide). In the open a throw to a thrower who stands is in the air
+# 1.1 s (a tap) to 1.35 s (a full charge); never more than arc_outbound_ticks
+# + arc_return_ticks + 1 + arc_glide_ticks (145 ticks, 2.4 s).
 
 [boomerang]
 radius = 0.35               # contact radius
@@ -43,6 +50,9 @@ arc_apex_speed = 3          # arc: units/s at the turn (slowing evenly from the 
 arc_outbound_ticks = 36     # arc: 0.6 s out to the apex
 arc_return_speed = 20       # arc: top speed home, units/s
 arc_return_accel_ticks = 24 # arc: 0.4 s from the apex speed to the top speed
-arc_return_ticks = 60       # arc: returning 1 s without reaching the thrower drops it
-arc_turn_rate_bam = 96      # arc: ~0.5 degrees per tick of steering on the way home
-arc_bounce_ticks = 9        # arc: a bounce on the way out costs 0.15 s of flight
+arc_return_ticks = 84       # arc: homing 1.4 s at most, then it glides
+arc_turn_rate_bam = 384     # arc: ~2.1 degrees per tick of steering on the way home
+arc_bounce_ticks = 9        # arc: a bounce on the way out (or gliding) costs 0.15 s of flight
+arc_glide_ticks = 24        # arc: past its thrower, it glides on 0.4 s, slowing to rest, then lands
+arc_return_min_speed = 18   # arc: the top speed home is never below this (a tap's x0.6 would be 12)
+arc_return_max_speed = 24   # arc: nor above this (a full charge's x1.5 would be 30; 0 = no cap)

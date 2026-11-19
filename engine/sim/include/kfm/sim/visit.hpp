@@ -102,7 +102,7 @@ inline constexpr uint8_t kEnumCount<AbilityPhase> = 4;
 template <>
 inline constexpr uint8_t kEnumCount<StatKind> = 4;
 template <>
-inline constexpr uint8_t kEnumCount<BoomerangPhase> = 5;
+inline constexpr uint8_t kEnumCount<BoomerangPhase> = 6;
 template <>
 inline constexpr uint8_t kEnumCount<PickupKind> = 3;
 template <>
@@ -125,7 +125,7 @@ template <>
 inline constexpr uint8_t kEnumCount<Tag> = static_cast<uint8_t>(Tag::kCount);
 static_assert(static_cast<uint8_t>(AbilityPhase::Recovery) + 1 == kEnumCount<AbilityPhase>);
 static_assert(static_cast<uint8_t>(StatKind::Radius) + 1 == kEnumCount<StatKind>);
-static_assert(static_cast<uint8_t>(BoomerangPhase::Recalled) + 1 == kEnumCount<BoomerangPhase>);
+static_assert(static_cast<uint8_t>(BoomerangPhase::Gliding) + 1 == kEnumCount<BoomerangPhase>);
 static_assert(static_cast<uint8_t>(PickupKind::Flag) + 1 == kEnumCount<PickupKind>);
 static_assert(static_cast<uint8_t>(GrantKind::Tag) + 1 == kEnumCount<GrantKind>);
 static_assert(static_cast<uint8_t>(PowerUpShape::Coin) + 1 == kEnumCount<PowerUpShape>);
@@ -261,8 +261,11 @@ void visit(V& v, BoomerangDef& d) {
   v.u16(d.arcReturnTicks);
   v.u16(d.arcTurnRateBam);
   v.u16(d.arcBounceTicks);
+  v.u16(d.arcGlideTicks);  // v0.95
+  visit(v, d.arcReturnMinSpeed);
+  visit(v, d.arcReturnMaxSpeed);
 }
-static_assert(fieldCount<BoomerangDef>() == 17, "visit the new field, then update the count");
+static_assert(fieldCount<BoomerangDef>() == 20, "visit the new field, then update the count");
 template <class V>
 void visit(V& v, PickupDef& d) {
   visit(v, d.radius);

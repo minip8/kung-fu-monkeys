@@ -2037,3 +2037,53 @@ reconnect states v0.92 adds draw through the same status screen. Verified: clien
 (the new `content_labels_test.cpp`; the menus, room and lobby tests updated), off-screen renders
 of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
 unchanged.
+
+v0.95 changes: the arc's way home (§5.6, §5.7, §7). The owner's playtest: "the boomerang drops
+too fast now"; asked what that meant, they chose "it gives up too easily on the way home. It
+should home on a moving thrower much better, return for longer, and glide on past you for a
+moment instead of dropping dead the instant it misses. Still no endless circling." v0.89's arc
+steered 96 BAM a tick and dropped the instant its velocity pointed away from its thrower, it
+touched a wall on the way home or it had returned 60 ticks: on an open floor it caught 4 of 16
+full-speed walks (tap and full charge, eight directions) and missed every dash. Now: it steers
+`arc_turn_rate_bam` = 384 (2.1°) a tick for up to `arc_return_ticks` = 84; its top speed home
+is `arc_return_speed × speedMul` held within two new keys, `arc_return_min_speed` = 18 and
+`arc_return_max_speed` = 24 u/s (a tap's ×0.6 would come home at 12, slower than a walk's 7
+plus the gap; a full charge's ×1.5 at 30 ran down a thrower who kept dashing away), so the
+charge no longer leaves the time in the air unchanged (a standing tap 65 ticks, a full charge
+80). Where it dropped it now glides: a new banana phase, `BoomerangPhase::Gliding` (5,
+appended), entered when it passes its thrower, runs out of homing time or meets a wall (it
+bounces off the wall first: one bounce home, then the glide, never a rattle); it flies straight
+on, never steering (at most one pass, no orbit), its n-th tick keeping `(G − n)/(G − n + 1)` of
+the last tick's velocity, so it slows evenly from its speed to rest over `arc_glide_ticks` = 24
+(a pass at 20 u/s glides about 4 units), and lands as a pickup its thrower may recall; a bounce
+while gliding costs `arc_bounce_ticks`. To the rules it is a returning banana (in
+`kPhaseInFlight` and `kPhaseReturning` wherever Returning is; a test pins it): it hits, is
+perfect-caught, parried, slammed and blocked, and its thrower catches it by touching it.
+Worst case in the air: `arc_outbound_ticks + arc_return_ticks + 1 + arc_glide_ticks` = 145
+ticks (2.4 s). Measured on an open floor (`banana_homing_scenario.cpp`, its hidden `[measure]`
+case; the §5.7 table): standing, a tap 65 ticks, a full charge 80; every full-speed walk caught,
+the slowest walking straight away (106 and 113 ticks), each at least 7 ticks before the homing
+ends; one dash back and walking on, caught (123, 124, in the glide); dashing back whenever the
+dash is ready, both lost, down at 144 ticks; dashing sideways whenever ready, caught; a late
+sidestep (a dash at 3 units) makes a tap pass and glide (down at 107), a full charge too fast to
+dodge that late. New content keys in `content/boomerang.toml` and `defaultContent()`, `visit()`
+(`BoomerangDef` 17 → 20 fields), the hash test, the loader (max at least min when set) and the
+F1 tuning core's `contentToCpp`. Presentation draws a glide as a returning banana coming down
+evenly from the height it had to the pickup's (`BananaTrack::glideFromArc`). Bots: Observation
+v2 unchanged; a gliding banana reads as Returning with its `ticksInPhase` counting the glide,
+`bananaMaxReturnTicks` is the homing budget (`docs/bot-abi.md` §2.5, §2.8); the reference bot
+is unchanged (its flight prediction was already an approximation in an arc mode). Considered and
+not taken: steering at a lead point ahead of a moving thrower (pure pursuit at 384 BAM already
+catches every walk); dropping at the timeout rather than gliding (it would still drop dead in
+the air, the owner's complaint); sliding along a wall on the way home (it sticks there, homing,
+for the rest of its time); a charge-independent return speed (a min and a max keep the power-ups'
+and the charge's effect inside a band). Tests: `banana_homing_scenario.cpp` (the walks, the
+dashes, the glide, a gliding banana caught, hitting and dash-caught, the wall, a 50-throw
+bounded-air sweep in a small room with a pillar), the arc scenario's numbers, the mask pin, the
+observation, the presentation's glide height; `kfm_arena`'s "reference bots finish a match"
+moves to seed 4 (seed 2's match no longer had both slots lose a round). Replay checksums:
+changed, corpus regenerated because every arc mode's banana homes, glides and lands differently;
+the grid, contest and control entries (`scripted_*grid_rounds*`, `scripted_10p_contest*`,
+`scripted_10p_control_1t_1800t`) and the empty ones keep every per-tick checksum, only their
+content hash moved; `scripted_4p_recall_1800t` takes input seed 0x5C1284 (with 0x5C1265 more
+bananas come home in flight and a single pull, let go, was left).

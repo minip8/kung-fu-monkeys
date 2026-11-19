@@ -133,7 +133,10 @@ TEST_CASE("every content field reaches the content hash", "[sim][content]") {
       [](ContentDB& c) { c.boomerang.arcReturnAccelTicks += 1; },
       [](ContentDB& c) { c.boomerang.arcReturnTicks += 1; },
       [](ContentDB& c) { c.boomerang.arcTurnRateBam += 1; },
-      [](ContentDB& c) { c.boomerang.arcBounceTicks += 1; });
+      [](ContentDB& c) { c.boomerang.arcBounceTicks += 1; },
+      [](ContentDB& c) { c.boomerang.arcGlideTicks += 1; },  // v0.95
+      [](ContentDB& c) { c.boomerang.arcReturnMinSpeed += Fixed::epsilon(); },
+      [](ContentDB& c) { c.boomerang.arcReturnMaxSpeed += Fixed::epsilon(); });
   everyFieldReachesTheHash<PickupDef>([](ContentDB& c) { c.pickup.radius += Fixed::epsilon(); });
   everyFieldReachesTheHash<PlayerDef>([](ContentDB& c) { c.player.radius += Fixed::epsilon(); },
                                       [](ContentDB& c) { c.player.moveSpeed += Fixed::epsilon(); },

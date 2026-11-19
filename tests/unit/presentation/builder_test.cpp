@@ -239,6 +239,14 @@ TEST_CASE("banana arc is zero at the throw and back at the owner", "[presentatio
   CHECK(bananaArcHeight(b, 0.0f, 6.0f, content) == 0.0f);
   b.phase = BoomerangPhase::Grounded;
   CHECK(bananaArcHeight(b, 3.0f, 6.0f, content) == 0.0f);
+  // v0.95: a glide comes down from where it began to the pickup's height.
+  b.phase = BoomerangPhase::Gliding;
+  b.ticksInPhase = 0;
+  CHECK(bananaArcHeight(b, 3.0f, 6.0f, content, 0.5f) == Approx(0.5f));
+  b.ticksInPhase = content.boomerang.arcGlideTicks / 2;
+  CHECK(bananaArcHeight(b, 3.0f, 6.0f, content, 0.5f) < 0.5f);
+  b.ticksInPhase = content.boomerang.arcGlideTicks;
+  CHECK(bananaArcHeight(b, 3.0f, 6.0f, content, 0.5f) == Approx(kPickupHeight - kBananaHandHeight));
 
   // A real throw: the banana is airborne for its whole flight and its shadow
   // stays on the sim position.
@@ -633,11 +641,18 @@ TEST_CASE("a scripted 10-player match renders consistently every frame",
         CHECK(p.bodyYaw >= -kPi);
         CHECK(p.bodyYaw <= kPi);
       }
+      // The render bananas are the live boomerangs in pool order.
+      std::vector<BoomerangPhase> phases;
+      curr->boomerangs.forEachAlive(
+          [&](EntityId /*id*/, const Boomerang& b) { phases.push_back(b.phase); });
+      REQUIRE(phases.size() == rs->bananaCount);
       for (uint16_t i = 0; i < rs->bananaCount; ++i) {
         const RenderBanana& b = rs->bananas[i];
         CHECK(std::fabs(b.ground.x) <= hx);
         CHECK(std::fabs(b.ground.z) <= hy);
-        CHECK(b.height >= kBananaHandHeight);
+        // v0.95: a glide comes down to the pickup's height.
+        CHECK(b.height >=
+              (phases[i] == BoomerangPhase::Gliding ? kPickupHeight - 1e-4f : kBananaHandHeight));
         CHECK(b.height <= kBananaHandHeight + kBananaArcPeak + 1e-4f);
       }
       for (uint16_t i = 0; i < rs->effectCount; ++i) {

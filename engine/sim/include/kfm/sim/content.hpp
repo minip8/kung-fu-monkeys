@@ -131,10 +131,11 @@ struct BoomerangDef {
   // over arcOutboundTicks; at the apex it turns to face its owner, then
   // speeds up evenly from arcApexSpeed to arcReturnSpeed over
   // arcReturnAccelTicks, steering toward the owner by at most arcTurnRateBam
-  // a tick. It drops (Grounded) when it has passed its owner (flying away
-  // from it), when it hits a wall on the way back, or after arcReturnTicks
-  // returning. A wall on the way out bounces it and ages the flight by
-  // arcBounceTicks (it reaches its apex that much sooner, slower).
+  // a tick. v0.95: it gives up and glides (below) when it has passed its
+  // owner (flying away from it), when it meets a wall on the way back (it
+  // bounces off), or after arcReturnTicks returning. A wall on the way out
+  // bounces it and ages the flight by arcBounceTicks (it reaches its apex
+  // that much sooner, slower).
   Fixed arcLaunchSpeed{};
   Fixed arcApexSpeed{};
   uint16_t arcOutboundTicks{0};
@@ -143,6 +144,17 @@ struct BoomerangDef {
   uint16_t arcReturnTicks{0};
   uint16_t arcTurnRateBam{0};
   uint16_t arcBounceTicks{0};
+  // v0.95: a returning banana that gives up (it flew past its owner, has
+  // returned arcReturnTicks or met a wall) glides on (BoomerangPhase::Gliding)
+  // in a straight line, slowing evenly to rest over arcGlideTicks, then
+  // drops; a bounce while gliding costs arcBounceTicks of it.
+  uint16_t arcGlideTicks{0};
+  // v0.95: the return's top speed is arcReturnSpeed x speedMul, but never
+  // below arcReturnMinSpeed (units/tick: a tap's slow banana still outruns
+  // its thrower) nor above arcReturnMaxSpeed (0: no cap; a full charge does
+  // not run down a thrower who dashes off).
+  Fixed arcReturnMinSpeed{};
+  Fixed arcReturnMaxSpeed{};
 };
 
 // Pickups lying in the arena (M1: grounded bananas; M4 adds power-ups).
