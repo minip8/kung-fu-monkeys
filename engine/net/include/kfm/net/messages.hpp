@@ -51,8 +51,9 @@ namespace kfm::net {
 // RoomState carries the bots' placement (botPlacement), so the waiting room
 // shows the slots the server will put its bots in (issue #68). v8:
 // RoomState carries the server's player cap (maxPlayers), so the waiting
-// room shows no slot above it as open (issue #83).
-inline constexpr uint16_t kProtocolVersion = 8;
+// room shows no slot above it as open (issue #83). v9 (v0.96): RoomCommand,
+// the host's controls of a running match (end it, restart it).
+inline constexpr uint16_t kProtocolVersion = 9;
 
 // Inputs per Input / AuthInputs message: the newest tick and up to 15 before
 // it (§6.3: the last 8–16 are resent every packet).
@@ -82,8 +83,9 @@ enum class MessageType : uint8_t {
   RoomSettings,   // C→S reliable (v6: the host's settings)
   RoomState,      // S→C reliable (v6)
   Start,          // C→S reliable (v6: the host starts or plays again)
+  RoomCommand,    // C→S reliable (v9: the host ends or restarts the match)
 };
-inline constexpr uint8_t kMessageTypeCount = 17;  // values 1..kMessageTypeCount
+inline constexpr uint8_t kMessageTypeCount = 18;  // values 1..kMessageTypeCount
 
 enum class DecodeError : uint8_t {
   Truncated = 0,     // ran past the end of the buffer
@@ -299,6 +301,24 @@ struct StartMsg {
   constexpr bool operator==(const StartMsg&) const = default;
 };
 
+// v9 (v0.96): the host's controls of a running match, one kind per
+// command (an enum, so later kinds append without a new message type).
+//   EndMatch  Playing → Waiting: the match stops where it is and everyone
+//             is back in the room, settings and roster kept, the room's
+//             bots removed (as Over → Waiting does).
+//   Restart   Playing or Over → Playing: a fresh match at once with the
+//             same settings and roster (the bots placed again, as at
+//             Start), without the waiting room.
+// The server ignores anyone else's and one in another phase, and answers
+// with RoomState either way.
+enum class RoomCommand : uint8_t { EndMatch = 0, Restart };
+inline constexpr uint8_t kRoomCommandCount = 2;
+
+struct RoomCommandMsg {
+  RoomCommand command{RoomCommand::EndMatch};
+  constexpr bool operator==(const RoomCommandMsg&) const = default;
+};
+
 // Server → every peer, on every change and after Welcome. `names` holds the
 // nickname of every human slot (the others are empty).
 struct RoomStateMsg {
@@ -347,6 +367,7 @@ inline constexpr size_t kPongMsgBytes = 1 + 8 + 4 + 4;
 inline constexpr size_t kRoomSettingsBits = 8 + 8 + 8 + 16 + 4;
 inline constexpr size_t kRoomSettingsMsgBytes = (8 + kRoomSettingsBits + 7) / 8;
 inline constexpr size_t kStartMsgBytes = 1;
+inline constexpr size_t kRoomCommandMsgBytes = 2;
 inline constexpr size_t kRoomStateMsgMaxBytes =
     (8 + 2 + 1 + 4 + kRoomSettingsBits + (3 * size_t{sim::kMaxPlayers}) + 4 + 1 + 4 +
      size_t{sim::kMaxPlayers} * (5 + kMaxNicknameBytes * 8) + 7) /
@@ -383,6 +404,7 @@ static_assert(kAuthInputsMsgMaxBytes <= kMaxUnreliableBytes);
 [[nodiscard]] size_t encode(const RoomSettingsMsg& m, std::span<std::byte> out);
 [[nodiscard]] size_t encode(const RoomStateMsg& m, std::span<std::byte> out);
 [[nodiscard]] size_t encode(const StartMsg& m, std::span<std::byte> out);
+[[nodiscard]] size_t encode(const RoomCommandMsg& m, std::span<std::byte> out);
 
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, InputMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, AuthInputsMsg& out);
@@ -402,6 +424,7 @@ static_assert(kAuthInputsMsgMaxBytes <= kMaxUnreliableBytes);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, RoomSettingsMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, RoomStateMsg& out);
 [[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, StartMsg& out);
+[[nodiscard]] DecodeResult decode(std::span<const std::byte> bytes, RoomCommandMsg& out);
 
 // The delta coding of one PlayerInput against `prev` (exposed for tests and
 // for size estimates).

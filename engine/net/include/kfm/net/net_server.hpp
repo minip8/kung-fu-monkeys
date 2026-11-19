@@ -90,11 +90,12 @@
 // The room (v0.42, protocol 6, §6.6): NetServer keeps no room policy. It
 // keeps each slot's nickname (from the Hello of the peer that took it; a
 // reconnect with the same token keeps the slot's name, a released slot
-// forgets it), reports a peer's RoomSettings and Start as ServerEvents
-// (RoomSettingsRequested with the settings, StartRequested) for the host to
+// forgets it), reports a peer's RoomSettings, Start and (v0.96, protocol 9)
+// RoomCommand as ServerEvents (RoomSettingsRequested with the settings,
+// StartRequested, RoomCommandRequested with the command) for the host to
 // judge, and sends the RoomState the host sets (setRoomState()) to every
 // active peer at once and to each joiner right after its Welcome and
-// Snapshot. Both requests share a per-peer token bucket (roomMsgsPerSecond);
+// Snapshot. The requests share a per-peer token bucket (roomMsgsPerSecond);
 // excess ones are dropped. A host that keeps the room waiting simply stops
 // calling tick(): pump() still answers pings, handshakes and inputs (which
 // wait in the assembler's window), and releaseReservations() frees the slots
@@ -180,7 +181,7 @@ struct ServerConfig {
   BotInputSource botInputs;
   // Player slots open to peers and bots: the lowest maxPlayers (1..kMaxPlayers).
   uint8_t maxPlayers{sim::kMaxPlayers};
-  // RoomSettings and Start messages per second per peer (v0.42).
+  // RoomSettings, Start and RoomCommand messages per second per peer (v0.42).
   uint32_t roomMsgsPerSecond{20};
   // JoinMatch messages per second per peer, a one-second burst (v0.70).
   uint32_t joinMsgsPerSecond{2};
@@ -204,6 +205,7 @@ enum class ServerEventKind : uint8_t {
   RoomSettingsRequested,  // v0.42: a peer sent RoomSettings (settings)
   StartRequested,         // v0.42: a peer sent Start
   PeerQueued,             // v0.44: a joiner waits for slots; reason = how many
+  RoomCommandRequested,   // v0.96: a peer sent RoomCommand; reason = the RoomCommand
 };
 
 // v0.92: why a peer left (PeerLeft), for the host's log and metrics. The
@@ -242,7 +244,7 @@ struct ServerStats {
   uint64_t inputsLate{0};       // redundant copies of ticks already assembled
   uint64_t rejectedInputs{0};   // messages or slot-ticks refused (§6.7)
   uint64_t rateLimited{0};      // Input messages over the rate limit
-  uint64_t roomRateLimited{0};  // RoomSettings / Start messages over their limit
+  uint64_t roomRateLimited{0};  // RoomSettings / Start / RoomCommand messages over their limit
   uint64_t joinRateLimited{0};  // JoinMatch messages over their limit (v0.70)
   uint64_t helloTimeouts{0};    // peers dropped for no Hello in time (v0.70)
   uint64_t timeouts{0};         // peers dropped for silence (v0.92)

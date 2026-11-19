@@ -55,7 +55,8 @@ namespace {
 constexpr int kMaskBits = sim::kMaxPlayers;
 constexpr int kCountBits = 4;
 static_assert((1u << kCountBits) == kMaxInputRedundancy);
-static_assert(kMessageTypeCount == static_cast<uint8_t>(MessageType::Start));
+static_assert(kMessageTypeCount == static_cast<uint8_t>(MessageType::RoomCommand));
+static_assert(kRoomCommandCount == static_cast<uint8_t>(RoomCommand::Restart) + 1);
 static_assert(kRoomPhaseCount == static_cast<uint8_t>(RoomPhase::Over) + 1);
 static_assert(kRejectReasonCount == static_cast<uint8_t>(RejectReason::ServerShuttingDown) + 1);
 static_assert(kDisconnectReasonCount ==
@@ -834,6 +835,24 @@ size_t encode(const StartMsg& /*m*/, std::span<std::byte> out) {
 
 DecodeResult decode(std::span<const std::byte> bytes, StartMsg& /*out*/) {
   return decodeWith(bytes, MessageType::Start, [](BitReader& /*r*/) -> DecodeResult { return {}; });
+}
+
+size_t encode(const RoomCommandMsg& m, std::span<std::byte> out) {
+  return encodeWith(out, MessageType::RoomCommand, [&](BitWriter& w) {
+    const auto command = static_cast<uint8_t>(m.command);
+    if (command >= kRoomCommandCount) return false;
+    w.writeU8(command);
+    return true;
+  });
+}
+
+DecodeResult decode(std::span<const std::byte> bytes, RoomCommandMsg& out) {
+  return decodeWith(bytes, MessageType::RoomCommand, [&](BitReader& r) -> DecodeResult {
+    const uint8_t command = r.readU8();
+    if (command >= kRoomCommandCount) return unexpected(DecodeError::OutOfRange);
+    out.command = static_cast<RoomCommand>(command);
+    return {};
+  });
 }
 
 }  // namespace kfm::net

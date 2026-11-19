@@ -554,6 +554,7 @@ void NetServer::onPacket(Peer& p, const Packet& packet) {
       return;
     case MessageType::RoomSettings:
     case MessageType::Start:
+    case MessageType::RoomCommand:
       onRoomMessage(p, packet, *type);
       return;
     default:
@@ -811,6 +812,16 @@ void NetServer::onRoomMessage(Peer& p, const Packet& packet, MessageType type) {
       return;
     }
     emit(ServerEventKind::StartRequested, p.info.peer, p.info.slots);
+    return;
+  }
+  if (type == MessageType::RoomCommand) {
+    RoomCommandMsg m;
+    if (!decode(packet.data, m)) {
+      protocolError(p, nowNs_);
+      return;
+    }
+    emit(ServerEventKind::RoomCommandRequested, p.info.peer, p.info.slots,
+         static_cast<uint8_t>(m.command));
     return;
   }
   RoomSettingsMsg m;
