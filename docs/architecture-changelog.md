@@ -2082,6 +2082,6 @@ and the pause menu in `menus_test.cpp`, the volume migration), clang-format 23.1
 clang-tidy 23.1.4 on every touched file, off-screen renders (`SDL_VIDEODRIVER=offscreen`) at
 1280×720 and 700 px of the main menu, Settings over the menu, the lobby and the pause menu, the
 local lobby on several presets, the power-up picker, the local pause menu, and against a local
-`kfm_server` (and the lobby service for a room code) the waiting room, Settings over it and the
-online pause menu. Not looked at: a guest's read-only waiting room (one client per run here),
-the browser build. No sim, content or wire change. Replay checksums: unchanged.
+`kfm_server` (and the lobby service for a room code) the host's and a guest's waiting room,
+Settings over it, the online pause menu and Settings over it. Not looked at: the browser build,
+and anything that needs a key press (keyboard-mode highlights, the picker in a room). No sim, content or wire change. Replay checksums: unchanged.

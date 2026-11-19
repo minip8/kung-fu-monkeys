@@ -902,7 +902,8 @@ bool drawSettingsRows(LobbyMenu& menu, bool readOnly = false) {
     if (const std::optional<std::size_t> p = menu.activePreset()) {
       line = std::string(menu.presets()[*p].def->blurb);
     } else {
-      line = "Custom: your own mix. Change Game to start again from a preset.";
+      line = readOnly ? "Custom: the host's own mix."
+                      : "Custom: your own mix. Change Game to start again from a preset.";
     }
   }
   ImGui::PushFont(nullptr, ui::kFontSmall);
