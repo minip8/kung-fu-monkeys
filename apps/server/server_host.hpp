@@ -35,7 +35,15 @@
 // the match at the next tick with the room's settings (teams by
 // sim::teamsFor, next seeds as after a match end) → Playing. MatchEnded →
 // Over (no auto-restart, exitAfterMatches still counts); the host's Start in
-// Over removes the bots → Waiting. The room returns to Waiting, removing the
+// Over removes the bots → Waiting. v0.96 (protocol 9), the host's
+// RoomCommand: EndMatch while Playing removes the bots, frees the
+// reservations and stops ticking → Waiting (the match stops where it is;
+// the next Start restarts it as from any Waiting); Restart while Playing or
+// Over removes the bots, gives a queued joiner the free slots, places the
+// bots again and restarts the match at the next tick as Start does →
+// Playing (reservations keep their grace). Anyone else's, or one in
+// another phase, is logged as refused; every command is answered with the
+// RoomState. The room returns to Waiting, removing the
 // bots, when its last human slot is gone. Every change goes out as one
 // RoomState (NetServer::setRoomState) and one "room ..." log line; while
 // Waiting its botPlacement is the slots Start would place the bots in now
@@ -240,6 +248,10 @@ class ServerHost {
   // when the roster changed. `tickEnded`: called after a tick (onTick).
   bool serveQueue(bool tickEnded, bool roundEnded);
   void startRoomMatch();
+  // v0.96: the host's RoomCommand EndMatch (Playing → Waiting) and Restart
+  // (Playing or Over → Playing), after the Room accepted it.
+  void endRoomMatch();
+  void restartRoomMatch();
   void broadcastRoom();
   [[nodiscard]] std::string roomText() const;
   void fillBots(const sim::WorldState& world, const sim::MatchContent& content,

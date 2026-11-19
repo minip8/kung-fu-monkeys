@@ -6,7 +6,9 @@
 // refused and its valid ones applied, the host starts a short deathmatch
 // with bots, it plays to MatchEnded, the room is Over (nothing ticks), the
 // host plays again (Waiting, bots gone), the host leaves and the other client
-// becomes host and starts the next match. Time is a deterministic 1 ms step
+// becomes host and starts the next match. v0.96: the host's RoomCommand
+// (end a running match, restart a running or an ended one) with spectators,
+// queued joiners and a lost link around. Time is a deterministic 1 ms step
 // loop, as in server_host_test.cpp.
 #include "kfm/core/rng.hpp"
 #include "kfm/net/loopback.hpp"
@@ -69,11 +71,12 @@ struct RoomRig {
     host = std::move(*created);
   }
 
-  NetClient& addClient(const std::string& token, std::string_view nick) {
+  NetClient& addClient(const std::string& token, std::string_view nick, uint8_t slots = 1) {
     const LinkConditions l = netsim::link(30 * kMs, 3 * kMs);
     LoopbackTransport& t = net.connectClient(now, l, l);
     ClientConfig cc = netsim::tokenConfig(token);
     cc.nickname = Nickname::from(nick);
+    cc.requestedSlots = slots;  // 0: a spectator
     clients.push_back(std::make_unique<NetClient>(content, cc));
     clients.back()->connect(t, now);
     rngs.push_back(Rng::seeded(0xACE + clients.size()));
@@ -501,4 +504,257 @@ TEST_CASE("The room flow: the waiting room previews the bots' placement under th
   CHECK(roomOf(a).botPlacement == preview);
   CHECK(roomOf(c).botPlacement == preview);
   CHECK(roomOf(c).maxPlayers == 4);
+}
+
+// v0.96 (protocol 9): the host ends a running match. A non-host's EndMatch
+// and one outside Playing are refused; the host's stops the ticks at once,
+// brings every client (a player, a spectator, a queued joiner) back to the
+// waiting room holding, removes the bots, frees a lost peer's reservation
+// and gives the queued joiner a slot; the next Start plays normally.
+TEST_CASE("The room flow: the host ends a running match and the next one plays",
+          "[server][room][flow][command]") {
+  server::HostConfig cfg;
+  cfg.room = true;
+  cfg.server.maxPlayers = 4;
+  cfg.server.reconnectGraceTicks = 30 * sim::kTickHz;
+  cfg.bots = server::referenceBots(2);
+  RoomRig rig(cfg);
+  NetClient& a = rig.addClient("host", "Host");
+  NetClient& c = rig.addClient("lost", "Lost");
+  REQUIRE(rig.runUntil([&] { return a.running() && c.running() && roomOf(a).humans == 0b11; },
+                       5 * kSec));
+  // The long deathmatch, so the match runs until the host ends it.
+  a.sendRoomSettings(RoomSettings{.mode = 2, .bots = 2});
+  REQUIRE(rig.runUntil([&] { return roomOf(a).settings.mode == 2; }, kSec));
+
+  // Waiting: nothing to end.
+  a.sendEndMatch();
+  REQUIRE(rig.runUntil([&] { return rig.linesWith("room end-match refused") == 1; }, kSec));
+  CHECK(rig.room().phase() == RoomPhase::Waiting);
+  CHECK(rig.host->stats().ticks == 0);
+
+  a.sendStart();
+  REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Playing) && !a.holding(); }, 2 * kSec));
+  CHECK(rig.host->server().bots() == 0b1100);
+  CHECK_FALSE(a.roomEndedByHost());
+
+  // A spectator and a joiner the full room queues, then the second human's
+  // link is lost (its slot reserved for the grace).
+  NetClient& s = rig.addClient("watch", "Watch", 0);
+  NetClient& q = rig.addClient("queued", "Queued");
+  REQUIRE(rig.runUntil([&] { return s.running() && q.running(); }, 5 * kSec));
+  CHECK(s.spectator());
+  rig.net.cut(rig.host->server().ownerOf(PlayerId{1}));
+  rig.runFor(2 * kSec);
+  CHECK((rig.host->server().humanSlots() & 0b10) != 0);  // reserved: held, no owner
+  CHECK(!rig.host->server().ownerOf(PlayerId{1}).isValid());
+  CHECK(rig.room().playing());
+
+  // Neither the spectator nor the (queued or granted) joiner is the host.
+  const size_t refused = rig.linesWith("room end-match refused");
+  s.sendEndMatch();
+  q.sendEndMatch();
+  REQUIRE(
+      rig.runUntil([&] { return rig.linesWith("room end-match refused") == refused + 2; }, kSec));
+  CHECK(rig.room().playing());
+  const uint64_t ticks = rig.host->stats().ticks;
+  rig.runFor(500 * kMs);
+  CHECK(rig.host->stats().ticks > ticks + 20);
+
+  // The host ends it: Waiting at once, everyone holds.
+  a.sendEndMatch();
+  REQUIRE(rig.runUntil(
+      [&] {
+        return roomIs(a, RoomPhase::Waiting) && roomIs(s, RoomPhase::Waiting) &&
+               roomIs(q, RoomPhase::Waiting);
+      },
+      kSec));
+  CHECK(rig.linesWith("room match ended by the host") == 1);
+  CHECK(rig.room().phase() == RoomPhase::Waiting);
+  CHECK(rig.room().settings() == RoomSettings{.mode = 2, .bots = 2});  // kept
+  CHECK(rig.room().host() == PlayerId{0});
+  CHECK(a.holding());
+  CHECK(s.holding());
+  CHECK(q.holding());
+  CHECK(a.roomEndedByHost());
+  CHECK(s.roomEndedByHost());
+  CHECK(q.roomEndedByHost());
+  CHECK(!roomOf(a).winner.isValid());
+  // The lost peer's reservation is freed (no tick will expire it), the
+  // queued joiner holds a slot (a bot yielded during the match, or a bot's
+  // slot came free at the end), and no bot is placed.
+  REQUIRE(rig.runUntil([&] { return q.localSlots() != 0 && roomOf(a).bots == 0; }, kSec));
+  CHECK(rig.host->server().bots() == 0);
+  CHECK(rig.linesWith("release slots=1") == 1);  // freed at the end, not after the grace
+  const Tick frozen = rig.host->server().nextTick();
+  const Tick aTick = a.localTick();
+  rig.runFor(2 * kSec);
+  CHECK(rig.host->server().nextTick() == frozen);
+  CHECK(a.localTick() == aTick);
+  CHECK(a.running());
+  CHECK(s.running());
+  CHECK(q.running());
+  CHECK(roomOf(a).humans == roomOf(q).humans);
+  CHECK(roomOf(a).humans == (0b1 | q.localSlots()));
+
+  // A second EndMatch in Waiting is refused; the next Start plays normally.
+  a.sendEndMatch();
+  REQUIRE(
+      rig.runUntil([&] { return rig.linesWith("room end-match refused") == refused + 3; }, kSec));
+  a.sendStart();
+  REQUIRE(rig.runUntil(
+      [&] {
+        return roomIs(a, RoomPhase::Playing) && roomIs(q, RoomPhase::Playing) &&
+               roomIs(s, RoomPhase::Playing) && !a.holding() && !q.holding() && !s.holding();
+      },
+      2 * kSec));
+  CHECK_FALSE(a.roomEndedByHost());
+  CHECK_FALSE(s.roomEndedByHost());
+  CHECK(rig.host->server().bots() == roomOf(a).botPlacement);
+  CHECK(std::popcount(static_cast<uint32_t>(rig.host->server().bots())) == 2);
+  const uint64_t aCompared = a.netStats().checksumsCompared;
+  const uint64_t qCompared = q.netStats().checksumsCompared;
+  rig.runFor(5 * kSec);
+  CHECK(rig.room().playing());
+  for (const NetClient* n : {&a, &q, &s}) {
+    CHECK(n->running());
+    CHECK(n->netStats().checksumMismatches == 0);
+    CHECK(n->netStats().resyncRequests == 0);
+  }
+  CHECK(a.netStats().checksumsCompared > aCompared + 10);
+  CHECK(q.netStats().checksumsCompared > qCompared + 10);
+  CHECK(a.netStats().matchRestarts == 2);
+  CHECK(q.netStats().leadTicks > 0);
+  CHECK(rig.host->server().stats().protocolErrors == 0);
+}
+
+// v0.96: the host restarts a running match (Playing → Playing, a fresh
+// match at the next tick, the clients keep running and load its snapshot)
+// and an ended one (Over → Playing, "play again" without the waiting room).
+// A non-host's Restart and one in Waiting are refused; EndMatch at Over is
+// refused (Start is the way back to the lobby there).
+TEST_CASE("The room flow: the host restarts a running and an ended match",
+          "[server][room][flow][command]") {
+  server::HostConfig cfg;
+  cfg.room = true;
+  cfg.server.match.seed = 0xBEEF;
+  cfg.bots = server::referenceBots(1);
+  RoomRig rig(cfg);
+  NetClient& a = rig.addClient("alpha", "Alpha");
+  NetClient& b = rig.addClient("beta", "Beta");
+  NetClient& s = rig.addClient("gamma", "Gamma", 0);
+  REQUIRE(rig.runUntil(
+      [&] { return a.running() && b.running() && s.running() && roomOf(a).humans == 0b11; },
+      5 * kSec));
+  a.sendRoomSettings(RoomSettings{.mode = 1, .bots = 1});
+  REQUIRE(rig.runUntil([&] { return roomOf(b).settings.mode == 1; }, kSec));
+
+  a.sendRestart();  // Waiting: Start is the way in
+  REQUIRE(rig.runUntil([&] { return rig.linesWith("room restart refused") == 1; }, kSec));
+  CHECK(rig.room().phase() == RoomPhase::Waiting);
+  CHECK(rig.host->stats().ticks == 0);
+
+  a.sendStart();
+  REQUIRE(rig.runUntil([&] { return roomIs(b, RoomPhase::Playing) && !b.holding(); }, 2 * kSec));
+  rig.runFor(kSec);
+  const uint32_t match = rig.host->server().matchIndex();
+  const uint64_t seed = rig.host->server().matchConfig().seed;
+
+  b.sendRestart();  // not the host
+  REQUIRE(rig.runUntil([&] { return rig.linesWith("room restart refused") == 2; }, kSec));
+  CHECK(rig.host->server().matchIndex() == match);
+
+  // Mid-match: a fresh match at once, the room never leaves Playing.
+  const uint64_t restarts = a.netStats().matchRestarts;
+  const uint32_t updates = b.roomUpdates();
+  a.sendRestart();
+  REQUIRE(rig.runUntil([&] { return rig.host->server().matchIndex() == match + 1; }, kSec));
+  CHECK(rig.room().playing());
+  CHECK(rig.host->server().matchConfig().seed != seed);
+  CHECK(rig.host->server().matchConfig().mode == 1);
+  CHECK(rig.host->server().bots() == 0b100);  // placed again, the same slot
+  CHECK(rig.linesWith("room start") == 2);
+  REQUIRE(rig.runUntil(
+      [&] {
+        return a.netStats().matchRestarts == restarts + 1 &&
+               b.netStats().matchRestarts == restarts + 1 &&
+               s.netStats().matchRestarts == restarts + 1 && b.roomUpdates() > updates;
+      },
+      2 * kSec));
+  CHECK(roomIs(b, RoomPhase::Playing));
+  CHECK_FALSE(a.holding());
+  CHECK_FALSE(b.holding());
+  CHECK(a.simConfig().seed == rig.host->server().matchConfig().seed);
+  const uint64_t compared = b.netStats().checksumsCompared;
+  rig.runFor(3 * kSec);
+  CHECK(b.netStats().checksumsCompared > compared + 10);
+  for (const NetClient* n : {&a, &b, &s}) {
+    CHECK(n->running());
+    CHECK(n->netStats().checksumMismatches == 0);
+    CHECK(n->netStats().resyncRequests == 0);
+  }
+
+  // Over: EndMatch refused, Restart plays again straight away.
+  REQUIRE(rig.runUntil([&] { return rig.room().phase() == RoomPhase::Over; }, 120 * kSec));
+  REQUIRE(
+      rig.runUntil([&] { return roomIs(a, RoomPhase::Over) && roomIs(s, RoomPhase::Over); }, kSec));
+  CHECK(rig.host->stats().matchesCompleted == 1);
+  a.sendEndMatch();
+  REQUIRE(rig.runUntil([&] { return rig.linesWith("room end-match refused") == 1; }, kSec));
+  CHECK(rig.room().phase() == RoomPhase::Over);
+  b.sendRestart();
+  REQUIRE(rig.runUntil([&] { return rig.linesWith("room restart refused") == 3; }, kSec));
+  CHECK(rig.room().phase() == RoomPhase::Over);
+  const Tick ended = rig.host->server().nextTick();
+  a.sendRestart();
+  REQUIRE(rig.runUntil(
+      [&] {
+        return roomIs(a, RoomPhase::Playing) && roomIs(b, RoomPhase::Playing) &&
+               roomIs(s, RoomPhase::Playing) && !a.holding() && !b.holding() && !s.holding();
+      },
+      2 * kSec));
+  CHECK(!roomOf(b).winner.isValid());
+  CHECK_FALSE(b.roomEndedByHost());  // never went through Waiting
+  CHECK(rig.host->server().nextTick() > ended);
+  CHECK(rig.host->server().matchIndex() == match + 2);
+  CHECK(rig.host->server().bots() == 0b100);
+  const uint64_t again = a.netStats().checksumsCompared;
+  rig.runFor(3 * kSec);
+  CHECK(a.netStats().checksumsCompared > again + 10);
+  for (const NetClient* n : {&a, &b, &s}) {
+    CHECK(n->running());
+    CHECK(n->netStats().checksumMismatches == 0);
+    CHECK(n->netStats().resyncRequests == 0);
+  }
+  CHECK(rig.host->server().stats().protocolErrors == 0);
+}
+
+// v0.96: a restart gives a queued joiner the slots before the bots are
+// placed again, so a full room's waiting peer plays the fresh match.
+TEST_CASE("The room flow: a restart seats a queued joiner before the bots",
+          "[server][room][flow][command][yield]") {
+  server::HostConfig cfg;
+  cfg.room = true;
+  cfg.server.maxPlayers = 3;
+  cfg.bots = server::referenceBots(2);
+  RoomRig rig(cfg);
+  NetClient& a = rig.addClient("host", "Host");
+  REQUIRE(rig.runUntil([&] { return a.running() && a.roomState(); }, 5 * kSec));
+  a.sendRoomSettings(RoomSettings{.mode = 2, .bots = 2});
+  REQUIRE(rig.runUntil([&] { return roomOf(a).settings.mode == 2; }, kSec));
+  a.sendStart();
+  REQUIRE(rig.runUntil([&] { return roomIs(a, RoomPhase::Playing) && !a.holding(); }, 2 * kSec));
+  CHECK(rig.host->server().bots() == 0b110);
+  NetClient& q = rig.addClient("queued", "Queued");
+  REQUIRE(rig.runUntil([&] { return q.running(); }, 5 * kSec));
+  a.sendRestart();
+  REQUIRE(rig.runUntil([&] { return q.localSlots() != 0 && !q.holding(); }, 2 * kSec));
+  CHECK(std::popcount(static_cast<uint32_t>(rig.host->server().bots())) == 1);
+  CHECK(rig.linesWith("room slot granted") == 1);
+  REQUIRE(rig.runUntil([&] { return roomOf(q).humans == (0b1 | q.localSlots()); }, kSec));
+  CHECK(roomOf(q).bots == rig.host->server().bots());
+  rig.runFor(3 * kSec);
+  CHECK(q.netStats().checksumMismatches == 0);
+  CHECK(a.netStats().checksumMismatches == 0);
+  CHECK(q.netStats().leadTicks > 0);
 }

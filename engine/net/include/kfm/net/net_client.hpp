@@ -45,7 +45,8 @@
 // (FrameReport::matchRestarted, snapshotLoaded and rolledBack are set).
 //
 // The room (v0.42, protocol 6, §6.6): the client keeps the newest RoomState
-// (roomState()) and sends the host's RoomSettings and Start. While the room
+// (roomState()) and sends the host's RoomSettings, Start and (v0.96,
+// protocol 9) RoomCommand (sendEndMatch(), sendRestart()). While the room
 // is not Playing (Waiting or Over) the server does not tick, so the client
 // holds too: ticksDue() returns 0 and its clock restarts on every call (no
 // backlog builds up), while pings keep the link and the RTT estimate alive
@@ -335,6 +336,16 @@ class NetClient {
   // The host's requests; the server ignores anyone else's (Running only).
   void sendRoomSettings(const RoomSettings& settings);
   void sendStart();
+  // v0.96: the host's controls of a running match (RoomCommand): end it and
+  // bring the room back to Waiting (Playing only); restart it at once with
+  // the same settings (Playing or Over).
+  void sendEndMatch();
+  void sendRestart();
+  // v0.96: the room is Waiting because its host ended the running match
+  // (a RoomState went from Playing to Waiting with humans in the room);
+  // false again once the room leaves Waiting, and in a Waiting room reached
+  // any other way (the first Waiting, Over → Waiting, the room emptied).
+  [[nodiscard]] bool roomEndedByHost() const { return endedByHost_; }
 
   // L: the tick world() will step next.
   [[nodiscard]] Tick localTick() const { return world_.tick; }
@@ -447,6 +458,7 @@ class NetClient {
   std::optional<Tick> restartTick_;  // announced, snapshot not loaded yet
   std::optional<RoomStateMsg> room_;
   uint32_t roomUpdates_{0};
+  bool endedByHost_{false};      // v0.96: see roomEndedByHost()
   bool resumePending_{false};    // the room turned Playing; waiting to reload
   bool resumeSnapshot_{false};   // snapshot_ holds the snapshot to resume from
   bool resumeIsRestart_{false};  // ... and it starts an announced new match

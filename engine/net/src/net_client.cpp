@@ -59,6 +59,7 @@ void NetClient::resetSession() {
   restartTick_.reset();
   room_.reset();
   roomUpdates_ = 0;
+  endedByHost_ = false;
   resumePending_ = false;
   resumeSnapshot_ = false;
   resumeIsRestart_ = false;
@@ -122,6 +123,16 @@ void NetClient::sendRoomSettings(const RoomSettings& settings) {
 void NetClient::sendStart() {
   if (state_ != ClientState::Running) return;
   sendMsg(Lane::Reliable, StartMsg{});
+}
+
+void NetClient::sendEndMatch() {
+  if (state_ != ClientState::Running) return;
+  sendMsg(Lane::Reliable, RoomCommandMsg{RoomCommand::EndMatch});
+}
+
+void NetClient::sendRestart() {
+  if (state_ != ClientState::Running) return;
+  sendMsg(Lane::Reliable, RoomCommandMsg{RoomCommand::Restart});
 }
 
 void NetClient::disconnect() {
@@ -307,6 +318,14 @@ void NetClient::onPacket(const Packet& packet) {
       RoomStateMsg r;
       if (!decode(packet.data, r)) break;
       const bool wasHeld = roomHeld();
+      // v0.96: Playing → Waiting with a human still in the room is the
+      // host's EndMatch (the room's only other way back from Playing is its
+      // last human leaving); it holds until the room leaves Waiting.
+      if (r.phase != RoomPhase::Waiting) {
+        endedByHost_ = false;
+      } else if (room_ && room_->phase == RoomPhase::Playing) {
+        endedByHost_ = r.humans != 0;
+      }
       room_ = r;
       ++roomUpdates_;
       if (wasHeld && !roomHeld() && state_ == ClientState::Running) {

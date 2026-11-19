@@ -8,9 +8,13 @@
 //            occupy slots, see the roster, the settings and the host; the
 //            host's RoomSettings are validated and applied; the host's
 //            Start → Playing.
-//   Playing  the match runs as before M6b; MatchEnded → Over.
-//   Over     the match-over screen (no ticks); the host's Start ("play
-//            again") → Waiting with the same settings.
+//   Playing  the match runs as before M6b; MatchEnded → Over. v0.96: the
+//            host's RoomCommand EndMatch → Waiting (the match stops where
+//            it is, settings and roster kept) and Restart → Playing (a
+//            fresh match at once, the same settings and roster).
+//   Over     the match-over screen (no ticks); the host's Start ("back to
+//            the lobby") → Waiting with the same settings; v0.96: the
+//            host's Restart ("play again") → Playing.
 // Every state returns to Waiting when the last human slot is gone, keeping
 // the settings; reset() returns to Waiting with given settings (a new lobby
 // room).
@@ -57,6 +61,12 @@ class Room {
     Start,          // Waiting → Playing: place the bots and restart the match
     BackToWaiting,  // Over → Waiting: remove the bots
   };
+  // v0.96: what a RoomCommand does.
+  enum class CommandResult : uint8_t {
+    Ignored = 0,  // not the host, or the command does not apply in this state
+    EndMatch,     // Playing → Waiting: remove the bots (as BackToWaiting)
+    Restart,      // Playing or Over → Playing: bots placed again, match restarted
+  };
 
   Room(const sim::ContentDB& content, uint8_t maxPlayers, const net::RoomSettings& settings);
 
@@ -85,6 +95,9 @@ class Room {
   bool requestSettings(sim::PlayerMask peerSlots, const net::RoomSettings& settings);
   // A peer's Start (see StartResult); the phase changes before it returns.
   StartResult requestStart(sim::PlayerMask peerSlots);
+  // v0.96: a peer's RoomCommand (see CommandResult); the phase changes
+  // before it returns.
+  CommandResult requestCommand(sim::PlayerMask peerSlots, net::RoomCommand command);
   // The match ended (Playing → Over). False in any other state.
   bool matchEnded(PlayerId winner);
   // Waiting with `settings` (a new group arrives): the roster stays.
