@@ -41,6 +41,10 @@ struct ModeLabel {
 // Bot-contest content (see the header comment).
 [[nodiscard]] bool isBotMode(const sim::ModeDef& mode);
 [[nodiscard]] bool isBotLoadout(const sim::ContentDB& db, uint8_t loadout);
+// v0.97: a kit some mode hands out by role (ModeDef::roles: `grid`,
+// `catcher` and the bot contests' `_1t` twins): the lobby's Kit row, which
+// picks the kit every monkey plays, skips it.
+[[nodiscard]] bool isRoleLoadout(const sim::ContentDB& db, uint8_t loadout);
 
 // Which power-ups an arena's spawners can draw (trees aside), as a
 // ContentDB::powerUps bit set: 0 when the arena has no power-up spawner.

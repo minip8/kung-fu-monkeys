@@ -30,6 +30,7 @@ add_library(kfm_client_core STATIC
   core/replay_controls.cpp
   core/content_labels.cpp
   core/how_to_play.cpp
+  core/presets.cpp
 )
 add_library(kfm::client_core ALIAS kfm_client_core)
 target_include_directories(kfm_client_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

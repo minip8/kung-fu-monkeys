@@ -2046,4 +2046,8 @@ sound, etc. should be separated from game selection", "settings should be access
 40 % (`presentation::kDefaultMasterVolume` 0.4, `client::kDefaultVolume`; a linear gain, so
 6 dB down); the settings text goes to `settings_version=3`, and an older text's `volume=80`
 (saved by every install whether chosen or not) reads as 40 once, the v0.93 `theme=auto`
-precedent, so a later deliberate 80 is kept.
+precedent, so a later deliberate 80 is kept. Presets (`core/presets`): ten named matches, one
+per mode a human lobby offers, each with an arena made for it, defined by content names in a
+client table and resolved against the loaded content (content hash unchanged), the active one
+derived by comparing settings (no new persisted key); a unit test resolves every preset against
+the shipped content to a compatible pair and checks that the table covers every human mode.

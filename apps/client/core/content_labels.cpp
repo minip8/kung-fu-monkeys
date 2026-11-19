@@ -127,6 +127,17 @@ bool isBotLoadout(const sim::ContentDB& db, uint8_t loadout) {
   return botRole;
 }
 
+bool isRoleLoadout(const sim::ContentDB& db, uint8_t loadout) {
+  for (uint8_t m = 0; m < db.modeCount && m < sim::kMaxModes; ++m) {
+    const sim::ModeDef& mode = db.modes[m];
+    const uint8_t roles = std::min<uint8_t>(mode.roleCount, sim::kMaxPlayers);
+    for (uint8_t r = 0; r < roles; ++r) {
+      if (mode.roles[r] == loadout) return true;
+    }
+  }
+  return false;
+}
+
 uint16_t arenaPowerUps(const sim::ContentDB& db, const sim::ArenaDef& arena) {
   const uint8_t count = std::min<uint8_t>(db.powerUpCount, sim::kMaxPowerUps);
   const auto all = static_cast<uint16_t>((uint32_t{1} << count) - 1u);

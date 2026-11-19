@@ -3120,6 +3120,24 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
     from this device: 1 monkey" and has Cancel (Back to the menu once it failed). A joined
     pad's B leaves the local lobby, and any pad's B a waiting room or connection screen, as
     Escape does.
+  v0.97, the game-setup revamp (a playtest after v0.94: "still pretty unintuitive ... changing
+  options suddenly introduces new options", presets "for specific gamemodes", settings
+  "separated from game selection" and "accessible mid game"; the findings are the changelog's):
+  - Presets (`core/presets.{hpp,cpp}`): a client-side table of named matches, each a mode, an
+    arena made for it, a kit, a power-up set and the monkeys it is meant for: Classic (Last
+    Monkey Standing on the Dojo with Power-ups, the first-run default), Brawl (`pillars`),
+    Power-up Frenzy (Brawl on `marsh`), Survival (`island`), Knockout (Knockout Rounds on
+    `corridors`), Team Brawl (`compound`), Team Rounds (`standoff`), King of the Hill
+    (`hilltop`), Capture the Flag (`outposts`) and Grid Rounds (`courtyard`): one per mode a
+    human lobby offers, the bot contests left out. The table names content by its names and is
+    resolved against the loaded `ContentDB` (`resolvePresets`); a preset the content cannot
+    play (an unknown name, an arena that does not suit its mode) is left out, so `content/`
+    and its hash never change for presets. Which preset is active is derived, never stored:
+    the first whose mode, arena, kit (unless the mode hands kits out by role) and power-ups
+    (only those the arena's spawners can draw) the settings equal, else Custom; bots and their
+    difficulty are not compared, so adding a bot keeps the preset. Picking one raises the
+    bots, never lowers them, until the humans and bots make its players (4, 6 for Power-up
+    Frenzy). Online a preset is the `RoomSettings` it implies: no wire change.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.
