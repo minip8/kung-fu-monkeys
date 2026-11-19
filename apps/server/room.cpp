@@ -96,6 +96,23 @@ Room::StartResult Room::requestStart(sim::PlayerMask peerSlots) {
   return StartResult::Ignored;
 }
 
+Room::CommandResult Room::requestCommand(sim::PlayerMask peerSlots, net::RoomCommand command) {
+  if (!isHost(peerSlots)) return CommandResult::Ignored;
+  switch (command) {
+    case net::RoomCommand::EndMatch:
+      if (phase_ != net::RoomPhase::Playing) return CommandResult::Ignored;
+      phase_ = net::RoomPhase::Waiting;
+      winner_ = PlayerId::invalid();
+      return CommandResult::EndMatch;
+    case net::RoomCommand::Restart:
+      if (phase_ == net::RoomPhase::Waiting) return CommandResult::Ignored;  // that is Start
+      phase_ = net::RoomPhase::Playing;
+      winner_ = PlayerId::invalid();
+      return CommandResult::Restart;
+  }
+  return CommandResult::Ignored;
+}
+
 bool Room::matchEnded(PlayerId winner) {
   if (phase_ != net::RoomPhase::Playing) return false;
   phase_ = net::RoomPhase::Over;

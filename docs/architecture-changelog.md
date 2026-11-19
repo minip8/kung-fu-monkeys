@@ -2037,3 +2037,40 @@ reconnect states v0.92 adds draw through the same status screen. Verified: clien
 (the new `content_labels_test.cpp`; the menus, room and lobby tests updated), off-screen renders
 of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
 unchanged.
+
+v0.96 changes: host controls for a running online match (§6.3 protocol version 9, §6.6 the
+online room, "M6b design"), from the owner's playtest note: "host should have more options mid
+game to do stuff, e.g. (start/end the game, go back to lobby, etc...)". Until now a Playing
+room gave its host nothing but Leave. Protocol version 9 adds one reliable client-to-server
+message, `RoomCommand` (the type byte and a command u8, 2 B), whose kinds are `EndMatch` and
+`Restart`; `Start` is unchanged. Policy stays in `Room` (`requestCommand()`, returning
+`CommandResult` beside `requestStart()`), `ServerHost` carries it out and `NetServer` only
+reports `ServerEventKind::RoomCommandRequested` with the kind (one more message on the room's
+token bucket). `EndMatch` (Playing only) stops the match where it is: Waiting with the settings
+and roster kept, the bots removed, a pending bot yield dropped and reservations released at
+once, as in any Waiting; a queued joiner then gets a slot from the free ones. `Restart`
+(Playing or Over) removes the bots, seats a queued joiner first, places the bots again and
+restarts the match at the next tick as Start does: in Playing the clients never hold (they take
+the `MatchConfig` and the start tick's snapshot as in the M3 back-to-back restart), at Over it
+is the match-over screen's real "Play again" beside Start's "Back to lobby". A non-host's
+command, `EndMatch` in Waiting or Over and `Restart` in Waiting are ignored and answered with
+the `RoomState`. Clients needed no change to stop and hold on a mid-match Waiting (the hold
+path of v0.42 covers players, spectators, queued joiners and a client mid-rollback); they gain
+`NetClient::sendEndMatch()`/`sendRestart()` and `roomEndedByHost()` (a Playing → Waiting
+`RoomState` with a human in the room: the only other way back from Playing is the room
+emptying), and `NetSession` gains `endMatch()`, `restartMatch()`, `canEndMatch()`,
+`canRestartMatch()` and `matchEndedByHost()` for the pause menu, which a later change wires.
+Considered and not taken: overloading `Start` with a phase-dependent meaning mid-match (one
+message already means two things; a third would make a stray press end a match); a reason
+field in `RoomState` for "ended by the host" (the inference is exact today and costs no
+layout change; a later reason can still be appended); a pause command (one player cannot
+pause a server match, v0.46); keeping the bots across a restart (re-placing them is Start's
+rule, so a yielded bot comes back when there is room, and a queued joiner is seated); keeping
+a reconnect reservation across an end (no tick runs to expire it, the v0.42 rule). The lobby
+protocol is unaffected. Verified: `Room` unit tests for every command in every phase;
+`room_flow_test.cpp` over the loopback with real `NetClient`s (an end mid-match with a
+spectator, a queued joiner and a lost link around, then a second match without desync; a
+restart mid-match and at Over; a restart that seats a queued joiner); the message round-trip,
+range and fuzz tests; `NetServer`'s event, rate-limit and malformed-message test; a
+`NetSession` test of the senders, the availability and the hold mid-match. No sim or content
+change. Replay checksums: unchanged.

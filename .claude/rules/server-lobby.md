@@ -17,8 +17,10 @@ paths:
 These add to the netcode rules in `CLAUDE.md` ("Netcode (§6)"), which always apply.
 
 - The room: room state never enters `WorldState` or `NetServer` (which only reports
-  `RoomSettings`/`Start` events and sends the `RoomState` the host sets); policy is
-  `apps/server/room.hpp` driven by `ServerHost`. Waiting and Over mean the host does not call
+  `RoomSettings`/`Start`/`RoomCommand` events and sends the `RoomState` the host sets); policy
+  is `apps/server/room.hpp` driven by `ServerHost`. A new host control is a `RoomCommand` kind
+  (appended, never reordered) with its `Room::requestCommand()` rule, not a new meaning of
+  `Start`. Waiting and Over mean the host does not call
   `NetServer::tick()` at all (the sim leaves `MatchPhase::Lobby` on its first step); clients
   hold (`NetClient::holding()`) while their `RoomState` is not Playing. Tests and `kfm_netsim`
   that drive `NetServer` directly, and `HostConfig{}` (room off), keep the back-to-back flow.

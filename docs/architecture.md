@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.94 (2026-11-18), a living document: it describes the system as built and deployed,
+Status: v0.96 (2026-11-19), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -2147,7 +2147,8 @@ message begins with a one-byte type; everything else is bit-packed and quantised
 | `ResyncRequest` (v0.17) | C→S | reliable | tick and client checksum of a mismatch; answered with a `Snapshot` |
 | `RoomSettings` (v0.42) | C→S | reliable | the host's arena, mode, loadout, power-up set and bot count |
 | `RoomState` (v0.42) | S→C | reliable | room phase, host slot, settings, human and bot slots, the bots' placement (v0.75), the player cap (v0.76), winner, nicknames |
-| `Start` (v0.42) | C→S | reliable | the host starts the match, or plays again after it |
+| `Start` (v0.42) | C→S | reliable | the host starts the match, or goes back to the waiting room after it |
+| `RoomCommand` (v0.96) | C→S | reliable | the host's control of a running match: end it (back to the waiting room) or restart it |
 
 Redundancy replaces retransmission on the hot path, so a lost packet costs nothing unless 8+
 consecutive packets vanish. A longer burst (an outage of the server-to-client direction past the
@@ -2197,6 +2198,10 @@ frozen across versions so a server can always answer `Reject(ProtocolMismatch)`.
   the bot mask (§6.6). Protocol version 8 (v0.76) adds the server's player cap after the
   placement mask, u4 holding the cap − 1: 1 to `kMaxPlayers`, with no human, bot or placement
   slot at or above it (refused on encode and on decode). `RoomState` is then at most 179 B.
+  Protocol version 9 (v0.96) adds `RoomCommand`, the host's controls of a running match: the
+  type byte and a command u8 (`EndMatch` 0, `Restart` 1; an undefined value is refused on
+  encode and decode, so later kinds append without a new message type): 2 B
+  (`kRoomCommandMsgBytes`). `Start` keeps its layout and meaning.
 - `kfm/net/input_history.hpp` holds the shared pieces: a 128-tick `SlotInputHistory` per slot
   with `getOrRepeat`, `InputHistory::makeInputMsg`, `FrameHistory::makeAuthInputsMsg` (a gap
   shortens the window) and the server's `InputFrameAssembler` (accepted / late / too early by
@@ -2583,8 +2588,8 @@ C++ server library is mature. The seam makes that swap a contained change.
   (§5.3), at the farthest spawn point.
 - The online room (v0.42, M6b; `apps/server/room.hpp`, `ServerHost` with `HostConfig::room`):
   room state lives in the host beside `ServerHost`, never in `WorldState`, and `NetServer`
-  keeps no policy (it reports `RoomSettings`/`Start` as events and sends the `RoomState` the host
-  sets, to every peer at once and to each joiner after its `Welcome` and `Snapshot`). Three
+  keeps no policy (it reports `RoomSettings`/`Start`/`RoomCommand` as events and sends the
+  `RoomState` the host sets, to every peer at once and to each joiner after its `Welcome` and `Snapshot`). Three
   phases. **Waiting**: no match runs. The sim leaves `MatchPhase::Lobby` on its first step, so
   it cannot idle: the host pumps the `NetServer` but never calls `tick()` (the server tick does
   not move, the host clock is rebased every frame so the first tick after Start runs no
@@ -2594,8 +2599,18 @@ C++ server library is mature. The seam makes that swap a contained change.
   `MatchEnded`; again no tick, the clients show the final world and the winner. Transitions:
   the host's `Start` in Waiting places the bots and calls `restartMatch(config, nextTick(),
   botSeed)` with the room's settings (next seeds as after a match end, teams by `teamsFor`);
-  its `Start` in Over removes the bots and returns to Waiting with the same settings ("play
-  again"); the room returns to Waiting when its last human slot is gone, and `openRoom()` (a new
+  its `Start` in Over removes the bots and returns to Waiting with the same settings ("back to
+  the lobby"). The host's `RoomCommand` (v0.96, protocol 9) controls a running match:
+  `EndMatch` in Playing stops the match where it is and returns to Waiting with the settings
+  and roster kept, removing the bots, dropping a pending bot yield and releasing reservations
+  at once as any Waiting does (a reconnecting peer joins afresh); `Restart` in Playing or Over
+  removes the bots, hands the free slots to a queued joiner first (the fresh world never saw
+  the yielded bot, so no tick needs to separate the two), places the bots again and calls
+  `restartMatch(config, nextTick(), botSeed)` exactly as Start does, without the waiting room
+  (in Playing reservations keep their grace; at Over it is the match-over screen's "play
+  again"). `EndMatch` in Waiting or Over and `Restart` in Waiting (Start's job) are ignored, as
+  is a non-host's, and every command is answered with the `RoomState`. The room returns to
+  Waiting when its last human slot is gone, and `openRoom()` (a new
   lobby room with no peer) resets it to the server's defaults. The host is a slot, not a peer:
   the first human slot to appear, then the longest-present one left, none without a human; a
   slot reserved for a reconnect stays a member, so a host who drops mid-match keeps the role,
@@ -2618,7 +2633,16 @@ C++ server library is mature. The seam makes that swap a contained change.
   tick past it, then hard-loads it and runs forward to estimated server tick + target lead with
   the lead controller and clock reset, exactly as the initial sync: the lead never carries the
   pause over. A client of a server that sends no `RoomState` (the M3 policy, `kfm_netsim`, the
-  netcode tests) never holds.
+  netcode tests) never holds. A host's `EndMatch` reaches a running client as a `RoomState`
+  that turns Waiting mid-match: it holds at once over its last predicted world (spectators and
+  queued joiners alike; the unconfirmed ticks past the server's last one are simply dropped by
+  the next load), and the next Start resumes it through the path above. A `Restart` in Playing
+  never holds: the client takes the `MatchConfig` and the snapshot at its start tick as it
+  takes the M3 policy's back-to-back restart (checksums from the start tick dropped until the
+  snapshot, then a hard load and a run forward to its lead). `NetClient::roomEndedByHost()`
+  reads a `RoomState` that went from Playing to Waiting with a human in the room as the host's
+  end (the only other way back from Playing is the last human leaving), so the waiting screen
+  can say so without a wire field.
 - Bots yield (v0.44, M6b): in the room flow `ServerConfig::queueForBotSlots` is on, so a `Hello`
   (or `JoinMatch`) that wants more slots than are free, but no more than are free or held by
   bots, is answered with a `Welcome` of no slots instead of `Reject{MatchFull}`: the peer
@@ -4495,7 +4519,7 @@ the server holds the initial world and ticks nothing for the sim; peers occupy s
 roster, the settings and who is host), Playing (as today: a joiner spectates until the round
 break in a rounds mode or spawns after `respawnTicks` in a deathmatch) and Over (the match-over
 screen; the host's "play again" returns to Waiting with the same settings, a leaver's slot is
-freed). The host is the room's creator, then the longest-present human when the host leaves.
+freed; v0.96: the host's Restart plays again at once and Start goes back to Waiting). The host is the room's creator, then the longest-present human when the host leaves.
 Protocol version 6 adds three reliable messages: `RoomSettings` (host → server: the
 `MatchConfig` axes and the bot count; the server validates against its content and
 `ContentDB::compatible` and answers with the state), `RoomState` (server → everyone on every
