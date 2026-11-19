@@ -85,9 +85,10 @@ struct NetStatusOutcome {
 // the match in words, the join help and the start button; over it, while
 // open, the power-up picker (an overlay).
 struct LobbyOutcome {
-  bool start{false};    // the start button was pressed
-  bool changed{false};  // a setting changed through the panel's mouse controls
-  bool back{false};     // v0.94: Back (to the main menu)
+  bool start{false};     // the start button was pressed
+  bool changed{false};   // a setting changed through the panel's mouse controls
+  bool back{false};      // v0.94: Back (to the main menu)
+  bool settings{false};  // v0.97: Settings (the overlay over the lobby)
 };
 [[nodiscard]] LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu);
 
@@ -101,6 +102,7 @@ struct RoomOutcome {
   bool start{false};            // the host pressed Start match
   bool settingsChanged{false};  // the host changed a row of `menu`
   bool leave{false};
+  bool openSettings{false};  // v0.97: Settings (the overlay over the room)
   ShareOutcome share;
 };
 [[nodiscard]] RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu,
@@ -133,10 +135,11 @@ struct ReplayBarOutcome {
 [[nodiscard]] ReplayBarOutcome drawReplayBar(ReplayControls& controls, const ReplayBarView& view);
 
 // v0.46: the pause menu over a running match, the match dimmed behind it:
-// its buttons in a column (`menu` holds the focus) and a line saying what
-// the pause means (locally the match waits; online it goes on). Returns the
-// item clicked. v0.94: with its help open, the How to play `card` in the
-// buttons' place; its Back returns PauseItem::HowToPlay (closing the card).
+// its buttons in a column (`menu` holds the focus; v0.97: Resume, Settings,
+// How to play, then Restart match, Back to lobby, Main menu locally or Leave
+// room online) and a line saying what the pause means (locally the match
+// waits; online it goes on). Returns the item clicked. v0.94: with its help open, the How to play
+// `card` in the buttons' place; its Back returns PauseItem::HowToPlay (closing the card).
 [[nodiscard]] std::optional<PauseItem> drawPauseMenu(PauseMenu& menu, const HowToPlay& card);
 
 }  // namespace kfm::client

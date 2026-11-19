@@ -2061,4 +2061,27 @@ panel is now seven fixed rows (Game, Mode, Arena, Kit, Power-ups, Bots, Bot diff
 that does not apply stays greyed with its reason, the power-ups are one row (All / None /
 "3 of 5") with a picker over the panel for the rest, and a line under the rows says what a
 change forced and why. A first run (nothing saved, no match flag) opens on Classic with three
-bots beside the keyboard player.
+bots beside the keyboard player. Settings: Name, Volume, Sound, Arena theme and Mouse aim only
+(Bot difficulty moved to the setup panel, Volume, Sound and the theme left it), as an overlay
+(a modal card over the screen that opened it, `ui::beginOverlay`) reachable from the main menu,
+the local lobby and the waiting room (a Settings button, Tab or a pad's View) and mid-game from
+the pause menu, local and online; closing it returns there, a change applies at once and is
+saved. The pause menu: Resume, Settings, How to play, Restart match, Back to lobby, Main menu
+locally; Resume, Settings, How to play, Leave room online, built by `pauseItems(PauseContext)`
+so the online host's End match and Restart match can join once `NetSession` asks the server for
+them. Considered and not taken: presets in `content/*.toml` (they would move the content hash
+and the replay corpus for a front-end choice); a persisted preset key (the active preset is
+derived, so a saved text from before stays valid and a preset is never out of step with the
+settings); keeping per-power-up toggles in the panel as a grid (still a variable count per
+arena: the picker keeps the panel fixed); hiding rows that do not apply (the complaint itself:
+greyed rows with a reason keep every control where it was); stepping onto a greyed row with
+Up/Down (nothing to do there, the reason is in its value); a separate Settings screen per
+context (one overlay, one model). Verified: client unit tests (`presets_test.cpp`, the setup
+panel's fixed rows, greying, presets, the notice and the picker in `lobby_test.cpp`, Settings
+and the pause menu in `menus_test.cpp`, the volume migration), clang-format 23.1.3 and
+clang-tidy 23.1.4 on every touched file, off-screen renders (`SDL_VIDEODRIVER=offscreen`) at
+1280×720 and 700 px of the main menu, Settings over the menu, the lobby and the pause menu, the
+local lobby on several presets, the power-up picker, the local pause menu, and against a local
+`kfm_server` (and the lobby service for a room code) the waiting room, Settings over it and the
+online pause menu. Not looked at: a guest's read-only waiting room (one client per run here),
+the browser build. No sim, content or wire change. Replay checksums: unchanged.

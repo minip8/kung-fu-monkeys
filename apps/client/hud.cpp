@@ -663,6 +663,9 @@ void drawLobbyCards(const std::array<LobbyCard, sim::kMaxPlayers>& cards, int pe
 // something to spawn and hollow when it switches them off.
 // v0.52: the player's arena theme, which the preview draws in (setHudTheme()).
 presentation::ThemeChoice gTheme = presentation::ThemeChoice::Beach;
+// v0.97: the setup screens' preview stops at this height, so the lobby and
+// the room fit 720p at any width.
+constexpr float kPreviewMaxH = 150.0f;
 
 void drawArenaPreview(const sim::ContentDB& db, const sim::ArenaDef& arena, uint16_t powerUps,
                       ImVec2 box) {
@@ -993,21 +996,32 @@ bool drawPowerUpPicker(LobbyMenu& menu, const sim::ContentDB& db) {
   return changed;
 }
 
-// v0.43: the room's code, large, with Copy link and (touch) Share.
-ShareOutcome drawShare(const ShareView& share) {
+// v0.43: the room's code, large, with Copy link and (touch) Share. v0.97:
+// `compact`, the waiting room's: one row (the label, the code, the buttons,
+// then what the link is or "Copied"), so the room fits 720p with it.
+ShareOutcome drawShare(const ShareView& share, bool compact = false) {
   ShareOutcome out;
   if (share.code.empty()) return out;
+  const float codeSize = compact ? 44.0f : ui::kFontTitle;
+  const float y0 = ImGui::GetCursorPosY();
   ImGui::PushFont(nullptr, ui::kFontUi);
+  if (compact) ImGui::SetCursorPosY(y0 + ((codeSize - ImGui::GetFontSize()) * 0.5f));
   ImGui::TextDisabled("Room code (%s)", share.region.c_str());
   ImGui::PopFont();
+  if (compact) {
+    ImGui::SameLine(0.0f, 12.0f);
+    ImGui::SetCursorPosY(y0);
+  }
   const ImVec2 at = ImGui::GetCursorScreenPos();
-  ImGui::PushFont(ui::font(Face::Display), ui::kFontTitle);
-  ImGui::GetWindowDrawList()->AddText(ui::font(Face::Display), ui::kFontTitle, at, ui::kTeal,
+  ImGui::PushFont(ui::font(Face::Display), codeSize);
+  ImGui::GetWindowDrawList()->AddText(ui::font(Face::Display), codeSize, at, ui::kTeal,
                                       share.code.c_str());
-  ImGui::Dummy(ImVec2(textWidth(ui::kFontTitle, share.code.c_str()), ImGui::GetFontSize()));
+  ImGui::Dummy(ImVec2(textWidth(codeSize, share.code.c_str()), ImGui::GetFontSize()));
   ImGui::PopFont();
-  ImGui::SameLine();
-  ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 18.0f);
+  ImGui::SameLine(0.0f, 12.0f);
+  const float buttonH = ui::bigButtonHeight(ui::kFontUi + 2.0f) + ui::kButtonDrop;
+  const float rowTop = compact ? y0 : ImGui::GetCursorPosY();
+  ImGui::SetCursorPosY(rowTop + std::max(0.0f, (codeSize - buttonH) * 0.5f));
   // Without a page URL (natively, unless the build bakes one) the link is
   // the code itself: friends type it into Play online.
   const bool codeOnly = share.link == share.code;
@@ -1020,6 +1034,14 @@ ShareOutcome drawShare(const ShareView& share) {
     ImGui::SameLine();
     if (ui::bigButton("Share", false, 0.0f, true, ui::kFontUi + 2.0f)) out.share = true;
   }
+  if (compact) {
+    ImGui::EndGroup();
+    ImGui::SameLine(0.0f, 12.0f);
+    ImGui::SetCursorPosY(y0 + 2.0f);
+    ImGui::BeginGroup();
+    ImGui::PushFont(nullptr, ui::kFontSmall);
+  }
+  ImGui::PushTextWrapPos(0.0f);
   if (share.copied) {
     ImGui::TextColored(ui::vec4(ui::kSuccess), "Copied: %s", share.link.c_str());
   } else if (codeOnly) {
@@ -1027,6 +1049,8 @@ ShareOutcome drawShare(const ShareView& share) {
   } else {
     ImGui::TextDisabled("%s", share.link.c_str());
   }
+  ImGui::PopTextWrapPos();
+  if (compact) ImGui::PopFont();
   ImGui::EndGroup();
   return out;
 }
@@ -1214,7 +1238,8 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
       ImGui::TableNextColumn();
       ImGui::PushFont(nullptr, ui::kFontSmall);
       const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
-      drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps, ImVec2(w, w * 0.5f));
+      drawArenaPreview(db, db.arenaAt(ls.arena), ls.powerUps,
+                       ImVec2(w, std::min(w * 0.5f, kPreviewMaxH)));
       matchConfigText(db, preview);
       ImGui::PopFont();
       ImGui::EndTable();
@@ -1232,6 +1257,11 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
     const float backW = ui::bigButtonWidth("Back", ui::kFontButton);
     if (ui::bigButton("Back", false, backW)) out.back = true;
     ImGui::SameLine();
+    // v0.97: the player's preferences, over the lobby (Tab / a pad's View).
+    if (ui::bigButton("Settings", false, ui::bigButtonWidth("Settings", ui::kFontButton))) {
+      out.settings = true;
+    }
+    ImGui::SameLine();
     if (ui::bigButton("Start match", false, ImGui::GetContentRegionAvail().x, canStart,
                       ui::kFontButton, ui::Tone::Lead)) {
       out.start = true;
@@ -1244,7 +1274,8 @@ LobbyOutcome drawLobby(MatchSession& session, LobbyMenu& menu) {
       ImGui::TextWrapped("A round needs two monkeys to end: add a player or a bot.");
     }
     ImGui::TextWrapped(
-        "Enter / Start: start. Arrows: choose and change a setting. Esc / B: back.");
+        "Enter / Start: start. Arrows: choose and change a setting. Tab / View: settings. "
+        "Esc / B: back.");
     ImGui::PopStyleColor();
     ImGui::PopFont();
   }
@@ -1269,7 +1300,7 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     const std::string hostName =
         room->host.isValid() ? session.slotName(room->host) : std::string("the host");
     ui::heading(host ? "Your room" : (hostName + "'s room").c_str());
-    if (!share.code.empty()) out.share = drawShare(share);
+    if (!share.code.empty()) out.share = drawShare(share, true);
     ImGui::Spacing();
 
     // The roster (roomSlots()): the humans by name (the host's crown, you),
@@ -1341,7 +1372,8 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
       ImGui::TableNextColumn();
       ImGui::PushFont(nullptr, ui::kFontSmall);
       const float w = std::max(120.0f, ImGui::GetContentRegionAvail().x);
-      drawArenaPreview(db, db.arenaAt(r.arena), r.powerUps, ImVec2(w, w * 0.5f));
+      drawArenaPreview(db, db.arenaAt(r.arena), r.powerUps,
+                       ImVec2(w, std::min(w * 0.5f, kPreviewMaxH)));
       matchConfigText(db, shown);
       ImGui::PopFont();
       ImGui::EndTable();
@@ -1356,6 +1388,11 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     const float leaveW = ui::bigButtonWidth("Leave", ui::kFontButton);
     if (ui::bigButton("Leave", false, leaveW)) out.leave = true;
     ImGui::SameLine();
+    // v0.97: the player's preferences, over the room (Tab / a pad's View).
+    if (ui::bigButton("Settings", false, ui::bigButtonWidth("Settings", ui::kFontButton))) {
+      out.openSettings = true;
+    }
+    ImGui::SameLine();
     if (host) {
       if (ui::bigButton("Start match", true, ImGui::GetContentRegionAvail().x, true,
                         ui::kFontButton, ui::Tone::Lead)) {
@@ -1363,7 +1400,10 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
       }
     } else {
       const std::string line = "Waiting for " + hostName + " to start";
-      ImGui::PushFont(ui::font(Face::Display), ui::kFontButton);
+      // v0.97: beside Leave and Settings, smaller when a narrow window needs it.
+      const float fits = ImGui::GetContentRegionAvail().x /
+                         std::max(1.0f, textWidth(1.0f, (line + "...").c_str()));
+      ImGui::PushFont(ui::font(Face::Display), std::clamp(fits, ui::kFontSmall, ui::kFontButton));
       constexpr const char* kDots[] = {"", ".", "..", "..."};
       const auto dots = static_cast<std::size_t>(ImGui::GetTime() * 2.0) % 4;
       ImGui::SetCursorPosY(ImGui::GetCursorPosY() +
@@ -1376,9 +1416,9 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
     if (host && humans < 2 && r.bots == 0) {
       ImGui::TextWrapped("You are alone: send the link, or add bots, then Start.");
     }
-    ImGui::TextWrapped("%s", host ? "Enter: start. Up/Down: choose a setting, Left/Right: change "
-                                    "it. Esc / B: leave the room."
-                                  : "Esc / B: leave the room.");
+    ImGui::TextWrapped("%s", host ? "Enter: start. Arrows: choose and change a setting. Tab / "
+                                    "View: settings. Esc / B: leave the room."
+                                  : "Tab / View: settings. Esc / B: leave the room.");
     ImGui::PopStyleColor();
     ImGui::PopFont();
   }

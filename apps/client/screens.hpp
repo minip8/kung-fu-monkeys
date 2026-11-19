@@ -21,15 +21,18 @@ namespace kfm::client {
 // small in the bottom right. Returns the item clicked.
 [[nodiscard]] std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corner);
 
-// Name (a text field: `editNick` puts the keyboard into it), Volume, Sound,
-// Bot difficulty and Back. `settings` and `nick` are edited in place.
+// v0.97: Settings as an overlay over whatever screen opened it (the main
+// menu, the local lobby, a waiting room, the pause menu): Name (a text
+// field: `editNick` puts the keyboard into it), Volume, Sound, Arena theme,
+// Mouse aim and Done. `settings` and `nick` are edited in place. Drawn at
+// the top level, after the screen under it, while menu.isOpen().
 struct SettingsOutcome {
-  bool changed{false};      // volume, sound or bot difficulty
+  bool changed{false};      // volume, sound, theme or mouse aim
   bool nickChanged{false};  // a new valid name was committed
-  bool back{false};
+  bool back{false};         // Done
 };
-[[nodiscard]] SettingsOutcome drawSettingsScreen(SettingsMenu& menu, LobbySettings& settings,
-                                                 std::string& nick, bool& editNick);
+[[nodiscard]] SettingsOutcome drawSettingsOverlay(SettingsMenu& menu, LobbySettings& settings,
+                                                  std::string& nick, bool& editNick);
 
 // v0.94: the player's name (a text field, edited in place: `editName` puts
 // the keyboard into it), then the region with its availability and Create

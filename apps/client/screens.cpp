@@ -157,71 +157,75 @@ std::optional<MainMenuItem> drawMainMenu(MainMenu& menu, const std::string& corn
   return chosen;
 }
 
-SettingsOutcome drawSettingsScreen(SettingsMenu& menu, LobbySettings& settings, std::string& nick,
-                                   bool& editNick) {
+SettingsOutcome drawSettingsOverlay(SettingsMenu& menu, LobbySettings& settings, std::string& nick,
+                                    bool& editNick) {
   SettingsOutcome out;
-  dimBackground();
   static std::array<char, 17> nickBuf{};  // 16 bytes and the NUL: the wire's limit
   static bool nickEditing = false;
-  if (ui::beginScreen("##settings", 600.0f)) {
-    ui::heading("Settings");
-    ImGui::Spacing();
-    constexpr float kValueX = 230.0f;
-    constexpr float kValueW = 200.0f;
-    const float rowH = ImGui::GetFrameHeight() + 14.0f;
-    const auto rows = SettingsMenu::rows();
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-      const SettingsRow row = rows[i];
-      if (row == SettingsRow::Back) continue;
-      bool takesFocus = false;
-      menuRow(SettingsMenu::rowLabel(row), i == menu.focus(), rowH, takesFocus);
-      if (takesFocus) menu.setFocus(i);
-      const float x0 = ImGui::GetCursorPosX();
-      ImGui::SetCursorPosX(x0 + 8.0f);
-      ImGui::AlignTextToFramePadding();
-      ImGui::TextUnformatted(SettingsMenu::rowLabel(row));
-      if (row == SettingsRow::Name) {
-        if (!nickEditing) {
-          const std::size_t n = std::min(nick.size(), nickBuf.size() - 1);
-          std::memcpy(nickBuf.data(), nick.data(), n);
-          nickBuf[n] = '\0';
-        }
-        ImGui::SameLine(x0 + kValueX);
-        ImGui::SetNextItemWidth(kValueW + 2.0f * ImGui::GetFrameHeight());
-        if (editNick) {
-          ImGui::SetKeyboardFocusHere();
-          editNick = false;
-        }
-        ui::pushFieldStyle();
-        const bool enter = ImGui::InputText(
-            "##nick", nickBuf.data(), nickBuf.size(),
-            ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
-        ui::popFieldStyle();
-        if (ImGui::IsItemActivated()) menu.setFocus(i);
-        nickEditing = ImGui::IsItemActive();
-        if (enter || ImGui::IsItemDeactivatedAfterEdit()) {
-          out.nickChanged = SettingsMenu::setNick(nick, nickBuf.data()) || out.nickChanged;
-          nickEditing = false;
-        }
-      } else {
-        const int d = valueArrows(SettingsMenu::rowLabel(row), x0 + kValueX, kValueW,
-                                  SettingsMenu::rowValue(row, settings, nick));
-        if (d != 0) {
-          menu.setFocus(i);
-          out.changed = SettingsMenu::change(i, d, settings) || out.changed;
-        }
+  const ImVec2 view = ImGui::GetIO().DisplaySize;
+  if (!ui::beginOverlay("##settings", std::min(600.0f, view.x - 24.0f))) return out;
+  ui::heading("Settings");
+  ui::bodyText("Yours on this device: they apply at once and are kept.", ui::kTextDim,
+               ui::kFontSmall);
+  ImGui::Spacing();
+  const float full = ImGui::GetContentRegionAvail().x;
+  const float valueX = std::clamp(full * 0.36f, 120.0f, 220.0f);
+  const float valueW = std::max(110.0f, full - valueX - (2.0f * ImGui::GetFrameHeight()) - 16.0f);
+  const float rowH = ImGui::GetFrameHeight() + 12.0f;
+  const auto rows = SettingsMenu::rows();
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    const SettingsRow row = rows[i];
+    if (row == SettingsRow::Back) continue;
+    bool takesFocus = false;
+    menuRow(SettingsMenu::rowLabel(row), i == menu.focus(), rowH, takesFocus);
+    if (takesFocus) menu.setFocus(i);
+    const float x0 = ImGui::GetCursorPosX();
+    ImGui::SetCursorPosX(x0 + 8.0f);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(SettingsMenu::rowLabel(row));
+    if (row == SettingsRow::Name) {
+      if (!nickEditing) {
+        const std::size_t n = std::min(nick.size(), nickBuf.size() - 1);
+        std::memcpy(nickBuf.data(), nick.data(), n);
+        nickBuf[n] = '\0';
       }
-      ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6.0f);
+      ImGui::SameLine(x0 + valueX);
+      ImGui::SetNextItemWidth(valueW + (2.0f * ImGui::GetFrameHeight()));
+      if (editNick) {
+        ImGui::SetKeyboardFocusHere();
+        editNick = false;
+      }
+      ui::pushFieldStyle();
+      const bool enter = ImGui::InputText(
+          "##nick", nickBuf.data(), nickBuf.size(),
+          ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_AutoSelectAll);
+      ui::popFieldStyle();
+      if (ImGui::IsItemActivated()) menu.setFocus(i);
+      nickEditing = ImGui::IsItemActive();
+      if (enter || ImGui::IsItemDeactivatedAfterEdit()) {
+        out.nickChanged = SettingsMenu::setNick(nick, nickBuf.data()) || out.nickChanged;
+        nickEditing = false;
+      }
+    } else {
+      const int d = valueArrows(SettingsMenu::rowLabel(row), x0 + valueX, valueW,
+                                SettingsMenu::rowValue(row, settings, nick));
+      if (d != 0) {
+        menu.setFocus(i);
+        out.changed = SettingsMenu::change(i, d, settings) || out.changed;
+      }
     }
-    ImGui::Spacing();
-    const std::size_t back = rows.size() - 1;
-    if (ui::bigButton("Back", menu.focus() == back, -1.0f)) out.back = true;
-    if (ui::pointerTakesFocus()) menu.setFocus(back);
-    footer(
-        "Up/Down: choose. Left/Right: change. Enter on Name: type a new one (16 bytes at most), "
-        "Enter to keep it. Esc: back. Your name is what friends see online.");
+    ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 6.0f);
   }
-  ui::endScreen();
+  ImGui::Spacing();
+  const std::size_t done = rows.size() - 1;
+  if (ui::bigButton("Done", menu.focus() == done, -1.0f, true, ui::kFontButton, ui::Tone::Lead)) {
+    out.back = true;
+  }
+  if (ui::pointerTakesFocus()) menu.setFocus(done);
+  footer(
+      "Up/Down: choose. Left/Right: change. Enter on Name: type a new one (16 bytes at most), "
+      "Enter to keep it. Esc / B: done. Your name is what friends see online.");
+  ui::endOverlay();
   return out;
 }
 

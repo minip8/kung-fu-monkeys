@@ -3157,6 +3157,31 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
     contests'), and the preview says "Kits by place in the team" for such a mode. Volume, Sound
     and Arena theme left the panel for Settings; the read-only Teams row is gone (the preview
     says it). `--screen powerups` opens the local lobby under the picker.
+  - Settings apart from the match, reachable everywhere: `SettingsMenu` (Name, Volume, Sound,
+    Arena theme, Mouse aim, Done; Bot difficulty moved to the setup panel) is an overlay, a
+    modal card drawn at the top level over whatever screen opened it (`drawSettingsOverlay`,
+    `ui::beginOverlay`), and closing it (Done, Escape, a pad's B or View) returns to that
+    screen: from the main menu's Settings, the local lobby's and the waiting room's Settings
+    button (Back / Leave, Settings, Start match along the bottom) or Tab / a pad's View there
+    (`isSettingsEvent`), and the pause menu's Settings, locally (the match stays paused under
+    it) and online (the match runs on with the local slots idle, as the pause menu has them). A
+    change applies at once (the volume audibly, `applyPreferences`: the audio, the theme, mouse
+    aim, never the match's settings) and is saved as before. A modal ImGui window keeps every
+    window under it from the pointer and stays above them; one not drawn in a frame is closed
+    by `ui::finishOverlays()` before `debugUiFlush()`, since a modal ImGui keeps open would
+    block the screens under it.
+  - The pause menu: locally Resume, Settings, How to play, Restart match (a fresh match, new
+    seed, the same setup and players: `MatchSession::restart`), Back to lobby, Main menu;
+    online Resume, Settings, How to play, Leave room. `pauseItems(PauseContext{online, host})`
+    builds the list; the online host's items (End match, Restart match) go there once
+    `NetSession` can ask the server for them.
+  - Polish: one button row per setup screen (Back / Leave plain, Settings plain, Start match
+    the lead), shorter hint lines that name the keys the screen has, the slot card's
+    "Keys + mouse" (was cut off), the waiting room's code on one row with Copy and the preview
+    at most 150 px high, so the lobby and the room (with its code) fit 1280×720 and 700 px.
+    `--screen local-settings` / `paused-settings` open Settings over the lobby / the pause
+    menu, and with `--connect` or a room `--screen settings` / `paused` / `paused-settings`
+    open them over the room or the running match.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.

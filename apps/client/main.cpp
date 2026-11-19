@@ -56,12 +56,14 @@
 // content kept). Online the server's content and match config rule.
 //
 // Lobby settings (v0.24, core/lobby_menu.hpp, core/lobby_settings.hpp): the
-// local lobby's panel picks the arena, mode, loadout, power-up set, bots, the bot
-// difficulty, volume and mute, from the mouse, the arrow keys / WASD or a joined pad's d-pad and
-// stick. Every change applies to the lobby's MatchSession and the audio at
-// once and is saved (natively in SDL's preference directory, in the browser
-// in localStorage) unless --no-settings; at startup the saved settings come
-// first and the flags (or URL parameters) override them.
+// local lobby's panel (v0.97: seven fixed rows, Game (a preset,
+// core/presets.hpp), Mode, Arena, Kit, Power-ups with its picker, Bots, Bot
+// difficulty) picks the match, from the mouse, the arrow keys / WASD or a
+// joined pad's d-pad and stick; Tab or a pad's View opens Settings over it
+// (volume, sound, theme, mouse aim, the name: the overlay, applyPreferences()). Every change
+// applies to the lobby's MatchSession and the audio at once and is saved (natively in SDL's
+// preference directory, in the browser in localStorage) unless --no-settings; at startup the saved
+// settings come first and the flags (or URL parameters) override them.
 //
 // Bots (§8, core/bot_roster.hpp): local bot slots are agents in the session's
 // AgentHost, the reference bot at the lobby's difficulty tier, or natively a
@@ -73,7 +75,8 @@
 // screens.cpp): Play online (the Play online screen: the region with its
 // availability, Create room, a room code and Join; with --connect and no
 // lobby it connects to that server), Play local (the local lobby), Settings
-// (name, volume, sound, bot difficulty, theme, mouse aim) and, natively, Quit. Arrows / WASD,
+// (v0.97: an overlay over the menu, the lobby, a waiting room or the pause
+// menu: name, volume, sound, theme, mouse aim) and, natively, Quit. Arrows / WASD,
 // a pad's d-pad or stick and the mouse move between items, Enter / Space or
 // a pad's South / Start selects, Escape or a pad's East / Back goes back.
 // Escape from the local lobby or any online screen returns to the menu.
@@ -93,9 +96,10 @@
 // keys do nothing online.
 //
 // The pause menu (v0.46, core/menus.hpp PauseMenu): Escape or a bound pad's
-// Start over a running match opens it. Locally it pauses the match (Resume,
-// Back to lobby, Main menu); online the match runs on and the local slots
-// send idle input (Resume, Leave room). While it is open every device
+// Start over a running match opens it. Locally it pauses the match (v0.97:
+// Resume, Settings, How to play, Restart match, Back to lobby, Main menu);
+// online the match runs on and the local slots send idle input (Resume,
+// Settings, How to play, Leave room). While it is open every device
 // navigates it, Escape or a pad's East / Back / Start resumes, and no press
 // reaches the session (releases and sticks still do, so nothing stays
 // held). In the browser the page never asks for fullscreen, so Escape
@@ -190,7 +194,9 @@ using client::SessionPhase;
 
 // Which front-end screen the local frame draws (v0.43); online, the
 // NetSession's phase decides instead.
-enum class Screen : std::uint8_t { Menu = 0, Settings, Online, Play, Replay, HowTo };
+// v0.97: Settings is an overlay over any of them (App::settingsMenu), not a
+// screen of its own.
+enum class Screen : std::uint8_t { Menu = 0, Online, Play, Replay, HowTo };
 
 // M7 step 6: where the replay viewer's bytes are.
 enum class ReplayLoad : std::uint8_t { None = 0, Loading, Ready, Failed };
@@ -227,12 +233,13 @@ struct App {
   // v0.43: the front end. The keyboard and pads reach the menus through
   // onEvent(); what they asked for is acted on in the frame.
   Screen screen = Screen::Menu;
-  client::MainMenu mainMenu;  // made again once the services say whether Quit applies
-  client::SettingsMenu settingsMenu;
+  client::MainMenu mainMenu;          // made again once the services say whether Quit applies
+  client::SettingsMenu settingsMenu;  // v0.97: the overlay, open over any screen
   client::OnlineMenu onlineMenu;
   client::ButtonMenu overMenu;  // the match-over screen's buttons
   client::PauseMenu pauseMenu;  // v0.46: Escape over a running match
   bool pauseSoon = false;       // --screen paused: open it a moment into the match
+  bool settingsSoon = false;    // v0.97: --screen paused-settings: and Settings over it
   bool editNick = false;        // put the keyboard into the name field
   bool editCode = false;        // ... into the room code field
   bool editOnlineName = false;  // v0.94: ... into Play online's name field
@@ -267,6 +274,7 @@ struct App {
   // item; keys / pads: the focus); revealOnly() drops the press that shows it.
   client::MenuHighlight highlight;
   bool lobbyChanged = false;  // a menu action changed a setting this frame
+  bool prefsChanged = false;  // v0.97: ... a preference, from the Settings overlay
   presentation::RenderState renderState;
   std::uint64_t frames = 0;
   std::uint64_t lastFrameNs = 0;
@@ -319,6 +327,21 @@ void syncLobbySettings(App& app) {
   ls.volume = static_cast<uint8_t>(std::clamp(app.audio.volumePercent(), 0, 100));
   ls.mute = app.audio.muted();
   if (!(ls == before)) applyLobbySettings(app);
+}
+
+// v0.97: Settings changed a preference (the overlay, over any screen, a
+// running match too): the audio, the theme and mouse aim at once, and saved.
+// Never the match's settings: a running match keeps its own.
+void applyPreferences(App& app) {
+  const client::LobbySettings& ls = app.lobby.settings();
+  app.audio.setMuted(ls.mute);
+  app.audio.setVolumePercent(ls.volume);
+  app.renderer.setThemeChoice(ls.theme);
+  client::setHudTheme(ls.theme);
+  app.session->sampler().setMouseAimEnabled(ls.mouseAim);
+  if (app.net) app.net->sampler().setMouseAimEnabled(ls.mouseAim);
+  client::storeLobbySettings(ls, app.content.db, app.options);
+  saveSettings(app);
 }
 
 constexpr double kMaxBuilderDtSeconds = 0.25;  // a stalled frame must not fast-forward effects
@@ -583,8 +606,7 @@ void chooseMainItem(App& app, client::MainMenuItem item) {
       app.screen = Screen::HowTo;
       break;
     case client::MainMenuItem::Settings:
-      app.screen = Screen::Settings;
-      app.settingsMenu.setFocus(0);
+      app.settingsMenu.open();  // v0.97: the overlay, over the menu
       break;
     case client::MainMenuItem::Quit:
       app.quit = true;
@@ -619,6 +641,12 @@ void choosePauseItem(App& app, client::PauseItem item) {
     app.pauseMenu.setHelp(!app.pauseMenu.helpOpen());
     return;
   }
+  if (item == client::PauseItem::Settings) {
+    // v0.97: the overlay over the pause menu, which stays open under it
+    // (online the match runs on with the local slots idle).
+    app.settingsMenu.open();
+    return;
+  }
   if (app.net) {
     client::closePauseMenu(app.pauseMenu, *app.net);
     if (item == client::PauseItem::LeaveRoom) app.leaveRequested = true;
@@ -626,6 +654,11 @@ void choosePauseItem(App& app, client::PauseItem item) {
   }
   MatchSession& s = *app.session;
   client::closePauseMenu(app.pauseMenu, s);
+  if (item == client::PauseItem::Restart) {
+    // v0.97: a fresh match (a new seed) with the same setup and players.
+    s.restart(platform::Window::nowNs(), true);
+    return;
+  }
   if (item == client::PauseItem::BackToLobby || item == client::PauseItem::MainMenu) {
     s.returnToLobby();
   }
@@ -638,6 +671,43 @@ void choosePauseItem(App& app, client::PauseItem item) {
 [[nodiscard]] bool revealOnly(App& app, client::MenuAction action, bool select) {
   if (action == client::MenuAction::None && !select) return false;
   return app.highlight.reveal(client::ui::pointerOnFocus());
+}
+
+// v0.97: an event while the Settings overlay is open: every device
+// navigates it; Escape or a pad's East / Back closes it (back to the screen
+// that opened it); Enter, Space or a pad's South / Start act on the focused
+// row (the name field, Done, or the value as Right). True for the presses
+// (none reaches the screen under it or a session).
+bool settingsEvent(App& app, const platform::InputEvent& input) {
+  const bool press = input.kind == platform::InputEventKind::KeyDown ||
+                     input.kind == platform::InputEventKind::PadButtonDown ||
+                     input.kind == platform::InputEventKind::MouseButtonDown;
+  const client::SettingsMenu::Press what = client::SettingsMenu::press(input);
+  if (what == client::SettingsMenu::Press::Close) {
+    app.audio.click();
+    app.settingsMenu.close();
+    return true;
+  }
+  const client::MenuAction action = app.menuInput.translate(input, true);
+  const bool pick = what == client::SettingsMenu::Press::Activate;
+  if (revealOnly(app, action, pick)) return press;
+  if (app.settingsMenu.apply(action, app.lobby.settings())) app.prefsChanged = true;
+  if (pick) {
+    switch (app.settingsMenu.activate(app.lobby.settings())) {
+      case client::SettingsMenu::Activation::EditName:
+        app.editNick = true;
+        break;
+      case client::SettingsMenu::Activation::Changed:
+        app.prefsChanged = true;
+        break;
+      case client::SettingsMenu::Activation::Closed:
+        app.audio.click();
+        break;
+      case client::SettingsMenu::Activation::None:
+        break;
+    }
+  }
+  return press;
 }
 
 // v0.97: an event while a setup panel's power-up picker is open: the
@@ -885,8 +955,8 @@ void handleShortcut(App& app, const platform::InputEvent& input) {
   if (gameInputBlocked()) return;
   // M7 step 6: the replay screen's keys are its control bar's (replayEvent).
   if (app.screen == Screen::Replay) return;
-  // v0.97: the power-up picker takes Escape itself (pickerEvent).
-  if (app.lobby.pickerOpen() || app.roomMenu.pickerOpen()) return;
+  // v0.97: the power-up picker and Settings take Escape themselves.
+  if (app.settingsMenu.isOpen() || app.lobby.pickerOpen() || app.roomMenu.pickerOpen()) return;
   // v0.46: Escape over a running match is the pause menu's (onEvent), and
   // the developer's P / O wait while it is open.
   if (app.pauseMenu.isOpen() || (key == Key::Escape && pauseApplies(app))) return;
@@ -961,6 +1031,17 @@ void onEvent(void* user, const SDL_Event& event) {
     replayEvent(*app, *input);
     return;
   }
+  // v0.97: Settings over whatever screen opened it takes the presses first.
+  if (app->settingsMenu.isOpen()) {
+    if (settingsEvent(*app, *input)) return;
+    // Releases and sticks still reach a session, so nothing stays held.
+    if (app->net) {
+      app->net->push(*input);
+    } else if (app->screen == Screen::Play) {
+      app->session->push(*input);
+    }
+    return;
+  }
   if (pauseMenuEvent(*app, *input)) return;
   if (app->net) {
     // v0.43: the room's screens. Every device navigates (nothing joins
@@ -973,6 +1054,12 @@ void onEvent(void* user, const SDL_Event& event) {
     if (client::isMenuBack(*input) && !n.running() && !n.canReconnect() &&
         n.phase() != client::NetPhase::Over) {
       app->leaveRequested = true;
+      return;
+    }
+    // v0.97: Tab or a pad's Back (View) opens Settings over the waiting room.
+    if (n.phase() == client::NetPhase::Waiting && client::isSettingsEvent(*input, true)) {
+      app->audio.click();
+      app->settingsMenu.open();
       return;
     }
     if (n.phase() == client::NetPhase::Waiting && n.isHost()) {
@@ -1011,9 +1098,6 @@ void onEvent(void* user, const SDL_Event& event) {
       case Screen::Menu:
         app->mainMenu.apply(action);
         break;
-      case Screen::Settings:
-        if (app->settingsMenu.apply(action, app->lobby.settings())) app->lobbyChanged = true;
-        break;
       case Screen::Online:
         if (app->onlineMenu.apply(action)) {
           app->lobby.settings().region = app->onlineMenu.region();
@@ -1037,6 +1121,12 @@ void onEvent(void* user, const SDL_Event& event) {
     bool changed = false;
     if (pickerEvent(*app, app->lobby, *input, bound, changed)) {
       app->lobbyChanged = app->lobbyChanged || changed;
+      return;
+    }
+    // v0.97: Tab or a joined pad's Back (View) opens Settings over the lobby.
+    if (client::isSettingsEvent(*input, bound)) {
+      app->audio.click();
+      app->settingsMenu.open();
       return;
     }
     // v0.94: a joined pad's B (or Back) is the lobby's Back, as Escape; an
@@ -1103,9 +1193,36 @@ bool writePpm(const std::string& path, int width, int height) {
   return text;
 }
 
-// v0.43: the menu screens over the lobby's arena: the main menu, Settings,
-// Play online. A press from onEvent (menuActivate) acts on the focused item
-// here, like a click.
+// v0.97: the Settings overlay over whatever the frame drew (a menu, the
+// local lobby, a waiting room, the pause menu over a match). A preference
+// applies at once (the volume audibly) and is saved; Done or Escape closes
+// it onto the screen under it.
+void settingsOverlayFrame(App& app) {
+  if (app.settingsMenu.isOpen()) {
+    const client::SettingsOutcome out = client::drawSettingsOverlay(
+        app.settingsMenu, app.lobby.settings(), app.options.nick, app.editNick);
+    if (out.changed) app.prefsChanged = true;
+    if (out.nickChanged) {
+      app.audio.click();
+      app.options.nickChosen = true;  // v0.94
+      std::printf("kfm_client: name %s\n", app.options.nick.c_str());
+      std::fflush(stdout);
+      saveSettings(app);
+    }
+    if (out.back) {
+      app.audio.click();
+      app.settingsMenu.close();
+    }
+  }
+  if (std::exchange(app.prefsChanged, false)) {
+    applyPreferences(app);
+    app.audio.click();
+  }
+}
+
+// v0.43: the menu screens over the lobby's arena: the main menu and Play
+// online (v0.97: Settings is an overlay, settingsOverlayFrame()). A press from onEvent
+// (menuActivate) acts on the focused item here, like a click.
 void menuFrame(App& app, std::uint64_t now) {
   const bool press = std::exchange(app.menuActivate, false);
   switch (app.screen) {
@@ -1114,27 +1231,6 @@ void menuFrame(App& app, std::uint64_t now) {
           client::drawMainMenu(app.mainMenu, versionLine(app));
       if (press && !item) item = app.mainMenu.activate();
       if (item) chooseMainItem(app, *item);
-      break;
-    }
-    case Screen::Settings: {
-      if (press) {
-        if (app.settingsMenu.focusedRow() == client::SettingsRow::Name) app.editNick = true;
-        if (app.settingsMenu.focusedRow() == client::SettingsRow::Back) {
-          menuBack(app);
-          break;
-        }
-      }
-      const client::SettingsOutcome out = client::drawSettingsScreen(
-          app.settingsMenu, app.lobby.settings(), app.options.nick, app.editNick);
-      if (out.changed) app.lobbyChanged = true;
-      if (out.nickChanged) {
-        app.audio.click();
-        app.options.nickChosen = true;  // v0.94
-        std::printf("kfm_client: name %s\n", app.options.nick.c_str());
-        std::fflush(stdout);
-        saveSettings(app);
-      }
-      if (out.back) menuBack(app);
       break;
     }
     case Screen::HowTo:
@@ -1230,6 +1326,7 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
   if (app.pauseSoon && s.curr().tick.value >= kPauseSoonTicks && pauseApplies(app)) {
     app.pauseSoon = false;
     client::openPauseMenu(app.pauseMenu, s);
+    if (std::exchange(app.settingsSoon, false)) app.settingsMenu.open();
   }
   s.presentation().pingSlots = s.localMask();  // v0.35: a local human's call pings
   presentation::buildRenderState(
@@ -1263,6 +1360,10 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
     if (lobby.back) {
       app.audio.click();
       app.screen = Screen::Menu;  // v0.94: the lobby's Back, as Escape
+    }
+    if (lobby.settings) {
+      app.audio.click();
+      app.settingsMenu.open();  // v0.97
     }
   } else {
     client::HudView view = client::hudView(s);
@@ -1299,6 +1400,7 @@ presentation::Camera localFrame(App& app, std::uint64_t now, double dt, int w, i
       app.overMenu.setFocus(0);
     }
   }
+  settingsOverlayFrame(app);  // v0.97: over whatever this frame drew
   app.overlay.draw(s, app.renderer.stats(), now);
   app.audio.frame(app.renderState);
   return camera;
@@ -1360,6 +1462,10 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
   const client::RoomOutcome out = client::drawRoomScreen(n, app.roomMenu, share);
   applyShare(app, out.share, share, now);
   if (out.leave) app.leaveRequested = true;
+  if (out.openSettings) {
+    app.audio.click();
+    app.settingsMenu.open();  // v0.97
+  }
   if (out.settingsChanged || std::exchange(app.roomChanged, false)) {
     app.audio.click();
     n.sendSettings(net::RoomSettings{.arena = ls.arena,
@@ -1384,6 +1490,11 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   n.advance(now);
   // v0.46: the pause menu goes away when the match does (over, lost).
   if (app.pauseMenu.isOpen() && !n.running()) client::closePauseMenu(app.pauseMenu, n);
+  if (app.pauseSoon && n.running() && n.curr().tick.value >= kPauseSoonTicks) {
+    app.pauseSoon = false;  // v0.97: --screen paused online
+    client::openPauseMenu(app.pauseMenu, n);
+    if (std::exchange(app.settingsSoon, false)) app.settingsMenu.open();
+  }
   if (n.room() && !app.roomAnnounced) {
     app.roomAnnounced = true;
     std::printf("kfm_client: in room %s (%s); invite: %s\n", n.room()->code.c_str(),
@@ -1456,6 +1567,7 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
       }
     }
   }
+  settingsOverlayFrame(app);  // v0.97: over the room or the pause menu
   app.overlay.draw(n, app.renderer.stats());
   app.audio.frame(app.renderState);
   return camera;
@@ -1794,10 +1906,25 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     // left: one slot, unless --players); Escape returns to the menu.
     app.screen = Screen::Play;
     startNetwork(app, true, app.lastFrameNs);
+    // v0.97 (screenshots): --screen settings opens Settings over the room,
+    // paused and paused-settings the pause menu (and Settings) once the
+    // match runs.
+    if (app.options.screen == "settings") app.settingsMenu.open();
+    app.pauseSoon = app.options.screen == "paused" || app.options.screen == "paused-settings";
+    app.settingsSoon = app.options.screen == "paused-settings";
   } else if (app.options.screen != "menu" && !app.options.autostart) {
     // v0.43: --screen settings|online|local (screenshots, development).
     if (app.options.screen == "settings") {
-      app.screen = Screen::Settings;
+      app.screen = Screen::Menu;  // v0.97: the overlay over the main menu
+      app.settingsMenu.open();
+    } else if (app.options.screen == "local-settings") {
+      app.screen = Screen::Play;  // v0.97: ... over the local lobby
+      app.settingsMenu.open();
+    } else if (app.options.screen == "paused-settings") {
+      // v0.97: ... over the pause menu of a local match.
+      app.screen = Screen::Play;
+      app.pauseSoon = app.session->startMatch(app.lastFrameNs);
+      app.settingsSoon = app.pauseSoon;
     } else if (app.options.screen == "howto") {
       app.screen = Screen::HowTo;
     } else if (app.options.screen == "local") {

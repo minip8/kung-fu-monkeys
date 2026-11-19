@@ -136,10 +136,11 @@ inline constexpr const char* kUsage =
     "  --nick NAME            your name online, at most 16 bytes (saved; default: a\n"
     "                         random monkey name picked once)\n"
     "  --screen S             open on this screen instead of the main menu: menu,\n"
-    "                         settings, online (Play online), local (the lobby) or\n"
-    "                         paused (a local match under the pause menu), howto\n"
-    "                         (the How to play card) or powerups (the lobby's\n"
-    "                         power-up picker)\n"
+    "                         settings (over the menu), online (Play online), local\n"
+    "                         (the lobby), paused (a local match under the pause\n"
+    "                         menu), howto (the How to play card), powerups (the\n"
+    "                         lobby's power-up picker), local-settings or\n"
+    "                         paused-settings (Settings over the lobby, the pause)\n"
     "replays:\n"
     "  --replay SRC           watch a replay (.kfmr): a file path natively, a URL in\n"
     "                         the browser (?replay=URL); it must come from this\n"
@@ -161,9 +162,11 @@ inline constexpr uint8_t kDefaultVolume = 40;
 inline constexpr uint8_t kOldDefaultVolume = 80;
 
 // --screen's values (v0.43; v0.94 howto; v0.97 powerups: the local lobby
-// under its power-up picker).
-inline constexpr std::array<std::string_view, 7> kScreens{"menu",   "settings", "online",  "local",
-                                                          "paused", "howto",    "powerups"};
+// under its power-up picker, local-settings and paused-settings: Settings
+// over the local lobby and over a local match's pause menu).
+inline constexpr std::array<std::string_view, 9> kScreens{
+    "menu",  "settings", "online",         "local",          "paused",
+    "howto", "powerups", "local-settings", "paused-settings"};
 
 inline constexpr uint64_t kMinWindowSide = 320;
 inline constexpr uint64_t kMaxWindowSide = 8192;
