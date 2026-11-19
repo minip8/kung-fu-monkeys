@@ -113,7 +113,7 @@ inline constexpr const char* kUsage =
     "                         as possible instead of at the display's refresh rate\n"
     "  --mute                 start with sound off (F1 overlay, Audio, turns it on)\n"
     "  --verbose              online: the transport's own log (ICE, DTLS, the lobby socket)\n"
-    "  --volume N             master volume in percent, 0-100 (default 80)\n"
+    "  --volume N             master volume in percent, 0-100 (default 40)\n"
     "  --mouse-aim on|off     the cursor aims for the keyboard + mouse player (default\n"
     "                         on; saved); off, the move direction aims and clicks\n"
     "                         still throw and dash (the browser's ?mouse_aim=off)\n"
@@ -151,6 +151,14 @@ inline constexpr const char* kUsage =
     "  --t TICK               start the replay at this tick (?t=TICK)\n";
 
 // --window's bounds (each side, logical pixels).
+// v0.97: the master volume out of the box, in percent (was 80: too loud).
+// presentation::kDefaultMasterVolume is the same as a gain.
+inline constexpr uint8_t kDefaultVolume = 40;
+// The default before v0.97: a settings text older than version 3 that says
+// volume=80 never chose it (every install saved it) and reads as
+// kDefaultVolume (applySettingsText()).
+inline constexpr uint8_t kOldDefaultVolume = 80;
+
 inline constexpr uint64_t kMinWindowSide = 320;
 inline constexpr uint64_t kMaxWindowSide = 8192;
 
@@ -181,8 +189,8 @@ struct ClientOptions {
   bool settings{true};    // read and save the lobby settings (lobby_settings.hpp)
   // Audio (§7): the mixer's starting settings; the overlay can change them.
   bool mute{false};
-  bool verbose{false};  // network mode: libdatachannel's log at Debug on stderr
-  uint8_t volume{80};   // percent, = presentation::kDefaultMasterVolume
+  bool verbose{false};             // network mode: libdatachannel's log at Debug on stderr
+  uint8_t volume{kDefaultVolume};  // percent, = presentation::kDefaultMasterVolume
   bool mouseAim{true};  // --mouse-aim: the cursor aims (InputSampler::setMouseAimEnabled)
   // Network mode (empty connect: local play).
   std::string connect;  // signaling URL, "ws://host:port"

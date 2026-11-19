@@ -485,7 +485,9 @@ inline constexpr int kMixerVoices = 16;
 // The device queue is topped up to this much audio each frame: the sound
 // latency, and the stall a frame can survive without a gap.
 inline constexpr float kAudioQueueSeconds = 0.05f;
-inline constexpr float kDefaultMasterVolume = 0.8f;  // --volume 80
+// v0.97: 0.4 (was 0.8): out of the box the game was too loud, a playtest
+// found; the client's default --volume is 40 to match.
+inline constexpr float kDefaultMasterVolume = 0.4f;  // --volume 40
 // Positioned sounds pan by world x over the arena half width, scaled by this
 // (a light pan: nothing fully leaves one ear).
 inline constexpr float kPanWidth = 0.6f;

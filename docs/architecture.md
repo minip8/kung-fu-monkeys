@@ -1,6 +1,6 @@
 # Kung Fu Monkeys — Architecture Design
 
-Status: v0.94 (2026-11-18), a living document: it describes the system as built and deployed,
+Status: v0.97 (2026-11-19), a living document: it describes the system as built and deployed,
 and in §11 and §12 what is planned and what is open. Working title taken from the repo name.
 
 Changelog: `docs/architecture-changelog.md`, one entry per version, oldest first. A design
@@ -3443,8 +3443,11 @@ is in `platform`.
   no device before input, "audio open: emscripten, 48000 Hz" and a running `AudioContext` after
   the key presses, 60 fps unchanged, no console errors (one Chromium deprecation warning about
   SDL's `ScriptProcessorNode`); with `?mute` no `AudioContext` is created.
-- `kfm_client --mute` and `--volume 0..100` (default 80; `?mute&volume=50` in the browser) set
-  the mixer; the F1 overlay's Audio panel (local and online) toggles mute, sets the volume, plays
+- `kfm_client --mute` and `--volume 0..100` (default 40 since v0.97, was 80: a playtest found
+  the game too loud out of the box; `presentation::kDefaultMasterVolume` 0.4; `?mute&volume=50`
+  in the browser) set the mixer; a settings text older than `settings_version=3` that says
+  `volume=80` never chose it (every install saved the old default) and reads as 40, as v0.93
+  moved `theme=auto`; the F1 overlay's Audio panel (local and online) toggles mute, sets the volume, plays
   a test click and shows the device status, voices, steals and underruns. The client glue is
   `apps/client/client_audio.{hpp,cpp}` (`ClientAudio`: `init`, `frame`, `onUserGesture`,
   `click`, `setMuted`, `setVolumePercent`), which the lobby UI uses for its own controls and

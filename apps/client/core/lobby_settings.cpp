@@ -99,6 +99,7 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
   int lineNo = 0;
   uint8_t version = 1;  // text without settings_version is from before v0.93
   bool themeAuto = false;
+  bool volumeOld = false;  // volume=80, the default before v0.97
   while (!text.empty()) {
     const size_t nl = text.find('\n');
     const std::string_view line = trim(text.substr(0, nl));
@@ -152,7 +153,11 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
         warn("bot_difficulty must be easy, medium or hard");
       }
     } else if (key == "volume") {
-      if (!parseSmall(value, 100, options.volume)) warn("volume must be 0..100");
+      if (parseSmall(value, 100, options.volume)) {
+        volumeOld = options.volume == kOldDefaultVolume;
+      } else {
+        warn("volume must be 0..100");
+      }
     } else if (key == "mute") {
       uint8_t m = 0;
       if (parseSmall(value, 1, m)) {
@@ -206,9 +211,13 @@ void applySettingsText(std::string_view text, const sim::ContentDB& content, Cli
   }
   // v0.93: Beach became the default theme. Every text saved before then
   // says theme=auto, the old default, whether or not the player chose it:
-  // move those to Beach once. The next save writes settings_version=2, so a
+  // move those to Beach once. The next save writes settings_version=2 (3 since v0.97), so a
   // deliberate later choice of auto is kept.
   if (version < 2 && themeAuto) options.theme = presentation::ThemeChoice::Beach;
+  // v0.97: the default volume fell from 80 to 40 (it was too loud). Texts
+  // saved before then say volume=80 whether or not the player chose it:
+  // read it as the new default once (settings_version=3 keeps a later 80).
+  if (version < 3 && volumeOld) options.volume = kDefaultVolume;
 }
 
 }  // namespace kfm::client

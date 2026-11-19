@@ -9,11 +9,13 @@
 #include "kfm/content/loader.hpp"
 #include "kfm/net/messages.hpp"
 #include "kfm/platform/input_event.hpp"
+#include "kfm/presentation/tuning.hpp"
 #include "kfm/sim/content.hpp"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <set>
 #include <span>
@@ -285,8 +287,9 @@ TEST_CASE("lobby menu: focus wraps, values cycle, toggle and clamp", "[client][l
     CHECK_FALSE(m.change(bots, +1));
 
     const std::size_t volume = rowOf(m, LobbyRowKind::Volume);
-    CHECK(m.settings().volume == 80);
-    CHECK(m.change(volume, +1));
+    CHECK(m.settings().volume == 40);  // v0.97: quieter out of the box
+    for (int i = 0; i < 5; ++i)
+      CHECK(m.change(volume, +1));
     CHECK(m.settings().volume == 90);
     CHECK(m.change(volume, +1));
     CHECK_FALSE(m.change(volume, +1));
@@ -563,7 +566,7 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
   saved.theme = presentation::ThemeChoice::Temple;
   const std::string text = client::settingsText(saved);
   CHECK(text ==
-        "settings_version=2\narena=island\nmode=survival\nloadout=parry\npowerups=none\nbots="
+        "settings_version=3\narena=island\nmode=survival\nloadout=parry\npowerups=none\nbots="
         "4\nbot_difficulty=hard\n"
         "volume=30\nmute=1\nregion=us\ntheme=temple\nmouse_aim=on\n");
 
@@ -590,7 +593,7 @@ TEST_CASE("lobby settings persist as text; stale lines are skipped, flags win",
     CHECK(o.mode == "deathmatch");
     CHECK(o.powerUps.empty());
     CHECK(o.bots == 0);
-    CHECK(o.volume == 80);
+    CHECK(o.volume == client::kDefaultVolume);
     CHECK_FALSE(o.mute);
     CHECK(warnings[0].find("line 3") != std::string::npos);
     CHECK(warnings[0].find("volcano") != std::string::npos);
@@ -860,7 +863,7 @@ TEST_CASE("saved settings from before v0.93 move from auto to the beach once",
     CHECK(o.theme == presentation::ThemeChoice::Beach);
     // Saved again it says so, and a later read keeps it.
     const std::string text = client::settingsText(o);
-    CHECK(text.find("settings_version=2\n") == 0);
+    CHECK(text.find("settings_version=3\n") == 0);
     CHECK(text.find("theme=beach\n") != std::string::npos);
   }
   SECTION("an old text's deliberate jungle or temple stays") {
@@ -891,6 +894,47 @@ TEST_CASE("saved settings from before v0.93 move from auto to the beach once",
     std::string error;
     REQUIRE(parse({"--theme", "auto"}, o, error));
     CHECK(o.theme == presentation::ThemeChoice::Auto);
+  }
+}
+
+TEST_CASE("the default volume is 40 and an old text's volume=80 reads as it (v0.97)",
+          "[client][lobby][options]") {
+  const sim::ContentDB& db = shipped();
+  std::vector<std::string> warnings;
+  CHECK(ClientOptions{}.volume == 40);
+  CHECK(LobbySettings{}.volume == 40);
+  CHECK(std::lround(presentation::kDefaultMasterVolume * 100.0f) == 40);
+  SECTION("volume=80 from a version 1 or 2 text was the old default: now 40") {
+    for (const char* text :
+         {"volume=80\n", "settings_version=2\nvolume=80\n", "volume=80\nsettings_version=2\n"}) {
+      ClientOptions o;
+      client::applySettingsText(text, db, o, warnings);
+      CHECK(o.volume == 40);
+    }
+    CHECK(warnings.empty());
+  }
+  SECTION("another volume in an old text was chosen: kept") {
+    ClientOptions o;
+    client::applySettingsText("settings_version=2\nvolume=70\n", db, o, warnings);
+    CHECK(o.volume == 70);
+    client::applySettingsText("volume=0\n", db, o, warnings);
+    CHECK(o.volume == 0);
+  }
+  SECTION("80 saved from version 3 on is the player's: kept, and round-trips") {
+    ClientOptions o;
+    o.volume = 80;
+    const std::string text = client::settingsText(o);
+    CHECK(text.find("settings_version=3\n") == 0);
+    ClientOptions round;
+    client::applySettingsText(text, db, round, warnings);
+    CHECK(round.volume == 80);
+  }
+  SECTION("a flag wins for the run") {
+    ClientOptions o;
+    client::applySettingsText("volume=80\n", db, o, warnings);
+    std::string error;
+    REQUIRE(parse({"--volume", "80"}, o, error));
+    CHECK(o.volume == 80);
   }
 }
 

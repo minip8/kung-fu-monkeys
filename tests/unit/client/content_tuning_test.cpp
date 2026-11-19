@@ -190,7 +190,7 @@ TEST_CASE("client options: audio flags", "[client][options][audio]") {
   std::string err;
   const ClientOptions defaults;
   CHECK_FALSE(defaults.mute);
-  CHECK(defaults.volume == 80);
+  CHECK(defaults.volume == 40);  // v0.97: was 80
   ClientOptions o;
   const std::array<const char*, 4> args = {"kfm_client", "--mute", "--volume", "35"};
   REQUIRE(parseClientOptions(args, o, err));

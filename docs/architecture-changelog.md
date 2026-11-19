@@ -2037,3 +2037,13 @@ reconnect states v0.92 adds draw through the same status screen. Verified: clien
 (the new `content_labels_test.cpp`; the menus, room and lobby tests updated), off-screen renders
 of every screen at 1280×720 and 700 px. No sim, content or wire change. Replay checksums:
 unchanged.
+
+v0.97 changes: the game-setup revamp (§7, the front end), from a playtest after v0.94: "the ui
+needs polishing, and is still pretty unintuitive to use ... changing options suddenly introduces
+new options ... add preset defaults for like specific gamemodes ... settings such as volume,
+sound, etc. should be separated from game selection", "settings should be accessible mid game",
+"default sound should be quieter". Quieter sound: the default master volume falls from 80 % to
+40 % (`presentation::kDefaultMasterVolume` 0.4, `client::kDefaultVolume`; a linear gain, so
+6 dB down); the settings text goes to `settings_version=3`, and an older text's `volume=80`
+(saved by every install whether chosen or not) reads as 40 once, the v0.93 `theme=auto`
+precedent, so a later deliberate 80 is kept.

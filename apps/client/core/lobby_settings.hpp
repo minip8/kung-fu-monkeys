@@ -8,14 +8,15 @@
 // that reorders or removes an entry. The settings text is the persisted
 // form: one "key=value" per line,
 //
-//   settings_version=2              (v0.93; text without it is older)
+//   settings_version=3              (v0.93: 2, v0.97: 3; text without it is older)
 //   arena=pillars
 //   mode=deathmatch
 //   loadout=slam                    (v0.31; base = the player's kit)
 //   powerups=shield,big_banana      (all, none or comma-separated names)
 //   bots=3
 //   bot_difficulty=medium           (easy, medium or hard: the reference bot's tier)
-//   volume=80
+//   volume=40                       (v0.97: 40 by default, and an older text's
+//                                    volume=80, the old default, reads as 40)
 //   mute=0
 //   region=eu                       (M6a: the Online section's Create room region)
 //   nick=Bonobo 42                  (v0.42: the name online; absent until there is one)
@@ -49,7 +50,7 @@ struct LobbySettings {
   uint8_t loadout{0};
   uint8_t bots{0};
   ai::ReferenceTier botTier{kDefaultBotTier};
-  uint8_t volume{80};  // percent
+  uint8_t volume{kDefaultVolume};  // percent (v0.97: 40)
   bool mute{false};
   std::string region{"eu"};  // M6a: the Online section's region label (the lobby lists them)
   presentation::ThemeChoice theme{presentation::ThemeChoice::Beach};  // v0.52; v0.93 Beach
@@ -69,8 +70,9 @@ struct LobbySettings {
 void storeLobbySettings(const LobbySettings& settings, const sim::ContentDB& content,
                         ClientOptions& options);
 
-// The settings text's format version (settings_version=): 2 since v0.93.
-inline constexpr uint8_t kSettingsVersion = 2;
+// The settings text's format version (settings_version=): 2 since v0.93,
+// 3 since v0.97.
+inline constexpr uint8_t kSettingsVersion = 3;
 
 // The persisted settings of `options`, one "key=value" line each.
 [[nodiscard]] std::string settingsText(const ClientOptions& options);
