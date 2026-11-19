@@ -280,7 +280,7 @@ TEST_CASE("--screen opens a front-end screen (v0.43)", "[client][menu][options]"
   CHECK(o.screen == "local");
   REQUIRE(parse({"--screen", "paused"}, o, error));  // v0.46
   CHECK(o.screen == "paused");
-  for (const char* s : {"howto", "powerups", "local-settings", "paused-settings"}) {  // v0.97
+  for (const char* s : {"howto", "powerups", "local-settings", "paused-settings", "match"}) {
     REQUIRE(parse({"--screen", s}, o, error));
     CHECK(o.screen == s);
   }
@@ -349,14 +349,91 @@ TEST_CASE("pause menu: the local and online buttons, focus on Resume (v0.46)", "
   CHECK(m.items()[2] == PauseItem::HowToPlay);
   CHECK(m.items()[3] == PauseItem::LeaveRoom);
   CHECK(m.focusedItem() == PauseItem::Resume);
-  // The host's menu is the same until NetSession can end or restart a match.
-  CHECK(client::pauseItems(PauseContext{.online = true, .host = true}).count == 4);
   CHECK(m.context().online);
   m.setFocus(3);
   CHECK(m.focusedItem() == PauseItem::LeaveRoom);
   m.setFocus(4);  // out of range: ignored
   CHECK(m.focusedItem() == PauseItem::LeaveRoom);
   CHECK(std::string(client::PauseMenu::label(PauseItem::LeaveRoom)) == "Leave room");
+}
+
+TEST_CASE("pause menu: the online host's Restart and End match, live (v0.97)", "[client][menu]") {
+  using client::PauseContext;
+  const PauseContext guest{.online = true};
+  const PauseContext host{.online = true, .canRestart = true, .canEnd = true};
+  const auto list = [](PauseContext c) {
+    const client::PauseItems items = client::pauseItems(c);
+    return std::vector<PauseItem>(items.view().begin(), items.view().end());
+  };
+  CHECK(list(guest) == std::vector<PauseItem>{PauseItem::Resume, PauseItem::Settings,
+                                              PauseItem::HowToPlay, PauseItem::LeaveRoom});
+  CHECK(list(host) == std::vector<PauseItem>{PauseItem::Resume, PauseItem::Settings,
+                                             PauseItem::HowToPlay, PauseItem::Restart,
+                                             PauseItem::EndMatch, PauseItem::LeaveRoom});
+  CHECK(std::string(client::PauseMenu::label(PauseItem::EndMatch)) == "End match");
+
+  client::PauseMenu m;
+  m.open(host);
+  m.setFocus(5);
+  REQUIRE(m.focusedItem() == PauseItem::LeaveRoom);
+  SECTION("the host leaves while the menu is open: the items go, the focus stays put") {
+    m.setContext(guest);
+    CHECK(m.items().size() == 4);
+    CHECK(m.focusedItem() == PauseItem::LeaveRoom);
+    // ... and come back when the role does.
+    m.setContext(host);
+    CHECK(m.items().size() == 6);
+    CHECK(m.focusedItem() == PauseItem::LeaveRoom);
+  }
+  SECTION("a focused host item that goes away leaves the focus in range") {
+    m.setFocus(4);
+    REQUIRE(m.focusedItem() == PauseItem::EndMatch);
+    m.setContext(guest);
+    CHECK(m.focus() < m.items().size());
+    // At Over only Restart is left (End match needs a running match).
+    m.setContext(PauseContext{.online = true, .canRestart = true});
+    CHECK(list(m.context()) == std::vector<PauseItem>{PauseItem::Resume, PauseItem::Settings,
+                                                      PauseItem::HowToPlay, PauseItem::Restart,
+                                                      PauseItem::LeaveRoom});
+  }
+}
+
+TEST_CASE("pause menu: online Restart and End match ask again first (v0.97)", "[client][menu]") {
+  client::PauseMenu m;
+  m.open(client::PauseContext{.online = true, .canRestart = true, .canEnd = true});
+  m.setFocus(4);
+  REQUIRE(m.focusedItem() == PauseItem::EndMatch);
+  CHECK(m.needsConfirm(PauseItem::EndMatch));
+  CHECK(m.needsConfirm(PauseItem::Restart));
+  CHECK_FALSE(m.needsConfirm(PauseItem::LeaveRoom));
+  CHECK_FALSE(m.needsConfirm(PauseItem::Resume));
+  // The first press arms it and says so; the second acts.
+  CHECK_FALSE(m.pick(PauseItem::EndMatch).has_value());
+  CHECK(m.armed() == PauseItem::EndMatch);
+  CHECK(std::string(m.buttonLabel(PauseItem::EndMatch)) == "Yes, end for everyone");
+  CHECK(std::string(m.buttonLabel(PauseItem::Restart)) == "Restart match");
+  CHECK(m.pick(PauseItem::EndMatch) == PauseItem::EndMatch);
+  CHECK_FALSE(m.armed().has_value());
+  // Anything else cancels: another item, a move, the role going away, closing.
+  CHECK_FALSE(m.pick(PauseItem::Restart).has_value());
+  CHECK(std::string(m.buttonLabel(PauseItem::Restart)) == "Yes, restart for all");
+  CHECK_FALSE(m.pick(PauseItem::EndMatch).has_value());  // re-armed on End match instead
+  CHECK(m.armed() == PauseItem::EndMatch);
+  m.apply(MenuAction::Down);
+  CHECK_FALSE(m.armed().has_value());
+  (void)m.pick(PauseItem::Restart);
+  m.setContext(client::PauseContext{.online = true});
+  CHECK_FALSE(m.armed().has_value());
+  m.setContext(client::PauseContext{.online = true, .canRestart = true, .canEnd = true});
+  (void)m.pick(PauseItem::Restart);
+  m.close();
+  CHECK_FALSE(m.armed().has_value());
+  // Resume and the others never ask; locally nothing does.
+  m.open(client::PauseContext{.online = true, .canRestart = true, .canEnd = true});
+  CHECK(m.pick(PauseItem::LeaveRoom) == PauseItem::LeaveRoom);
+  m.open(client::PauseContext{.online = false, .canRestart = true});
+  CHECK(m.pick(PauseItem::Restart) == PauseItem::Restart);
+  CHECK(m.pick(PauseItem::BackToLobby) == PauseItem::BackToLobby);
 }
 
 TEST_CASE("pause menu: what opens it, what resumes, what picks (v0.46)", "[client][menu][input]") {

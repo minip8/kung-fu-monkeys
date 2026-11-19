@@ -559,6 +559,22 @@ std::string LobbyMenu::rowValue(LobbyRowKind row) const {
   return {};
 }
 
+std::optional<LobbySettings> createdRoomSetup(const LobbySettings& mine, const LobbySettings& room,
+                                              uint8_t maxBots, const sim::ContentDB& content) {
+  LobbySettings out = room;
+  out.arena = mine.arena;
+  out.mode = mine.mode;
+  out.loadout = mine.loadout;
+  out.powerUps = mine.powerUps;
+  out.bots = std::min(mine.bots, maxBots);
+  if (out == room) return std::nullopt;
+  if (out.arena >= content.arenaCount || out.mode >= content.modeCount ||
+      out.loadout >= content.loadoutCount || !content.compatible(out.arena, out.mode)) {
+    return std::nullopt;
+  }
+  return out;
+}
+
 std::string_view arenaNeed(const sim::ModeDef& mode) {
   if (mode.space == sim::Space::Grid || mode.vision.fog()) return "a grid arena";
   switch (mode.kind) {

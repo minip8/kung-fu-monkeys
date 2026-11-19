@@ -3196,16 +3196,39 @@ world `(x, z)`; world `y` is height and is never read back into the sim.
     block the screens under it.
   - The pause menu: locally Resume, Settings, How to play, Restart match (a fresh match, new
     seed, the same setup and players: `MatchSession::restart`), Back to lobby, Main menu;
-    online Resume, Settings, How to play, Leave room. `pauseItems(PauseContext{online, host})`
-    builds the list; the online host's items (End match, Restart match) go there once
-    `NetSession` can ask the server for them.
+    online Resume, Settings, How to play, then for the host Restart match and End match (to
+    the room), and Leave room. `pauseItems(PauseContext{online, canRestart, canEnd})` builds
+    the list from `NetSession::canRestartMatch()` / `canEndMatch()`, read every frame while
+    the menu is open (`PauseMenu::setContext`: the host role can move, the focus stays on its
+    item), so a guest never sees them and a host who loses the role loses them at once.
+  - The host's controls drive v0.96's `RoomCommand`: online, Restart match and End match stop
+    everyone's game, so the first press arms the button in coral ("Yes, end for everyone",
+    "Yes, restart for all", with a line saying what happens) and a second press or click on it
+    acts; any other press, a move or the role going away cancels (`PauseMenu::pick`,
+    `armed()`). Locally Restart and Back to lobby act at once (only the couch's own match).
+    A mid-match restart (`FrameReport::matchRestarted`) closes everyone's pause menu and
+    resets the match-over focus. The online match-over screen gives the host the local
+    screen's two buttons in the same order, Play again (the lead, `restartMatch()`) and Back
+    to lobby (`start()`: the waiting room), then Leave room; a guest sees Leave room under
+    "Mango chooses: play again or back to the room". `MatchOverAction::Leave` reads "Leave
+    room", as in the pause menu. A waiting room the host's End match made says so to
+    everyone ("Mango ended the match: everyone is back in the room", "You ended ..." for the
+    host, `matchEndedByHost()`).
+  - A fresh room is not Custom: when this client created the room through the lobby and is
+    its host, its first waiting room sends its own setup (the local lobby's, the Classic
+    preset on a first run) once through `sendSettings()` (`createdRoomSetup`: the match of
+    the local settings, bots clamped to the room's cap, nothing when the pair does not suit
+    the content or the room already has it); a refusal leaves the server's, never retried,
+    and a guest or a `--connect` client (whose server's flags chose the defaults) never sends.
   - Polish: one button row per setup screen (Back / Leave plain, Settings plain, Start match
     the lead), shorter hint lines that name the keys the screen has, the slot card's
     "Keys + mouse" (was cut off), the waiting room's code on one row with Copy and the preview
     at most 150 px high, so the lobby and the room (with its code) fit 1280×720 and 700 px.
     `--screen local-settings` / `paused-settings` open Settings over the lobby / the pause
     menu, and with `--connect` or a room `--screen settings` / `paused` / `paused-settings`
-    open them over the room or the running match.
+    open them over the room or the running match; online `paused`, `paused-settings` and
+    `match` have the host start the room's match first (once the server took its settings),
+    and locally `match` starts a match at once.
 - M3 network mode (v0.17, `apps/client/core/net_session.{hpp,cpp}`): a separate `NetSession`
   beside `MatchSession`, so the local path (bots, pause, step, time scale, content tuning,
   `FixedStepClock`) is untouched; the two meet only through the lobby's `InputSampler`.

@@ -1302,6 +1302,15 @@ RoomOutcome drawRoomScreen(const NetSession& session, LobbyMenu& menu, const Sha
         room->host.isValid() ? session.slotName(room->host) : std::string("the host");
     ui::heading(host ? "Your room" : (hostName + "'s room").c_str());
     if (!share.code.empty()) out.share = drawShare(share, true);
+    // v0.97: why everyone is back (v0.96's End match).
+    if (session.matchEndedByHost()) {
+      ImGui::PushFont(nullptr, ui::kFontUi);
+      ImGui::TextColored(
+          ui::vec4(ui::kTeal), "%s",
+          host ? "You ended the match: everyone is back in the room."
+               : (hostName + " ended the match: everyone is back in the room.").c_str());
+      ImGui::PopFont();
+    }
     ImGui::Spacing();
 
     // The roster (roomSlots()): the humans by name (the host's crown, you),
@@ -1728,8 +1737,11 @@ std::optional<PauseItem> drawPauseMenu(PauseMenu& menu, const HowToPlay& card) {
     const float width = ImGui::GetContentRegionAvail().x;
     const std::span<const PauseItem> items = menu.items();
     for (std::size_t i = 0; i < items.size(); ++i) {
-      if (ui::bigButton(PauseMenu::label(items[i]), i == menu.focus(), width, true, ui::kFontButton,
-                        items[i] == PauseItem::Resume ? ui::Tone::Lead : ui::Tone::Plain)) {
+      // v0.97: an armed confirmation (online Restart / End match) in coral.
+      ui::Tone tone = items[i] == PauseItem::Resume ? ui::Tone::Lead : ui::Tone::Plain;
+      if (menu.armed() == items[i]) tone = ui::Tone::Second;
+      if (ui::bigButton(menu.buttonLabel(items[i]), i == menu.focus(), width, true, ui::kFontButton,
+                        tone)) {
         menu.setFocus(i);
         clicked = items[i];
       }
@@ -1738,6 +1750,15 @@ std::optional<PauseItem> drawPauseMenu(PauseMenu& menu, const HowToPlay& card) {
       if (ui::pointerTakesFocus()) menu.setFocus(i);
     }
     ImGui::PushFont(nullptr, ui::kFontSmall);
+    if (menu.armed()) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ui::vec4(ui::kAlarm));
+      ImGui::TextWrapped("%s", *menu.armed() == PauseItem::EndMatch
+                                   ? "Everyone goes back to the room. Press it again to end the "
+                                     "match; anything else cancels."
+                                   : "Everyone starts again from 0. Press it again to restart; "
+                                     "anything else cancels.");
+      ImGui::PopStyleColor();
+    }
     ImGui::TextDisabled("Up/Down: choose. Enter / A: select. Esc / B: resume.");
     ImGui::PopFont();
   }

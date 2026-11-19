@@ -256,6 +256,16 @@ class LobbyMenu {
   PowerUpPicker picker_;
 };
 
+// v0.97: the setup a room this client created opens on: `room` (the
+// server's RoomSettings as a LobbySettings) with the match of `mine` (the
+// local lobby's: arena, mode, kit, power-ups, bots clamped to `maxBots`),
+// or nullopt when that changes nothing or the pair does not suit the
+// content (the server would refuse it). Sent once, by the host.
+[[nodiscard]] std::optional<LobbySettings> createdRoomSetup(const LobbySettings& mine,
+                                                            const LobbySettings& room,
+                                                            uint8_t maxBots,
+                                                            const sim::ContentDB& content);
+
 // v0.97: what a mode needs of an arena, for the notice when the Arena row
 // had to move ("a starting side for each team", "a grid arena"); empty when
 // any arena suits it.

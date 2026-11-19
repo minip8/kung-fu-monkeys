@@ -140,7 +140,9 @@ inline constexpr const char* kUsage =
     "                         (the lobby), paused (a local match under the pause\n"
     "                         menu), howto (the How to play card), powerups (the\n"
     "                         lobby's power-up picker), local-settings or\n"
-    "                         paused-settings (Settings over the lobby, the pause)\n"
+    "                         paused-settings (Settings over the lobby, the pause);\n"
+    "                         online, the host starts the room for match, paused\n"
+    "                         and paused-settings\n"
     "replays:\n"
     "  --replay SRC           watch a replay (.kfmr): a file path natively, a URL in\n"
     "                         the browser (?replay=URL); it must come from this\n"
@@ -163,10 +165,12 @@ inline constexpr uint8_t kOldDefaultVolume = 80;
 
 // --screen's values (v0.43; v0.94 howto; v0.97 powerups: the local lobby
 // under its power-up picker, local-settings and paused-settings: Settings
-// over the local lobby and over a local match's pause menu).
-inline constexpr std::array<std::string_view, 9> kScreens{
-    "menu",  "settings", "online",         "local",          "paused",
-    "howto", "powerups", "local-settings", "paused-settings"};
+// over the local lobby and over a local match's pause menu; match, online
+// only: the host starts the room's match, as paused and paused-settings do
+// online).
+inline constexpr std::array<std::string_view, 10> kScreens{
+    "menu",  "settings", "online",         "local",           "paused",
+    "howto", "powerups", "local-settings", "paused-settings", "match"};
 
 inline constexpr uint64_t kMinWindowSide = 320;
 inline constexpr uint64_t kMaxWindowSide = 8192;

@@ -537,6 +537,38 @@ TEST_CASE("lobby menu: a mode with an arena pool brings its first member (v0.82)
   CHECK(m.settings().arena == 2);
 }
 
+TEST_CASE("a room this client created opens on its own setup (v0.97)", "[client][lobby][room]") {
+  const sim::ContentDB& db = shipped();
+  LobbyMenu local;
+  local.setContent(db);
+  local.setHumans(1);
+  REQUIRE(local.applyPreset(0));  // Classic, 3 bots: a first run's setup
+  const LobbySettings server{};   // the server's defaults: rounds on the dojo, no bots
+  const std::optional<LobbySettings> sent =
+      client::createdRoomSetup(local.settings(), server, 9, db);
+  REQUIRE(sent.has_value());
+  const LobbySettings s = sent.value_or(server);
+  CHECK(s.arena == local.settings().arena);
+  CHECK(s.mode == local.settings().mode);
+  CHECK(s.loadout == local.settings().loadout);
+  CHECK(s.powerUps == local.settings().powerUps);
+  CHECK(s.bots == 3);
+  // So the room's Game row names the preset, not Custom.
+  LobbyMenu room;
+  room.setContent(db);
+  room.setRoomRows(true);
+  room.settings() = s;
+  CHECK(room.rowValue(LobbyRowKind::Game) == "Classic");
+  // Clamped to the room's cap; nothing to send when it is the room's already.
+  CHECK(client::createdRoomSetup(local.settings(), server, 1, db).value_or(server).bots == 1);
+  CHECK_FALSE(client::createdRoomSetup(s, s, 9, db).has_value());
+  // A pair the content does not suit is never sent (the server would refuse it).
+  LobbySettings odd = local.settings();
+  odd.mode = db.findMode("team_rounds").value_or(0);
+  odd.arena = arenaIndex("dojo");
+  CHECK_FALSE(client::createdRoomSetup(odd, server, 9, db).has_value());
+}
+
 // v8 (issue #83): the online room's Bots row stops where the server's
 // validRoomSettings() does under its player cap (RoomStateMsg::maxPlayers):
 // at most cap − 1 bots, so the host never asks for bots Start cannot place.

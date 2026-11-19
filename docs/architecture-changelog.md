@@ -2121,4 +2121,25 @@ clang-tidy 23.1.4 on every touched file, off-screen renders (`SDL_VIDEODRIVER=of
 local lobby on several presets, the power-up picker, the local pause menu, and against a local
 `kfm_server` (and the lobby service for a room code) the host's and a guest's waiting room,
 Settings over it, the online pause menu and Settings over it. Not looked at: the browser build,
-and anything that needs a key press (keyboard-mode highlights, the picker in a room). No sim, content or wire change. Replay checksums: unchanged.
+and anything that needs a key press (keyboard-mode highlights, the picker in a room). That part
+changes no sim, content or wire. Then the host's controls, on v0.96's `RoomCommand` (the UI
+drives it; no message is added): the online pause menu gives the host Restart match and End
+match before Leave room, following `canRestartMatch()` / `canEndMatch()` every frame so a host
+change while it is open adds or removes them; both stop everyone's game, so the first press arms
+the button ("Yes, end for everyone") and a second acts, anything else cancels (local Restart and
+Back to lobby stay one press: the couch's own match). The online match-over screen gives the
+host Play again (`restartMatch()`, a fresh match at once; it was `start()`, which only went back
+to the room) and Back to lobby (`start()`), as the local screen, then Leave room; a guest sees
+"Mango chooses: play again or back to the room". A waiting room the host ended says so to
+everyone. A mid-match restart closes the pause menu. A room this client created opens on its own
+setup (`createdRoomSetup`, sent once by the host through `sendSettings()`, never by a guest or a
+`--connect` client, a refusal kept), so a first-run room is Classic, not Custom. Considered and
+not taken: a two-button confirm row (the armed button keeps the list's shape and needs nothing
+new from a pad); confirming the local Restart (one press undoes nothing anyone else cared
+about). Verified: `menus_test.cpp` (the host's and a guest's lists, the list following a role
+change, the confirmation), `hud_view_test.cpp` (the match-over buttons), `lobby_test.cpp`
+(`createdRoomSetup`); off-screen renders against `kfm_server` and the lobby service of a fresh
+room (Classic), the host's online pause menu and the host's and a guest's match-over screens.
+Not looked at: the armed confirmation and the "ended the match" line on screen (they need a
+press), the host role moving while the menu is open (tested headless only). No sim or content
+change. Replay checksums: unchanged.

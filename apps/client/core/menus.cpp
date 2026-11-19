@@ -266,8 +266,9 @@ PauseItems pauseItems(PauseContext context) {
   add(PauseItem::Settings);
   add(PauseItem::HowToPlay);
   if (context.online) {
-    // The online host's own items (End match, Restart match) go here, before
-    // the way out, once NetSession can ask the server for them.
+    // v0.97: the host's controls of the running match (v0.96).
+    if (context.canRestart) add(PauseItem::Restart);
+    if (context.canEnd) add(PauseItem::EndMatch);
     add(PauseItem::LeaveRoom);
   } else {
     add(PauseItem::Restart);
@@ -280,10 +281,60 @@ PauseItems pauseItems(PauseContext context) {
 void PauseMenu::open(PauseContext context) {
   open_ = true;
   help_ = false;
+  armed_.reset();
   context_ = context;
   items_ = pauseItems(context);
   buttons_.setCount(items_.count);
   buttons_.setFocus(0);
+}
+
+void PauseMenu::setContext(PauseContext context) {
+  if (context == context_) return;
+  const PauseItem focused = focusedItem();
+  context_ = context;
+  items_ = pauseItems(context);
+  buttons_.setCount(items_.count);
+  const auto items = items_.view();
+  if (const auto it = std::ranges::find(items, focused); it != items.end()) {
+    buttons_.setFocus(static_cast<std::size_t>(it - items.begin()));
+  }
+  if (armed_ && std::ranges::find(items, *armed_) == items.end()) armed_.reset();
+}
+
+void PauseMenu::setFocus(std::size_t index) {
+  if (index != buttons_.focus()) armed_.reset();
+  buttons_.setFocus(index);
+}
+
+void PauseMenu::apply(MenuAction action) {
+  if (action != MenuAction::None) armed_.reset();
+  buttons_.apply(action);
+}
+
+bool PauseMenu::needsConfirm(PauseItem item) const {
+  return context_.online && (item == PauseItem::Restart || item == PauseItem::EndMatch);
+}
+
+std::optional<PauseItem> PauseMenu::pick(PauseItem item) {
+  if (!needsConfirm(item) || armed_ == item) {
+    armed_.reset();
+    return item;
+  }
+  armed_ = item;
+  return std::nullopt;
+}
+
+const char* PauseMenu::buttonLabel(PauseItem item) const {
+  if (armed_ == item) {
+    if (item == PauseItem::EndMatch) return "Yes, end for everyone";
+    if (item == PauseItem::Restart) return "Yes, restart for all";
+  }
+  return label(item);
+}
+
+PauseContext pauseContext(const NetSession& session) {
+  return PauseContext{
+      .online = true, .canRestart = session.canRestartMatch(), .canEnd = session.canEndMatch()};
 }
 
 std::optional<PauseItem> PauseMenu::press(const platform::InputEvent& event) const {
@@ -320,6 +371,8 @@ const char* PauseMenu::label(PauseItem item) {
       return "Main menu";
     case PauseItem::LeaveRoom:
       return "Leave room";
+    case PauseItem::EndMatch:
+      return "End match";
     case PauseItem::HowToPlay:
       return "How to play";
   }
@@ -333,7 +386,7 @@ bool isPauseEvent(const platform::InputEvent& event, bool deviceBound) {
 }
 
 void openPauseMenu(PauseMenu& menu, MatchSession& session) {
-  menu.open(PauseContext{.online = false, .host = false});
+  menu.open(PauseContext{.online = false, .canRestart = true, .canEnd = false});
   session.setPaused(true);
 }
 
@@ -347,7 +400,7 @@ void closePauseMenu(PauseMenu& menu, MatchSession& session) {
 }
 
 void openPauseMenu(PauseMenu& menu, NetSession& session) {
-  menu.open(PauseContext{.online = true, .host = session.isHost()});
+  menu.open(pauseContext(session));
   session.setInputSuspended(true);
 }
 

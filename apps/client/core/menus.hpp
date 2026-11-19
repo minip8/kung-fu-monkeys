@@ -28,7 +28,8 @@
 //                 match. v0.97: locally Resume, Settings, How to play,
 //                 Restart match, Back to lobby, Main menu (the match is
 //                 paused while it is open); online Resume, Settings, How to
-//                 play, Leave room (the server's match runs on; the local
+//                 play, the host's Restart match and End match (asked
+//                 twice), Leave room (the server's match runs on; the local
 //                 slots send idle input). pauseItems() builds the list from a
 //                 PauseContext. v0.94: How to play shows the controls card in
 //                 the menu's place until Back (Esc, a pad's B, Enter).
@@ -170,18 +171,21 @@ enum class PauseItem : uint8_t {
   Resume = 0,
   Settings,
   HowToPlay,
-  Restart,
+  Restart,  // locally MatchSession::restart, online the host's NetSession::restartMatch
   BackToLobby,
   MainMenu,
   LeaveRoom,
+  EndMatch,  // v0.97 (v0.96's RoomCommand): the online host's, everyone back to the room
 };
 
-// v0.97: where the pause menu opens. `host`: the online room's host (no
-// item of its own yet; End match and Restart match for the host go here,
-// in pauseItems()).
+// v0.97: where the pause menu is open. Online, `canRestart` and `canEnd`
+// are the host's NetSession::canRestartMatch() / canEndMatch(), read every
+// frame (setContext()): the host role can move while the menu is open.
 struct PauseContext {
   bool online{false};
-  bool host{false};
+  bool canRestart{false};
+  bool canEnd{false};
+  constexpr bool operator==(const PauseContext&) const = default;
 };
 
 inline constexpr std::size_t kMaxPauseItems = 8;
@@ -191,6 +195,9 @@ struct PauseItems {
   [[nodiscard]] std::span<const PauseItem> view() const { return {items.data(), count}; }
 };
 // The buttons for a context, top to bottom: Resume first, the way out last.
+// Locally Resume, Settings, How to play, Restart match, Back to lobby, Main
+// menu; online Resume, Settings, How to play, then the host's Restart match
+// and End match when the server would take them, and Leave room.
 [[nodiscard]] PauseItems pauseItems(PauseContext context);
 
 class PauseMenu {
@@ -200,7 +207,13 @@ class PauseMenu {
   void close() {
     open_ = false;
     help_ = false;
+    armed_.reset();
   }
+  // v0.97: a new context while open (the host role moved, the match ended):
+  // the buttons follow, the focus stays on the same item when it is still
+  // there (else on the one now in its place), a confirmation whose item went
+  // away is dropped.
+  void setContext(PauseContext context);
   [[nodiscard]] bool isOpen() const { return open_; }
   // v0.94: the controls card in the menu's place (How to play).
   [[nodiscard]] bool helpOpen() const { return open_ && help_; }
@@ -212,9 +225,19 @@ class PauseMenu {
   [[nodiscard]] std::size_t focus() const { return buttons_.focus(); }
   [[nodiscard]] PauseItem focusedItem() const { return items()[buttons_.focus()]; }
   [[nodiscard]] ButtonMenu& buttons() { return buttons_; }
-  void setFocus(std::size_t index) { buttons_.setFocus(index); }
-  // Any direction moves the focus, wrapping (ButtonMenu).
-  void apply(MenuAction action) { buttons_.apply(action); }
+  void setFocus(std::size_t index);
+  // Any direction moves the focus, wrapping (ButtonMenu), and drops a
+  // confirmation.
+  void apply(MenuAction action);
+  // v0.97: online, Restart match and End match stop everyone's game: the
+  // first press arms the button ("Yes, end for everyone"), a second on it
+  // confirms. pick() is what a press or click on `item` does: the item to
+  // act on, or nullopt when it only armed it.
+  [[nodiscard]] bool needsConfirm(PauseItem item) const;
+  [[nodiscard]] std::optional<PauseItem> pick(PauseItem item);
+  [[nodiscard]] std::optional<PauseItem> armed() const { return armed_; }
+  // The button's text: label(), or the confirmation while armed.
+  [[nodiscard]] const char* buttonLabel(PauseItem item) const;
   // What a press asks for while the menu is open: Escape or any pad's East,
   // Back or Start resume; Enter, keypad Enter, Space or a pad's South pick
   // the focused item; anything else nothing. v0.94: with the controls card
@@ -230,7 +253,11 @@ class PauseMenu {
   PauseContext context_{};
   PauseItems items_{};
   ButtonMenu buttons_;
+  std::optional<PauseItem> armed_;
 };
+
+// v0.97: the online pause menu's context for this session.
+[[nodiscard]] PauseContext pauseContext(const NetSession& session);
 
 // Whether `event` opens the pause menu over a running match: Escape, or the
 // Start of a pad bound to a slot (`deviceBound`, eventDeviceBound(); an

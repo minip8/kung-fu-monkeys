@@ -99,12 +99,11 @@
 // Start over a running match opens it. Locally it pauses the match (v0.97:
 // Resume, Settings, How to play, Restart match, Back to lobby, Main menu);
 // online the match runs on and the local slots send idle input (Resume,
-// Settings, How to play, Leave room). While it is open every device
-// navigates it, Escape or a pad's East / Back / Start resumes, and no press
-// reaches the session (releases and sticks still do, so nothing stays
-// held). In the browser the page never asks for fullscreen, so Escape
-// reaches SDL as any key; were the canvas fullscreen, the browser would take
-// the first Escape to leave fullscreen and the next one opens the menu.
+// Settings, How to play, the host's Restart match and End match, Leave room). While it is open
+// every device navigates it, Escape or a pad's East / Back / Start resumes, and no press reaches
+// the session (releases and sticks still do, so nothing stays held). In the browser the page never
+// asks for fullscreen, so Escape reaches SDL as any key; were the canvas fullscreen, the browser
+// would take the first Escape to leave fullscreen and the next one opens the menu.
 //
 // The replay viewer (M7 step 6, core/replay_session.hpp,
 // core/replay_controls.hpp): --replay SRC (?replay=URL in the browser), or
@@ -245,6 +244,8 @@ struct App {
   bool editOnlineName = false;  // v0.94: ... into Play online's name field
   bool menuActivate = false;    // Enter / Start on a menu screen, this frame
   bool roomChanged = false;     // the host's rows changed from the keyboard / a pad
+  bool roomSetupSent = false;   // v0.97: a created room got this client's setup once
+  bool roomAutoStart = false;   // v0.97: --screen match / paused online: the host starts once
   bool roomStart = false;       // the host's Enter on the waiting screen
   bool overActivate = false;    // Enter on the match-over screen
   std::uint64_t copiedAtNs = 0;
@@ -495,6 +496,7 @@ void startNetwork(App& app, bool atStartup, std::uint64_t nowNs,
   app.lastNetPhase = app.net->phase();
   app.roomMenu.setContent(app.net->content());
   app.roomSentAt.reset();
+  app.roomSetupSent = false;
   std::printf("kfm_client: %s\n", app.net->statusText().c_str());
   std::fflush(stdout);
 }
@@ -634,8 +636,12 @@ void menuBack(App& app) {
 }
 
 // The pause menu's choice (a click or a press).
-void choosePauseItem(App& app, client::PauseItem item) {
+void choosePauseItem(App& app, client::PauseItem picked) {
   app.audio.click();
+  // v0.97: online, Restart match and End match ask once more first.
+  const std::optional<client::PauseItem> confirmed = app.pauseMenu.pick(picked);
+  if (!confirmed) return;
+  const client::PauseItem item = *confirmed;
   if (item == client::PauseItem::HowToPlay) {
     // v0.94: the controls card in the menu's place, and back.
     app.pauseMenu.setHelp(!app.pauseMenu.helpOpen());
@@ -648,8 +654,12 @@ void choosePauseItem(App& app, client::PauseItem item) {
     return;
   }
   if (app.net) {
-    client::closePauseMenu(app.pauseMenu, *app.net);
+    client::NetSession& n = *app.net;
+    client::closePauseMenu(app.pauseMenu, n);
     if (item == client::PauseItem::LeaveRoom) app.leaveRequested = true;
+    // v0.97: the host's controls of the running match (v0.96's RoomCommand).
+    if (item == client::PauseItem::Restart) n.restartMatch();
+    if (item == client::PauseItem::EndMatch) n.endMatch();
     return;
   }
   MatchSession& s = *app.session;
@@ -1439,10 +1449,18 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
     if (std::exchange(app.overActivate, false) && !pick) pick = over.actionAt(app.overMenu.focus());
     if (pick) {
       app.audio.click();
-      if (*pick == client::MatchOverAction::PlayAgain) {
-        n.start();
-      } else {
-        app.leaveRequested = true;
+      // v0.97: Play again is a fresh match at once (v0.96's Restart), Back
+      // to lobby the waiting room (Start at Over), as the local screen.
+      switch (*pick) {
+        case client::MatchOverAction::PlayAgain:
+          n.restartMatch();
+          break;
+        case client::MatchOverAction::BackToLobby:
+          n.start();
+          break;
+        case client::MatchOverAction::Leave:
+          app.leaveRequested = true;
+          break;
       }
       app.overMenu.setFocus(0);
     }
@@ -1463,6 +1481,21 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
     ls.powerUps = room->settings.powerUps;
     ls.bots = room->settings.bots;
   }
+  // v0.97: a room this client created opens on its own setup (the local
+  // lobby's, a preset on a first run), sent once as RoomSettings; a refusal
+  // leaves the server's (the flag is never cleared), a guest never sends.
+  if (!app.roomSetupSent && n.isHost() && n.config().lobby && n.config().lobby->create) {
+    app.roomSetupSent = true;
+    if (const std::optional<client::LobbySettings> wanted = client::createdRoomSetup(
+            app.lobby.settings(), ls, app.roomMenu.maxBots(), n.content())) {
+      ls = *wanted;
+      app.roomChanged = true;
+      std::printf("kfm_client: the room takes this client's setup (%s on %s, %u bots)\n",
+                  n.content().modeAt(ls.mode).name.cStr(),
+                  n.content().arenaAt(ls.arena).name.cStr(), static_cast<unsigned>(ls.bots));
+      std::fflush(stdout);
+    }
+  }
   const client::RoomOutcome out = client::drawRoomScreen(n, app.roomMenu, share);
   applyShare(app, out.share, share, now);
   if (out.leave) app.leaveRequested = true;
@@ -1479,6 +1512,12 @@ void roomFrame(App& app, client::NetSession& n, const client::ShareView& share,
                                      .bots = ls.bots});
     app.roomSentAt = n.client().roomUpdates();
   }
+  // v0.97 (screenshots): --screen match / paused online: the host starts the
+  // room's match once, after the server took its settings.
+  if (app.roomAutoStart && n.isHost() && !app.roomSentAt && !out.settingsChanged) {
+    app.roomAutoStart = false;
+    app.roomStart = true;
+  }
   if ((out.start || std::exchange(app.roomStart, false)) && n.isHost()) {
     app.audio.click();
     n.start();
@@ -1494,6 +1533,16 @@ presentation::Camera netFrame(App& app, std::uint64_t now, double dt, int w, int
   n.advance(now);
   // v0.46: the pause menu goes away when the match does (over, lost).
   if (app.pauseMenu.isOpen() && !n.running()) client::closePauseMenu(app.pauseMenu, n);
+  // v0.97: the host's restart mid-match (the phase stays Running): a fresh
+  // match on screen, so no pause menu or match-over focus is left from the
+  // old one. The host's items follow the role while the menu is open.
+  if (n.client().frameReport().matchRestarted) {
+    if (app.pauseMenu.isOpen()) client::closePauseMenu(app.pauseMenu, n);
+    app.overMenu.setFocus(0);
+    app.overActivate = false;
+  }
+  if (app.pauseMenu.isOpen()) app.pauseMenu.setContext(client::pauseContext(n));
+
   if (app.pauseSoon && n.running() && n.curr().tick.value >= kPauseSoonTicks) {
     app.pauseSoon = false;  // v0.97: --screen paused online
     client::openPauseMenu(app.pauseMenu, n);
@@ -1916,6 +1965,7 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
     if (app.options.screen == "settings") app.settingsMenu.open();
     app.pauseSoon = app.options.screen == "paused" || app.options.screen == "paused-settings";
     app.settingsSoon = app.options.screen == "paused-settings";
+    app.roomAutoStart = app.pauseSoon || app.options.screen == "match";
   } else if (app.options.screen != "menu" && !app.options.autostart) {
     // v0.43: --screen settings|online|local (screenshots, development).
     if (app.options.screen == "settings") {
@@ -1933,6 +1983,10 @@ int main(int argc, char** argv) {  // NOLINT(misc-const-correctness): main signa
       app.screen = Screen::HowTo;
     } else if (app.options.screen == "local") {
       app.screen = Screen::Play;
+    } else if (app.options.screen == "match") {
+      // v0.97: a local match at once (online the host starts the room's).
+      app.screen = Screen::Play;
+      (void)app.session->startMatch(app.lastFrameNs);
     } else if (app.options.screen == "powerups") {
       // v0.97: the local lobby under its power-up picker (screenshots).
       app.screen = Screen::Play;
